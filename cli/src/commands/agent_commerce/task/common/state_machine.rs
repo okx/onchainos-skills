@@ -186,19 +186,19 @@ pub enum Event {
     /// ASP declined a user-designated assignment via `asp/reject` API (off-chain;
     /// notifies the user to re-route to another ASP or fall back to public).
     JobProviderReject,
-    /// User rejected the current ASP via `user/reject` API (off-chain;
+    /// User Agent rejected the current ASP via `user/reject` API (off-chain;
     /// notifies the ASP that they are no longer needed for this task).
     JobUserReject,
-    /// User designated a specific ASP for the task (private-task path; status remains created;
+    /// User Agent designated a specific ASP for the task (private-task path; status remains created;
     /// notifies the chosen provider that they have been selected and should start negotiation).
     JobAspSelected,
-    /// User confirm-accept on-chain (status enters accepted; notifies provider).
+    /// User Agent confirm-accept on-chain (status enters accepted; notifies provider).
     JobAccepted,
     /// Provider deliver on-chain (status enters submitted; notifies user to review).
     JobSubmitted,
-    /// User complete on-chain / arbitration approve (status enters completed; notifies provider).
+    /// User Agent complete on-chain / arbitration approve (status enters completed; notifies provider).
     JobCompleted,
-    /// User reject on-chain (status enters rejected; notifies provider to choose between arbitration / refund).
+    /// User Agent reject on-chain (status enters rejected; notifies provider to choose between arbitration / refund).
     JobRejected,
     /// Arbitration phase-1 (approve) on-chain (status remains rejected; pass-through event;
     /// notifies the initiating provider to proceed to phase-2 dispute confirm).
@@ -264,10 +264,10 @@ pub enum Event {
     SubmitExpired,
     /// After reject, the provider failed to raise arbitration in time (notifies user to call claimAutoRefund).
     RejectExpired,
-    /// Review timeout (after provider submit, the user did not confirm; notifies provider to call claimAutoComplete).
+    /// Review timeout (after provider submit, the User Agent did not confirm; notifies provider to call claimAutoComplete).
     ReviewExpired,
     // ── Auto-refund tx receipt ────────────────────────────────────────
-    /// User's claimAutoRefund tx on-chain result (after submit/reject timeout the user pulls funds back; notifies user).
+    /// User Agent's claimAutoRefund tx on-chain result (after submit/reject timeout the User Agent pulls funds back; notifies user).
     JobAutoRefunded,
 
     // ── Deadline reminders (warn class, no status change) ─────────────
@@ -286,12 +286,12 @@ pub enum Event {
     /// User session dispatched `[ATTACHMENT_ADDED]`; sub session uploads + forwards the file to the provider.
     /// Can fire in Created (with active sub session) or Accepted — multi-status, so freshness check is skipped.
     AttachmentAdded,
-    /// Provider receives `[intent:attachment]` from the user; downloads + saves the file locally.
+    /// Provider receives `[intent:attachment]` from the User Agent; downloads + saves the file locally.
     /// Can fire in Created (negotiation phase) or Accepted (mid-task) — multi-status.
     UserAttachmentReceived,
 
     // ── Deliverable relay event (user-local dispatch, no status change) ─
-    /// User receives provider's `[intent:deliver]` P2P message; downloads + saves the deliverable
+    /// User Agent receives provider's `[intent:deliver]` P2P message; downloads + saves the deliverable
     /// locally before the on-chain `job_submitted` event confirms the submission.
     DeliverableReceived,
 

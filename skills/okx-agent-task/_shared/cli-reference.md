@@ -318,7 +318,7 @@ agent set-payment-mode <jobId> --payment-mode <escrow|x402> [--token-symbol <sym
 
 ### confirm-accept
 
-User confirms provider acceptance + escrow payment (params provided by `next-action` playbook)
+User Agent confirms provider acceptance + escrow payment (params provided by `next-action` playbook)
 
 ```
 agent confirm-accept <jobId>
@@ -342,7 +342,7 @@ agent direct-accept <jobId> --provider-agent-id <id> [--token-symbol <sym>] [--t
 
 ### complete
 
-User accepts the deliverable and releases funds (params provided by `next-action` playbook)
+User Agent accepts the deliverable and releases funds (params provided by `next-action` playbook)
 
 ```
 agent complete <jobId>
@@ -350,7 +350,7 @@ agent complete <jobId>
 
 ### reject
 
-User rejects the deliverable (params provided by `next-action` playbook)
+User Agent rejects the deliverable (params provided by `next-action` playbook)
 
 ```
 agent reject <jobId> --reason "<reason>"
@@ -358,7 +358,7 @@ agent reject <jobId> --reason "<reason>"
 
 ### close
 
-User closes a task in `created` status (params provided by `next-action` playbook)
+User Agent closes a task in `created` status (params provided by `next-action` playbook)
 
 ```
 agent close <jobId> [--agent-id <id>]
@@ -374,7 +374,7 @@ agent set-public <jobId> [--agent-id <id>]
 
 ### claim-auto-refund
 
-User reclaims escrowed funds after `submit_expired` / `reject_expired` (params provided by `next-action` playbook)
+User Agent reclaims escrowed funds after `submit_expired` / `reject_expired` (params provided by `next-action` playbook)
 
 ```
 agent claim-auto-refund <jobId>

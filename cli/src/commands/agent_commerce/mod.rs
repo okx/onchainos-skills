@@ -421,7 +421,7 @@ pub enum AgentCommand {
         #[arg(long, default_value = "")] reason: String,
     },
 
-    /// Provider cold-start: contact the user in one shot.
+    /// Provider cold-start: contact the User Agent in one shot.
     /// Combines `okx-a2a session create` (group + session create) + `okx-a2a xmtp-send`
     /// (the canonical self-intro / interest opener) so the LLM only runs ONE
     /// command instead of chaining two CLI calls. Opener content is fixed;

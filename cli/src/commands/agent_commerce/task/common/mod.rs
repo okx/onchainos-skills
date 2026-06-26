@@ -525,7 +525,7 @@ pub(crate) async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Val
 /// single entry matching `service_id`. Returns:
 /// - `Ok(Some(entry))` — service-list fetched, entry found
 /// - `Ok(None)`         — service-list fetched, but no entry has this serviceId
-///                        (e.g. user designated a stale / unregistered serviceId)
+///                        (e.g. User Agent designated a stale / unregistered serviceId)
 /// - `Err(e)`           — service-list fetch failed entirely (subprocess died,
 ///                        backend rejected, JSON parse failed). Callers usually
 ///                        want to treat this as "no match" — use `.ok().flatten()`.

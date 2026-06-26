@@ -60,7 +60,7 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 
 **Network timeout / connection error does NOT qualify as an exception** — go through the pending-decisions-v2 flow above and let the user decide. Blindly retrying network flakes = pushing repeatedly inside the same turn, which overlaps with the §4 anti-pattern.
 
-**Role-specific exception (evaluator)**: `vote-commit` / `vote-reveal` / `arbitration-claim` are penalized at 0.3% stake the moment the commit / reveal window closes, so the sub is allowed up to 3 internal retries — this is a hard constraint forced by the dispute economic model; see `references/evaluator-decision-rubric.md` §6 for details. Other evaluator commands (`stake` / `unstake-*` / `info` / `download` etc.) still follow the §2 standard flow. User / provider have no such exception.
+**Role-specific exception (evaluator)**: `vote-commit` / `vote-reveal` / `arbitration-claim` are penalized at 0.3% stake the moment the commit / reveal window closes, so the sub is allowed up to 3 internal retries — this is a hard constraint forced by the dispute economic model; see `references/evaluator-decision-rubric.md` §6 for details. User Agent / provider have no such exception.
 
 ## 3. ❌ Absolute prohibition: broadcasting technical errors to the counterpart
 

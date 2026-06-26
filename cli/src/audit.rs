@@ -359,7 +359,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::XmtpSign(_) => "xmtp-sign".into(),
         AgentCommand::ValidateListing(_) => "validate-listing".into(),
 
-        // Task (buyer)
+        // Task (user)
         AgentCommand::CreateTask { .. } => "create-task".into(),
         AgentCommand::Status { .. } => "status".into(),
         AgentCommand::Tasks { .. } => "tasks".into(),
