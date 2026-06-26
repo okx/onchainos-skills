@@ -13,7 +13,7 @@ use crate::commands::agent_commerce::task::common::{fetch_my_agents, network::ta
 use crate::commands::agent_commerce::task::signing;
 
 /// ASP role value (backend convention: 1=User Agent, 2=ASP, 3=evaluator).
-const ROLE_PROVIDER: i64 = 2;
+const ROLE_ASP: i64 = 2;
 /// Online status value.
 const STATUS_ONLINE: i64 = 1;
 
@@ -30,7 +30,7 @@ pub async fn handle_find_jobs() -> Result<()> {
     let online_ASPs: Vec<&Value> = agent_list
         .iter()
         .filter(|a| {
-            a["role"].as_i64() == Some(ROLE_PROVIDER)
+            a["role"].as_i64() == Some(ROLE_ASP)
                 && a["status"].as_i64() == Some(STATUS_ONLINE)
         })
         .collect();

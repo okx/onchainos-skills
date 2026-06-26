@@ -181,7 +181,7 @@ pub enum AgentCommand {
     /// / 4 disputed by default; pass `--include-terminal` to also list 5-9.
     #[command(name = "active-tasks")]
     ActiveTasks {
-        /// Optional role filter: user | provider | evaluator (also accepts 1/2/3)
+        /// Optional role filter: user | asp | evaluator (also accepts 1/2/3)
         #[arg(long)] role: Option<String>,
         /// Include terminal statuses (complete / close / expired / rejected / admin_stopped)
         #[arg(long = "include-terminal")] include_terminal: bool,
@@ -320,7 +320,7 @@ pub enum AgentCommand {
     /// already scoped to the current account's XLayer ownerAddress.
     #[command(name = "my-agents")]
     MyAgents {
-        /// Optional role filter: user | provider | evaluator (also accepts 1/2/3)
+        /// Optional role filter: user | asp | evaluator (also accepts 1/2/3)
         #[arg(long)] role: Option<String>,
     },
 
