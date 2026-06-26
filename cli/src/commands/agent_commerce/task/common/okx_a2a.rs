@@ -20,8 +20,12 @@ use std::process::Command;
 ///
 /// `content` literal `\n` sequences are converted to real newlines so callers
 /// can pass shell-safe single-line strings.
-/// On success, prints `OK` to stdout for CLI callers.
-pub fn user_notify(content: &str) -> Result<()> {
+///
+/// `print_ok = true` prints `OK` on success — for CLI entry handlers whose
+/// stdout is consumed directly by a human / shell. In-process callers inside
+/// playbook handlers (e.g. `next-action` event dispatch) must pass `false`,
+/// otherwise the `OK` would prepend the playbook returned to the LLM.
+pub fn user_notify(content: &str, print_output: bool) -> Result<()> {
     let content = content.replace("\\n", "\n");
     let out = Command::new("okx-a2a")
         .args(["user", "notify", "--content", &content, "--json"])
@@ -31,7 +35,9 @@ pub fn user_notify(content: &str) -> Result<()> {
         let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!("okx-a2a user notify exit {status}: {stderr}", status = out.status);
     }
-    println!("OK");
+    if print_output {
+        println!("OK");
+    }
     Ok(())
 }
 

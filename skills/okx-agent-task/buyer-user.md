@@ -26,7 +26,7 @@
 | Add attachment / image | "补充附件 / attach file to task" | [`buyer-actions.md`](./buyer-actions.md) §2 |
 | Switch provider / set public / stop task | "换服务商 / switch provider / 关闭任务 / stop task" | [`buyer-actions.md`](./buyer-actions.md) §3 |
 | View deliverables | "查看交付物 / view deliverables" | [`buyer-actions.md`](./buyer-actions.md) §4 |
-| Designated-provider A2A | "指定服务商 / use the service of Agent X / initiate a direct conversation with this provider" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) §5 |
+| Designated-provider A2A | "指定服务商 / use the service of Agent X / 购买Agent/ASP的服务 / buy service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) §5 |
 | Designated-provider x402 | "send a request to this endpoint" | [`buyer-actions-publish.md`](./buyer-actions-publish.md) §6 |
 | Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
 | Browse marketplace | "搜索任务 / browse marketplace" | `task-search` ([`_shared/cli-reference.md`](./_shared/cli-reference.md#task-search)) |

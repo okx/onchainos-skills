@@ -538,6 +538,75 @@ pub(crate) fn deliverable_received_cli(
         }
     };
 
+    // Pre-decide the ASP rating + pre-translate the rating_submitted notify
+    // + pre-translate the JobCompleted notify on the backup session (escrow
+    // only). The future `job_completed` event then dispatches
+    // `feedback-submit` + `user-notify` in-process with zero LLM decisions.
+    //
+    // All three artifacts are bundled into one backup turn because they share
+    // the same trigger (rating decided from this deliverable) and the same
+    // downstream consumer (the job_completed fast path).
+    if ctx.payment_mode != Some(3) {
+        // Description is the basis for the sub LLM's rating decision — if it's
+        // missing (no prefetched / empty), skip the prefetch entirely and let
+        // the LLM playbook handle job_completed with full context at event time.
+        let task_description = ctx.prefetched
+            .map(|p| p.description.as_str())
+            .filter(|s| !s.is_empty());
+        if let Some(task_description) = task_description {
+            let rating_title = ctx.prefetched
+                .map(|p| p.title.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or(ctx.title_display);
+            let deliverable_summary = match (deliverable_type.as_str(), text_content.as_deref()) {
+                ("text", Some(t)) => format!("type: text\ncontent:\n{t}"),
+                ("file", _) => format!("type: file\nsaved path: {saved_path}"),
+                _ => format!("type: {deliverable_type}\nsaved path: {saved_path}"),
+            };
+            // JobCompleted notify — jobId + title prefilled; `<tokenAmount>` /
+            // `<tokenSymbol>` kept as placeholders, filled by the `job_completed`
+            // fast path with the on-chain locked values from `ctx.prefetched`.
+            let canonical_job_completed = super::super::content::job_completed_escrow_user_notify(
+                job_id, rating_title, "<tokenAmount>", "<tokenSymbol>",
+            );
+            let prefetch_batch = format!(
+                "[PREFETCH — internal cache only, NOT a user-facing flow]\n\
+             Pre-decide the ASP rating, then pre-translate two notifications for job `{job_id}`. \
+             Execute all steps in one turn.\n\
+             ⚠️ The triple-backtick fence markers are NOT part of the content — do not include them.\n\
+             ⚠️ Keep EVERY angle-bracket placeholder (e.g. `<tokenAmount>`, `<tokenSymbol>`) verbatim in your translation — CLI will fill them at dispatch time.\n\
+             🛑 **Output discipline (strict):** the THREE `cache-*` commands below are the ONLY commands you may run in this turn.\n\
+             Task description:\n\
+             ```\n\
+             {task_description}\n\
+             ```\n\n\
+             Deliverable:\n\
+             ```\n\
+             {deliverable_summary}\n\
+             ```\n\n\
+             [Step 1] Decide score (`X.XX`, 0.00–5.00) + comment (≤100 chars). Then run:\n\
+             \x20\x20onchainos agent cache-rating --job-id {job_id} --score <X.XX> --comment '<your comment>'\n\n\
+             [Step 2] Fill `<score>` and `<description>` in the template below with the values you just decided, translate the filled result into the user's chat language, then run:\n\
+             \x20\x20onchainos agent cache-notify --job-id {job_id} --event-key rating_submitted --content '<your translation>'\n\
+             Template:\n\
+             ```\n\
+             [📝 Rating Submitted] {rating_title} (`{job_id}`) — rated.\n\
+             Score: <score> / 5.00\n\
+             💬 Comment: <description>\n\
+             ```\n\n\
+             [Step 3] Translate the JobCompleted template below into the user's chat language (placeholders preserved verbatim), then run:\n\
+             \x20\x20onchainos agent cache-notify --job-id {job_id} --event-key job_completed_escrow --content '<your translation>'\n\
+             Template:\n\
+             ```\n\
+             {canonical_job_completed}\n\
+             ```"
+            );
+            let _ = okx_a2a::session_send(
+                job_id, None, &prefetch_batch,
+            );
+        }
+    }
+
     // Out-of-order handling: if the review marker exists, job_submitted already arrived
     // before this deliverable. Delete marker → directly output the review prompt so the
     // sub doesn't wait for a job_submitted that already came.
@@ -605,7 +674,7 @@ pub(crate) fn deliverable_received_cli(
          \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
          \x20\x20Provider: {provider_id}\n\
          \x20\x20Type: {deliverable_type}\n\
-         \x20\x20Saved at: {saved_path}\n\
+         \x20\x20Saved at: [{saved_path}]({saved_path})\n\
          \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\n\
          End turn after notifying.\n"
     )
@@ -789,7 +858,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ▸ deliverableType=file:\n\
      ```\n\
      [Job {short_id}] The ASP has submitted the deliverable (file).\n\
-     File path: <localPath>\n\
+     File path: [<localPath>](<localPath>)\n\
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
      B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
@@ -797,7 +866,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ▸ deliverableType=text:\n\
      ```\n\
      [Job {short_id}] The ASP has submitted the deliverable (text).\n\
-     Saved at: <localPath>\n\
+     Saved at: [<localPath>](<localPath>)\n\
      ---Deliverable---\n\
      <deliverableText from Step 2 — full content, no truncation>\n\
      ---End of deliverable---\n\
@@ -891,8 +960,8 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Compose from two halves (concatenate with two blank lines):\n\
      \x20\x20▸ Deliverable (always; pick template):\n\
-     \x20\x20\x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: <localPath>`\n\
-     \x20\x20\x20\x20text (localPath available): `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: <localPath>` + deliverableText from Step 2\n\
+     \x20\x20\x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: [<localPath>](<localPath>)`\n\
+     \x20\x20\x20\x20text (localPath available): `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: [<localPath>](<localPath>)` + deliverableText from Step 2\n\
      \x20\x20\x20\x20text (no localPath): `[Deliverable Received] Job {job_id} — x402, payment settled.` + deliverableText from Step 2 inline\n\
      \x20\x20▸ Rating (include ONLY if feedback-submit succeeded; if it failed or errored, **omit this entire half**):\n\
      \x20\x20\x20\x20{rating_notify}\n\
@@ -963,7 +1032,7 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
 /// This event fires when the blockchain confirms the `complete` transaction.
 /// It is the ONLY place where "funds released" is factually true.
 /// `approve_review` only broadcasts; this event confirms.
-pub(crate) fn job_completed(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
+pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json::Value>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
@@ -978,18 +1047,59 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, message: Option<&serde_json::
         .map(|p| (p.token_amount.as_str(), p.token_symbol.as_str()))
         .unwrap_or(("<tokenAmount>", "<tokenSymbol>"));
 
-    let tx_hash = message
-        .and_then(|m| m.get("txHash"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("<txHash from the system event message>");
-
     let pm = ctx.payment_mode;
+
+    // Fast path (escrow only): rating + both notify templates pre-cached at
+    // deliverable_received time. Run feedback-submit and user-notify entirely
+    // in-process; zero LLM decisions.
+    //
+    // The `job_completed_escrow` template is cached at deliverable_received
+    // with `<tokenAmount>` / `<tokenSymbol>` placeholders — filled here with
+    // the on-chain locked values from `ctx.prefetched`.
+    let provider_id_opt = ctx.prefetched
+        .and_then(|p| p.provider_agent_id.as_deref())
+        .filter(|s| !s.is_empty());
+    if pm != Some(3) {
+        if let Some(real_provider_id) = provider_id_opt {
+            use crate::commands::agent_commerce::task::common::{
+                okx_a2a, onchainos_self, prefilled_notify, prefilled_rating, session_cleanup,
+            };
+            let cached_completed = prefilled_notify::get(job_id, "job_completed_escrow").ok().flatten();
+            let cached_rating_notify = prefilled_notify::get(job_id, "rating_submitted").ok().flatten();
+            let cached_rating = prefilled_rating::get(job_id).ok().flatten();
+            let amount_ok = !token_amount.is_empty() && !token_amount.starts_with('<');
+            let symbol_ok = !token_symbol.is_empty() && !token_symbol.starts_with('<');
+            if let (Some(completed_tpl), Some(rating_text), Some(rating)) =
+                (cached_completed, cached_rating_notify, cached_rating)
+            {
+                let placeholders_present = completed_tpl.contains("<tokenAmount>")
+                    && completed_tpl.contains("<tokenSymbol>");
+                if amount_ok && symbol_ok && placeholders_present {
+                    let completed = completed_tpl
+                        .replace("<tokenAmount>", token_amount)
+                        .replace("<tokenSymbol>", token_symbol);
+                    let feedback_ok = onchainos_self::feedback_submit(
+                        real_provider_id, agent_id, &rating.score, job_id, &rating.comment,
+                    ).is_ok();
+                    let combined = if feedback_ok {
+                        format!("{completed}\n\n{rating_text}")
+                    } else {
+                        completed
+                    };
+                    let _ = okx_a2a::user_notify(&combined, false);
+                    let _ = session_cleanup::handle_session_cleanup(job_id, false);
+
+                    return "Task is at a terminal state. User has been notified by the CLI. Do NOT run any further command.".to_string();
+                }
+                // Placeholder missing or amount/symbol unknown → fall through to LLM playbook.
+            }
+        }
+    }
 
     let completed_notify = if pm == Some(3) {
         super::super::content::job_completed_x402_user_notify(job_id, title_display)
     } else {
-        super::super::content::job_completed_escrow_user_notify(job_id, title_display, token_amount, token_symbol, tx_hash)
+        super::super::content::job_completed_escrow_user_notify(job_id, title_display, token_amount, token_symbol)
     };
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
 

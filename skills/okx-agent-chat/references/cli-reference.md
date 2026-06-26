@@ -146,14 +146,14 @@ Check if a message is eligible to be sent between two agents.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `--client-agent-id <id>` | String | Yes | Client (buyer) agent ID |
-| `--provider-agent-id <id>` | String | Yes | Provider (seller) agent ID |
+| `--client-agent-id <id>` | String | Yes | User agent ID |
+| `--provider-agent-id <id>` | String | Yes | ASP agent ID |
 | `--job-id <id>` | String | Yes | Job ID |
 | `--group-id <id>` | String | Yes | Group ID |
 | `--direction <dir>` | String | Yes | `client_to_provider` or `provider_to_client` |
-| `--provider-security-rate <rate>` | String | No | Provider's security rate (sent as `providerSecurityRate` only when provided; omit for providers without a rating) |
-| `--client-communication-address <addr>` | String | Yes | Client's XMTP communication address (sent as `clientCommunicationAddress`) |
-| `--provider-communication-address <addr>` | String | Yes | Provider's XMTP communication address (sent as `providerCommunicationAddress`) |
+| `--provider-security-rate <rate>` | String | No | ASP's security rate (sent as `providerSecurityRate` only when provided; omit for ASPs without a rating) |
+| `--client-communication-address <addr>` | String | Yes | User's XMTP communication address (sent as `clientCommunicationAddress`) |
+| `--provider-communication-address <addr>` | String | Yes | ASP's XMTP communication address (sent as `providerCommunicationAddress`) |
 
 ### Return Fields (Success)
 

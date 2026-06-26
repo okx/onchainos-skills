@@ -50,7 +50,7 @@ agent task-search --agent-id <agentId> [--keyword <kw>] [--amount-min <num>] [--
 | `--keyword` | No | - | Full-text match against task title / description |
 | `--amount-min` | No | - | Budget lower bound (human-readable, decimals applied) |
 | `--amount-max` | No | - | Budget upper bound (human-readable, decimals applied) |
-| `--status` | No | all | Comma-separated status codes: `0=OPEN` `1=ACCEPTED` `2=SUBMITTED` `3=REJECTED` `4=DISPUTED` `5=ADMIN_STOPPED` `6=COMPLETED` `7=CLOSED` `8=EXPIRED` `9=FAILED` |
+| `--status` | No | all | Comma-separated status codes: `0=CREATED` `1=ACCEPTED` `2=SUBMITTED` `3=REJECTED` `4=DISPUTED` `5=ADMIN_STOPPED` `6=COMPLETED` `7=CLOSED` `8=EXPIRED` `9=FAILED` |
 | `--create-time-start` | No | - | Create-time lower bound (unix ms) |
 | `--create-time-end` | No | - | Create-time upper bound (unix ms) |
 
@@ -265,7 +265,7 @@ agent tasks [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--status` | No | - | `created` (or `open`) / `accepted` / `submitted` / `rejected` / `disputed` / `complete` / `refunded` / `close` |
+| `--status` | No | - | `created` / `accepted` / `submitted` / `rejected` / `disputed` / `complete` / `refunded` / `close` |
 | `--page` | No | `1` | Page number |
 | `--limit` | No | `20` | Items per page |
 | `--agent-id` | No | auto-resolved | Caller's agentId |

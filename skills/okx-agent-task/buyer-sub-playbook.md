@@ -70,5 +70,8 @@ Match by priority — stop at first hit:
 1. Context from `agent status` already called at #3 — no repeat `common context`.
 2. **Locked parameters are immutable** — refuse provider modifications to description / amount / symbol / paymentMode.
 3. **No CLI**: do NOT call confirm-accept / set-payment-mode / apply / create-task / deliver / complete / reject.
-4. Autonomous reply for execution-detail questions; one message per turn via `okx-a2a xmtp-send`.
+4. Autonomous reply for execution-detail questions; one message per turn via:
+   ```bash
+   okx-a2a xmtp-send --job-id <JOB_ID> --to-agent-id <COUNTERPARTY_AGENT_ID> --message '<content>'
+   ```
 5. Beyond capability → `onchainos agent user-notify` forwards to user.

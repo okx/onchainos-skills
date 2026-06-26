@@ -210,7 +210,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "Task is initializing (waiting for on-chain confirmation) → waiting for job_created event".to_string(),
         ],
         Status::Other(s) => vec![
-            format!("Current task status=`{s}` is not in the set of statuses the buyer cares about (open / accepted / submitted / rejected / disputed / completed / failed / close / expired / admin_stopped)"),
+            format!("Current task status=`{s}` is not in the set of statuses the buyer cares about (created / accepted / submitted / rejected / disputed / completed / failed / close / expired / admin_stopped)"),
             "→ No task-level action required for this role, wait for the next relevant chain event / user decision before handling".to_string(),
             "→ **Do NOT** repeatedly run `agent status` / `agent common context` (the result will be the same), end this turn".to_string(),
         ],
@@ -222,7 +222,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 /// Generate the structured next-action prompt for the client/buyer based on event.
 ///
 /// The `event_str` parameter accepts both event names (job_created / provider_applied / ...)
-/// and status names (open / submitted / ...), uniformly parsed by state_machine.
+/// and status names (created / submitted / ...), uniformly parsed by state_machine.
 pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>, prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>, message: Option<&serde_json::Value>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
