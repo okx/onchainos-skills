@@ -2,7 +2,7 @@
 //!
 //! Based on the current system notification type received (event), outputs the prompt
 //! for the next action to take. The goal: consolidate the Scene steps scattered across
-//! provider.md into code so the agent can simply run
+//! asp.md into code so the agent can simply run
 //! `exec onchainos agent next-action ...` to fetch the prompt and execute it directly,
 //! without having to reason over the entire document.
 

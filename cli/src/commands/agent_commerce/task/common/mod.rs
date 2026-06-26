@@ -1419,7 +1419,7 @@ async fn build_context(
     // ── Role guide that must be loaded ───────────────────────────────────
     let skill_file = match role {
         "buyer"     => "client.md",
-        "provider"    => "provider.md",
+        "provider"    => "asp.md",
         "evaluator" => "evaluator.md",
         _           => "",
     };

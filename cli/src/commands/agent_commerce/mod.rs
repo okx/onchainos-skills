@@ -1745,13 +1745,13 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
         return (None, prefetched);
     }
     (Some(format!(
-        "🛑 **状态脱节，剧本已 block**（next-action 入参与任务真实状态不一致，不输出步骤防止你按 stale event 上链）\n\n\
-         - 你传的 event = `{job_status_or_event}`，对应任务状态应为 `{expected_str}`\n\
-         - 但任务 {job_id} 真实 statusStr = `{actual_str}`\n\n\
-         **必须做**（二选一）：\n\
-         1. 如果当前 inbound 是 **P2P 消息**（a2a-agent-chat）→ 你很可能用错了 event。回到 buyer-sub-playbook.md / provider.md §3 Inbound Message Routing 重新匹配正确的事件（例如 `[intent:deliver]` → `deliverable_received`，自然语言报价 → `negotiate_reply`）。这些伪事件不受 freshness 限制。\n\
-         2. 如果当前 inbound 是 **system event** → 重调 next-action，并在 `--message` JSON 里把 `event` 字段改成 `{actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\n\
-         **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 `onchainos agent user-notify` 推用户。\n",
+        "🛑 **Stale state — playbook blocked** (next-action's event arg is inconsistent with the task's real status; not emitting steps to prevent on-chain action on a stale event).\n\n\
+         - You passed event = `{job_status_or_event}` (expected task status = `{expected_str}`)\n\
+         - But task {job_id} real statusStr = `{actual_str}`\n\n\
+         **MUST do** (pick one):\n\
+         1. If the current inbound is a **P2P message** (a2a-agent-chat) → you likely picked the wrong event. Re-match the pseudo-event from the message content (e.g. `[intent:deliver]` → `deliverable_received`; a natural-language quote → `negotiate_reply`). Pseudo-events are not freshness-gated.\n\
+         2. If the current inbound is a **system event** → re-run next-action with the `event` field in the `--message` JSON changed to `{actual_str}` (fetch the playbook matching the real status), or just ignore this stale notification and end the turn waiting for the next real chain event.\n\n\
+         **MUST NOT**: do NOT guess the next step; do NOT call any task CLI before getting a fresh playbook; do NOT push this warning to the user via `onchainos agent user-notify`.\n",
         expected_str = expected.as_str(),
     )), prefetched)
 }
