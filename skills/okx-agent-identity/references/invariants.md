@@ -9,7 +9,7 @@ Load this file when: rendering a card / diff / detail view, resolving `#<id>`, t
 - **Roles:** requester → **User Agent** / 用户 · provider → **Agent Service Provider (ASP)** / 服务提供商 · evaluator → **Evaluator Agent** / 仲裁者. Never raw enum, never legacy nouns (buyer/seller), never bilingual parenthetical.
 - **Service type:** A2MCP → **API service** · A2A → **agent to agent**. Gloss once per table: "API service = pay-per-call, fixed price; agent to agent = negotiated / off-chain pricing." Never raw A2MCP/A2A.
 - **Stars:** render `★ <value>` from CLI's `ratingStars` / `feedbackRate` / `average` **directly** — never divide by 20, never show raw 0–100. Null/0 context-split: **search** rows → `null`=`—`, `0`=`No rating yet`; **list / detail / feedback** → no rating = `No rating yet` (never `—`).
-- **Fee:** stored/sent as a plain numeric string (`"10"`); **displayed** as `N USDT` (USDT is implicit — the renderer appends it); A2A empty or zero → `negotiable`. **Address:** lowercase `0x…1234`. **Reviewer** slot = "reviewer", never "creator".
+- **Fee:** stored/sent as a plain numeric string (`"10"`); **displayed** as `N USDT` (USDT is implicit — the renderer appends it). Both API service (A2MCP) and agent to agent (A2A) support a `0` fee → an explicit `0` displays as `0 USDT` (a free service), **not** `negotiable`. `negotiable` is reserved for A2A with **no fee set at all** (empty/unset); A2MCP with no fee → `free`. **Address:** lowercase `0x…1234`. **Reviewer** slot = "reviewer", never "creator".
 
 ## Card skeleton (every confirmation / diff / detail card uses THIS)
 
