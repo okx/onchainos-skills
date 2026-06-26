@@ -1619,22 +1619,23 @@ fn format_top_service_a2a_no_fee_renders_negotiable() {
 }
 
 #[test]
-fn format_top_service_a2a_zero_fee_variants_render_negotiable() {
-    // fee="0", "0.0", "0 USDT" — all zero variants must render negotiable, not a USDT amount.
-    for fee in &["0", "0.0", "0.00", "0 USDT"] {
-        let svc = json!({ "serviceName": "S", "serviceType": "A2A", "feeAmount": fee });
+fn format_top_service_a2a_zero_fee_renders_zero_usdt() {
+    // An explicit 0 is a real price (a free service) — shown as "0 USDT", NOT "negotiable".
+    // "negotiable" is reserved for A2A with no fee set at all.
+    for fee in &["0", "0.0", "0.00"] {
+        let svc = json!({ "serviceName": "S", "serviceType": "A2A", "feeAmount": fee, "feeToken": "USDT" });
         let result = format_top_service(&svc).unwrap();
-        assert_eq!(result, "S (agent-to-agent, negotiable)", "fee={fee} failed");
+        assert_eq!(result, format!("S (agent-to-agent, {fee} USDT)"), "fee={fee} failed");
     }
 }
 
 #[test]
-fn build_service_cells_a2a_zero_fee_variants_render_negotiable() {
-    for fee in &["0", "0.0", "0.00", "0 USDT"] {
+fn build_service_cells_a2a_zero_fee_renders_zero_usdt() {
+    for fee in &["0", "0.0", "0.00"] {
         let svc = json!({ "ServiceName": "S", "ServiceType": "A2A", "Fee": fee });
         let cells = build_service_cells(1, &svc).expect("cells");
         let pairs = cell_pairs(&Value::Array(cells));
-        assert_eq!(pairs[3], ("Fee".to_string(), "negotiable".to_string()), "fee={fee} failed");
+        assert_eq!(pairs[3], ("Fee".to_string(), format!("{fee} USDT")), "fee={fee} failed");
     }
 }
 

@@ -480,7 +480,7 @@ fn check_fee(index: usize, svc: &AgentService, is_a2mcp: bool, findings: &mut Ve
                 &field,
                 "U4",
                 "A2MCP service has an empty fee.",
-                "Set an explicit fee, e.g. 0 for free.",
+                "Set an explicit fee, e.g. 10, or 0 for a free service.",
             ));
             findings.push(Finding::block(
                 &field,
