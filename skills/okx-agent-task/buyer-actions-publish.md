@@ -135,36 +135,20 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `P
 Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (all required; no Price — pricing is fetched from the endpoint).
 
 **Flow**:
-1. **URL template parameter resolution** (before any HTTP call):
-   Scan the `endpoint` URL for path parameters matching `{paramName}` (regex: `\{(\w+)\}`).
-   - **No placeholders found** → skip to Step 2.
-   - **Placeholders found** → collect values from the user:
-     1. Extract all `{paramName}` occurrences (preserve order, deduplicate).
-     2. Display to the user:
-        ```
-        The endpoint URL contains the following path parameter(s) that need to be filled in:
-        • {paramName1} — please provide the value
-        • {paramName2} — please provide the value
-        ```
-     3. 🛑 **End this turn** and wait for the user to provide values. Do NOT guess or auto-fill.
-     4. Once all values are provided, substitute each `{paramName}` in the URL with the user-supplied value (URL-encode if the value contains special characters).
-     5. Cache the resolved URL as the new `endpoint` for all subsequent steps. Also cache the original template URL + parameter values as `serviceParams` (JSON: `{"paramName": "value", ...}`) — they will appear in the confirmation form.
-
-2. **Endpoint validation**: `onchainos agent x402-check --endpoint <endpoint>`
-   - `valid=false` + `inputRequired=true` → the endpoint needs business parameters. Cache the `fields` / `requiredAnyOf` list for Step 3. **Continue** (this is not a real failure).
+1. **Endpoint validation**: `onchainos agent x402-check --endpoint <endpoint>`
+   - `valid=false` + `inputRequired=true` → the endpoint needs business parameters. Cache the `fields` / `requiredAnyOf` list for Step 2. **Continue** (this is not a real failure).
    - `valid=false` + no `inputRequired` → inform "invalid endpoint"; stop.
    - `tokenSymbol` not USDT/USDG → inform "unsupported token"; stop.
-3. **Field collection & confirmation form** (🛑🛑🛑 may NOT be skipped):
+2. **Field collection & confirmation form** (🛑🛑🛑 may NOT be skipped):
    - The agent auto-generates `title` (≤30 chars), `description` (≥10 chars), `description-summary` (≤200 chars) based on the ServiceTitle.
    - `budget` / `max-budget` = `amountHuman` (x402 pricing is fixed; the two are equal).
    - `currency` = `tokenSymbol`.
-   - 🛑 **`inputRequired` field collection** — if Step 2 returned `inputRequired=true`:
+   - 🛑 **`inputRequired` field collection** — if Step 1 returned `inputRequired=true`:
      - Display each field from `fields` / `requiredAnyOf` to the user with its `name`, `type`, and `description`.
      - The user MUST fill in or explicitly confirm every field value. Do NOT auto-generate or infer values on behalf of the user.
      - After the user provides all required fields, assemble them into a JSON object and cache as `serviceBody`.
-   - 🛑 **Path parameters from Step 1** — if Step 1 resolved URL template parameters, the cached `serviceParams` JSON should appear in the confirmation form (Service Params row).
    - Acceptance / delivery deadlines are now managed by the server — do NOT pass `--deadline-open` / `--deadline-submit`.
    - ⚠️ **Language matching**: field labels MUST match the user's language.
    - Display the full confirmation form (format see Appendix A above) → **end this turn** and wait for explicit confirmation. If refused, end.
    - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn.**
-4. **Create the task after user confirmation**: `create-task` with `--body '<serviceBody JSON>'` (only when Step 2 returned `inputRequired=true`; omit otherwise). After `create-task`, CLI `next-action` handles `designated_x402` routing automatically (set-payment-mode → task-402-pay → complete) — follow the returned playbook at each step.
+3. **Create the task after user confirmation**: `create-task` with `--body '<serviceBody JSON>'` (only when Step 1 returned `inputRequired=true`; omit otherwise). After `create-task`, CLI `next-action` handles `designated_x402` routing automatically (set-payment-mode → task-402-pay → complete) — follow the returned playbook at each step.
