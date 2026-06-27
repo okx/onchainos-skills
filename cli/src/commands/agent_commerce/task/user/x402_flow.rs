@@ -3,7 +3,7 @@
 //! After the user accepts, x402 is invoked to complete payment. Subprocess invocation
 //! of `onchainos payment x402-pay` reuses the signing logic in `agentic_wallet`.
 //! This module is responsible for:
-//! - requesting the Provider endpoint → decoding HTTP 402;
+//! - requesting the ASP endpoint → decoding HTTP 402;
 //! - invoking the CLI signer;
 //! - assembling the payment header → replaying the request.
 

@@ -6,7 +6,7 @@
 //!
 //! In addition to the explicit `--text` / `--file` inputs, the CLI auto-attaches every
 //! entry recorded in `~/.onchainos/deliverables/<role>/<jobId>/manifest.json`
-//! (user side: the downloaded deliverable + any later attachments; provider side:
+//! (user side: the downloaded deliverable + any later attachments; asp side:
 //! the submitted deliverable copy). This guarantees the arbitrator always sees the
 //! actual deliverable artefacts even if the user only writes a textual summary.
 //!
@@ -40,7 +40,7 @@ const MAX_FILE_BYTES: u64 = 100 * 1024 * 1024;
 ///
 /// `role` selects which local deliverables manifest to auto-attach
 /// (`user` → `~/.onchainos/deliverables/user/<jobId>/`,
-/// `provider` → `~/.onchainos/deliverables/provider/<jobId>/`).
+/// `asp` → `~/.onchainos/deliverables/asp/<jobId>/`).
 pub async fn handle_upload_evidence(
     client: &mut TaskApiClient,
     job_id: &str,

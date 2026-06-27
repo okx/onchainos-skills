@@ -2,7 +2,7 @@
 //!
 //! Core command: `context`
 //! Given a job_id + role, pull task details from the backend and generate a structured
-//! natural-language context for the LLM (openclaw user/provider/evaluator AI) to understand
+//! natural-language context for the LLM (openclaw user/asp/evaluator AI) to understand
 //! the current task state.
 
 use anyhow::{bail, Result};
@@ -47,7 +47,7 @@ pub const XLAYER_CHAIN_NAME: &str = "okb";
 
 /// User / requestor.
 pub const AGENT_ROLE_USER: i64 = 1;
-/// Seller / provider.
+/// ASP.
 pub const AGENT_ROLE_ASP: i64 = 2;
 /// Evaluator (arbiter).
 pub const AGENT_ROLE_EVALUATOR: i64 = 3;
@@ -72,12 +72,12 @@ pub enum CommonCommand {
         /// Task ID (jobId), e.g. task-001 or 0x1a2b...
         job_id: String,
 
-        /// Caller role: user | provider | evaluator.
+        /// Caller role: user | asp | evaluator.
         #[arg(long, default_value = "user")]
         role: String,
 
         /// Caller AgentID (**required**). The beta backend requires a non-empty agenticId header;
-        /// a wallet may have multiple provider agents and the caller must pick one explicitly —
+        /// a wallet may have multiple asp agents and the caller must pick one explicitly —
         /// the CLI does not auto-select. Wallet / communication addresses are looked up via
         /// `agent get-agents --agent-ids <agent_id>` automatically and need not be passed via the CLI.
         #[arg(long)]

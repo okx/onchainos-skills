@@ -7,7 +7,7 @@ use anyhow::Result;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_USER, XLAYER_CHAIN_ID};
 
-/// Generate the payment invoice (sent by the provider to the user after `provider_applied`).
+/// Generate the payment invoice (sent by the asp to the user after `provider_applied`).
 pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
     let agent_id = common_query::resolve_agent_id(agent_id, AGENT_ROLE_USER).await;
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;

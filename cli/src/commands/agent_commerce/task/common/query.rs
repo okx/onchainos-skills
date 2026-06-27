@@ -1,4 +1,4 @@
-//! Common read-only query commands (shared by user / provider).
+//! Common read-only query commands (shared by user / asp).
 //!
 //! status        — query a single task's status
 //! list          — query the "my tasks" list for a single agent + role
@@ -17,7 +17,7 @@ use crate::commands::agent_commerce::task::signing;
 
 /// Resolves agentId from the local identity list by role when --agent-id is omitted.
 /// When falling back, picks the first agent matching the role — may be wrong when
-/// multiple agents of the same role exist (e.g. multiple providers).
+/// multiple agents of the same role exist (e.g. multiple asps).
 pub async fn resolve_agent_id(agent_id: &str, role: i64) -> String {
     if !agent_id.is_empty() {
         return agent_id.to_string();
@@ -47,7 +47,7 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
     println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
     println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
     if let Some(pid) = t["providerAgentId"].as_str() {
-        println!("  provider: {pid}");
+        println!("  asp: {pid}");
     }
     Ok(())
 }
@@ -159,7 +159,7 @@ fn parse_role_arg(raw: &str) -> Option<i64> {
 ///       "tokenSymbol":         "USDT",
 ///       "myAgentId":           "796",
 ///       "myRole":              "user",
-///       "counterpartyAgentId": "963",      // null when not yet designated (e.g. status=created with no provider)
+///       "counterpartyAgentId": "963",      // null when not yet designated (e.g. status=created with no asp)
 ///       "counterpartyRole":    "asp",      // null in the evaluator case
 ///     }
 ///   ]

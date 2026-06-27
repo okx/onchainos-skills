@@ -1,6 +1,6 @@
 //! Synchronous wrappers around the external `okx-a2a` CLI binary.
 //!
-//! Shared by user / provider / evaluator sub-session flows that need to
+//! Shared by user / asp / evaluator sub-session flows that need to
 //! probe session state (sessionKey, jobId, agentId, etc.) without going
 //! through the MCP host's `xmtp_*` tools. All calls are blocking
 //! (std::process::Command); spawn cost is ~100-150ms per invocation, so

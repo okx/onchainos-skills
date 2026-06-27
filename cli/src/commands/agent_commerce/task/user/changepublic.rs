@@ -52,6 +52,6 @@ pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str, explici
         None,
     );
 
-    println!("✓ Task converted to public (off-chain); other providers can now see and apply.");
+    println!("✓ Task converted to public (off-chain); other ASPs can now see and apply.");
     Ok(())
 }

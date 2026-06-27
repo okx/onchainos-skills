@@ -58,7 +58,7 @@ pub fn resolve_wallet(
 
 /// Resolve wallet account_id and address by looking up the agent's registered wallet address.
 ///
-/// Used by provider operations where `agent_id` is known but the wallet address isn't.
+/// Used by asp operations where `agent_id` is known but the wallet address isn't.
 /// Fetches `agentWalletAddress` from the agent registry, then resolves to the local wallet account.
 pub async fn resolve_wallet_by_agent_id(agent_id: &str) -> Result<(String, String)> {
     let id = agent_id.trim();

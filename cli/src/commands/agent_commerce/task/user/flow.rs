@@ -1,7 +1,7 @@
 //! User Agent (user) side task flow driver
 //!
 //! Based on the current event from system notifications, outputs the next-action prompt.
-//! User counterpart of provider/flow.rs — lets the agent simply run
+//! User counterpart of asp/flow.rs — lets the agent simply run
 //! `exec onchainos agent next-action --role user ...` to fetch a prompt and execute directly.
 //!
 //! The actual prompt generation logic is split by responsibility into:

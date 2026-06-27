@@ -1,4 +1,4 @@
-//! Persistent deliverable storage for both user and provider roles.
+//! Persistent deliverable storage for both user and asp roles.
 //!
 //! Layout: `~/.onchainos/deliverables/<role>/<jobId>/`
 //!   - Files are moved (not copied) from the platform download directory.
