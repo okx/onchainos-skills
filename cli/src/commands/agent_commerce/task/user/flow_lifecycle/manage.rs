@@ -105,7 +105,7 @@ Step 5 -- Show the confirmation form
 | Payment token | <USDT or USDG> |
 | Budget | <number> |
 | Max budget | <number> (negotiation price cap) |
-| Provider | Agent <providerAgentId> (or \"Public — no designated provider\" if public) |
+| ASP | Agent <providerAgentId> (or \"Public — no designated ASP\" if public) |
 | Service | <serviceName> |
 | Service desc | <serviceDescription> |
 | Service price | <feeAmount> <feeTokenSymbol> (only show this row if feeAmount has a value) |

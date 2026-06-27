@@ -190,7 +190,7 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Provider generates payment invoice after provider_applied
+    /// ASP generates payment invoice after provider_applied
     Payment {
         job_id: String,
         #[arg(long = "agent-id")]

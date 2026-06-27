@@ -1,7 +1,7 @@
 //! Task-system state machine — single source of truth.
 //!
 //! Centralizes string literals like `"created"` / `"provider_applied"` previously scattered across
-//! `available_actions` / `provider/flow.rs` / `user/flow.rs` / `evaluator/flow.rs`, exposing
+//! `available_actions` / `asp/flow.rs` / `user/flow.rs` / `evaluator/flow.rs`, exposing
 //! `Status` / `Event` / `Role` enums plus status<->event conversion helpers. All matches now go
 //! through the enums, eliminating string-spelling drift.
 //!
@@ -181,7 +181,7 @@ pub enum Event {
     // ── Main task flow ────────────────────────────────────────────────
     /// Task creation on-chain (status enters created; notifies user).
     JobCreated,
-    /// Provider apply on-chain (status remains created; pass-through event; notifies the provider that just applied).
+    /// ASP apply on-chain (status remains created; pass-through event; notifies the ASP that just applied).
     ProviderApplied,
     /// ASP declined a user-designated assignment via `asp/reject` API (off-chain;
     /// notifies the user to re-route to another ASP or fall back to public).
@@ -190,24 +190,24 @@ pub enum Event {
     /// notifies the ASP that they are no longer needed for this task).
     JobUserReject,
     /// User Agent designated a specific ASP for the task (private-task path; status remains created;
-    /// notifies the chosen provider that they have been selected and should start negotiation).
+    /// notifies the chosen ASP that they have been selected and should start negotiation).
     JobAspSelected,
-    /// User Agent confirm-accept on-chain (status enters accepted; notifies provider).
+    /// User Agent confirm-accept on-chain (status enters accepted; notifies ASP).
     JobAccepted,
-    /// Provider deliver on-chain (status enters submitted; notifies user to review).
+    /// ASP deliver on-chain (status enters submitted; notifies user to review).
     JobSubmitted,
-    /// User Agent complete on-chain / arbitration approve (status enters completed; notifies provider).
+    /// User Agent complete on-chain / arbitration approve (status enters completed; notifies ASP).
     JobCompleted,
-    /// User Agent reject on-chain (status enters rejected; notifies provider to choose between arbitration / refund).
+    /// User Agent reject on-chain (status enters rejected; notifies ASP to choose between arbitration / refund).
     JobRejected,
     /// Arbitration phase-1 (approve) on-chain (status remains rejected; pass-through event;
-    /// notifies the initiating provider to proceed to phase-2 dispute confirm).
+    /// notifies the initiating ASP to proceed to phase-2 dispute confirm).
     DisputeApproved,
-    /// Either party's dispute-raise on-chain (status enters disputed; notifies both user + provider to upload evidence).
+    /// Either party's dispute-raise on-chain (status enters disputed; notifies both user + ASP to upload evidence).
     JobDisputed,
-    /// Provider agrees to refund / arbitration user-wins refund on-chain (status enters refunded; notifies user + provider).
+    /// ASP agrees to refund / arbitration user-wins refund on-chain (status enters refunded; notifies user + ASP).
     JobRefunded,
-    /// DisputeSettled arbitration verdict (status enters completed or refunded; notifies user/provider/voters
+    /// DisputeSettled arbitration verdict (status enters completed or refunded; notifies user/ASP/voters
     /// to call /claimable + /claim to collect rewards).
     DisputeResolved,
     /// Task expired (no accept before the acceptance window, or no submit before the delivery window;
@@ -283,10 +283,10 @@ pub enum Event {
     CooldownEntered,
 
     // ── Attachment relay events (local dispatch, no status change) ──────
-    /// User session dispatched `[ATTACHMENT_ADDED]`; sub session uploads + forwards the file to the provider.
+    /// User session dispatched `[ATTACHMENT_ADDED]`; sub session uploads + forwards the file to the ASP.
     /// Can fire in Created (with active sub session) or Accepted — multi-status, so freshness check is skipped.
     AttachmentAdded,
-    /// Provider receives `[intent:attachment]` from the User Agent; downloads + saves the file locally.
+    /// ASP receives `[intent:attachment]` from the User Agent; downloads + saves the file locally.
     /// Can fire in Created (negotiation phase) or Accepted (mid-task) — multi-status.
     UserAttachmentReceived,
 
@@ -296,7 +296,7 @@ pub enum Event {
     DeliverableReceived,
 
     // ── Negotiation relay events (user-local dispatch, no status change) ─
-    /// Provider's natural-language reply; user-sub-playbook.md Route 6 → negotiate_reply.
+    /// ASP's natural-language reply; user-sub-playbook.md Route 6 → negotiate_reply.
     NegotiateReply,
 
     // ── Network / restart recovery events (pass-through, no status change) ─
