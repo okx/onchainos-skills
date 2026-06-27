@@ -112,6 +112,70 @@ fn parse_a2a_file(path: &str) -> Option<DeliverPayload> {
     parse_deliver_content(content)
 }
 
+/// Try to recover a deliverable from `/tmp/a2a_deliver_<jobId>.json`.
+///
+/// Called by `check_status_freshness` when `job_submitted` finds no manifest.
+/// Parses the temp file, downloads (file) or writes (text), saves via
+/// `handle_save`, and returns `(saved_path, deliverable_type, text_content)`.
+/// On any failure returns `None` and falls through to the "wait" path.
+pub(crate) fn try_recover_from_temp_file(
+    job_id: &str,
+    agent_id: &str,
+    short_id: &str,
+    title: &str,
+    token_symbol: &str,
+    token_amount: &str,
+    provider_agent_id: Option<&str>,
+) -> Option<(String, String, Option<String>)> {
+    use crate::commands::agent_commerce::task::common::{deliverables, okx_a2a};
+
+    let temp_path = format!("/tmp/a2a_deliver_{job_id}.json");
+    let payload = parse_a2a_file(&temp_path)?;
+
+    let result = match payload {
+        DeliverPayload::File { ref file_key, ref digest, ref salt, ref nonce, ref secret, ref filename } => {
+            let local_path = okx_a2a::file_download(
+                file_key, agent_id, digest, salt, nonce, secret, filename.as_deref(),
+            ).ok()?;
+            let r = deliverables::handle_save(&deliverables::SaveParams {
+                job_id,
+                role: "buyer",
+                file_path: &local_path,
+                deliverable_type: "file",
+                title,
+                short_id,
+                file_key: Some(file_key),
+                token_symbol: Some(token_symbol),
+                token_amount: Some(token_amount),
+                counterparty_agent_id: provider_agent_id,
+                counterparty_name: None,
+            }).ok()?;
+            (r.path, "file".to_string(), None)
+        }
+        DeliverPayload::Text(ref text) => {
+            let tmp = std::env::temp_dir().join(format!("deliverable-text-{job_id}.txt"));
+            std::fs::write(&tmp, text).ok()?;
+            let r = deliverables::handle_save(&deliverables::SaveParams {
+                job_id,
+                role: "buyer",
+                file_path: &tmp.display().to_string(),
+                deliverable_type: "text",
+                title,
+                short_id,
+                file_key: None,
+                token_symbol: Some(token_symbol),
+                token_amount: Some(token_amount),
+                counterparty_agent_id: provider_agent_id,
+                counterparty_name: None,
+            }).ok()?;
+            (r.path, "text".to_string(), Some(text.clone()))
+        }
+    };
+
+    let _ = std::fs::remove_file(&temp_path);
+    Some(result)
+}
+
 // --- Execution stage ----------------------------------------------------
 
 pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bool, visibility: i64) -> String {
@@ -132,11 +196,25 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
     let mut client = TaskApiClient::new();
 
     if over_most_budget {
-        // ── Over-budget branch: reject the apply, mirror job_provider_reject's playbook ──
+        // F19: reject_apply failure → do NOT auto-advance (apply still active on-chain)
         if let Err(e) = super::super::reject_apply::handle_reject_apply(&mut client, job_id, Some(agent_id)).await {
             return format!(
                 "[provider_applied/over_budget] reject-apply failed in-process: {e}\n\n\
                  See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+            );
+        }
+
+        // R5: public task → mark-failed + auto-advance (no decision card)
+        if visibility == 0 {
+            if let Some(p) = ctx.prefetched {
+                if let Some(pa) = p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
+                    let _ = super::super::negotiate::mark_failed(job_id, pa);
+                }
+            }
+            let _ = super::super::negotiate::clear_designated_provider(job_id);
+            let auto = super::super::flow_negotiate::provider_conversation_auto_consume(ctx).await;
+            return format!(
+                "[provider_applied/over_budget] ✅ Rejected (over budget).\n\n{auto}"
             );
         }
 
@@ -162,14 +240,38 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
     }
 
     // ── Within-budget branch: confirm-accept on-chain (escrow funded; status → accepted) ──
-    if let Err(e) = super::super::accept::handle_confirm_accept(&mut client, job_id, ctx.prefetched).await {
-        return format!(
-            "[provider_applied/confirm_accept] confirm-accept failed in-process: {e}\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
-        );
-    }
+    match super::super::accept::handle_confirm_accept(&mut client, job_id, ctx.prefetched).await {
+        Ok(()) => {
+            // R14: drain remaining ASP messages for this job
+            let _ = crate::commands::agent_commerce::task::common::okx_a2a::task_reject_by_job(job_id);
+            "**End this turn** and wait for the `job_accepted` system notification.".to_string()
+        }
+        Err(e) => {
+            // R18: distinguish balance error vs other errors
+            let err_lower = e.to_string().to_lowercase();
+            let is_balance_err = err_lower.contains("insufficient") || err_lower.contains("balance");
 
-    "**End this turn** and wait for the `job_accepted` system notification.".to_string()
+            if visibility == 0 && !is_balance_err {
+                // Public + non-balance error: mark-failed + auto-advance
+                if let Some(p) = ctx.prefetched {
+                    if let Some(pa) = p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
+                        let _ = super::super::negotiate::mark_failed(job_id, pa);
+                    }
+                }
+                let _ = super::super::negotiate::clear_designated_provider(job_id);
+                let auto = super::super::flow_negotiate::provider_conversation_auto_consume(ctx).await;
+                return format!(
+                    "[provider_applied/confirm_accept] failed: {e}\n\n{auto}"
+                );
+            }
+
+            // Balance error or private: existing cli_failed behavior
+            format!(
+                "[provider_applied/confirm_accept] confirm-accept failed in-process: {e}\n\n\
+                 See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+            )
+        }
+    }
 }
 
 pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
@@ -264,13 +366,15 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
         ),
     };
 
-    // When the review marker exists, job_submitted already arrived. After manual
-    // download + save succeeds, the LLM should re-trigger job_submitted (which will
-    // now find the manifest) instead of waiting for an event that already came.
-    let marker_exists = crate::commands::agent_commerce::task::common::deliverables::has_review_marker(job_id);
-    let step4 = if marker_exists {
+    // Status-based step 4: if the task is already submitted (status=2), re-trigger
+    // job_submitted immediately so the review flow starts without waiting.
+    let is_submitted = ctx.prefetched
+        .and_then(|p| p.status)
+        .map(|s| s == 2)
+        .unwrap_or(false);
+    let step4 = if is_submitted {
         format!(
-            "**Step 4 — Re-trigger review** (job_submitted already arrived before this deliverable):\n\
+            "**Step 4 — Re-trigger review** (task already in submitted state):\n\
              ```bash\n\
              onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'\n\
              ```\n"
@@ -607,16 +711,16 @@ pub(crate) fn deliverable_received_cli(
         }
     }
 
-    // Out-of-order handling: if the review marker exists, job_submitted already arrived
-    // before this deliverable. Delete marker → directly output the review prompt so the
-    // sub doesn't wait for a job_submitted that already came.
-    if deliverables::has_review_marker(job_id) {
-        deliverables::delete_review_marker(job_id);
-        audit::log("cli", "buyer/deliverable_received_marker_found", true, Duration::default(),
-            Some(base_tags.clone()), Some("job_submitted arrived first; merging into review flow"));
+    // Status-based review entry: if the task is already in Submitted state (status=2),
+    // skip waiting for job_submitted and enter the review flow directly.
+    let is_submitted = ctx.prefetched
+        .and_then(|p| p.status)
+        .map(|s| s == 2)
+        .unwrap_or(false);
+    if is_submitted {
+        audit::log("cli", "buyer/deliverable_received_status_submitted", true, Duration::default(),
+            Some(base_tags.clone()), Some("task already submitted; entering review directly"));
 
-        // Reconstruct prefetched with the just-saved deliverable so job_submitted_escrow
-        // sees it in Step 2 ("Deliverable already saved").
         let mut patched = ctx.prefetched.cloned().unwrap_or_else(|| {
             crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
                 title: title.to_string(),
@@ -628,7 +732,7 @@ pub(crate) fn deliverable_received_cli(
                 provider_agent_id: if provider_id.is_empty() { None } else { Some(provider_id.to_string()) },
                 buyer_agent_id: None,
                 visibility: None,
-                status: None,
+                status: Some(2),
                 deliverable: None,
                 service_id: None,
                 service_token_address: None,
@@ -729,8 +833,8 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
-    // Out-of-order handling: prefetch doesn't include local deliverable info.
-    // Check the local manifest to decide: saved → populate & proceed, else → marker + wait.
+    // Fallback: prefetch didn't include local deliverable info.
+    // Check manifest → temp file → wait.
     if p.deliverable.is_none() {
         use crate::commands::agent_commerce::task::common::deliverables;
         if let Ok(Some(manifest)) = deliverables::read_manifest("buyer", job_id) {
@@ -765,13 +869,37 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
                 return job_submitted_escrow(&patched_ctx);
             }
         }
-        if !deliverables::has_review_marker(job_id) {
-            let _ = deliverables::write_review_marker(job_id);
+        if let Some((saved_path, dtype, text_content)) = try_recover_from_temp_file(
+            job_id, agent_id, short_id, &p.title,
+            &p.token_symbol, &p.token_amount,
+            p.provider_agent_id.as_deref(),
+        ) {
+            let mut patched = p.clone();
+            patched.deliverable = Some(crate::commands::agent_commerce::task::common::PreFetchedDeliverable {
+                path: saved_path,
+                deliverable_type: dtype,
+                original_name: String::new(),
+                text_content,
+            });
+            let patched_ctx = super::super::flow::FlowContext {
+                job_id: ctx.job_id,
+                agent_id: ctx.agent_id,
+                short_id: ctx.short_id,
+                title_display: ctx.title_display,
+                title_query_hint: ctx.title_query_hint,
+                title_in_extract: ctx.title_in_extract,
+                terminal_session_hint: ctx.terminal_session_hint.clone(),
+                payment_mode: ctx.payment_mode,
+                prefetched: Some(&patched),
+                data: ctx.data,
+            };
+            return job_submitted_escrow(&patched_ctx);
         }
         return format!(
             "[System] job_submitted received but deliverable has not arrived yet (XMTP [intent:deliver] pending).\n\
-             The review flow will auto-trigger when the deliverable is received.\n\
-             No action required — end this turn and wait.\n"
+             If your conversation context contains an `[intent:deliver]` message, Write its raw JSON to `/tmp/a2a_deliver_{job_id}.json` and re-trigger:\n\
+             `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`\n\
+             Otherwise, end this turn and wait.\n"
         );
     }
 

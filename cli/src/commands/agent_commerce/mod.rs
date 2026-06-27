@@ -1641,6 +1641,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
         "deliverable_received",
         "job_provider_reject",
         "attachment_added",
+        "provider_conversation",
     ];
 
     // Events that skip both freshness validation AND pre-fetching (no jobId yet, or irrelevant).
@@ -1678,11 +1679,10 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     };
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
 
-    // For job_submitted: check local deliverable manifest to avoid an extra CLI round-trip.
-    // Also manages the review-awaiting-deliverable marker for out-of-order event handling:
-    //   manifest present         → populate ctx.deliverable (normal path)
-    //   manifest empty + no marker → write marker (first job_submitted, deliverable not yet received)
-    //   manifest empty + marker    → delete marker, leave ctx.deliverable=None (retry: fall through to Step 2b chat history)
+    // For job_submitted: check local deliverable to avoid an extra CLI round-trip.
+    //   ① manifest present  → populate ctx.deliverable (normal path)
+    //   ② temp file present → recover: download + save → populate ctx.deliverable
+    //   ③ neither           → leave ctx.deliverable=None; prompt will output "wait"
     if job_status_or_event == "job_submitted" {
         if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("buyer", job_id) {
             if let Some(entry) = manifest.entries.first() {
@@ -1700,19 +1700,27 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
                     original_name: entry.original_name.clone(),
                     text_content,
                 });
-                task::common::deliverables::delete_review_marker(job_id);
             }
-        } else if task::common::deliverables::has_review_marker(job_id) {
-            task::common::deliverables::delete_review_marker(job_id);
+        } else if let Some((saved_path, dtype, text_content)) = {
+            let short_id_fallback = &job_id[..job_id.len().min(10)];
+            task::buyer::try_recover_from_temp_file(
+                job_id, agent_id, short_id_fallback, &ctx.title,
+                &ctx.token_symbol, &ctx.token_amount,
+                ctx.provider_agent_id.as_deref(),
+            )
+        }
+        {
             if DEBUG_LOG {
-                eprintln!("[check-freshness] job_submitted retry: marker found, deleted — will fall through to Step 2b chat history");
+                eprintln!("[check-freshness] job_submitted: recovered deliverable from temp file: {saved_path}");
             }
-        } else if let Err(e) = task::common::deliverables::write_review_marker(job_id) {
-            if DEBUG_LOG {
-                eprintln!("[check-freshness] failed to write review marker: {e}");
-            }
+            ctx.deliverable = Some(task::common::PreFetchedDeliverable {
+                path: saved_path,
+                deliverable_type: dtype,
+                original_name: String::new(),
+                text_content,
+            });
         } else if DEBUG_LOG {
-            eprintln!("[check-freshness] job_submitted: no deliverable, marker written — waiting for deliverable_received");
+            eprintln!("[check-freshness] job_submitted: no deliverable found — waiting for deliverable_received");
         }
     }
 

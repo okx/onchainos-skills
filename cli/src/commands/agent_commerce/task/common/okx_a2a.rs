@@ -290,6 +290,27 @@ pub fn task_reject(group_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Reject all pending ASP messages for a given job (batch drain).
+/// `okx-a2a task reject --job-id <jobId> --json`
+///
+/// Used after successful confirm-accept (R14) to clear remaining ASP
+/// messages in the queue so they don't trigger further provider_conversation
+/// events for an already-accepted task.
+pub fn task_reject_by_job(job_id: &str) -> Result<()> {
+    let out = Command::new("okx-a2a")
+        .args(["task", "reject", "--job-id", job_id, "--json"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!(
+            "okx-a2a task reject --job-id exit {status}: {stderr}",
+            status = out.status
+        );
+    }
+    Ok(())
+}
+
 // ── File transfer ────────────────────────────────────────────────────────
 
 /// Result of `okx-a2a file upload`. The 5 encryption fields (digest / salt /

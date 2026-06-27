@@ -326,7 +326,12 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             super::flow_negotiate::job_created(&ctx).await
         }
         Event::Other(ref s) if s == "provider_conversation" => {
-            super::flow_negotiate::provider_conversation(&ctx)
+            let vis = prefetched.and_then(|p| p.visibility).unwrap_or(1);
+            if vis == 0 {
+                super::flow_negotiate::provider_conversation_auto_consume(&ctx).await
+            } else {
+                super::flow_negotiate::provider_conversation(&ctx)
+            }
         }
         Event::Other(ref s) if s == "provider_conversation_reject" => {
             let gid = message
@@ -366,6 +371,18 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 }
             }
         }
+        Event::Other(ref s) if s == "auto_advance_next" => {
+            let failed_provider = message
+                .and_then(|m| m.get("failedProvider"))
+                .and_then(|v| v.as_str());
+            if let Some(fp) = failed_provider {
+                let _ = super::negotiate::mark_failed(job_id, fp);
+            }
+            // Safety: ensure designated-provider is cleared even if mark_failed
+            // was skipped (missing failedProvider field from LLM)
+            let _ = super::negotiate::clear_designated_provider(job_id);
+            super::flow_negotiate::provider_conversation_auto_consume(&ctx).await
+        }
         Event::JobVisibilityChanged => {
             let visibility = message
                 .and_then(|m| m.get("visibility"))
@@ -374,7 +391,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             super::flow_negotiate::job_visibility_changed(&ctx, visibility)
         }
         Event::JobPaymentModeChanged => super::flow_negotiate::job_payment_mode_changed(&ctx),
-        Event::NegotiateReply => super::flow_negotiate::negotiate_reply(&ctx),
+        Event::NegotiateReply => super::flow_negotiate::negotiate_reply(&ctx).await,
 
         // ─── Task execution + arbitration + terminal states → flow_lifecycle ─────────────────
         Event::ProviderApplied => {
@@ -385,6 +402,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             let visibility = message
                 .and_then(|m| m.get("visibility"))
                 .and_then(|v| v.as_i64())
+                .or_else(|| prefetched.and_then(|p| p.visibility))
                 .unwrap_or(1);
             super::flow_lifecycle::provider_applied(&ctx, over_most_budget, visibility).await
         }
@@ -392,6 +410,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             let visibility = message
                 .and_then(|m| m.get("visibility"))
                 .and_then(|v| v.as_i64())
+                .or_else(|| prefetched.and_then(|p| p.visibility))
                 .unwrap_or(1);
             super::flow_negotiate::provider_reject(&ctx, visibility).await
         }

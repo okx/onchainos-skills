@@ -230,34 +230,6 @@ pub fn handle_save(params: &SaveParams<'_>) -> Result<SaveResult> {
     })
 }
 
-// ── Review-awaiting-deliverable marker ───────────────────────────────
-//
-// When `job_submitted` arrives before the XMTP `[intent:deliver]` message,
-// the buyer has no deliverable to review yet. A marker file is written so
-// that the later `deliverable_received` event can detect this and directly
-// output the review prompt instead of "wait for job_submitted".
-
-fn review_marker_path(job_id: &str) -> Result<PathBuf> {
-    Ok(deliverables_dir("buyer", job_id)?.join("review_awaiting_deliverable"))
-}
-
-pub fn write_review_marker(job_id: &str) -> Result<()> {
-    let path = review_marker_path(job_id)?;
-    std::fs::create_dir_all(path.parent().unwrap())?;
-    std::fs::write(&path, "")?;
-    Ok(())
-}
-
-pub fn has_review_marker(job_id: &str) -> bool {
-    review_marker_path(job_id).map(|p| p.exists()).unwrap_or(false)
-}
-
-pub fn delete_review_marker(job_id: &str) {
-    if let Ok(p) = review_marker_path(job_id) {
-        let _ = std::fs::remove_file(p);
-    }
-}
-
 // ── List (single job) ────────────────────────────────────────────────
 
 pub fn handle_list(job_id: &str, role: &str) -> Result<()> {

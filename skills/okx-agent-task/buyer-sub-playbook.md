@@ -49,6 +49,12 @@ Match by priority — stop at first hit:
 | 2b | Raw base64 / image / file data (no `[ATTACHMENT_ADDED]` prefix) | User session bypassed `task-attach`. → `onchainos agent user-notify --content '<translate: Attachment failed — please type "补充附件" or "attach file" and resend.>'` → **end turn**. Do NOT save / parse / describe the content or ask questions. |
 | 3 | Fallback (1–2b not matched, source: peer) | See **Fallback decision tree** below. |
 
+<!-- ⚠️ **Out-of-order: `job_submitted` arrives while `[intent:deliver]` is in context but unprocessed**
+On interrupt platforms, `job_submitted` (system event) may preempt a pending `[intent:deliver]` (P2P message). Before calling `next-action --event job_submitted`, check your current conversation context for an unprocessed `[intent:deliver]` message for the same jobId. If found:
+1. Write its **raw JSON** to `/tmp/a2a_deliver_<jobId>.json` first.
+2. Then call `next-action` with `job_submitted` as normal — CLI will recover the deliverable from the temp file automatically.
+This ensures the deliverable data is not lost when the system event interrupts the P2P flow. -->
+
 #### Fallback decision tree (routing #3)
 
 **First peer message in sub** (no prior `negotiate_reply` handled) → call `agent status <jobId>`, then branch:

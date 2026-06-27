@@ -119,7 +119,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
 /// Round counting: the LLM checks how many buyer replies have already been
 /// sent in this sub session. If this would be the 3rd reply, the negotiation
 /// has exceeded the 2-round limit → mark-failed + push decision card to user.
-pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
+pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
 
@@ -133,6 +133,11 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     let provider_agent_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => {
+            // R16: auto-consume uses visibility==0 only
+            let is_auto_consume = p.visibility == Some(0);
+            if is_auto_consume {
+                return super::match_provider::provider_conversation_auto_consume(ctx).await;
+            }
             let is_public = p.visibility == Some(0) || p.service_id.is_none();
             if is_public {
                 return super::match_provider::provider_conversation(ctx);
@@ -149,10 +154,11 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     } else {
         p.description.clone()
     };
-    let is_public = p.visibility == Some(0) || p.service_id.is_none();
+    let is_price_negotiable = p.visibility == Some(0) || p.service_id.is_none();
+    let is_auto_consume = p.visibility == Some(0);
 
     let max_budget_val = p.max_budget.as_deref().unwrap_or("0");
-    let (price_rule, price_fields, reply_hint) = if is_public {
+    let (price_rule, price_fields, reply_hint) = if is_price_negotiable {
         (
             format!(
                 "**Public task — price is negotiable**: you MAY discuss tokenAmount with the ASP. \
@@ -191,6 +197,42 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
 
     let cmd_no_asp = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role buyer --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP] negotiate timeout — next-step decision\" --source-event no_asp_found");
 
+    let over_limit_section = if is_auto_consume {
+        format!(
+            "━━━━━━━━━ [Over-limit] 2-round limit exceeded or timeout ━━━━━━━━━\n\n\
+             **Step 1** — mark this ASP as failed:\n\
+             ```bash\n\
+             onchainos agent mark-failed {job_id} --provider {provider_agent_id}\n\
+             ```\n\n\
+             **Step 2** — auto-advance to next ASP (public task auto-consume):\n\
+             ```bash\n\
+             onchainos agent next-action --role buyer --agentId {agent_id} \
+             --message '{{\"event\":\"auto_advance_next\",\"jobId\":\"{job_id}\",\
+             \"failedProvider\":\"{provider_agent_id}\",\"reason\":\"negotiate_over_limit\"}}'\n\
+             ```\n\
+             → **End this turn.**\n"
+        )
+    } else {
+        format!(
+            "━━━━━━━━━ [Over-limit] 2-round limit exceeded or timeout ━━━━━━━━━\n\n\
+             **Step 1** — mark this ASP as failed:\n\
+             ```bash\n\
+             onchainos agent mark-failed {job_id} --provider {provider_agent_id}\n\
+             ```\n\n\
+             **Step 2** — push a decision card to the user:\n\
+             ```bash\n\
+             {cmd_no_asp}\n\
+             ```\n\
+             `--user-content` template:\n\
+             Negotiation with ASP {provider_agent_id} did not reach agreement within 2 rounds.\n\n\
+             What would you like to do next?\n\
+             A. Browse the ASP list\n\
+             B. Designate a specific ASP by agentId\n\
+             C. Close the task\n\n\
+             → **End this turn.**\n"
+        )
+    };
+
     format!(
         "{task_block}\
          [Negotiation] negotiate_reply (ASP sent a natural-language message)\n\
@@ -211,23 +253,8 @@ pub(crate) fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
          \x20\x20--no-wait\n\
          ```\n\n\
          ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, treat as over-limit (see below).\n\n\
-         ━━━━━━━━━ [Over-limit] 2-round limit exceeded or timeout ━━━━━━━━━\n\n\
-         **Step 1** — mark this ASP as failed:\n\
-         ```bash\n\
-         onchainos agent mark-failed {job_id} --provider {provider_agent_id}\n\
-         ```\n\n\
-         **Step 2** — push a decision card to the user:\n\
-         ```bash\n\
-         {cmd_no_asp}\n\
-         ```\n\
-         `--user-content` template:\n\
-         Negotiation with ASP {provider_agent_id} did not reach agreement within 2 rounds.\n\n\
-         What would you like to do next?\n\
-         A. Browse the ASP list\n\
-         B. Designate a specific ASP by agentId\n\
-         C. Close the task\n\n\
-         → **End this turn.**\n",
-        public_price_note = if is_public { ", and **price** (within max budget)" } else { "" },
+         {over_limit_section}",
+        public_price_note = if is_price_negotiable { ", and **price** (within max budget)" } else { "" },
     )
 }
 
@@ -267,6 +294,21 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
         return format!(
             "[job_provider_reject] ❌ POST reset/asp failed: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+        );
+    }
+
+    // Public task (visibility=0): mark failed + auto-advance, no decision card
+    if visibility == 0 {
+        if let Some(p) = ctx.prefetched {
+            if let Some(pa) = p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
+                let _ = super::super::negotiate::mark_failed(job_id, pa);
+            }
+        }
+        let _ = super::super::negotiate::clear_designated_provider(job_id);
+        let auto = super::match_provider::provider_conversation_auto_consume(ctx).await;
+        return format!(
+            "[job_provider_reject] ✅ ASP binding reset (reset/asp) completed in-process.\n\n\
+             {auto}"
         );
     }
 

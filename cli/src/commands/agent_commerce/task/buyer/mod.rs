@@ -25,6 +25,7 @@ mod create;
 pub mod draft;
 pub mod flow;
 mod flow_lifecycle;
+pub(crate) use flow_lifecycle::try_recover_from_temp_file;
 mod flow_negotiate;
 pub(crate) mod negotiate;
 mod query;

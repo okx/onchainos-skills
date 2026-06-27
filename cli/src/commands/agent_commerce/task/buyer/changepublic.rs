@@ -52,6 +52,8 @@ pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str, explici
         None,
     );
 
+    let _ = super::negotiate::clear_designated_provider(job_id);
+
     println!("✓ Task converted to public (off-chain); other providers can now see and apply.");
     Ok(())
 }
