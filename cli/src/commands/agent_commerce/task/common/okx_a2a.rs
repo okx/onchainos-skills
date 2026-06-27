@@ -198,7 +198,6 @@ pub fn xmtp_send(job_id: &str, to_agent_id: &str, message: &str) -> Result<()> {
             "--job-id", job_id,
             "--to-agent-id", to_agent_id,
             "--message", message,
-            "--no-wait",
         ])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
