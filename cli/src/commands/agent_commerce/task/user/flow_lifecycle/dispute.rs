@@ -62,7 +62,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      ```\n\
      The CLI auto-attaches every entry under `~/.onchainos/deliverables/user/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
      **Step 4 — Notify the user via `onchainos agent user-notify` (after upload returns):**\n\
-     🌐 **Localize first** — translate the content below into the user's language before sending.\n\
+     **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
@@ -146,7 +146,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in Step 3.\n\n\
      **Step 3 — Notify the user with a SINGLE consolidated message:**\n\
-     🌐 **Localize first** — translate the composed content into the user's language before sending.\n\
+     **Localize first** — translate the composed content into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\

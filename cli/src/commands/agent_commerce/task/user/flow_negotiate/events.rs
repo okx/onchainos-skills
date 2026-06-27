@@ -27,7 +27,7 @@ pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>, visibility: i64) -> 
      🛑 **This is not an auxiliary event; you MUST notify the user.**\n\n\
      [Your next action — call ONE command only, then END TURN]\n\n\
      {title_query_hint}\
-     🌐 **Localize first** — translate the content below into the user's language before sending.\n\
+     **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
@@ -92,13 +92,19 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      If `deliverableSavedPath` is present → show saved path only (no preview/summary needed; user can read the local file).\n\
      If `deliverableSavedPath` is absent (save failed) → embed full `replayBodyDisplay` so the user can still see what they paid for.\n\n\
      ▸ replaySuccess=true:\n\
-     {x402_replay_ok}\n\
+     **Localize first** — translate the content below into the user's language before sending.\n\
+     ```bash\n\
+     onchainos agent user-notify --content '<localized content>'\n\
+     ```\n\
+     Content:\n\
+     \x20\x20{x402_replay_ok}\n\
      -> **end this turn** and wait for `job_accepted`.\n\
      🛑 When `job_accepted` arrives, call `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'`.\n\
      ❌ Do NOT re-run this turn's commands (double payment) or skip next-action (job stuck).\n\n\
      ▸ replaySuccess=false:\n\
      Check `replayBody` for `requiredArgs` / `fields` / `status: \"input_required\"`.\n\n\
      \x20\x20▸▸ **Endpoint needs business parameters** → push decision card:\n\
+     \x20\x20**Localize first** — translate the `--user-content` and `--list-label` values below into the user's language before running.\n\
      \x20\x20```bash\n\
      \x20\x20{cmd_replay_input}\n\
      \x20\x20```\n\
@@ -221,6 +227,7 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
              onchainos agent mark-failed {job_id} --provider {provider_agent_id}\n\
              ```\n\n\
              **Step 2** — push a decision card to the user:\n\
+             **Localize first** — translate the `--user-content` and `--list-label` values below into the user's language before running.\n\
              ```bash\n\
              {cmd_no_asp}\n\
              ```\n\
@@ -328,7 +335,7 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
 
     format!(
     "[job_provider_reject] ✅ ASP binding reset (reset/asp) completed in-process.\n\n\
-     🌐 **Localize first** — translate the `--user-content` value below into the user's language before executing. \
+     **Localize first** — translate the `--user-content` value below into the user's language before executing. \
      Keep `[Job {short_id}]` prefix and `A.` / `B.` / `C.` / `D.` option letters unchanged.\n\n\
      🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
      {request_block}\n"

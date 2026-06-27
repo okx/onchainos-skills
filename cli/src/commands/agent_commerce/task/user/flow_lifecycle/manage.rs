@@ -331,7 +331,7 @@ pub(crate) fn attachment_added_cli(
             format!(
                 "[attachment_added_cli] ✓ Attachment uploaded and forwarded to provider in-process.\n\n\
                  [Your next action] Notify the user and end turn.\n\n\
-                 🌐 **Localize first** — translate the content below into the user's language before sending.\n\
+                 **Localize first** — translate the content below into the user's language before sending.\n\
                  Content:\n\
                  \x20\x20{att_sent}\n\n\
                  ```bash\n\

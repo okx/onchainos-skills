@@ -294,7 +294,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
 
         return format!(
             "✓ job_accepted (escrow). Notify the user:\n\
-             🌐 **Localize first** — translate the template below into the user's language before sending.\n\
+             **Localize first** — translate the template below into the user's language before sending.\n\
              ```bash\n\
              onchainos agent user-notify --content '<localized content>'\n\
              ```\n\
@@ -325,7 +325,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ```\n\
      broadcast ≠ on-chain confirmed. Do NOT notify user or say \"task complete\" here.\n\
      On error → notify user:\n\
-     🌐 **Localize first** — translate the content below into the user's language before sending.\n\
+     **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
@@ -336,7 +336,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      Check whether a `x402_replay_input` pending decision was already pushed in the previous turn:\n\
      ▸ Yes → end turn (user will reply to the pending decision).\n\
      ▸ No → notify user:\n\
-     🌐 **Localize first** — translate the content below into the user's language before sending.\n\
+     **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
@@ -401,7 +401,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      ```\n\
      For file type only, add `--file-key \"<fileKey>\"`. Record savedPath from output.\n\n\
      **Step 3 — Notify user**\n\
-     🌐 **Localize first** — translate the template below into the user's language before sending.\n\
+     **Localize first** — translate the template below into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
@@ -767,7 +767,7 @@ pub(crate) fn deliverable_received_cli(
          savedPath: {saved_path}\n\
          title: {title} | shortId: {short_id} | ASP: {provider_id}\n\n\
          Notify the user:\n\
-         🌐 **Localize first** — translate the template below into the user's language before sending.\n\
+         **Localize first** — translate the template below into the user's language before sending.\n\
          ```bash\n\
          onchainos agent user-notify --content '<localized content>'\n\
          ```\n\
@@ -1080,7 +1080,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      ```\n\
      `--agent-id` = ASP being rated; `--creator-id` = user's agent id.\n\n\
      **3b — Notify user (deliverable + rating in one message):**\n\
-     🌐 **Localize first** — translate the composed content into the user's language before sending.\n\
+     **Localize first** — translate the composed content into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
@@ -1236,7 +1236,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json:
          onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
          ```\n\n\
          **Step 2 — Notify user** (completion + rating):\n\
-         🌐 **Localize first** — translate the template below into the user's language before sending.\n\
+         **Localize first** — translate the template below into the user's language before sending.\n\
          ```bash\n\
          onchainos agent user-notify --content '<localized content>'\n\
          ```\n\

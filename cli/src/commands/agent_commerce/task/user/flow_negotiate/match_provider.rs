@@ -156,10 +156,11 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
          ```\n\
          From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, \
          `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`.\n\
-         If `asp-match` returns no services, notify the user (🌐 localized): \
+         If `asp-match` returns no services, notify the user (localized): \
          \"ASP {dp_id} has no registered services.\" and end the turn.\n\n\
          **Step 2 — collect serviceParams if needed:**\n\
          If `serviceDescription` is non-empty, ask the user for serviceParams — enqueue:\n\
+         **Localize first** — translate the `--user-content` and `--list-label` values below into the user's language before running.\n\
          ```bash\n\
          onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} \
          --source-event set_asp_params \
@@ -172,7 +173,6 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
          Fee: <feeAmount> <feeTokenSymbol>\n\n\
          Please describe the input for this service (serviceParams):\n\
          [SERVICE_CONTEXT providerAgentId={dp_id} serviceId=<sid> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
-         **`--list-label` must be localized to the user's language.**\n\
          Then **end this turn** and wait for the user's reply.\n\n\
          If `serviceDescription` is empty, skip the decision and go to Step 3 directly (serviceParams = `''`).\n\n\
          **Step 3 — call `set-asp`:**\n\
@@ -180,7 +180,7 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
          onchainos agent set-asp {job_id} --provider-agent-id {dp_id} --service-id <sid> --service-params '<params or empty>' \
          --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
          ```\n\
-         On success → notify user (🌐 localized): \"ASP set to Agent {dp_id}. Waiting for ASP to accept.\"\n\n\
+         On success → notify user (localized): \"ASP set to Agent {dp_id}. Waiting for ASP to accept.\"\n\n\
          **Step 4 — create sub session + SKILL_PREFETCH (only after Step 3 succeeds):**\n\
          ```bash\n\
          okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id {dp_id} --json\n\
@@ -273,7 +273,7 @@ pub(crate) fn provider_conversation_cli_inner(
         return format!(
             "[provider_conversation] No pending ASPs.\n\n\
              **Action — notify the user:**\n\
-             🌐 **Localize first** — translate the content below into the user's language before sending.\n\
+             **Localize first** — translate the content below into the user's language before sending.\n\
              Content: {content}\n\
              ```bash\n\
              onchainos agent user-notify --content '<localized content>'\n\
@@ -311,6 +311,7 @@ pub(crate) fn provider_conversation_cli_inner(
          🛑 Push the accept/reject decision card via `pending-decisions-v2 request`, then end turn.\n\n\
          ASP context (LLM-only; do NOT expose groupId to user):\n\
          \x20\x20agentId: {asp_agent_id} | groupId: {group_id} | name: {name} | remaining after this: {remaining}\n\n\
+         **Localize first** — translate the `--user-content` and `--list-label` values below into the user's language before running.\n\
          ```bash\n\
          {cmd}\n\
          ```\n\
