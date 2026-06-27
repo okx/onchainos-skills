@@ -18,8 +18,6 @@ use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 // Each constant produces byte-for-byte identical output when interpolated via
 // `format!("{CONST}")` — zero prompt-level risk.
 
-// LOCALIZATION_PREFIX removed — each user-notify call site now carries its own
-// inline "Translate …" / "🌐 Localize first" instruction (same pattern as ASP side).
 
 /// Shared switch-asp routing text for user_decision_* handlers.
 /// Covers: user-reject → asp-match → service extraction → set-asp (or set_asp_params decision).
