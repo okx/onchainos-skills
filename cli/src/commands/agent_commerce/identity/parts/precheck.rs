@@ -2,8 +2,8 @@
 //!
 //! Sinks references/register.md §2's per-wallet uniqueness logic into the CLI:
 //! scope an `/agent-list` envelope to the signing wallet, count by role, and
-//! decide whether the requested role can be created (≤1 requester, ≤1 evaluator
-//! per address; provider unlimited). The skill renders the verdict instead of
+//! decide whether the requested role can be created (≤1 user, ≤1 evaluator
+//! per address; asp unlimited). The skill renders the verdict instead of
 //! filtering / counting agent rows by hand.
 //!
 //! Split out of `utils.rs` (file-size hygiene); declared there as a `#[path]`
@@ -15,25 +15,12 @@ use serde_json::Value;
 
 use super::role_label;
 
-/// Canonical role key (`requester` / `provider` / `evaluator`) from a row's raw
-/// `role` value, accepting both the string enum and the backend integer
-/// (`1`/`2`/`3`). Unknown → `None`.
+/// Canonical role key (`user` / `asp` / `evaluator`) from a row's raw `role`
+/// value. Thin wrapper over the single inbound parser
+/// [`super::role_token_from_value`] (reads the backend integer code 1/2/3).
+/// Unknown → `None`.
 fn role_key_from_value(role: &Value) -> Option<&'static str> {
-    match role {
-        Value::String(s) => match s.trim() {
-            "requester" => Some("requester"),
-            "provider" => Some("provider"),
-            "evaluator" => Some("evaluator"),
-            _ => None,
-        },
-        Value::Number(n) => match n.as_u64()? {
-            1 => Some("requester"),
-            2 => Some("provider"),
-            3 => Some("evaluator"),
-            _ => None,
-        },
-        _ => None,
-    }
+    super::role_token_from_value(role)
 }
 
 /// Collect the signing wallet's `(agentId, roleKey, name)` from an
@@ -90,11 +77,11 @@ pub(crate) fn collect_owned_agents(
 
 /// Pure pre-check verdict for the requested role (register.md §2 uniqueness):
 ///   { role, roleLabel, ownerAddress, uniqueness, canCreate,
-///     existingSameRole: [{agentId,name,roleLabel}], providerCount }
+///     existingSameRole: [{agentId,name,roleLabel}], aspCount }
 pub(crate) fn build_precheck(agent_list: &Value, signing_address: &str, role_key: &str) -> Value {
     let owned = collect_owned_agents(agent_list, signing_address);
 
-    let provider_count = owned.iter().filter(|(_, rk, _)| *rk == Some("provider")).count();
+    let asp_count = owned.iter().filter(|(_, rk, _)| *rk == Some("asp")).count();
 
     let existing_same_role: Vec<Value> = owned
         .iter()
@@ -108,7 +95,7 @@ pub(crate) fn build_precheck(agent_list: &Value, signing_address: &str, role_key
         })
         .collect();
 
-    let unique = matches!(role_key, "requester" | "evaluator");
+    let unique = matches!(role_key, "user" | "evaluator");
     let can_create = if unique { existing_same_role.is_empty() } else { true };
     let label = role_label(role_key).unwrap_or(role_key);
 
@@ -119,7 +106,7 @@ pub(crate) fn build_precheck(agent_list: &Value, signing_address: &str, role_key
         "uniqueness": if unique { "single" } else { "multiple" },
         "canCreate": can_create,
         "existingSameRole": existing_same_role,
-        "providerCount": provider_count,
+        "aspCount": asp_count,
     });
     // `reason` accompanies every canCreate:false (a single-role identity already
     // exists for this wallet). English canonical; the skill localizes.

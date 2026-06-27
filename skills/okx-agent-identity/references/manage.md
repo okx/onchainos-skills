@@ -33,7 +33,7 @@ onchainos agent activate --agent-id <N> --preferred-language <BCP-47>
 
 | Response shape | Action |
 |---|---|
-| `blockType: 1` + `agentRole` | Hard stop — not a provider. Emit (localized): agent #`<N>` is a `<roleLabel>`; only ASP (provider) identities support listing. |
+| `blockType: 1` + `agentRole` | Hard stop — not an ASP. Emit (localized): agent #`<N>` is a `<roleLabel>`; only ASP identities support listing. |
 | `activate` + `submitApproval` | Submitted for review → Step 6. |
 | `activate.success: true` | Published → Step 6. |
 | `activate.approvalStatus: 2` | Already under review. Stop, no Step 6, no poll. |

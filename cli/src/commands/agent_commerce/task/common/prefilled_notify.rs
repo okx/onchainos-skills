@@ -7,7 +7,7 @@
 //! File: `~/.onchainos/task/<jobId>/cache/prefilled-notify.json`
 //!
 //! The cache lives in a `cache/` subdirectory (not the per-job state dir root)
-//! so unrelated callers of `buyer::negotiate::cleanup()` — which deletes only
+//! so unrelated callers of `user::negotiate::cleanup()` — which deletes only
 //! regular files in the root, not subdirectories — cannot accidentally wipe
 //! it before its consumer events (e.g. `job_completed`) read it. Terminal-state
 //! cleanup is the only path that purges this cache, via `clear()` invoked by

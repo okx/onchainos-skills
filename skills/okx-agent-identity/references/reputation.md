@@ -15,7 +15,7 @@ description can be multi-line).
 
 Header — average rendered DIRECTLY (CLI pre-converted; never /20):
 ```
-Agent #42 — DeFi Analyzer (Agent Service Provider (ASP)) · ★ 4.45 (18 reviews)
+Agent #42 — DeFi Analyzer (ASP) · ★ 4.45 (18 reviews)
 ```
 
 Per item: `#<i> · <date> · reviewer #<id> (<role label> <name>) · ★ <stars>`
@@ -25,10 +25,10 @@ Per item: `#<i> · <date> · reviewer #<id> (<role label> <name>) · ★ <stars>
 - Description in quotes when present; empty / missing → `(no comment)`.
 
 ```
-**#1 · 2026-04-20 · reviewer #88 (User Agent MyBuyer) · ★ 4.5**
+**#1 · 2026-04-20 · reviewer #88 (User MyBuyer) · ★ 4.5**
 - "Delivered on time, data accurate"
 
-**#2 · 2026-04-18 · reviewer #14 (User Agent CryptoPM) · ★ 5**
+**#2 · 2026-04-18 · reviewer #14 (User CryptoPM) · ★ 5**
 - "..."
 
 **#3 · 2026-04-15 · reviewer #77 · ★ 4**   ← role/name shown only if the item carries them; else `#<id>` alone

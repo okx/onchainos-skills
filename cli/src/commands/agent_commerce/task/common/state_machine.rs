@@ -1,7 +1,7 @@
 //! Task-system state machine — single source of truth.
 //!
 //! Centralizes string literals like `"created"` / `"provider_applied"` previously scattered across
-//! `available_actions` / `provider/flow.rs` / `buyer/flow.rs` / `evaluator/flow.rs`, exposing
+//! `available_actions` / `provider/flow.rs` / `user/flow.rs` / `evaluator/flow.rs`, exposing
 //! `Status` / `Event` / `Role` enums plus status<->event conversion helpers. All matches now go
 //! through the enums, eliminating string-spelling drift.
 //!
@@ -15,18 +15,18 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
-    Buyer,
-    Provider,
+    User,
+    Asp,
     Evaluator,
 }
 
 impl Role {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "buyer" | "client"            => Some(Role::Buyer),
-            "provider" | "seller"         => Some(Role::Provider),
-            "evaluator" | "arbitrator"    => Some(Role::Evaluator),
-            _                             => None,
+            "user"      => Some(Role::User),
+            "asp"       => Some(Role::Asp),
+            "evaluator" => Some(Role::Evaluator),
+            _           => None,
         }
     }
 
@@ -179,39 +179,39 @@ impl DisputeRoundStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     // ── Main task flow ────────────────────────────────────────────────
-    /// Task creation on-chain (status enters created; notifies buyer).
+    /// Task creation on-chain (status enters created; notifies user).
     JobCreated,
     /// Provider apply on-chain (status remains created; pass-through event; notifies the provider that just applied).
     ProviderApplied,
-    /// ASP declined a buyer-designated assignment via `asp/reject` API (off-chain;
-    /// notifies the buyer to re-route to another ASP or fall back to public).
+    /// ASP declined a user-designated assignment via `asp/reject` API (off-chain;
+    /// notifies the user to re-route to another ASP or fall back to public).
     JobProviderReject,
-    /// Buyer rejected the current ASP via `user/reject` API (off-chain;
+    /// User Agent rejected the current ASP via `user/reject` API (off-chain;
     /// notifies the ASP that they are no longer needed for this task).
     JobUserReject,
-    /// Buyer designated a specific ASP for the task (private-task path; status remains created;
+    /// User Agent designated a specific ASP for the task (private-task path; status remains created;
     /// notifies the chosen provider that they have been selected and should start negotiation).
     JobAspSelected,
-    /// Buyer confirm-accept on-chain (status enters accepted; notifies provider).
+    /// User Agent confirm-accept on-chain (status enters accepted; notifies provider).
     JobAccepted,
-    /// Provider deliver on-chain (status enters submitted; notifies buyer to review).
+    /// Provider deliver on-chain (status enters submitted; notifies user to review).
     JobSubmitted,
-    /// Buyer complete on-chain / arbitration approve (status enters completed; notifies provider).
+    /// User Agent complete on-chain / arbitration approve (status enters completed; notifies provider).
     JobCompleted,
-    /// Buyer reject on-chain (status enters rejected; notifies provider to choose between arbitration / refund).
+    /// User Agent reject on-chain (status enters rejected; notifies provider to choose between arbitration / refund).
     JobRejected,
     /// Arbitration phase-1 (approve) on-chain (status remains rejected; pass-through event;
     /// notifies the initiating provider to proceed to phase-2 dispute confirm).
     DisputeApproved,
-    /// Either party's dispute-raise on-chain (status enters disputed; notifies both buyer + provider to upload evidence).
+    /// Either party's dispute-raise on-chain (status enters disputed; notifies both user + provider to upload evidence).
     JobDisputed,
-    /// Provider agrees to refund / arbitration buyer-wins refund on-chain (status enters refunded; notifies buyer + provider).
+    /// Provider agrees to refund / arbitration user-wins refund on-chain (status enters refunded; notifies user + provider).
     JobRefunded,
-    /// DisputeSettled arbitration verdict (status enters completed or refunded; notifies buyer/provider/voters
+    /// DisputeSettled arbitration verdict (status enters completed or refunded; notifies user/provider/voters
     /// to call /claimable + /claim to collect rewards).
     DisputeResolved,
     /// Task expired (no accept before the acceptance window, or no submit before the delivery window;
-    /// notifies buyer to close and reclaim funds).
+    /// notifies user to close and reclaim funds).
     JobExpired,
     /// TaskMarket.close on-chain / Close tx result (notifies the initiating client).
     JobClosed,
@@ -230,7 +230,7 @@ pub enum Event {
     /// Evaluator reveal tx on-chain success (notifies the evaluator that initiated the reveal; wait for dispute_resolved).
     VoteRevealed,
     /// DisputeInvalidated — current round invalidated (insufficient votes / nobody revealed, etc.;
-    /// notifies buyer/provider/round-evaluators to wait for the next round).
+    /// notifies user/provider/round-evaluators to wait for the next round).
     RoundFailed,
     /// Commit-window nearing-deadline reminder for an evaluator that has been selected but has not yet
     /// committed a vote (warn class; no status change; backend only fires when commit is still pending).
@@ -260,20 +260,20 @@ pub enum Event {
     RewardClaimed,
 
     // ── Timeout events ────────────────────────────────────────────────
-    /// Submit timeout — no delivery (notifies buyer to call claimAutoRefund).
+    /// Submit timeout — no delivery (notifies user to call claimAutoRefund).
     SubmitExpired,
-    /// After reject, the provider failed to raise arbitration in time (notifies buyer to call claimAutoRefund).
+    /// After reject, the provider failed to raise arbitration in time (notifies user to call claimAutoRefund).
     RejectExpired,
-    /// Review timeout (after provider submit, the buyer did not confirm; notifies provider to call claimAutoComplete).
+    /// Review timeout (after provider submit, the User Agent did not confirm; notifies provider to call claimAutoComplete).
     ReviewExpired,
     // ── Auto-refund tx receipt ────────────────────────────────────────
-    /// Buyer's claimAutoRefund tx on-chain result (after submit/reject timeout the buyer pulls funds back; notifies buyer).
+    /// User Agent's claimAutoRefund tx on-chain result (after submit/reject timeout the User Agent pulls funds back; notifies user).
     JobAutoRefunded,
 
     // ── Deadline reminders (warn class, no status change) ─────────────
     /// Escrow delivery-window nearing-deadline reminder (notifies provider to submit).
     SubmitDeadlineWarn,
-    /// Escrow submit→complete nearing-deadline reminder (notifies buyer to complete).
+    /// Escrow submit→complete nearing-deadline reminder (notifies user to complete).
     ReviewDeadlineWarn,
 
     // ── Extra evaluator lifecycle ────────────────────────────────────
@@ -286,17 +286,17 @@ pub enum Event {
     /// User session dispatched `[ATTACHMENT_ADDED]`; sub session uploads + forwards the file to the provider.
     /// Can fire in Created (with active sub session) or Accepted — multi-status, so freshness check is skipped.
     AttachmentAdded,
-    /// Provider receives `[intent:attachment]` from the buyer; downloads + saves the file locally.
+    /// Provider receives `[intent:attachment]` from the User Agent; downloads + saves the file locally.
     /// Can fire in Created (negotiation phase) or Accepted (mid-task) — multi-status.
-    BuyerAttachmentReceived,
+    UserAttachmentReceived,
 
-    // ── Deliverable relay event (buyer-local dispatch, no status change) ─
-    /// Buyer receives provider's `[intent:deliver]` P2P message; downloads + saves the deliverable
+    // ── Deliverable relay event (user-local dispatch, no status change) ─
+    /// User Agent receives provider's `[intent:deliver]` P2P message; downloads + saves the deliverable
     /// locally before the on-chain `job_submitted` event confirms the submission.
     DeliverableReceived,
 
-    // ── Negotiation relay events (buyer-local dispatch, no status change) ─
-    /// Provider's natural-language reply; buyer-sub-playbook.md Route 6 → negotiate_reply.
+    // ── Negotiation relay events (user-local dispatch, no status change) ─
+    /// Provider's natural-language reply; user-sub-playbook.md Route 6 → negotiate_reply.
     NegotiateReply,
 
     // ── Network / restart recovery events (pass-through, no status change) ─
@@ -365,10 +365,10 @@ impl Event {
             "cooldown_entered"          => Event::CooldownEntered,
             // Attachment relay (local dispatch)
             "attachment_added"          => Event::AttachmentAdded,
-            "buyer_attachment_received" => Event::BuyerAttachmentReceived,
-            // Deliverable relay (buyer-local dispatch)
+            "user_attachment_received" => Event::UserAttachmentReceived,
+            // Deliverable relay (user-local dispatch)
             "deliverable_received"      => Event::DeliverableReceived,
-            // Negotiation relay (buyer-local dispatch)
+            // Negotiation relay (user-local dispatch)
             "negotiate_reply"           => Event::NegotiateReply,
             // Network / restart recovery
             "wakeup_notify"             => Event::WakeupNotify,
@@ -416,7 +416,7 @@ impl Event {
             Event::StakeStopped           => "stake_stopped",
             Event::CooldownEntered        => "cooldown_entered",
             Event::AttachmentAdded        => "attachment_added",
-            Event::BuyerAttachmentReceived => "buyer_attachment_received",
+            Event::UserAttachmentReceived => "user_attachment_received",
             Event::DeliverableReceived    => "deliverable_received",
             Event::NegotiateReply         => "negotiate_reply",
             Event::WakeupNotify           => "wakeup_notify",
@@ -449,7 +449,7 @@ impl Event {
 /// Which status the task is in when the event fires.
 ///
 /// `provider_applied` does not change status — it occurs in the created state;
-/// `dispute_resolved` depends on the verdict (buyer-wins → refunded; seller-wins → completed),
+/// `dispute_resolved` depends on the verdict (user-wins → refunded; seller-wins → completed),
 /// which cannot be determined from the event alone; this returns `Completed` by default,
 /// and callers should prefer calling `agent status` to fetch the real status.
 pub fn status_when_event(e: &Event) -> Status {
@@ -469,11 +469,11 @@ pub fn status_when_event(e: &Event) -> Status {
         // review_expired only means the review window has ended; task is still submitted —
         // must wait for the provider's claimAutoComplete to enter completed
         Event::ReviewExpired                                                => Status::Submitted,
-        // Backend TaskStatusEnum: 6=COMPLETE (funds released to provider), 9=FAILED (funds returned to buyer).
+        // Backend TaskStatusEnum: 6=COMPLETE (funds released to provider), 9=FAILED (funds returned to user).
         // The two terminal states are distinguished directly by the event.
         Event::JobCompleted                                                 => Status::Completed,
         Event::JobRefunded | Event::JobAutoRefunded                         => Status::Failed,
-        // DisputeResolved depends on the verdict (buyer-wins → Failed; seller-wins → Completed);
+        // DisputeResolved depends on the verdict (user-wins → Failed; seller-wins → Completed);
         // not determinable from the event alone — default to Completed and callers should prefer `agent status`.
         Event::DisputeResolved  => Status::Completed,
         // Arbitration sub state machine: all events fire while task=disputed
@@ -496,9 +496,9 @@ pub fn status_when_event(e: &Event) -> Status {
         // attachment_added is dispatched by the user session; can fire at Created or Accepted —
         // multi-status, so freshness check is skipped via PSEUDO_EVENTS; placeholder here.
         Event::AttachmentAdded                                                  => Status::Other("attachment".to_string()),
-        // buyer_attachment_received fires on the provider when it receives [intent:attachment];
+        // user_attachment_received fires on the provider when it receives [intent:attachment];
         // can occur in Created (negotiation) or Accepted (mid-task) — multi-status placeholder.
-        Event::BuyerAttachmentReceived                                          => Status::Other("attachment".to_string()),
+        Event::UserAttachmentReceived                                          => Status::Other("attachment".to_string()),
         // wake-up is a pass-through event; the real status lives in envelope.message.jobStatus.
         // Return a placeholder status here — agents must not drive next-action with wakeup_notify.
         Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),
@@ -508,7 +508,7 @@ pub fn status_when_event(e: &Event) -> Status {
 
 /// The **canonical** entry event that drove the task into this status.
 /// - Status::Completed canonical = JobCompleted (happy-path acceptance / arbitration seller-wins)
-/// - Status::Failed canonical = JobRefunded (refund / arbitration buyer-wins)
+/// - Status::Failed canonical = JobRefunded (refund / arbitration user-wins)
 /// - DisputeResolved is not canonical (the same event may land on either Completed or Failed)
 pub fn entry_event(s: &Status) -> Option<Event> {
     match s {
@@ -547,7 +547,7 @@ mod tests {
     fn status_event_roundtrip() {
         // entry_event(s) → e ; status_when_event(e) must round-trip back to s.
         // Status::AdminStopped has no client-side entry event (entry_event returns None); skip.
-        // Status::Completed → JobCompleted; Status::Failed → JobRefunded (buyer-wins / refund).
+        // Status::Completed → JobCompleted; Status::Failed → JobRefunded (user-wins / refund).
         for s in [
             Status::Created, Status::Accepted, Status::Submitted, Status::Rejected,
             Status::Disputed, Status::Completed, Status::Close, Status::Expired,

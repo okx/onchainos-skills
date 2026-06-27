@@ -4,7 +4,7 @@
 //! - **No-auth** (always run): CLI parsing and input validation that fails
 //!   before `ensure_tokens_refreshed`. No wallet session needed.
 //! - **Auth-required** (`#[ignore]`): CRUD lifecycle and edge cases that
-//!   require a logged-in wallet + registered buyer agent. Run with:
+//!   require a logged-in wallet + registered user agent. Run with:
 //!   `cargo test --test cli_draft -- --ignored`
 
 mod common;

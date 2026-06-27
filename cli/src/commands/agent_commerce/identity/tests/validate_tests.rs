@@ -19,7 +19,7 @@ fn codes(r: &ValidationResult) -> Vec<String> {
 }
 
 #[test]
-fn clean_provider_passes() {
+fn clean_asp_passes() {
     // 3-part description, good name, valid A2MCP service.
     let desc = "Summarizes text.\\nHandles long docs and articles.\\nSummarize this article";
     let service = svc(
@@ -30,7 +30,7 @@ fn clean_provider_passes() {
         Some("https://example.com/mcp"),
     );
     let r = run_validation(
-        "provider",
+        "asp",
         Some("Summarizer Bot"),
         Some("A helpful agent."),
         Some(&service),
@@ -42,7 +42,7 @@ fn clean_provider_passes() {
 
 #[test]
 fn name_with_test_marker_fails_u1() {
-    let r = run_validation("provider", Some("FitnessBot(test)"), None, None);
+    let r = run_validation("asp", Some("FitnessBot(test)"), None, None);
     assert!(codes(&r).contains(&"U1".to_string()));
     assert!(!r.pass);
 }
@@ -50,7 +50,7 @@ fn name_with_test_marker_fails_u1() {
 #[test]
 fn name_predict_does_not_fail_u1() {
     // "Predict" contains "pre" but is not a delimited marker.
-    let r = run_validation("requester", Some("Predict"), None, None);
+    let r = run_validation("user", Some("Predict"), None, None);
     assert!(
         !codes(&r).contains(&"U1".to_string()),
         "got {:?}",
@@ -73,7 +73,7 @@ fn a2mcp_empty_endpoint_fails_t2() {
         "5",
         Some(""),
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"T2".to_string()), "got {:?}", codes(&r));
     assert!(!r.pass);
 }
@@ -87,7 +87,7 @@ fn a2a_with_endpoint_fails_t3() {
         "5",
         Some("https://example.com"),
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"T3".to_string()), "got {:?}", codes(&r));
     assert!(!r.pass);
 }
@@ -106,7 +106,7 @@ fn fee_with_negotiation_or_paren_fails_p1() {
             fee,
             None,
         );
-        let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+        let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
         let c = codes(&r);
         assert!(c.contains(&"P1".to_string()), "fee={fee} got {:?}", c);
         assert!(!c.contains(&"P3".to_string()), "P3 retired, fee={fee} got {:?}", c);
@@ -128,7 +128,7 @@ fn fee_with_currency_token_fails_p1() {
             fee,
             None,
         );
-        let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+        let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
         assert!(codes(&r).contains(&"P1".to_string()), "fee={fee} got {:?}", codes(&r));
         assert!(!r.pass);
     }
@@ -143,28 +143,28 @@ fn too_short_service_name_fails_s1() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
     assert!(!r.pass);
 }
 
 #[test]
-fn requester_ignores_service() {
-    // A bad service should NOT produce findings for a requester role.
+fn user_ignores_service() {
+    // A bad service should NOT produce findings for a user role.
     let service = svc("Q", "x", "BADTYPE", "", None);
-    let r = run_validation("requester", Some("Buyer Bot"), None, Some(&service));
+    let r = run_validation("user", Some("Buyer Bot"), None, Some(&service));
     assert!(r.pass, "got {:?}", codes(&r));
 }
 
 #[test]
 fn bilingual_name_without_middledot_fails_n6() {
-    let r = run_validation("provider", Some("健身 Bot"), None, None);
+    let r = run_validation("asp", Some("健身 Bot"), None, None);
     assert!(codes(&r).contains(&"N6".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
 fn bilingual_name_with_middledot_ok_n6() {
-    let r = run_validation("provider", Some("健身 \u{00B7} Bot"), None, None);
+    let r = run_validation("asp", Some("健身 \u{00B7} Bot"), None, None);
     assert!(
         !codes(&r).contains(&"N6".to_string()),
         "got {:?}",
@@ -177,7 +177,7 @@ fn long_bilingual_name_not_blocked_by_cjk_length_cap() {
     // 22 chars: a mixed CJK + Latin name (N6-compliant separator) must use
     // the 3..=25 bound, NOT the dense pure-CJK 12-char cap, so no N1.
     let r = run_validation(
-        "provider",
+        "asp",
         Some("健身 \u{00B7} Fitness Coach Pro"),
         None,
         None,
@@ -197,7 +197,7 @@ fn long_bilingual_name_not_blocked_by_cjk_length_cap() {
 #[test]
 fn pure_cjk_over_twelve_chars_fails_n1() {
     // 13 pure-CJK chars: still bounded by the 2..=12 cap.
-    let r = run_validation("provider", Some("一二三四五六七八九十一二三"), None, None);
+    let r = run_validation("asp", Some("一二三四五六七八九十一二三"), None, None);
     assert!(codes(&r).contains(&"N1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -207,7 +207,7 @@ fn hex_in_service_description_emits_d7_not_duplicate_u2() {
     // also as U2 for the same field (no duplicate diagnostic).
     let desc = "Summarizes text 0xdeadbeefdeadbeef.\\nHandles long docs.\\nSummarize this";
     let service = svc("Document Summarizer", desc, "A2A", "0", None);
-    let r = run_validation("provider", Some("Summary Bot"), None, Some(&service));
+    let r = run_validation("asp", Some("Summary Bot"), None, Some(&service));
     let desc_field = "service[0].servicedescription";
     let desc_codes: Vec<&str> = r
         .findings
@@ -227,13 +227,13 @@ fn hex_in_service_description_emits_d7_not_duplicate_u2() {
 
 #[test]
 fn hex_address_in_name_fails_u2() {
-    let r = run_validation("requester", Some("Agent 0xdeadbeef"), None, None);
+    let r = run_validation("user", Some("Agent 0xdeadbeef"), None, None);
     assert!(codes(&r).contains(&"U2".to_string()));
 }
 
 #[test]
 fn embedded_id_fails_n2() {
-    let r = run_validation("provider", Some("Helper Bot 3"), None, None);
+    let r = run_validation("asp", Some("Helper Bot 3"), None, None);
     assert!(codes(&r).contains(&"N2".to_string()), "got {:?}", codes(&r));
 }
 
@@ -246,7 +246,7 @@ fn bare_numeric_fee_ok() {
         "10",
         Some("https://example.com/mcp"),
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);
     assert!(!c.contains(&"P1".to_string()), "got {:?}", c);
 }
@@ -263,7 +263,7 @@ fn fee_with_currency_suffix_fails_p1() {
             fee,
             Some("https://example.com/mcp"),
         );
-        let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+        let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
         assert!(codes(&r).contains(&"P1".to_string()), "fee={fee} got {:?}", codes(&r));
     }
 }
@@ -273,27 +273,27 @@ fn fee_with_currency_suffix_fails_p1() {
 #[test]
 fn latin_name_two_chars_fails_n1() {
     // 2 chars — below the 3-char Latin minimum.
-    let r = run_validation("provider", Some("AB"), None, None);
+    let r = run_validation("asp", Some("AB"), None, None);
     assert!(codes(&r).contains(&"N1".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
 fn latin_name_three_chars_passes_n1() {
-    let r = run_validation("provider", Some("Bot"), None, None);
+    let r = run_validation("asp", Some("Bot"), None, None);
     assert!(!codes(&r).contains(&"N1".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
 fn latin_name_twenty_five_chars_passes_n1() {
     // Exactly 25 chars — upper bound is inclusive.
-    let r = run_validation("provider", Some("ABCDEFGHIJKLMNOPQRSTUVWXY"), None, None);
+    let r = run_validation("asp", Some("ABCDEFGHIJKLMNOPQRSTUVWXY"), None, None);
     assert!(!codes(&r).contains(&"N1".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
 fn latin_name_twenty_six_chars_fails_n1() {
     // 26 chars — one over the limit.
-    let r = run_validation("provider", Some("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), None, None);
+    let r = run_validation("asp", Some("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), None, None);
     assert!(codes(&r).contains(&"N1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -302,14 +302,14 @@ fn latin_name_twenty_six_chars_fails_n1() {
 #[test]
 fn ordinal_suffix_v2_fails_n3() {
     assert!(has_ordinal_suffix("Agent_v2"));
-    let r = run_validation("provider", Some("Agent_v2"), None, None);
+    let r = run_validation("asp", Some("Agent_v2"), None, None);
     assert!(codes(&r).contains(&"N3".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
 fn ordinal_suffix_paren_digit_fails_n3() {
     assert!(has_ordinal_suffix("Agent Bot (2)"));
-    let r = run_validation("provider", Some("Agent Bot (2)"), None, None);
+    let r = run_validation("asp", Some("Agent Bot (2)"), None, None);
     assert!(codes(&r).contains(&"N3".to_string()), "got {:?}", codes(&r));
 }
 
@@ -318,7 +318,7 @@ fn hash_suffix_triggers_n3() {
     // "Bot#3": has_ordinal_suffix detects the trailing #3, has_embedded_agent_id detects #3,
     // and has_decorative_symbols detects '#' in DECOR — so N2 + N3 + N8 all fire together.
     assert!(has_ordinal_suffix("Bot#3"));
-    let r = run_validation("provider", Some("Bot#3"), None, None);
+    let r = run_validation("asp", Some("Bot#3"), None, None);
     let c = codes(&r);
     assert!(c.contains(&"N3".to_string()), "expected N3, got {:?}", c);
     assert!(c.contains(&"N2".to_string()), "expected N2 (hash marker_digit_run), got {:?}", c);
@@ -329,7 +329,7 @@ fn hash_suffix_triggers_n3() {
 fn plain_name_does_not_fail_n3() {
     // "Bot Proto" contains no ordinal suffix, no trailing number, no decorative symbols.
     assert!(!has_ordinal_suffix("Bot Proto"));
-    let r = run_validation("provider", Some("Bot Proto"), None, None);
+    let r = run_validation("asp", Some("Bot Proto"), None, None);
     assert!(!codes(&r).contains(&"N3".to_string()), "got {:?}", codes(&r));
 }
 
@@ -350,7 +350,7 @@ fn name_without_ordinal_passes_n3() {
 #[test]
 fn exclamation_fails_n8() {
     assert!(has_decorative_symbols("Bot!"));
-    let r = run_validation("provider", Some("My Bot!"), None, None);
+    let r = run_validation("asp", Some("My Bot!"), None, None);
     assert!(codes(&r).contains(&"N8".to_string()), "got {:?}", codes(&r));
 }
 
@@ -384,14 +384,14 @@ fn standalone_hyphen_fails_n8() {
 
 #[test]
 fn name_with_negative_capability_fails_u3() {
-    let r = run_validation("provider", Some("Does not support"), None, None);
+    let r = run_validation("asp", Some("Does not support"), None, None);
     assert!(codes(&r).contains(&"U3".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
 fn description_with_negative_capability_fails_u3() {
     let r = run_validation(
-        "provider",
+        "asp",
         Some("GoodBot"),
         Some("currently not supported for this chain"),
         None,
@@ -421,7 +421,7 @@ fn a2mcp_empty_fee_fails_u4_and_p1() {
         "",
         Some("https://example.com/mcp"),
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);
     assert!(c.contains(&"U4".to_string()), "expected U4, got {:?}", c);
     assert!(c.contains(&"P1".to_string()), "expected P1, got {:?}", c);
@@ -438,7 +438,7 @@ fn non_numeric_fee_fails_p1() {
         "much_money",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"P1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -452,7 +452,7 @@ fn fee_with_extra_token_fails_p1() {
         "10 USDT extra",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"P1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -467,7 +467,7 @@ fn service_name_same_as_agent_name_fails_s3() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"S3".to_string()), "got {:?}", codes(&r));
 }
 
@@ -480,7 +480,7 @@ fn service_name_case_insensitive_duplicate_fails_s3() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"S3".to_string()), "got {:?}", codes(&r));
 }
 
@@ -493,7 +493,7 @@ fn service_name_different_from_agent_passes_s3() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(!codes(&r).contains(&"S3".to_string()), "got {:?}", codes(&r));
 }
 
@@ -508,7 +508,7 @@ fn service_name_with_usdt_fails_s4() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Other Agent"), None, Some(&service));
+    let r = run_validation("asp", Some("Other Agent"), None, Some(&service));
     assert!(codes(&r).contains(&"S4".to_string()), "got {:?}", codes(&r));
 }
 
@@ -521,7 +521,7 @@ fn service_name_with_free_fails_s4() {
         "0",
         None,
     );
-    let r = run_validation("provider", Some("Other Agent"), None, Some(&service));
+    let r = run_validation("asp", Some("Other Agent"), None, Some(&service));
     assert!(codes(&r).contains(&"S4".to_string()), "got {:?}", codes(&r));
 }
 
@@ -536,7 +536,7 @@ fn service_name_with_test_marker_fails_s6() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Other Agent"), None, Some(&service));
+    let r = run_validation("asp", Some("Other Agent"), None, Some(&service));
     assert!(codes(&r).contains(&"S6".to_string()), "got {:?}", codes(&r));
 }
 
@@ -551,7 +551,7 @@ fn a2a_service_name_mentioning_a2mcp_fails_u5() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Other Agent"), None, Some(&service));
+    let r = run_validation("asp", Some("Other Agent"), None, Some(&service));
     assert!(codes(&r).contains(&"U5".to_string()), "got {:?}", codes(&r));
 }
 
@@ -564,7 +564,7 @@ fn a2mcp_service_name_mentioning_a2a_fails_u5() {
         "5",
         Some("https://example.com/mcp"),
     );
-    let r = run_validation("provider", Some("Other Agent"), None, Some(&service));
+    let r = run_validation("asp", Some("Other Agent"), None, Some(&service));
     assert!(codes(&r).contains(&"U5".to_string()), "got {:?}", codes(&r));
 }
 
@@ -586,7 +586,7 @@ fn invalid_servicetype_fails_t1() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"T1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -599,7 +599,7 @@ fn empty_servicetype_fails_t1() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"T1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -607,7 +607,7 @@ fn empty_servicetype_fails_t1() {
 
 #[test]
 fn invalid_service_json_fails_parse() {
-    let r = run_validation("provider", Some("Agent Name"), None, Some("not json at all"));
+    let r = run_validation("asp", Some("Agent Name"), None, Some("not json at all"));
     assert!(codes(&r).contains(&"PARSE".to_string()), "got {:?}", codes(&r));
     assert!(!r.pass);
 }
@@ -615,7 +615,7 @@ fn invalid_service_json_fails_parse() {
 #[test]
 fn service_json_object_not_array_fails_parse() {
     let r = run_validation(
-        "provider",
+        "asp",
         Some("Agent Name"),
         None,
         Some("{\"name\":\"foo\"}"),
@@ -624,9 +624,9 @@ fn service_json_object_not_array_fails_parse() {
 }
 
 #[test]
-fn requester_ignores_invalid_service_json() {
-    // Requester silently ignores --service regardless of content.
-    let r = run_validation("requester", Some("Buyer Bot"), None, Some("not json"));
+fn user_ignores_invalid_service_json() {
+    // User silently ignores --service regardless of content.
+    let r = run_validation("user", Some("Buyer Bot"), None, Some("not json"));
     assert!(r.pass, "got {:?}", codes(&r));
 }
 
@@ -642,14 +642,14 @@ fn description_single_line_fails_d1() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
 fn description_empty_fails_d1() {
     let service = svc("Doc Summarizer", "", "A2A", "5", None);
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -663,7 +663,7 @@ fn description_two_parts_passes_d1() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -674,7 +674,7 @@ fn description_over_800_width_fails_d2() {
     let part2 = "y".repeat(401);
     let desc = format!("{part1}\n{part2}");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
     // 400-CJK-char part 2 is too long too (800 width) → also D4.
 }
@@ -685,7 +685,7 @@ fn description_cjk_width_counts_double_d2() {
     let part1 = "测".repeat(401);
     let desc = format!("{part1}\n需要提供钱包地址");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
 }
 
@@ -695,7 +695,7 @@ fn description_part1_over_400_width_fails_d3() {
     let p1 = "A".repeat(401);
     let desc = format!("{p1}\nProvide a document.");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D3".to_string()), "got {:?}", codes(&r));
 }
 
@@ -705,7 +705,7 @@ fn description_part2_over_400_width_fails_d4() {
     let p2 = "B".repeat(401);
     let desc = format!("Short summary.\n{p2}");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D4".to_string()), "got {:?}", codes(&r));
 }
 
@@ -713,7 +713,7 @@ fn description_part2_over_400_width_fails_d4() {
 fn description_with_url_fails_d6() {
     let desc = "Short summary.\nhttps://example.com for more";
     let service = svc("Doc Summarizer", desc, "A2A", "5", None);
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D6".to_string()), "got {:?}", codes(&r));
 }
 
@@ -729,7 +729,7 @@ fn service_name_four_chars_fails_s1() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -742,7 +742,7 @@ fn service_name_five_chars_passes_s1() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(!codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -755,7 +755,7 @@ fn service_name_thirty_chars_passes_s1() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(!codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -768,7 +768,7 @@ fn service_name_thirty_one_chars_fails_s1() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -855,12 +855,12 @@ fn hyphen_test_mid_word_does_not_trigger() {
     assert!(!has_test_marker("bot-testing"));
 }
 
-// ─── provider description U3 ──────────────────────────────────────────────
+// ─── asp description U3 ──────────────────────────────────────────────
 
 #[test]
-fn provider_description_with_negative_capability_fails_u3() {
+fn asp_description_with_negative_capability_fails_u3() {
     let r = run_validation(
-        "provider",
+        "asp",
         Some("GoodBot"),
         Some("Does not support trading"),
         None,
@@ -869,10 +869,10 @@ fn provider_description_with_negative_capability_fails_u3() {
 }
 
 #[test]
-fn requester_description_with_negative_capability_also_fails_u3() {
+fn user_description_with_negative_capability_also_fails_u3() {
     // Universal text rules apply to all roles.
     let r = run_validation(
-        "requester",
+        "user",
         Some("Buyer"),
         Some("currently not supported"),
         None,
@@ -894,7 +894,7 @@ fn s3_does_not_trigger_when_agent_name_empty() {
         None,
     );
     // No name provided → agent_name = "" → S3 guard skips.
-    let r = run_validation("provider", None, None, Some(&service));
+    let r = run_validation("asp", None, None, Some(&service));
     assert!(!codes(&r).contains(&"S3".to_string()), "got {:?}", codes(&r));
 }
 
@@ -908,7 +908,7 @@ fn service_name_with_cjk_free_fails_s4() {
         "0",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"S4".to_string()), "got {:?}", codes(&r));
 }
 
@@ -923,7 +923,7 @@ fn empty_service_name_does_not_trigger_s1() {
         "5",
         None,
     );
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(!codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
 }
 
@@ -942,7 +942,7 @@ fn description_over_800_single_line_fails_d1_and_d2() {
     // A single line of 801 chars → D2 (total width > 800) and D1 (only 1 part).
     let long = "x".repeat(801);
     let service = svc("Doc Summarizer", &long, "A2A", "5", None);
-    let r = run_validation("provider", Some("Agent Name"), None, Some(&service));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);
     assert!(c.contains(&"D2".to_string()), "expected D2, got {:?}", c);
     assert!(c.contains(&"D1".to_string()), "expected D1 (single line → no part 2), got {:?}", c);
@@ -952,7 +952,7 @@ fn description_over_800_single_line_fails_d1_and_d2() {
 #[test]
 fn no_ordinal_suffix_integration_fails_n3() {
     assert!(has_ordinal_suffix("BotNo3"));
-    let r = run_validation("provider", Some("BotNo3"), None, None);
+    let r = run_validation("asp", Some("BotNo3"), None, None);
     assert!(codes(&r).contains(&"N3".to_string()), "got {:?}", codes(&r));
 }
 

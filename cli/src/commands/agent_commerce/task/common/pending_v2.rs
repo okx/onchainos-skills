@@ -1295,7 +1295,7 @@ fn strip_label_prefix(label: &str) -> &str {
 ///
 /// Arguments:
 /// - `job_id`: full hex jobId
-/// - `role`: `buyer` | `provider` | `evaluator`
+/// - `role`: `user` | `provider` | `evaluator`
 /// - `agent_id`: numeric agentId (string form)
 /// - `user_content`: the user-facing prompt body (canonical English; LLM localizes
 ///   before pasting). Double-quote (`"`) and backslash safety is handled internally.
@@ -1343,8 +1343,8 @@ pub fn request_command_block(
 /// Map internal role enum to the short user-facing label used in notifications.
 fn role_short_label(role: &str) -> &str {
     match role {
-        "buyer" => "User",
-        "provider" => "ASP",
+        "user" => "User",
+        "asp" => "ASP",
         "evaluator" => "Evaluator",
         other => other,
     }
