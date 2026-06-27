@@ -181,7 +181,7 @@ pub enum AgentCommand {
     /// / 4 disputed by default; pass `--include-terminal` to also list 5-9.
     #[command(name = "active-tasks")]
     ActiveTasks {
-        /// Optional role filter: user | asp | evaluator (also accepts 1/2/3)
+        /// Optional role filter: user | asp | evaluator
         #[arg(long)] role: Option<String>,
         /// Include terminal statuses (complete / close / expired / rejected / admin_stopped)
         #[arg(long = "include-terminal")] include_terminal: bool,
@@ -320,7 +320,7 @@ pub enum AgentCommand {
     /// already scoped to the current account's XLayer ownerAddress.
     #[command(name = "my-agents")]
     MyAgents {
-        /// Optional role filter: user | asp | evaluator (also accepts 1/2/3)
+        /// Optional role filter: user | asp | evaluator
         #[arg(long)] role: Option<String>,
     },
 
@@ -328,7 +328,7 @@ pub enum AgentCommand {
     /// Pure read-only diagnostic — does not modify any state.
     #[command(name = "gate-check")]
     GateCheck {
-        /// Role to check identity for: user | provider | evaluator (also accepts 1/2/3)
+        /// Role to check identity for: user | asp | evaluator
         #[arg(long)] role: String,
     },
 
@@ -714,7 +714,7 @@ pub enum AgentCommand {
     NextAction {
         /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab).
         #[arg(long = "agentId", alias = "agent-id")] agent_id: String,
-        /// Role: `user` / `provider` / `evaluator`, or `auto` to let the CLI
+        /// Role: `user` / `asp` / `evaluator`, or `auto` to let the CLI
         /// resolve the role from `--agentId` (saves a separate `agent profile` round-trip).
         #[arg(long)] role: String,
         /// Full system event envelope as a JSON string — the entire `message` object.

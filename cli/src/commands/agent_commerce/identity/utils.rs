@@ -321,9 +321,11 @@ pub(super) fn role_token_from_value(role: &Value) -> Option<&'static str> {
 }
 
 /// Normalize a role alias to its backend integer code (`"1"` / `"2"` / `"3"`).
-/// Accepts the same inputs as [`normalize_role`] (numbers + names), so callers
-/// that send the role as a code (e.g. the `agent get` listing filter) share one
-/// validation path. Errors on any unrecognized value.
+/// Accepts exactly the inputs [`normalize_role`] accepts — the three canonical
+/// tokens `user` / `asp` / `evaluator` only (case-insensitive; no numeric or
+/// legacy aliases) — so callers that send the role as a code (e.g. the
+/// `agent get` listing filter) share one validation path. Errors on any
+/// unrecognized value.
 pub(super) fn normalize_role_code(role: &str) -> Result<String> {
     match normalize_role(role)?.as_str() {
         "user" => Ok("1".to_string()),
