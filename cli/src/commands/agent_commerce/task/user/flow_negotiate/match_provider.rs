@@ -273,6 +273,7 @@ pub(crate) fn provider_conversation_cli_inner(
         return format!(
             "[provider_conversation] No pending ASPs.\n\n\
              **Action — notify the user:**\n\
+             🌐 **Localize first** — translate the content below into the user's language before sending.\n\
              Content: {content}\n\
              ```bash\n\
              onchainos agent user-notify --content '<localized content>'\n\

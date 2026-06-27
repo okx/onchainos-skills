@@ -27,6 +27,7 @@ pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>, visibility: i64) -> 
      🛑 **This is not an auxiliary event; you MUST notify the user.**\n\n\
      [Your next action — call ONE command only, then END TURN]\n\n\
      {title_query_hint}\
+     🌐 **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\

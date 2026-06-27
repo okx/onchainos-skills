@@ -292,14 +292,13 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
             None => ("<title>", "<description>", "<providerAgentId>", "<tokenAmount>", "<tokenSymbol>"),
         };
 
-        let l10n = super::super::flow::LOCALIZATION_PREFIX;
         return format!(
-            "{l10n}\
-             ✓ job_accepted (escrow). Notify the user:\n\
+            "✓ job_accepted (escrow). Notify the user:\n\
+             🌐 **Localize first** — translate the template below into the user's language before sending.\n\
              ```bash\n\
              onchainos agent user-notify --content '<localized content>'\n\
              ```\n\
-             Template (translate to user's language, keep structure):\n\
+             Template:\n\
              \x20\x20[Job Accepted] Job `{job_id}` has been accepted; execution begins.\n\
              \x20\x20Title: {title}\n\
              \x20\x20Description: {desc}\n\
@@ -311,13 +310,11 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
     }
 
     // ── x402: LLM needs to determine replaySuccess + run complete ──
-    let l10n = super::super::flow::LOCALIZATION_PREFIX;
     let accepted_x402_fail = super::super::content::job_accepted_x402_replay_fail_user_notify(job_id);
     let complete_failed = super::super::content::complete_failed_user_notify(job_id);
 
     format!(
-    "{l10n}\
-     [Current Status] job_accepted (x402 — funds already paid)\n\n\
+    "[Current Status] job_accepted (x402 — funds already paid)\n\n\
      **Step 1 -- Determine replaySuccess from the previous turn's task-402-pay:**\n\
      Look up the task-402-pay output in this sub session context.\n\
      If not found (e.g. context compaction), **default to replaySuccess=true** —\n\
@@ -328,6 +325,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ```\n\
      broadcast ≠ on-chain confirmed. Do NOT notify user or say \"task complete\" here.\n\
      On error → notify user:\n\
+     🌐 **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
@@ -338,6 +336,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      Check whether a `x402_replay_input` pending decision was already pushed in the previous turn:\n\
      ▸ Yes → end turn (user will reply to the pending decision).\n\
      ▸ No → notify user:\n\
+     🌐 **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
@@ -402,10 +401,11 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      ```\n\
      For file type only, add `--file-key \"<fileKey>\"`. Record savedPath from output.\n\n\
      **Step 3 — Notify user**\n\
+     🌐 **Localize first** — translate the template below into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
-     Content:\n\
+     Template:\n\
      \x20\x20[Deliverable Received] {title_field} (`{short_id}`)\n\
      \x20\x20ASP: {provider_field}\n\
      \x20\x20Type: <file|text>\n\
@@ -762,17 +762,16 @@ pub(crate) fn deliverable_received_cli(
         return job_submitted_escrow(&merged_ctx);
     }
 
-    let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
-        "{l10n}\
-         ✓ {deliverable_type} deliverable saved.\n\
+        "✓ {deliverable_type} deliverable saved.\n\
          savedPath: {saved_path}\n\
-         title: {title} | shortId: {short_id} | provider: {provider_id}\n\n\
+         title: {title} | shortId: {short_id} | ASP: {provider_id}\n\n\
          Notify the user:\n\
+         🌐 **Localize first** — translate the template below into the user's language before sending.\n\
          ```bash\n\
          onchainos agent user-notify --content '<localized content>'\n\
          ```\n\
-         Template (translate to user's language, keep structure; path must be full absolute — never abbreviate):\n\
+         Template (path must be full absolute — never abbreviate):\n\
          \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
          \x20\x20ASP: {provider_id}\n\
          \x20\x20Type: {deliverable_type}\n\
@@ -1081,6 +1080,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      ```\n\
      `--agent-id` = ASP being rated; `--creator-id` = user's agent id.\n\n\
      **3b — Notify user (deliverable + rating in one message):**\n\
+     🌐 **Localize first** — translate the composed content into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content '<localized content>'\n\
      ```\n\
@@ -1229,15 +1229,14 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json:
     };
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
 
-    let l10n = super::super::flow::LOCALIZATION_PREFIX;
     format!(
-        "{l10n}\
-         ✓ job_completed — on-chain confirmed. Rate ASP, then notify user in one message.\n\n\
+        "✓ job_completed — on-chain confirmed. Rate ASP, then notify user in one message.\n\n\
          **Step 1 — Rate ASP** (0.00–5.00, comment ≤100 chars):\n\
          ```bash\n\
          onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
          ```\n\n\
          **Step 2 — Notify user** (completion + rating):\n\
+         🌐 **Localize first** — translate the template below into the user's language before sending.\n\
          ```bash\n\
          onchainos agent user-notify --content '<localized content>'\n\
          ```\n\

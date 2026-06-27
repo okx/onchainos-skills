@@ -18,8 +18,8 @@ use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 // Each constant produces byte-for-byte identical output when interpolated via
 // `format!("{CONST}")` — zero prompt-level risk.
 
-pub(super) const LOCALIZATION_PREFIX: &str = "\
-**Localize first** — fill `<...>` placeholders with real values, then rewrite all user-facing content in the user's language before sending. Do NOT add information not present in the template. Do NOT pass the English template verbatim to a non-English user.\n\n";
+// LOCALIZATION_PREFIX removed — each user-notify call site now carries its own
+// inline "Translate …" / "🌐 Localize first" instruction (same pattern as ASP side).
 
 /// Shared switch-asp routing text for user_decision_* handlers.
 /// Covers: user-reject → asp-match → service extraction → set-asp (or set_asp_params decision).
@@ -226,7 +226,6 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>, prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>, message: Option<&serde_json::Value>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
-    let localization_prefix = LOCALIZATION_PREFIX;
     let version_prefix = format!(
         "[Protocol version] When calling `okx-a2a xmtp-send`, the `--payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
     );
@@ -917,7 +916,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
     let result = if use_cli_minimal {
         core
     } else {
-        format!("{localization_prefix}{version_prefix}{core}")
+        format!("{version_prefix}{core}")
     };
     if DEBUG_LOG {
         let preview: String = result.chars().take(200).collect();

@@ -167,7 +167,7 @@ pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
      ```bash\n\
      onchainos agent pending-decisions-v2 list --format json\n\
      ```\n\
-     - The returned `entries` already contains an entry with `job_id={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead send the resume notification via `onchainos agent user-notify --content '<localized {wakeup_resume}>'` and end the turn.\n\
+     - The returned `entries` already contains an entry with `job_id={job_id}` for this role (the prompt was queued before disconnection) → **skip the script's push step**; instead translate the resume notification below into the user's language and send via `onchainos agent user-notify --content '<localized content>'`, then end the turn. Resume notification: {wakeup_resume}\n\
      - No matching entry → run the Step 2 playbook normally; the `pending-decisions-v2 request` call handles the prompt.\n\n\
      **Do not** send the ASP \"I'm back online\" or similar small talk — they do not care about your connection state.\n\
      If the Step 2 playbook is passive (e.g. status=accepted waiting for ASP delivery), just emit a \"task resumed\" notification and end the turn; do not proactively run business actions.\n"
