@@ -64,7 +64,7 @@ pub(crate) fn branch_a2a_cli(
     // previous turn; bail out so we don't double-send.
     match okx_a2a::session_query_exists(job_id, agent_id, dp_id) {
         Ok(true) => return Some(format!(
-            "[Designated ASP route: A2A] Provider {dp_id}\n\n\
+            "[Designated ASP route: A2A] ASP {dp_id}\n\n\
              🛑 Sub session already exists for this job; the first inquiry has already been sent in a prior turn. \
              End this turn immediately — do not create a group, do not send any message, do not run `okx-a2a session status` / `okx-a2a session create` / `okx-a2a xmtp-send`.\n"
         )),
@@ -129,7 +129,7 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
     let ep_for_spm = if has_route { ep.to_string() } else { "<endpoint>".to_string() };
 
     format!("\
-         [Designated ASP route: x402] Provider {dp_id} has an x402 endpoint.\n\
+         [Designated ASP route: x402] ASP {dp_id} has an x402 endpoint.\n\
          [Role] User (User)\n\n\
          🌐 **Localize first** — every `pending-decisions-v2 request` invocation below: translate the `--user-content` body (and the human portion of `--list-label`) to the user's language before running. Keep bash structure, flags, and `--source-event` tokens unchanged.\n\n\
          **DX-Step 1 — validate endpoint + price + budget (single CLI call):**\n\
@@ -249,7 +249,7 @@ pub(crate) fn branch_error(job_id: &str, agent_id: &str, short_id: &str, dp_id: 
     );
 
     format!("\
-         [Designated ASP route: error] Provider {dp_id} encountered a routing error.\n\
+         [Designated ASP route: error] ASP {dp_id} encountered a routing error.\n\
          [Role] User (User)\n\n\
          **Branch by `errorType` from the `designated-route` response above (earlier in this turn):**\n\n\
          - **`errorType == \"endpoint_not_found\"`** -> the persisted endpoint no longer exists in the ASP's service list.\n\

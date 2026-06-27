@@ -407,7 +407,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Content:\n\
      \x20\x20[Deliverable Received] {title_field} (`{short_id}`)\n\
-     \x20\x20Provider: {provider_field}\n\
+     \x20\x20ASP: {provider_field}\n\
      \x20\x20Type: <file|text>\n\
      \x20\x20Saved at: <savedPath>\n\
      \x20\x20Awaiting on-chain submission confirmation; review will follow.\n\n\
@@ -774,7 +774,7 @@ pub(crate) fn deliverable_received_cli(
          ```\n\
          Template (translate to user's language, keep structure; path must be full absolute — never abbreviate):\n\
          \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
-         \x20\x20Provider: {provider_id}\n\
+         \x20\x20ASP: {provider_id}\n\
          \x20\x20Type: {deliverable_type}\n\
          \x20\x20Saved at: [{saved_path}]({saved_path})\n\
          \x20\x20Awaiting on-chain submission confirmation; acceptance review will follow.\n\n\

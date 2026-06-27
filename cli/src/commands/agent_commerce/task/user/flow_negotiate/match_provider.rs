@@ -148,7 +148,7 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
         §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
 
     format!(
-        "[Provider picked: A2A] Provider {dp_id}\n\
+        "[ASP picked: A2A] ASP {dp_id}\n\
          [Role] User (User)\n\n\
          **Step 1 — fetch the ASP's service info:**\n\
          ```bash\n\
@@ -157,7 +157,7 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
          From the result, extract the ASP's **top service**: `serviceId`, `serviceName`, `serviceDescription`, \
          `feeAmount` (→ serviceTokenAmount), `feeToken` (→ serviceTokenAddress), `feeTokenSymbol`.\n\
          If `asp-match` returns no services, notify the user (🌐 localized): \
-         \"Provider {dp_id} has no registered services.\" and end the turn.\n\n\
+         \"ASP {dp_id} has no registered services.\" and end the turn.\n\n\
          **Step 2 — collect serviceParams if needed:**\n\
          If `serviceDescription` is non-empty, ask the user for serviceParams — enqueue:\n\
          ```bash\n\
@@ -180,7 +180,7 @@ fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, 
          onchainos agent set-asp {job_id} --provider-agent-id {dp_id} --service-id <sid> --service-params '<params or empty>' \
          --service-token-address <feeToken> --service-token-amount <feeAmount>\n\
          ```\n\
-         On success → notify user (🌐 localized): \"Provider set to Agent {dp_id}. Waiting for provider to accept.\"\n\n\
+         On success → notify user (🌐 localized): \"ASP set to Agent {dp_id}. Waiting for ASP to accept.\"\n\n\
          **Step 4 — create sub session + SKILL_PREFETCH (only after Step 3 succeeds):**\n\
          ```bash\n\
          okx-a2a session create --job-id {job_id} --my-agent-id {agent_id} --to-agent-id {dp_id} --json\n\
