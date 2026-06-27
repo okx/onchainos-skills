@@ -5,14 +5,32 @@ use clap::Args;
 
 #[derive(Args, Clone, Debug)]
 pub struct CreateArgs {
+    /// Required (all roles). The agent name. Missing / empty → `missing required
+    /// parameter: --name`.
     #[arg(long)]
     pub name: Option<String>,
+    /// Required. Canonical values only: `user` / `asp` / `evaluator` (no
+    /// aliases — map any synonym to one of these three first). Role is fixed at
+    /// create and cannot be changed later (`update` has no `--role`). Missing →
+    /// `missing required parameter`; an unrecognized value → `invalid value for
+    /// --role`.
     #[arg(long)]
     pub role: Option<String>,
+    /// Agent-level description. Required for `asp` (core searchable field;
+    /// missing / empty → `missing required parameter: --description`); optional
+    /// for `user` / `evaluator` (omitted → on-chain `ProfileDescription:""`).
     #[arg(long)]
     pub description: Option<String>,
+    /// Profile-picture URL (upload an image via `agent upload` first, then pass
+    /// the returned URL). Required for `asp` (no avatar → `ASP agents require an
+    /// avatar`); optional for `user` / `evaluator` (omitted → default avatar).
     #[arg(long)]
     pub picture: Option<String>,
+    /// Service list as a JSON array (element shape per the service-element key
+    /// table in references/invariants.md — on create every entry is new, so omit
+    /// the `operation` / `id` keys). Required for `asp`: at least one service
+    /// (empty → `ASP agents require at least one service`); ignored for
+    /// `user` / `evaluator`.
     #[arg(long)]
     pub service: Option<String>,
 }
