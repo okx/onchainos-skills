@@ -147,11 +147,7 @@ pub fn validate_budget_decimals(budget: f64) -> Result<()> {
 // ─── Identity check ─────────────────────────────────────────────────────
 
 pub(crate) async fn resolve_user_agent() -> Result<(String, String)> {
-    // The literal "buyer" here crosses into the identity module via a subprocess
-    // (`onchainos agent get-my-agents --role buyer`); identity's normalize_role
-    // only accepts {1, buyer, requestor, requester} as aliases for the
-    // "requester" canonical. Do NOT change to "user" until identity adds it.
-    let agents = fetch_my_agents_by_role("buyer").await;
+    let agents = fetch_my_agents_by_role("user").await;
 
     let user = agents.iter()
         .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_USER))
