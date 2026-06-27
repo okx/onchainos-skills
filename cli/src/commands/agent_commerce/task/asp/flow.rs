@@ -823,7 +823,7 @@ pub async fn generate_next_action(
                              \x20\x20Task description:    {task_desc}\n\
                              \x20\x20Designated service:  {svc_name} (`{service_id}`)\n\
                              \x20\x20Service description: {svc_desc}\n\
-                             \x20\x20Buyer offer:         {offer_amount} {user_token_symbol}\n\
+                             \x20\x20User Agent offer:    {offer_amount} {user_token_symbol}\n\
                              \x20\x20Price gate ({price_status}): {price_summary}\n\
                              \x20\x20Recommended action:  {price_action}\n\
                              \x20\x20Apply currency:      {user_token_symbol} (User Agent's specified token)\n\n\

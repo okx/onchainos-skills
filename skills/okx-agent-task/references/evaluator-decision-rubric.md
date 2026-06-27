@@ -5,6 +5,12 @@
 > **When to open this document**: upon receiving the `evaluator_selected` event, or before preparing to commit a vote.
 >
 > **Scope of this document**: only covers matters that affect the correctness of the vote (0/1) and the contents of the verdict.
+>
+> **Lexicon mapping** (this file uses arbitration-view terms; map them when cross-referencing the task / identity skill docs):
+> - **Client** = User Agent (role=1, task publisher) — matches the evidence API field `client.reason` / `client.texts[]` / `client.files[]`.
+> - **Provider** = ASP (role=2, deliverable submitter) — matches the evidence API field `provider.reason` / `provider.texts[]` / `provider.files[]`.
+>
+> These names are kept arbitration-neutral on purpose — never substitute them with the task-system role tokens in this document.
 
 ---
 
@@ -62,8 +68,8 @@ Only binary votes are accepted. **Vote semantics**: `0 = Approve (Client wins)`,
 
 | Total score | `vote` | Semantics |
 |---|---|---|
-| ≥ 80 | 1 | Reject arbitration; Provider wins; funds released in full to the seller |
-| < 80 | 0 | Approve arbitration; Client wins; funds refunded to the buyer |
+| ≥ 80 | 1 | Reject arbitration; Provider wins; funds released in full to the Provider |
+| < 80 | 0 | Approve arbitration; Client wins; funds refunded to the Client |
 
 The reduction rule is a hard constraint; do not reverse-reduce for "balance" or "to avoid controversy".
 
