@@ -171,7 +171,7 @@ pub enum DisputeCommand {
     /// In addition to the explicit `--text` / `--file` inputs, the CLI auto-attaches every
     /// entry recorded in `~/.onchainos/deliverables/<role>/<jobId>/manifest.json` as evidence
     /// (User Agent side = the downloaded deliverable + any later attachments; ASP side = the
-    /// submitted deliverable copy). The next-action script must inject `--role user|ASP`
+    /// submitted deliverable copy). The next-action script must inject `--role user|asp`
     /// so the CLI knows which manifest to read.
     Upload {
         job_id: String,

@@ -125,9 +125,9 @@ fn short_job_id(jid: &str) -> String {
 
 fn parse_role_arg(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "user" | "requestor" | "1"    => Some(1),
-        "asp" | "2"                   => Some(2),
-        "evaluator" | "arbiter" | "3" => Some(3),
+        "user"      => Some(1),
+        "asp"       => Some(2),
+        "evaluator" => Some(3),
         _ => None,
     }
 }
@@ -179,7 +179,7 @@ pub async fn handle_active_tasks(
     if let Some(raw) = role_filter {
         let want = parse_role_arg(raw).ok_or_else(|| {
             anyhow::anyhow!(
-                "unrecognized --role value: {raw:?} (expected user / asp / evaluator, or 1 / 2 / 3)"
+                "unrecognized --role value: {raw:?} (expected user / asp / evaluator)"
             )
         })?;
         agents.retain(|a| a.get("role").and_then(|v| v.as_i64()) == Some(want));

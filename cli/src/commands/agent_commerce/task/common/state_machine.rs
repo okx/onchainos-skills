@@ -23,10 +23,10 @@ pub enum Role {
 impl Role {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "user" | "client"             => Some(Role::User),
-            "asp"                         => Some(Role::Asp),
-            "evaluator" | "arbitrator"    => Some(Role::Evaluator),
-            _                             => None,
+            "user"      => Some(Role::User),
+            "asp"       => Some(Role::Asp),
+            "evaluator" => Some(Role::Evaluator),
+            _           => None,
         }
     }
 

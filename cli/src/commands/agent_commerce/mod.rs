@@ -1347,7 +1347,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             // query the task detail API for providerAgentId and persist it.
             // Must run AFTER role resolution so --role auto is correctly resolved.
             if provider.is_none()
-                && matches!(resolved_role.as_str(), "user" | "client")
+                && resolved_role == "user"
                 && event == "job_created"
                 && !task::user::negotiate::has_designated_provider(&job_id)
             {
@@ -1368,7 +1368,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // ── review gate: auto-mark user's review gate ──────────────────────
             // Must run AFTER role resolution so --role auto is correctly resolved.
-            if matches!(resolved_role.as_str(), "user" | "client") {
+            if resolved_role == "user" {
                 if event == "job_submitted" {
                     if let Err(e) = task::common::review_gate::mark_pending(&job_id) {
                         if DEBUG_LOG {
@@ -1420,7 +1420,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         task::asp::flow::generate_next_action(&job_id, &event, &agent_id, title_ref, data.as_deref(), prefetched.as_ref(), parsed_message.as_ref()).await
                     }
                 }
-                "user" | "client" => {
+                "user" => {
                     crate::audit::log(
                         "cli",
                         "user/next_action_received",

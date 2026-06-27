@@ -280,7 +280,7 @@ agent active-tasks [--role <r>] [--include-terminal]
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--role` | No | all | `user` / `asp` / `evaluator` (also accepts `1` / `2` / `3`) |
+| `--role` | No | all | `user` / `asp` / `evaluator` |
 | `--include-terminal` | No | `false` | Include terminal-state tasks (statuses 5-9) |
 
 **Return fields**:

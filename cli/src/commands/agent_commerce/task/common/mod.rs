@@ -457,13 +457,15 @@ pub async fn fetch_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
 }
 
 /// Resolve a `--role` CLI arg into the corresponding `role` numeric value
-/// (1/2/3). Accepts both names (user / provider / requestor / evaluator)
-/// and raw integers ("1" / "2" / "3"). Returns `None` for unrecognized input.
+/// (1/2/3). STRICT: accepts only the three canonical tokens
+/// `user` / `asp` / `evaluator` (case-insensitive, trimmed) — matching
+/// `identity::normalize_role`. Legacy aliases (`requestor` / `arbiter` /
+/// numeric codes) are rejected to keep the CLI surface single-source-of-truth.
 fn parse_role_filter(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "user" | "requestor" | "1" => Some(AGENT_ROLE_USER),
-        "asp" | "2" => Some(AGENT_ROLE_ASP),
-        "evaluator" | "arbiter" | "3" => Some(AGENT_ROLE_EVALUATOR),
+        "user"      => Some(AGENT_ROLE_USER),
+        "asp"       => Some(AGENT_ROLE_ASP),
+        "evaluator" => Some(AGENT_ROLE_EVALUATOR),
         _ => None,
     }
 }
@@ -908,7 +910,7 @@ pub async fn handle_my_agents(role: Option<&str>) -> Result<()> {
         Some(raw) => match parse_role_filter(raw) {
             Some(n) => Some(n),
             None => bail!(
-                "unrecognized --role value: {raw:?} (expected user / asp / evaluator, or 1 / 2 / 3)"
+                "unrecognized --role value: {raw:?} (expected user / asp / evaluator)"
             ),
         },
         None => None,
@@ -929,7 +931,7 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
     let role_num = match parse_role_filter(role_raw) {
         Some(n) => n,
         None => bail!(
-            "unrecognized --role value: {role_raw:?} (expected user / asp / evaluator, or 1 / 2 / 3)"
+            "unrecognized --role value: {role_raw:?} (expected user / asp / evaluator)"
         ),
     };
     let role_label = match role_num {
