@@ -206,7 +206,7 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
              ```\n\n\
              **Step 2** — auto-advance to next ASP (public task auto-consume):\n\
              ```bash\n\
-             onchainos agent next-action --role buyer --agentId {agent_id} \
+             onchainos agent next-action --role user --agentId {agent_id} \
              --message '{{\"event\":\"auto_advance_next\",\"jobId\":\"{job_id}\",\
              \"failedProvider\":\"{provider_agent_id}\",\"reason\":\"negotiate_over_limit\"}}'\n\
              ```\n\

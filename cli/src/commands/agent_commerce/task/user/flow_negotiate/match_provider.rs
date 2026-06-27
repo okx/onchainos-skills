@@ -523,20 +523,20 @@ fn provider_conversation_pick_a2a_auto(ctx: &FlowContext<'_>, asp_id: &str, grou
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
 
-    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load buyer role context. \
+    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load user role context. \
         This prefetch message itself requires no action — but when the NEXT inbound message arrives \
-        (same turn or later turn), you MUST process it normally via buyer-sub-playbook.md \
+        (same turn or later turn), you MUST process it normally via user-sub-playbook.md \
         §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
 
     let auto_advance = format!(
-        "onchainos agent next-action --role buyer --agentId {agent_id} \
+        "onchainos agent next-action --role user --agentId {agent_id} \
          --message '{{\"event\":\"auto_advance_next\",\"jobId\":\"{job_id}\",\
          \"failedProvider\":\"{asp_id}\",\"reason\":\"<REASON>\"}}'"
     );
 
     format!(
-        "[Auto-Consume: A2A] Provider {asp_id}\n\
-         [Role] User (Buyer) — Public Task Auto-Consume\n\n\
+        "[Auto-Consume: A2A] ASP {asp_id}\n\
+         [Role] User — Public Task Auto-Consume\n\n\
          🛑 Execute ALL steps below silently (no user-notify, no decision cards).\n\
          On ANY failure → reject + auto-advance (instructions at each step).\n\n\
          **Step 1 — Fetch ASP service info:**\n\
@@ -616,14 +616,14 @@ fn branch_x402_auto_consume(
     );
 
     let auto_advance = format!(
-        "onchainos agent next-action --role buyer --agentId {agent_id} \
+        "onchainos agent next-action --role user --agentId {agent_id} \
          --message '{{\"event\":\"auto_advance_next\",\"jobId\":\"{job_id}\",\
          \"failedProvider\":\"{asp_id}\",\"reason\":\"<REASON>\"}}'"
     );
 
     format!(
-        "[Auto-Consume: x402] Provider {asp_id} — x402 endpoint\n\
-         [Role] User (Buyer) — Public Task Auto-Consume\n\n\
+        "[Auto-Consume: x402] ASP {asp_id} — x402 endpoint\n\
+         [Role] User — Public Task Auto-Consume\n\n\
          🛑 Execute ALL steps below silently (no user-notify, no decision cards).\n\
          On failure → reject + auto-advance (instructions at each step).\n\n\
          **DX-Step 1 — Validate endpoint + price + budget:**\n\
@@ -657,7 +657,7 @@ fn branch_x402_auto_consume(
          Check `paymentMode` from the `[Pre-fetched task context]` block.\n\n\
          ▸ If paymentMode is already `3` (x402) → skip, call next-action:\n\
          ```bash\n\
-         onchainos agent next-action --role buyer --agentId {agent_id} \
+         onchainos agent next-action --role user --agentId {agent_id} \
          --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
          ```\n\n\
          ▸ Otherwise → push payment mode on-chain:\n\

@@ -139,7 +139,7 @@ pub(crate) fn try_recover_from_temp_file(
             ).ok()?;
             let r = deliverables::handle_save(&deliverables::SaveParams {
                 job_id,
-                role: "buyer",
+                role: "user",
                 file_path: &local_path,
                 deliverable_type: "file",
                 title,
@@ -157,7 +157,7 @@ pub(crate) fn try_recover_from_temp_file(
             std::fs::write(&tmp, text).ok()?;
             let r = deliverables::handle_save(&deliverables::SaveParams {
                 job_id,
-                role: "buyer",
+                role: "user",
                 file_path: &tmp.display().to_string(),
                 deliverable_type: "text",
                 title,
@@ -896,7 +896,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         return format!(
             "[System] job_submitted received but deliverable has not arrived yet (XMTP [intent:deliver] pending).\n\
              If your conversation context contains an `[intent:deliver]` message, Write its raw JSON to `/tmp/a2a_deliver_{job_id}.json` and re-trigger:\n\
-             `onchainos agent next-action --role buyer --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`\n\
+             `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`\n\
              Otherwise, end this turn and wait.\n"
         );
     }
