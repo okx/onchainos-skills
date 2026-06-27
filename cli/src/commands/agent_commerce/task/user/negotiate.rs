@@ -68,7 +68,7 @@ pub struct NegotiateState {
     /// Current page (0-based).
     #[serde(default)]
     pub page: usize,
-    /// Provider agentIds that failed negotiation (kept across pages; cleared by cleanup on accept success).
+    /// ASP agentIds that failed negotiation (kept across pages; cleared by cleanup on accept success).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed_providers: Vec<String>,
 }

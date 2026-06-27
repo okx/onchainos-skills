@@ -163,8 +163,8 @@ pub enum TaskCommand {
         #[arg(long)]
         endpoint: Option<String>,
     },
-    /// Client confirms provider and executes payment (setPaymentMode must be done first).
-    /// Provider, token symbol, and amount are read from the task detail API.
+    /// Client confirms ASP and executes payment (setPaymentMode must be done first).
+    /// ASP, token symbol, and amount are read from the task detail API.
     ConfirmAccept {
         job_id: String,
     },
