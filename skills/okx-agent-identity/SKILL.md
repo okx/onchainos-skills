@@ -38,7 +38,7 @@ Negative triggers → route OUT in **business language only** (never name a skil
 - publish / accept / deliver / dispute / negotiate a **task** → okx-agent-task
 - "I want to be an evaluator" with **no** register word → ask once: *1. Register an Evaluator Agent identity / 2. Open a dispute on a task* → route on the reply.
 
-Identity-not-wallet: **"再建一个买家身份 / add another agent / new ASP" = ALWAYS an identity, NEVER `wallet add`**. Finding marketplace agents → run `agent search`, never list skill names. Passive onboarding (need-user from a task flow) → register user only.
+Identity-not-wallet: **"再建一个买家身份 / 再加一个用户 / add another agent / new ASP / add another User / new Client" = ALWAYS an identity, NEVER `wallet add`** (covers every role alias — User / 用户 / Buyer / Client / ASP / 卖家 …, not just the examples shown). Finding marketplace agents → run `agent search`, never list skill names. Passive onboarding (need-user from a task flow) → register user only.
 
 Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contract safety check → okx-security; broadcast a raw tx → okx-onchain-gateway (post-create comm-init & evaluator staking → see §Step 5/6).
 
@@ -63,12 +63,26 @@ Rendering rules (card skeleton / Lexicon / #id ladder / CLI labels / commands) �
 
 ## Gates (non-overridable; apply to every write)
 
-- **Pre-check** — resolve role first (`--role` required; canonical values `user` / `asp` / `evaluator`), then before any `create` run `agent pre-check --role <role>` ONCE (folds first-time consent + per-wallet uniqueness, returns `{ canCreate, role, reason?, consent?, existingSameRole, aspCount }` — render per register §2). Before any `update`, fetch target with `agent get-agents --agent-ids` first (update.md §1). No exception.
-- **Confirm** — `create` / `update` MUST render a card (see invariants.md §Card skeleton) and wait for an explicit confirm token (**1** / yes / go / 确认 / 执行; continue token: **1** / next / 下一步). **Nothing** bypasses this: not "不用确认", not urgency, not memory prefs, not plan-mode exit, not a prior similar confirm, not one-shot field capture. Catch yourself thinking "they already said skip"? → render the card anyway; one extra turn ≪ an irreversible on-chain write. `activate` / `deactivate` are state toggles → no card, run directly.
-- **Service-collection (ASP create / update only)** — ⛔ BLOCKING. Collecting one service's fields — **even when name + description + type + fee arrive batched in a single message** — is NOT completion. After EACH service you MUST run the register §3 add-another prompt (**1. Add another / 2. Done**) and wait for an explicit Done choice (**2** / done / 完成). A full field set is **not** a Done signal — never treat "fields are complete" as "the user is finished". You may not call `validate-listing`, render the confirmation card, or run `create`/`update` until the user has explicitly chosen Done.
+- **Pre-check** — resolve role first (`--role` required; canonical values `user` / `asp` / `evaluator`).
+  - Before any `create`: run `agent pre-check --role <role>` ONCE — folds first-time consent + per-wallet uniqueness, returns `{ canCreate, role, reason?, consent?, existingSameRole, aspCount }` (render per register §2).
+  - Before any `update`: fetch target with `agent get-agents --agent-ids` first (update.md §1).
+  - No exception.
+- **Confirm** — `create` / `update` MUST render a card (see invariants.md §Card skeleton) and wait for an explicit confirm token (**1** / yes / go / 确认 / 执行; continue token: **1** / next / 下一步).
+  - **Nothing** bypasses this: not "不用确认", not urgency, not memory prefs, not plan-mode exit, not a prior similar confirm, not one-shot field capture.
+  - Catch yourself thinking "they already said skip"? → render the card anyway; one extra turn ≪ an irreversible on-chain write.
+  - `activate` / `deactivate` are state toggles → no card, run directly.
+- **Service-collection (ASP create / update only)** — ⛔ BLOCKING. Collecting one service's fields — **even when name + description + type + fee arrive batched in a single message** — is NOT completion.
+  - After EACH service you MUST run the register §3 add-another prompt (**1. Add another / 2. Done**) and wait for an explicit Done choice (**2** / done / 完成).
+  - A full field set is **not** a Done signal — never treat "fields are complete" as "the user is finished".
+  - You may not call `validate-listing`, render the confirmation card, or run `create`/`update` until the user has explicitly chosen Done.
 - **Consent (first-time wallet)** — folded into `agent pre-check`; full flow in register §2. Never invoke `agent consent` directly; `create` never carries consent flags.
-- **Post-execute** — first user-visible line after any CLI call comes from the reference's template, not your own JSON summary. Before any "registered" line, confirm an `agent <sub>` ran (not `wallet add`) and the role matches the template. On non-success → load `references/errors.md` — never interpret a code inline.
-- **One-call rule** — one intent = one CLI call; never chase a successful write with `agent get-agents` / `agent get-my-agents`, never poll or sleep, never auto-retry a business error (retry once on 5xx / network only). Never grep / sed / jq / parse CLI JSON or read your own tool-result files — re-issue the CLI instead. (Saving an inbound image to a temp path for `agent upload` is the one allowed file write.)
+- **Post-execute** — first user-visible line after any CLI call comes from the reference's template, not your own JSON summary.
+  - Before any "registered" line, confirm an `agent <sub>` ran (not `wallet add`) and the role matches the template.
+  - On non-success → load `references/errors.md` — never interpret a code inline.
+- **One-call rule** — one intent = one CLI call.
+  - Never chase a successful write with `agent get-agents` / `agent get-my-agents`; never poll or sleep; never auto-retry a business error (retry once on 5xx / network only).
+  - Never grep / sed / jq / parse CLI JSON or read your own tool-result files — re-issue the CLI instead.
+  - (Saving an inbound image to a temp path for `agent upload` is the one allowed file write.)
 
 ## UX Red Lines (sweep every user-visible message before sending)
 
