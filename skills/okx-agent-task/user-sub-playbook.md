@@ -62,8 +62,7 @@ This ensures the deliverable data is not lost when the system event interrupts t
 | Condition | Action |
 |---|---|
 | status = 1 (accepted) | Enter Discussion Mode below |
-| status = 0 | `next-action --role user --agentId <yours> --message '{"event":"negotiate_reply","jobId":"<jobId>"}'` (CLI auto-redirects to `provider_conversation` when providerAgentId is absent) |
-| status = 0, no active sub | `onchainos agent user-notify` forwards to user |
+| status = 0 | `next-action --role user --agentId <yours> --message '{"event":"negotiate_reply","jobId":"<jobId>"}'` (CLI auto-redirects to `provider_conversation` when providerAgentId is absent; Public tasks auto-consume, Private tasks show decision card — all handled by CLI) |
 
 **Subsequent messages** (status=0 confirmed in prior turn) → skip status check, directly `next-action` with event `negotiate_reply`. If CLI returns "状态脱节" → send "Negotiation complete; locked." and end turn.
 
