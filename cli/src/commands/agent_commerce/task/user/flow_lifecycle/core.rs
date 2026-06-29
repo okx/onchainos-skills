@@ -892,6 +892,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
             };
             return job_submitted_escrow(&patched_ctx);
         }
+        let _ = deliverables::write_review_marker(job_id);
         return format!(
             "[System] job_submitted received but deliverable has not arrived yet (XMTP [intent:deliver] pending).\n\
              If your conversation context contains an `[intent:deliver]` message, Write its raw JSON to `/tmp/a2a_deliver_{job_id}.json` and re-trigger:\n\
