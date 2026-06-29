@@ -48,7 +48,7 @@ pub use validate::validate_listing;
 
 // Read-side commands.
 pub use queries::{
-    feedback_list, get, get_agents, get_by_address, get_my_agents, search, service_list, top_asps,
+    feedback_list, get, get_agents, get_by_address, get_my_agents, search, service_list,
 };
 
 // Write-side commands.

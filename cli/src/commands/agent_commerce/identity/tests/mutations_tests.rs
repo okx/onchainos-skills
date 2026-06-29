@@ -57,30 +57,23 @@ fn envelope_without_push_omits_agent_key() {
 // ─── parse_agent_info_row ─────────────────────────────────────────────
 
 #[test]
-fn parse_agent_info_row_canonical_string_roles() {
-    for (role, expected) in [("provider", "provider"), ("requester", "requester"), ("evaluator", "evaluator")] {
-        let row = json!({ "role": role, "name": "Agent", "description": "Desc" });
-        let info = parse_agent_info_row(&row).unwrap_or_else(|| panic!("should parse role={role}"));
-        assert_eq!(info.role, expected, "role={role}");
+fn parse_agent_info_row_string_roles_are_none() {
+    // The live backend returns `role` as the integer code 1/2/3; a string role
+    // (canonical, legacy enum, or alias) is not a backend form → does not parse.
+    for role in ["asp", "user", "evaluator", "provider", "requester", "buyer"] {
+        let row = json!({ "role": role, "name": "Agent" });
+        assert!(parse_agent_info_row(&row).is_none(), "string role {role:?} must not parse");
     }
 }
 
 #[test]
 fn parse_agent_info_row_integer_roles() {
-    for (n, expected) in [(1u64, "requester"), (2, "provider"), (3, "evaluator")] {
+    for (n, expected) in [(1u64, "user"), (2, "asp"), (3, "evaluator")] {
         let row = json!({ "role": n, "name": "Agent" });
         let info = parse_agent_info_row(&row)
             .unwrap_or_else(|| panic!("should parse integer role={n}"));
         assert_eq!(info.role, expected);
     }
-}
-
-#[test]
-fn parse_agent_info_row_alias_buyer_maps_to_requester() {
-    // "buyer" is a recognized alias for "requester" in normalize_role.
-    let row = json!({ "role": "buyer", "name": "Buyer" });
-    let info = parse_agent_info_row(&row).expect("buyer alias should parse");
-    assert_eq!(info.role, "requester");
 }
 
 #[test]
@@ -103,7 +96,7 @@ fn parse_agent_info_row_missing_role_returns_none() {
 
 #[test]
 fn parse_agent_info_row_reads_description_field() {
-    let row = json!({ "role": "provider", "name": "A", "description": "Legacy desc" });
+    let row = json!({ "role": 2, "name": "A", "description": "Legacy desc" });
     let info = parse_agent_info_row(&row).unwrap();
     assert_eq!(info.description, "Legacy desc");
 }
@@ -111,7 +104,7 @@ fn parse_agent_info_row_reads_description_field() {
 #[test]
 fn parse_agent_info_row_reads_profile_description_field() {
     // Live backend uses `profileDescription`.
-    let row = json!({ "role": "provider", "name": "A", "profileDescription": "Live desc" });
+    let row = json!({ "role": 2, "name": "A", "profileDescription": "Live desc" });
     let info = parse_agent_info_row(&row).unwrap();
     assert_eq!(info.description, "Live desc");
 }
@@ -120,7 +113,7 @@ fn parse_agent_info_row_reads_profile_description_field() {
 fn parse_agent_info_row_description_wins_over_profile_description() {
     // The code checks ["description", "profileDescription"] in order — first non-empty wins.
     let row = json!({
-        "role": "provider",
+        "role": 2,
         "name": "A",
         "description": "first",
         "profileDescription": "second",
@@ -131,7 +124,7 @@ fn parse_agent_info_row_description_wins_over_profile_description() {
 
 #[test]
 fn parse_agent_info_row_missing_name_and_desc_defaults_to_empty() {
-    let row = json!({ "role": "requester" });
+    let row = json!({ "role": 1 });
     let info = parse_agent_info_row(&row).unwrap();
     assert_eq!(info.name, "");
     assert_eq!(info.description, "");

@@ -1,6 +1,6 @@
 //! Synchronous wrappers around the external `okx-a2a` CLI binary.
 //!
-//! Shared by buyer / provider / evaluator sub-session flows that need to
+//! Shared by user / asp / evaluator sub-session flows that need to
 //! probe session state (sessionKey, jobId, agentId, etc.) without going
 //! through the MCP host's `xmtp_*` tools. All calls are blocking
 //! (std::process::Command); spawn cost is ~100-150ms per invocation, so
@@ -198,7 +198,6 @@ pub fn xmtp_send(job_id: &str, to_agent_id: &str, message: &str) -> Result<()> {
             "--job-id", job_id,
             "--to-agent-id", to_agent_id,
             "--message", message,
-            "--no-wait",
         ])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
@@ -241,7 +240,7 @@ pub fn session_history(job_id: &str, to_agent_id: &str) -> Result<String> {
 
 /// Bridge equivalent: `xmtp_get_pending_list` / `xmtp_pending_list`
 /// `okx-a2a task requests --json` — list pending XMTP task requests (ASPs
-/// trying to reach the buyer). Returns the raw item array as
+/// trying to reach the user). Returns the raw item array as
 /// `Vec<serde_json::Value>` so callers can extract whichever fields they
 /// need (typical: `agentId` / `name` / `serviceName` / `creditScore` /
 /// `completedTaskCount`).
@@ -286,6 +285,27 @@ pub fn task_reject(group_id: &str) -> Result<()> {
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!("okx-a2a task reject exit {status}: {stderr}", status = out.status);
+    }
+    Ok(())
+}
+
+/// Reject all pending ASP messages for a given job (batch drain).
+/// `okx-a2a task reject --job-id <jobId> --json`
+///
+/// Used after successful confirm-accept (R14) to clear remaining ASP
+/// messages in the queue so they don't trigger further provider_conversation
+/// events for an already-accepted task.
+pub fn task_reject_by_job(job_id: &str) -> Result<()> {
+    let out = Command::new("okx-a2a")
+        .args(["task", "reject", "--job-id", job_id, "--json"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!(
+            "okx-a2a task reject --job-id exit {status}: {stderr}",
+            status = out.status
+        );
     }
     Ok(())
 }

@@ -14,11 +14,11 @@ use std::process::Command;
 
 /// Spawn `onchainos agent feedback-submit ...` as a child process.
 ///
-/// Used by `job_completed` escrow fast path after the buyer sub session
+/// Used by `job_completed` escrow fast path after the user sub session
 /// has pre-decided the score / comment via the `cache-rating` prefetch.
 pub fn feedback_submit(
     provider_agent_id: &str,
-    buyer_agent_id: &str,
+    user_agent_id: &str,
     score: &str,
     job_id: &str,
     comment: &str,
@@ -29,7 +29,7 @@ pub fn feedback_submit(
         .args([
             "agent", "feedback-submit",
             "--agent-id", provider_agent_id,
-            "--creator-id", buyer_agent_id,
+            "--creator-id", user_agent_id,
             "--score", score,
             "--task-id", job_id,
             "--description", comment,

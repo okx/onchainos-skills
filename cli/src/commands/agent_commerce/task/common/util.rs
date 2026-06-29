@@ -155,7 +155,7 @@ pub async fn resolve_x402_params(
 
     // Tier 2: negotiate cache.
     let mut cached_provider_agent_id = String::new();
-    match crate::commands::agent_commerce::task::buyer::negotiate::current(job_id) {
+    match crate::commands::agent_commerce::task::user::negotiate::current(job_id) {
         Ok(Some(pi)) => {
             cached_provider_agent_id = pi.provider_agent_id.clone();
             if let Some(svc) = pi.services.first() {
@@ -181,7 +181,7 @@ pub async fn resolve_x402_params(
         }
         Ok(None) => {
             if DEBUG_LOG {
-                eprintln!("⚠ x402: negotiate cache has no current provider, falling back to service-list API");
+                eprintln!("⚠ x402: negotiate cache has no current asp, falling back to service-list API");
             }
         }
         Err(e) => {
@@ -197,7 +197,7 @@ pub async fn resolve_x402_params(
         .map(|s| s.to_string())
         .unwrap_or(cached_provider_agent_id);
     if resolved_id.is_empty() {
-        anyhow::bail!("unable to determine provider agentId: negotiate cache is empty and --provider-agent-id was not provided");
+        anyhow::bail!("unable to determine ASP agentId: negotiate cache is empty and --provider-agent-id was not provided");
     }
     let params = fetch_x402_service_from_identity(&resolved_id).await?;
     Ok(X402ServiceParams {
@@ -249,7 +249,7 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
     // Flatten data[*].list[*] to get individual service entries (same shape as handle_designated_route).
     let data_arr = body["data"].as_array()
         .ok_or_else(|| anyhow::anyhow!(
-            "x402: data array not found in service-list response, provider={provider_agent_id}"
+            "x402: data array not found in service-list response, ASP={provider_agent_id}"
         ))?;
     let services: Vec<&serde_json::Value> = data_arr.iter()
         .flat_map(|item| item["list"].as_array().into_iter().flatten())
@@ -263,7 +263,7 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
             stype.eq_ignore_ascii_case("A2MCP")
         })
         .ok_or_else(|| anyhow::anyhow!(
-            "x402: provider {provider_agent_id} has no A2MCP service"
+            "x402: ASP {provider_agent_id} has no A2MCP service"
         ))?;
 
     let endpoint = svc["endpoint"].as_str()

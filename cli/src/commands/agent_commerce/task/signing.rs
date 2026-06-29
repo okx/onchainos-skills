@@ -16,7 +16,7 @@ use crate::audit;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
-    fetch_agent_by_id, fetch_my_agents, DEBUG_LOG, AGENT_ROLE_BUYER,
+    fetch_agent_by_id, fetch_my_agents, DEBUG_LOG, AGENT_ROLE_USER,
     XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
@@ -58,7 +58,7 @@ pub fn resolve_wallet(
 
 /// Resolve wallet account_id and address by looking up the agent's registered wallet address.
 ///
-/// Used by provider operations where `agent_id` is known but the wallet address isn't.
+/// Used by asp operations where `agent_id` is known but the wallet address isn't.
 /// Fetches `agentWalletAddress` from the agent registry, then resolves to the local wallet account.
 pub async fn resolve_wallet_by_agent_id(agent_id: &str) -> Result<(String, String)> {
     let id = agent_id.trim();
@@ -84,12 +84,12 @@ pub async fn resolve_wallet_by_agent_id(agent_id: &str) -> Result<(String, Strin
     resolve_wallet(None, Some(&wallet_address))
 }
 
-/// Query task detail to resolve the buyer's wallet **and** agentId for signing.
+/// Query task detail to resolve the user's wallet **and** agentId for signing.
 ///
 /// If `explicit_agent_id` is provided (from `--agent-id` CLI flag), it is used
 /// directly for the GET header instead of auto-detecting via subprocess.
 ///
-/// Returns `(account_id, address, buyer_agent_id)`.
+/// Returns `(account_id, address, user_agent_id)`.
 pub async fn resolve_wallet_and_agent_for_task(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -98,7 +98,7 @@ pub async fn resolve_wallet_and_agent_for_task(
     let local_agent_id = if let Some(id) = explicit_agent_id {
         id.to_string()
     } else {
-        resolve_agent_by_role(AGENT_ROLE_BUYER, "buyer", None)
+        resolve_agent_by_role(AGENT_ROLE_USER, "user", None)
             .await
             .map(|(id, _)| id)
             .unwrap_or_default()
@@ -106,17 +106,17 @@ pub async fn resolve_wallet_and_agent_for_task(
 
     let resp = client.get_with_identity(&client.task_path(job_id), &local_agent_id).await?;
 
-    let buyer_address = resp["buyerAgentAddress"]
+    let user_address = resp["buyerAgentAddress"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("task detail missing buyerAgentAddress field"))?;
 
-    let buyer_agent_id = resp["buyerAgentId"]
+    let user_agent_id = resp["buyerAgentId"]
         .as_str()
         .unwrap_or("")
         .to_string();
 
-    let (account_id, address) = resolve_wallet(None, Some(buyer_address))?;
-    Ok((account_id, address, buyer_agent_id))
+    let (account_id, address) = resolve_wallet(None, Some(user_address))?;
+    Ok((account_id, address, user_agent_id))
 }
 
 /// Fetch the current active account's agent list — thin wrapper over
@@ -234,8 +234,8 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
 /// On failure returns Ok(String::new()) without blocking the caller.
 pub async fn resolve_agent_id_by_role(role_code: i64) -> Result<String> {
     let label = match role_code {
-        1 => "buyer",
-        2 => "provider",
+        1 => "user",
+        2 => "asp",
         3 => "evaluator",
         _ => "unknown",
     };

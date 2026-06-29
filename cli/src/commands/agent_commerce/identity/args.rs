@@ -5,14 +5,32 @@ use clap::Args;
 
 #[derive(Args, Clone, Debug)]
 pub struct CreateArgs {
+    /// Required (all roles). The agent name. Missing / empty → `missing required
+    /// parameter: --name`.
     #[arg(long)]
     pub name: Option<String>,
+    /// Required. Canonical values only: `user` / `asp` / `evaluator` (no
+    /// aliases — map any synonym to one of these three first). Role is fixed at
+    /// create and cannot be changed later (`update` has no `--role`). Missing →
+    /// `missing required parameter`; an unrecognized value → `invalid value for
+    /// --role`.
     #[arg(long)]
     pub role: Option<String>,
+    /// Agent-level description. Required for `asp` (core searchable field;
+    /// missing / empty → `missing required parameter: --description`); optional
+    /// for `user` / `evaluator` (omitted → on-chain `ProfileDescription:""`).
     #[arg(long)]
     pub description: Option<String>,
+    /// Profile-picture URL (upload an image via `agent upload` first, then pass
+    /// the returned URL). Required for `asp` (no avatar → `ASP agents require an
+    /// avatar`); optional for `user` / `evaluator` (omitted → default avatar).
     #[arg(long)]
     pub picture: Option<String>,
+    /// Service list as a JSON array (element shape per the service-element key
+    /// table in references/invariants.md — on create every entry is new, so omit
+    /// the `operation` / `id` keys). Required for `asp`: at least one service
+    /// (empty → `ASP agents require at least one service`); ignored for
+    /// `user` / `evaluator`.
     #[arg(long)]
     pub service: Option<String>,
 }
@@ -68,9 +86,9 @@ pub struct UpdateArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct GetMyAgentsArgs {
-    /// Filter the listing to a single role. Accepts requester / provider /
-    /// evaluator (aliases: 1/2/3, plus buyer/requestor → requester). Sent to
-    /// the backend as the integer code `role` (1/2/3).
+    /// Filter the listing to a single role. Accepts the canonical values
+    /// `user` / `asp` / `evaluator` only (no aliases). Sent to the backend as
+    /// the integer code `role` (1/2/3).
     #[arg(long)]
     pub role: Option<String>,
     /// Filter the listing to all agents owned by this address. Sent to the
@@ -114,9 +132,9 @@ pub struct GetArgs {
 #[derive(Args, Clone, Debug)]
 pub struct PrecheckArgs {
     /// Required (same shape as `agent create`: clap-optional, runtime-enforced).
-    /// requester / provider / evaluator (aliases: 1/buyer/requestor → requester,
-    /// 2 → provider, 3 → evaluator). Missing → `missing required parameter`;
-    /// an unrecognized value → `invalid value for --role`.
+    /// Canonical values only: `user` / `asp` / `evaluator` (no aliases — the
+    /// skill maps any synonym to one of these three first). Missing → `missing
+    /// required parameter`; an unrecognized value → `invalid value for --role`.
     #[arg(long)]
     pub role: Option<String>,
     /// The one-time consentKey from a prior `consent` block. PRESENCE means "the
@@ -238,8 +256,8 @@ pub struct XmtpSignArgs {
 /// skill during registration QA.
 #[derive(Args, Clone, Debug)]
 pub struct ValidateListingArgs {
-    /// requester / provider / evaluator (aliases: 1/buyer/requestor →
-    /// requester, 2 → provider, 3 → evaluator). Defaults to provider.
+    /// Canonical values only: `user` / `asp` / `evaluator` (no aliases).
+    /// Defaults to `asp`.
     #[arg(long)]
     pub role: Option<String>,
     #[arg(long)]
@@ -247,7 +265,7 @@ pub struct ValidateListingArgs {
     #[arg(long)]
     pub description: Option<String>,
     /// JSON array string with the same element shape as create/update's
-    /// `--service`. Ignored for non-provider roles.
+    /// `--service`. Ignored for non-ASP roles.
     #[arg(long)]
     pub service: Option<String>,
 }

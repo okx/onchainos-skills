@@ -1295,7 +1295,7 @@ fn strip_label_prefix(label: &str) -> &str {
 ///
 /// Arguments:
 /// - `job_id`: full hex jobId
-/// - `role`: `buyer` | `provider` | `evaluator`
+/// - `role`: `user` | `provider` | `evaluator`
 /// - `agent_id`: numeric agentId (string form)
 /// - `user_content`: the user-facing prompt body (canonical English; LLM localizes
 ///   before pasting). Double-quote (`"`) and backslash safety is handled internally.
@@ -1322,7 +1322,7 @@ pub fn request_command_block(
         None => String::new(),
     };
     format!(
-        "🌐 **Localize first** — translate the `--user-content` and `--list-label` values below to the user's language before running. Keep the bash structure / flags / source-event token unchanged.\n\n\
+        "**Localize first** — translate the `--user-content` and `--list-label` values below to the user's language before running. Keep the bash structure / flags / source-event token unchanged.\n\n\
          ```bash\n\
          onchainos agent pending-decisions-v2 request \\\n\
          \x20\x20--job-id {job_id} --role {role} --agent-id {agent_id}{to_flag} \\\n\
@@ -1343,8 +1343,8 @@ pub fn request_command_block(
 /// Map internal role enum to the short user-facing label used in notifications.
 fn role_short_label(role: &str) -> &str {
     match role {
-        "buyer" => "User",
-        "provider" => "ASP",
+        "user" => "User",
+        "asp" => "ASP",
         "evaluator" => "Evaluator",
         other => other,
     }
@@ -1532,7 +1532,7 @@ fn playbook_render(entry: &PendingEntry) -> String {
     let llm_content = resolve_llm_content_prompt_user(entry);
     format!(
         "Render the selected decision card to the user as your assistant response (text rendering only — do NOT call any tool). End the turn after rendering.\n\n\
-         **User-visible text** (render this verbatim as your assistant response; 🌐 translate per [Localization] rules if the user's language is not English; keep `jobId` / data values intact):\n\
+         **User-visible text** (render this verbatim as your assistant response; translate per [Localization] rules if the user's language is not English; keep `jobId` / data values intact):\n\
          \"\"\"\n{}\"\"\"\n\n\
          **LLM context** (this is for YOUR own routing reasoning — **do NOT show / paraphrase / leak this block to the user**):\n\
          \"\"\"\n{}\n\"\"\"\n\n\
@@ -1615,7 +1615,7 @@ fn playbook_stale_relist(snap: &DisplaySnapshot, reason: &str) -> String {
         list.push_str(&format!("\nReply with a number 1-{} to re-select.\n", snap.items.len()));
     }
     format!(
-        "The previous selection is stale. In your assistant response, render the following list VERBATIM:\n\n\
+        "The previous selection is stale. **Translate the content below into the user's language**, then render as your assistant response:\n\n\
          \"\"\"\n{}\"\"\"\n\n\
          After rendering, end the turn. Do NOT call any tool.\n",
         list

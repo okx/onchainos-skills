@@ -4,8 +4,8 @@
 //! in escrow mode.
 //!
 //! Write points (automatic at the code level, not driven by prompts):
-//! - `next-action --event job_submitted --role buyer` → writes `pending`
-//! - `next-action --event approve_review --role buyer` → `pending` → `approved`
+//! - `next-action --event job_submitted --role user` → writes `pending`
+//! - `next-action --event approve_review --role user` → `pending` → `approved`
 //!
 //! Check points:
 //! - `complete.rs` escrow path: `approved` lets the call through and clears the gate; everything else is rejected.
@@ -51,7 +51,7 @@ pub fn mark_approved(job_id: &str) -> Result<()> {
         Err(_) => {
             bail!(
                 "review-gate file does not exist (job_submitted flow was not executed). \
-                 Please call next-action --role buyer with `event=job_submitted` in --message first."
+                 Please call next-action --role user with `event=job_submitted` in --message first."
             );
         }
     }
@@ -72,7 +72,7 @@ pub fn check_and_consume(job_id: &str) -> Result<()> {
                 "User has not made a review decision yet (review-gate = pending). \
                  Please enqueue a review decision via `onchainos agent pending-decisions-v2 request --source-event job_submitted ...` and wait for the user's reply. \
                  After the user-session relays the reply back as a system envelope (`event:\"user_decision_job_submitted\"`, `message.data:<user verbatim>`), \
-                 call `next-action --role buyer --agentId <agentId> --message '{{\"event\":\"user_decision_job_submitted\",\"jobId\":\"<jobId>\",\"data\":\"<message.data>\"}}'` — \
+                 call `next-action --role user --agentId <agentId> --message '{{\"event\":\"user_decision_job_submitted\",\"jobId\":\"<jobId>\",\"data\":\"<message.data>\"}}'` — \
                  the returned playbook will instruct you to call `next-action` with `event=approve_review` (when the user approves) or `event=reject_review` (when the user rejects) inside `--message`."
             );
         }

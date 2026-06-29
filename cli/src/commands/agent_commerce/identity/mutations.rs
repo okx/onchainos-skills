@@ -33,11 +33,12 @@ use super::signing::{
 };
 use super::socket::{open_identity_subscription, IdentitySubscription};
 use super::utils::{
-    build_precheck, collect_owned_agents, ensure_provider_has_avatar, ensure_provider_has_service,
+    build_precheck, collect_owned_agents, ensure_asp_has_avatar, ensure_asp_has_service,
     identity_ws_url,
     normalize_bcp47, normalize_role, normalize_role_code, normalize_singleton_object,
+    role_token_from_value, role_to_wire,
     parse_agent_unsigned, parse_services, parse_stars_arg, reconstruct_post_url_for_log,
-    redact_token_for_debug, require_non_empty, trim_or_empty, wallet_client,
+    redact_token_for_debug, require_non_empty, trim_or_empty, validate_avatar_image, wallet_client,
 };
 
 const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -109,15 +110,15 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     let session_signature = sign_key_uuid(&key_uuid, &signing_session.signing_seed)?;
     let normalized_role = normalize_role(require_non_empty(args.role.as_deref(), "--role")?)?;
     // Description requirements differ by role:
-    //   - provider: core searchable field → required.
-    //   - requester / evaluator: optional; omitted = on-chain ProfileDescription:"",
+    //   - asp: core searchable field → required.
+    //   - user / evaluator: optional; omitted = on-chain ProfileDescription:"",
     //     rendered by the skill as "(not set)". See references/register.md.
-    let profile_description = if normalized_role == "provider" {
+    let profile_description = if normalized_role == "asp" {
         require_non_empty(args.description.as_deref(), "--description")?.to_string()
     } else {
         trim_or_empty(args.description.as_deref())
     };
-    let card = AgentCard {
+    let mut card = AgentCard {
         role: normalized_role.clone(),
         name: require_non_empty(args.name.as_deref(), "--name")?.to_string(),
         profile_picture: trim_or_empty(args.picture.as_deref()),
@@ -125,8 +126,13 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         communication_address: None,
         services: parse_services(args.service.as_deref())?,
     };
-    ensure_provider_has_service(&card)?;
-    ensure_provider_has_avatar(&card)?;
+    // Role guards run on the internal canonical token (`asp`).
+    ensure_asp_has_service(&card)?;
+    ensure_asp_has_avatar(&card)?;
+    // Backend-accepted enum is unchanged: emit the original role STRING on the
+    // wire (cardJson.role + erc8004Msg.role below) via role_to_wire.
+    let wire_role = role_to_wire(&normalized_role);
+    card.role = wire_role.to_string();
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
         "fromAddr": from_addr,
@@ -169,7 +175,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         .to_string();
     let overlay = build_erc8004_overlay(&[
         ("communicationAddress", &communication_address),
-        ("role", &normalized_role),
+        ("role", wire_role),
         ("keyUuid", &key_uuid),
     ]);
 
@@ -293,10 +299,10 @@ async fn consent_impl(args: &ConsentArgs, ctx: &Context) -> Result<Value> {
 //   3. Fetch the role-scoped agent list (`role` pushed to the backend).
 //      a. same-role agent present → step 4.
 //      b. absent → canCreate:true.
-//   4. Uniqueness rule (build_precheck): requester/evaluator are single per
-//      address, provider is unlimited → final canCreate verdict.
+//   4. Uniqueness rule (build_precheck): user/evaluator are single per
+//      address, asp is unlimited → final canCreate verdict.
 // Always returns `{ canCreate, role, reason?, consent?, existingSameRole,
-// providerCount }`. Decline is skill-side (show terms, user declines → terminate;
+// aspCount }`. Decline is skill-side (show terms, user declines → terminate;
 // user agrees → re-invoke with `--consent-key`).
 
 /// Fetch the agent list for the precheck uniqueness scan. The `agent-list`
@@ -375,9 +381,9 @@ async fn precheck_impl(args: &PrecheckArgs, ctx: &Context) -> Result<Value> {
     // ── Step 2b → Step 3 — wallet has agents (⇒ already consented) ──
     // Fetch the role-scoped slice (`role` pushed to the backend) and let
     // build_precheck (Step 4) apply the per-wallet uniqueness rule:
-    // requester/evaluator are single, provider is unlimited. An empty slice (no
+    // user/evaluator are single, asp is unlimited. An empty slice (no
     // same-role agent) yields canCreate:true; `existingSameRole` carries the
-    // same-role agents the skill lists for the provider update-vs-new choice.
+    // same-role agents the skill lists for the asp update-vs-new choice.
     let role_agents = fetch_wallet_agents(ctx, Some(&role_key)).await?;
     Ok(build_precheck(&role_agents, &from_addr, &role_key))
 }
@@ -505,7 +511,7 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
 ///           runs only at register/update, never here)
 ///
 /// Return-structure contract (all branches):
-///   blockType:1 + reason + agentRole   → not a provider; agent-status never called
+///   blockType:1 + reason + agentRole   → not an ASP; agent-status never called
 ///   activate [+ submitApproval] → normal path
 async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
@@ -516,10 +522,10 @@ async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
         bail!("agent {} not found or not accessible", agent_id);
     }
     if let Some(ref info) = agent_info {
-        if info.role != "provider" {
+        if info.role != "asp" {
             return Ok(json!({
                 "blockType": 1,
-                "reason": "only provider agents can be listed; requester and evaluator roles are not supported.",
+                "reason": "only ASP agents can be listed; user and evaluator roles are not supported.",
                 "agentRole": info.role,
             }));
         }
@@ -620,12 +626,9 @@ async fn fetch_agent_info_by_id(agent_id: &str, ctx: &Context) -> Result<Option<
 /// Extract `AgentInfo` from a single agent row. Returns `None` when the role
 /// field is absent or unrecognized.
 fn parse_agent_info_row(row: &Value) -> Option<AgentInfo> {
-    let raw_role = match row.get("role")? {
-        Value::String(s) if !s.trim().is_empty() => s.trim().to_string(),
-        Value::Number(n) => n.to_string(),
-        _ => return None,
-    };
-    let role = normalize_role(&raw_role).ok()?;
+    // Backend response role → canonical token (accepts integer code / legacy
+    // enum). NOT the strict CLI-input `normalize_role`.
+    let role = role_token_from_value(row.get("role")?)?.to_string();
 
     let name = row
         .get("name")
@@ -740,6 +743,9 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
     let client = wallet_client(ctx)?;
     let file = require_non_empty(args.file.as_deref(), "--file")?;
     let bytes = fs::read(file).with_context(|| format!("failed to read file: {file}"))?;
+    // Content-based type gate (magic bytes, not extension): reject anything
+    // that isn't PNG / JPEG / WebP before it can become a broken avatar URL.
+    let (image_label, image_mime) = validate_avatar_image(&bytes)?;
     if bytes.len() > MAX_UPLOAD_BYTES {
         bail!(
             "file size {} bytes exceeds the 1 MB limit — please downscale the image and retry",
@@ -756,15 +762,19 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
         "/priapi/v5/wallet/agentic/pre-transaction/upload-picture",
     );
     debug_log!(
-        "[agent-identity] upload request: url={} access_token_len={} access_token_prefix={} file_path={} filename={} bytes_len={}",
+        "[agent-identity] upload request: url={} access_token_len={} access_token_prefix={} file_path={} filename={} image_kind={} bytes_len={}",
         upload_url,
         access_token.len(),
         redact_token_for_debug(&access_token),
         file,
         filename,
+        image_label,
         bytes.len(),
     );
-    let part = reqwest::multipart::Part::bytes(bytes).file_name(filename);
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(filename)
+        .mime_str(image_mime)
+        .context("failed to set upload content-type")?;
     let form = reqwest::multipart::Form::new().part("file", part);
     let result = client
         .post_authed_multipart(

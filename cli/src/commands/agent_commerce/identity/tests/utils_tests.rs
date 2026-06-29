@@ -203,14 +203,15 @@ fn normalize_bcp47_rejects_blank_and_malformed_language() {
 
 #[test]
 fn role_label_maps_known_and_omits_unknown() {
-    assert_eq!(role_label("requester"), Some("User Agent"));
-    assert_eq!(role_label("provider"), Some("Agent Service Provider (ASP)"));
-    assert_eq!(role_label("evaluator"), Some("Evaluator Agent"));
-    assert_eq!(
-        role_label(" provider "),
-        Some("Agent Service Provider (ASP)")
-    );
-    assert_eq!(role_label("buyer"), None); // raw alias not a canonical enum
+    // Canonical tokens only (callers always pass a canonical token).
+    assert_eq!(role_label("user"), Some("User"));
+    assert_eq!(role_label("asp"), Some("ASP"));
+    assert_eq!(role_label("evaluator"), Some("Evaluator"));
+    assert_eq!(role_label(" asp "), Some("ASP"));
+    // Legacy enum strings / aliases are NOT labels here.
+    assert_eq!(role_label("requester"), None);
+    assert_eq!(role_label("provider"), None);
+    assert_eq!(role_label("buyer"), None);
     assert_eq!(role_label(""), None);
 }
 
@@ -283,13 +284,13 @@ fn rating_stars_omitted_when_no_reputation() {
 fn enrich_agent_row_adds_all_four_fields() {
     let mut row = json!({
         "agentId": 42,
-        "role": "provider",
+        "role": 2,
         "status": 1,
         "approvalDisplayStatus": 4,
         "reputation": { "score": 92, "count": 18 },
     });
     enrich_agent_row(&mut row);
-    assert_eq!(row["roleLabel"], json!("Agent Service Provider (ASP)"));
+    assert_eq!(row["roleLabel"], json!("ASP"));
     assert_eq!(row["statusLabel"], json!("active"));
     assert_eq!(
         row["approvalLabel"],
@@ -297,7 +298,7 @@ fn enrich_agent_row_adds_all_four_fields() {
     );
     assert_eq!(row["ratingStars"], json!("4.6"));
     // Raw fields untouched.
-    assert_eq!(row["role"], json!("provider"));
+    assert_eq!(row["role"], json!(2));
     assert_eq!(row["status"], json!(1));
     assert_eq!(row["approvalDisplayStatus"], json!(4));
     assert_eq!(row["reputation"], json!({ "score": 92, "count": 18 }));
@@ -307,7 +308,7 @@ fn enrich_agent_row_adds_all_four_fields() {
 fn enrich_agent_row_omits_unknown_and_absent() {
     let mut row = json!({
         "agentId": 7,
-        "role": "buyer",        // alias, not canonical → omit roleLabel
+        "role": 9,               // unknown role code → omit roleLabel
         "status": 99,            // unknown → omit statusLabel
         // no approvalDisplayStatus → omit approvalLabel
         "reputation": { "count": 0 }, // count 0 → omit ratingStars
@@ -322,11 +323,11 @@ fn enrich_agent_row_omits_unknown_and_absent() {
 // ─── agent get row enrichment: `card` array ─────────────────────────
 
 #[test]
-fn build_agent_card_provider_full_ordered_with_services_and_rating() {
+fn build_agent_card_asp_full_ordered_with_services_and_rating() {
     let mut row = json!({
         "agentId": 42,
         "name": "DeFi Analyzer",
-        "role": "provider",
+        "role": 2,
         "status": 1,
         "approvalDisplayStatus": 4,
         "address": "0xabcdef0123456789abcdef0123456789abcd1234",
@@ -351,7 +352,7 @@ fn build_agent_card_provider_full_ordered_with_services_and_rating() {
         vec![
             ("Agent ID", "#42"),
             ("Name", "DeFi Analyzer"),
-            ("Role", "Agent Service Provider (ASP)"),
+            ("Role", "ASP"),
             ("Status", "active"),
             (
                 "Approval status",
@@ -370,20 +371,20 @@ fn build_agent_card_provider_full_ordered_with_services_and_rating() {
         ]
     );
     // Raw fields untouched.
-    assert_eq!(row["role"], json!("provider"));
+    assert_eq!(row["role"], json!(2));
     assert!(row["services"].is_array());
 }
 
 #[test]
-fn build_agent_card_requester_has_no_service_rows_and_description_not_set() {
+fn build_agent_card_user_has_no_service_rows_and_description_not_set() {
     let mut row = json!({
         "agentId": 58,
         "name": "MyBuyer",
-        "role": "requester",
+        "role": 1,
         "status": 1,
         // empty description → "(not set)"; no picture → "default".
         "description": "",
-        // Anomaly: backend returned services for a non-provider — must be dropped.
+        // Anomaly: backend returned services for a non-ASP — must be dropped.
         "services": [
             { "serviceName": "Should Not Appear", "serviceType": "A2MCP", "fee": "1",
               "endpoint": "https://x" },
@@ -415,13 +416,13 @@ fn build_agent_card_requester_has_no_service_rows_and_description_not_set() {
 fn build_agent_card_omits_rating_when_count_zero() {
     let mut row = json!({
         "agentId": 7,
-        "role": "evaluator",
+        "role": 3,
         "reputation": { "score": 80, "count": 0 },
     });
     enrich_agent_row(&mut row);
     let card = row["card"].as_array().expect("card present");
     assert!(card.iter().all(|r| r["label"] != json!("Rating")));
-    // Evaluator is not a provider → no Service rows.
+    // Evaluator is not an ASP → no Service rows.
     assert!(card
         .iter()
         .all(|r| !r["label"].as_str().unwrap().starts_with("Service")));
@@ -431,7 +432,7 @@ fn build_agent_card_omits_rating_when_count_zero() {
 fn build_agent_card_includes_txhash_when_present() {
     let mut row = json!({
         "agentId": 1,
-        "role": "requester",
+        "role": 1,
         "txHash": "0xabcdef0f12",
     });
     enrich_agent_row(&mut row);
@@ -474,11 +475,11 @@ fn cell_pairs(cells: &Value) -> Vec<(String, String)> {
 }
 
 #[test]
-fn build_agent_list_cells_full_provider_row() {
+fn build_agent_list_cells_full_asp_row() {
     let row = json!({
         "agentId": 42,
         "name": "DeFi Analyzer",
-        "role": "provider",
+        "role": 2,
         "status": 1,
         "approvalDisplayStatus": 4,
         "reputation": { "score": 92, "count": 18 },
@@ -491,7 +492,7 @@ fn build_agent_list_cells_full_provider_row() {
             ("Name".to_string(), "DeFi Analyzer".to_string()),
             (
                 "Role".to_string(),
-                "Agent Service Provider (ASP)".to_string()
+                "ASP".to_string()
             ),
             ("Status".to_string(), "active".to_string()),
             (
@@ -508,7 +509,7 @@ fn build_agent_list_cells_count_zero_no_rating_and_truncates_name() {
     let row = json!({
         "agentId": "58",
         "name": "A really long agent name that exceeds twenty",
-        "role": "requester",
+        "role": 1,
         "status": 1,
         "reputation": { "score": 0, "count": 0 },
     });
@@ -521,7 +522,7 @@ fn build_agent_list_cells_count_zero_no_rating_and_truncates_name() {
         pairs[1],
         ("Name".to_string(), "A really long agent …".to_string())
     );
-    assert_eq!(pairs[2].1, "User Agent");
+    assert_eq!(pairs[2].1, "User");
     // count 0 → No rating yet (never `—` in list view).
     assert_eq!(
         pairs[5],
@@ -536,7 +537,7 @@ fn build_agent_list_cells_review_failed_with_reason() {
     let row = json!({
         "agentId": 7,
         "name": "RejectedAgent",
-        "role": "provider",
+        "role": 2,
         "status": 2,
         "approvalDisplayStatus": 5,
         "approvalRemark": "Name violates policy",
@@ -560,7 +561,7 @@ fn build_agent_list_cells_review_failed_empty_remark() {
     let row = json!({
         "agentId": 8,
         "name": "X",
-        "role": "provider",
+        "role": 2,
         "approvalDisplayStatus": 5,
         "approvalRemark": "   ",
     });
@@ -581,7 +582,7 @@ fn add_agent_list_cells_walks_envelope_and_skips_detail_unaffected() {
         "list": [
             {
                 "agentList": [
-                    { "agentId": 1, "name": "A", "role": "requester", "status": 1 },
+                    { "agentId": 1, "name": "A", "role": 1, "status": 1 },
                 ],
             },
         ],
@@ -828,9 +829,9 @@ fn enrich_agent_get_rows_walks_double_layer_envelope() {
             {
                 "ownerAddress": "0xabc",
                 "agentList": [
-                    { "agentId": 1, "role": "requester", "status": 2,
+                    { "agentId": 1, "role": 1, "status": 2,
                       "approvalDisplayStatus": 5 },
-                    { "agentId": 2, "role": "evaluator", "status": 3,
+                    { "agentId": 2, "role": 3, "status": 3,
                       "reputation": { "score": 100, "count": 4 } },
                 ],
             },
@@ -838,11 +839,11 @@ fn enrich_agent_get_rows_walks_double_layer_envelope() {
     });
     enrich_agent_get_rows(&mut env);
     let rows = &env["list"][0]["agentList"];
-    assert_eq!(rows[0]["roleLabel"], json!("User Agent"));
+    assert_eq!(rows[0]["roleLabel"], json!("User"));
     assert_eq!(rows[0]["statusLabel"], json!("not listed"));
     assert_eq!(rows[0]["approvalLabel"], json!("Listing rejected"));
     assert!(rows[0].get("ratingStars").is_none());
-    assert_eq!(rows[1]["roleLabel"], json!("Evaluator Agent"));
+    assert_eq!(rows[1]["roleLabel"], json!("Evaluator"));
     assert_eq!(rows[1]["statusLabel"], json!("unavailable"));
     assert_eq!(rows[1]["ratingStars"], json!("5"));
 }
@@ -857,10 +858,10 @@ fn enrich_agent_get_rows_walks_double_layer_envelope() {
 
 #[test]
 fn enrich_agent_row_accepts_integer_role() {
-    // role=2 (provider) as an integer, the live backend form.
+    // role=2 (asp) as an integer, the live backend form.
     let mut row = json!({ "agentId": 392, "role": 2, "status": 1, "approvalDisplayStatus": 1 });
     enrich_agent_row(&mut row);
-    assert_eq!(row["roleLabel"], json!("Agent Service Provider (ASP)"));
+    assert_eq!(row["roleLabel"], json!("ASP"));
     assert_eq!(row["statusLabel"], json!("active"));
     assert_eq!(row["approvalLabel"], json!("Review not submitted"));
     // role untouched (still the integer).
@@ -880,7 +881,7 @@ fn enrich_agent_get_rows_walks_single_layer_envelope() {
     });
     enrich_agent_get_rows(&mut env);
     let row = &env["list"][0];
-    assert_eq!(row["roleLabel"], json!("Agent Service Provider (ASP)"));
+    assert_eq!(row["roleLabel"], json!("ASP"));
     assert_eq!(row["statusLabel"], json!("active"));
     assert_eq!(row["approvalLabel"], json!("Review not submitted"));
     // `card` was assembled too.
@@ -906,7 +907,7 @@ fn build_agent_card_reads_live_backend_field_names() {
         .iter()
         .map(|r| (r["label"].as_str().unwrap(), r["value"].as_str().unwrap()))
         .collect();
-    assert!(pairs.contains(&("Role", "Agent Service Provider (ASP)")));
+    assert!(pairs.contains(&("Role", "ASP")));
     assert!(pairs.contains(&("Status", "active")));
     assert!(pairs.contains(&("Address", "0x30c1…59d7")));
     assert!(pairs.contains(&("Description", "On-chain data analysis.")));
@@ -966,43 +967,43 @@ fn add_feedback_list_cells_walks_list_key() {
 // ─── build_precheck (registration §2 uniqueness) ─────────────────────
 
 #[test]
-fn precheck_requester_exists_blocks_create() {
+fn precheck_user_exists_blocks_create() {
     let data = json!({
         "list": [
             { "agentId": 10, "name": "My Buyer", "role": 1, "ownerAddress": "0xSIGNER" },
             { "agentId": 11, "name": "My ASP",   "role": 2, "ownerAddress": "0xSIGNER" },
         ],
     });
-    let r = build_precheck(&data, "0xsigner", "requester");
+    let r = build_precheck(&data, "0xsigner", "user");
     assert_eq!(r["canCreate"], json!(false));
     assert_eq!(r["uniqueness"], json!("single"));
     assert_eq!(r["existingSameRole"][0]["agentId"], json!("10"));
-    assert_eq!(r["existingSameRole"][0]["roleLabel"], json!("User Agent"));
+    assert_eq!(r["existingSameRole"][0]["roleLabel"], json!("User"));
     assert!(r.get("knownAgentIds").is_none());
 }
 
 #[test]
-fn precheck_requester_absent_allows_create() {
+fn precheck_user_absent_allows_create() {
     let data = json!({ "list": [
         { "agentId": 11, "name": "My ASP", "role": 2, "ownerAddress": "0xSIGNER" },
     ]});
-    let r = build_precheck(&data, "0xSIGNER", "requester");
+    let r = build_precheck(&data, "0xSIGNER", "user");
     assert_eq!(r["canCreate"], json!(true));
     assert_eq!(r["existingSameRole"].as_array().unwrap().len(), 0);
     assert!(r.get("knownAgentIds").is_none());
 }
 
 #[test]
-fn precheck_provider_always_creatable_and_counts() {
+fn precheck_asp_always_creatable_and_counts() {
     let data = json!({ "list": [
         { "agentId": 11, "name": "ASP One", "role": 2, "ownerAddress": "0xSIGNER" },
         { "agentId": 12, "name": "ASP Two", "role": 2, "ownerAddress": "0xSIGNER" },
         { "agentId": 10, "name": "Buyer",   "role": 1, "ownerAddress": "0xSIGNER" },
     ]});
-    let r = build_precheck(&data, "0xSIGNER", "provider");
+    let r = build_precheck(&data, "0xSIGNER", "asp");
     assert_eq!(r["canCreate"], json!(true));
     assert_eq!(r["uniqueness"], json!("multiple"));
-    assert_eq!(r["providerCount"], json!(2));
+    assert_eq!(r["aspCount"], json!(2));
     assert_eq!(r["existingSameRole"].as_array().unwrap().len(), 2);
 }
 
@@ -1142,29 +1143,25 @@ fn reconstruct_get_url_respects_base_url_override() {
 
 #[test]
 fn normalize_role_canonical_strings() {
-    assert_eq!(normalize_role("requester").unwrap(), "requester");
-    assert_eq!(normalize_role("provider").unwrap(),  "provider");
+    assert_eq!(normalize_role("user").unwrap(), "user");
+    assert_eq!(normalize_role("asp").unwrap(),  "asp");
     assert_eq!(normalize_role("evaluator").unwrap(), "evaluator");
 }
 
 #[test]
-fn normalize_role_numeric_aliases() {
-    assert_eq!(normalize_role("1").unwrap(), "requester");
-    assert_eq!(normalize_role("2").unwrap(), "provider");
-    assert_eq!(normalize_role("3").unwrap(), "evaluator");
-}
-
-#[test]
-fn normalize_role_string_aliases() {
-    assert_eq!(normalize_role("buyer").unwrap(),     "requester");
-    assert_eq!(normalize_role("requestor").unwrap(), "requester");
-}
-
-#[test]
 fn normalize_role_is_case_insensitive_and_trims_whitespace() {
-    assert_eq!(normalize_role("PROVIDER").unwrap(),        "provider");
-    assert_eq!(normalize_role("Requester").unwrap(),       "requester");
-    assert_eq!(normalize_role("  evaluator  ").unwrap(),   "evaluator");
+    assert_eq!(normalize_role("ASP").unwrap(),             "asp");
+    assert_eq!(normalize_role("User").unwrap(),            "user");
+    assert_eq!(normalize_role("  Evaluator  ").unwrap(),   "evaluator");
+}
+
+#[test]
+fn normalize_role_rejects_legacy_and_numeric_aliases() {
+    // STRICT CLI input: legacy/foreign aliases + numeric codes are NOT accepted.
+    // The skill maps any synonym the user typed to user/asp/evaluator first.
+    for bad in ["buyer", "requestor", "requester", "provider", "1", "2", "3"] {
+        assert!(normalize_role(bad).is_err(), "{bad} must be rejected by strict normalize_role");
+    }
 }
 
 #[test]
@@ -1173,6 +1170,51 @@ fn normalize_role_unknown_input_is_err() {
     assert!(normalize_role("admin").is_err());
     assert!(normalize_role("4").is_err());
     assert!(normalize_role("").is_err());
+}
+
+// ─── role_token_from_value (backend-response role parser) ──────────────
+// Reads ONLY the backend integer code 1/2/3 (the live agent-list/batch-list
+// form). Any non-integer form (string token/legacy enum/alias, or unknown
+// code) → None.
+
+#[test]
+fn role_token_from_value_reads_integer_code() {
+    // integer code (the live backend form)
+    assert_eq!(role_token_from_value(&json!(1)), Some("user"));
+    assert_eq!(role_token_from_value(&json!(2)), Some("asp"));
+    assert_eq!(role_token_from_value(&json!(3)), Some("evaluator"));
+    // strings (canonical, legacy enum, numeric-string, alias) are NOT backend
+    // forms → None
+    for s in ["user", "asp", "evaluator", "requester", "provider", "buyer", "2"] {
+        assert_eq!(role_token_from_value(&json!(s)), None, "string {s:?} must not parse");
+    }
+    // unknown code / null → None
+    assert_eq!(role_token_from_value(&json!(9)), None);
+    assert_eq!(role_token_from_value(&json!(null)), None);
+}
+
+// ─── role_to_wire (create cardJson.role / erc8004Msg.role) ─────────────
+// The CLI-side rename is internal + display only — the backend-accepted
+// create enum is UNCHANGED, so the canonical token maps back to the original
+// role string on the wire.
+
+#[test]
+fn role_to_wire_maps_back_to_original_backend_strings() {
+    assert_eq!(role_to_wire("user"), "requester");
+    assert_eq!(role_to_wire("asp"), "provider");
+    assert_eq!(role_to_wire("evaluator"), "evaluator");
+}
+
+#[test]
+fn normalize_role_code_maps_canonical_to_backend_codes() {
+    // The list/filter enum (1/2/3) is unchanged by the rename; the canonical
+    // tokens map to the same codes the backend has always used.
+    assert_eq!(normalize_role_code("user").unwrap(), "1");
+    assert_eq!(normalize_role_code("asp").unwrap(), "2");
+    assert_eq!(normalize_role_code("evaluator").unwrap(), "3");
+    // STRICT input: legacy aliases are now rejected (skill passes canonical).
+    assert!(normalize_role_code("requester").is_err());
+    assert!(normalize_role_code("provider").is_err());
 }
 
 // ─── require_non_empty ────────────────────────────────────────────────
@@ -1360,7 +1402,7 @@ fn parse_services_no_operation_ok_register_path() {
     assert!(svcs[0].id.is_none());
 }
 
-// ─── ensure_provider_has_service ──────────────────────────────────────
+// ─── ensure_asp_has_service ──────────────────────────────────────
 
 fn make_a2a_service() -> AgentService {
     AgentService {
@@ -1386,30 +1428,30 @@ fn make_card(role: &str, services: Vec<AgentService>) -> AgentCard {
 }
 
 #[test]
-fn ensure_provider_has_service_ok_when_services_present() {
-    let card = make_card("provider", vec![make_a2a_service()]);
-    assert!(ensure_provider_has_service(&card).is_ok());
+fn ensure_asp_has_service_ok_when_services_present() {
+    let card = make_card("asp", vec![make_a2a_service()]);
+    assert!(ensure_asp_has_service(&card).is_ok());
 }
 
 #[test]
-fn ensure_provider_has_service_err_when_provider_has_no_services() {
-    let card = make_card("provider", vec![]);
-    assert!(ensure_provider_has_service(&card).is_err());
+fn ensure_asp_has_service_err_when_asp_has_no_services() {
+    let card = make_card("asp", vec![]);
+    assert!(ensure_asp_has_service(&card).is_err());
 }
 
 #[test]
-fn ensure_provider_has_service_ok_for_requester_without_services() {
-    let card = make_card("requester", vec![]);
-    assert!(ensure_provider_has_service(&card).is_ok());
+fn ensure_asp_has_service_ok_for_user_without_services() {
+    let card = make_card("user", vec![]);
+    assert!(ensure_asp_has_service(&card).is_ok());
 }
 
 #[test]
-fn ensure_provider_has_service_ok_for_evaluator_without_services() {
+fn ensure_asp_has_service_ok_for_evaluator_without_services() {
     let card = make_card("evaluator", vec![]);
-    assert!(ensure_provider_has_service(&card).is_ok());
+    assert!(ensure_asp_has_service(&card).is_ok());
 }
 
-// ─── ensure_provider_has_avatar ───────────────────────────────────────
+// ─── ensure_asp_has_avatar ───────────────────────────────────────
 
 fn make_card_with_avatar(role: &str, picture: &str) -> AgentCard {
     let mut card = make_card(role, vec![]);
@@ -1418,33 +1460,33 @@ fn make_card_with_avatar(role: &str, picture: &str) -> AgentCard {
 }
 
 #[test]
-fn ensure_provider_has_avatar_ok_when_picture_present() {
-    let card = make_card_with_avatar("provider", "https://cdn.okx.com/avatar/x.png");
-    assert!(ensure_provider_has_avatar(&card).is_ok());
+fn ensure_asp_has_avatar_ok_when_picture_present() {
+    let card = make_card_with_avatar("asp", "https://cdn.okx.com/avatar/x.png");
+    assert!(ensure_asp_has_avatar(&card).is_ok());
 }
 
 #[test]
-fn ensure_provider_has_avatar_err_when_provider_picture_empty() {
-    let card = make_card_with_avatar("provider", "");
-    assert!(ensure_provider_has_avatar(&card).is_err());
+fn ensure_asp_has_avatar_err_when_asp_picture_empty() {
+    let card = make_card_with_avatar("asp", "");
+    assert!(ensure_asp_has_avatar(&card).is_err());
 }
 
 #[test]
-fn ensure_provider_has_avatar_err_when_provider_picture_blank() {
-    let card = make_card_with_avatar("provider", "   ");
-    assert!(ensure_provider_has_avatar(&card).is_err());
+fn ensure_asp_has_avatar_err_when_asp_picture_blank() {
+    let card = make_card_with_avatar("asp", "   ");
+    assert!(ensure_asp_has_avatar(&card).is_err());
 }
 
 #[test]
-fn ensure_provider_has_avatar_ok_for_requester_without_picture() {
-    let card = make_card_with_avatar("requester", "");
-    assert!(ensure_provider_has_avatar(&card).is_ok());
+fn ensure_asp_has_avatar_ok_for_user_without_picture() {
+    let card = make_card_with_avatar("user", "");
+    assert!(ensure_asp_has_avatar(&card).is_ok());
 }
 
 #[test]
-fn ensure_provider_has_avatar_ok_for_evaluator_without_picture() {
+fn ensure_asp_has_avatar_ok_for_evaluator_without_picture() {
     let card = make_card_with_avatar("evaluator", "");
-    assert!(ensure_provider_has_avatar(&card).is_ok());
+    assert!(ensure_asp_has_avatar(&card).is_ok());
 }
 
 // ─── parse_u32_arg ────────────────────────────────────────────────────
@@ -1709,15 +1751,15 @@ fn identity_ws_url_returns_override_when_env_set() {
 
 #[test]
 fn precheck_can_create_false_includes_reason_message() {
-    // A requester already exists under the same wallet → canCreate=false.
+    // A user already exists under the same wallet → canCreate=false.
     let data = json!({ "list": [
         { "agentId": 10, "name": "Existing Buyer", "role": 1, "ownerAddress": "0xADDR" },
     ]});
-    let r = build_precheck(&data, "0xADDR", "requester");
+    let r = build_precheck(&data, "0xADDR", "user");
     assert_eq!(r["canCreate"], json!(false));
     let reason = r["reason"].as_str().expect("reason must be a string when canCreate=false");
     assert!(
-        reason.contains("User Agent"),
+        reason.contains("User"),
         "reason should mention the role label; got: {reason}"
     );
     assert!(
@@ -1729,7 +1771,7 @@ fn precheck_can_create_false_includes_reason_message() {
 #[test]
 fn precheck_can_create_true_has_no_reason_field() {
     let data = json!({ "list": [] });
-    let r = build_precheck(&data, "0xADDR", "requester");
+    let r = build_precheck(&data, "0xADDR", "user");
     assert_eq!(r["canCreate"], json!(true));
     assert!(r.get("reason").is_none(), "reason must be absent when canCreate=true");
 }
@@ -1768,4 +1810,55 @@ fn normalize_service_a2mcp_whitespace_only_fee_is_err() {
     assert!(result.is_err(), "A2MCP with whitespace-only fee must be an error after trim");
     let msg = result.unwrap_err().to_string();
     assert!(msg.contains("fee"), "error message should mention 'fee'; got: {msg}");
+}
+
+// ─── detect_image_kind / validate_avatar_image ───────────────────────
+
+#[test]
+fn detect_image_kind_recognizes_png() {
+    let png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01];
+    assert_eq!(detect_image_kind(&png), Some(("PNG", "image/png")));
+}
+
+#[test]
+fn detect_image_kind_recognizes_jpeg() {
+    let jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+    assert_eq!(detect_image_kind(&jpeg), Some(("JPEG", "image/jpeg")));
+}
+
+#[test]
+fn detect_image_kind_recognizes_webp() {
+    // "RIFF" <4 bytes size> "WEBP"
+    let webp = *b"RIFF\x24\x00\x00\x00WEBPVP8 ";
+    assert_eq!(detect_image_kind(&webp), Some(("WebP", "image/webp")));
+}
+
+#[test]
+fn detect_image_kind_rejects_riff_that_is_not_webp() {
+    // "RIFF" container but WAVE, not WEBP — must not be accepted as an image.
+    let wav = *b"RIFF\x24\x00\x00\x00WAVEfmt ";
+    assert_eq!(detect_image_kind(&wav), None);
+}
+
+#[test]
+fn detect_image_kind_rejects_non_image_and_short_input() {
+    assert_eq!(detect_image_kind(b"%PDF-1.4"), None); // PDF
+    assert_eq!(detect_image_kind(b"GIF89a"), None); // GIF is not in the accepted set
+    assert_eq!(detect_image_kind(b"hello text"), None);
+    assert_eq!(detect_image_kind(&[]), None); // empty
+    assert_eq!(detect_image_kind(&[0x89, 0x50]), None); // truncated PNG signature
+}
+
+#[test]
+fn validate_avatar_image_errors_with_supported_types() {
+    let err = validate_avatar_image(b"%PDF-1.4").unwrap_err().to_string();
+    assert!(err.contains("PNG"), "message should list PNG; got: {err}");
+    assert!(err.contains("JPEG"), "message should list JPEG; got: {err}");
+    assert!(err.contains("WebP"), "message should list WebP; got: {err}");
+}
+
+#[test]
+fn validate_avatar_image_accepts_supported() {
+    let png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    assert_eq!(validate_avatar_image(&png).unwrap(), ("PNG", "image/png"));
 }

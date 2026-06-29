@@ -2,7 +2,7 @@
 //!
 //! Core command: `context`
 //! Given a job_id + role, pull task details from the backend and generate a structured
-//! natural-language context for the LLM (openclaw buyer/provider/evaluator AI) to understand
+//! natural-language context for the LLM (openclaw user/asp/evaluator AI) to understand
 //! the current task state.
 
 use anyhow::{bail, Result};
@@ -45,10 +45,10 @@ pub const XLAYER_CHAIN_NAME: &str = "okb";
 
 // ─── Agent role constants (the identity module's API `role` field) ──────
 
-/// Buyer / requestor.
-pub const AGENT_ROLE_BUYER: i64 = 1;
-/// Seller / provider.
-pub const AGENT_ROLE_PROVIDER: i64 = 2;
+/// User / requestor.
+pub const AGENT_ROLE_USER: i64 = 1;
+/// ASP.
+pub const AGENT_ROLE_ASP: i64 = 2;
 /// Evaluator (arbiter).
 pub const AGENT_ROLE_EVALUATOR: i64 = 3;
 
@@ -66,18 +66,18 @@ pub enum CommonCommand {
     /// Query task context and print a structured natural-language description for the LLM.
     ///
     /// Examples:
-    ///   onchainos agent context task-001 --role buyer --agent-id 426
-    ///   onchainos agent context task-001 --role provider --agent-id 558
+    ///   onchainos agent context task-001 --role user --agent-id 426
+    ///   onchainos agent context task-001 --role asp --agent-id 558
     Context {
         /// Task ID (jobId), e.g. task-001 or 0x1a2b...
         job_id: String,
 
-        /// Caller role: buyer | provider | evaluator.
-        #[arg(long, default_value = "buyer")]
+        /// Caller role: user | asp | evaluator.
+        #[arg(long, default_value = "user")]
         role: String,
 
         /// Caller AgentID (**required**). The beta backend requires a non-empty agenticId header;
-        /// a wallet may have multiple provider agents and the caller must pick one explicitly —
+        /// a wallet may have multiple asp agents and the caller must pick one explicitly —
         /// the CLI does not auto-select. Wallet / communication addresses are looked up via
         /// `agent get-agents --agent-ids <agent_id>` automatically and need not be passed via the CLI.
         #[arg(long)]
@@ -111,8 +111,8 @@ struct TaskDetail {
     category_codes: Option<Vec<String>>,
     chain_id: Option<i32>,
     min_credit_score: Option<f64>,
-    buyer_agent_address: Option<String>,
-    buyer_agent_id: Option<String>,
+    user_agent_address: Option<String>,
+    user_agent_id: Option<String>,
     provider_agent_address: Option<String>,
     provider_agent_id: Option<String>,
     group_id: Option<String>,
@@ -146,7 +146,7 @@ pub struct PreFetchedTaskContext {
     pub payment_mode: Option<i64>,
     pub max_budget: Option<String>,
     pub provider_agent_id: Option<String>,
-    pub buyer_agent_id: Option<String>,
+    pub user_agent_id: Option<String>,
     pub visibility: Option<i64>,
     pub status: Option<i64>,
     pub deliverable: Option<PreFetchedDeliverable>,
@@ -154,7 +154,7 @@ pub struct PreFetchedTaskContext {
     pub service_token_address: Option<String>,
     pub service_token_amount: Option<String>,
     pub service_params: Option<String>,
-    pub buyer_agent_address: Option<String>,
+    pub user_agent_address: Option<String>,
     pub token_address: Option<String>,
 }
 
@@ -169,7 +169,7 @@ impl PreFetchedTaskContext {
             payment_mode: v["paymentMode"].as_i64(),
             max_budget: v["paymentMostTokenAmount"].as_str().map(String::from),
             provider_agent_id: v["providerAgentId"].as_str().map(String::from),
-            buyer_agent_id: v["buyerAgentId"].as_str().map(String::from),
+            user_agent_id: v["buyerAgentId"].as_str().map(String::from),
             visibility: v["visibility"].as_i64(),
             status: v["status"].as_i64(),
             deliverable: None,
@@ -177,7 +177,7 @@ impl PreFetchedTaskContext {
             service_token_address: v["serviceTokenAddress"].as_str().map(String::from),
             service_token_amount: v["serviceTokenAmount"].as_str().map(String::from),
             service_params: v["serviceParams"].as_str().map(String::from),
-            buyer_agent_address: v["buyerAgentAddress"].as_str().map(String::from),
+            user_agent_address: v["buyerAgentAddress"].as_str().map(String::from),
             token_address: v["tokenAddress"].as_str().map(String::from),
         }
     }
@@ -192,7 +192,7 @@ impl PreFetchedTaskContext {
         };
         let max_b = self.max_budget.as_deref().unwrap_or("not set");
         let prov = self.provider_agent_id.as_deref().unwrap_or("none");
-        let buyer = self.buyer_agent_id.as_deref().unwrap_or("none");
+        let user = self.user_agent_id.as_deref().unwrap_or("none");
         let desc_line = if self.description.is_empty() {
             String::new()
         } else {
@@ -214,7 +214,7 @@ impl PreFetchedTaskContext {
              \x20\x20title: {title}\n\
              {desc_line}\
              \x20\x20tokenSymbol: {sym} | tokenAmount: {amt} | paymentMode: {pm}\n\
-             \x20\x20maxBudget (paymentMostTokenAmount): {max_b} | providerAgentId: {prov} | buyerAgentId: {buyer}\n\
+             \x20\x20maxBudget (paymentMostTokenAmount): {max_b} | providerAgentId: {prov} | buyerAgentId: {user}\n\
              {sp_line}\
              {deliv_line}",
             title = self.title,
@@ -457,13 +457,15 @@ pub async fn fetch_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
 }
 
 /// Resolve a `--role` CLI arg into the corresponding `role` numeric value
-/// (1/2/3). Accepts both names (buyer / provider / requestor / evaluator)
-/// and raw integers ("1" / "2" / "3"). Returns `None` for unrecognized input.
+/// (1/2/3). STRICT: accepts only the three canonical tokens
+/// `user` / `asp` / `evaluator` (case-insensitive, trimmed) — matching
+/// `identity::normalize_role`. Legacy aliases (`requestor` / `arbiter` /
+/// numeric codes) are rejected to keep the CLI surface single-source-of-truth.
 fn parse_role_filter(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "buyer" | "requestor" | "1" => Some(AGENT_ROLE_BUYER),
-        "provider" | "seller" | "2" => Some(AGENT_ROLE_PROVIDER),
-        "evaluator" | "arbiter" | "3" => Some(AGENT_ROLE_EVALUATOR),
+        "user"      => Some(AGENT_ROLE_USER),
+        "asp"       => Some(AGENT_ROLE_ASP),
+        "evaluator" => Some(AGENT_ROLE_EVALUATOR),
         _ => None,
     }
 }
@@ -525,7 +527,7 @@ pub(crate) async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Val
 /// single entry matching `service_id`. Returns:
 /// - `Ok(Some(entry))` — service-list fetched, entry found
 /// - `Ok(None)`         — service-list fetched, but no entry has this serviceId
-///                        (e.g. buyer designated a stale / unregistered serviceId)
+///                        (e.g. User Agent designated a stale / unregistered serviceId)
 /// - `Err(e)`           — service-list fetch failed entirely (subprocess died,
 ///                        backend rejected, JSON parse failed). Callers usually
 ///                        want to treat this as "no match" — use `.ok().flatten()`.
@@ -541,7 +543,7 @@ pub(crate) async fn find_service(
     }
     let data = spawn_service_list(agent_id).await?;
     // service-list returns the service ID under the `id` key as a JSON number
-    // (e.g. `"id": 1270`), while the buyer's designation envelope sends
+    // (e.g. `"id": 1270`), while the user's designation envelope sends
     // `"serviceId"` as a string. Try both keys, coerce number↔string for
     // comparison.
     let matched = data
@@ -578,7 +580,7 @@ pub(crate) async fn find_service(
 /// ```
 /// In-process variant of the `designated-route` query — returns the resolved
 /// route JSON (the same shape that `handle_designated_route` would print to
-/// stdout). Used by buyer CLI flows to inline the routing query without an
+/// stdout). Used by user CLI flows to inline the routing query without an
 /// LLM round-trip. Errors propagate; success cases (a2a / x402 / error) are
 /// all encoded as `Ok(json)`.
 pub async fn designated_route_inner(provider_id: &str, target_endpoint: Option<&str>) -> Result<serde_json::Value> {
@@ -908,7 +910,7 @@ pub async fn handle_my_agents(role: Option<&str>) -> Result<()> {
         Some(raw) => match parse_role_filter(raw) {
             Some(n) => Some(n),
             None => bail!(
-                "unrecognized --role value: {raw:?} (expected buyer / provider / evaluator, or 1 / 2 / 3)"
+                "unrecognized --role value: {raw:?} (expected user / asp / evaluator)"
             ),
         },
         None => None,
@@ -929,12 +931,12 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
     let role_num = match parse_role_filter(role_raw) {
         Some(n) => n,
         None => bail!(
-            "unrecognized --role value: {role_raw:?} (expected buyer / provider / evaluator, or 1 / 2 / 3)"
+            "unrecognized --role value: {role_raw:?} (expected user / asp / evaluator)"
         ),
     };
     let role_label = match role_num {
-        AGENT_ROLE_BUYER => "buyer",
-        AGENT_ROLE_PROVIDER => "provider",
+        AGENT_ROLE_USER => "user",
+        AGENT_ROLE_ASP => "asp",
         AGENT_ROLE_EVALUATOR => "evaluator",
         _ => "unknown",
     };
@@ -1090,7 +1092,7 @@ pub async fn handle_prepare_create(
     currency: Option<&str>,
     provider: Option<&str>,
 ) -> Result<()> {
-    use super::buyer::draft::validate_draft_fields;
+    use super::user::draft::validate_draft_fields;
 
     // ── 1. Validate fields (local, instant) ──────────────────────
     let validation = validate_draft_fields(
@@ -1107,7 +1109,7 @@ pub async fn handle_prepare_create(
     }
 
     // ── 2. Gate-check (wallet + identity + communication) ─────────
-    let preflight = preflight_inner("buyer").await?;
+    let preflight = preflight_inner("user").await?;
     let pf_ok = preflight.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
     if !pf_ok {
         crate::output::success(serde_json::json!({
@@ -1259,8 +1261,8 @@ async fn run_context(
         bail!("{msg}");
     }
     // Validate role.
-    if !["buyer", "provider", "evaluator"].contains(&role) {
-        bail!("--role must be buyer / provider / evaluator");
+    if !["user", "asp", "evaluator"].contains(&role) {
+        bail!("--role must be user / asp / evaluator");
     }
     if agent_id.is_empty() {
         bail!("--agent-id is required (beta backend requires non-empty agenticId header)");
@@ -1300,8 +1302,8 @@ async fn build_context(
 
     let role_enum = state_machine::Role::parse(role);
     let role_cn = match role_enum {
-        Some(state_machine::Role::Buyer)     => "User Agent",
-        Some(state_machine::Role::Provider)  => "Agent Service Provider (ASP)",
+        Some(state_machine::Role::User)     => "User Agent",
+        Some(state_machine::Role::Asp)  => "Agent Service Provider (ASP)",
         Some(state_machine::Role::Evaluator) => "Evaluator Agent",
         None                                 => role,
     };
@@ -1395,7 +1397,7 @@ async fn build_context(
 
     // ── User Agent info ─────────────────────────────────────────────────
     out.push_str("[User Agent Info]\n");
-    match (&task.buyer_agent_id, &task.buyer_agent_address) {
+    match (&task.user_agent_id, &task.user_agent_address) {
         (Some(id), Some(addr)) => {
             out.push_str(&format!("- AgentID: {id}\n"));
             out.push_str(&format!("- Communication address: {addr}\n"));
@@ -1418,8 +1420,8 @@ async fn build_context(
 
     // ── Role guide that must be loaded ───────────────────────────────────
     let skill_file = match role {
-        "buyer"     => "client.md",
-        "provider"    => "provider.md",
+        "user"      => "client.md",
+        "asp"       => "asp.md",
         "evaluator" => "evaluator.md",
         _           => "",
     };

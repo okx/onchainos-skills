@@ -1,4 +1,4 @@
-//! Common read-only query commands (shared by buyer / provider).
+//! Common read-only query commands (shared by user / asp).
 //!
 //! status        — query a single task's status
 //! list          — query the "my tasks" list for a single agent + role
@@ -17,7 +17,7 @@ use crate::commands::agent_commerce::task::signing;
 
 /// Resolves agentId from the local identity list by role when --agent-id is omitted.
 /// When falling back, picks the first agent matching the role — may be wrong when
-/// multiple agents of the same role exist (e.g. multiple providers).
+/// multiple agents of the same role exist (e.g. multiple asps).
 pub async fn resolve_agent_id(agent_id: &str, role: i64) -> String {
     if !agent_id.is_empty() {
         return agent_id.to_string();
@@ -45,9 +45,9 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
     println!("  jobId:    {job_id}");
     println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
     println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
-    println!("  buyer:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
+    println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
     if let Some(pid) = t["providerAgentId"].as_str() {
-        println!("  provider: {pid}");
+        println!("  asp: {pid}");
     }
     Ok(())
 }
@@ -102,8 +102,8 @@ pub fn status_name(code: i64) -> &'static str {
 
 fn role_name(code: i64) -> &'static str {
     match code {
-        1 => "buyer",
-        2 => "provider",
+        1 => "user",
+        2 => "asp",
         3 => "evaluator",
         _ => "unknown",
     }
@@ -125,9 +125,9 @@ fn short_job_id(jid: &str) -> String {
 
 fn parse_role_arg(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "buyer" | "requestor" | "1" => Some(1),
-        "provider" | "seller" | "2" => Some(2),
-        "evaluator" | "arbiter" | "3" => Some(3),
+        "user"      => Some(1),
+        "asp"       => Some(2),
+        "evaluator" => Some(3),
         _ => None,
     }
 }
@@ -158,9 +158,9 @@ fn parse_role_arg(raw: &str) -> Option<i64> {
 ///       "tokenAmount":         "1",
 ///       "tokenSymbol":         "USDT",
 ///       "myAgentId":           "796",
-///       "myRole":              "buyer",
-///       "counterpartyAgentId": "963",      // null when not yet designated (e.g. status=created with no provider)
-///       "counterpartyRole":    "provider", // null in the evaluator case
+///       "myRole":              "user",
+///       "counterpartyAgentId": "963",      // null when not yet designated (e.g. status=created with no asp)
+///       "counterpartyRole":    "asp",      // null in the evaluator case
 ///     }
 ///   ]
 /// }
@@ -179,7 +179,7 @@ pub async fn handle_active_tasks(
     if let Some(raw) = role_filter {
         let want = parse_role_arg(raw).ok_or_else(|| {
             anyhow::anyhow!(
-                "unrecognized --role value: {raw:?} (expected buyer / provider / evaluator, or 1 / 2 / 3)"
+                "unrecognized --role value: {raw:?} (expected user / asp / evaluator)"
             )
         })?;
         agents.retain(|a| a.get("role").and_then(|v| v.as_i64()) == Some(want));
@@ -210,16 +210,16 @@ pub async fn handle_active_tasks(
                 continue;
             }
 
-            let buyer_id = t.get("buyerAgentId").and_then(|v| v.as_str()).unwrap_or("");
+            let user_id = t.get("buyerAgentId").and_then(|v| v.as_str()).unwrap_or("");
             let provider_id = t.get("providerAgentId").and_then(|v| v.as_str()).unwrap_or("");
 
             // Counterparty inferred from my role:
-            // - I'm buyer (1) → counterparty is provider
-            // - I'm provider (2) → counterparty is buyer
-            // - I'm evaluator (3) → no single counterparty (both buyer + provider are parties)
+            // - I'm user (1) → counterparty is asp
+            // - I'm asp (2) → counterparty is user
+            // - I'm evaluator (3) → no single counterparty (both user + asp are parties)
             let (counterparty_id, counterparty_role) = match role {
-                1 => (provider_id, "provider"),
-                2 => (buyer_id, "buyer"),
+                1 => (provider_id, "asp"),
+                2 => (user_id, "user"),
                 _ => ("", ""),
             };
 

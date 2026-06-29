@@ -359,7 +359,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::XmtpSign(_) => "xmtp-sign".into(),
         AgentCommand::ValidateListing(_) => "validate-listing".into(),
 
-        // Task (buyer)
+        // Task (user)
         AgentCommand::CreateTask { .. } => "create-task".into(),
         AgentCommand::Status { .. } => "status".into(),
         AgentCommand::Tasks { .. } => "tasks".into(),
@@ -383,8 +383,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::TaskAttach { .. } => "task-attach".into(),
         AgentCommand::ListAttachments { .. } => "list-attachments".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
-        AgentCommand::ProviderClaimable { .. } => "provider-claimable".into(),
-        AgentCommand::ProviderClaimRewards { .. } => "provider-claim-rewards".into(),
+        AgentCommand::AspClaimable { .. } => "asp-claimable".into(),
+        AgentCommand::AspClaimRewards { .. } => "asp-claim-rewards".into(),
 
         // Task (provider)
         AgentCommand::RecommendTask { .. } => "recommend-task".into(),
@@ -393,7 +393,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Deliver { .. } => "deliver".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::AspReject { .. } => "asp-reject".into(),
-        AgentCommand::ContactBuyer { .. } => "contact-buyer".into(),
+        AgentCommand::ContactUser { .. } => "contact-user".into(),
         // Sub-groups
         AgentCommand::Draft(c) => format!("draft {:?}", std::mem::discriminant(c)),
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),

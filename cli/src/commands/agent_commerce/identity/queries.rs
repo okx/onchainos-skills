@@ -6,7 +6,7 @@
 //! - `agent feedback-list`→ `GET /agent/reviews`
 
 use anyhow::{bail, Result};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::Context;
@@ -62,82 +62,6 @@ pub async fn get_by_address(args: GetByAddressArgs, ctx: &Context) -> Result<()>
     Ok(())
 }
 
-pub async fn top_asps(limit: usize, ctx: &Context) -> Result<()> {
-    output::success(top_asps_impl(limit, ctx).await?);
-    Ok(())
-}
-
-// ─── `agent top-asps` ───────────────────────────────────────────────────────
-
-const TOP_ASPS_PAGE_SIZE: u32 = 100;
-/// Safety cap on pagination (100 × 50 = 5000 ASPs) so a backend that never
-/// reports a final page can't loop forever.
-const TOP_ASPS_MAX_PAGES: u32 = 50;
-/// agent-search requires a non-empty `query` (omitting it → code 902) but has no
-/// "list all" mode. A single common character matches the whole ASP population
-/// (verified: "a" / "e" / any common character / … all return the same total), so we use it to
-/// approximate a full listing. Swap for a real list-all/top-N endpoint once one exists.
-const TOP_ASPS_BROAD_QUERY: &str = "a";
-
-/// Pull the full marketplace ASP list (paginated agent-search), de-dup, then
-/// return the top `limit` by `soldCount` (highest first). Returns fewer than
-/// `limit` when the marketplace has fewer ASPs.
-async fn top_asps_impl(limit: usize, ctx: &Context) -> Result<Value> {
-    let access_token = ensure_tokens_refreshed().await?;
-    let mut client = wallet_client(ctx)?;
-
-    let page_size_s = TOP_ASPS_PAGE_SIZE.to_string();
-    let mut all: Vec<Value> = Vec::new();
-    let mut total: u64 = 0;
-
-    for page in 1..=TOP_ASPS_MAX_PAGES {
-        let page_s = page.to_string();
-        let query_refs: Vec<(&str, &str)> = vec![
-            ("query", TOP_ASPS_BROAD_QUERY),
-            ("page", page_s.as_str()),
-            ("pageSize", page_size_s.as_str()),
-        ];
-        let data = normalize_singleton_object(
-            client
-                .get_authed(
-                    "/priapi/v5/wallet/agentic/search/agent-search",
-                    &access_token,
-                    &query_refs,
-                )
-                .await?,
-        );
-        if page == 1 {
-            total = data["total"].as_u64().unwrap_or(0);
-        }
-        let list = data["list"].as_array().cloned().unwrap_or_default();
-        let got = list.len();
-        all.extend(list);
-        if got < TOP_ASPS_PAGE_SIZE as usize || (all.len() as u64) >= total {
-            break;
-        }
-    }
-
-    // De-dup by agentId (pagination guard), then rank by soldCount, highest first.
-    let mut seen = std::collections::HashSet::new();
-    all.retain(|a| {
-        let id = a.get("agentId")
-            .and_then(|v| v.as_u64().map(|n| n.to_string())
-                .or_else(|| v.as_str().map(str::to_string)))
-            .unwrap_or_default();
-        seen.insert(id)
-    });
-    let total_pulled = all.len();
-    all.sort_by(|a, b| {
-        b["soldCount"]
-            .as_i64()
-            .unwrap_or(0)
-            .cmp(&a["soldCount"].as_i64().unwrap_or(0))
-    });
-    all.truncate(limit);
-
-    Ok(json!({ "totalPulled": total_pulled, "asps": all }))
-}
-
 // ─── `agent get-my-agents` ────────────────────────────────────────────────
 
 async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Value> {
@@ -146,9 +70,9 @@ async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Val
 
     // Product spec: agent-list identifies the user via JWT; `from` is never needed.
     let mut query = vec![("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string())];
-    // Optional listing filters. `role` accepts requester/provider/evaluator
-    // (aliases 1/2/3) and is sent to the backend as its integer code (1/2/3),
-    // matching the on-chain role enum. `ownerAddress` filters to a single owner.
+    // Optional listing filters. `role` accepts the canonical values
+    // user/asp/evaluator only (strict — no aliases) and is sent to the backend
+    // as its integer code (1/2/3). `ownerAddress` filters to a single owner.
     if let Some(role_raw) = args.role.as_deref().filter(|r| !r.trim().is_empty()) {
         query.push(("role".to_string(), normalize_role_code(role_raw)?));
     }
@@ -582,13 +506,12 @@ async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<V
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 // NOTE: All public entry points in this module (get / search / service_list /
-// feedback_list / get_by_address / top_asps) are async and require a live
+// feedback_list / get_by_address) are async and require a live
 // authenticated HTTP client. Integration-level coverage requires a mock HTTP
 // layer (e.g. mockito) which is not yet wired into this crate's dev-dependencies.
 //
 // The testable pure-logic paths are:
 //   - `chain_index` default-fallback in get_by_address_impl (None/empty → XLAYER)
-//   - `top_asps_impl` accumulation + dedup logic
 //
 // These are exercised at the integration layer. Add `mockito` to
 // [dev-dependencies] in Cargo.toml to enable unit-level HTTP mocking here.
