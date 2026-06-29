@@ -561,7 +561,7 @@ fn provider_conversation_pick_a2a_auto(ctx: &FlowContext<'_>, asp_id: &str, grou
          \x20\x20- If inference succeeds → use the inferred value → go to Step 3.\n\
          \x20\x20- If you cannot infer → reject + auto-advance (do NOT use empty params):\n\
          \x20\x20\x20\x20```bash\n\
-         \x20\x20\x20\x20okx-a2a task reject --group-id {group_id} --content '[user_rejected]:Service params could not be inferred from task description.' --json\n\
+         \x20\x20\x20\x20okx-a2a task reject --group-id {group_id} --json\n\
          \x20\x20\x20\x20{auto_advance}\n\
          \x20\x20\x20\x20```\n\
          \x20\x20\x20\x20(Replace `<REASON>` with `service_params_not_inferred`)\n\
