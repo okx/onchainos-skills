@@ -93,9 +93,19 @@ pub async fn handle_contact_user(
     println!("  taskTitle:     {task_title}");
     println!("  sessionKey:    {session_key}");
     println!();
-    println!("⚠️  End this turn now. Wait for the User Agent's reply.");
-    println!("    On the next inbound a2a-agent-chat, call:");
-    println!("    onchainos agent next-action --role asp --agentId {agent_id} \\");
-    println!("      --message '{{\"event\":\"job_created\",\"jobId\":\"{job_id}\"}}'");
+    if crate::commands::agent_commerce::task::common::config::is_cli_mode() {
+        println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
+        println!();
+        println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-task-watch/SKILL.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
+        println!();
+        println!("**Step 2 — Execute the watch per `skills/okx-task-watch/SKILL.md` §Run watch, scoped to job-id `{job_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read SKILL.md first.)");
+        println!();
+        println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
+    } else {
+        println!("⚠️  End this turn now. Wait for the User Agent's reply.");
+        println!("    On the next inbound a2a-agent-chat, call:");
+        println!("    onchainos agent next-action --role asp --agentId {agent_id} \\");
+        println!("      --message '{{\"event\":\"job_created\",\"jobId\":\"{job_id}\"}}'");
+    }
     Ok(())
 }
