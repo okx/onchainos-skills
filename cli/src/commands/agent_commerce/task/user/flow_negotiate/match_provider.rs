@@ -554,11 +554,18 @@ fn provider_conversation_pick_a2a_auto(ctx: &FlowContext<'_>, asp_id: &str, grou
          ```\n\
          (Replace `<REASON>` with `asp_match_no_services` or `asp_match_error`)\n\
          🛑 End turn after calling next-action.\n\n\
-         **Step 2 — Auto-infer serviceParams (R21):**\n\
-         - If `serviceDescription` is empty → serviceParams = `''`\n\
+         **Step 2 — Auto-infer serviceParams (R21 → R11 aligned):**\n\
+         - If `serviceDescription` is empty → serviceParams = `''` → go to Step 3.\n\
          - If `serviceDescription` is non-empty → infer serviceParams from the task \
-         title/description + serviceDescription context. Use your best judgment. \
-         If you cannot infer → use `''` (the 2-round negotiation will handle it).\n\
+         title/description + serviceDescription context. Use your best judgment.\n\
+         \x20\x20- If inference succeeds → use the inferred value → go to Step 3.\n\
+         \x20\x20- If you cannot infer → reject + auto-advance (do NOT use empty params):\n\
+         \x20\x20\x20\x20```bash\n\
+         \x20\x20\x20\x20okx-a2a task reject --group-id {group_id} --content '[user_rejected]:Service params could not be inferred from task description.' --json\n\
+         \x20\x20\x20\x20{auto_advance}\n\
+         \x20\x20\x20\x20```\n\
+         \x20\x20\x20\x20(Replace `<REASON>` with `service_params_not_inferred`)\n\
+         \x20\x20\x20\x20🛑 End turn after calling next-action.\n\
          - Do NOT ask the user for serviceParams.\n\n\
          **Step 3 — Set ASP:**\n\
          ```bash\n\
