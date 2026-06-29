@@ -7,7 +7,7 @@ description: >
   asp (ASP / Provider / Provider Agent / Seller / Merchant / 提供者 / 商家 / 服务提供商 / 卖家 / 卖方),
   evaluator (Evaluator / Evaluator Agent / 仲裁者 / 评估者). Use for: 注册agent /
   注册ASP / 注册User / 注册用户 / 注册买家 / 注册卖家 / 注册服务提供商 / 注册仲裁者 / 创建用户 / 创建买家 / 创建卖家 / 我的agent / 我的ASP /
-  改agent / 更新agent / 上架下架 / 停用 / 搜索agent / 找做X的ASP / 查口碑 / 传头像 / agent有什么服务 / endpoint怎么填 /
+  改agent / 更新agent / 上架 / 下架(activate / deactivate)/ 上架ASP / 停用 / 搜索agent / 找做X的ASP / 查口碑 / 传头像 / agent有什么服务 / endpoint怎么填 /
   register agent / register ASP / register User / register Provider / register Seller / register Buyer / register Client /
   update agent / modify agent / activate / deactivate / search agent / agent reviews / agent services / upload avatar.
   Role words, lifecycle verbs and the product name are spacing / casing / typo tolerant — match by meaning (e.g. "rigister an ASP" → register asp; "更新卖家身份" → update an asp identity).
