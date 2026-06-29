@@ -38,7 +38,7 @@ use super::utils::{
     normalize_bcp47, normalize_role, normalize_role_code, normalize_singleton_object,
     role_token_from_value, role_to_wire,
     parse_agent_unsigned, parse_services, parse_stars_arg, reconstruct_post_url_for_log,
-    redact_token_for_debug, require_non_empty, trim_or_empty, wallet_client,
+    redact_token_for_debug, require_non_empty, trim_or_empty, validate_avatar_image, wallet_client,
 };
 
 const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -743,6 +743,9 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
     let client = wallet_client(ctx)?;
     let file = require_non_empty(args.file.as_deref(), "--file")?;
     let bytes = fs::read(file).with_context(|| format!("failed to read file: {file}"))?;
+    // Content-based type gate (magic bytes, not extension): reject anything
+    // that isn't PNG / JPEG / WebP before it can become a broken avatar URL.
+    let (image_label, image_mime) = validate_avatar_image(&bytes)?;
     if bytes.len() > MAX_UPLOAD_BYTES {
         bail!(
             "file size {} bytes exceeds the 1 MB limit — please downscale the image and retry",
@@ -759,15 +762,19 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
         "/priapi/v5/wallet/agentic/pre-transaction/upload-picture",
     );
     debug_log!(
-        "[agent-identity] upload request: url={} access_token_len={} access_token_prefix={} file_path={} filename={} bytes_len={}",
+        "[agent-identity] upload request: url={} access_token_len={} access_token_prefix={} file_path={} filename={} image_kind={} bytes_len={}",
         upload_url,
         access_token.len(),
         redact_token_for_debug(&access_token),
         file,
         filename,
+        image_label,
         bytes.len(),
     );
-    let part = reqwest::multipart::Part::bytes(bytes).file_name(filename);
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(filename)
+        .mime_str(image_mime)
+        .context("failed to set upload content-type")?;
     let form = reqwest::multipart::Form::new().part("file", part);
     let result = client
         .post_authed_multipart(

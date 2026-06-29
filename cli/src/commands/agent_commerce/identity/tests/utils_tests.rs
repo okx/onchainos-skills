@@ -1811,3 +1811,54 @@ fn normalize_service_a2mcp_whitespace_only_fee_is_err() {
     let msg = result.unwrap_err().to_string();
     assert!(msg.contains("fee"), "error message should mention 'fee'; got: {msg}");
 }
+
+// ─── detect_image_kind / validate_avatar_image ───────────────────────
+
+#[test]
+fn detect_image_kind_recognizes_png() {
+    let png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01];
+    assert_eq!(detect_image_kind(&png), Some(("PNG", "image/png")));
+}
+
+#[test]
+fn detect_image_kind_recognizes_jpeg() {
+    let jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+    assert_eq!(detect_image_kind(&jpeg), Some(("JPEG", "image/jpeg")));
+}
+
+#[test]
+fn detect_image_kind_recognizes_webp() {
+    // "RIFF" <4 bytes size> "WEBP"
+    let webp = *b"RIFF\x24\x00\x00\x00WEBPVP8 ";
+    assert_eq!(detect_image_kind(&webp), Some(("WebP", "image/webp")));
+}
+
+#[test]
+fn detect_image_kind_rejects_riff_that_is_not_webp() {
+    // "RIFF" container but WAVE, not WEBP — must not be accepted as an image.
+    let wav = *b"RIFF\x24\x00\x00\x00WAVEfmt ";
+    assert_eq!(detect_image_kind(&wav), None);
+}
+
+#[test]
+fn detect_image_kind_rejects_non_image_and_short_input() {
+    assert_eq!(detect_image_kind(b"%PDF-1.4"), None); // PDF
+    assert_eq!(detect_image_kind(b"GIF89a"), None); // GIF is not in the accepted set
+    assert_eq!(detect_image_kind(b"hello text"), None);
+    assert_eq!(detect_image_kind(&[]), None); // empty
+    assert_eq!(detect_image_kind(&[0x89, 0x50]), None); // truncated PNG signature
+}
+
+#[test]
+fn validate_avatar_image_errors_with_supported_types() {
+    let err = validate_avatar_image(b"%PDF-1.4").unwrap_err().to_string();
+    assert!(err.contains("PNG"), "message should list PNG; got: {err}");
+    assert!(err.contains("JPEG"), "message should list JPEG; got: {err}");
+    assert!(err.contains("WebP"), "message should list WebP; got: {err}");
+}
+
+#[test]
+fn validate_avatar_image_accepts_supported() {
+    let png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    assert_eq!(validate_avatar_image(&png).unwrap(), ("PNG", "image/png"));
+}

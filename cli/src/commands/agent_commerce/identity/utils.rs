@@ -453,6 +453,41 @@ pub(super) fn ensure_asp_has_avatar(card: &AgentCard) -> Result<()> {
     Ok(())
 }
 
+/// Sniff the avatar image format from its leading magic bytes, returning
+/// `(label, mime)` for a supported format (PNG / JPEG / WebP) or `None` for
+/// anything else. Detection is content-based — a `.png`-renamed PDF still maps
+/// to `None`, because extensions are attacker-controlled and reqwest never sees
+/// the path anyway. Keep the accepted set in sync with references/register.md §5.
+pub(super) fn detect_image_kind(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some(("PNG", "image/png"));
+    }
+    // JPEG: FF D8 FF
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some(("JPEG", "image/jpeg"));
+    }
+    // WebP: "RIFF" <4-byte size> "WEBP"
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some(("WebP", "image/webp"));
+    }
+    None
+}
+
+/// CLI backstop for avatar uploads: validate `bytes` is a supported image and
+/// return its `(label, mime)`. Bails with a user-facing message otherwise so a
+/// wrong file type is caught at the client boundary instead of producing a
+/// broken avatar URL (the skill prompt also guards this, but prompt guards are
+/// advisory — this is the authoritative check).
+pub(super) fn validate_avatar_image(bytes: &[u8]) -> Result<(&'static str, &'static str)> {
+    detect_image_kind(bytes).ok_or_else(|| {
+        anyhow!(
+            "unsupported image type — only PNG, JPEG, and WebP are accepted; \
+             please convert the file to one of those and retry"
+        )
+    })
+}
+
 pub(super) fn parse_u32_arg(
     value: Option<&str>,
     flag: &str,
