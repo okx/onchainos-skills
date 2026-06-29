@@ -91,7 +91,7 @@ See the install guide: {install_doc_url}
 
 ## Variant C — Compatible & registered (user home)
 
-Render when `detect_harness` is compatible AND the user is logged in with ≥1 OKX.AI identity (`SKILL.md` §Step 4). Fill each role block from the `onchainos agent get` result — list every returned agent under its role; for a role with no agent, render that role's "not registered yet" line. Keep Agent IDs / addresses / wire values literal; localize labels and status words. Render only the columns shown below — do NOT add a `description` / `profileDescription` or any other field, and never invent one. After rendering, wait for the user's reply.
+Render when `detect_harness` is compatible AND the user is logged in with ≥1 OKX.AI identity (`SKILL.md` §Step 4). Fill each role block from the `onchainos agent get-my-agents` result — list every returned agent under its role; for a role with no agent, render that role's "not registered yet" line. Keep Agent IDs / addresses / wire values literal; localize labels and status words. Render only the columns shown below — do NOT add a `description` / `profileDescription` or any other field, and never invent one. After rendering, wait for the user's reply.
 
 ```
 Welcome back to OKX.AI.

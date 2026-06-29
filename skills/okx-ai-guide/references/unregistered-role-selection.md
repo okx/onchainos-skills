@@ -1,6 +1,6 @@
 # Unregistered-user role selection + routing (Steps 2 + 5)
 
-> Loaded from `SKILL.md` Step 1 ONLY when the user is logged in but `agent get` returns NO OKX.AI identity. Registered users never load this file.
+> Loaded from `SKILL.md` Step 1 ONLY when the user is logged in but `agent get-my-agents` returns NO OKX.AI identity. Registered users never load this file.
 
 ## Step 2 — Role selection page
 
