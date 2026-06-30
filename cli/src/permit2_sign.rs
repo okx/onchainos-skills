@@ -1,11 +1,9 @@
-//! Permit2 EIP-712 signing — both schemes funnel through the TEE's
-//! `gen-msg-hash` so the digest is computed by the same code path the
-//! facilitator backend uses.
-//!
-//! - [`sign_exact_permit2`]: TEE returns 65-byte secp256k1 hex.
-//! - [`sign_upto_permit2_session`]: buyer Ed25519-signs the digest with the
-//!   session key; facilitator handles secp256k1 conversion on-chain.
+//! Permit2 EIP-712 signing for `exact + Permit2` and `upto` schemes.
+//! All paths produce a 65-byte secp256k1 hex signature (`0x...`). TEE
+//! variants (`sign_*_permit2`) sign via the enclave; local variants
+//! (`sign_*_permit2_local`) sign with an on-disk EOA private key.
 
+use alloy_sol_types::SolStruct;
 use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
@@ -15,8 +13,8 @@ use zeroize::Zeroize;
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::keyring_store;
 use crate::permit2_eip712::{
-    build_exact_permit2_typed_data, build_upto_permit2_typed_data, ExactPermit2Input,
-    UptoPermit2Input,
+    build_exact_permit2_struct, build_exact_permit2_typed_data, build_upto_permit2_struct,
+    build_upto_permit2_typed_data, permit2_domain, ExactPermit2Input, UptoPermit2Input,
 };
 use crate::permit2_types::{
     ExactPermit2Payload, Permit2Authorization, Permit2Permitted, Permit2Witness,
@@ -27,9 +25,10 @@ use crate::wallet_store;
 
 type Signature = String;
 
-/// HPKE-decrypt the session signing seed and Ed25519-sign `msg_hash`.
-/// Returns `(signature_b64, session_cert)`. Seed material is zeroized as
-/// soon as it's no longer needed.
+/// HPKE-decrypt the wallet session signing seed and Ed25519-sign `msg_hash`.
+/// Returns `(signature_b64, session_cert)` used **only** to authenticate the
+/// TEE `sign-msg` call — the final x402 payload still carries a pure secp256k1
+/// signature, no sessionCert.
 fn session_sign_msg_hash(msg_hash: &str) -> Result<(String, String)> {
     let session = wallet_store::load_session()?.ok_or_else(|| {
         anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN)
@@ -47,6 +46,9 @@ fn session_sign_msg_hash(msg_hash: &str) -> Result<(String, String)> {
     Ok((signature_b64, session.session_cert))
 }
 
+// ── TEE path (`onchainos payment pay`) ───────────────────────────────────
+
+/// Sign exact + Permit2 via TEE.
 pub async fn sign_exact_permit2(
     chain_index: &str,
     payer_addr: &str,
@@ -74,19 +76,17 @@ pub async fn sign_exact_permit2(
     })
 }
 
-/// Returns the payload (base64 Ed25519 signature) plus the `sessionCert`
-/// that must be embedded into `accepted.extra` before replay.
-pub async fn sign_upto_permit2_session(
+/// Sign upto via TEE. Returns pure secp256k1 EIP-712 signature (no sessionCert).
+pub async fn sign_upto_permit2(
     chain_index: &str,
     payer_addr: &str,
     input: &UptoPermit2Input<'_>,
-) -> Result<(UptoPermit2Payload, String)> {
+) -> Result<UptoPermit2Payload> {
     let typed_data = build_upto_permit2_typed_data(input);
-    let msg_hash = tee_gen_msg_hash(chain_index, &typed_data).await?;
-    let (signature_b64, session_cert) = session_sign_msg_hash(&msg_hash)?;
+    let signature = tee_sign_eip712(chain_index, payer_addr, &typed_data).await?;
 
-    let payload = UptoPermit2Payload {
-        signature: signature_b64,
+    Ok(UptoPermit2Payload {
+        signature,
         permit2_authorization: UptoPermit2Authorization {
             from: payer_addr.to_string(),
             permitted: Permit2Permitted {
@@ -102,9 +102,83 @@ pub async fn sign_upto_permit2_session(
                 valid_after: input.witness_valid_after.to_string(),
             },
         },
-    };
-    Ok((payload, session_cert))
+    })
 }
+
+// ── Local-key path (`onchainos payment pay-local`) ───────────────────────
+
+/// `crypto::secp256k1_sign` produces modern v (0/1); on-chain Permit2
+/// `ecrecover` expects legacy v (27/28). Sign + convert + hex-encode.
+fn sign_eip712_legacy_v(pk_bytes: &[u8], digest: &[u8]) -> Result<String> {
+    let mut sig_bytes = crate::crypto::secp256k1_sign(pk_bytes, digest)?;
+    sig_bytes[64] += 27;
+    Ok(format!("0x{}", hex::encode(&sig_bytes)))
+}
+
+/// Sign exact + Permit2 locally — same `crypto::secp256k1_sign` path as EIP-3009.
+pub fn sign_exact_permit2_local(
+    pk_bytes: &[u8],
+    payer_addr: &str,
+    input: &ExactPermit2Input<'_>,
+) -> Result<ExactPermit2Payload> {
+    let permit = build_exact_permit2_struct(input)?;
+    let domain = permit2_domain(input.chain_id);
+    let digest = permit.eip712_signing_hash(&domain);
+
+    let signature = sign_eip712_legacy_v(pk_bytes, digest.as_ref())?;
+
+    Ok(ExactPermit2Payload {
+        signature,
+        permit2_authorization: Permit2Authorization {
+            from: payer_addr.to_string(),
+            permitted: Permit2Permitted {
+                token: input.token.to_string(),
+                amount: input.amount.to_string(),
+            },
+            spender: input.spender.to_string(),
+            nonce: input.nonce.to_string(),
+            deadline: input.deadline.to_string(),
+            witness: Permit2Witness {
+                to: input.witness_to.to_string(),
+                valid_after: input.witness_valid_after.to_string(),
+            },
+        },
+    })
+}
+
+/// Sign upto locally — same `crypto::secp256k1_sign` path as EIP-3009.
+pub fn sign_upto_permit2_local(
+    pk_bytes: &[u8],
+    payer_addr: &str,
+    input: &UptoPermit2Input<'_>,
+) -> Result<UptoPermit2Payload> {
+    let permit = build_upto_permit2_struct(input)?;
+    let domain = permit2_domain(input.chain_id);
+    let digest = permit.eip712_signing_hash(&domain);
+
+    let signature = sign_eip712_legacy_v(pk_bytes, digest.as_ref())?;
+
+    Ok(UptoPermit2Payload {
+        signature,
+        permit2_authorization: UptoPermit2Authorization {
+            from: payer_addr.to_string(),
+            permitted: Permit2Permitted {
+                token: input.token.to_string(),
+                amount: input.amount.to_string(),
+            },
+            spender: input.spender.to_string(),
+            nonce: input.nonce.to_string(),
+            deadline: input.deadline.to_string(),
+            witness: UptoPermit2Witness {
+                to: input.witness_to.to_string(),
+                facilitator: input.witness_facilitator.to_string(),
+                valid_after: input.witness_valid_after.to_string(),
+            },
+        },
+    })
+}
+
+// ── TEE shared helpers ───────────────────────────────────────────────────
 
 /// POST `gen-msg-hash` with EIP-712 typed-data; returns `0x`-prefixed msgHash.
 async fn tee_gen_msg_hash(
@@ -136,9 +210,8 @@ async fn tee_gen_msg_hash(
         .map(str::to_string)
 }
 
-/// gen-msg-hash → local Ed25519 session-sign → sign-msg (TEE secp256k1).
-/// `skipWarning: true` because this is an automated x402 payment, not an
-/// interactive transfer.
+/// gen-msg-hash → local Ed25519 session-sign (TEE auth) → sign-msg (TEE
+/// secp256k1 owner key). Returns 65-byte secp256k1 hex.
 async fn tee_sign_eip712(
     chain_index: &str,
     payer_addr: &str,
@@ -176,4 +249,3 @@ async fn tee_sign_eip712(
         .ok_or_else(|| anyhow!("missing signature in sign-msg response"))
         .map(str::to_string)
 }
-

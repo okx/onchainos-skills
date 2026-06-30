@@ -361,6 +361,14 @@ async fn sign_and_broadcast(
         bail!("transaction simulation failed: {}", err_msg);
     }
 
+    // Tx type (deposit / stake / etc.) not eligible for Gas Station. Bail only when the backend
+    // returned no signable payload; if it did, fall through to sign with native SOL.
+    if unsigned.gs_status() == crate::wallet_api::GasStationStatus::NotSupportIntention
+        && !unsigned.has_sign_material()
+    {
+        return Err(gs_not_supported_err(&addr_info.address));
+    }
+
     // Gas Station guard (also reached by contract-call and other non-GS
     // dispatch paths). Backend uses a two-phase protocol: Phase 1 (diagnosis)
     // returns only gasStationStatus + tokenList with empty hash fields;
@@ -479,6 +487,8 @@ async fn sign_and_broadcast(
                 "A pending Gas Station transaction is blocking this request. Wait for it to \
                  complete, or run `wallet gas-station disable --chain <chain>` to bypass."
             ),
+            // Backup for match exhaustiveness; normally intercepted by the guard above.
+            GS::NotSupportIntention => return Err(gs_not_supported_err(&addr_info.address)),
             GS::NotApplicable | GS::ReadyToUse | GS::Unknown => bail!(
                 "Backend returned empty signing materials with gasStationStatus=\"{}\". \
                  This is unexpected — likely a backend/environment issue.",
@@ -1067,6 +1077,13 @@ pub(super) async fn cmd_send(
         .await
         .map_err(format_api_error)?;
 
+    // Tx type not eligible for Gas Station — bail only when no signable payload was returned.
+    if unsigned.gs_status() == crate::wallet_api::GasStationStatus::NotSupportIntention
+        && !unsigned.has_sign_material()
+    {
+        return Err(gs_not_supported_err(&addr_info.address));
+    }
+
     // ── Gas Station dispatch (two-phase protocol + client-side Scene B/C decision) ──
     // Phase 1 diagnostic: backend returns gasStationStatus + gasStationTokenList +
     // defaultGasTokenAddress with all hash fields null. CLI matches defaultGasTokenAddress
@@ -1212,6 +1229,14 @@ async fn gas_station_send(
         )
         .await
         .map_err(format_api_error)?;
+
+    // Tx type not eligible for Gas Station — bail only when no signable payload was returned
+    // (checked before the gasStationUsed bail so the message is actionable).
+    if unsigned.gs_status() == crate::wallet_api::GasStationStatus::NotSupportIntention
+        && !unsigned.has_sign_material()
+    {
+        return Err(gs_not_supported_err(&addr_info.address));
+    }
 
     if !unsigned.gas_station_used {
         bail!("Gas Station not activated by backend for this transaction");
@@ -1643,6 +1668,14 @@ fn emit_gs_insufficient_all_state(
         "fromAddr": from_addr,
     }));
     Ok(())
+}
+
+/// Tx type (deposit / stake / etc.) not eligible for Gas Station — only transfer and swap are.
+fn gs_not_supported_err(from_addr: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Gas Station does not support this transaction type — only transfers and swaps can pay \
+         gas with a stablecoin. Pay with native SOL instead, then retry. Top up SOL at: {from_addr}"
+    )
 }
 
 /// Serialize the full `gasStationTokenList` as JSON for inclusion in a `CliConfirming.next`
