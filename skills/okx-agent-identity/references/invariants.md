@@ -65,10 +65,10 @@ Array fields: create/update/get-agents/get-my-agents/search → `list`; feedback
 
 | key | required | rule |
 |---|---|---|
-| `serviceName` | ✅ | service name (5–30) |
-| `serviceDescription` | ✅ | 2-part description on separate lines: ① core-capability summary (≤200 CJK chars) · ② what the user must provide (≤200 CJK chars). Total ≤400 CJK chars; no example prompts / links / tech-stack / disclaimers. Length is counted in **East-Asian display width** (CJK = 2, ASCII = 1) — matches the backend |
-| `serviceType` | ✅ | raw enum `A2MCP` (API service) or `A2A` (agent to agent) — never the localized label |
-| `fee` | A2MCP ✅ / A2A optional | a **plain number as a JSON string**, e.g. `"10"` (quoted — never a bare number `10`). USDT is the implicit, only currency; **no currency suffix/symbol**, ≤6 dp. `"10 USDT"` / `"5元"` → rejected (P1) |
+| `serviceName` | yes | service name (5–30) |
+| `serviceDescription` | yes | 2-part description on separate lines: ① core-capability summary (≤200 CJK chars) · ② what the user must provide (≤200 CJK chars). Total ≤400 CJK chars; no example prompts / links / tech-stack / disclaimers. Length is counted in **East-Asian display width** (CJK = 2, ASCII = 1) — matches the backend |
+| `serviceType` | yes | raw enum `A2MCP` (API service) or `A2A` (agent to agent) — never the localized label |
+| `fee` | A2MCP yes / A2A optional | a **plain number as a JSON string**, e.g. `"10"` (quoted — never a bare number `10`). USDT is the implicit, only currency; **no currency suffix/symbol**, ≤6 dp. `"10 USDT"` / `"5元"` → rejected (P1) |
 | `endpoint` | A2MCP only | `https://…`; **omit entirely for A2A** |
 | `operation` | **`update` flow only** | one of `create` / `update` / `delete` — the per-service delta directive (see update.md §6). **Omit entirely on `create` / register** (services there are all new). |
 | `id` | optional | the existing service's id (from `agent service-list`) — used to target an existing service in the `update` flow. |

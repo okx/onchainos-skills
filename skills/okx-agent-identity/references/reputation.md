@@ -2,7 +2,7 @@
 Loaded when: the intent is "view reviews / reputation #N". (Rating/scoring an agent is not offered by this skill.)
 
 The CLI converts wire scores back to 0.00–5.00 stars on read. You render the CLI's review list
-verbatim; never do score arithmetic skill-side, never poll (SKILL §Gates).
+verbatim; never do score arithmetic skill-side (SKILL §Gates).
 
 ---
 

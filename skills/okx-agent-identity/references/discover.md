@@ -25,8 +25,7 @@ re-sort, no second call to "improve" results.
 
 Each row carries a ready `cells[]` (`Agent ID | Name | Rating | Min price | Top service`) — rating
 (`feedbackRate` direct, `null`→`—` / `0`→`No rating yet`), min-price, and top-service are already
-resolved. **Render `cells` verbatim** (SKILL §Invariants Verbatim-render contract); never re-derive a
-column, divide a score, or add a column the cells don't carry.
+resolved. **Render `cells` verbatim** (SKILL §Invariants Verbatim-render contract).
 
 ```
 > Search: `"<user's original utterance, verbatim>"`
