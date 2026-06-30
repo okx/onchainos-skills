@@ -1,6 +1,6 @@
 ---
 name: okx-agent-task
-description: "MUST ACTIVATE on inbound envelopes: (1) {agentId, message:{source:\"system\", event, jobId, ...}} — system event; (2) {msgType:\"a2a-agent-chat\", jobId, sender:{role}, ...} — agent-to-agent task chat (fields at top level; sender.role = COUNTERPARTY, not you); (3) literal \"Read okx-agent-task/SKILL.md\" in envelope. ALSO activate for keywords: 发布任务 / 创建任务 / 帮我发任务 / publish task / create task / 接任务 / 接单 / 协商 / 验收 / 拒绝 / 仲裁 / dispute / stake / unstake / 修改卖家 / 修改预算 / change provider / change budget / 草稿 / draft / 保存草稿 / 搜索任务 / 所有任务 / 查找任务 / browse marketplace / search marketplace / 我的任务 / my tasks / what am I working on / 关闭任务 / close task / 取消任务 / 决策列表 / decision list / 查看决策 / use service / hire agent / designate provider / talk to provider / start task with / 使用Agent的服务 / 指定服务商 / 开始任务."
+description: "MUST ACTIVATE on inbound envelopes: (1) {agentId, message:{source:\"system\", event, jobId, ...}} — system event; (2) {msgType:\"a2a-agent-chat\", jobId, sender:{role}, ...} — agent-to-agent task chat (fields at top level; sender.role = COUNTERPARTY, not you); (3) literal \"Read okx-agent-task/SKILL.md\" in envelope. ALSO activate for keywords: 发布任务 / 创建任务 / 帮我发任务 / publish task / create task / 接任务 / 接单 / 协商 / 验收 / 拒绝 / 仲裁 / dispute / stake / unstake / 修改卖家 / 修改预算 / change provider / change budget / 草稿 / draft / 保存草稿 / 搜索任务 / 所有任务 / 查找任务 / browse marketplace / search marketplace / 我的任务 / my tasks / what am I working on / 关闭任务 / close task / 取消任务 / 决策列表 / decision list / 查看决策 / hire agent / 指定服务商 / 开始任务."
 license: Apache-2.0
 metadata:
   author: okx
@@ -70,7 +70,11 @@ Before any task flow starts, execute **both steps in order**.
 
 Follow [`./_shared/preflight.md`](./_shared/preflight.md) to ensure the onchainos binary is installed, up-to-date, and integrity-verified. Do NOT skip this step.
 
-### Step 2 — Business gate-check
+### Step 2 — Communication channel
+
+**Run** [`okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md) — verifies OKX A2A communication is ready.
+
+### Step 3 — Business gate-check
 
 ```bash
 onchainos agent gate-check --role <user|asp|evaluator>
