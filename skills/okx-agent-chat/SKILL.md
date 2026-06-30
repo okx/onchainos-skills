@@ -4,7 +4,7 @@ description: "Routing stub — any a2a-agent-chat envelope / agent-task system m
 license: MIT
 metadata:
   author: okx
-  version: "3.21.6-beta"
+  version: "4.0.0"
   homepage: "https://web3.okx.com"
 ---
 
