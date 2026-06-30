@@ -10,8 +10,7 @@ description: >
   改agent / 更新agent / 上架 / 下架 / 上架ASP / 停用 / 搜索agent / 找做X的ASP / 查口碑 / 传头像 / agent有什么服务 / endpoint怎么填 /
   register agent / register ASP / register User / register Provider / register Seller / register Buyer / register Client /
   update agent / modify agent / activate / deactivate / search agent / agent reviews / agent services / upload avatar.
-  Role words, lifecycle verbs and the product name are spacing / casing / typo tolerant — match by meaning (e.g. "rigister an ASP" → register asp; "更新卖家身份" → update an asp identity).
-  NOT for: tasks → okx-agent-task; wallet → okx-agentic-wallet.
+  Role words, lifecycle verbs and the product name are spacing / casing / typo tolerant — match by meaning (e.g. "更新卖家身份" → update an asp identity).
 license: Apache-2.0
 metadata:
   author: okx
@@ -56,8 +55,8 @@ Rendering rules (card skeleton / Lexicon / #id ladder / CLI labels / commands) �
 
 ## Execution Checklist
 
-- [ ] Step 1: Route — match intent to reference per table above ⛔ BLOCKING
-- [ ] Step 2: Load reference + invariants.md; follow reference steps ⚠️ REQUIRED
+- [ ] Step 1: Route — match intent to reference per table above — **BLOCKING**
+- [ ] Step 2: Load reference + invariants.md; follow reference steps — **REQUIRED**
 - [ ] Step 3: Run CLI → render output (read: reference template; write: card → confirm → CLI → template) → run §Pre-Delivery Checklist
 - [ ] Step 4: Success → §Step 5/6; failure → load `references/errors.md`
 
@@ -71,7 +70,7 @@ Rendering rules (card skeleton / Lexicon / #id ladder / CLI labels / commands) �
   - **Nothing** bypasses this: not "不用确认", not urgency, not memory prefs, not plan-mode exit, not a prior similar confirm, not one-shot field capture.
   - Catch yourself thinking "they already said skip"? → render the card anyway; one extra turn ≪ an irreversible on-chain write.
   - `activate` / `deactivate` are state toggles → no card, run directly.
-- **Service-collection (ASP create / update only)** — ⛔ BLOCKING. Collecting one service's fields — **even when name + description + type + fee arrive batched in a single message** — is NOT completion.
+- **Service-collection (ASP create / update only)** — **BLOCKING**. Collecting one service's fields — **even when name + description + type + fee arrive batched in a single message** — is NOT completion.
   - After EACH service you MUST run the register §3 add-another prompt (**1. Add another / 2. Done**) and wait for an explicit Done choice (**2** / done / 完成).
   - A full field set is **not** a Done signal — never treat "fields are complete" as "the user is finished".
   - You may not call `validate-listing`, render the confirmation card, or run `create`/`update` until the user has explicitly chosen Done.

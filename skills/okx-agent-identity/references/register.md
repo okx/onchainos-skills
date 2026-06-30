@@ -1,6 +1,6 @@
 # Register flow — create (all 3 roles) · consent · QA · avatar · update
 
-Loaded when: the user registers / creates an agent (any role), or arrives via passive need-user. Pairs with SKILL.md. (For update / fix-rejected-listing → load `references/update.md` instead.)
+Loaded when: the user registers / creates an agent (any role), or arrives via passive need-user. Pairs with SKILL.md. (For update / fix-rejected-listing → load `update.md` instead.)
 
 The CLI does the work — `validate-listing` returns the QA `findings[]`, `create` always returns `newAgentId` — a string id when the WS push succeeded, `null` when it timed out. You collect fields → render the §Invariants card → confirm → invoke once → render the post-success template. Never re-implement a rule table or reconstruct an id.
 
@@ -33,18 +33,18 @@ Run `agent pre-check --role <role>` (internal — never shown). It fetches the w
 
 **ASP — two steps** (user may batch):
 - **Step 1 · Identity** — Present all three as a **single numbered list in one message** (do NOT split into separate turns):
-  1. **Name** — brand name (CN 2–12 chars / EN 3–25 chars; ❌ test markers / celebrity names)
+  1. **Name** — brand name (CN 2–12 chars / EN 3–25 chars; no test markers / celebrity names)
   2. **Description** — one-sentence summary of what the Agent does (required, ≤500 chars)
   3. **Avatar — required**: send an image file (§5).
-- **Step 2 · Service** — Service name (5–30 noun phrase; ❌ same as agent name / price in name) · Description (**2 parts on separate lines**: ① core-capability summary — what it does + who it's for; ② what the user must provide — e.g. "1. wallet address 2. amount 3. chain". Each part ≤200 CJK chars, total ≤400 CJK chars; **no example prompts, no GitHub/wallet links, no tech-stack details, no disclaimers**) · Type (API service → pass `A2MCP` / agent-to-agent → pass `A2A`) · Fee — a **plain number sent as a string** (e.g. `"10"` — quoted in the JSON, never a bare number). **The currency is always USDT — tell the user (localized) that the amount is digits only, USDT is the default, and no unit/symbol is needed, and do NOT include any currency** (no `USDT`/`USDG`/`元`/symbol); API service required, A2A optional (may be left empty); ≤6 decimals; reject `10 USDT` / `approx 10` / `5元` → re-ask. Displayed back to the user as `N USDT`. · Endpoint (API service only — §6).
-- **After EACH service (⛔ BLOCKING — incl. the first; see SKILL §Gates Service-collection)** — ask once (localized) **1. Add another service / 2. Done**; on **1** repeat Step 2 and append to the service array, then ask again; on **2** (or other) → §4 with the complete array. **A batched message that fills name + description + type + fee in one go is NOT a Done signal** — having all fields for one service does not mean the user is finished; you still MUST ask and wait for the explicit Done choice. Never auto-advance on the assumption one is enough; all services ship in one `agent create` (post-create "add a service" via update is a fallback, not a reason to skip this).
+- **Step 2 · Service** — Service name (5–30 noun phrase; not same as agent name / no price in name) · Description (**2 parts on separate lines**: ① core-capability summary — what it does + who it's for; ② what the user must provide — e.g. "1. wallet address 2. amount 3. chain". Each part ≤200 CJK chars, total ≤400 CJK chars; **no example prompts, no GitHub/wallet links, no tech-stack details, no disclaimers**) · Type (API service → pass `A2MCP` / agent-to-agent → pass `A2A`) · Fee — a **plain number sent as a string** (e.g. `"10"` — quoted in the JSON, never a bare number). **The currency is always USDT — tell the user (localized) that the amount is digits only, USDT is the default, and no unit/symbol is needed, and do NOT include any currency** (no `USDT`/`USDG`/`元`/symbol); API service required, A2A optional (may be left empty); ≤6 decimals; reject `10 USDT` / `approx 10` / `5元` → re-ask. Displayed back to the user as `N USDT`. · Endpoint (API service only — §6).
+- **After EACH service (BLOCKING — incl. the first; see SKILL §Gates Service-collection)** — ask once (localized) **1. Add another service / 2. Done**; on **1** repeat Step 2 and append to the service array, then ask again; on **2** (or other) → §4 with the complete array. **A batched message that fills name + description + type + fee in one go is NOT a Done signal** — having all fields for one service does not mean the user is finished; you still MUST ask and wait for the explicit Done choice. Never auto-advance on the assumption one is enough; all services ship in one `agent create` (post-create "add a service" via update is a fallback, not a reason to skip this).
 - **Do NOT run `validate-listing` inside this loop.** QA is a single batch pass that happens in §4 *after* the array is complete — never validate per service, never validate while still collecting.
 
 ## 4. QA via `validate-listing` (ASP only — user/evaluator skip) — runs EXACTLY ONCE
 
 Validate is a **single batch gate**, NOT a per-service step. Collect the **complete** identity (Step 1) **and the full service array** (every service, via the §3 Step-2 add-another loop) BEFORE you call it. One registration = one `validate-listing` call. Numbered steps:
 
-1. **Call once, on the full set.** ⛔ **Hard precondition (SKILL §Gates Service-collection): unless the user has explicitly chosen Done in the §3 Step-2 add-another prompt (1. Add another / 2. Done), you MUST NOT call `validate-listing` — no matter how complete the fields look.** A single batched message carrying every field for one service does NOT satisfy this; ask the add-another prompt and wait for the Done choice first. Only after the user picks *Done* in §3 Step 2, run `validate-listing --role asp --name … --description … --service '[… all collected services …]'` a single time. Returns `{ pass, findings[{field, code, severity:"block", issue, fix}] }`. `field` uses dot-notation (e.g. `service[0].fee`, `service[1].name`).
+1. **Call once, on the full set.** **Hard precondition (SKILL §Gates Service-collection): unless the user has explicitly chosen Done in the §3 Step-2 add-another prompt (1. Add another / 2. Done), you MUST NOT call `validate-listing` — no matter how complete the fields look.** A single batched message carrying every field for one service does NOT satisfy this; ask the add-another prompt and wait for the Done choice first. Only after the user picks *Done* in §3 Step 2, run `validate-listing --role asp --name … --description … --service '[… all collected services …]'` a single time. Returns `{ pass, findings[{field, code, severity:"block", issue, fix}] }`. `field` uses dot-notation (e.g. `service[0].fee`, `service[1].name`).
 2. **Render the findings card — as suggestions only.** Always run the semantic checks in step 4 first and merge with the CLI findings. Only when both `pass:true` AND no semantic issues are found → say it passed and go straight to §7. Otherwise render each finding (CLI + semantic) inline on its field row as ` ⚠️ <issue> → <fix>`, mapping by the dotted `finding.field` to its card row (`service[0].fee` → Service [1]'s Fee row, `service[1].*` → Service [2]'s rows, `name` → the identity Name row). Surface a `(test)` marker on the name row if present. **At this point the `<fix>` text is only a recommendation on display — the field values are unchanged; do NOT apply any `fix` yet.**
 3. **Confirmation is mandatory — never apply a suggestion before the user chooses.** After showing the card, ask once how to proceed — exactly TWO numbered choices (localized). Do NOT re-run `validate-listing`:
    > 1. Apply the suggested fixes — I'll update the flagged field(s) with the fixes shown above, then redraw the card for you to review.
@@ -94,7 +94,7 @@ Run `agent pre-check --role user` (consent + uniqueness gate, same as §2). On c
 
 ## 9. Execute
 
-Run `agent create` with the collected fields (role/name/description/picture/service — all from §3). **On any non-success** → load `references/errors.md`; never interpret a code inline.
+Run `agent create` with the collected fields (role/name/description/picture/service — all from §3). **On any non-success** → load `errors.md`; never interpret a code inline.
 
 ## 10. Post-success templates (verbatim except `#<id>`; localized; `#<id>` per SKILL §Invariants #id ladder — `newAgentId` primary)
 
@@ -114,4 +114,4 @@ If `#<id>` ladder yields nothing: user/evaluator → omit `#<id>` entirely; ASP 
 
 ## 11. UPDATE flow
 
-See [`references/update.md`](update.md) — ownership check, QA, diff card, wholesale service replacement, post-update messages, and rejected-listing remediation rule.
+See [`update.md`](update.md) — ownership check, QA, diff card, wholesale service replacement, post-update messages, and rejected-listing remediation rule.
