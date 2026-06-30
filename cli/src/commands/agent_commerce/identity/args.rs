@@ -1,0 +1,271 @@
+//! CLI `Args` definitions for every `onchainos agent ...` subcommand under
+//! the identity module. Only clap structs live here — no business logic.
+
+use clap::Args;
+
+#[derive(Args, Clone, Debug)]
+pub struct CreateArgs {
+    /// Required (all roles). The agent name. Missing / empty → `missing required
+    /// parameter: --name`.
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Required. Canonical values only: `user` / `asp` / `evaluator` (no
+    /// aliases — map any synonym to one of these three first). Role is fixed at
+    /// create and cannot be changed later (`update` has no `--role`). Missing →
+    /// `missing required parameter`; an unrecognized value → `invalid value for
+    /// --role`.
+    #[arg(long)]
+    pub role: Option<String>,
+    /// Agent-level description. Required for `asp` (core searchable field;
+    /// missing / empty → `missing required parameter: --description`); optional
+    /// for `user` / `evaluator` (omitted → on-chain `ProfileDescription:""`).
+    #[arg(long)]
+    pub description: Option<String>,
+    /// Profile-picture URL (upload an image via `agent upload` first, then pass
+    /// the returned URL). Required for `asp` (no avatar → `ASP agents require an
+    /// avatar`); optional for `user` / `evaluator` (omitted → default avatar).
+    #[arg(long)]
+    pub picture: Option<String>,
+    /// Service list as a JSON array (element shape per the service-element key
+    /// table in references/invariants.md — on create every entry is new, so omit
+    /// the `operation` / `id` keys). Required for `asp`: at least one service
+    /// (empty → `ASP agents require at least one service`); ignored for
+    /// `user` / `evaluator`.
+    #[arg(long)]
+    pub service: Option<String>,
+}
+
+/// `onchainos agent consent`: standalone first-time-creation terms consent
+/// (the legal module's two-step flow, decoupled from `create`). Step 1 (no
+/// flags) issues a `consentKey` + `terms`; step 2 (`--consent-key` +
+/// `--agreed`) finalizes the user's accept/decline decision. fromAddr +
+/// chainIndex are auto-filled (current XLayer wallet). See API doc
+/// `pre-transaction/agent-consent`.
+#[derive(Args, Clone, Debug)]
+pub struct ConsentArgs {
+    /// Step 2: the one-time consentKey returned by step 1; pass back together
+    /// with `--agreed`.
+    #[arg(long = "consent-key")]
+    pub consent_key: Option<String>,
+    /// Step 2: `true` = user agreed, `false` = user declined. Pass together
+    /// with `--consent-key`.
+    #[arg(long)]
+    pub agreed: Option<bool>,
+}
+
+/// `onchainos agent update`: edit an existing agent. Only `--agent-id` is
+/// required; every other flag is an optional partial change — omit a flag to
+/// leave that field untouched. `role` and CommunicationAddress are immutable
+/// and are not accepted here. The payload is a DELTA: agent-level fields are
+/// sent only when provided, and `--service` carries only the services to
+/// change (each tagged with an `operation`), never a full snapshot.
+#[derive(Args, Clone, Debug)]
+pub struct UpdateArgs {
+    /// REQUIRED. The target agent's id (becomes cardJson `agentId`). Missing →
+    /// `missing required parameter: --agent-id`.
+    #[arg(long = "agent-id")]
+    pub agent_id: Option<String>,
+    /// Optional. New agent name. Omitted / empty → name left unchanged.
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Optional. New agent-level description. Omitted / empty → unchanged; an
+    /// empty string does NOT clear an existing description.
+    #[arg(long)]
+    pub description: Option<String>,
+    /// Optional. New profile-picture URL. Omitted / empty → unchanged.
+    #[arg(long)]
+    pub picture: Option<String>,
+    /// Optional. Service DELTA as a JSON array — only the services to change,
+    /// each tagged with `operation`: `create` (new service, no `id`),
+    /// `update` / `delete` (carry the existing service `id`). Omitted → the
+    /// `services` field is left out entirely (omission does NOT clear
+    /// services). See the service-element key table in references/invariants.md.
+    #[arg(long)]
+    pub service: Option<String>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct GetMyAgentsArgs {
+    /// Filter the listing to a single role. Accepts the canonical values
+    /// `user` / `asp` / `evaluator` only (no aliases). Sent to the backend as
+    /// the integer code `role` (1/2/3).
+    #[arg(long)]
+    pub role: Option<String>,
+    /// Filter the listing to all agents owned by this address. Sent to the
+    /// backend as `ownerAddress`.
+    #[arg(long = "owner-address")]
+    pub owner_address: Option<String>,
+    #[arg(long)]
+    pub page: Option<String>,
+    #[arg(long = "page-size")]
+    pub page_size: Option<String>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct GetAgentsArgs {
+    /// Agent ID(s), comma-separated. Each id is sent as one `agentIdList`
+    /// array element to the batch-list endpoint.
+    #[arg(long = "agent-ids")]
+    pub agent_ids: Option<String>,
+}
+
+/// `onchainos agent get`: the original dual-mode agent-list query — list mode
+/// (no ids, paginated) or detail mode (`--agent-ids`, comma-joined into a single
+/// `agentIdList` param). Hits `GET /agent/agent-list`.
+#[derive(Args, Clone, Debug)]
+pub struct GetArgs {
+    #[arg(long = "agent-ids")]
+    pub agent_ids: Option<String>,
+    #[arg(long)]
+    pub page: Option<String>,
+    #[arg(long = "page-size")]
+    pub page_size: Option<String>,
+}
+
+/// `onchainos agent precheck`: unified registration entry (see the registration
+/// flow diagram). `--role` is REQUIRED; `--consent-key` optional. Always returns
+/// `{ canCreate, role, agentList?, reason?, consent? }`:
+///   • canCreate:true                          → may register this role
+///   • canCreate:false + reason + agentList    → blocked (single role already exists)
+///   • canCreate:false + reason + consent{...}  → first-time wallet, terms not yet
+///     accepted; the skill shows `consent.terms`, then re-invokes with `--consent-key`.
+#[derive(Args, Clone, Debug)]
+pub struct PrecheckArgs {
+    /// Required (same shape as `agent create`: clap-optional, runtime-enforced).
+    /// Canonical values only: `user` / `asp` / `evaluator` (no aliases — the
+    /// skill maps any synonym to one of these three first). Missing → `missing
+    /// required parameter`; an unrecognized value → `invalid value for --role`.
+    #[arg(long)]
+    pub role: Option<String>,
+    /// The one-time consentKey from a prior `consent` block. PRESENCE means "the
+    /// user agreed" — the CLI submits the consent with `agreed=true`. Omit it and
+    /// (for a first-time wallet) the CLI checks consent status / returns terms.
+    #[arg(long = "consent-key")]
+    pub consent_key: Option<String>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct AgentStatusArgs {
+    #[arg(long = "agent-id")]
+    pub agent_id: Option<String>,
+}
+
+/// `onchainos agent activate`: unified activation that handles role guard,
+/// agent-status(1), and (when approvalStatus ∈ {1,5}) the full QA + submit-approval
+/// pipeline internally. All data fetching is done by the CLI itself.
+#[derive(Args, Clone, Debug)]
+pub struct ActivateArgs {
+    #[arg(long = "agent-id")]
+    pub agent_id: Option<String>,
+    /// Required: preferred language for backend review messages (BCP-47,
+    /// e.g. `zh-CN`, `en-US`). Normalized to canonical BCP-47.
+    #[arg(long = "preferred-language", required = true)]
+    pub preferred_language: Option<String>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct UploadArgs {
+    #[arg(long)]
+    pub file: Option<String>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SearchArgs {
+    #[arg(long)]
+    pub query: Option<String>,
+    #[arg(long, value_delimiter = ',')]
+    pub feedback: Vec<String>,
+    #[arg(long = "agent-info", value_delimiter = ',')]
+    pub agent_info: Vec<String>,
+    #[arg(long, value_delimiter = ',')]
+    pub status: Vec<String>,
+    #[arg(long, value_delimiter = ',')]
+    pub service: Vec<String>,
+    #[arg(long)]
+    pub page: Option<String>,
+    #[arg(long = "page-size")]
+    pub page_size: Option<String>,
+}
+
+
+#[derive(Args, Clone, Debug)]
+pub struct ServiceListArgs {
+    #[arg(long = "agent-id")]
+    pub agent_id: Option<String>,
+}
+
+/// `onchainos agent get-by-address`: reverse-lookup an agent by communication
+/// address + chain. Hidden (hide=true); only used by sub-agent / xmtp flows.
+#[derive(Args, Clone, Debug)]
+pub struct GetByAddressArgs {
+    /// Communication address bound to the agent on-chain — required.
+    #[arg(long = "communication-address", required = true)]
+    pub communication_address: String,
+    /// Chain index; defaults to XLayer (196).
+    #[arg(long = "chain-index")]
+    pub chain_index: Option<String>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct FeedbackSubmitArgs {
+    /// Required: agent id being reviewed; maps to `comment.agentid` in the create-comment body.
+    #[arg(long = "agent-id")]
+    pub agent_id: Option<String>,
+    /// Required: agent id of the reviewer; maps to `extraData.erc8004Msg.feedBackAgentId`.
+    #[arg(long = "creator-id")]
+    pub creator_id: Option<String>,
+    /// Required: star rating 0.00–5.00 (up to 2 decimal places, step 0.01).
+    /// The CLI multiplies by 20 with round-half-up to produce the 0–100 u32
+    /// wire value for `comment.value`. Validation and mapping live in
+    /// `utils::parse_stars_arg`.
+    #[arg(long)]
+    pub score: Option<String>,
+    /// Optional: free-text review; maps to `comment.comment` in the create-comment body.
+    #[arg(long)]
+    pub description: Option<String>,
+    /// Optional: taskId; maps to `extraData.erc8004Msg.taskId`. Omitted when empty.
+    #[arg(long = "task-id")]
+    pub task_id: Option<String>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct FeedbackListArgs {
+    #[arg(long = "agent-id")]
+    pub agent_id: Option<String>,
+    #[arg(long)]
+    pub page: Option<String>,
+    #[arg(long = "page-size")]
+    pub page_size: Option<String>,
+}
+
+/// `onchainos agent xmtp-sign`: sign an arbitrary message with the local
+/// signing_seed. No broadcast — POSTs directly to pre-transaction/sign-msg
+/// and returns the backend's signature.
+#[derive(Args, Clone, Debug)]
+pub struct XmtpSignArgs {
+    /// The keyUuid generated at create time; retrievable via `agent get`.
+    #[arg(long = "key-uuid")]
+    pub key_uuid: Option<String>,
+    /// Message to sign; forwarded verbatim to the backend.
+    #[arg(long)]
+    pub message: Option<String>,
+}
+
+/// `onchainos agent validate-listing`: pure-local (no HTTP, no network)
+/// validator. Hidden (`hide=true`) — not shown in `--help`; used by the
+/// skill during registration QA.
+#[derive(Args, Clone, Debug)]
+pub struct ValidateListingArgs {
+    /// Canonical values only: `user` / `asp` / `evaluator` (no aliases).
+    /// Defaults to `asp`.
+    #[arg(long)]
+    pub role: Option<String>,
+    #[arg(long)]
+    pub name: Option<String>,
+    #[arg(long)]
+    pub description: Option<String>,
+    /// JSON array string with the same element shape as create/update's
+    /// `--service`. Ignored for non-ASP roles.
+    #[arg(long)]
+    pub service: Option<String>,
+}

@@ -1,6 +1,7 @@
 pub mod account;
 pub mod auth;
 pub mod balance;
+pub mod broadcast;
 pub mod chain;
 pub mod common;
 pub mod gas_station;

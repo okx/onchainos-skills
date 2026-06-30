@@ -206,6 +206,8 @@ CLI signs an EIP-712 Voucher(channelId, cum_for_this_call) via TEE. `mode = "sig
 Authorization: <authorization_header>
 ```
 
+**Non-empty Step A3-Params plan?** Also attach its params on their carriers (query / body / header / path), using the plan's `input.method` if it differs from the original. The `Authorization` voucher header rides alongside. (Channel ops — open / topup / close — carry their action in the credential payload, not business params, so they're unaffected.)
+
 Expected: `HTTP 200`. **Update state**: `current_cum = cum_for_this_call`, `current_sig = <signature>`, `estimated_spent += unit_amount`. (Reuse path: `current_cum` / `current_sig` unchanged; only `estimated_spent` advances.)
 
 ### S2.5: Insufficient-balance fallback

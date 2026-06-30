@@ -23,6 +23,7 @@ build/
 .build/
 out/
 target/
+target-pack/
 
 # Xcode / Swift
 xcuserdata/
@@ -75,6 +76,9 @@ run.sh
 test-cases.json
 
 evals/
+
+# Agent task workspace (local only)
+skills/okx-agent-task-workspace/
 .gs-recovery/
 
 # oli-flow session-local runtime state (never committed)

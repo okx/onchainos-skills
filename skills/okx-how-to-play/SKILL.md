@@ -1,10 +1,10 @@
 ---
 name: okx-how-to-play
-description: "Onchain OS entry router for open-ended onboarding questions. Renders a welcome banner with a Quick-start menu and routes the user into the right skill or workflow (Polymarket, DeFi APY, smart-money signals, new-token screening, daily on-chain brief). Triggers: 'what is onchainos', 'what is onchain os', 'what does this do', 'what can it do', 'what can I do here', 'how do I use this', 'how do I play', 'how to use onchainos', 'how to play onchainos', 'how does this work', 'how do I start', 'getting started', 'how do I get started', 'tutorial', 'onboarding', 'first time', 'I just installed', 'now what', 'what do I do now', 'where do I start', 'who are you', 'what are you', 'introduce yourself', 'introduction', 'introduce onchainos', 'tell me about onchainos', 'I'm new'."
+description: "Onchain OS onboarding entry router. Triggers: 'what is onchainos', 'what is onchain os', 'what can onchainos do', 'what does onchainos do', 'how do I use this', 'how do I play', 'how to use onchainos', 'how to play onchainos', 'how does onchainos work', 'how do I start', 'getting started', 'tutorial', 'onboarding', 'first time', 'I just installed', 'now what', 'what do I do now', 'where do I start', 'who are you', 'what are you', 'introduce onchainos', 'tell me about onchainos', 'I'm new'. NOT for: questions where the subject is explicitly 'OKX.AI' — use okx-ai-guide instead."
 license: MIT
 metadata:
   author: okx
-  version: "3.3.15"
+  version: "4.0.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -24,24 +24,6 @@ Tagged blocks indicate rule severity (higher wins on conflict):
 
 <MUST>
 > Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
-</MUST>
-
-## Trigger Criteria
-
-<MUST>
-Only trigger this skill when the user message is **open-ended / guidance-seeking**. Positive examples:
-
-- "how do I use this / what can I do / what is this / getting started"
-- "I just installed it, now what?"
-- "tutorial / onboarding / first time / where do I start"
-
-Negative examples (use the matching skill instead, **not** this one):
-
-- "check my balance" → `okx-agentic-wallet` / `okx-wallet-portfolio`
-- "swap 0.1 ETH for USDC" → `okx-dex-swap`
-- "what's the price of BTC" → `okx-dex-market`
-- "login" alone → `okx-agentic-wallet` (but `login` as a reply *to the welcome banner* is handled inside this skill — see **Login Method Choice**)
-- "search for PEPE token" → `okx-dex-token`
 </MUST>
 
 ## Authoring Pattern — Free Zone vs Fixed Zone
@@ -78,7 +60,7 @@ onchainos wallet status
 # Welcome Banner
 
 <MUST>
-Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 5 picks (Polymarket allowed); Variant B = 4 picks (Polymarket geoblocked). Never fabricate addresses or balance.
+Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 4 picks (Polymarket allowed); Variant B = 3 picks (Polymarket geoblocked). Numbered picks are interpreted strictly against the currently-rendered menu (digit-routing contract per welcome.md §4). Never fabricate addresses or balance. If `wallet balance` fails despite `loggedIn: true` (stale session — refresh token expired), prompt the user to log in again per welcome.md §2.2 instead of rendering a partial banner.
 </MUST>
 
 ---
@@ -155,7 +137,9 @@ On success → **Post-login routing** below. On login failure, surface the error
 
 After login completes successfully:
 
-- If the user came from picking a **workflow pick** while logged out: automatically load the corresponding workflow file (`~/.onchainos/workflows/<file>.md`) and follow it. Do NOT re-render the welcome banner.
+- If the user came from picking the **OKX.AI option** (Reply `1`) while logged out: automatically load `okx-ai-guide` and follow it. Do NOT re-render the welcome banner.
+- If the user came from picking the **Daily brief** option (option `4` in Variant A / option `3` in Variant B) while logged out: automatically load `~/.onchainos/workflows/daily-brief.md` and follow it. Do NOT re-render the welcome banner.
+- If the user came from picking any other **workflow pick** while logged out: automatically load the corresponding workflow file (`~/.onchainos/workflows/<file>.md`) and follow it. Do NOT re-render the welcome banner.
 - If the user came from replying `login` (or equivalent) to the logged-out banner: render the **logged-in** Welcome Banner so they see their addresses + balance.
 
 ---
@@ -168,29 +152,18 @@ If the user types something other than a numbered pick or `login`, answer in the
 |---|---|
 | meme sniping / pump.fun / new launches | `okx-dex-trenches` |
 | follow smart money / KOL / whale | `okx-dex-signal` (or load `smart-money-signals.md`) |
-| bridge / cross-chain / move tokens between chains | `okx-dex-bridge` |
 | yield / earn / stake / DeFi | `okx-defi-invest` |
-| is this token safe / approvals | `okx-security` |
-| swap / buy / sell | `okx-dex-swap` |
-| my holdings / portfolio | `okx-wallet-portfolio` |
-| trading competition / join contest / competition rank | `okx-growth-competition` |
 | login (free-form, not as a banner reply) | this skill's **Login Method Choice** |
 | named DApp + action verb (Aave / Hyperliquid / etc.) | `okx-dapp-discovery` |
-
-<SHOULD>
-If the user picks multiple options at once, execute them in order and bookmark unused picks ("we'll come back to 4 after this").
-</SHOULD>
 
 ---
 
 ## Acceptance Criteria
 
-1. **Banner variant matches auth state** — `loggedIn: false` renders the logged-out variant (no addresses, with "login" hint); `loggedIn: true` renders the logged-in variant (addresses + balance, no hint).
-2. **Skill picks load without login gate** — 🔥 / 💰 load even when logged out; each loaded skill handles its own auth.
-3. **Workflow picks gate on login** — when logged out, 🐋 / 🆕 / ☕ route through Login Method Choice first, then auto-resume the workflow. User should not have to re-state their pick.
+1. **Banner variant matches auth state** — `loggedIn: false` renders the logged-out variant (no addresses); `loggedIn: true` renders the logged-in variant (addresses + balance).
+2. **Skill picks load without login gate** — Polymarket (option 2 in Variant A) and USDC APY (option 3 in A / option 2 in B) load even when logged out; each loaded skill handles its own auth.
+3. **OKX.AI (Reply 1) and Daily brief (option 4 in A / option 3 in B) gate on login** — when logged out, route through Login Method Choice first, then auto-resume the chosen target (`okx-ai-guide` or `daily-brief.md`) WITHOUT re-rendering the welcome banner. Smart-money / new-token intents are no longer numbered picks but remain reachable via the free-form fallback table (`okx-dex-signal` / `okx-dex-trenches`).
 4. **Turn budget** — ≤ 3 turns end-to-end for a new user; ≤ 2 turns for a returning user picking a workflow + login.
+5. **Disclaimer placement** — the disclaimer is the final segment of every rendered banner (both variants, both auth states).
+6. **Stale-session fallback** — when `wallet status` returns `loggedIn: true` but `wallet balance` fails (e.g. expired refresh token) or lacks the address / balance fields, the flow prompts re-login (routes to Login Method Choice) instead of rendering a partial or fabricated logged-in banner; after re-login it renders the logged-in banner.
 
-## Notes / Non-obvious
-
-- **Polymarket plugin is not pre-installed.** Pick 🔥 routes through `okx-dapp-discovery`, which handles plugin install + load. Don't try to load `web3-polymarket` directly.
-- **Workflow files are runtime resources** — at install time they live at `~/.onchainos/workflows/`; in this repo's source they're under `workflows/`.

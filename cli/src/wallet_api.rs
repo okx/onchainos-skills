@@ -12,6 +12,10 @@ use crate::doh::DohManager;
 pub struct ApiCodeError {
     pub code: String,
     pub msg: String,
+    /// HTTP status of the response that carried this business code. Lets
+    /// callers separate backend verdicts (2xx + non-zero code) from
+    /// transport/auth-layer failures (4xx) that happen to ship a JSON body.
+    pub http_status: u16,
 }
 
 impl std::fmt::Display for ApiCodeError {
@@ -654,12 +658,22 @@ pub(crate) async fn force_refresh_access_token() -> Result<String> {
 
 impl WalletApiClient {
     pub fn new() -> Result<Self> {
-        let base_url = std::env::var("OKX_BASE_URL")
-            .ok()
+        Self::with_base_url(None)
+    }
+
+    pub fn with_base_url(base_url_override: Option<&str>) -> Result<Self> {
+        // Same precedence and custom detection as ApiClient::new: an explicit
+        // CLI --base-url beats the OKX_BASE_URL env var, and either one counts
+        // as custom so DoH never swaps a user-chosen host for a proxy node.
+        let base_url = base_url_override
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("OKX_BASE_URL").ok())
             .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
             .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
-        let custom = std::env::var("OKX_BASE_URL").is_ok() || option_env!("OKX_BASE_URL").is_some();
+        let custom = base_url_override.is_some()
+            || std::env::var("OKX_BASE_URL").is_ok()
+            || option_env!("OKX_BASE_URL").is_some();
         let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
         doh.prepare();
 
@@ -732,6 +746,12 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    return self.post_public(path, body).await;
+                }
+            }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
         })
@@ -767,6 +787,12 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    return self.get_no_okheaders(path).await;
+                }
+            }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
         })
@@ -861,6 +887,14 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    return self
+                        .post_authed_with_headers_once(path, access_token, body, extra_headers)
+                        .await;
+                }
+            }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
         })
@@ -914,6 +948,98 @@ impl WalletApiClient {
         self.handle_response(resp).await
     }
 
+    /// POST multipart/form-data with Bearer accessToken.
+    pub async fn post_authed_multipart(
+        &self,
+        path: &str,
+        access_token: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<Value> {
+        self.post_authed_multipart_with_headers(path, access_token, form, None)
+            .await
+    }
+
+    /// POST multipart/form-data with Bearer accessToken and optional extra headers.
+    pub async fn post_authed_multipart_with_headers(
+        &self,
+        path: &str,
+        access_token: &str,
+        form: reqwest::multipart::Form,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
+        let effective = self.effective_base_url();
+        let url = format!("{}{}", effective.trim_end_matches('/'), path);
+
+        let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+        headers.remove(reqwest::header::CONTENT_TYPE);
+        if let Some(extra) = extra_headers {
+            for (k, v) in extra {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    headers.insert(name, val);
+                }
+            }
+        }
+
+        let resp = self
+            .http
+            .post(&url)
+            .headers(headers)
+            .multipart(form)
+            .send()
+            .await
+            .context("wallet API request failed")?;
+        self.handle_response(resp).await
+    }
+
+    /// POST 原始 body bytes + 显式 Content-Type + JWT + 可选附加 header。
+    ///
+    /// 用于手写 multipart body 等需要精确控制 wire 格式的场景（curl 兼容）：
+    /// 调用方负责拼好 body bytes，传 `Content-Type: multipart/form-data; boundary=...`。
+    /// reqwest 自带的 `multipart::Form` builder 会用 chunked transfer 且 part header 不全可控，
+    /// 部分 Spring/Tomcat 配置会因此 1001 拒掉。
+    pub async fn post_authed_raw_with_headers(
+        &self,
+        path: &str,
+        access_token: &str,
+        body: Vec<u8>,
+        content_type: &str,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
+        let effective = self.effective_base_url();
+        let url = format!("{}{}", effective.trim_end_matches('/'), path);
+
+        let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+        headers.remove(reqwest::header::CONTENT_TYPE);
+
+        if let Some(extra) = extra_headers {
+            for (k, v) in extra {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    headers.insert(name, val);
+                }
+            }
+        }
+
+        // 显式设置 Content-Length（reqwest 默认 multipart 可能用 chunked，部分 Spring/Tomcat 配置不接受）
+        let content_len = body.len();
+        let resp = self
+            .http
+            .post(&url)
+            .headers(headers)
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .header(reqwest::header::CONTENT_LENGTH, content_len.to_string())
+            .body(body)
+            .send()
+            .await
+            .context("wallet API request failed")?;
+        self.handle_response(resp).await
+    }
+
     async fn handle_response(&self, resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
         let raw_text = resp.text().await.context("failed to read response body")?;
@@ -922,8 +1048,14 @@ impl WalletApiClient {
             bail!("Wallet API server error (HTTP {}): {}", status.as_u16(), &raw_text);
         }
 
-        let body: Value = serde_json::from_str(&raw_text)
-            .context("failed to parse wallet API response")?;
+        let body: Value = serde_json::from_str(&raw_text).with_context(|| {
+            let preview = if raw_text.len() <= 500 { raw_text.clone() } else { raw_text[..500].to_string() };
+            format!(
+                "failed to parse wallet API response as JSON (HTTP {}): {}",
+                status.as_u16(),
+                preview
+            )
+        })?;
 
         // Handle code as either string "0" or number 0
         let code_ok = match &body["code"] {
@@ -937,11 +1069,23 @@ impl WalletApiClient {
                 Value::Number(n) => n.to_string(),
                 other => other.to_string(),
             };
-            let msg = body["msg"].as_str().unwrap_or("unknown error");
-            let msg = crate::client::augment_auth_error_msg(&code_str, msg);
+            let msg_raw = body["msg"]
+                .as_str()
+                .or_else(|| body["errorMessage"].as_str())
+                .or_else(|| body["error_message"].as_str())
+                .or_else(|| body["message"].as_str())
+                .or_else(|| body["detailMsg"].as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    eprintln!("[WalletAPI] no msg field in error response (HTTP {}), raw body: {}", status.as_u16(), body);
+                    let s = body.to_string();
+                    if s.len() <= 200 { s } else { format!("{}…", &s[..200]) }
+                });
+            let msg = crate::client::augment_auth_error_msg(&code_str, &msg_raw);
             return Err(ApiCodeError {
                 code: code_str,
                 msg,
+                http_status: status.as_u16(),
             }
             .into());
         }
@@ -982,6 +1126,12 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    return self.get_public(path, query).await;
+                }
+            }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
         })
@@ -996,14 +1146,33 @@ impl WalletApiClient {
         access_token: &'a str,
         query: &'a [(&'a str, &'a str)],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        self.get_authed_with_headers(path, access_token, query, None)
+    }
+
+    /// GET + JWT + optional extra headers (e.g. X-Agent-Id / X-Wallet-Address).
+    /// Retries once after DoH failover, and additionally force-refreshes the
+    /// access token + retries once on a server-side `Invalid access token`
+    /// (10008) — see `post_authed_with_headers`. `get_authed` delegates here,
+    /// so plain GET-authed callers (agent get, system config, …) inherit it.
+    pub fn get_authed_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        access_token: &'a str,
+        query: &'a [(&'a str, &'a str)],
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
         Box::pin(async move {
-            match self.get_authed_once(path, access_token, query).await {
+            match self
+                .get_authed_with_headers_once(path, access_token, query, extra_headers)
+                .await
+            {
                 Err(e) if is_invalid_token_error(&e) => {
                     if cfg!(feature = "debug-log") {
                         eprintln!("[DEBUG][get_authed] 10008 invalid token → force-refresh + retry once");
                     }
                     let fresh = force_refresh_access_token().await?;
-                    self.get_authed_once(path, &fresh, query).await
+                    self.get_authed_with_headers_once(path, &fresh, query, extra_headers)
+                        .await
                 }
                 other => other,
             }
@@ -1011,12 +1180,67 @@ impl WalletApiClient {
     }
 
     /// Single GET attempt (with DoH failover retry, no token retry).
-    fn get_authed_once<'a>(
+    fn get_authed_with_headers_once<'a>(
         &'a mut self,
         path: &'a str,
         access_token: &'a str,
         query: &'a [(&'a str, &'a str)],
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let query_string = build_query_string(query);
+            let effective = self.effective_base_url();
+            let url = format!("{}{}{}", effective.trim_end_matches('/'), path, query_string);
+
+            let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+            if let Some(extra) = extra_headers {
+                for (k, v) in extra {
+                    if let (Ok(name), Ok(val)) = (
+                        reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                        reqwest::header::HeaderValue::from_str(v),
+                    ) {
+                        headers.insert(name, val);
+                    }
+                }
+            }
+
+            let resp = match self.http.get(&url).headers(headers).send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self
+                            .get_authed_with_headers_once(path, access_token, query, extra_headers)
+                            .await;
+                    }
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            if self.doh.should_failover_on_response(&resp) {
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    return self
+                        .get_authed_with_headers_once(path, access_token, query, extra_headers)
+                        .await;
+                }
+            }
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
+    }
+
+    /// GET + JWT + optional extra headers, returning raw bytes instead of JSON data.
+    /// Used for binary downloads (e.g. file attachments). No 10008 retry —
+    /// binary download endpoints are not typical token-revocation sites.
+    pub fn get_authed_bytes_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        access_token: &'a str,
+        query: &'a [(&'a str, &'a str)],
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>>> + Send + 'a>> {
         Box::pin(async move {
             let query_string = build_query_string(query);
             let effective = self.effective_base_url();
@@ -1026,18 +1250,27 @@ impl WalletApiClient {
                 path,
                 query_string
             );
-            let resp = match self
-                .http
-                .get(&url)
-                .headers(crate::client::ApiClient::jwt_headers(access_token))
-                .send()
-                .await
-            {
+
+            let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+            if let Some(extra) = extra_headers {
+                for (k, v) in extra {
+                    if let (Ok(name), Ok(val)) = (
+                        reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                        reqwest::header::HeaderValue::from_str(v),
+                    ) {
+                        headers.insert(name, val);
+                    }
+                }
+            }
+
+            let resp = match self.http.get(&url).headers(headers).send().await {
                 Ok(r) => r,
                 Err(e) if e.is_connect() || e.is_timeout() => {
                     if self.doh.handle_failure().await {
                         self.rebuild_http_client()?;
-                        return self.get_authed_once(path, access_token, query).await;
+                        return self
+                            .get_authed_bytes_with_headers(path, access_token, query, extra_headers)
+                            .await;
                     }
                     return Err(e)
                         .context("Network unavailable — check your connection and try again");
@@ -1045,7 +1278,49 @@ impl WalletApiClient {
                 Err(e) => return Err(e).context("request failed"),
             };
             self.doh.cache_direct_if_needed();
-            self.handle_response(resp).await
+
+            let status = resp.status();
+            let content_type = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            let body_bytes = resp.bytes().await.context("failed to read response body")?;
+
+            if content_type.contains("application/json") {
+                let body: Value = serde_json::from_slice(&body_bytes)
+                    .context("failed to parse wallet API response as JSON")?;
+                let code_ok = match &body["code"] {
+                    Value::String(s) => s == "0",
+                    Value::Number(n) => n.as_i64() == Some(0),
+                    _ => false,
+                };
+                if !code_ok {
+                    let code_str = match &body["code"] {
+                        Value::String(s) => s.clone(),
+                        Value::Number(n) => n.to_string(),
+                        other => other.to_string(),
+                    };
+                    let msg = body["msg"]
+                        .as_str()
+                        .or_else(|| body["errorMessage"].as_str())
+                        .or_else(|| body["error_message"].as_str())
+                        .or_else(|| body["message"].as_str())
+                        .or_else(|| body["detailMsg"].as_str())
+                        .unwrap_or("unknown error");
+                    bail!("download failed (code={}): {}", code_str, msg);
+                }
+                return Ok(Vec::new());
+            }
+
+            if status.as_u16() >= 400 {
+                let text = String::from_utf8_lossy(&body_bytes);
+                let preview: String = text.trim().chars().take(500).collect();
+                bail!("download failed (HTTP {}): {}", status.as_u16(), preview);
+            }
+
+            Ok(body_bytes.to_vec())
         })
     }
 
@@ -1997,6 +2272,67 @@ mod tests {
         assert_eq!(resp.accounts[1].addresses.len(), 2);
         assert_eq!(resp.accounts[1].addresses[0].chain_index, "56");
         assert_eq!(resp.accounts[1].addresses[1].chain_index, "501");
+    }
+
+    #[tokio::test]
+    async fn post_authed_raw_with_headers_injects_identity_headers() {
+        use std::io::{Read, Write};
+        use std::sync::{Arc, Mutex};
+
+        // 随机端口的本地 TCP listener，捕获一次原始 HTTP 请求
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(false).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let captured = Arc::new(Mutex::new(String::new()));
+        let captured_clone = captured.clone();
+
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = vec![0u8; 16_384];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            *captured_clone.lock().unwrap() = String::from_utf8_lossy(&buf[..n]).to_string();
+            let body = br#"{"code":0,"data":null,"msg":""}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.write_all(body);
+        });
+
+        // 隔离环境变量：OKX_BASE_URL 优先级最高，测试时要清掉
+        std::env::remove_var("OKX_BASE_URL");
+        let client = WalletApiClient::with_base_url(Some(&format!("http://127.0.0.1:{port}")))
+            .expect("build client");
+        let boundary = "----test-boundary-xyz";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nhello-evidence\r\n--{boundary}--\r\n"
+        ).into_bytes();
+        let content_type = format!("multipart/form-data; boundary={boundary}");
+        let extra = [("X-Agent-Id", "agent-test-1"), ("X-Wallet-Address", "0xDEADBEEF")];
+        let _ = client
+            .post_authed_raw_with_headers(
+                "/priapi/v1/aieco/task/0x1/evidence/upload",
+                "fake_token",
+                body,
+                &content_type,
+                Some(&extra),
+            )
+            .await;
+
+        server.join().expect("listener thread");
+        let req = captured.lock().unwrap().clone();
+        assert!(req.contains("authorization: Bearer fake_token") || req.contains("Authorization: Bearer fake_token"),
+            "missing Authorization header:\n{req}");
+        assert!(req.contains("x-agent-id: agent-test-1") || req.contains("X-Agent-Id: agent-test-1"),
+            "missing X-Agent-Id header:\n{req}");
+        assert!(req.contains("x-wallet-address: 0xDEADBEEF") || req.contains("X-Wallet-Address: 0xDEADBEEF"),
+            "missing X-Wallet-Address header:\n{req}");
+        assert!(req.to_lowercase().contains("multipart/form-data"),
+            "expected multipart/form-data content-type:\n{req}");
+        // json Content-Type 必须已被移除，不能同时出现
+        assert!(!req.to_lowercase().contains("content-type: application/json"),
+            "application/json content-type should have been stripped:\n{req}");
     }
 
     // ── Gas Station routing: GasStationStatus::parse ───────────────

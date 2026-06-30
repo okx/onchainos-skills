@@ -1,3 +1,4 @@
+pub mod agent_commerce;
 pub mod agentic_wallet;
 pub mod common;
 pub mod competition;

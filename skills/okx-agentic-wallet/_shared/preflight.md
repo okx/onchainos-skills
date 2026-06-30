@@ -13,8 +13,13 @@
    tell the user to check their network connection or install manually from
    https://github.com/okx/onchainos-skills.
 
-2. **Install or update**: If `onchainos` is not found, or if the cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows) is older than 12 hours:
-   - Download the installer and its checksum file from the latest release tag:
+2. **Install or update**:
+   - **Already installed** → run
+     `onchainos upgrade --throttle --skill-version "<this skill's frontmatter version>"`
+     (handles the 12h throttle, channel selection, beta→stable graduation, checkout switching, and
+     its own cache refresh). If the JSON output has an `action` field, perform it and re-read
+     SKILL.md. On failure, keep the current binary. Skip the installer bullets below.
+   - **Not installed** → download the installer and its checksum file from the latest release tag:
      - **macOS/Linux**:
        `curl -sSL "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.sh" -o /tmp/onchainos-install.sh`
        `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -o /tmp/installer-checksums.txt`
@@ -23,6 +28,8 @@
        `Invoke-WebRequest -Uri "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -OutFile "$env:TEMP\installer-checksums.txt"`
    - Verify the installer's SHA256 against `installer-checksums.txt`. On mismatch, **stop** and warn — the installer may have been tampered with.
    - Execute: `sh /tmp/onchainos-install.sh` (or `& "$env:TEMP\onchainos-install.ps1"` on Windows).
+     If the active skill's frontmatter `version` contains `-beta`, append `--beta` so beta skills
+     install the matching beta CLI.
      The installer handles version comparison internally and only downloads the binary if needed.
    - On other failures, point to https://github.com/okx/onchainos-skills.
 

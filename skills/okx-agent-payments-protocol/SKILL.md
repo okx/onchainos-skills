@@ -1,10 +1,10 @@
 ---
 name: okx-agent-payments-protocol
-description: "Use when an agent hits HTTP 402 / payment-required, or the user mentions x402, x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, permit2, upto, metered billing, a payment channel / voucher / session, channelId / channel_id, opening / closing / topping up / settling / refunding a channel, a paymentId or a2a_ link, or creating / checking a payment link. Covers x402 (exact, exact+Permit2, upto, aggr_deferred), MPP (charge / session), and a2a-pay paymentId flows. Any close / topup / settle / voucher / refund near a channel_id or session is an MPP mid-session op. The full bilingual trigger list (including Chinese) lives in the skill body."
+description: "Use when an agent hits HTTP 402 / payment-required, or the user mentions x402, x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, permit2, upto, metered billing, a payment channel / voucher / session, channelId / channel_id, opening / closing / topping up / settling / refunding a channel, a paymentId or a2a_ link, creating / checking a payment link, A2MCP / an A2MCP endpoint, or sending a request to / calling an Agent's endpoint with a concrete endpoint URL. Covers x402 (exact, exact+Permit2, upto, aggr_deferred), MPP (charge / session), and a2a-pay paymentId flows. Any close / topup / settle / voucher / refund near a channel_id or session is an MPP mid-session op. The full bilingual trigger list (including Chinese) lives in the skill body."
 license: MIT
 metadata:
   author: okx
-  version: "3.3.15"
+  version: "4.0.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -80,6 +80,8 @@ Each 402 signal (or paymentId) → CLI command → reference. Detailed gating + 
 ## Step A1: Start from the original response
 
 You already have the original HTTP response. If it is **not 402**, return the body directly. Otherwise → Step A2.
+
+**Capture any request parameters the user's prompt supplies** (e.g. "查 San Francisco 的天气" → `city=San Francisco`, `token=0x…`, "翻译成中文" → `lang=zh`). Record each as `name → value` for the Step A3-Params plan — values given here are **never re-asked**, just shown in the confirmation card. Keep them even if the first request didn't need them; the seller may require them on the paid replay.
 
 ## Step A2: Detect the protocol
 
@@ -158,6 +160,38 @@ unitType            optional — "request" | "second" | "byte" etc.
 
 Convert `amount` from base units to human-readable (see `_shared/amount-display.md`).
 
+## Step A3-Params: Build the request-parameter plan
+
+> **Runs after Step A3 decode, before any confirmation card.** Beyond payment terms, the seller may declare which parameters the **paid replay** must carry and how. Build a **param plan** so the user confirms params alongside payment and the replay attaches them correctly.
+
+A param plan is a list of `{ name, value, carrier, required, source }`, `carrier ∈ {query, body, header, path}`. No seller-declared params and none named by the user → **empty plan**; replay unchanged.
+
+### Source 1 — Bazaar `outputSchema.input` (preferred)
+
+If the decoded 402 (or any `accepts[i]`) carries `outputSchema.input`, parse it:
+
+| Field | Use |
+|---|---|
+| `input.type` | `"http"` → handle here. `"mcp"` → out of scope, skip param assembly. |
+| `input.method` | Method to replay with (may differ from the original). `GET`/`HEAD`/`DELETE` → params go in **query**; `POST`/`PUT`/`PATCH` → in **body** (`input.bodyType`: `json`/`form-data`/`text`). |
+| `input.queryParams` / `input.body` / `input.pathParams` / `input.headers` | Params for that carrier (query / body / path / header). |
+
+The JSON Schema `properties` + `required` give each param's type and whether it's mandatory. One plan entry per declared param.
+
+### Source 2 — non-Bazaar (conservative)
+
+No `outputSchema.input` → add a param **only** on an explicit seller signal; **never invent one**:
+
+- response **body** lists requirements (`required` / `params` / `parameters` / `fields` / `inputSchema`), OR
+- an **error message** names a missing param (e.g. `missing required query param "city"`), OR
+- a documented response **header** asks for one.
+
+Ambiguous → add nothing, replay unchanged.
+
+### Fill values
+
+Per entry, resolve `value`: (1) user's prompt (Step A1) → `source=prompt`, don't re-ask; (2) conversation context → `source=context`; (3) still missing **and required** → ask the user, one grouped question for all of them (a legitimate gate, not narration — ZERO-TEXT-ON-TRIGGER doesn't forbid it). Optional + unresolved → drop.
+
 ## Step A3.5: Multi-scheme recommendation (when applicable)
 
 **Applies only when** the combined candidate pool contains **2 or more** of `{exact, aggr_deferred, charge}`. Otherwise skip straight to Step A4 with the single available candidate.
@@ -181,6 +215,7 @@ For **`accepts`-based 402** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v
 > - **Token**: `<token symbol>` (`<option.asset>`)
 > - **Amount**: `<human-readable amount>` (from `option.amount` for v2, or `option.maxAmountRequired` for v1; convert from minimal units using token decimals)
 > - **Pay to**: `<option.payTo>`
+> - **Request parameters** (omit this line entirely if the Step A3-Params plan is empty): one row per param as `<name> = <value>` → `<carrier: query | body | header | path>`
 >
 > Proceed with payment? (yes / no)
 
@@ -195,6 +230,7 @@ For **`WWW-Authenticate: Payment` 402**:
 > - **Who pays gas**: `<server (transaction mode) | you broadcast it yourself (hash mode)>`
 > - **Split recipients** (one-shot only, if present): `<N other parties also receive a share>`
 > - **Suggested prepaid balance** (session only, if present): `<human-readable>`
+> - **Request parameters** (omit this line entirely if the Step A3-Params plan is empty): one row per param as `<name> = <value>` → `<carrier: query | body | header | path>`
 >
 > Proceed with payment? (yes / no)
 

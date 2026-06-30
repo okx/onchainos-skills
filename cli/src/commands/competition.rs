@@ -1026,8 +1026,8 @@ fn entry_chain_string(entry: &Value) -> String {
 /// version:
 ///   - top level: `data` / `unsignedTx` / `serializedTx` / `rawTx`
 ///   - nested:    `tx` / `v0.tx` (preferred — these are the *unsigned* tx;
-///     we avoid `*.txSigned` because despite the name those
-///     bytes still have a zero signature placeholder).
+///     we avoid `*.txSigned` because despite the name those bytes still have
+///     a zero signature placeholder).
 ///
 /// Returns `None` if no plausible byte array is found.
 fn encode_solana_byte_array(entry: &Value) -> Option<String> {

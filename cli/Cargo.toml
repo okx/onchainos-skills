@@ -1,6 +1,6 @@
 [package]
 name = "onchainos-cli"
-version = "3.3.15"
+version = "4.0.0"
 edition = "2021"
 
 [[bin]]
@@ -16,6 +16,7 @@ dotenvy = "0.15"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
+  "multipart",
   "rustls-tls",
 ] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
@@ -57,6 +58,7 @@ alloy-network = "1"
 # Keyring (cross-platform credential storage)
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 fs2 = "0.4"
+tempfile = "3"
 
 # X25519 key derivation (tempPubKey generation)
 x25519-dalek = { version = "2", features = ["static_secrets"] }
