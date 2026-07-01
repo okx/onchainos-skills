@@ -29,11 +29,11 @@ fn job_created_non_designated_provider(ctx: &FlowContext<'_>) -> String {
         "[Trigger] job_created (on-chain, public task — no designated provider)\n\
          [Role] User (User)\n\n\
          🛑 Execute the 1 action below, then end the turn. The task is public; ASPs will discover it and reach out via `provider_conversation`.\n\n\
-         **Action 1 — Notify the user that the job is on-chain.** Translate the canonical English notification below to the user's chat language (per [Localization] rules), then dispatch it:\n\
+         **Action 1 — Notify the user that the job is on-chain.** **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          Canonical content (`<title>` and `<short_jobId>` already filled in):\n\
          \x20\x20{notify_filled}\n\
          ```bash\n\
-         onchainos agent user-notify --content '<your translated content>'\n\
+         onchainos agent user-notify --content '<localized content shown below>'\n\
          ```\n\n\
          🛑 End the turn after notifying. Do NOT call `asp-match` — public tasks wait for ASPs to apply.\n"
     )
@@ -61,11 +61,11 @@ async fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
         .replace("<short_jobId>", short_id)
         .replace("<provider_agentId>", &dp_id);
     let notify_body = format!(
-        "Translate the canonical English notification below to the user's chat language, then dispatch it:\n\
-         Canonical content:\n\
+        "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
+         Content:\n\
          \x20\x20{notify_filled}\n\
          ```bash\n\
-         onchainos agent user-notify --content '<your translated content>'\n\
+         onchainos agent user-notify --content '<localized content shown below>'\n\
          ```\n\n"
     );
 
@@ -344,7 +344,7 @@ pub(crate) fn provider_conversation_reject_cli(ctx: &FlowContext<'_>, group_id: 
 
     let job_id = ctx.job_id;
 
-    if let Err(e) = okx_a2a::task_reject(group_id) {
+    if let Err(e) = okx_a2a::task_reject(group_id, None) {
         return format!("[provider_conversation_reject] ERROR: task reject failed: {e}\n");
     }
 
@@ -440,7 +440,7 @@ pub(crate) async fn provider_conversation_auto_consume(ctx: &FlowContext<'_>) ->
                 "cli", "auto_consume/skip_failed_asp", true, Duration::default(),
                 Some(vec![format!("jobId={job_id}"), format!("asp={asp_agent_id}")]), None,
             );
-            if let Err(e) = okx_a2a::task_reject(&group_id) {
+            if let Err(e) = okx_a2a::task_reject(&group_id, None) {
                 skip_groups.insert(group_id);
                 crate::audit::log(
                     "cli", "auto_consume/reject_failed", false, Duration::default(),
@@ -460,7 +460,7 @@ pub(crate) async fn provider_conversation_auto_consume(ctx: &FlowContext<'_>) ->
                     "cli", "auto_consume/route_check_error", false, Duration::default(),
                     Some(vec![format!("jobId={job_id}"), format!("asp={asp_agent_id}"), format!("error={e}")]), None,
                 );
-                if okx_a2a::task_reject(&group_id).is_err() {
+                if okx_a2a::task_reject(&group_id, None).is_err() {
                     skip_groups.insert(group_id);
                 }
                 continue;
@@ -503,7 +503,7 @@ pub(crate) async fn provider_conversation_auto_consume(ctx: &FlowContext<'_>) ->
                         format!("route={route}"),
                     ]), None,
                 );
-                if okx_a2a::task_reject(&group_id).is_err() {
+                if okx_a2a::task_reject(&group_id, None).is_err() {
                     skip_groups.insert(group_id);
                 }
                 continue;
@@ -561,7 +561,7 @@ fn provider_conversation_pick_a2a_auto(ctx: &FlowContext<'_>, asp_id: &str, grou
          \x20\x20- If inference succeeds → use the inferred value → go to Step 3.\n\
          \x20\x20- If you cannot infer → reject + auto-advance (do NOT use empty params):\n\
          \x20\x20\x20\x20```bash\n\
-         \x20\x20\x20\x20okx-a2a task reject --group-id {group_id} --json\n\
+         \x20\x20\x20\x20okx-a2a task reject --group-id {group_id} --content '[user_rejected]:Your request has been declined. The task submitted by the User is missing required input parameters for your service. Please look for another task that provides the necessary inputs.' --json\n\
          \x20\x20\x20\x20{auto_advance}\n\
          \x20\x20\x20\x20```\n\
          \x20\x20\x20\x20(Replace `<REASON>` with `service_params_not_inferred`)\n\

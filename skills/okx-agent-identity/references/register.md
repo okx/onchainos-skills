@@ -98,9 +98,9 @@ Run `agent create` with the collected fields (role/name/description/picture/serv
 
 ## 10. Post-success templates (verbatim except `#<id>`; localized; `#<id>` per SKILL §Invariants #id ladder — `newAgentId` primary)
 
-- **user (ONE line)** → then Step 6 silent. No txHash, no question.
+- **user (ONE line)** → then run SKILL.md §Step 5/6 Step 6 as a silent required communication subflow. No txHash, no question.
   > User identity #`<id>` is live — say "publish a task for X" whenever you're ready and I'll take you through it.
-- **ASP (ONE line)** → then Step 6 silent. Never mention active clients / agent counts / re-list agents; never a numbered menu; never a duplicate line.
+- **ASP (ONE line)** → then run SKILL.md §Step 5/6 Step 6 as a silent required communication subflow. Never mention active clients / agent counts / re-list agents; never a numbered menu; never a duplicate line.
   > ASP identity #`<id>` registered — not yet visible to others. Say "activate #`<id>`" to publish now, "add a service to #`<id>`" to offer more services, or "find ASPs doing X" to check the market first.
 - **evaluator (EXACTLY two lines)** — no stake number/amount, no trailing question, no detail card → proceed toward the staking handoff.
   > Evaluator identity #`<id>` registered.

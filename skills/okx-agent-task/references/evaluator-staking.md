@@ -100,7 +100,15 @@ onchainos agent stake --amount <N> --agent-id <evaluatorAgentId>
 
 ### Step 4 — Handoff after success
 
-When the CLI exit code = 0 and stdout contains `stake submitted`, **same-turn handoff** to the Execution Flow of `/skills/okx-agent-chat/ensure-okx-a2a-communication-ready.md` (the OKX A2A plugin and communication channel must be ready).
+When the CLI exit code = 0 and stdout contains `stake submitted`, run this required subflow in the same turn:
+
+1. Open [`../../okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../../okx-agent-chat/ensure-okx-a2a-communication-ready.md).
+2. Follow its `Execution Flow` from start to finish.
+3. Wait for every command in that flow to complete.
+4. End this staking flow only if that communication flow completes successfully.
+5. If the file cannot be opened, or any command in the flow fails or blocks, show the failure output and stop.
+
+Do not skip this subflow. Do not treat the linked markdown file as optional background reading.
 
 ---
 

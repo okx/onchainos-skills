@@ -14,7 +14,7 @@ description: >
 license: Apache-2.0
 metadata:
   author: okx
-  version: "4.0.0"
+  version: "4.0.1"
   homepage: "https://web3.okx.com"
 ---
 
@@ -22,6 +22,14 @@ metadata:
 
 ERC-8004 agent identity on XLayer (chain fixed — never pass `--chain`; asked about ETH/BSC/other chains → say identities are created on XLayer only). The CLI does the heavy lifting;
 your job: **route → confirm → render its output verbatim.** You invoke the CLI; the user never sees an `onchainos ...` literal.
+
+## Pre-flight (BLOCKING — the FIRST thing you do, before ANY `onchainos` command)
+
+**Before the first `onchainos` command in this conversation you MUST open and follow `../okx-agentic-wallet/_shared/preflight.md`.** Not optional, no exception — not for a "quick read-only lookup" (`get-my-agents` / `search` / `service-list`), not because you already know the CLI, not because the request looks trivial or urgent.
+
+- **Session-once means *per session*.** A new conversation resets it. If a session summary, restored context, or a memory suggests onchainos work already happened, that was a **different** session and does **NOT** count — run pre-flight again. Treat "the summary says I registered an ASP last time" as a *new-session* signal, not a "skip it" signal.
+- **No `onchainos` call from memory first.** Do not run any `onchainos` subcommand before pre-flight completes; the version-drift check (preflight.md step 4) is REQUIRED even when steps 1–3 are skipped.
+- **Self-catch:** about to type `onchainos ...` and you haven't run pre-flight this session? → stop, run pre-flight, then proceed.
 
 ## Language Lock (apply on EVERY turn — highest priority, before routing)
 
@@ -55,13 +63,15 @@ Rendering rules (card skeleton / Lexicon / #id ladder / CLI labels / commands) �
 
 ## Execution Checklist
 
+- [ ] Step 0: Pre-flight — run §Pre-flight before the first `onchainos` command this session (read-only lookups included) — **BLOCKING, no exception**
 - [ ] Step 1: Route — match intent to reference per table above — **BLOCKING**
 - [ ] Step 2: Load reference + invariants.md; follow reference steps — **REQUIRED**
 - [ ] Step 3: Run CLI → render output (read: reference template; write: card → confirm → CLI → template) → run §Pre-Delivery Checklist
 - [ ] Step 4: Success → §Step 5/6; failure → load `references/errors.md`
 
-## Gates (non-overridable; apply to every write)
+## Gates (non-overridable)
 
+- **Pre-flight** — before the FIRST `onchainos` command this session (read **or** write — `get-my-agents` / `search`), §Pre-flight must have run. A prior session does not count. No exception. This gate precedes every other gate below.
 - **Pre-check** — resolve role first (`--role` required; canonical values `user` / `asp` / `evaluator`).
   - Before any `create`: run `agent pre-check --role <role>` ONCE — folds first-time consent + per-wallet uniqueness, returns `{ canCreate, role, reason?, consent?, existingSameRole, aspCount }` (render per register §2).
   - Before any `update`: fetch target with `agent get-agents --agent-ids` first (update.md §1).
@@ -110,11 +120,7 @@ Targets below are internal routing — never name a skill path or "staking" hand
 
 | Last successful CLI | Next |
 |---|---|
-| create user / asp · update · activate · deactivate | → Step 6: load okx-agent-chat comm-init. |
+| create user / asp · update · activate · deactivate | → Step 6: required communication subflow. Open [`../okx-agent-chat/ensure-okx-a2a-communication-ready.md`](../okx-agent-chat/ensure-okx-a2a-communication-ready.md), follow its `Execution Flow` from start to finish, and wait for every command in that flow to complete. Continue only if that flow completes successfully. If the file cannot be opened, or any command in the flow fails or blocks, show the failure output and stop. Do not skip this subflow or treat the linked markdown file as optional background reading. |
 | create evaluator | → okx-agent-task evaluator-staking. Do NOT end on a question or a detail card. |
 | passive need-user | hand back to okx-agent-task with ONE line. No Step 6. |
 | search / get / service-list / feedback-list | Stop. |
-
-## Pre-flight
-
-Session-once (not per-task), before the first onchainos call: run `../okx-agentic-wallet/_shared/preflight.md`.

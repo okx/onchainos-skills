@@ -9,16 +9,11 @@ pub struct CreateArgs {
     /// parameter: --name`.
     #[arg(long)]
     pub name: Option<String>,
-    /// Required. Canonical values only: `user` / `asp` / `evaluator` (no
-    /// aliases — map any synonym to one of these three first). Role is fixed at
-    /// create and cannot be changed later (`update` has no `--role`). Missing →
-    /// `missing required parameter`; an unrecognized value → `invalid value for
-    /// --role`.
+    /// Required. One of `user` / `asp` / `evaluator`. Fixed at create — cannot
+    /// be changed by `update`.
     #[arg(long)]
     pub role: Option<String>,
-    /// Agent-level description. Required for `asp` (core searchable field;
-    /// missing / empty → `missing required parameter: --description`); optional
-    /// for `user` / `evaluator` (omitted → on-chain `ProfileDescription:""`).
+    /// Agent description. Required for `asp`; optional for `user` / `evaluator`.
     #[arg(long)]
     pub description: Option<String>,
     /// Profile-picture URL (upload an image via `agent upload` first, then pass
@@ -26,17 +21,19 @@ pub struct CreateArgs {
     /// avatar`); optional for `user` / `evaluator` (omitted → default avatar).
     #[arg(long)]
     pub picture: Option<String>,
-    /// Service list as a JSON array (element shape per the service-element key
-    /// table in references/invariants.md — on create every entry is new, so omit
-    /// the `operation` / `id` keys). Required for `asp`: at least one service
-    /// (empty → `ASP agents require at least one service`); ignored for
-    /// `user` / `evaluator`.
+    /// Service list as a JSON array. Element keys: `serviceName`,
+    /// `serviceDescription`, `serviceType` (`A2A` | `A2MCP`), `fee` (A2MCP
+    /// required, A2A optional — plain number, USDT implied, ≤6 decimals),
+    /// `endpoint` (A2MCP only; A2A must omit it). Required for `asp`: at least
+    /// one service (empty → `ASP agents require at least one service`); ignored
+    /// for `user` / `evaluator`.
     #[arg(long)]
     pub service: Option<String>,
 }
 
-/// `onchainos agent consent`: standalone first-time-creation terms consent
-/// (the legal module's two-step flow, decoupled from `create`). Step 1 (no
+/// INTERNAL — not a CLI subcommand. There is no `onchainos agent consent`
+/// command; this struct backs `consent_impl`, which `pre-check` calls
+/// internally to run the legal module's two-step consent flow. Step 1 (no
 /// flags) issues a `consentKey` + `terms`; step 2 (`--consent-key` +
 /// `--agreed`) finalizes the user's accept/decline decision. fromAddr +
 /// chainIndex are auto-filled (current XLayer wallet). See API doc
@@ -56,9 +53,10 @@ pub struct ConsentArgs {
 /// `onchainos agent update`: edit an existing agent. Only `--agent-id` is
 /// required; every other flag is an optional partial change — omit a flag to
 /// leave that field untouched. `role` and CommunicationAddress are immutable
-/// and are not accepted here. The payload is a DELTA: agent-level fields are
-/// sent only when provided, and `--service` carries only the services to
-/// change (each tagged with an `operation`), never a full snapshot.
+/// and are not accepted here. Updates are incremental: agent-level fields are
+/// sent only when provided, and `--service` carries only the services you want
+/// to add / modify / remove (each tagged with an `operation`), never the full
+/// list.
 #[derive(Args, Clone, Debug)]
 pub struct UpdateArgs {
     /// REQUIRED. The target agent's id (becomes cardJson `agentId`). Missing →
@@ -75,36 +73,40 @@ pub struct UpdateArgs {
     /// Optional. New profile-picture URL. Omitted / empty → unchanged.
     #[arg(long)]
     pub picture: Option<String>,
-    /// Optional. Service DELTA as a JSON array — only the services to change,
-    /// each tagged with `operation`: `create` (new service, no `id`),
-    /// `update` / `delete` (carry the existing service `id`). Omitted → the
-    /// `services` field is left out entirely (omission does NOT clear
-    /// services). See the service-element key table in references/invariants.md.
+    /// Optional. Incremental service changes as a JSON array — only the services
+    /// you want to add / modify / remove, NOT the full list. Element keys:
+    /// `serviceName`, `serviceDescription`, `serviceType` (`A2A` | `A2MCP`),
+    /// `fee` (A2MCP required — plain number, USDT implied, ≤6 decimals),
+    /// `endpoint` (A2MCP only), plus `operation`: `create` (new service, no
+    /// `id`) / `update` (modify, carry the existing service `id`) / `delete`
+    /// (remove, carry the existing service `id`). Omitted → the `services` field
+    /// is left out entirely (omission does NOT clear existing services).
+    ///
+    /// Example — add one A2MCP service and delete an existing one:
+    ///   --service '[{"operation":"create","serviceName":"Price feed","serviceDescription":"Realtime prices","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"},{"operation":"delete","id":"svc_123"}]'
     #[arg(long)]
     pub service: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
 pub struct GetMyAgentsArgs {
-    /// Filter the listing to a single role. Accepts the canonical values
-    /// `user` / `asp` / `evaluator` only (no aliases). Sent to the backend as
-    /// the integer code `role` (1/2/3).
+    /// Optional. Filter to one role: `user` / `asp` / `evaluator`.
     #[arg(long)]
     pub role: Option<String>,
-    /// Filter the listing to all agents owned by this address. Sent to the
-    /// backend as `ownerAddress`.
+    /// Filter to agents owned by this address.
     #[arg(long = "owner-address")]
     pub owner_address: Option<String>,
+    /// Page number (1-based). Omitted → backend default.
     #[arg(long)]
     pub page: Option<String>,
+    /// Results per page. Omitted → backend default.
     #[arg(long = "page-size")]
     pub page_size: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
 pub struct GetAgentsArgs {
-    /// Agent ID(s), comma-separated. Each id is sent as one `agentIdList`
-    /// array element to the batch-list endpoint.
+    /// Agent ID(s), comma-separated.
     #[arg(long = "agent-ids")]
     pub agent_ids: Option<String>,
 }
@@ -114,10 +116,14 @@ pub struct GetAgentsArgs {
 /// `agentIdList` param). Hits `GET /agent/agent-list`.
 #[derive(Args, Clone, Debug)]
 pub struct GetArgs {
+    /// Agent ID(s), comma-separated → detail mode. Omitted → list mode
+    /// (your own agents, paginated).
     #[arg(long = "agent-ids")]
     pub agent_ids: Option<String>,
+    /// Page number (1-based; list mode only). Omitted → backend default.
     #[arg(long)]
     pub page: Option<String>,
+    /// Results per page (list mode only). Omitted → backend default.
     #[arg(long = "page-size")]
     pub page_size: Option<String>,
 }
@@ -131,21 +137,25 @@ pub struct GetArgs {
 ///     accepted; the skill shows `consent.terms`, then re-invokes with `--consent-key`.
 #[derive(Args, Clone, Debug)]
 pub struct PrecheckArgs {
-    /// Required (same shape as `agent create`: clap-optional, runtime-enforced).
-    /// Canonical values only: `user` / `asp` / `evaluator` (no aliases — the
-    /// skill maps any synonym to one of these three first). Missing → `missing
-    /// required parameter`; an unrecognized value → `invalid value for --role`.
+    /// Required. One of `user` / `asp` / `evaluator`.
     #[arg(long)]
     pub role: Option<String>,
-    /// The one-time consentKey from a prior `consent` block. PRESENCE means "the
-    /// user agreed" — the CLI submits the consent with `agreed=true`. Omit it and
-    /// (for a first-time wallet) the CLI checks consent status / returns terms.
+    /// Optional. Only needed the first time a wallet registers, when a prior
+    /// `pre-check` (run without this flag) returned `consent.consentKey` plus
+    /// the terms to display. After the user accepts those terms, re-run
+    /// `pre-check` passing that key here — its presence submits the agreement
+    /// (agreed=true). Omit it otherwise (already-consented wallets never
+    /// receive one).
     #[arg(long = "consent-key")]
     pub consent_key: Option<String>,
 }
 
+/// `onchainos agent deactivate`: state toggle to unpublish an agent. Also the
+/// arg shape for any single-agent-id status command.
 #[derive(Args, Clone, Debug)]
 pub struct AgentStatusArgs {
+    /// REQUIRED (runtime-enforced). The target agent's id. Missing →
+    /// `missing required parameter: --agent-id`.
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
 }
@@ -155,6 +165,8 @@ pub struct AgentStatusArgs {
 /// pipeline internally. All data fetching is done by the CLI itself.
 #[derive(Args, Clone, Debug)]
 pub struct ActivateArgs {
+    /// REQUIRED (runtime-enforced). The target agent's id. Missing →
+    /// `missing required parameter: --agent-id`.
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
     /// Required: preferred language for backend review messages (BCP-47,
@@ -165,24 +177,35 @@ pub struct ActivateArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct UploadArgs {
+    /// REQUIRED (runtime-enforced). Local image file path to upload as an
+    /// avatar; returns a CDN URL to pass to `create`/`update` `--picture`.
+    /// Missing → `missing required parameter: --file`.
     #[arg(long)]
     pub file: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
 pub struct SearchArgs {
+    /// REQUIRED (runtime-enforced). Search keyword(s). Missing / empty →
+    /// `missing required parameter: --query`.
     #[arg(long)]
     pub query: Option<String>,
+    /// Optional feedback / rating filters (comma-separated).
     #[arg(long, value_delimiter = ',')]
     pub feedback: Vec<String>,
+    /// Optional agent-info filters (comma-separated).
     #[arg(long = "agent-info", value_delimiter = ',')]
     pub agent_info: Vec<String>,
+    /// Optional status filters (comma-separated).
     #[arg(long, value_delimiter = ',')]
     pub status: Vec<String>,
+    /// Optional service filters (comma-separated).
     #[arg(long, value_delimiter = ',')]
     pub service: Vec<String>,
+    /// Page number (1-based). Omitted → backend default.
     #[arg(long)]
     pub page: Option<String>,
+    /// Results per page. Omitted → backend default.
     #[arg(long = "page-size")]
     pub page_size: Option<String>,
 }
@@ -190,6 +213,8 @@ pub struct SearchArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct ServiceListArgs {
+    /// REQUIRED (runtime-enforced). The target agent's id whose services to
+    /// list. Missing → `missing required parameter: --agent-id`.
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
 }
@@ -208,32 +233,33 @@ pub struct GetByAddressArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct FeedbackSubmitArgs {
-    /// Required: agent id being reviewed; maps to `comment.agentid` in the create-comment body.
+    /// Required: agent id being reviewed.
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
-    /// Required: agent id of the reviewer; maps to `extraData.erc8004Msg.feedBackAgentId`.
+    /// Required: your (reviewer's) agent id.
     #[arg(long = "creator-id")]
     pub creator_id: Option<String>,
-    /// Required: star rating 0.00–5.00 (up to 2 decimal places, step 0.01).
-    /// The CLI multiplies by 20 with round-half-up to produce the 0–100 u32
-    /// wire value for `comment.value`. Validation and mapping live in
-    /// `utils::parse_stars_arg`.
+    /// Required: star rating 0.00–5.00 (step 0.01).
     #[arg(long)]
     pub score: Option<String>,
-    /// Optional: free-text review; maps to `comment.comment` in the create-comment body.
+    /// Optional: free-text review.
     #[arg(long)]
     pub description: Option<String>,
-    /// Optional: taskId; maps to `extraData.erc8004Msg.taskId`. Omitted when empty.
+    /// Required: related task id.
     #[arg(long = "task-id")]
     pub task_id: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
 pub struct FeedbackListArgs {
+    /// REQUIRED (runtime-enforced). The target agent's id whose reviews to
+    /// list. Missing → `missing required parameter: --agent-id`.
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
+    /// Page number (1-based). Omitted → backend default.
     #[arg(long)]
     pub page: Option<String>,
+    /// Results per page. Omitted → backend default.
     #[arg(long = "page-size")]
     pub page_size: Option<String>,
 }
@@ -256,12 +282,13 @@ pub struct XmtpSignArgs {
 /// skill during registration QA.
 #[derive(Args, Clone, Debug)]
 pub struct ValidateListingArgs {
-    /// Canonical values only: `user` / `asp` / `evaluator` (no aliases).
-    /// Defaults to `asp`.
+    /// One of `user` / `asp` / `evaluator`. Defaults to `asp`.
     #[arg(long)]
     pub role: Option<String>,
+    /// Agent name to validate against marketplace naming rules.
     #[arg(long)]
     pub name: Option<String>,
+    /// Agent-level description to validate.
     #[arg(long)]
     pub description: Option<String>,
     /// JSON array string with the same element shape as create/update's

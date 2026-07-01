@@ -242,8 +242,12 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
     // ── Within-budget branch: confirm-accept on-chain (escrow funded; status → accepted) ──
     match super::super::accept::handle_confirm_accept(&mut client, job_id, ctx.prefetched).await {
         Ok(()) => {
-            // R14: drain remaining ASP messages for this job
-            let _ = crate::commands::agent_commerce::task::common::okx_a2a::task_reject_by_job(job_id);
+            // R14: drain remaining ASP messages for this job, notifying each ASP
+            let drain_content = format!(
+                "[user_rejected]:Job {} is no longer available. It was accepted by another ASP before your request was processed.",
+                job_id
+            );
+            let _ = crate::commands::agent_commerce::task::common::okx_a2a::task_reject_by_job(job_id, Some(&drain_content));
             "**End this turn** and wait for the `job_accepted` system notification.".to_string()
         }
         Err(e) => {
@@ -698,7 +702,7 @@ pub(crate) fn deliverable_received_cli(
              Score: <score> / 5.00\n\
              💬 Comment: <description>\n\
              ```\n\n\
-             [Step 3] Translate the JobCompleted template below into the user's chat language (placeholders preserved verbatim), then run:\n\
+             [Step 3] **Localize first** — rewrite the template below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user. Preserve placeholders verbatim.\n\
              \x20\x20onchainos agent cache-notify --job-id {job_id} --event-key job_completed_escrow --content '<your translation>'\n\
              Template:\n\
              ```\n\

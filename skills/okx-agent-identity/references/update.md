@@ -22,4 +22,4 @@ Loaded when: user wants to update an existing agent, or fix a rejected / QA-fail
    **No-op guard:** if nothing changed (no agent field, no service entry) → "No changes to submit." Don't call `agent update`; re-enter update Q&A. `--description ""` does NOT clear a description. Post-update:
    - `agent.approvalStatus == 2` (WS push payload, if the field is present) → "Update saved. Under review — once approved it will go live automatically. No further action needed." If the `agent` key or `approvalStatus` field is absent (WS push timed out or field not returned), fall through to the standard update success line per §10 update template.
    - step-1 detail showed `approvalDisplayStatus == 5` (not auto-resubmitted) → "Update saved — not yet resubmitted. Say 'activate #\<id\>' to send it for review."
-   - else → "Update saved." → Step 6.
+   - else → "Update saved." → run SKILL.md §Step 5/6 Step 6 as a required communication subflow.

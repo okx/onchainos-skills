@@ -64,7 +64,7 @@ pub enum AgentCommand {
     FeedbackList(identity::FeedbackListArgs),
 
     /// Sign an arbitrary message with keyUuid + signing_seed (xmtp etc.); does not broadcast
-    #[command(name = "xmtp-sign")]
+    #[command(name = "xmtp-sign", hide = true)]
     XmtpSign(identity::XmtpSignArgs),
 
     /// Validate an Agent listing's fields against marketplace rules (pure-local, no network)
