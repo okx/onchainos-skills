@@ -816,7 +816,7 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
 async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    // --agent-id / --creator-id / --score required; --description / --task-id optional.
+    // --agent-id / --creator-id / --score / --task-id required; --description optional.
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string();
     let creator_id = require_non_empty(args.creator_id.as_deref(), "--creator-id")?.to_string();
     // --score is 0.00–5.00 stars (up to 2 decimal places, step 0.01); the
@@ -832,7 +832,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         "--score",
     )?;
     let feedback_desc = trim_or_empty(args.description.as_deref());
-    let task_id = trim_or_empty(args.task_id.as_deref());
+    let task_id = require_non_empty(args.task_id.as_deref(), "--task-id")?.to_string();
     let signing_session = load_agent_signing_session(None)?;
 
     // Request body: create-comment requires chainIndex + sessionCert +
@@ -853,9 +853,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         "feedBackAgentId": creator_id,
         "comment": serde_json::to_string(&comment).context("failed to serialize comment")?,
     });
-    if !task_id.is_empty() {
-        body["taskId"] = json!(task_id);
-    }
+    body["taskId"] = json!(task_id);
 
     debug_log!(
         "[agent-identity] feedback-submit request: url={} access_token_len={} access_token_prefix={} body={}",
@@ -887,8 +885,8 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
 
     let response = result?;
     let unsigned = parse_agent_unsigned(response)?;
-    // erc8004Msg: feedBackAgentId is required (from --creator-id); taskId is optional.
-    // Empty values are filtered by build_erc8004_overlay, so an empty taskId is omitted.
+    // erc8004Msg: feedBackAgentId (from --creator-id) and taskId (from --task-id)
+    // are both required and validated non-empty above.
     let overlay = build_erc8004_overlay(&[
         ("taskId", &task_id),
         ("feedBackAgentId", &creator_id),

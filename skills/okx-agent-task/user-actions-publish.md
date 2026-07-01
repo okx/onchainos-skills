@@ -96,6 +96,8 @@ Display as a single `| Field | Value |` table:
 
 Rules: summary always in table; description > 200 chars → `See below` + prose below table; footer = blockquote asking confirmation.
 
+**Description-change re-match rule**: if the user modifies the **description** at the confirmation form stage, **immediately** re-run `asp-match` with the updated description as `--task-desc` before regenerating the confirmation form. The re-match may return a different recommended service or provider — update the Provider / Service / Service Desc / Service Price / Service Params / Payment Mode fields accordingly. If the re-match returns empty, enter the Option A / B fallback (see §5 Flow step 1).
+
 ---
 
 ## 5. Designated-Provider A2A flow
@@ -104,12 +106,12 @@ Rules: summary always in table; description > 200 chars → `See below` + prose 
 
 > ⚠️ **A2MCP with known endpoint → NOT this skill** — concrete URL + A2MCP serviceType → `okx-agent-payments-protocol`. "Please send a request to this endpoint" without "use onchainos" → also NOT this skill. "Please use onchainos to send a request to this endpoint" + non-A2MCP → **§6** below.
 
-Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `Price` / `symbol` (mutable).
+Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `ServiceDescription`, `Price` / `symbol` (mutable).
 
 ### Path A — ServiceTitle is missing (e.g. "购买ASP#1960的服务" without specifying which service) → service discovery:
 1. `onchainos agent service-list --agent-id <agentId>` — list all services the ASP offers. Empty result → provider does not exist or has no services; inform the user and stop.
 2. Display the service list to the user and ask them to pick one.
-3. Fill `ServiceTitle`, `ServiceType`, `Price`, `symbol`, `serviceId`, `endpoint` from the chosen service.
+3. Fill `ServiceTitle`, `ServiceType`, `ServiceDescription`, `Price`, `symbol`, `serviceId`, `endpoint` from the chosen service.
 4. Branch by serviceType directly (skip asp-match — service-list already provides all needed fields):
    - A2MCP + endpoint present → enter §6 (x402 flow).
    - Otherwise → A2A: enter step 2 of the Flow below.
@@ -119,11 +121,17 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `P
 **Flow** (run step 1 and gate-check in **parallel** — they are independent):
 1. **Provider validation + service-type determination** (single call replaces the old profile + asp-match two-step):
    `onchainos agent asp-match --task-desc "<ServiceTitle>" --provider-agent-id <agentId> --agent-id <buyerAgentId> --format json`
-   - Empty `recommendations` → provider does not exist, is not an ASP, is offline, or has no matching services → inform the user; do NOT continue.
+   - Empty `recommendations` → **no matching service found**. Present two recovery options to the user:
+     - **Option A — Revise description**: ask the user to rephrase or adjust the task description. Once the user provides the updated text, **immediately** re-run `asp-match` with the new `--task-desc` (no additional confirmation needed). Loop until a match is found or the user gives up.
+     - **Option B — Switch to public task**: remove the designated provider and publish as a public task (enter §1 without `designatedProvider`).
+     - If the user chooses neither, stop.
    - x402 supported (serviceType=A2MCP + endpoint present) → carry `agentId` + `endpoint` and enter §6 below (from Step 1).
    - Otherwise → A2A (step 2 below).
    - ⚠️ **Do NOT call `okx-a2a session create` directly.**
-2. **A2A path**: map fields (`description` ← ServiceTitle, `budget` ← Price, `currency` ← symbol), cache `designatedProvider = { agentId, serviceType }` → enter §1 above to publish the task (🛑 must run the full publishing flow including confirmation form).
+2. **A2A path**: map fields as follows, then cache `designatedProvider = { agentId, serviceType }` → enter §1 above to publish the task (🛑 must run the full publishing flow including confirmation form).
+   - `description` ← **refined from `ServiceDescription`** (NOT ServiceTitle). Distill the service description into a clear task description: keep the concrete deliverables and scope; strip promotional language.
+   - `serviceParams` ← extract from `ServiceDescription`: any variable / placeholder / user-specific input the description expects (e.g. "select a match or team", "specify a region") becomes a key in the serviceParams JSON object. Present these to the user for filling before the confirmation form.
+   - `budget` ← Price, `currency` ← symbol.
 3. After `job_created`, CLI `next-action` handles `designated_a2a` routing automatically — follow the returned playbook.
 
 ---
@@ -132,7 +140,7 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `P
 
 **Trigger**: user message contains "Please use onchainos to send a request to this endpoint".
 
-Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (all required; no Price — pricing is fetched from the endpoint).
+Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `ServiceDescription`, `endpoint` (all required; no Price — pricing is fetched from the endpoint).
 
 **Flow**:
 1. **Endpoint validation**: `onchainos agent x402-check --endpoint <endpoint>`
@@ -140,7 +148,8 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `endpoint` (al
    - `valid=false` + no `inputRequired` → inform "invalid endpoint"; stop.
    - `tokenSymbol` not USDT/USDG → inform "unsupported token"; stop.
 2. **Field collection & confirmation form** (🛑🛑🛑 may NOT be skipped):
-   - The agent auto-generates `title` (≤30 chars), `description` (≥10 chars), `description-summary` (≤200 chars) based on the ServiceTitle.
+   - The agent auto-generates `title` (≤30 chars), `description` (≥10 chars), `description-summary` (≤200 chars) **based on the `ServiceDescription`** (NOT ServiceTitle). Distill the service description into a clear task description: keep the concrete deliverables and scope; strip promotional language. ServiceTitle is only used for the `title` field if the description doesn't suggest a better one.
+   - `serviceParams` extraction: any variable / placeholder / user-specific input that the ServiceDescription expects becomes a key in the `serviceBody` JSON. Present these to the user for filling during field collection (alongside any `inputRequired` fields from Step 1).
    - `budget` / `max-budget` = `amountHuman` (x402 pricing is fixed; the two are equal).
    - `currency` = `tokenSymbol`.
    - 🛑 **`inputRequired` field collection** — if Step 1 returned `inputRequired=true`:

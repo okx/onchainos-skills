@@ -117,9 +117,9 @@ pub(super) struct FlowContext<'a> {
 /// calls `onchainos agent user-notify` once. No multi-step ceremony.
 pub(super) fn notify_and_end(canonical_content: &str) -> String {
     format!(
-        "Translate the content below into the user's language, then run:\n\
+        "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<translated content>'\n\
+         onchainos agent user-notify --content '<localized content shown below>'\n\
          ```\n\
          Content: {canonical_content}\n\n\
          End turn after the call.\n"
@@ -129,9 +129,9 @@ pub(super) fn notify_and_end(canonical_content: &str) -> String {
 /// Same as `notify_and_end` but appends a terminal session hint.
 pub(super) fn notify_and_end_terminal(canonical_content: &str, terminal_hint: &str) -> String {
     format!(
-        "Translate the content below into the user's language, then run:\n\
+        "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<translated content>'\n\
+         onchainos agent user-notify --content '<localized content shown below>'\n\
          ```\n\
          Content: {canonical_content}\n\n\
          {terminal_hint}\n"
@@ -327,7 +327,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             if vis == 0 {
                 super::flow_negotiate::provider_conversation_auto_consume(&ctx).await
             } else {
-                super::flow_negotiate::provider_conversation(&ctx)
+                // Private task: ASPs cannot discover or contact-user for private tasks.
+                // Silently ignore unexpected provider_conversation; end turn.
+                "Private task — unexpected provider contact. No action needed. End turn.\n".to_string()
             }
         }
         Event::Other(ref s) if s == "provider_conversation_reject" => {

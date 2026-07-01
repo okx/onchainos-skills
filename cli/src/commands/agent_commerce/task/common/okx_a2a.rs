@@ -272,12 +272,16 @@ pub fn task_requests() -> Result<Vec<serde_json::Value>> {
 ///
 /// Requires daemon running. Queued command — does not wait for the final
 /// result.
-pub fn task_reject(group_id: &str) -> Result<()> {
-    let mut args: Vec<&str> = vec![
-        "task", "reject",
-        "--group-id", group_id,
+pub fn task_reject(group_id: &str, content: Option<&str>) -> Result<()> {
+    let mut args: Vec<String> = vec![
+        "task".into(), "reject".into(),
+        "--group-id".into(), group_id.into(),
     ];
-    args.push("--json");
+    if let Some(c) = content {
+        args.push("--content".into());
+        args.push(c.into());
+    }
+    args.push("--json".into());
     let out = Command::new("okx-a2a")
         .args(&args)
         .output()
@@ -295,9 +299,18 @@ pub fn task_reject(group_id: &str) -> Result<()> {
 /// Used after successful confirm-accept (R14) to clear remaining ASP
 /// messages in the queue so they don't trigger further provider_conversation
 /// events for an already-accepted task.
-pub fn task_reject_by_job(job_id: &str) -> Result<()> {
+pub fn task_reject_by_job(job_id: &str, content: Option<&str>) -> Result<()> {
+    let mut args: Vec<String> = vec![
+        "task".into(), "reject".into(),
+        "--job-id".into(), job_id.into(),
+    ];
+    if let Some(c) = content {
+        args.push("--content".into());
+        args.push(c.into());
+    }
+    args.push("--json".into());
     let out = Command::new("okx-a2a")
-        .args(["task", "reject", "--job-id", job_id, "--json"])
+        .args(&args)
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {

@@ -7,7 +7,7 @@ Runtime readiness is owned by the `okx-a2a` CLI:
 - The latest stable `@okxweb3/a2a-node` package must be installed before readiness checks, unless the current installed package is a `beta` build. Beta builds are intentionally preserved and must not be replaced with `@latest`.
 - `okx-a2a daemon start` ensures the local A2A daemon is running. If the daemon is already running and the `@okxweb3/a2a-node` package version did not change, do not restart it.
 - `okx-a2a switch-runtime --json` detects the current caller runtime, switches the AI provider/runtime wiring, and returns the machine-readable runtime readiness result.
-- `okx-a2a agent refresh --json` queues or performs local agent communication identity refresh, depending on the installed CLI behavior. It is the CLI replacement for the legacy/native `xmtp_refresh_agents` tool.
+- `okx-a2a agent refresh --json` refreshes local agent communication identities through the running daemon and waits for the completed refresh result. It is the CLI replacement for the legacy/native `xmtp_refresh_agents` tool.
 - `okx-a2a setup --json` owns final runtime/plugin setup and verification after daemon readiness, runtime switch, and the agent refresh command.
 - `okx-a2a update` is **not** part of this auto-triggered readiness flow. Package updates are performed with `npm install -g @okxweb3/a2a-node@latest`, except for beta builds.
 
@@ -190,7 +190,6 @@ Use the `switch-runtime --json` output as the source of truth:
 | JSON state | Required behavior |
 |---|---|
 | `ok: true` | Runtime/provider wiring is ready. Surface `userMessage` only if it is user-relevant, then continue to Step 4. |
-| `state: "needs_user_choice"` | Ask the user to choose one value from `providers`. After they choose, rerun the command indicated by `nextCommand`, or rerun `okx-a2a switch-runtime --json` with the supported provider selection option if the CLI prints one. |
 | `state: "blocked"` | Show `userMessage` and stop. The environment needs user/admin action. |
 | `state: "failed"` | Show `userMessage` and the relevant `detail`; stop. Do not invent a manual recovery. |
 
@@ -212,12 +211,11 @@ Use the refresh output as the source of truth:
 
 | JSON state | Required behavior |
 |---|---|
-| `ok: true` and `payload.queued: true` | Agent communication refresh was accepted by the daemon queue. Continue to Step 5. |
-| `ok: true` with a completed refresh payload | Agent communication identities are refreshed. Surface `userMessage` only if it is user-relevant, then continue to Step 5. |
+| `ok: true` with a completed refresh payload | Agent communication identities are refreshed. Continue to Step 5. |
 | `ok: false` or `state: "blocked"` | Show `userMessage` and stop. |
 | `state: "failed"` | Show `userMessage` and the relevant `detail`; stop. Do not invent a manual recovery. |
 
-Current `okx-a2a` builds may return a queued-command JSON for `agent refresh --json` instead of waiting for the daemon to finish the refresh. This flow treats queue acceptance as the readiness handoff. If a future caller needs confirmed refreshed identities or active client counts before continuing, the CLI must provide a wait/status command and this document must be updated to use it.
+`okx-a2a agent refresh --json` must return the daemon's real refresh result, not only a queued-command acknowledgement.
 
 ### Step 5: Run Final A2A Setup
 
@@ -271,30 +269,20 @@ Example switch-runtime success:
 }
 ```
 
-Example refresh queued:
-
-```json
-{
-  "id": "cmd_123",
-  "ok": true,
-  "completedAt": 1760000000000,
-  "payload": {
-    "queued": true
-  }
-}
-```
-
 Example completed refresh success:
 
 ```json
 {
   "ok": true,
+  "commandId": "cmd_123",
   "payload": {
     "added": [],
     "removed": [],
+    "changed": false,
+    "agentCount": 2,
     "activeClients": 2
   },
-  "userMessage": "OKX A2A communication is ready."
+  "error": null
 }
 ```
 
@@ -332,4 +320,3 @@ Example blocked result:
 | `okx-a2a setup --json` is blocked or fails | Surface the setup output and stop. |
 | Current runtime is OpenClaw / Hermes Gateway | Do not run manual restart/install commands from markdown. `okx-a2a setup --json` owns plugin setup behavior. |
 | Runtime signals conflict | Do not resolve in markdown. `okx-a2a switch-runtime --json` and `okx-a2a setup --json` own runtime detection. |
-| Legacy `ensure-okx-a2a-ready.sh` exists in this skill directory | It is a compatibility wrapper only; this markdown flow calls `okx-a2a` directly. |

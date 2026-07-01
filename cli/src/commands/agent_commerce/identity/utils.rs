@@ -198,7 +198,7 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
                 bail!("missing required field in --service for A2MCP: endpoint");
             }
         }
-        other => bail!("invalid serviceType in --service: {other}"),
+        other => bail!("invalid serviceType in --service: {other} (expected: A2A or A2MCP)"),
     }
 
     // Fee is a PLAIN NUMBER only — USDT is the implicit, only currency. A

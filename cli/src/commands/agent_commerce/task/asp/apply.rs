@@ -24,16 +24,16 @@ pub async fn handle_apply(
         anyhow::bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
 
-    // Guardrail: token_amount must be a positive number. Empty / "0" / non-parseable / non-positive
-    // submitting it would commit on-chain to do the work for free (irreversible). Hard reject early.
+    // Guardrail: token_amount must be a non-negative number. Empty / non-parseable / negative
+    // would corrupt the on-chain apply; 0 is allowed (matches identity service_fee=0 support).
     let amt_trim = token_amount.trim();
     let parsed = amt_trim.parse::<f64>();
-    if amt_trim.is_empty() || !matches!(parsed, Ok(n) if n > 0.0) {
+    if amt_trim.is_empty() || !matches!(parsed, Ok(n) if n >= 0.0) {
         anyhow::bail!(
-            "--token-amount must be a positive number; got `{token_amount}`. \
+            "--token-amount must be a non-negative number; got `{token_amount}`. \
              Read the locked `tokenAmount` from the task fields (set at accept time) \
              — for a designated assignment use the `tokenAmount` carried by the `JobAspSelected` envelope. \
-             Empty / 0 / negative = apply for free, irreversible — refusing to broadcast."
+             Empty / negative = malformed apply, refusing to broadcast."
         );
     }
     if token_symbol.trim().is_empty() {

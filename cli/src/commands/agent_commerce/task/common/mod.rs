@@ -990,7 +990,7 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
             identity_detail = serde_json::json!({
                 "ok": false,
                 "role": role_label,
-                "hint": format!("no {role_label} agent found; run `onchainos agent register` with role={role_label}"),
+                "hint": format!("no {role_label} agent found; route to `okx-agent-identity` with the intent \"Register a {role_label} identity\""),
             });
         } else {
             let first = &agents[0];
@@ -1004,76 +1004,13 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
         }
     }
 
-    // ── 3. Communication (okx-a2a) ────────────────────────────────
-    let communication_detail;
-    if !wallet_ok {
-        communication_detail = serde_json::json!({
-            "ok": false,
-            "hint": "skipped — wallet not logged in",
-        });
-    } else {
-        let okx_a2a_found = std::process::Command::new("okx-a2a")
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok();
-
-        if !okx_a2a_found {
-            communication_detail = serde_json::json!({
-                "ok": false,
-                "hint": "okx-a2a CLI not found; install via `npx @aspect-build/a2a-node` or load ensure-okx-a2a-communication-ready.md",
-            });
-        } else {
-            let status_out = std::process::Command::new("okx-a2a")
-                .arg("status")
-                .output();
-            match status_out {
-                Ok(out) => {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    let combined = format!("{stdout}{stderr}");
-                    let running = combined.contains("running");
-                    let stopped = combined.contains("stopped");
-                    if running {
-                        communication_detail = serde_json::json!({
-                            "ok": true,
-                            "state": "running",
-                        });
-                    } else if stopped {
-                        communication_detail = serde_json::json!({
-                            "ok": false,
-                            "state": "stopped",
-                            "hint": "okx-a2a is stopped; run `okx-a2a restart`",
-                        });
-                    } else {
-                        communication_detail = serde_json::json!({
-                            "ok": false,
-                            "state": "unknown",
-                            "raw": combined.trim(),
-                            "hint": "okx-a2a status returned unexpected output; run `okx-a2a restart`",
-                        });
-                    }
-                }
-                Err(e) => {
-                    communication_detail = serde_json::json!({
-                        "ok": false,
-                        "hint": format!("failed to run `okx-a2a status`: {e}"),
-                    });
-                }
-            }
-        }
-    }
-
     let all_ok = wallet_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
-        && identity_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
-        && communication_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        && identity_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
 
     Ok(serde_json::json!({
         "ready": all_ok,
         "wallet": wallet_detail,
         "identity": identity_detail,
-        "communication": communication_detail,
     }))
 }
 
@@ -1108,7 +1045,7 @@ pub async fn handle_prepare_create(
         return Ok(());
     }
 
-    // ── 2. Gate-check (wallet + identity + communication) ─────────
+    // ── 2. Gate-check (wallet + identity) ─────────────────────────
     let preflight = preflight_inner("user").await?;
     let pf_ok = preflight.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
     if !pf_ok {
