@@ -41,11 +41,11 @@ const DEPRECATED_SKILLS: &[&str] = &[
     // Fully removed from the repo — true orphans, no stub left behind.
     "okx-a2a-payment",
     "okx-x402-payment",
-    // Merged into `okx-guide` (deprecated alias stubs).
+    // Merged into `okx-guide` (former deprecated alias stubs, now removed).
     "okx-how-to-play",
     "okx-ai-guide",
     "okx-ai-support",
-    // Merged into `okx-agentic-wallet` (redirect stubs).
+    // Merged into `okx-agentic-wallet` (former redirect stubs, now removed).
     "okx-audit-log",
     "okx-dex-bridge",
     "okx-dex-strategy",

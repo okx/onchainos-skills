@@ -1,6 +1,6 @@
 # onchainos — Agent Instructions
 
-This is an **onchainos skill + workflow collection** providing 21 skills and pre-built workflows for on-chain operations across 20+ blockchains.
+This is an **onchainos skill + workflow collection** providing 17 skills and pre-built workflows for on-chain operations across 20+ blockchains.
 
 ## Workflows (Primary Routing)
 

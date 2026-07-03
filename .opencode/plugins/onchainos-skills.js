@@ -45,11 +45,9 @@ export const OnchainOsSkillsPlugin = async ({ client, directory }) => {
   const agentsFile = path.join(PROJECT_ROOT, 'AGENTS.md');
 
   const SKILL_NAMES = [
-    'okx-wallet-portfolio',
+    'okx-agentic-wallet',
     'okx-dex-market',
-    'okx-dex-swap',
     'okx-dex-token',
-    'okx-onchain-gateway',
   ];
 
   const getBootstrapContent = () => {
@@ -86,11 +84,9 @@ export const OnchainOsSkillsPlugin = async ({ client, directory }) => {
       `## Using Skills in OpenCode
 
 Use OpenCode's native \`skill\` tool to load a skill when triggered:
-- \`skill: okx-wallet-portfolio\` — wallet balance & portfolio
+- \`skill: okx-agentic-wallet\` — wallet, swap, bridge, gateway, portfolio, security, audit
 - \`skill: okx-dex-market\` — token prices, charts, trade history
-- \`skill: okx-dex-swap\` — DEX token swap execution
 - \`skill: okx-dex-token\` — token search, rankings, holder analysis
-- \`skill: okx-onchain-gateway\` — gas estimation, tx simulation, broadcasting, order tracking
 
 **Required environment variables** (set before use):
 \`\`\`
