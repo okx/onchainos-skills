@@ -4,7 +4,7 @@ description: "Surfaces social-layer signals for crypto markets. Three capability
 license: MIT
 metadata:
   author: okx
-  version: "4.0.1"
+  version: "4.1.0"
   homepage: "https://web3.okx.com"
 ---
 
