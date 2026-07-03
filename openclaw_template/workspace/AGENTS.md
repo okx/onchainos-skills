@@ -59,26 +59,19 @@ For script requests, append `--format json` to all CLI commands.
 
 | Skill | Purpose | When to Use |
 |-------|---------|-------------|
-| okx-agentic-wallet | Wallet auth, authenticated balance, send tokens, tx history, contract call | User wants to log in, check balance, send tokens, or view tx history |
-| okx-wallet-portfolio | Public address balance, token holdings, portfolio value | User asks about wallet holdings or token balances for a specific address |
-| okx-security | DApp/URL phishing detection, tx pre-execution scan, signature safety, approval management | User asks about DApp/URL safety, tx scan, signature safety, or token approvals |
+| okx-agentic-wallet | Wallet lifecycle (auth, balance, PnL, send, history, contract call), Gas Station, DEX swap, cross-chain bridge, limit-order strategy, transaction gateway, public-address portfolio, security scanning, audit log | User wants to operate their wallet or execute on-chain: log in, balance/PnL, send, call contracts, swap/trade, bridge, limit orders, broadcast/simulate a tx, look up a public address, safety-check a token/DApp/tx, or export the audit log |
 | okx-dex-market | Prices, charts, index prices, wallet PnL | User asks for token prices, K-line data, or wallet PnL analysis |
 | okx-dex-signal | Smart money / KOL / whale tracking, buy signals, leaderboard | User asks what smart money/whales/KOLs are buying or wants signal alerts |
 | okx-dex-trenches | Meme/pump.fun token scanning, dev reputation, bundle detection | User asks about new meme launches, dev reputation, or bundle analysis |
 | okx-dex-ws | Real-time WebSocket monitoring and scripting | User wants a WS script or real-time on-chain data stream |
-| okx-dex-swap | DEX swap execution (market orders, immediate fill) | User wants to swap, trade, buy, or sell tokens at the current price |
-| okx-dex-bridge | Cross-chain bridging / transfer across Stargate, Across, Relay, Gas.zip | User wants to move tokens between chains, get cross-chain quotes, compare bridge fees, or check bridge status |
-| okx-dex-strategy | Limit-order strategy trading on Agentic Wallet TEE: create, cancel, list, resume | User wants to place a price-triggered limit order (buy dip, take profit, stop loss), manage pending orders, or recover orders suspended by TEE upgrades |
 | okx-dex-token | Token search, metadata, rankings, liquidity, holders, top traders, cluster analysis | User searches for tokens, wants rankings, holder info, or cluster analysis |
 | okx-dex-social | Crypto news, sentiment, KOL / vibe analytics | User asks for news, market sentiment, top KOLs discussing a token, or token vibe score |
-| okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a tx, estimate gas, or check tx status |
 | okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred` — TEE or local-key), MPP (`charge` / `session` — open / voucher / topUp / close), and a2a-pay (paymentId-based create / pay / status). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session, pays for streaming / voucher / top-up payment-gated resources, or works with a paymentId / `a2a_...` link |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, or manage DeFi positions |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
 | okx-dapp-discovery | Third-party DApp routing — installs the matching plugin on demand and forwards the prompt to its quickstart | User names a specific third-party DApp (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, …) or asks "what dapps are available" |
-| okx-audit-log | Audit log export and troubleshooting | User wants command history, debug info, or audit log |
 | okx-growth-competition | Agentic Wallet exclusive trading competitions: list, join, rank, claim rewards | User asks about trading competitions, wants to join/register for a competition, check leaderboard ranking, or claim competition rewards |
-| okx-how-to-play | Onboarding router — welcome banner + quick-start menu routing into the right skill or workflow | First-time / unfamiliar user asks "what is onchainos", "how do I use this", "what can it do", "tutorial", "I just installed", "now what" |
+| okx-guide | Onboarding & guide hub — welcome banner + quick-start menu, OKX.AI intro & role-registration routing, and customer-support / Help Center guidance (merges former okx-how-to-play + okx-ai-guide + okx-ai-support) | First-time / unfamiliar user asks "what is onchainos", "how do I use this", "what can it do", "tutorial", "I just installed", "now what"; OKX.AI questions; or customer service / talk to a human / help center |
 
 **Skills verification:** Skills are verified during bootstrap (Step 2 of `BOOTSTRAP.md`). If skills go missing mid-session, re-run the bootstrap sequence.
 

@@ -52,13 +52,13 @@ The skill description gives the 5 firing patterns at a glance. Use this section 
 - **Conceptual / adversarial questions about a DApp** ("explain how X works", "is X safe / legit / a good investment", "what is X", "how does X compare to centralized exchanges") — let the model answer from general knowledge; do not invoke a plugin for an explainer.
 - **"Tell me about X" with a single supported DApp and no action or comparison context** — single-name informational queries are model knowledge, not plugin routing. (Comparison of two or more DApps DOES fire — see pattern 2.)
 - **pump.fun READ intent** — `dev history`, `bundle/sniper detection` (the analytical noun, NOT the verb), `who aped`, `similar tokens`, `bonding curve progress` (ZH: glossary §5) → `okx-dex-trenches`.
-- **Generic verbs alone WITHOUT a DApp name and WITHOUT a protocol-native token** (deposit/stake/borrow/swap/yield/APY; ZH: glossary §2) → `okx-defi-invest` (yield) or `okx-dex-swap` (swap).
+- **Generic verbs alone WITHOUT a DApp name and WITHOUT a protocol-native token** (deposit/stake/borrow/swap/yield/APY; ZH: glossary §2) → `okx-defi-invest` (yield) or `okx-agentic-wallet` (swap).
 - **Generic tickers alone** (ETH/BTC/USDC/USDT/SOL/BNB/MATIC/AVAX/DAI/WBTC) — these are not protocol-native; route per the actual verb.
 - **Read-only data analytics on a DApp** ("analyze the swap volume on Uniswap last week") without action or comparison — these are research/analysis queries, not routing triggers.
 
 ### Not for
 
-Unnamed swap → `okx-dex-swap`. Generic yield discovery → `okx-defi-invest`. Price/chart/PnL → `okx-dex-market`. Wallet auth/balance → `okx-agentic-wallet`. Positions overview → `okx-defi-portfolio`. pump.fun read-only research → `okx-dex-trenches`.
+Unnamed swap → `okx-agentic-wallet`. Generic yield discovery → `okx-defi-invest`. Price/chart/PnL → `okx-dex-market`. Wallet auth/balance → `okx-agentic-wallet`. Positions overview → `okx-defi-portfolio`. pump.fun read-only research → `okx-dex-trenches`.
 
 ---
 
@@ -99,7 +99,7 @@ When the user's message references a DApp directly or implicitly, score it again
 | $CLANKER, clanker.world | Clanker |
 | "X 5min" / "X 15min" / "X up or down" / "5min updown" (X = BTC/ETH/SOL/XRP/BNB/DOGE/HYPE; ZH variants in glossary §4) | Polymarket |
 
-**DApp-name-beats-verb override (Rule 0, see routing rules below):** when any generic verb appears with a DApp name (in any language) OR a protocol-native token/phrase from the table above, the DApp wins. Do NOT defer to `okx-dex-swap`, `okx-defi-invest`, `okx-defi-portfolio`, or any other generic skill.
+**DApp-name-beats-verb override (Rule 0, see routing rules below):** when any generic verb appears with a DApp name (in any language) OR a protocol-native token/phrase from the table above, the DApp wins. Do NOT defer to `okx-agentic-wallet`, `okx-defi-invest`, `okx-defi-portfolio`, or any other generic skill.
 
 ### Top-5 cohort (used by Rule 5b fallback only)
 
@@ -509,11 +509,11 @@ If the prompt contains **any** of:
 
 …then this skill wins regardless of any generic verb (swap / stake / lend / borrow / deposit / withdraw / LP / farm / mint / make liquidity / pool — ZH equivalents in glossary §2).
 
-**Apply Rules 1 or 2 directly with the matching plugin** — do NOT defer to `okx-dex-swap`, `okx-defi-invest`, `okx-defi-portfolio`, `okx-dex-market`, `okx-onchain-gateway`, or any other generic skill.
+**Apply Rules 1 or 2 directly with the matching plugin** — do NOT defer to `okx-agentic-wallet`, `okx-defi-invest`, `okx-defi-portfolio`, `okx-dex-market`, `okx-agentic-wallet`, or any other generic skill.
 
-**Swap-pair carve-out (Rule 0 exception):** when the verb is a market-side DEX verb (`swap` / `exchange` / `sell`; ZH verbs in glossary §2) AND a protocol-native token appears on **either side** of the pair (as source OR destination) against a generic ticker (ETH / BTC / USDC / USDT / SOL / BNB / ...), AND **no explicit DApp name** appears in the prompt, defer to `okx-dex-swap` instead of installing the native protocol's plugin. The user wants a market route in or out of the position, not the protocol's stake/mint/deposit/wrap flow. (When the user explicitly names a DApp — e.g. "on Lido", "on Curve" — Rule 0 still wins regardless of which side the protocol-native token is on; see "Examples that this rule fixes" below.)
+**Swap-pair carve-out (Rule 0 exception):** when the verb is a market-side DEX verb (`swap` / `exchange` / `sell`; ZH verbs in glossary §2) AND a protocol-native token appears on **either side** of the pair (as source OR destination) against a generic ticker (ETH / BTC / USDC / USDT / SOL / BNB / ...), AND **no explicit DApp name** appears in the prompt, defer to `okx-agentic-wallet` instead of installing the native protocol's plugin. The user wants a market route in or out of the position, not the protocol's stake/mint/deposit/wrap flow. (When the user explicitly names a DApp — e.g. "on Lido", "on Curve" — Rule 0 still wins regardless of which side the protocol-native token is on; see "Examples that this rule fixes" below.)
 
-| Goes to `okx-dex-swap` (not Rule 0) | Goes to Rule 0 (use the protocol) |
+| Goes to `okx-agentic-wallet` (not Rule 0) | Goes to Rule 0 (use the protocol) |
 |---|---|
 | "swap USDC for stETH" | "stake ETH for stETH" / "stake on Lido" |
 | "swap stETH to USDC" | "unstake stETH on Lido for ETH" |
@@ -533,7 +533,7 @@ If the prompt contains **any** of:
 **Rule 0 vs Rule 3b precedence:** Rule 3b (discussion / comparison without action verb) takes precedence over Rule 0 when no action verb is present in the prompt. So "Tell me about Pendle" → Rule 3b clarify, NOT Rule 0 install. "Buy PT-stETH on Pendle" → Rule 0 install (action verb present).
 
 **Examples that this rule fixes** (all should install the named DApp's plugin, not a generic skill):
-- "swap SOL to USDC on Orca" → `orca-plugin` (not `okx-dex-swap`)
+- "swap SOL to USDC on Orca" → `orca-plugin` (not `okx-agentic-wallet`)
 - "open a DLMM position on Meteora" → `meteora-plugin`
 - "stake ETH on Lido" → `lido-plugin`
 - "buy PT-stETH on Pendle" → `pendle-plugin` (PT-* is protocol-native)

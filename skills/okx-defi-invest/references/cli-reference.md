@@ -676,7 +676,7 @@ onchainos defi deposit \
   --address 0xYourWallet \
   --user-input '[{"tokenAddress":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","chainIndex":"1","coinAmount":"100"}]'
 # → dataList: [{callDataType: "DEPOSIT", from: "0x...", to: "0x...", serializedData: "0x..."}]
-# → sign serializedData → broadcast via okx-onchain-gateway
+# → sign serializedData → broadcast via okx-agentic-wallet
 ```
 
 ### V3 Pool entry with calculate-entry

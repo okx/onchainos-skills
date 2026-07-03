@@ -333,6 +333,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
+        Commands::Preflight(_) => "preflight".to_string(),
         Commands::Agent { command } => format!("agent {}", agent_sub(command)),
         Commands::CrossChain { .. } => "cross-chain".to_string(),
     }

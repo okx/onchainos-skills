@@ -29,7 +29,7 @@ These verbs do **not** select a DApp by themselves (same role as the English gen
 
 买, 购买, 卖, 换, 换成, 兑换, 存, 存款, 取, 借, 借贷, 抵押, 质押, 做多, 做空, 多单, 空单, 合约, 永续, 加池子, 加流动性, 池子, 仓位, 挖矿, 拿利息, 发币, 发新代币, LP.
 
-**Swap-pair carve-out (Rule 0 exception):** when the market-side verb is 换成 / 兑换 / 卖 / 卖掉换 AND a protocol-native token sits on either side of the pair against a generic ticker, with **no DApp name present**, defer to `okx-dex-swap` (not the protocol plugin). If a DApp name IS present (在 X 上…), Rule 0 still wins.
+**Swap-pair carve-out (Rule 0 exception):** when the market-side verb is 换成 / 兑换 / 卖 / 卖掉换 AND a protocol-native token sits on either side of the pair against a generic ticker, with **no DApp name present**, defer to `okx-agentic-wallet` (not the protocol plugin). If a DApp name IS present (在 X 上…), Rule 0 still wins.
 
 ---
 
@@ -103,7 +103,7 @@ Each installs the named DApp's plugin (Rule 0) unless noted otherwise:
 
 | 中文 prompt | Routes to |
 |---|---|
-| 在 Orca 上把 SOL 换成 USDC | `orca-plugin` (not `okx-dex-swap` — DApp named) |
+| 在 Orca 上把 SOL 换成 USDC | `orca-plugin` (not `okx-agentic-wallet` — DApp named) |
 | 在 Raydium 上把 SOL 换成 USDC | `raydium-plugin` |
 | 在 Meteora 上开个 DLMM 仓位 | `meteora-plugin` |
 | Curve 上把 USDC 换成 USDT | `curve-plugin` |

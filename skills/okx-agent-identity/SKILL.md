@@ -47,7 +47,7 @@ Negative triggers → route OUT in **business language only** (never name a skil
 
 Identity-not-wallet: **"再建一个买家身份 / 再加一个用户 / add another agent / new ASP / add another User / new Client" = ALWAYS an identity, NEVER `wallet add`** (covers every role alias — User / 用户 / Buyer / Client / ASP / 卖家 …, not just the examples shown). Finding marketplace agents → run `agent search`, never list skill names. Passive onboarding (need-user from a task flow) → register user only.
 
-Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contract safety check → okx-security; broadcast a raw tx → okx-onchain-gateway (post-create comm-init & evaluator staking → see §Step 5/6).
+Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contract safety check → okx-agentic-wallet; broadcast a raw tx → okx-agentic-wallet (post-create comm-init & evaluator staking → see §Step 5/6).
 
 | Intent | Load SKILL.md + exactly ONE reference |
 |---|---|

@@ -1,6 +1,6 @@
 ---
 name: okx-defi-invest
-description: "OKX-aggregated DeFi discovery and execution — for users who want OKX to find and route to the best protocol WITHOUT naming a specific DApp. **If the user names ANY third-party protocol/DApp as destination (Aave, Lido, PancakeSwap, Uniswap, Curve, Compound, Morpho, Pendle, Kamino, Raydium, Hyperliquid, Polymarket, etc.), route to okx-dapp-discovery — NOT here, even if the verb (deposit, stake, add liquidity, borrow, claim) matches.** DApp-agnostic triggers: 'invest in DeFi', 'earn yield on stablecoins', 'find best APY', 'deposit/stake for yield', 'search DeFi products', 'redeem/withdraw position', 'claim DeFi rewards', 'borrow against asset', 'repay loan', 'add/remove CLMM liquidity', 'APY/TVL history', 'CLMM depth chart'. Also covers DeFi investing, yield farming, lending, borrowing, staking, liquidity pools, APY/TVL trends. Do NOT use for: DEX swaps (okx-dex-swap), token prices (okx-dex-market), wallet balances (okx-wallet-portfolio), positions-only views (okx-defi-portfolio)."
+description: "OKX-aggregated DeFi discovery and execution — for users who want OKX to find and route to the best protocol WITHOUT naming a specific DApp. **If the user names ANY third-party protocol/DApp as destination (Aave, Lido, PancakeSwap, Uniswap, Curve, Compound, Morpho, Pendle, Kamino, Raydium, Hyperliquid, Polymarket, etc.), route to okx-dapp-discovery — NOT here, even if the verb (deposit, stake, add liquidity, borrow, claim) matches.** DApp-agnostic triggers: 'invest in DeFi', 'earn yield on stablecoins', 'find best APY', 'deposit/stake for yield', 'search DeFi products', 'redeem/withdraw position', 'claim DeFi rewards', 'borrow against asset', 'repay loan', 'add/remove CLMM liquidity', 'APY/TVL history', 'CLMM depth chart'. Also covers DeFi investing, yield farming, lending, borrowing, staking, liquidity pools, APY/TVL trends. Do NOT use for: DEX swaps (okx-agentic-wallet), token prices (okx-dex-market), wallet balances (okx-agentic-wallet), positions-only views (okx-defi-portfolio)."
 license: MIT
 metadata:
   author: okx
@@ -20,9 +20,9 @@ For CLI parameter details, see [references/cli-reference.md](references/cli-refe
 - For DeFi positions / holdings → use `okx-defi-portfolio`
 - For token price/chart → use `okx-dex-market`
 - For token search by name/contract → use `okx-dex-token`
-- For DEX spot swap execution → use `okx-dex-swap`
-- For wallet token balances → use `okx-wallet-portfolio`
-- For broadcasting signed transactions → use `okx-onchain-gateway`
+- For DEX spot swap execution → use `okx-agentic-wallet`
+- For wallet token balances → use `okx-agentic-wallet`
+- For broadcasting signed transactions → use `okx-agentic-wallet`
 - For Agentic Wallet login, balance, contract-call → use `okx-agentic-wallet`
 
 ## Command Index
@@ -86,7 +86,7 @@ Rules:
 2. defi detail --investment-id <id>                 → confirm APY/TVL, get underlyingToken[].tokenAddress
 3. token search --query <tokenAddress> --chains <chain>  → get decimal (e.g. 6) for amount conversion
 4. Ask user for amount → convert: userAmount × 10^decimal (e.g. 100 USDC → 100000000)
-5. Check wallet balance (okx-wallet-portfolio) → if insufficient, warn user and stop
+5. Check wallet balance (okx-agentic-wallet) → if insufficient, warn user and stop
 6. defi invest --investment-id <id> --address <addr> --token USDC --amount 100000000
    → CLI returns calldata (APPROVE + DEPOSIT steps)
 7. User signs and broadcasts each step in order
@@ -94,7 +94,7 @@ Rules:
 
 > **Token decimal**: Get `tokenAddress` from `defi detail` → `underlyingToken[].tokenAddress`, then use `token search --query <tokenAddress>` to get `decimal`. Same approach as DEX swap.
 >
-> **CRITICAL — Balance check is REQUIRED before calling `defi invest`.** You MUST call `okx-wallet-portfolio` to verify the user has sufficient balance of the deposit token BEFORE generating calldata. If balance is insufficient, STOP and warn the user. Do NOT proceed to `defi invest` without confirming balance. Skipping this step wastes gas and results in failed on-chain transactions.
+> **CRITICAL — Balance check is REQUIRED before calling `defi invest`.** You MUST call `okx-agentic-wallet` to verify the user has sufficient balance of the deposit token BEFORE generating calldata. If balance is insufficient, STOP and warn the user. Do NOT proceed to `defi invest` without confirming balance. Skipping this step wastes gas and results in failed on-chain transactions.
 
 ### Withdraw
 
@@ -134,7 +134,7 @@ Rules:
 3. (Optional) defi depth-price-chart --investment-id <id>
    → show liquidity depth distribution to help user pick tick range
 4. Ask user for amount and tick range
-5. Check wallet balance (okx-wallet-portfolio) → if insufficient, warn user and stop
+5. Check wallet balance (okx-agentic-wallet) → if insufficient, warn user and stop
 6. defi invest --investment-id <id> --address <addr> --token USDT --amount 100000000 --range 5
    → CLI handles calculate-entry internally, returns calldata
 7. User signs and broadcasts
@@ -271,8 +271,8 @@ onchainos wallet contract-call \
 | `defi detail` | Check trends → `defi rate-chart` / `defi tvl-chart`, or proceed → `defi invest` |
 | `defi detail` (V3 Pool) | View depth → `defi depth-price-chart`, check price history → `defi depth-price-chart --chart-type PRICE` |
 | `defi invest` success | View positions → `okx-defi-portfolio`, or search more |
-| `defi withdraw` success | Check positions → `okx-defi-portfolio`, or check balance → `okx-wallet-portfolio` |
-| `defi collect` success | Check positions → `okx-defi-portfolio`, or swap rewards → `okx-dex-swap` |
+| `defi withdraw` success | Check positions → `okx-defi-portfolio`, or check balance → `okx-agentic-wallet` |
+| `defi collect` success | Check positions → `okx-defi-portfolio`, or swap rewards → `okx-agentic-wallet` |
 
 ## Error Codes
 
@@ -281,7 +281,7 @@ onchainos wallet contract-call \
 | 84400 | Parameter null | Check required params — partial exit needs `--amount` or `--ratio` |
 | 84021 | Asset syncing | "Position data is syncing, please retry shortly" |
 | 84023 | Invalid expectOutputList | CLI auto-constructs from position-detail; retry or pass `--platform-id` |
-| 84014 | Balance check failed | Insufficient balance — check with `okx-wallet-portfolio` |
+| 84014 | Balance check failed | Insufficient balance — check with `okx-agentic-wallet` |
 | 84018 | Balancing failed | V3 balancing failed — adjust price range or increase slippage |
 | 84010 | Token not supported | Check supported tokens via `defi detail` |
 | 84001 | Platform not supported | DeFi platform not supported |

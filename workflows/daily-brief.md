@@ -12,7 +12,7 @@
 
 ## Required Skills
 
-okx-dex-token, okx-dex-market, okx-dex-signal, okx-dex-trenches, okx-wallet-portfolio
+okx-dex-token, okx-dex-market, okx-dex-signal, okx-dex-trenches, okx-agentic-wallet
 
 ## Input
 

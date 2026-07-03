@@ -12,7 +12,7 @@
 
 ## Required Skills
 
-okx-dex-market, okx-wallet-portfolio, okx-dex-signal
+okx-dex-market, okx-agentic-wallet, okx-dex-signal
 
 ## Input
 

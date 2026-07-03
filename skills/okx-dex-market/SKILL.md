@@ -156,7 +156,7 @@ Do not expose raw error codes or internal error messages to the user.
 - **Invalid token address**: returns empty data or error — prompt user to verify, or use `onchainos token search` to resolve
 - **Unsupported chain**: the CLI will report an error — try a different chain name
 - **No candle data**: may be a new token or low liquidity — inform user
-- **Solana SOL price/kline**: The native SOL address (`11111111111111111111111111111111`) does not work for `market price` or `market kline`. Use the wSOL SPL token address (`So11111111111111111111111111111111111111112`) instead. Note: for **swap** operations, the native address must be used — see `okx-dex-swap`.
+- **Solana SOL price/kline**: The native SOL address (`11111111111111111111111111111111`) does not work for `market price` or `market kline`. Use the wSOL SPL token address (`So11111111111111111111111111111111111111112`) instead. Note: for **swap** operations, the native address must be used — see `okx-agentic-wallet`.
 - **Unsupported chain for portfolio PnL**: not all chains support PnL — always verify with `onchainos market portfolio-supported-chains` first
 - **`portfolio-dex-history` requires `--begin` and `--end`**: both timestamps (Unix milliseconds) are mandatory; if the user says "last 30 days" compute them before calling
 - **`portfolio-recent-pnl` `unrealizedPnlUsd` returns `SELL_ALL`**: this means the address has sold all its holdings of that token
