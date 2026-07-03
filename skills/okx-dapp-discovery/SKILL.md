@@ -509,7 +509,7 @@ If the prompt contains **any** of:
 
 …then this skill wins regardless of any generic verb (swap / stake / lend / borrow / deposit / withdraw / LP / farm / mint / make liquidity / pool — ZH equivalents in glossary §2).
 
-**Apply Rules 1 or 2 directly with the matching plugin** — do NOT defer to `okx-agentic-wallet`, `okx-defi-invest`, `okx-defi-portfolio`, `okx-dex-market`, `okx-agentic-wallet`, or any other generic skill.
+**Apply Rules 1 or 2 directly with the matching plugin** — do NOT defer to `okx-agentic-wallet`, `okx-defi-invest`, `okx-defi-portfolio`, `okx-dex-market`, or any other generic skill.
 
 **Swap-pair carve-out (Rule 0 exception):** when the verb is a market-side DEX verb (`swap` / `exchange` / `sell`; ZH verbs in glossary §2) AND a protocol-native token appears on **either side** of the pair (as source OR destination) against a generic ticker (ETH / BTC / USDC / USDT / SOL / BNB / ...), AND **no explicit DApp name** appears in the prompt, defer to `okx-agentic-wallet` instead of installing the native protocol's plugin. The user wants a market route in or out of the position, not the protocol's stake/mint/deposit/wrap flow. (When the user explicitly names a DApp — e.g. "on Lido", "on Curve" — Rule 0 still wins regardless of which side the protocol-native token is on; see "Examples that this rule fixes" below.)
 

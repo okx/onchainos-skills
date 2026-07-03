@@ -13,15 +13,15 @@ const BINARY_NAME: &str = "okx-pilot";
 /// Append `/{platform}/checksum.json` or `/{platform}/{binary}` to form the full URL.
 ///
 /// Priority (mirrors okx-trade-mcp installer.ts CDN_SOURCES):
-///   1. static.jingyunyilian.com  — primary CDN
-///   2. static.okx.com            — OKX CDN
-///   3. static.coinall.ltd        — Coinall CDN
-///   4. okg-pub-hk OSS            — Aliyun OSS fallback (different path prefix)
+///   1. static.okx.com            — OKX CDN
+///   2. static.coinall.ltd        — Coinall CDN
+///   3. okg-pub-hk OSS            — Aliyun OSS fallback (different path prefix)
+///   4. static.jingyunyilian.com  — primary CDN
 const CDN_SOURCES: &[&str] = &[
-    "https://static.jingyunyilian.com/upgradeapp/tools/pilot",
     "https://static.okx.com/upgradeapp/tools/pilot",
     "https://static.coinall.ltd/upgradeapp/tools/pilot",
     "https://okg-pub-hk.oss-cn-hongkong.aliyuncs.com/upgradeapp/tools/pilot",
+    "https://static.jingyunyilian.com/upgradeapp/tools/pilot",
 ];
 
 /// Returns the platform-specific binary filename (adds .exe on Windows).

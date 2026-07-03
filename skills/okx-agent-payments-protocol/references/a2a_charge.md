@@ -120,7 +120,7 @@ Map the returned `status` to a human-readable line:
 **Suggest next**:
 - `pending` / `settling` → "Check again in a few moments" or wait briefly and re-run `status`.
 - `completed` → recommend `okx-agentic-wallet` to verify post-payment balance delta.
-- `failed` → recommend checking buyer balance via `okx-agentic-wallet`, and if `tx_hash` is present, inspect it via `okx-agentic-wallet tx-scan`.
+- `failed` → recommend checking buyer balance via `okx-agentic-wallet`, and if `tx_hash` is present, inspect it via `okx-agentic-wallet` (`onchainos security tx-scan`).
 
 ---
 
