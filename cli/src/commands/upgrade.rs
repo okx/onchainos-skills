@@ -3,8 +3,8 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::output;
 
@@ -30,6 +30,29 @@ const SKILL_HOME_DIRS: &[&str] = &[
     ".codex/skills",
     ".openclaw/skills",
     ".cursor/skills",
+];
+
+/// Skills that have been merged or retired and should be actively removed from
+/// user machines (via `npx skills remove`), even when they no longer exist in
+/// the repo at all. All names are onchainos-skills-owned, so a batch removal can
+/// never touch a skill installed from a different source. Add a name here once
+/// its redirect/deprecation window is over; drop it once it's cleaned up broadly.
+const DEPRECATED_SKILLS: &[&str] = &[
+    // Fully removed from the repo — true orphans, no stub left behind.
+    "okx-a2a-payment",
+    "okx-x402-payment",
+    // Merged into `okx-guide` (deprecated alias stubs).
+    "okx-how-to-play",
+    "okx-ai-guide",
+    "okx-ai-support",
+    // Merged into `okx-agentic-wallet` (redirect stubs).
+    "okx-audit-log",
+    "okx-dex-bridge",
+    "okx-dex-strategy",
+    "okx-dex-swap",
+    "okx-onchain-gateway",
+    "okx-security",
+    "okx-wallet-portfolio",
 ];
 
 #[derive(clap::Args)]
@@ -161,7 +184,7 @@ fn decorate_graduation(payload: &mut Value, graduated: bool) {
     payload["graduated"] = json!(true);
     payload["action"] = json!(
         "Beta CLI graduated to stable. If skills were installed via npx, re-run \
-         `npx skills add okx/onchainos-skills --yes`, then re-read SKILL.md before continuing."
+         `npx skills add okx/onchainos-skills --yes -g`, then re-read SKILL.md before continuing."
     );
 }
 
@@ -696,6 +719,103 @@ fn update_skill_checkouts(graduated: bool) -> Vec<Value> {
         .collect()
 }
 
+// ── Deprecated skill removal ────────────────────────────────────────────
+
+/// Remove every skill in [`DEPRECATED_SKILLS`] via `npx skills remove <names>
+/// -g -y`, unconditionally — npx no-ops on any that aren't installed, so no
+/// on-disk pre-check is needed. Best-effort: an absent npx, a non-zero exit, or
+/// a 30s timeout all degrade to a result carrying a manual-command `hint` rather
+/// than hanging session start. Returns `Value::Null` only when the list is empty.
+fn remove_deprecated_skills() -> Value {
+    if DEPRECATED_SKILLS.is_empty() {
+        return Value::Null;
+    }
+    let manual_cmd = format!("npx skills remove {} -g -y", DEPRECATED_SKILLS.join(" "));
+    // Every non-success path funnels through here: it can NEVER propagate an
+    // error or panic, so preflight's later steps (integrity, drift, output)
+    // always run. The `hint` lets the user finish the cleanup by hand.
+    let degrade = |status: &str, reason: String| {
+        json!({
+            "status": status,
+            "reason": reason,
+            "skills": DEPRECATED_SKILLS,
+            "hint": manual_cmd.clone(),
+        })
+    };
+
+    eprintln!("Removing deprecated skills: {}...", DEPRECATED_SKILLS.join(", "));
+    // Spawn directly — no separate `npx --version` probe, since that call is
+    // itself unbounded and could hang before the timeout guard below applies.
+    // A missing npx surfaces here as a NotFound spawn error → reported as a skip.
+    let mut child = match Command::new("npx")
+        .args(["skills", "remove"])
+        .args(DEPRECATED_SKILLS)
+        .args(["-g", "-y"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return degrade("skipped", "npx not found on PATH".to_string());
+        }
+        Err(e) => return degrade("failed", e.to_string()),
+    };
+
+    // Bounded wait: never block session start for more than 30s. On timeout the
+    // child is killed and reaped so no npx process is left dangling.
+    let timeout = Duration::from_secs(30);
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                return json!({ "status": "removed", "skills": DEPRECATED_SKILLS });
+            }
+            Ok(Some(_)) => {
+                return degrade("failed", "npx skills remove exited non-zero".to_string());
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return degrade("failed", "npx skills remove timed out after 30s".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => return degrade("failed", e.to_string()),
+        }
+    }
+}
+
+/// Turn a removal result into a user-facing action line. A success (or a no-op,
+/// which is indistinguishable without an on-disk check) stays silent — returns
+/// `None` — so this never nags on every session; only a degraded run (npx
+/// missing / failed / timed out) surfaces the manual command to finish by hand.
+fn removal_action(removed: &Value) -> Option<String> {
+    let status = removed.get("status")?.as_str()?;
+    if status == "removed" {
+        return None;
+    }
+    let names: Vec<&str> = removed
+        .get("skills")?
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    let hint = removed
+        .get("hint")
+        .and_then(Value::as_str)
+        .unwrap_or("npx skills remove <names> -g -y");
+    Some(format!(
+        "Could not auto-remove deprecated skill(s) {}. Remove them with: {hint}",
+        names.join(", ")
+    ))
+}
+
 // ── Command entry point ─────────────────────────────────────────────────
 
 pub async fn execute(args: UpgradeArgs) -> Result<()> {
@@ -832,16 +952,276 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
     Ok(())
 }
 
+// ── Preflight (consolidated session-start check) ─────────────────────────
+
+#[derive(clap::Args)]
+pub struct PreflightArgs {
+    /// The calling skill's frontmatter `version` (drift check + beta routing).
+    /// Safe to pass verbatim — a stable value or beta CLI ignores it.
+    #[arg(long, value_name = "VERSION")]
+    pub skill_version: Option<String>,
+}
+
+#[derive(PartialEq)]
+enum Integrity {
+    Ok,
+    Mismatch,
+    Skipped,
+}
+
+impl Integrity {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Integrity::Ok => "ok",
+            Integrity::Mismatch => "mismatch",
+            Integrity::Skipped => "skipped",
+        }
+    }
+}
+
+/// A binary running from a path with a `target` component is a cargo dev build
+/// (`target/debug|release/`); skip integrity — there is no published checksum to match.
+fn is_dev_build_path(path: &Path) -> bool {
+    path.components()
+        .any(|c| c.as_os_str().to_str() == Some("target"))
+}
+
+/// Verify the on-disk binary's SHA-256 against the release `checksums.txt` for
+/// `version`. dev build or unobtainable checksum → `Skipped` (not a failure);
+/// only a real published-hash mismatch → `Mismatch`.
+async fn verify_installed_integrity(client: &Client, version: &str) -> Integrity {
+    let Ok(exe_path) = std::env::current_exe() else {
+        return Integrity::Skipped;
+    };
+    let exe_path = exe_path.canonicalize().unwrap_or(exe_path);
+    if is_dev_build_path(&exe_path) {
+        return Integrity::Skipped;
+    }
+    let Ok(triple) = target_triple() else {
+        return Integrity::Skipped;
+    };
+    let binary_name = format!("onchainos-{}", triple);
+    let checksums_url = format!(
+        "https://github.com/{}/releases/download/v{}/checksums.txt",
+        REPO, version
+    );
+    let Ok(resp) = client
+        .get(&checksums_url)
+        .header("User-Agent", "onchainos-cli")
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+    else {
+        return Integrity::Skipped;
+    };
+    if !resp.status().is_success() {
+        return Integrity::Skipped;
+    }
+    let Ok(checksums) = resp.text().await else {
+        return Integrity::Skipped;
+    };
+    let expected = checksums
+        .lines()
+        .find(|l| l.contains(&binary_name))
+        .and_then(|l| l.split_whitespace().next());
+    let Some(expected) = expected else {
+        return Integrity::Skipped;
+    };
+    let Ok(bytes) = std::fs::read(&exe_path) else {
+        return Integrity::Skipped;
+    };
+    let actual = hex::encode(Sha256::digest(&bytes));
+    if actual == expected {
+        Integrity::Ok
+    } else {
+        Integrity::Mismatch
+    }
+}
+
+/// CLI ahead of the skill → drift warning string. Equal / skill ahead / no skill
+/// version → None.
+fn compute_drift(effective_cli: &str, skill_version: Option<&str>) -> Option<String> {
+    let skill = skill_version?;
+    if semver_gt(effective_cli, skill) {
+        Some(format!(
+            "Skill is behind the CLI (skill v{} < CLI v{}). Re-read this skill's SKILL.md; if it was installed via a package manager, update through that manager.",
+            skill, effective_cli
+        ))
+    } else {
+        None
+    }
+}
+
+/// One-shot session-start check: resolve the latest release, auto-update the
+/// binary + local skill checkouts when newer (reusing the `upgrade` machinery),
+/// verify binary integrity, and report version drift. Always exits 0 with a JSON
+/// payload; the agent acts only on `data.action`. Unlike `upgrade`, it does not
+/// throttle — the prompt constrains it to run once per session.
+pub async fn preflight(args: PreflightArgs) -> Result<()> {
+    let current = CURRENT_VERSION;
+    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
+    let skill_version = args.skill_version.as_deref();
+
+    // Channel resolution — identical policy to `execute()`.
+    let use_beta = skill_requests_beta(current, skill_version);
+    let resolution: Result<UpgradeTarget> = if use_beta {
+        get_latest_with_beta(&client)
+            .await
+            .map(|latest| decide_target(current, &latest, None))
+    } else if is_prerelease(current) {
+        match (
+            get_latest_stable(&client).await,
+            get_latest_with_beta(&client).await,
+        ) {
+            (Ok(stable), Ok(beta)) => Ok(decide_target(current, &stable, Some(&beta))),
+            (Err(e), _) | (_, Err(e)) => Err(e),
+        }
+    } else {
+        get_latest_stable(&client)
+            .await
+            .map(|stable| decide_target(current, &stable, None))
+    };
+
+    let mut actions: Vec<String> = Vec::new();
+
+    // 1. binary status
+    let (status, latest_version, updated, graduated, effective_version): (
+        &str,
+        Option<String>,
+        bool,
+        bool,
+        String,
+    ) = match resolution {
+        Ok(target) => {
+            if semver_gt(&target.version, current) {
+                eprintln!("Updating onchainos: {} → {}", current, target.version);
+                match download_and_install(&client, &target.version).await {
+                    Ok(()) => (
+                        "updated",
+                        Some(target.version.clone()),
+                        true,
+                        target.graduated,
+                        target.version,
+                    ),
+                    Err(e) => {
+                        eprintln!("Warning: update failed: {}", e.root_cause());
+                        actions.push(format!(
+                            "CLI update to v{} failed; kept v{}. Retry: onchainos upgrade --force",
+                            target.version, current
+                        ));
+                        (
+                            "update_failed",
+                            Some(target.version),
+                            false,
+                            false,
+                            current.to_string(),
+                        )
+                    }
+                }
+            } else {
+                ("ok", Some(target.version), false, false, current.to_string())
+            }
+        }
+        Err(e) => {
+            eprintln!("Warning: could not reach GitHub: {}", e.root_cause());
+            ("offline", None, false, false, current.to_string())
+        }
+    };
+
+    // beta→stable graduation hint (reuse the exact wording from `upgrade`).
+    if graduated {
+        let mut g = json!({});
+        decorate_graduation(&mut g, true);
+        if let Some(a) = g["action"].as_str() {
+            actions.push(a.to_string());
+        }
+    }
+
+    // 2. skill checkouts (local git topologies only). A git checkout that was
+    //    actually pulled means its on-disk SKILL.md changed under the agent, so
+    //    prompt a re-read. Package-manager installs can't be auto-updated, but we
+    //    do NOT nag about them here every session — when the skill is genuinely
+    //    behind, the drift action below already tells the user (incl. package
+    //    managers). Unconditional nagging would violate the "action=null when
+    //    nothing to do" contract.
+    let skills = update_skill_checkouts(graduated);
+    if skills.iter().any(|s| s["status"] == "updated") {
+        actions.push(
+            "A local skill checkout was updated — re-read the active SKILL.md to pick up the changes.".to_string(),
+        );
+    }
+
+    // 2b. Purge merged/retired skills unconditionally (npx no-ops on ones that
+    //     aren't installed). Best-effort: it degrades to a hint rather than
+    //     blocking on a stuck npx, so preflight's later steps always run.
+    let deprecated_removal = remove_deprecated_skills();
+    if let Some(a) = removal_action(&deprecated_removal) {
+        actions.push(a);
+    }
+
+    // 3. integrity. Skip right after an install (this process still reports the
+    //    OLD version, so a re-hash would false-mismatch) and when offline (GitHub
+    //    is unreachable — re-fetching the checksum would only fail again).
+    let integrity = if updated {
+        "verified-on-install".to_string()
+    } else if status == "offline" {
+        "skipped".to_string()
+    } else {
+        let i = verify_installed_integrity(&client, &effective_version).await;
+        if i == Integrity::Mismatch {
+            actions.push(
+                "Binary integrity check failed — reinstall: onchainos upgrade --force".to_string(),
+            );
+        }
+        i.as_str().to_string()
+    };
+
+    // 4. drift (skill behind CLI)
+    let drift = compute_drift(&effective_version, skill_version);
+    let drift_json = match &drift {
+        Some(msg) => {
+            actions.push(msg.clone());
+            json!({ "skill": skill_version, "cli": effective_version })
+        }
+        None => Value::Null,
+    };
+
+    let mut payload = json!({
+        "status": status,
+        "currentVersion": current,
+        "updated": updated,
+        "integrity": integrity,
+        "drift": drift_json,
+        "action": if actions.is_empty() { Value::Null } else { json!(actions.join("\n")) },
+    });
+    if let Some(lv) = latest_version {
+        payload["channel"] = json!(if is_prerelease(&lv) { "beta" } else { "stable" });
+        payload["latestVersion"] = json!(lv);
+    }
+    // Only report checkouts that actually did something: an `updated` one drives
+    // the re-read hint, a `failed` one flags a real problem. `skipped` (non-git /
+    // package-manager installs) is the normal case for most skills — listing it
+    // would flood the payload with noise, so it's dropped.
+    let reported: Vec<&Value> = skills.iter().filter(|s| s["status"] != "skipped").collect();
+    if !reported.is_empty() {
+        payload["skills"] = json!(reported);
+    }
+    output::success(payload);
+
+    Ok(())
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::{
-        current_branch, decide_target, decorate_graduation, discover_skill_paths_in,
-        highest_version, is_throttled, parse_ls_remote_versions, parse_release_tag_url,
-        record_check, remote_is_trusted_okx, semver_gt, skill_requests_beta, update_one_checkout,
+        compute_drift, current_branch, decide_target, decorate_graduation, discover_skill_paths_in,
+        highest_version, is_dev_build_path, is_throttled, parse_ls_remote_versions,
+        parse_release_tag_url, record_check, remote_is_trusted_okx, removal_action, semver_gt,
+        skill_requests_beta, update_one_checkout,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use tempfile::TempDir;
@@ -1199,7 +1579,7 @@ mod tests {
         decorate_graduation(&mut payload, true);
         assert_eq!(payload["graduated"], json!(true));
         let action = payload["action"].as_str().expect("action must be a string");
-        assert!(action.contains("npx skills add okx/onchainos-skills --yes"));
+        assert!(action.contains("npx skills add okx/onchainos-skills --yes -g"));
         assert!(action.contains("SKILL.md"));
     }
 
@@ -1268,5 +1648,54 @@ ccc333\trefs/heads/main
             Some("3.4.0")
         );
         assert_eq!(highest_version(vec![]), None);
+    }
+
+    #[test]
+    fn compute_drift_flags_cli_ahead() {
+        assert!(compute_drift("4.1.0", Some("4.0.0")).is_some());
+        assert!(compute_drift("4.0.1", Some("4.0.0")).is_some());
+    }
+
+    #[test]
+    fn compute_drift_none_when_not_behind() {
+        assert!(compute_drift("4.0.0", Some("4.0.0")).is_none()); // equal
+        assert!(compute_drift("4.0.0", Some("5.0.0")).is_none()); // skill ahead
+        assert!(compute_drift("4.0.0", None).is_none()); // no skill version
+    }
+
+    #[test]
+    fn is_dev_build_path_detects_target_component() {
+        assert!(is_dev_build_path(Path::new("/repo/cli/target/release/onchainos")));
+        assert!(is_dev_build_path(Path::new("/repo/cli/target/debug/onchainos")));
+        assert!(!is_dev_build_path(Path::new("/usr/local/bin/onchainos")));
+        assert!(!is_dev_build_path(Path::new("/home/u/.local/bin/onchainos")));
+    }
+
+    #[test]
+    fn removal_action_silent_on_success() {
+        // A successful removal (or npx no-op) must not nag every session.
+        let v = json!({
+            "status": "removed",
+            "skills": ["okx-a2a-payment", "okx-x402-payment"],
+        });
+        assert!(removal_action(&v).is_none());
+    }
+
+    #[test]
+    fn removal_action_hints_manual_command_on_degrade() {
+        let v = json!({
+            "status": "skipped",
+            "reason": "npx not found on PATH",
+            "skills": ["okx-a2a-payment"],
+            "hint": "npx skills remove okx-a2a-payment -g -y",
+        });
+        let a = removal_action(&v).unwrap();
+        assert!(a.contains("npx skills remove okx-a2a-payment -g -y"));
+    }
+
+    #[test]
+    fn removal_action_none_when_null_or_empty() {
+        assert!(removal_action(&Value::Null).is_none());
+        assert!(removal_action(&json!({ "status": "removed", "skills": [] })).is_none());
     }
 }

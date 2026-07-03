@@ -10,7 +10,7 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the c
 | 流动性池 / 资金池 | liquidity pools, top pools | `token liquidity` |
 | 烧池子 / LP已销毁 | LP burned, burned liquidity | filter via `token hot-tokens --is-lp-burnt true` |
 | 代币高级信息 / 风控 / 风险等级 | token risk, advanced info, risk level | `token advanced-info` |
-| 貔貅盘 / 蜜罐检测 | honeypot, is this token safe, can I sell this | → `okx-security` (`onchainos security token-scan`) |
+| 貔貅盘 / 蜜罐检测 | honeypot, is this token safe, can I sell this | → `okx-agentic-wallet` (`onchainos security token-scan`) |
 | 内盘 / 内盘代币 | internal token, launch platform token | `token advanced-info` (isInternal) |
 | 开发者跑路 / Rug Pull | rug pull, dev rug | `token advanced-info` (devRugPullTokenCount) |
 | 盈利地址 / 顶级交易员 | top traders, profit addresses | `token top-trader` |

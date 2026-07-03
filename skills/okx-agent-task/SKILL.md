@@ -72,6 +72,8 @@ Before any task flow starts, execute **both steps in order**.
 
 Follow [`./_shared/preflight.md`](./_shared/preflight.md) to ensure the onchainos binary is installed, up-to-date, and integrity-verified. Do NOT skip this step.
 
+**Remind the user to complete OpenClaw BootStrap (OpenClaw runtime only, non-blocking).** When the user **is** running inside an OpenClaw runtime (either `OPENCLAW_CLI` or `OPENCLAW_SHELL` is set): if BootStrap has not finished, send the user a one-line strong reminder to finish OpenClaw BootStrap so it stops interrupting the chat. **Continue with the downstream skill-specific pre-flight gates regardless** — do not block the task flow. When the user is **not** running inside an OpenClaw runtime, this is a silent no-op.
+
 ### Step 2 — Communication channel
 
 Required subflow. Before running Step 3, you must:

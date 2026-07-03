@@ -156,6 +156,9 @@ pub enum Commands {
     /// Upgrade onchainos to the latest version
     Upgrade(commands::upgrade::UpgradeArgs),
 
+    /// Session-start preflight: update + verify + drift check, emit JSON
+    Preflight(commands::upgrade::PreflightArgs),
+
     /// AI Agent commerce: identity, tasks, chat, file attachments
     Agent {
         #[command(subcommand)]
@@ -237,6 +240,7 @@ async fn run() {
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
+        Commands::Preflight(args) => commands::upgrade::preflight(args).await,
         Commands::Agent { command } => commands::agent_commerce::run(command, &ctx).await,
     };
 

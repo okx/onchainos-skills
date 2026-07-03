@@ -46,12 +46,10 @@ Verify by asking: `"check my ETH balance"` or `"what's the price of SOL?"`
 
 | Skill | When to Use |
 |-------|-------------|
-| `okx-wallet-portfolio` | Check wallet balance, token holdings, portfolio value |
+| `okx-agentic-wallet` | Wallet, swap, bridge, transaction gateway, public-address portfolio, security, audit log — all wallet & on-chain execution |
 | `okx-dex-market` | Token prices, K-line charts, trade history |
-| `okx-dex-swap` | Swap/trade/buy/sell tokens on-chain |
 | `okx-dex-token` | Search tokens, trending rankings, holder analysis |
 | `okx-dex-social` | Crypto news, sentiment ranking, KOL / vibe chatter |
-| `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
 | `okx-growth-competition` | Agentic Wallet trading competitions: list, join, rank, claim rewards |
 
 ### Loading a Skill Manually

@@ -121,7 +121,7 @@ Registered successfully! This competition runs on {supportedChains}, with a tota
 **On any other error:**
 > Operation failed. Please contact customer support.
 
-## Step 4 — Trade (delegate to okx-dex-swap)
+## Step 4 — Trade (delegate to okx-agentic-wallet)
 
 When user asks to trade per competition rules:
 
@@ -133,7 +133,7 @@ When user asks to trade per competition rules:
 4. Then follow **Case B** below.
 
 **Case B — User provides a CA directly:**
-1. **Execute swap** via the `swap_swap` MCP tool (CLI: `onchainos swap swap`); see the `okx-dex-swap` skill for parameters.
+1. **Execute swap** via the `swap_swap` MCP tool (CLI: `onchainos swap swap`); see the `okx-agentic-wallet` skill for parameters.
 2. Report: "Done — your trade has been submitted." + tx hash.
 
 **Competition constraints per trade:**

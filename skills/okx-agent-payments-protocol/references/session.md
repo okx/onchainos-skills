@@ -105,7 +105,7 @@ onchainos payment session open \
 
 CLI TEE-signs EIP-3009 `receiveWithAuthorization` (deposit into escrow) + EIP-712 baseline Voucher (channelId, cum=initial_cum). Output: `data.{authorization_header, channel_id, escrow, chain_id, deposit, wallet}` — save all to session state. Initial `current_cum` = the initial-cum value (default `"0"`).
 
-**Hash mode (`feePayer=false`)** — user must send the on-chain "open channel" tx themselves first (delegate to `okx-onchain-gateway` or manual). Then:
+**Hash mode (`feePayer=false`)** — user must send the on-chain "open channel" tx themselves first (delegate to `okx-agentic-wallet` or manual). Then:
 
 ```bash
 onchainos payment session open \
@@ -117,7 +117,7 @@ onchainos payment session open \
   [--from '<0xPayer>']
 ```
 
-`--salt` MUST be the same bytes32 the user passed to the on-chain `escrow.open(...)` call. The CLI recomputes `channelId = keccak256(abi.encode(payer, payee, token, salt, authorizedSigner, escrow, chainId))` and the seller compares it to what the on-chain event emitted — supply a fresh random salt and the open is rejected with a channelId mismatch. If the user broadcast through `okx-onchain-gateway`, the salt is the bytes32 they (or you) passed into the gateway's contract-call arguments.
+`--salt` MUST be the same bytes32 the user passed to the on-chain `escrow.open(...)` call. The CLI recomputes `channelId = keccak256(abi.encode(payer, payee, token, salt, authorizedSigner, escrow, chainId))` and the seller compares it to what the on-chain event emitted — supply a fresh random salt and the open is rejected with a channelId mismatch. If the user broadcast through `okx-agentic-wallet`, the salt is the bytes32 they (or you) passed into the gateway's contract-call arguments.
 
 CLI still TEE-signs the initial voucher; only the deposit tx is replaced by the supplied hash.
 

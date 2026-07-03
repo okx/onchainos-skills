@@ -455,7 +455,7 @@ pub async fn ensure_sufficient_balance_at(required: f64, currency: &str, address
             if balance < required {
                 bail!(
                     "Insufficient business token balance (USDT/USDG): current XLayer {symbol} balance is {balance} (address={address}), \
-                     need {required} {currency}. Please top up {currency} via okx-dex-swap. \
+                     need {required} {currency}. Please top up {currency} via okx-agentic-wallet swap. \
                      Note: gas is paid by the platform paymaster, no OKB / native required"
                 );
             }
@@ -465,7 +465,7 @@ pub async fn ensure_sufficient_balance_at(required: f64, currency: &str, address
 
     bail!(
         "Business token {currency} balance not found on XLayer for address={address}. \
-         Please confirm the account holds this token and top up via okx-dex-swap before retrying. \
+         Please confirm the account holds this token and top up via okx-agentic-wallet swap before retrying. \
          Note: gas is paid by the platform paymaster, no OKB / native required"
     );
 }
