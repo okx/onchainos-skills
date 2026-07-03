@@ -1044,7 +1044,7 @@ fn compute_drift(effective_cli: &str, skill_version: Option<&str>) -> Option<Str
     let skill = skill_version?;
     if semver_gt(effective_cli, skill) {
         Some(format!(
-            "Skill is behind the CLI (skill v{} < CLI v{}). Re-read this skill's SKILL.md; if it was installed via a package manager, update through that manager.",
+            "Skill is behind the CLI (skill v{} < CLI v{}). If it was installed via a package manager, update it with `npx skills add okx/onchainos-skills --yes -g` (or your manager's equivalent); then re-read this skill's SKILL.md.",
             skill, effective_cli
         ))
     } else {
