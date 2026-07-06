@@ -162,8 +162,8 @@ Route by pick **description** (not the raw number — the number shifts between 
 |---|---|---|---|---|
 | `1` | A + B | OKX.AI featured | **Yes** (logged-out → Login Method Choice → resume) | `ai-guide.md` |
 | `2` | A | 🔥 Polymarket Top 3 | No | invoke `okx-dapp-discovery` (it routes to / installs `polymarket-plugin`) |
-| `2` | B | 💰 USDC APY | No | invoke `okx-defi-invest` |
-| `3` | A | 💰 USDC APY | No | invoke `okx-defi-invest` |
+| `2` | B | 💰 USDC APY | No | invoke `okx-defi` |
+| `3` | A | 💰 USDC APY | No | invoke `okx-defi` |
 | `3` | B | ☕ Daily on-chain brief | **Yes** (logged-out → Login Method Choice → resume) | `~/.onchainos/workflows/daily-brief.md` |
 | `4` | A | ☕ Daily on-chain brief | **Yes** (logged-out → Login Method Choice → resume) | `~/.onchainos/workflows/daily-brief.md` |
 
@@ -182,7 +182,7 @@ OKX.AI is the primary featured option. Auth handling:
 The skill itself handles auth where it needs it. Don't pre-block on login.
 
 - **🔥 Polymarket** (Variant A reply `2`): invoke `okx-dapp-discovery` skill. One-line bridge ("Handing off Polymarket to dapp-discovery."). Don't pre-explain or pre-route.
-- **💰 USDC APY** (Variant A reply `3`, Variant B reply `2`): invoke `okx-defi-invest` skill, passing the user's intent ("find best USDC APY").
+- **💰 USDC APY** (Variant A reply `3`, Variant B reply `2`): invoke `okx-defi` skill, passing the user's intent ("find best USDC APY").
 
 ### 4.3 Daily brief — login-gated (Variant A reply `4`, Variant B reply `3`)
 
@@ -202,8 +202,7 @@ When a logged-out user replies `login` (or similar), route to **Login Method Cho
 
 Anything else (not a numbered pick, not `login`, not a hidden-pick keyword): answer in free zone, then route via the fallback table in `how-to-play.md → Free-form fallback`. Notably:
 
-- Free-text **"smart money"** / whale tracking intent → route to `okx-dex-signal`.
-- Free-text **"new tokens"** / fresh on-chain launches intent → route to `okx-dex-trenches`.
+- Free-text **"smart money"** / whale tracking intent, or **"new tokens"** / fresh on-chain launches intent → route to `okx-dex`.
 
 These two descriptions are NOT in the numbered menu anymore, but the free-text fallback in `how-to-play.md` still routes them correctly.
 
@@ -227,7 +226,7 @@ If a user picks a login-gated option (Reply `1` OKX.AI in either variant; Reply 
 
 ### 4.8 Downstream-skill load failure
 
-The banner shape (variant, pick count, numbering) is **fixed at render time** based on the Step 2 placeholders. If a downstream skill load fails after the user picks (e.g. `okx-defi-invest` not installed, `ai-guide.md` not found, `daily-brief.md` missing), surface the failure after the pick — the banner is **NOT** retroactively re-rendered, and the digit-to-description mapping does NOT change. If the user retries, route them through whatever standard error/fallback path the failed skill defines, NOT through a fresh banner.
+The banner shape (variant, pick count, numbering) is **fixed at render time** based on the Step 2 placeholders. If a downstream skill load fails after the user picks (e.g. `okx-defi` not installed, `ai-guide.md` not found, `daily-brief.md` missing), surface the failure after the pick — the banner is **NOT** retroactively re-rendered, and the digit-to-description mapping does NOT change. If the user retries, route them through whatever standard error/fallback path the failed skill defines, NOT through a fresh banner.
 
 ## Canonical render terminator
 

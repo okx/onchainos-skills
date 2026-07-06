@@ -6,7 +6,7 @@
 //!    `onchainos agent pending-decisions-v2 request`. Naming suffix: `_user_notify` / `_user_prompt`.
 //!    Rule: **no technical jargon** — event names (`provider_applied`/`job_*` etc.) /
 //!    status names (English enums like `Open`/`accepted` are kept as doc-reserved literals) / CLI flags (`--*`) /
-//!    skill names (`okx-agent-identity` etc.) / backend method names (`claimAutoComplete` etc.).
+//!    skill names (`okx-ai` etc.) / backend method names (`claimAutoComplete` etc.).
 //!    **Literals in this file are English** (aligned with the PM Review translation baseline),
 //!    serving as the canonical content for sub agent localization — English users see them
 //!    verbatim (after `<...>` placeholder fills); non-English users get a faithful translation

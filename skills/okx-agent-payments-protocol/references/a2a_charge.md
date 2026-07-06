@@ -128,7 +128,7 @@ Map the returned `status` to a human-readable line:
 
 Convert `amount` / `fee_amount` per **`../_shared/amount-display.md`**.
 
-**a2a exception (unlisted symbol):** a2a delegates trust upstream, so do **NOT** query `okx-dex-token` and do **NOT** block — use the unknown-decimals fallback (`<atomic> <symbol>` + "double-check") directly.
+**a2a exception (unlisted symbol):** a2a delegates trust upstream, so do **NOT** query `okx-dex` and do **NOT** block — use the unknown-decimals fallback (`<atomic> <symbol>` + "double-check") directly.
 
 ---
 

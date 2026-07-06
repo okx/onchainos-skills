@@ -7,15 +7,11 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | Skill | Description |
 |-------|-------------|
 | `okx-agentic-wallet` | Wallet lifecycle (auth, balance, portfolio PnL, send, tx history, contract call), Gas Station, DEX swap, cross-chain bridge, limit-order strategy, transaction gateway (gas / simulate / broadcast / track order), public-address portfolio, security scanning (token risk, DApp phishing, tx & signature checks, approvals), audit log |
-| `okx-dex-market` | Real-time prices, K-line charts, index prices, wallet PnL analysis, address tracker activities |
-| `okx-dex-signal` | Smart money / whale / KOL signal tracking, leaderboard rankings |
-| `okx-dex-trenches` | Meme pump/trenches token scanning, dev reputation, bundle detection, aped wallets |
-| `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history, holder cluster analysis |
-| `okx-dex-social` | Crypto news (latest, by symbol, search, detail, source platforms), market-wide sentiment ranking + per-coin sentiment with trend, per-token vibe timeline + TOP50 KOL leaderboard |
+| `okx-dex` | Read-only on-chain DEX data: real-time prices/K-line/index/wallet PnL, address tracker activities, smart money/whale/KOL signal tracking + leaderboard rankings, token search/metadata/market cap/rankings/liquidity/hot tokens/holder & cluster analysis/top traders/trade history, crypto news/sentiment/vibe/KOL leaderboard, meme pump/trenches scanning/dev reputation/bundle detection (read-only), and WS/script real-time streaming |
 | `okx-agent-payments-protocol` | Unified payment dispatcher across x402 (`exact` / `aggr_deferred` schemes — TEE or local-key sign), MPP (`charge` / `session` intents — open / voucher / topUp / close, transaction or hash mode), and a2a-pay (paymentId-based create / pay / status). Routes to per-scheme/intent references. |
-| `okx-defi-invest` | DeFi product discovery, deposit, withdraw, claim rewards across Aave, Lido, PancakeSwap, Kamino, NAVI and more |
-| `okx-defi-portfolio` | DeFi positions and holdings overview across protocols and chains |
-| `okx-agent-chat` | Agent-to-agent communication: XMTP plugin management, encrypted file attachment upload/download |
+| `okx-defi` | OKX-aggregated DeFi: product discovery, deposit, withdraw, claim rewards across Aave, Lido, PancakeSwap, Kamino, NAVI and more, plus positions and holdings overview across protocols and chains |
+| `okx-ai` | ERC-8004 on-chain Agent identity (register/update/search/rate/service-list) + agent task marketplace (publish/accept/deliver/dispute) + live task-progress monitor |
+| `okx-guide` | Onboarding & guide hub (merges former okx-how-to-play + okx-ai-guide + okx-ai-support): Onchain OS onboarding + welcome banner, OKX.AI intro & role-registration routing, customer-support / Help Center guidance |
 | `okx-dapp-discovery` | Third-party DApp discovery and direct plugin routing — currently supports Polymarket, Aave V3, Hyperliquid, PancakeSwap V3 AMM, Morpho V1 Optimizer |
 | `okx-growth-competition` | Agentic Wallet exclusive trading competitions: list, join, view leaderboard, claim rewards |
 
@@ -83,19 +79,19 @@ Fetch and follow instructions from https://raw.githubusercontent.com/okx/onchain
 
 The skills work together in typical DeFi flows:
 
-**Search and Buy**: `okx-dex-token` (find token) -> `okx-agentic-wallet` (check funds + execute trade)
+**Search and Buy**: `okx-dex` (find token) -> `okx-agentic-wallet` (check funds + execute trade)
 
-**Portfolio Overview**: `okx-agentic-wallet` (holdings) -> `okx-dex-token` (enrich with analytics) -> `okx-dex-market` (price charts)
+**Portfolio Overview**: `okx-agentic-wallet` (holdings) -> `okx-dex` (enrich with analytics + price charts)
 
-**Market Research**: `okx-dex-token` (trending/rankings) -> `okx-dex-market` (candles/history) -> `okx-agentic-wallet` (trade)
+**Market Research**: `okx-dex` (trending/rankings + candles/history) -> `okx-agentic-wallet` (trade)
 
 **Swap and Broadcast**: `okx-agentic-wallet` (get quote -> swap -> broadcast -> track order)
 
-**Full Trading Flow**: `okx-dex-token` (search) -> `okx-dex-market` (price/chart) -> `okx-agentic-wallet` (check balance -> swap -> simulate + broadcast + track)
+**Full Trading Flow**: `okx-dex` (search + price/chart) -> `okx-agentic-wallet` (check balance -> swap -> simulate + broadcast + track)
 
-**Leaderboard → Research → Trade**: `okx-dex-signal` (top traders by PnL/win rate) -> `okx-dex-token` (token analytics) -> `okx-agentic-wallet` (execute trade)
+**Leaderboard → Research → Trade**: `okx-dex` (top traders by PnL/win rate + token analytics) -> `okx-agentic-wallet` (execute trade)
 
-**Follow Smart Money**: `okx-dex-signal` (KOL/smart money buys) -> `okx-dex-token` (token details + holder cluster) -> `okx-dex-market` (price chart) -> `okx-agentic-wallet` (trade)
+**Follow Smart Money**: `okx-dex` (KOL/smart money buys + token details + holder cluster + price chart) -> `okx-agentic-wallet` (trade)
 
 ## Workflows
 

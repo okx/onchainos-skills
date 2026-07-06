@@ -183,7 +183,16 @@ const REDACT_FULL: &[&str] = &[
 ];
 
 /// Flags whose next positional value is an address / email — keep prefix + suffix.
-const REDACT_ADDR: &[&str] = &["--from", "--wallet", "--email", "--address"];
+const REDACT_ADDR: &[&str] = &[
+    "--from",
+    "--wallet",
+    "--email",
+    "--address",
+    "--sub-id",
+    "--new-sub-id",
+    // MPP hash-mode broadcast tx identifier — mask prefix+suffix in the audit log.
+    "--tx-hash",
+];
 
 /// Subcommand sequences whose next positional argument is sensitive.
 /// e.g. `onchainos wallet verify <OTP>` — the OTP is a positional arg, not a flag.
@@ -632,6 +641,24 @@ fn payment_sub(c: &PaymentCommand) -> String {
             SessionCommand::TopUp { .. } => "session topup".to_string(),
             SessionCommand::Close { .. } => "session close".to_string(),
         },
+        PaymentCommand::Subscription { command } => {
+            format!("subscription {}", subscription_sub(command))
+        }
+    }
+}
+
+fn subscription_sub(
+    c: &crate::commands::payment::subscription::SubscriptionCommand,
+) -> &'static str {
+    use crate::commands::payment::subscription::SubscriptionCommand;
+    match c {
+        SubscriptionCommand::Subscribe { .. } => "subscribe",
+        SubscriptionCommand::Access { .. } => "access",
+        SubscriptionCommand::Change { .. } => "change",
+        SubscriptionCommand::Cancel { .. } => "cancel",
+        SubscriptionCommand::CancelPending { .. } => "cancel-pending",
+        SubscriptionCommand::MySubscriptions { .. } => "my-subscriptions",
+        SubscriptionCommand::AllowanceStatus { .. } => "allowance-status",
     }
 }
 
@@ -892,6 +919,39 @@ mod tests {
         ]);
         let out = redact_args(&args);
         assert_eq!(out[4], "0x1234***5678");
+    }
+
+    #[test]
+    fn redact_subscription_sub_ids() {
+        let args = vec_s(&[
+            "onchainos",
+            "payment",
+            "subscription",
+            "cancel-pending",
+            "--sub-id",
+            "0xabcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--new-sub-id",
+            "0x1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff",
+        ]);
+        let out = redact_args(&args);
+        // Both subscription identifiers are masked prefix+suffix (REDACT_ADDR).
+        assert_eq!(out[5], "0xabcd***6789");
+        assert_eq!(out[7], "0x1111***ffff");
+    }
+
+    #[test]
+    fn redact_tx_hash() {
+        let args = vec_s(&[
+            "onchainos",
+            "payment",
+            "mpp",
+            "topup",
+            "--tx-hash",
+            "0xabcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        ]);
+        let out = redact_args(&args);
+        // The broadcast tx hash is masked prefix+suffix (REDACT_ADDR).
+        assert_eq!(out[5], "0xabcd***6789");
     }
 
     #[test]

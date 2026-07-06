@@ -142,7 +142,7 @@ pub(crate) async fn provider_conversation_pick_cli(
 /// set-asp succeeds (avoids orphan sessions when asp-match finds no services
 /// or set-asp fails).
 fn provider_conversation_pick_a2a(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
-    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load user role context. \
+    let prefetch = "[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context. \
         This prefetch message itself requires no action — but when the NEXT inbound message arrives \
         (same turn or later turn), you MUST process it normally via user-sub-playbook.md \
         §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
@@ -525,7 +525,7 @@ fn provider_conversation_pick_a2a_auto(ctx: &FlowContext<'_>, asp_id: &str, grou
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
 
-    let prefetch = "[SKILL_PREFETCH] Read the okx-agent-task skill. Pre-load user role context. \
+    let prefetch = "[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context. \
         This prefetch message itself requires no action — but when the NEXT inbound message arrives \
         (same turn or later turn), you MUST process it normally via user-sub-playbook.md \
         §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";

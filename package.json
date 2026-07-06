@@ -45,7 +45,7 @@
   "scripts": {
     "sync-shared": "bash scripts/sync-shared.sh",
     "bumpVersion": "bash scripts/bump-version.sh",
-    "postinstall": "echo '\\n  onchainos-skills installed!\\n  Skills: okx-agentic-wallet, okx-dex-market, okx-dex-signal, okx-dex-trenches, okx-dex-social, okx-dex-token, okx-defi-invest, okx-defi-portfolio, okx-growth-competition\\n  Docs: https://web3.okx.com\\n'"
+    "postinstall": "echo '\\n  onchainos-skills installed!\\n  Skills: okx-agentic-wallet, okx-dex, okx-defi, okx-ai, okx-guide, okx-agent-payments-protocol, okx-dapp-discovery, okx-growth-competition\\n  Docs: https://web3.okx.com\\n'"
   },
   "engines": {
     "node": ">=18"

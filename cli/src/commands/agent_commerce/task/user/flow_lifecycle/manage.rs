@@ -160,7 +160,7 @@ After success, tell the user directly (you are in the user session, no `onchaino
 - Private: \"{create_designated}\"\n\
 - Public: \"{create_public}\"\n\
 Append `Insufficient ... balance` warning from CLI output if present. Localize.\n\n\
-**STOP** — after create-task + task-attach (if any), end this turn. Exception: if CLI output contains `[Watch]` block → read `skills/okx-task-watch/SKILL.md`, execute watch, then end. Do not say \"published\"/\"succeeded\" (only submitted). No other commands; no describing subsequent flow.\n\n\
+**STOP** — after create-task + task-attach (if any), end this turn. Exception: if CLI output contains `[Watch]` block → read `skills/okx-ai/references/watch-core.md`, execute watch, then end. Do not say \"published\"/\"succeeded\" (only submitted). No other commands; no describing subsequent flow.\n\n\
 ================================================\n\
 Step 6-D -- Draft path\n\
 ================================================\n\
@@ -209,7 +209,7 @@ Localize to the user's language.
 ===============================================================
 **STOP** -- after draft publish + watch (if prompted), you **MUST end this turn**
 ===============================================================
-**Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, you MUST first read `skills/okx-task-watch/SKILL.md` (if not already read this session), then execute the watch per its §Run watch using the jobId in the `[Watch]` block, before ending the turn. Do NOT short-circuit by guessing the bash command.
+**Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, you MUST first read `skills/okx-ai/references/watch-core.md` (if not already read this session), then execute the watch per its §Run watch using the jobId in the `[Watch]` block, before ending the turn. Do NOT short-circuit by guessing the bash command.
 **Do not say \"task published\" or \"publish succeeded\"** -- draft publish only submits the transaction; it is not yet confirmed on-chain.
 **Do not call any other onchainos agent commands** (except the watch above) -- all further actions are driven by on-chain events.
 ===============================================================\n",

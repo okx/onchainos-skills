@@ -37,17 +37,18 @@ Enable onchainos skills in OpenClaw via native skill discovery. Just clone, syml
 ls -la ~/.agents/skills/onchainos-skills
 ```
 
-You should see the skill directories: `okx-agentic-wallet`, `okx-dex-market`, `okx-dex-token`,
-`okx-dex-social`, `okx-growth-competition`.
+You should see the skill directories: `okx-agentic-wallet`, `okx-dex`, `okx-defi`,
+`okx-ai`, `okx-guide`, `okx-growth-competition`.
 
 ## Available Skills
 
 | Skill                  | When to Use                                                          |
 |------------------------|----------------------------------------------------------------------|
 | `okx-agentic-wallet`   | Wallet, swap, bridge, gateway, portfolio, security, audit — all wallet & on-chain execution |
-| `okx-dex-market`       | Token prices, K-line charts, trade history                           |
-| `okx-dex-token`        | Token search, rankings, holder distribution                          |
-| `okx-dex-social`       | Crypto news, sentiment ranking, vibe / KOL chatter                   |
+| `okx-dex`              | Read-only on-chain DEX data: token prices/K-line/trade history, token search/rankings/holder distribution, crypto news/sentiment ranking/vibe/KOL chatter |
+| `okx-defi`             | Earn yield: deposit/withdraw, stake, claim rewards, DeFi positions & portfolio |
+| `okx-ai`               | ERC-8004 Agent identity + task marketplace (publish/accept/deliver/dispute) + task-progress monitor |
+| `okx-guide`            | Onboarding & guide hub: Onchain OS intro, OKX.AI, customer support |
 | `okx-growth-competition` | Agentic Wallet trading competitions: list, join, rank, claim rewards |
 
 ## Updating

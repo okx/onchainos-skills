@@ -605,10 +605,13 @@ pub async fn handle_task_402_pay(
             session_cert,
         } => (signature, authorization, session_cert),
         // TODO: support Permit2/Upto — replace x402_flow::assemble_payment_header with payment_flow::build_payment_header, pass (proof, entry) through
-        payment_flow::PaymentProof::Permit2 { .. } | payment_flow::PaymentProof::Upto { .. } => {
+        // Subscription (`period`) is not a task-payment scheme; reject defensively.
+        payment_flow::PaymentProof::Permit2 { .. }
+        | payment_flow::PaymentProof::Upto { .. }
+        | payment_flow::PaymentProof::Subscription { .. } => {
             bail!(
                 "task-402-pay only supports the EIP-3009 (exact / aggr_deferred) x402 schemes; \
-                 got a Permit2/upto proof from x402_pay_from_accepts"
+                 got a Permit2/upto/subscription proof from x402_pay_from_accepts"
             );
         }
     };

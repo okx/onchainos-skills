@@ -16,9 +16,9 @@ Render the matching wait-state line from [`intro.md`](./intro.md), then load the
 
 | Pick | Wait-state line (from `intro.md`) | Then load |
 |---|---|---|
-| `1` (User) | `Registering your User identity, hang tight... ⏳` | [`../../okx-agent-identity/references/register.md`](../../okx-agent-identity/references/register.md) (register flow — pass role `User`) |
-| `2` (ASP) | `Registering your ASP identity, hang tight... ⏳` | [`../../okx-agent-identity/references/register.md`](../../okx-agent-identity/references/register.md) (register flow — pass role `ASP`) |
-| `3` (Evaluator) | `Registering your Evaluator identity, hang tight... ⏳` | [`../../okx-agent-identity/references/register.md`](../../okx-agent-identity/references/register.md) (register flow — pass role `Evaluator`; → then evaluator staking, owned by that flow) |
+| `1` (User) | `Registering your User identity, hang tight... ⏳` | [`../../okx-ai/references/identity-register.md`](../../okx-ai/references/identity-register.md) (register flow — pass role `User`) |
+| `2` (ASP) | `Registering your ASP identity, hang tight... ⏳` | [`../../okx-ai/references/identity-register.md`](../../okx-ai/references/identity-register.md) (register flow — pass role `ASP`) |
+| `3` (Evaluator) | `Registering your Evaluator identity, hang tight... ⏳` | [`../../okx-ai/references/identity-register.md`](../../okx-ai/references/identity-register.md) (register flow — pass role `Evaluator`; → then evaluator staking, owned by that flow) |
 
 If the user's reply is NOT exactly `1` / `2` / `3`: map an unambiguous role word to its number (`user` / `User` / `用户` / `Buyer` / `Client` / `买家` / `买方` → 1; `ASP` / `Provider` / `服务商` / `Seller` / `卖家` / `卖方` → 2; `evaluator` / `Evaluator` / `仲裁者` / `评估者` / `arbiter` → 3). If it is still ambiguous, empty, multiple roles, or unrelated, re-render the three options from Variant A and ask the user to reply `1` / `2` / `3`. NEVER guess a role or invent a fourth path.
 

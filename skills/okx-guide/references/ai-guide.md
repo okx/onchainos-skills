@@ -16,11 +16,11 @@ Tagged blocks indicate rule severity (higher wins on conflict):
 This skill owns: OKX.AI intro + platform detection + login & identity detection (new vs returning user) + routing into registration. It does NOT:
 
 - own the Onchain OS welcome banner — that is `how-to-play.md`.
-- implement registration — delegated to `okx-agent-identity` (see §Step 5).
+- implement registration — delegated to `okx-ai` (see §Step 5).
 - own the wallet-login flow — Step 1 only *checks* login via `wallet status` and hands off to `okx-agentic-wallet`'s existing login flow when needed; the registration playbooks also run their own preflight.
 
 <NEVER>
-Do NOT call `onchainos agent create` (or any registration / staking CLI) from this skill. Registration is always delegated to `okx-agent-identity`. (Read-only `onchainos wallet status` and `onchainos agent get-my-agents` in Step 1 are allowed — they create nothing.)
+Do NOT call `onchainos agent create` (or any registration / staking CLI) from this skill. Registration is always delegated to `okx-ai`. (Read-only `onchainos wallet status` and `onchainos agent get-my-agents` in Step 1 are allowed — they create nothing.)
 </NEVER>
 
 ## Step 0 — Platform detection

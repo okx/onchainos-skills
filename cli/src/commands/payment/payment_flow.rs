@@ -135,6 +135,19 @@ pub enum PaymentProof {
         /// EIP-712 typehash baked in.
         permit2_authorization: Value,
     },
+    /// `period` scheme — buyer double-sign (SubscriptionTerms +
+    /// Permit2 PermitSingle). Routed here from `payment pay` whenever the
+    /// selected accepts entry's scheme is `period`.
+    Subscription {
+        /// Signed `SubscriptionTerms` (17 fields + unsigned `planId`), as JSON.
+        terms: Value,
+        /// Permit2 `PermitSingle`, as JSON.
+        permit_single: Value,
+        /// 0x 65-byte secp256k1 over the SubscriptionTerms digest (signer == payer).
+        terms_signature: String,
+        /// 0x 65-byte secp256k1 over the PermitSingle digest (signer == payer).
+        permit_single_signature: String,
+    },
 }
 
 impl PaymentProof {
@@ -170,6 +183,17 @@ impl PaymentProof {
             } => json!({
                 "signature": signature,
                 "permit2Authorization": permit2_authorization,
+            }),
+            PaymentProof::Subscription {
+                terms,
+                permit_single,
+                terms_signature,
+                permit_single_signature,
+            } => json!({
+                "terms": terms,
+                "permitSingle": permit_single,
+                "termsSignature": terms_signature,
+                "permitSingleSignature": permit_single_signature,
             }),
         }
     }
@@ -361,6 +385,65 @@ pub async fn sign_payment(
     sign_payment_with_preference(accepts, from, tier, preferred.as_ref()).await
 }
 
+/// Resolve `(chainIndex, realChainId, payerAddress)` from a chosen accepts
+/// entry's `network` (CAIP-2) and an optional `--from`, reusing the same chain
+/// lookup + address resolution as the x402 pay flow. Used by the
+/// `period` scheme handlers.
+///
+/// `chainIndex` is the OKX chain index (routes the TEE / facilitator request);
+/// `realChainId` is the EIP-712 `domain.chainId` (the eip155 id). They are
+/// equal on X Layer but not in general.
+pub(crate) async fn resolve_chain_and_payer(
+    accepted: &Value,
+    from: Option<&str>,
+) -> Result<(String, u64, String)> {
+    let network = accepted["network"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'network' in accepts entry"))?;
+    let real_chain_id = caip2_to_evm_chain_id(network)?;
+    let chain_entry = crate::commands::agentic_wallet::chain::get_chain_by_real_chain_index(
+        &real_chain_id.to_string(),
+    )
+    .await?
+    .ok_or_else(|| anyhow!("chain not found for realChainIndex {}", real_chain_id))?;
+    let chain_index = chain_entry["chainIndex"]
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| chain_entry["chainIndex"].as_u64().map(|n| n.to_string()))
+        .ok_or_else(|| anyhow!("missing chainIndex in chain entry"))?;
+    let chain_name = chain_entry["chainName"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing chainName in chain entry"))?;
+    let wallets =
+        wallet_store::load_wallets()?.ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let (_acct_id, addr_info) =
+        crate::commands::agentic_wallet::transfer::resolve_address(&wallets, from, chain_name)?;
+    Ok((chain_index, real_chain_id, addr_info.address.clone()))
+}
+
+/// Like [`resolve_chain_and_payer`] but keyed off a chain name/index
+/// (`--chain`) instead of an accepts entry — used by the buyer-direct
+/// subscription commands (cancel / list / allowance-status) that have no 402.
+pub(crate) async fn resolve_chain_and_payer_by_chain(
+    chain: &str,
+    from: Option<&str>,
+) -> Result<(String, u64, String)> {
+    let chain_index = crate::chains::resolve_chain(chain);
+    let entry = crate::commands::agentic_wallet::chain::get_chain_by_index(&chain_index)
+        .await?
+        .ok_or_else(|| anyhow!("chain not found: {chain}"))?;
+    let chain_name = entry["chainName"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing chainName in chain entry"))?;
+    let real_chain_id =
+        crate::commands::agentic_wallet::chain::get_real_chain_index(&chain_index).await?;
+    let wallets =
+        wallet_store::load_wallets()?.ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let (_acct_id, addr_info) =
+        crate::commands::agentic_wallet::transfer::resolve_address(&wallets, from, chain_name)?;
+    Ok((chain_index, real_chain_id, addr_info.address.clone()))
+}
+
 /// Pick the accepts entry (via scheme priority or user's saved default),
 /// resolve it to concrete fields, and collapse any tiered `amount` object
 /// (`{"basic": "100", "premium": "500"}`) to a scalar string.
@@ -508,6 +591,35 @@ pub async fn sign_payment_with_preference(
     // pre-check allowance so an insufficient approval surfaces here rather
     // than as an on-chain settle revert.
     let (is_upto, is_exact_permit2) = detect_permit2_route(&entry, &params);
+
+    // Subscription scheme: route to the dedicated double-sign (terms +
+    // PermitSingle). `sign_subscribe` handles its own allowance-status fetch /
+    // EIP-712, so it does not go through the Permit2/upto allowance block below.
+    let is_subscription = params
+        .scheme
+        .as_deref()
+        .map(|s| s.eq_ignore_ascii_case("period"))
+        .unwrap_or(false);
+    if is_subscription {
+        let signed = crate::subscription_sign::sign_subscribe(
+            &chain_index,
+            real_chain_id,
+            payer_addr,
+            &entry,
+        )
+        .await?;
+        let terms = serde_json::to_value(&signed.payload.terms)?;
+        let permit_single = serde_json::to_value(&signed.payload.permit)?;
+        return Ok((
+            PaymentProof::Subscription {
+                terms,
+                permit_single,
+                terms_signature: signed.payload.terms_signature,
+                permit_single_signature: signed.payload.permit_signature,
+            },
+            entry,
+        ));
+    }
 
     if is_upto || is_exact_permit2 {
         preflight_permit2_allowance(&chain_index, &params.asset, payer_addr, &params.amount)
@@ -1105,6 +1217,17 @@ pub fn assemble_v2_payment_header(
         } => json!({
             "signature": signature,
             "permit2Authorization": permit2_authorization,
+        }),
+        PaymentProof::Subscription {
+            terms,
+            permit_single,
+            terms_signature,
+            permit_single_signature,
+        } => json!({
+            "terms": terms,
+            "permitSingle": permit_single,
+            "termsSignature": terms_signature,
+            "permitSingleSignature": permit_single_signature,
         }),
     };
 

@@ -2,13 +2,13 @@
 
 Authoritative source for all **Chinese-language (中文) routing signals** used by `SKILL.md`. The skill body keeps its routing *rules* in English; this file holds the Chinese keyword → plugin / routing-decision mappings those rules depend on.
 
-**When to read:** for any query containing Chinese text, read this file before applying the body's routing rules (Confidence Framework, Per-Protocol tables, Rules 0–5b). The YAML `description` keeps the core Chinese trigger verbs so the skill still *fires* on 中文 queries; this glossary resolves *which plugin*.
+**When to read:** for any query containing Chinese text, read this file before applying the body's routing logic (§2 signal detection, the per-protocol keyword tables, and §3's decision flow, steps 0–5). The YAML `description` keeps the core Chinese trigger verbs so the skill still *fires* on 中文 queries; this glossary resolves *which plugin*.
 
 ---
 
 ## 1. ZH DApp aliases → plugin
 
-These Chinese names are protocol aliases and trigger ≥ 75 on their own (DApp-name-beats-verb, Rule 0).
+These Chinese names are protocol aliases and trigger ≥ 75 on their own (DApp-name-beats-verb; §3 step 0).
 
 | 中文别名 | DApp | Plugin |
 |---|---|---|
@@ -25,11 +25,11 @@ These Chinese names are protocol aliases and trigger ≥ 75 on their own (DApp-n
 
 ## 2. Generic ZH action verbs — do NOT raise confidence alone
 
-These verbs do **not** select a DApp by themselves (same role as the English generic-verb list in the Confidence Framework). They route only when paired with a DApp name (§1) or a protocol-native token/phrase (§3).
+These verbs do **not** select a DApp by themselves (same role as the English generic-verb list in §2 signal detection). They route only when paired with a DApp name (§1) or a protocol-native token/phrase (§3).
 
 买, 购买, 卖, 换, 换成, 兑换, 存, 存款, 取, 借, 借贷, 抵押, 质押, 做多, 做空, 多单, 空单, 合约, 永续, 加池子, 加流动性, 池子, 仓位, 挖矿, 拿利息, 发币, 发新代币, LP.
 
-**Swap-pair carve-out (Rule 0 exception):** when the market-side verb is 换成 / 兑换 / 卖 / 卖掉换 AND a protocol-native token sits on either side of the pair against a generic ticker, with **no DApp name present**, defer to `okx-agentic-wallet` (not the protocol plugin). If a DApp name IS present (在 X 上…), Rule 0 still wins.
+**Swap-pair carve-out (§3 step 0 carve-out (a)):** when the market-side verb is 换成 / 兑换 / 卖 / 卖掉换 AND a protocol-native token sits on either side of the pair against a generic ticker, with **no DApp name present**, defer to `okx-agentic-wallet` (not the protocol plugin). If a DApp name IS present (在 X 上…), the §3 step 0 install still wins.
 
 ---
 
@@ -72,20 +72,20 @@ These verbs do **not** select a DApp by themselves (same role as the English gen
 | 中文 | Intent | Routes to |
 |---|---|---|
 | 购买 pump.fun / 卖 pump.fun / 狙击 pump.fun / pump.fun 下单 / 梭哈 / 帮我买 / 买最火的币 / 买这个 | WRITE (trade) | `pump-fun-plugin` |
-| 扫 pump.fun / pump.fun 开发者历史 / pump.fun 捆绑分析 / 开发者信息 / 捆绑狙击者 / 同车 | READ (research) | `okx-dex-trenches` |
+| 扫 pump.fun / pump.fun 开发者历史 / pump.fun 捆绑分析 / 开发者信息 / 捆绑狙击者 / 同车 | READ (research) | `okx-dex` |
 
 ---
 
-## 6. Rule 3b — discussion / comparison markers (ZH)
+## 6. Discussion / comparison markers (ZH)
 
-Trigger Rule 3b (clarify, do NOT install) when these appear **without** an action verb:
+Trigger the discussion-first branch (§3 step 0 carve-out (b) → step 2 clarify; do NOT install) when these appear **without** an action verb:
 哪个更好, 怎么看, 对比, 比较, X 还是 Y, 有什么区别, 什么区别, 优缺点, 讲讲, 介绍一下, 是什么.
 
-**Action verbs that override Rule 3b** (install via Rules 1/2 even with a discussion marker): 换成 / 兑换 / 质押 / 借 / 存 / 取 / 加流动性 / 卖 / 买 / mint / claim / bridge.
+**Action verbs that override the discussion-first branch** (install via §3 steps 1/2 even with a discussion marker): 换成 / 兑换 / 质押 / 借 / 存 / 取 / 加流动性 / 卖 / 买 / mint / claim / bridge.
 
 ---
 
-## 7. Rule 5b — Top-5 action-verb matrix (ZH)
+## 7. Top-5 action-verb matrix (ZH)
 
 | 中文动作 | Top-5 DApp |
 |---|---|
@@ -99,7 +99,7 @@ Trigger Rule 3b (clarify, do NOT install) when these appear **without** an actio
 
 ## 8. ZH routing examples
 
-Each installs the named DApp's plugin (Rule 0) unless noted otherwise:
+Each installs the named DApp's plugin (§3 step 0) unless noted otherwise:
 
 | 中文 prompt | Routes to |
 |---|---|
@@ -117,8 +117,8 @@ Each installs the named DApp's plugin (Rule 0) unless noted otherwise:
 | 找个预测市场让我赌一下 BTC 5 分钟内的涨跌 | `polymarket-plugin` |
 | Polymarket 选举市场最新赔率 | `polymarket-plugin` |
 | SOL 5 分钟 updown market 现在多少钱 | `polymarket-plugin` |
-| 开10u的10倍BTC看多 | `hyperliquid-plugin` (perp; Rule 5b Top-5) |
-| 5 分钟涨跌 BTC | `polymarket-plugin` (Rule 5b Top-5) |
+| 开10u的10倍BTC看多 | `hyperliquid-plugin` (perp; §3 step 5 Top-5) |
+| 5 分钟涨跌 BTC | `polymarket-plugin` (§3 step 5 Top-5) |
 
 ---
 
@@ -126,4 +126,4 @@ Each installs the named DApp's plugin (Rule 0) unless noted otherwise:
 
 | 中文 | Routes to |
 |---|---|
-| 有什么dapp | Rule 5 — show the categorized supported-DApp table |
+| 有什么dapp | §3 step 0 → show §5's categorized discovery table |
