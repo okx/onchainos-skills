@@ -181,7 +181,10 @@ pub fn sign_upto_permit2_local(
 // ── TEE shared helpers ───────────────────────────────────────────────────
 
 /// POST `gen-msg-hash` with EIP-712 typed-data; returns `0x`-prefixed msgHash.
-async fn tee_gen_msg_hash(
+///
+/// `pub(crate)` so the `period` scheme (`subscription_sign`) can
+/// reuse the exact same digest path the facilitator uses.
+pub(crate) async fn tee_gen_msg_hash(
     chain_index: &str,
     typed_data: &serde_json::Value,
 ) -> Result<String> {
@@ -210,9 +213,14 @@ async fn tee_gen_msg_hash(
         .map(str::to_string)
 }
 
-/// gen-msg-hash → local Ed25519 session-sign (TEE auth) → sign-msg (TEE
-/// secp256k1 owner key). Returns 65-byte secp256k1 hex.
-async fn tee_sign_eip712(
+/// gen-msg-hash → local Ed25519 session-sign → sign-msg (TEE secp256k1).
+/// `skipWarning: true` because this is an automated x402 payment, not an
+/// interactive transfer.
+///
+/// `pub(crate)` so the `period` scheme reuses the same
+/// `signType: "eip712"` secp256k1 path (the subscription contract recovers
+/// `payer` via `ecrecover`, so an Ed25519 session signature won't do).
+pub(crate) async fn tee_sign_eip712(
     chain_index: &str,
     payer_addr: &str,
     typed_data: &serde_json::Value,
@@ -247,5 +255,56 @@ async fn tee_sign_eip712(
     sign_resp[0]["signature"]
         .as_str()
         .ok_or_else(|| anyhow!("missing signature in sign-msg response"))
+        .map(str::to_string)
+}
+
+/// TEE `personalSign` over a pre-hashed 32-byte value (`value_hex` = `0x` +
+/// 64 hex). The session key signs the EIP-191 message
+/// `keccak256("\x19Ethereum Signed Message:\n32" ‖ value)` (matching the
+/// subscription AccessProof spec, 02 §4.2), and the TEE returns the 65-byte
+/// secp256k1 signature (signer == `from`). `pub(crate)` for `subscription_sign`.
+pub(crate) async fn tee_sign_personal(
+    chain_index: &str,
+    from: &str,
+    value_hex: &str,
+) -> Result<Signature> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let session = wallet_store::load_session()?
+        .ok_or_else(|| anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
+    let session_key = keyring_store::get("session_key")
+        .map_err(|_| anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
+
+    let mut signing_seed =
+        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
+    // EVM EIP-191 personal sign over the 32-byte `value` (encoding = "hex" →
+    // the helper hex-decodes to bytes, prefixes "\x19...\n32", keccaks, signs).
+    let session_signature =
+        crate::crypto::ed25519_sign_eip191(value_hex, signing_seed.as_slice(), "hex")?;
+    signing_seed.zeroize();
+
+    let mut client = WalletApiClient::new()?;
+    let body = json!({
+        "chainIndex":  chain_index,
+        "from":        from,
+        "sessionCert": session.session_cert,
+        "payload": [{
+            "signType":         "personalSign",
+            "message":          { "value": value_hex },
+            "sessionSignature": session_signature,
+        }],
+        "skipWarning": true,
+    });
+    let resp = client
+        .post_authed(
+            "/priapi/v5/wallet/agentic/pre-transaction/sign-msg",
+            &access_token,
+            &body,
+        )
+        .await
+        .map_err(format_api_error)
+        .context("AccessProof personalSign failed")?;
+    resp[0]["signature"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing signature in personalSign response"))
         .map(str::to_string)
 }

@@ -5,7 +5,7 @@
 //! 1. **User-facing** — chat content shown to the user via `onchainos agent user-notify` /
 //!    Rule: **no technical jargon** — event names (`provider_applied`/`job_*` etc.) /
 //!    status enums (`created`/`accepted` etc.) / CLI flags (`--*`) /
-//!    skill names (`okx-agent-identity` etc.) /
+//!    skill names (`okx-ai` etc.) /
 //!    status field names (`jobStatus`/`paymentMode`) are all banned.
 //!    **The string literals in this file are English** (escrow/x402, review window
 //!    expired, task completed, etc.) and serve as the source-of-truth that the sub

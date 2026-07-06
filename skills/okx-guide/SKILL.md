@@ -4,7 +4,7 @@ description: "Onchain OS onboarding & guide hub — the single entry for first-t
 license: MIT
 metadata:
   author: okx
-  version: "4.1.0"
+  version: "4.2.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -48,5 +48,5 @@ When an opener could match more than one row, prefer the more specific intent:
 - Generic **Onchain OS** onboarding, or a blank "now what / where do I start / I'm new" with no product named → **how-to-play.md**.
 - Intent to reach a **human / complaint / feedback / bug / FAQ / help docs** → **ai-support.md**.
 
-A bare "register an ASP / 注册 ASP" with no OKX.AI framing is an identity-lifecycle request — route to `okx-agent-identity`, not here. This hub owns OKX.AI **intro + role routing**; the actual registration is delegated (ai-guide.md hands off to `okx-agent-identity`).
+A bare "register an ASP / 注册 ASP" with no OKX.AI framing is an identity-lifecycle request — route to `okx-ai`, not here. This hub owns OKX.AI **intro + role routing**; the actual registration is delegated (ai-guide.md hands off to `okx-ai`).
 </MUST>

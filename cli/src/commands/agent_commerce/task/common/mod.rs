@@ -990,7 +990,7 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
             identity_detail = serde_json::json!({
                 "ok": false,
                 "role": role_label,
-                "hint": format!("no {role_label} agent found; route to `okx-agent-identity` with the intent \"Register a {role_label} identity\""),
+                "hint": format!("no {role_label} agent found; route to `okx-ai` with the intent \"Register a {role_label} identity\""),
             });
         } else {
             let first = &agents[0];
@@ -1357,15 +1357,15 @@ async fn build_context(
 
     // ── Role guide that must be loaded ───────────────────────────────────
     let skill_file = match role {
-        "user"      => "client.md",
-        "asp"       => "asp.md",
-        "evaluator" => "evaluator.md",
+        "user"      => "task-user-sub-playbook.md",
+        "asp"       => "task-asp.md",
+        "evaluator" => "task-evaluator.md",
         _           => "",
     };
     if !skill_file.is_empty() {
         out.push_str("[⚠️ Must Execute Immediately]\n");
         out.push_str(&format!(
-            "Read the role guide skills/okx-agent-task/{skill_file} (same directory as skills/okx-agent-task/SKILL.md) immediately; it contains the complete negotiation rules and acceptance flow.\n"
+            "Read the role guide skills/okx-ai/references/{skill_file} immediately; it contains the complete negotiation rules and acceptance flow.\n"
         ));
     }
 

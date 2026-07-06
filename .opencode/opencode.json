@@ -3,7 +3,6 @@
   "instructions": [
     "AGENTS.md",
     "skills/okx-agentic-wallet/SKILL.md",
-    "skills/okx-dex-market/SKILL.md",
-    "skills/okx-dex-token/SKILL.md"
+    "skills/okx-dex/SKILL.md"
   ]
 }

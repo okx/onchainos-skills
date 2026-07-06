@@ -10,7 +10,7 @@
 //!
 //! All conversions use **round-half-up** at the displayed precision —
 //! consistent with the canonical rule pinned in
-//! `skills/okx-agent-identity/SKILL.md`. Note that
+//! `skills/okx-ai/SKILL.md`. Note that
 //! the wire (0..=100 integer) gives an effective storage grain of 0.05
 //! stars per wire unit, so distinct 2-decimal inputs whose ×20 product
 //! rounds to the same integer collapse on the wire (e.g. 3.30 / 3.31 /

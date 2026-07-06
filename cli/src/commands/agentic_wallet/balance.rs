@@ -65,58 +65,43 @@ pub(crate) async fn ensure_wallet_accounts_fresh(
         return Ok(());
     }
 
-    match client.account_list(access_token, &wallets.project_id).await {
-        Ok(account_list) => {
-            wallets.accounts = account_list
-                .iter()
-                .map(|a| wallet_store::AccountInfo {
-                    project_id: a.project_id.clone(),
-                    account_id: a.account_id.clone(),
-                    account_name: a.account_name.clone(),
-                    is_default: a.is_default,
-                })
-                .collect();
+    if let Ok(account_list) = client.account_list(access_token, &wallets.project_id).await {
+        wallets.accounts = account_list
+            .iter()
+            .map(|a| wallet_store::AccountInfo {
+                project_id: a.project_id.clone(),
+                account_id: a.account_id.clone(),
+                account_name: a.account_name.clone(),
+                is_default: a.is_default,
+            })
+            .collect();
 
-            let account_ids: Vec<String> =
-                account_list.iter().map(|a| a.account_id.clone()).collect();
-            match client
-                .account_address_list(access_token, &account_ids)
-                .await
-            {
-                Ok(address_data) => {
-                    for item in &address_data {
-                        wallets.accounts_map.insert(
-                            item.account_id.clone(),
-                            AccountMapEntry {
-                                address_list: item
-                                    .addresses
-                                    .iter()
-                                    .map(|a| AddressInfo {
-                                        account_id: item.account_id.clone(),
-                                        address: a.address.clone(),
-                                        chain_index: a.chain_index.clone(),
-                                        chain_name: a.chain_name.clone(),
-                                        address_type: a.address_type.clone(),
-                                        chain_path: a.chain_path.clone(),
-                                    })
-                                    .collect(),
-                            },
-                        );
-                    }
-                }
-                Err(e) => {
-                    if cfg!(feature = "debug-log") {
-                        eprintln!("Warning: failed to refresh address list: {e:#}");
-                    }
-                }
-            }
-            wallet_store::save_wallets(wallets)?;
-        }
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("Warning: failed to refresh account list: {e:#}");
+        let account_ids: Vec<String> = account_list.iter().map(|a| a.account_id.clone()).collect();
+        if let Ok(address_data) = client
+            .account_address_list(access_token, &account_ids)
+            .await
+        {
+            for item in &address_data {
+                wallets.accounts_map.insert(
+                    item.account_id.clone(),
+                    AccountMapEntry {
+                        address_list: item
+                            .addresses
+                            .iter()
+                            .map(|a| AddressInfo {
+                                account_id: item.account_id.clone(),
+                                address: a.address.clone(),
+                                chain_index: a.chain_index.clone(),
+                                chain_name: a.chain_name.clone(),
+                                address_type: a.address_type.clone(),
+                                chain_path: a.chain_path.clone(),
+                            })
+                            .collect(),
+                    },
+                );
             }
         }
+        wallet_store::save_wallets(wallets)?;
     }
     Ok(())
 }
@@ -255,6 +240,78 @@ fn enrich_with_usd_value(data: &mut Value) {
         }
     } else {
         enrich_group_usd_value(data);
+    }
+}
+
+// ── token field projection ────────────────────────────────────────────
+
+/// The fixed 9-field whitelist emitted per token by `wallet balance`.
+///
+/// Round-tripping a raw token through this struct drops every non-whitelisted key
+/// (serde ignores unknown input keys). Fields are `serde_json::Value` so
+/// numeric-form values round-trip with no string↔number coercion. With
+/// `#[serde(default)]` and `skip_serializing_if = "Value::is_null"` a missing key
+/// defaults to `Null` and is dropped from output, while an empty string (e.g. a
+/// native-token address) is kept. `serde_json` is built without `preserve_order`,
+/// so keys emit in deterministic alphabetical order. The contract-address field is
+/// emitted as `tokenAddress`.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TokenBalanceResponse {
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    symbol: Value,
+    #[serde(default, rename = "tokenName", skip_serializing_if = "Value::is_null")]
+    token_name: Value,
+    #[serde(default, rename = "chainIndex", skip_serializing_if = "Value::is_null")]
+    chain_index: Value,
+    #[serde(
+        default,
+        rename = "tokenAddress",
+        skip_serializing_if = "Value::is_null"
+    )]
+    token_address: Value,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    balance: Value,
+    #[serde(default, rename = "rawBalance", skip_serializing_if = "Value::is_null")]
+    raw_balance: Value,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    decimal: Value,
+    #[serde(default, rename = "tokenPrice", skip_serializing_if = "Value::is_null")]
+    token_price: Value,
+    #[serde(default, rename = "usdValue", skip_serializing_if = "Value::is_null")]
+    usd_value: Value,
+}
+
+/// Trim every token in `data` to the 9-field whitelist. Mirrors the
+/// group-traversal of `sort_token_assets`: handles both a single group object
+/// and an array of groups, and both `tokenAssets` and `assets` keys.
+/// Defensive: non-object tokens, missing arrays, and deserialize failures are
+/// no-ops (never panic). Invoked AFTER `enrich_with_usd_value`.
+///
+/// Idempotent by construction: a token already trimmed to the 9 keys
+/// deserializes to the same struct and re-serializes identically.
+fn project_token_fields(data: &mut Value) {
+    let groups = match data.as_array_mut() {
+        Some(arr) => arr.as_mut_slice(),
+        None => std::slice::from_mut(data),
+    };
+    for group in groups {
+        for key in &["tokenAssets", "assets"] {
+            if let Some(tokens) = group.get_mut(*key).and_then(|v| v.as_array_mut()) {
+                for token in tokens.iter_mut() {
+                    if !token.is_object() {
+                        continue; // defensive: skip malformed non-object entries
+                    }
+                    if let Ok(projected) =
+                        serde_json::from_value::<TokenBalanceResponse>(token.clone())
+                    {
+                        if let Ok(v) = serde_json::to_value(projected) {
+                            *token = v;
+                        }
+                    }
+                }
+                break; // only the first matching key, like sort_token_assets
+            }
+        }
     }
 }
 
@@ -411,6 +468,7 @@ pub(super) async fn cmd_balance(
                 if let Some(aid) = group["accountId"].as_str() {
                     let mut account_data = Value::Array(vec![group.clone()]);
                     enrich_with_usd_value(&mut account_data);
+                    project_token_fields(&mut account_data);
                     let total_usd = compute_total_value_usd(&account_data);
                     entries.push((
                         aid.to_string(),
@@ -435,9 +493,6 @@ pub(super) async fn cmd_balance(
     }
 
     let account_id = resolve_active_account_id(&wallets)?;
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][cmd_balance] resolved account_id={}", account_id);
-    }
 
     // ── Scenario 4: Specific token (--token-address) ────────────────
     if let Some(token_addr_str) = token_address {
@@ -445,7 +500,10 @@ pub(super) async fn cmd_balance(
             Some(c) => c,
             None => bail!("--chain is required when using --token-address"),
         };
-        let chain_entry = super::chain::get_chain_by_real_chain_index(c)
+        // Resolve the user-supplied --chain (name/alias/id) to a chainIndex via
+        // the canonical resolver at the command boundary.
+        let resolved_chain = crate::chains::resolve_chain(c);
+        let chain_entry = super::chain::get_chain_by_real_chain_index(&resolved_chain)
             .await?
             .ok_or_else(|| anyhow::anyhow!("unsupported chain: {c}"))?;
         if cfg!(feature = "debug-log") {
@@ -490,13 +548,15 @@ pub(super) async fn cmd_balance(
         }
 
         enrich_with_usd_value(&mut data);
+        project_token_fields(&mut data);
         output::success(json!({ "details": data }));
         return Ok(());
     }
 
     // ── Scenario 3: Chain filter (--chain, no --token-address) ──────
     if let Some(c) = chain {
-        let chain_entry = super::chain::get_chain_by_real_chain_index(c)
+        let resolved_chain = crate::chains::resolve_chain(c);
+        let chain_entry = super::chain::get_chain_by_real_chain_index(&resolved_chain)
             .await?
             .ok_or_else(|| anyhow::anyhow!("unsupported chain: {c}"))?;
         if cfg!(feature = "debug-log") {
@@ -533,6 +593,7 @@ pub(super) async fn cmd_balance(
         }
 
         enrich_with_usd_value(&mut data);
+        project_token_fields(&mut data);
         let total_usd = compute_total_value_usd(&data);
         if cfg!(feature = "debug-log") {
             eprintln!(
@@ -573,6 +634,7 @@ pub(super) async fn cmd_balance(
     }
 
     enrich_with_usd_value(&mut data);
+    project_token_fields(&mut data);
     sort_token_assets(&mut data);
     let total_usd = compute_total_value_usd(&data);
 
@@ -1107,5 +1169,223 @@ mod tests {
     fn sort_non_array_data_no_panic() {
         let mut data = json!({ "tokenAssets": [] });
         sort_token_assets(&mut data);
+    }
+
+    // ── project_token_fields ─────────────────────────────────────────
+
+    /// The 9 whitelisted keys, sorted, for assertion against `keys | sort`.
+    const KEPT_KEYS_SORTED: [&str; 9] = [
+        "balance",
+        "chainIndex",
+        "decimal",
+        "rawBalance",
+        "symbol",
+        "tokenAddress",
+        "tokenName",
+        "tokenPrice",
+        "usdValue",
+    ];
+
+    /// The 12 fields the projection must drop.
+    const DROPPED_KEYS: [&str; 12] = [
+        "address",
+        "absSpendingPendingBalance",
+        "spendingPendingBalance",
+        "receivedPendingBalance",
+        "activeBuy",
+        "coinTypeNo",
+        "customName",
+        "customSymbol",
+        "multiplier",
+        "tokenType",
+        "imageUrl",
+        "priceChangeRate24H",
+    ];
+
+    /// A raw token carrying all 9 kept fields plus all 12 dropped fields.
+    fn full_raw_token() -> Value {
+        json!({
+            "symbol": "ETH",
+            "tokenName": "Ethereum",
+            "chainIndex": "1",
+            "tokenAddress": "",
+            "balance": "1.5",
+            "rawBalance": "1500000000000000000",
+            "decimal": "18",
+            "tokenPrice": "3000.0",
+            "usdValue": "4500.0",
+            // dropped:
+            "address": "0xWALLET",
+            "absSpendingPendingBalance": "0",
+            "spendingPendingBalance": "0",
+            "receivedPendingBalance": "0",
+            "activeBuy": true,
+            "coinTypeNo": "123",
+            "customName": "My ETH",
+            "customSymbol": "mETH",
+            "multiplier": "1",
+            "tokenType": "native",
+            "imageUrl": "https://example.com/eth.png",
+            "priceChangeRate24H": "0.05"
+        })
+    }
+
+    fn sorted_keys(token: &Value) -> Vec<String> {
+        let mut keys: Vec<String> = token
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|s| s.to_string())
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    #[test]
+    fn project_trims_to_nine_fields() {
+        let mut data = Value::Array(vec![json!({ "tokenAssets": [full_raw_token()] })]);
+        project_token_fields(&mut data);
+        let token = &data[0]["tokenAssets"][0];
+        assert_eq!(sorted_keys(token), KEPT_KEYS_SORTED.to_vec());
+        for dropped in DROPPED_KEYS {
+            assert!(
+                token.get(dropped).is_none(),
+                "dropped field `{dropped}` still present"
+            );
+        }
+    }
+
+    #[test]
+    fn project_handles_assets_key() {
+        let mut data = Value::Array(vec![json!({ "assets": [full_raw_token()] })]);
+        project_token_fields(&mut data);
+        let token = &data[0]["assets"][0];
+        assert_eq!(sorted_keys(token), KEPT_KEYS_SORTED.to_vec());
+    }
+
+    #[test]
+    fn project_single_group_and_array() {
+        // Single group object (not wrapped in an array).
+        let mut single = json!({ "tokenAssets": [full_raw_token()] });
+        project_token_fields(&mut single);
+        assert_eq!(
+            sorted_keys(&single["tokenAssets"][0]),
+            KEPT_KEYS_SORTED.to_vec()
+        );
+
+        // Array of groups.
+        let mut arr = Value::Array(vec![
+            json!({ "tokenAssets": [full_raw_token()] }),
+            json!({ "tokenAssets": [full_raw_token()] }),
+        ]);
+        project_token_fields(&mut arr);
+        assert_eq!(
+            sorted_keys(&arr[0]["tokenAssets"][0]),
+            KEPT_KEYS_SORTED.to_vec()
+        );
+        assert_eq!(
+            sorted_keys(&arr[1]["tokenAssets"][0]),
+            KEPT_KEYS_SORTED.to_vec()
+        );
+    }
+
+    #[test]
+    fn project_preserves_group_level_fields() {
+        let mut data = Value::Array(vec![json!({
+            "accountId": "acc-1",
+            "totalValueUsd": "4500.0",
+            "tokenAssets": [full_raw_token()]
+        })]);
+        project_token_fields(&mut data);
+        // group-level fields untouched
+        assert_eq!(data[0]["accountId"].as_str().unwrap(), "acc-1");
+        assert_eq!(data[0]["totalValueUsd"].as_str().unwrap(), "4500.0");
+        // token trimmed
+        assert_eq!(
+            sorted_keys(&data[0]["tokenAssets"][0]),
+            KEPT_KEYS_SORTED.to_vec()
+        );
+    }
+
+    #[test]
+    fn project_empty_and_missing_array_noop() {
+        // empty tokenAssets → no panic, still empty
+        let mut empty = Value::Array(vec![json!({ "tokenAssets": [] })]);
+        project_token_fields(&mut empty);
+        assert_eq!(empty[0]["tokenAssets"].as_array().unwrap().len(), 0);
+
+        // group with neither tokenAssets nor assets → unchanged
+        let mut missing = Value::Array(vec![json!({ "accountId": "acc-1" })]);
+        let before = missing.clone();
+        project_token_fields(&mut missing);
+        assert_eq!(missing, before);
+    }
+
+    #[test]
+    fn project_idempotent_double_call() {
+        let mut once = Value::Array(vec![json!({ "tokenAssets": [full_raw_token()] })]);
+        project_token_fields(&mut once);
+        let mut twice = once.clone();
+        project_token_fields(&mut twice);
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn project_preserves_numeric_and_empty_string() {
+        let mut data = Value::Array(vec![json!({
+            "tokenAssets": [{
+                "symbol": "ETH",
+                "tokenAddress": "",           // native → empty string preserved
+                "usdValue": 4500.0,           // numeric → stays a JSON number
+                "balance": "1.5"
+            }]
+        })]);
+        project_token_fields(&mut data);
+        let token = &data[0]["tokenAssets"][0];
+        assert_eq!(token["tokenAddress"], json!(""));
+        assert!(token["usdValue"].is_number());
+        assert_eq!(token["usdValue"].as_f64().unwrap(), 4500.0);
+        // a missing key (tokenName here) must NOT be emitted as null
+        assert!(token.get("tokenName").is_none());
+    }
+
+    #[test]
+    fn project_emit_field_order_deterministic() {
+        // `serde_json` is compiled WITHOUT the `preserve_order` feature in this
+        // crate, so `to_value` builds a BTreeMap-backed object → keys are emitted
+        // in deterministic *alphabetical* order (not struct-declaration order).
+        // The set of 9 keys is the contract; every spec jq shape uses `keys|sort`,
+        // so emission order is cosmetic. This asserts the order is stable.
+        let mut a = Value::Array(vec![json!({ "tokenAssets": [full_raw_token()] })]);
+        let mut b = Value::Array(vec![json!({ "tokenAssets": [full_raw_token()] })]);
+        project_token_fields(&mut a);
+        project_token_fields(&mut b);
+        let order_a: Vec<&str> = a[0]["tokenAssets"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
+        let order_b: Vec<&str> = b[0]["tokenAssets"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
+        assert_eq!(order_a, order_b, "field order must be deterministic");
+        assert_eq!(order_a, KEPT_KEYS_SORTED.to_vec());
+    }
+
+    #[test]
+    fn project_non_object_token_noop() {
+        // string / number entries in the array are skipped, no panic.
+        let mut data = Value::Array(vec![json!({
+            "tokenAssets": ["not-an-object", 42, full_raw_token()]
+        })]);
+        project_token_fields(&mut data);
+        let arr = data[0]["tokenAssets"].as_array().unwrap();
+        assert_eq!(arr[0], json!("not-an-object"));
+        assert_eq!(arr[1], json!(42));
+        assert_eq!(sorted_keys(&arr[2]), KEPT_KEYS_SORTED.to_vec());
     }
 }

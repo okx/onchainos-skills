@@ -60,15 +60,9 @@ For script requests, append `--format json` to all CLI commands.
 | Skill | Purpose | When to Use |
 |-------|---------|-------------|
 | okx-agentic-wallet | Wallet lifecycle (auth, balance, PnL, send, history, contract call), Gas Station, DEX swap, cross-chain bridge, limit-order strategy, transaction gateway, public-address portfolio, security scanning, audit log | User wants to operate their wallet or execute on-chain: log in, balance/PnL, send, call contracts, swap/trade, bridge, limit orders, broadcast/simulate a tx, look up a public address, safety-check a token/DApp/tx, or export the audit log |
-| okx-dex-market | Prices, charts, index prices, wallet PnL | User asks for token prices, K-line data, or wallet PnL analysis |
-| okx-dex-signal | Smart money / KOL / whale tracking, buy signals, leaderboard | User asks what smart money/whales/KOLs are buying or wants signal alerts |
-| okx-dex-trenches | Meme/pump.fun token scanning, dev reputation, bundle detection | User asks about new meme launches, dev reputation, or bundle analysis |
-| okx-dex-ws | Real-time WebSocket monitoring and scripting | User wants a WS script or real-time on-chain data stream |
-| okx-dex-token | Token search, metadata, rankings, liquidity, holders, top traders, cluster analysis | User searches for tokens, wants rankings, holder info, or cluster analysis |
-| okx-dex-social | Crypto news, sentiment, KOL / vibe analytics | User asks for news, market sentiment, top KOLs discussing a token, or token vibe score |
+| okx-dex | Read-only on-chain DEX data: prices/charts/index/wallet PnL, smart money/KOL/whale tracking + buy signals + leaderboard, meme/pump.fun scanning + dev reputation + bundle detection (read-only), real-time WS monitoring/scripting, token search/metadata/rankings/liquidity/holders/top traders/cluster analysis, crypto news/sentiment/vibe | User asks for token prices, K-line data, wallet PnL, smart money/whale/KOL buying or signal alerts, new meme launches/dev reputation/bundle analysis, a WS script or real-time on-chain data stream, token rankings/holder info/cluster analysis, or news/sentiment/vibe score |
 | okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred` — TEE or local-key), MPP (`charge` / `session` — open / voucher / topUp / close), and a2a-pay (paymentId-based create / pay / status). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session, pays for streaming / voucher / top-up payment-gated resources, or works with a paymentId / `a2a_...` link |
-| okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, or manage DeFi positions |
-| okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
+| okx-defi | OKX-aggregated DeFi: product discovery, deposit, withdraw, claim rewards, plus positions overview | User wants to earn yield, stake, manage DeFi positions, or check DeFi positions across protocols |
 | okx-dapp-discovery | Third-party DApp routing — installs the matching plugin on demand and forwards the prompt to its quickstart | User names a specific third-party DApp (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, …) or asks "what dapps are available" |
 | okx-growth-competition | Agentic Wallet exclusive trading competitions: list, join, rank, claim rewards | User asks about trading competitions, wants to join/register for a competition, check leaderboard ranking, or claim competition rewards |
 | okx-guide | Onboarding & guide hub — welcome banner + quick-start menu, OKX.AI intro & role-registration routing, and customer-support / Help Center guidance (merges former okx-how-to-play + okx-ai-guide + okx-ai-support) | First-time / unfamiliar user asks "what is onchainos", "how do I use this", "what can it do", "tutorial", "I just installed", "now what"; OKX.AI questions; or customer service / talk to a human / help center |
@@ -153,7 +147,7 @@ Each session starts fresh. Workspace files are your memory — read them on star
 - **Transparency (mandatory):** Every response must cite its source. Before presenting results, always show:
   1. The **skill** or **workflow** that was invoked
   2. The exact **onchainos CLI command** that was executed
-  3. Example format: "Using **okx-dex-token** → `onchainos token search --query BONK`"
+  3. Example format: "Using **okx-dex** → `onchainos token search --query BONK`"
   4. If multiple commands were used, list each one
   This applies to **every** response — never present data without showing where it came from.
 - Use the **Output Template** from the matched workflow doc when running a workflow

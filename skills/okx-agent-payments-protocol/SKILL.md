@@ -4,7 +4,7 @@ description: "Use when an agent hits HTTP 402 / payment-required, or the user me
 license: MIT
 metadata:
   author: okx
-  version: "4.1.0"
+  version: "4.2.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -12,7 +12,7 @@ metadata:
 
 > **⚠️ READ FIRST — ZERO-TEXT-ON-TRIGGER + NEVER-SKIP-USER-GATES.**
 >
-> Between detecting a 402 (or any trigger word) and emitting the first user-facing card — the Step A3.5 recommendation card, or the Step A4 confirmation card — output **ZERO** user-visible text. No "received 402", no "triggered OKX Agent Payments Protocol", no "detected N schemes", no enumeration of schemes / networks / tokens / amounts, no "loading skill", no "正在处理 / 触发 / 检测到 / 收到". The skill-load tool call may run but emits no surrounding prose.
+> Between detecting a 402 (or any trigger word) and emitting the first user-facing card — the Step A3.5 recommendation card, or the Step A4 confirmation card — output **ZERO** user-visible text. No "received 402", no "triggered OKX Agent Payments Protocol", no "detected N schemes", no enumeration of schemes / networks / tokens / amounts, no "loading skill" — in any language (the same prohibition applies to the equivalent phrases in any other language). The skill-load tool call may run but emits no surrounding prose.
 >
 > Exactly **one** confirmation card runs per payment: A3.5's recommendation card (2+ candidates and user picks `yes`) OR A4's confirmation card (single candidate, OR user picked an alternative from A3.5's expanded list). Do NOT skip the applicable card under the pretext of "past user preference" / "streamlining" / "already confirmed once" — those preferences do not exist. Do NOT render both cards back-to-back with the same info — after `yes` on A3.5.5, go straight to Step A5. The next user-visible text after detection MUST be one of the two cards.
 
@@ -30,27 +30,30 @@ Three payment paths, distinguished by HTTP signature: **`accepts`-based 402** (c
 >
 > **Example**
 >
-> (中) `准备通过 **OKX Agent Payments Protocol** 完成本次支付，下面是扣款明细，请确认……`
 > (EN) `Preparing a payment via the **OKX Agent Payments Protocol**. Here are the charge details — please confirm before I proceed…`
+> When narrating in another language, translate this lead line but keep **OKX Agent Payments Protocol** as a bolded English noun phrase.
 
 > **Progress narration counts as user-visible — Rules 1-3 still apply.**
 >
-> Long-running flows (decode → confirm → wallet check → sign → replay) tempt status updates. Every `"正在…"` / `"I'm now…"` line is user-facing; Step labels and reference/scheme names are internal — do NOT echo them. The anchors:
+> Long-running flows (decode → confirm → wallet check → sign → replay) tempt status updates. Every progress line ("I'm now…", or its Chinese equivalent) is user-facing; Step labels and reference/scheme names are internal — do NOT echo them. The anchors:
 >
 > | ❌ Don't say | ✅ Say |
 > |---|---|
-> | "收到 HTTP 402,触发 OKX Agent Payments Protocol" / "Detected `PAYMENT-REQUIRED`, loading `exact`" | _(silent — detection / routing is internal)_ |
-> | "CLI 选了 `exact`,组装 `PAYMENT-SIGNATURE` 头" / "走 TEE 路径" | "签名完成,正在重放请求" / "Signing done, replaying" |
-> | "检测到 2 个 scheme:exact (USD₮0)、aggr_deferred (USDG)" / "正在查余额筛选候选" | _(silent — enumeration + balance check are internal; only the recommendation card is user-visible)_ |
-> | "进入 session / charge 模式" / "Entering session intent" | "支付通道已开" / "Channel opened" — describe the user-visible effect, not the internal mode |
-> | "按之前的偏好,直接付不再确认" / "Per past preference, skipping confirmation" | _(forbidden — no such preference; the gate is mandatory every time)_ |
+> | "Detected HTTP 402, triggering OKX Agent Payments Protocol" / "Detected `PAYMENT-REQUIRED`, loading `exact`" | _(silent — detection / routing is internal)_ |
+> | "CLI selected `exact`, assembling the `PAYMENT-SIGNATURE` header" / "taking the TEE path" | "Signing done, replaying the request" |
+> | "Detected 2 schemes: exact (USD₮0), aggr_deferred (USDG)" / "checking balance to filter candidates" | _(silent — enumeration + balance check are internal; only the recommendation card is user-visible)_ |
+> | "Entering session / charge mode" | "Channel opened" — describe the user-visible effect, not the internal mode |
+> | "Per past preference, paying without re-confirming" | _(forbidden — no such preference; the gate is mandatory every time)_ |
+>
+> The same rules apply when narrating in any other language — match the intent of these ❌/✅ phrasings, not just the English wording.
 >
 > **These rules are authoritative and always in force** — when unsure whether a status line leaks internals, match it against the rows above and default to silence.
 
-## Triggers (full list — EN + 中文)
+## Triggers (full list)
 
 - **EN**: `402`, payment required, `x402`, `x402Version`, `X-PAYMENT`, `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `WWW-Authenticate: Payment`, `permit2`, `upto`, metered billing, open / close / topup / settle channel, voucher, session payment, `channelId`, `channel_id`, `paymentId`, `a2a_`, create payment link, payment link, payment status
-- **中文**：按量计费、支付上限、支付通道、关闭/充值/续费/结算通道、关闭会话、结算会话、凭证、会话支付、付款链接、创建支付、支付状态
+- subscribe / subscription / recurring payment / recurring charge / "pay every month" / cancel subscription / upgrade plan / downgrade plan → `period` scheme (see `references/subscription.md`)
+- The same trigger vocabulary applies to its equivalents in any other language (e.g. Chinese subscription / recurring-billing terms route to the `period` scheme the same way).
 
 Any close / topup / settle / voucher / refund near a `channel_id` or session context = MPP mid-session op → `references/session.md`.
 
@@ -65,6 +68,7 @@ Each 402 signal (or paymentId) → CLI command → reference. Detailed gating + 
 | Signal | Command | Reference |
 |---|---|---|
 | 402 + `PAYMENT-REQUIRED` (v2) / body `x402Version` (v1) | `payment pay --payload [--selected-index]` | **Success (v2): none** — replay the returned `authorization_header` directly (Step A6). On error / legacy v1, load `references/accepts-schemes.md` (covers `exact` / `aggr_deferred` / `upto` + Permit2; the CLI-output field tells you which scheme — `permit2Authorization` = `upto` / `exact`+Permit2, `sessionCert` = `aggr_deferred`, `authorization` = `exact`) |
+| 402 offer with an `accepts[]` entry whose `scheme == "period"` (a.k.a. `permit2_subscription`) — recurring/subscription billing | `payment subscription subscribe/access/change/cancel/cancel-pending/my-subscriptions/allowance-status` | `references/subscription.md` |
 | 402 + `WWW-Authenticate: Payment`, `intent="charge"` | `payment charge --challenge` | `references/charge.md` |
 | 402 + `WWW-Authenticate: Payment`, `intent="session"` (or mid-session `channel_id`) | `payment session open/voucher/topup/close` | `references/session.md` |
 | paymentId / `a2a_…` link / create-or-check payment link | `payment a2a-pay create/pay/status` | `references/a2a_charge.md` |
@@ -81,7 +85,7 @@ Each 402 signal (or paymentId) → CLI command → reference. Detailed gating + 
 
 You already have the original HTTP response. If it is **not 402**, return the body directly. Otherwise → Step A2.
 
-**Capture any request parameters the user's prompt supplies** (e.g. "查 San Francisco 的天气" → `city=San Francisco`, `token=0x…`, "翻译成中文" → `lang=zh`). Record each as `name → value` for the Step A3-Params plan — values given here are **never re-asked**, just shown in the confirmation card. Keep them even if the first request didn't need them; the seller may require them on the paid replay.
+**Capture any request parameters the user's prompt supplies** (e.g. "weather in San Francisco" → `city=San Francisco`, `token=0x…`; "translate to Chinese" → `lang=zh`). Record each as `name → value` for the Step A3-Params plan — values given here are **never re-asked**, just shown in the confirmation card. Keep them even if the first request didn't need them; the seller may require them on the paid replay.
 
 ## Step A2: Detect the protocol
 
@@ -194,7 +198,9 @@ Per entry, resolve `value`: (1) user's prompt (Step A1) → `source=prompt`, don
 
 ## Step A3.5: Multi-scheme recommendation (when applicable)
 
-**Applies only when** the combined candidate pool contains **2 or more** of `{exact, aggr_deferred, charge}`. Otherwise skip straight to Step A4 with the single available candidate.
+**Applies only when** the combined candidate pool contains **2 or more** of `{exact, aggr_deferred, charge, period}`. Otherwise skip straight to Step A4 with the single available candidate.
+
+> When the 402 `accepts[]` contains 2 or more of `{exact, aggr_deferred, charge, period}`, load `references/multi-scheme.md`. Treat `period` as the recurring-billing option: recommend it only when the user intent is an ongoing subscription, not a single call.
 
 When it applies → **load `references/multi-scheme.md`** and follow it end to end. It returns the **selected candidate** and tells you where to resume: Step A4 (user picked an alternative) or straight to Step A6 (user accepted with `yes` — A5's wallet check already satisfied).
 
@@ -222,7 +228,7 @@ For **`accepts`-based 402** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v
 For **`WWW-Authenticate: Payment` 402**:
 
 > This resource requires payment via the **OKX Agent Payments Protocol**:
-> - **Payment type**: `<one-shot payment | session (multiple requests)>` (render in Chinese as `单次支付` / `会话支付(多请求)` — NEVER `单次购买`)
+> - **Payment type**: `<one-shot payment | session (multiple requests)>` (render as "one-shot payment" / "session (multiple requests)" — never "single purchase"; keep the same distinction when translating to another language)
 > - **Network**: `<chain name>` (`eip155:<chainId>`)
 > - **Token**: `<symbol>` (`<currency address>`)
 > - **Amount per request**: `<human-readable>` (atomic: `<amount>`)
@@ -253,6 +259,7 @@ onchainos wallet status
 |---|---|
 | **`accepts`-based** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1) | Run `onchainos payment pay --payload '<raw_402 from Step A3>'`. If Step A3.5 ran and the user picked an accepts-based candidate, add `--selected-index <index in decoded.accepts>` so the CLI signs exactly that entry; omit it for a single candidate (CLI auto-selects). The CLI decodes, signs from the selected account, and returns `{authorization_header, header_name, scheme, wallet}` — **no hand-assembly**.<br>**Success (normal path)** — `authorization_header` present → go straight to Replay below; do **NOT** load any scheme reference.<br>If the user picked the local-key fallback, run `onchainos payment pay-local --payload '<raw_402>'` instead (same success rule; supports `exact + EIP-3009`, `exact + Permit2`, and `upto` — `aggr_deferred` is TEE-only).<br>**`Permit2 allowance insufficient` error** (`upto` / `exact`+permit2, first payment for that token) → load **`references/accepts-schemes.md`** for the one-time approve, then retry the pay.<br>**Legacy v1** — CLI returns a raw proof (`signature`+`authorization`, no `authorization_header`) → load **`references/accepts-schemes.md`** and follow its "Legacy: x402 v1" section to assemble the `X-PAYMENT` header. |
 
+| `period` (subscription / `permit2_subscription`) | Load **`references/subscription.md`** at "Decide operation" (subscribe vs access vs change vs cancel). First-time offer → `payment subscription subscribe`; already-active resource → `payment subscription access` (never re-subscribe); upgrade/downgrade → `change`; teardown → `cancel` / `cancel-pending`. |
 | **`WWW-Authenticate: Payment`, `intent="charge"`** | Load **`references/charge.md`** at "Decide mode". |
 | **`WWW-Authenticate: Payment`, `intent="session"`** | Load **`references/session.md`** at "Phase S1: Open Channel" (or jump to S2 / S2b / S3 if the user is mid-session with an active `channel_id`). |
 

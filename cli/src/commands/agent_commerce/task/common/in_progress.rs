@@ -1,4 +1,4 @@
-//! Task "in-progress" query — okx-ai-guide node 5a.
+//! Task "in-progress" query — okx-guide node 5a.
 //!
 //! Wraps `POST /priapi/v1/aieco/task/inProgress` — the query endpoint shared by
 //! Agent CLI + C-end Web. Given up to 20 `agentIds`, the backend validates the

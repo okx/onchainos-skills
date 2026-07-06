@@ -77,7 +77,21 @@ onchainos wallet balance [--all] [--chain <chain>] [--token-address <addr>] [--f
 | `--token-address` | — | Single token contract address. Requires `--chain`. |
 | `--force` | false | Bypass caches; re-fetch accounts + balances. |
 
-Key fields: `totalValueUsd`, `evmAddress`, `solAddress`, `accountCount`, `details[]` (token groups enriched with `usdValue`). Per token: `symbol`, `balance`, `usdValue`, `tokenContractAddress` (empty = native), `tokenPrice`, `chainIndex`. With `--all`, `details` is a map of `accountId` → cache entry (`totalValueUsd`, `updatedAt`, `data`).
+Key fields: `totalValueUsd`, `evmAddress`, `solAddress`, `accountCount`, `details[]` (token balance groups). With `--all`, `details` is a map of `accountId` → cache entry (`totalValueUsd`, `updatedAt`, `data`).
+
+Every token in `details[].tokenAssets[]` (or `assets[]`, or `details.<accountId>.data[].tokenAssets[]` for `--all`) contains **exactly these 9 fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `symbol` | String | Token symbol (e.g. `"ETH"`) |
+| `tokenName` | String | Token full name (e.g. `"Ethereum"`) |
+| `chainIndex` | String | Chain identifier (e.g. `"1"`) |
+| `tokenAddress` | String | Token contract address; `""` for native tokens |
+| `balance` | String | Balance in UI units |
+| `rawBalance` | String | Balance in minimal units |
+| `decimal` | String | Token decimals |
+| `tokenPrice` | String | Token price in USD |
+| `usdValue` | String\|Number | Token value in USD (representation preserved as returned) |
 
 ---
 

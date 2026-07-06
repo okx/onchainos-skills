@@ -53,6 +53,21 @@ const DEPRECATED_SKILLS: &[&str] = &[
     "okx-onchain-gateway",
     "okx-security",
     "okx-wallet-portfolio",
+    // Merged into `okx-ai` (former deprecated stubs, now removed).
+    "okx-agent-identity",
+    "okx-agent-task",
+    "okx-agent-chat",
+    "okx-task-watch",
+    // Merged into `okx-defi` (former deprecated stubs, now removed).
+    "okx-defi-invest",
+    "okx-defi-portfolio",
+    // Merged into `okx-dex` (former deprecated stubs, now removed).
+    "okx-dex-market",
+    "okx-dex-signal",
+    "okx-dex-social",
+    "okx-dex-token",
+    "okx-dex-trenches",
+    "okx-dex-ws",
 ];
 
 #[derive(clap::Args)]
@@ -697,6 +712,14 @@ fn update_one_checkout(path: &Path, graduated: bool) -> Value {
     }
 }
 
+/// Drop `skipped` checkouts from the payload. An `updated` entry drives the
+/// re-read hint and a `failed` one flags a real problem, but `skipped` (non-git
+/// / package-manager installs) is the normal case for most skills — listing it
+/// would flood the payload with noise. Shared by `execute` and `preflight`.
+fn reportable_skills(skills: &[Value]) -> Vec<&Value> {
+    skills.iter().filter(|s| s["status"] != "skipped").collect()
+}
+
 /// Update each detected skill checkout via `git pull --ff-only`. Returns one
 /// result per path describing the outcome.
 fn update_skill_checkouts(graduated: bool) -> Vec<Value> {
@@ -923,7 +946,7 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
     let mut payload = json!({
         "currentVersion": current,
         "status": binary_status,
-        "skills": skills,
+        "skills": reportable_skills(&skills),
     });
     if binary_status != "binary_check_failed" {
         payload["latestVersion"] = json!(installed_version);
@@ -1198,11 +1221,7 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
         payload["channel"] = json!(if is_prerelease(&lv) { "beta" } else { "stable" });
         payload["latestVersion"] = json!(lv);
     }
-    // Only report checkouts that actually did something: an `updated` one drives
-    // the re-read hint, a `failed` one flags a real problem. `skipped` (non-git /
-    // package-manager installs) is the normal case for most skills — listing it
-    // would flood the payload with noise, so it's dropped.
-    let reported: Vec<&Value> = skills.iter().filter(|s| s["status"] != "skipped").collect();
+    let reported = reportable_skills(&skills);
     if !reported.is_empty() {
         payload["skills"] = json!(reported);
     }
@@ -1218,8 +1237,8 @@ mod tests {
     use super::{
         compute_drift, current_branch, decide_target, decorate_graduation, discover_skill_paths_in,
         highest_version, is_dev_build_path, is_throttled, parse_ls_remote_versions,
-        parse_release_tag_url, record_check, remote_is_trusted_okx, removal_action, semver_gt,
-        skill_requests_beta, update_one_checkout,
+        parse_release_tag_url, record_check, remote_is_trusted_okx, removal_action,
+        reportable_skills, semver_gt, skill_requests_beta, update_one_checkout,
     };
     use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
@@ -1272,6 +1291,30 @@ mod tests {
         git(&upstream, &["commit", "-m", "beta work"]);
         git(&upstream, &["checkout", "main"]);
         upstream
+    }
+
+    #[test]
+    fn reportable_skills_drops_skipped_keeps_updated_and_failed() {
+        let skills = vec![
+            json!({ "path": "/a", "status": "skipped", "reason": "not a git checkout" }),
+            json!({ "path": "/b", "status": "updated" }),
+            json!({ "path": "/c", "status": "failed", "reason": "conflict" }),
+            json!({ "path": "/d", "status": "skipped", "reason": "remote 'origin' is not okx" }),
+        ];
+        let statuses: Vec<&str> = reportable_skills(&skills)
+            .iter()
+            .map(|s| s["status"].as_str().unwrap())
+            .collect();
+        assert_eq!(statuses, vec!["updated", "failed"]);
+    }
+
+    #[test]
+    fn reportable_skills_empty_when_all_skipped() {
+        let skills = vec![
+            json!({ "path": "/a", "status": "skipped", "reason": "not a git checkout" }),
+            json!({ "path": "/b", "status": "skipped", "reason": "git not found on PATH" }),
+        ];
+        assert!(reportable_skills(&skills).is_empty());
     }
 
     fn git_clone(upstream: &Path, dest: &Path, branch: Option<&str>) {

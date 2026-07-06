@@ -859,7 +859,7 @@ pub enum AgentCommand {
     /// caller→agent binding via JWT and classifies results by role
     /// (buyerTasks / providerTasks / evaluatorDisputes).
     ///
-    /// Powers okx-ai-guide node 5a (registered-user home → "view what an Agent
+    /// Powers okx-guide node 5a (registered-user home → "view what an Agent
     /// is working on").
     ///
     /// Examples:

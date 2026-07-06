@@ -77,6 +77,13 @@ pub enum PaymentCommand {
         #[command(subcommand)]
         command: SessionCommand,
     },
+
+    /// Subscription payments (x402 `period` scheme):
+    /// subscribe / access / change / cancel / my-subscriptions / allowance-status.
+    Subscription {
+        #[command(subcommand)]
+        command: crate::commands::payment::subscription::SubscriptionCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -250,6 +257,9 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
         }
         PaymentCommand::Default { action } => cmd_default(action),
         PaymentCommand::A2aPay { command } => a2a_pay::execute(command).await,
+        PaymentCommand::Subscription { command } => {
+            crate::commands::payment::subscription::execute(command).await
+        }
         PaymentCommand::MppCharge {
             challenge,
             from,

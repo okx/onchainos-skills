@@ -4,7 +4,7 @@ description: "List OKX Agentic Wallet exclusive trading competitions, register u
 license: MIT
 metadata:
   author: okx
-  version: "4.1.0"
+  version: "4.2.0"
   homepage: "https://web3.okx.com"
 ---
 

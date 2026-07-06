@@ -137,9 +137,8 @@ If the user types something other than a numbered pick or `login`, answer in the
 
 | Intent | Route to |
 |---|---|
-| meme sniping / pump.fun / new launches | `okx-dex-trenches` |
-| follow smart money / KOL / whale | `okx-dex-signal` (or load `smart-money-signals.md`) |
-| yield / earn / stake / DeFi | `okx-defi-invest` |
+| meme sniping / pump.fun / new launches, or follow smart money / KOL / whale | `okx-dex` (or load `smart-money-signals.md`) |
+| yield / earn / stake / DeFi | `okx-defi` |
 | login (free-form, not as a banner reply) | this skill's **Login Method Choice** |
 | named DApp + action verb (Aave / Hyperliquid / etc.) | `okx-dapp-discovery` |
 
@@ -149,7 +148,7 @@ If the user types something other than a numbered pick or `login`, answer in the
 
 1. **Banner variant matches auth state** — `loggedIn: false` renders the logged-out variant (no addresses); `loggedIn: true` renders the logged-in variant (addresses + balance).
 2. **Skill picks load without login gate** — Polymarket (option 2 in Variant A) and USDC APY (option 3 in A / option 2 in B) load even when logged out; each loaded skill handles its own auth.
-3. **OKX.AI (Reply 1) and Daily brief (option 4 in A / option 3 in B) gate on login** — when logged out, route through Login Method Choice first, then auto-resume the chosen target (`ai-guide.md` or `daily-brief.md`) WITHOUT re-rendering the welcome banner. Smart-money / new-token intents are no longer numbered picks but remain reachable via the free-form fallback table (`okx-dex-signal` / `okx-dex-trenches`).
+3. **OKX.AI (Reply 1) and Daily brief (option 4 in A / option 3 in B) gate on login** — when logged out, route through Login Method Choice first, then auto-resume the chosen target (`ai-guide.md` or `daily-brief.md`) WITHOUT re-rendering the welcome banner. Smart-money / new-token intents are no longer numbered picks but remain reachable via the free-form fallback table (`okx-dex`).
 4. **Turn budget** — ≤ 3 turns end-to-end for a new user; ≤ 2 turns for a returning user picking a workflow + login.
 5. **Disclaimer placement** — the disclaimer is the final segment of every rendered banner (both variants, both auth states).
 6. **Stale-session fallback** — when `wallet status` returns `loggedIn: true` but `wallet balance` fails (e.g. expired refresh token) or lacks the address / balance fields, the flow prompts re-login (routes to Login Method Choice) instead of rendering a partial or fabricated logged-in banner; after re-login it renders the logged-in banner.

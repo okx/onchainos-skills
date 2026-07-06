@@ -9,4 +9,4 @@ All user-facing amounts in BOTH human and atomic form: `<human> (<atomic>)`, e.g
 | USDG | 6 | `1000000` | `500000`  → 0.50 USDG |
 | ETH | 18 | `1000000000000000000` | `10000000000000000` → 0.01 ETH |
 
-**Unknown symbol** (not in the table): never assume — query `okx-dex-token` for its decimals first. If you can't resolve them, render `<atomic> <symbol>` and append `unknown decimals — please double-check the seller-provided amount`. Do not block the flow. (`a2a-pay` overrides this — see `references/a2a_charge.md`.)
+**Unknown symbol** (not in the table): never assume — query `okx-dex` for its decimals first. If you can't resolve them, render `<atomic> <symbol>` and append `unknown decimals — please double-check the seller-provided amount`. Do not block the flow. (`a2a-pay` overrides this — see `references/a2a_charge.md`.)

@@ -4,7 +4,7 @@ description: "OKX Agentic Wallet — the single skill for the user's wallet and 
 license: MIT
 metadata:
   author: okx
-  version: "4.1.0"
+  version: "4.2.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -65,7 +65,7 @@ Never pass `--force` on the FIRST invocation of a state-changing command. Add `-
 - Token amounts in **UI units** (`1.5 ETH`), never base units.
 - USD values with **2 decimal places**; if `< 0.01`, show full precision.
 - Large amounts in shorthand (`$1.2M`, `$340K`); sort holdings by USD value descending.
-- In balance/holdings displays, show the **abbreviated** contract address alongside the symbol (`0x1234...abcd`); native tokens with empty `tokenContractAddress` → `(native)`.
+- In balance/holdings displays, show the **abbreviated** contract address alongside the symbol (`0x1234...abcd`); native tokens with empty `tokenAddress` → `(native)`.
 - **Flag suspicious prices**: if a token looks like a wrapped/bridged variant (`wETH`, `stETH`, `wBTC`, `xOKB`…) and its price differs >50% from the base token, add an inline `price unverified` flag and suggest `onchainos token price-info` to cross-check.
 
 ## Security & Global Notes

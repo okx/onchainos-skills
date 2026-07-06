@@ -1,6 +1,6 @@
 //! Integration tests for `onchainos tracker` and `onchainos signal` commands.
 //!
-//! Both namespaces belong to the okx-dex-signal skill:
+//! Both namespaces belong to the okx-dex skill (SIGNAL group):
 //! - `tracker activities` — raw DEX transaction feed for smart money / KOL / custom wallets
 //! - `signal chains` / `signal list` — aggregated buy-only signal alerts
 //!
