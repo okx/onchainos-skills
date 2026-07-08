@@ -3,14 +3,6 @@
 
 The OKX.AI onboarding entry. Introduces OKX.AI (the Agent economic system), detects whether the current runtime can run OKX.AI, and routes the user into one of the three identity-registration flows — or, on an incompatible platform, tells them how to get a compatible one.
 
-## Instruction Priority
-
-Tagged blocks indicate rule severity (higher wins on conflict):
-
-1. **`<NEVER>`** — Absolute prohibition.
-2. **`<MUST>`** — Mandatory step.
-3. **`<SHOULD>`** — Best practice.
-
 ## Scope & Boundary
 
 This skill owns: OKX.AI intro + platform detection + login & identity detection (new vs returning user) + routing into registration. It does NOT:
@@ -19,15 +11,11 @@ This skill owns: OKX.AI intro + platform detection + login & identity detection 
 - implement registration — delegated to `okx-ai` (see §Step 5).
 - own the wallet-login flow — Step 1 only *checks* login via `wallet status` and hands off to `okx-agentic-wallet`'s existing login flow when needed; the registration playbooks also run their own preflight.
 
-<NEVER>
-Do NOT call `onchainos agent create` (or any registration / staking CLI) from this skill. Registration is always delegated to `okx-ai`. (Read-only `onchainos wallet status` and `onchainos agent get-my-agents` in Step 1 are allowed — they create nothing.)
-</NEVER>
+**NEVER**: Do NOT call `onchainos agent create` (or any registration / staking CLI) from this skill. Registration is always delegated to `okx-ai`. (Read-only `onchainos wallet status` and `onchainos agent get-my-agents` in Step 1 are allowed — they create nothing.)
 
 ## Step 0 — Platform detection
 
-<MUST>
-Run the detection function below and read its single-line output. `compatible` = output is NOT `unknown`.
-</MUST>
+**MUST**: Run the detection function below and read its single-line output. `compatible` = output is NOT `unknown`.
 
 ```bash
 detect_harness() {
@@ -54,14 +42,13 @@ detect_harness
 
 Reached only when Step 0 is **compatible**. This step decides which page to show — by checking login **first**, identity **second**. The order is mandatory: `agent get-my-agents` requires a logged-in session, so never query identity before login is confirmed.
 
-<MUST>
+**MUST**:
 1. **Login check** — run `onchainos wallet status` and read `loggedIn`.
    - `loggedIn: false` → user is not logged in. Do **not** query identity. Hand off to the existing wallet-login flow ([`../../okx-agentic-wallet/SKILL.md`](../../okx-agentic-wallet/SKILL.md) §login): prompt login, and on success resume here (re-run `wallet status`, then do the identity check).
    - `loggedIn: true` → continue to the identity check.
 2. **Identity check** — run `onchainos agent get-my-agents`. It returns the logged-in user's own OKX.AI agents on XLayer (identified via JWT).
    - **Empty** (no agents) → user has no OKX.AI identity → **Step 2** (role selection page).
    - **≥1 agent** → user already has an identity → **Step 4** (registered user home).
-</MUST>
 
 The branch is decided **solely** by whether `agent get-my-agents` returns any agent — never show the role page (Step 2) to a user who already has an identity, nor the registered home (Step 4) to a user with none.
 

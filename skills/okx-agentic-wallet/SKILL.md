@@ -14,24 +14,24 @@ Unified wallet skill driving the `onchainos` CLI: wallet lifecycle, Gas Station,
 
 ## Intent Routing
 
-Match the user intent to its **Domain**. Then load **only** `references/<domain>.md` for that domain — that file holds the flow. Do NOT load any other domain's files. Deeper files (exact flags, troubleshooting) are loaded lazily — each domain file lists its own at the bottom (Additional Resources / Edge Cases), and you load them only when the situation calls for it.
+Match the user intent to a row, then **read that row's linked file first** — it holds the flow. Read only the matched file; do not load other rows' files. Each file links its own deeper files (cli-reference, troubleshooting) at the bottom via explicit links — open those when the flow needs them; never construct a file path yourself.
 
-| User Intent | Domain |
+| User Intent | Reference |
 | --- | --- |
-| Sign in / connect / OTP verify / API-Key login / logout; add / switch account; login status | wallet |
-| My wallet address / QR code; check my (logged-in) balance / holdings | wallet |
-| Send / transfer native or ERC-20 / SPL tokens | wallet |
-| Call a contract (approve / deposit / withdraw / custom function) | wallet |
-| Transaction history / tx detail / order status; sign a message (personalSign / EIP-712) | wallet |
-| Policy / spending limit / whitelist; export wallet / mnemonic; MEV protection for a contract-call; third-party Solana plugin write pre-flight | wallet |
-| Pay gas with a stablecoin on Solana; enable / disable / change default gas token / status; a `send` / `contract-call` returns `gasStationUsed` or a Gas Station Confirming; Gas Station FAQ / "check order" | gas-station |
-| Swap / trade / buy / sell / convert tokens; quote; best route; calldata-only swap; liquidity sources; ERC-20 approval for a DEX | swap |
-| Bridge / cross-chain swap / move tokens between chains; bridge quote / fee comparison; supported bridges; track cross-chain arrival | bridge |
-| Limit order: buy dip / take profit / stop loss / buy above; cancel / list / resume limit (strategy) orders | strategy |
-| Broadcast a signed / raw tx; estimate gas price / gas-limit; simulate a tx; track a broadcast order | gateway |
-| A given public address's balance / holdings / total value (`0xAbc…` / a Solana address) | portfolio |
-| Token / honeypot (蜜罐 / 貔貅) safety; DApp / URL phishing; tx or signature pre-check; check / list / revoke token approvals (ERC-20 / Permit2) | security |
-| Export / locate audit log, view command history | audit-log |
+| Sign in / connect / OTP verify / API-Key login / logout; add / switch account; login status | [wallet](references/wallet.md) |
+| My wallet address / QR code; check my (logged-in) balance / holdings | [wallet](references/wallet.md) |
+| Send / transfer native or ERC-20 / SPL tokens | [wallet](references/wallet.md) |
+| Call a contract (approve / deposit / withdraw / custom function) | [wallet](references/wallet.md) |
+| Transaction history / tx detail / order status; sign a message (personalSign / EIP-712) | [wallet](references/wallet.md) |
+| Policy / spending limit / whitelist; export wallet / mnemonic; MEV protection for a contract-call; third-party Solana plugin write pre-flight | [wallet](references/wallet.md) |
+| Pay gas with a stablecoin on Solana; enable / disable / change default gas token / status; a `send` / `contract-call` returns `gasStationUsed` or a Gas Station Confirming; Gas Station FAQ / "check order" | [gas-station](references/gas-station.md) |
+| Swap / trade / buy / sell / convert tokens; quote; best route; calldata-only swap; liquidity sources; ERC-20 approval for a DEX | [swap](references/swap.md) |
+| Bridge / cross-chain swap / move tokens between chains; bridge quote / fee comparison; supported bridges; track cross-chain arrival | [bridge](references/bridge.md) |
+| Limit order: buy dip / take profit / stop loss / buy above; cancel / list / resume limit (strategy) orders | [strategy](references/strategy.md) |
+| Broadcast a signed / raw tx; estimate gas price / gas-limit; simulate a tx; track a broadcast order | [gateway](references/gateway.md) |
+| A given public address's balance / holdings / total value (`0xAbc…` / a Solana address) | [portfolio](references/portfolio.md) |
+| Token / honeypot (蜜罐 / 貔貅) safety; DApp / URL phishing; tx or signature pre-check; check / list / revoke token approvals (ERC-20 / Permit2) | [security](references/security.md) |
+| Export / locate audit log, view command history | [audit-log](references/audit-log.md) |
 
 ---
 
@@ -41,7 +41,7 @@ Before the first `onchainos` command this session, read and follow [_shared/pref
 
 ## Build the Command
 
-1. **Read the matched domain's `references/<domain>.md` first** (per Intent Routing) — it carries the flow and the commands you need. Never guess subcommand or flag names.
+1. **Read the matched row's linked file first** (per the Intent Routing table) — it carries the flow and the commands you need. Never guess subcommand, flag, or file names.
 2. **When you need exact flags, defaults, or return-field schemas** that the domain file doesn't spell out, run `onchainos <group> <subcommand> --help` (the CLI is the source of truth), or load that domain's `-cli-reference.md` when the flow needs it (each domain file lists its own deeper files at the bottom). Don't load it up front.
 3. **Scripts / automation: append `--format json`** to every command for machine-readable output.
 4. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below.

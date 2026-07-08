@@ -3,14 +3,6 @@
 
 The first-time / "I don't know what to do" entry point. Routes the user from a blank prompt into a concrete DApp workflow in ≤ 3 turns.
 
-## Instruction Priority
-
-Tagged blocks indicate rule severity (higher wins on conflict):
-
-1. **`<NEVER>`** — Absolute prohibition.
-2. **`<MUST>`** — Mandatory step. Skipping breaks the flow.
-3. **`<SHOULD>`** — Best practice.
-
 > **Pre-flight:** already run by the `okx-guide` hub (`SKILL.md` §Pre-flight Checks) before this flow is loaded — do NOT run it again here.
 
 ## Authoring Pattern — Free Zone vs Fixed Zone
@@ -25,15 +17,11 @@ Most user-facing copy in this flow is split into two parts:
 
 This applies to: **Welcome Banner**, **Login Method Choice**, and **API Key Login** Step 1 heads-up.
 
-<MUST>
-**Bridging is mandatory.** End the free zone with a transitional half-sentence (e.g. "let me drop the menu" / "here's where to start ↓") — never with a hard period followed by an unrelated fixed-zone line. Self-check before emitting: read the free-zone tail + first fixed-zone line as a single unit; if they feel like two separate posts pasted together, rewrite the free-zone tail.
-</MUST>
+**MUST**: **Bridging is mandatory.** End the free zone with a transitional half-sentence (e.g. "let me drop the menu" / "here's where to start ↓") — never with a hard period followed by an unrelated fixed-zone line. Self-check before emitting: read the free-zone tail + first fixed-zone line as a single unit; if they feel like two separate posts pasted together, rewrite the free-zone tail.
 
 ## Status Check
 
-<MUST>
-Run `onchainos wallet status` **before** showing any login or welcome text. Use the `loggedIn` field to branch.
-</MUST>
+**MUST**: Run `onchainos wallet status` **before** showing any login or welcome text. Use the `loggedIn` field to branch.
 
 ```
 onchainos wallet status
@@ -46,9 +34,7 @@ onchainos wallet status
 
 # Welcome Banner
 
-<MUST>
-Render the banner from `welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 4 picks (Polymarket allowed); Variant B = 3 picks (Polymarket geoblocked). Numbered picks are interpreted strictly against the currently-rendered menu (digit-routing contract per welcome.md §4). Never fabricate addresses or balance. If `wallet balance` fails despite `loggedIn: true` (stale session — refresh token expired), prompt the user to log in again per welcome.md §2.2 instead of rendering a partial banner.
-</MUST>
+**MUST**: Render the banner from `welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 4 picks (Polymarket allowed); Variant B = 3 picks (Polymarket geoblocked). Numbered picks are interpreted strictly against the currently-rendered menu (digit-routing contract per welcome.md §4). Never fabricate addresses or balance. If `wallet balance` fails despite `loggedIn: true` (stale session — refresh token expired), prompt the user to log in again per welcome.md §2.2 instead of rendering a partial banner.
 
 ---
 
@@ -114,11 +100,10 @@ onchainos wallet login
 
 On success → **Post-login routing** below. On login failure, surface the error and ask the user to verify their env vars (do NOT re-show the heads-up — they already saw it).
 
-<NEVER>
+**NEVER**:
 - Do NOT accept API Key / Secret / Passphrase inline in chat. If the user pastes credentials in chat: do NOT echo, do NOT use the values, ask them to delete the message + rotate the keys + set the env vars locally instead.
 - Do NOT walk the user through generating keys, opening URLs, creating `.env` files, editing `.gitignore`, or any other multi-step setup. The heads-up is one-shot — they handle their own local setup.
 - Do NOT ask the user to paste the browser URL or any callback back to the CLI. The dev-portal is read-only.
-</NEVER>
 
 ## Post-login routing
 
