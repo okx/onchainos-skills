@@ -4,9 +4,9 @@
 
 The `contract-call` command supports MEV (Maximal Extractable Value) protection via the `--mev-protection` flag. When enabled, the broadcast API passes `isMEV: true` in `extraData` to route the transaction through MEV-protected channels, preventing front-running, sandwich attacks, and other MEV exploitation.
 
-> **⚠️ Solana MEV Protection**: On Solana, enabling `--mev-protection` also **requires** the `--jito-unsigned-tx` parameter. Without it, the command will fail. This parameter provides the Jito bundle unsigned transaction data needed for Solana MEV-protected routing.
+> **Solana MEV Protection**: On Solana, enabling `--mev-protection` also **requires** the `--jito-unsigned-tx` parameter. Without it, the command will fail. This parameter provides the Jito bundle unsigned transaction data needed for Solana MEV-protected routing.
 
-> 🚨 **Never substitute `--unsigned-tx` for `--jito-unsigned-tx`** — they are completely different parameters. If Jito bundle data is unavailable, stop and ask the user: proceed without MEV protection, or cancel.
+> **NEVER**: substitute `--unsigned-tx` for `--jito-unsigned-tx` — they are completely different parameters. If Jito bundle data is unavailable, stop and ask the user: proceed without MEV protection, or cancel.
 
 ## Supported Chains
 
