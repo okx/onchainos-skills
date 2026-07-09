@@ -13,7 +13,6 @@ pub mod portfolio;
 pub mod security;
 pub mod signal;
 pub mod social;
-pub mod strategy;
 pub mod swap;
 pub mod token;
 pub mod tracker;

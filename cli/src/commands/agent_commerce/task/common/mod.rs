@@ -1004,13 +1004,30 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
         }
     }
 
-    let all_ok = wallet_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
-        && identity_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let wallet_ok = wallet_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let identity_ok = identity_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    // ── 3. Communication ──────────────────────────────────────────
+    // Read-only A2A readiness (okx-a2a present + `okx-a2a doctor --json`).
+    // Skipped with a hint when an earlier gate already failed, to avoid the
+    // doctor spawn (~2-3s) on an already-failing check.
+    let communication_detail = if !wallet_ok || !identity_ok {
+        serde_json::json!({
+            "ok": false,
+            "hint": "skipped — resolve the wallet / identity gate first",
+        })
+    } else {
+        okx_a2a::communication_gate_json()
+    };
+    let communication_ok = communication_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let all_ok = wallet_ok && identity_ok && communication_ok;
 
     Ok(serde_json::json!({
         "ready": all_ok,
         "wallet": wallet_detail,
         "identity": identity_detail,
+        "communication": communication_detail,
     }))
 }
 

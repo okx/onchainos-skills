@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::okx_a2a;
 use crate::commands::agent_commerce::task::evaluator::{decimal_str, staking_types};
 use crate::commands::agent_commerce::task::signing;
 
@@ -12,6 +13,13 @@ pub async fn handle_stake(
     amount: &str,
     agent_id: &str,
 ) -> Result<()> {
+    // A successful first-time stake makes the evaluator an active candidate that
+    // can be drawn into a jury and must receive arbitration messages, so A2A
+    // communication must be ready BEFORE, and the identity synced AFTER — the
+    // stable in-CLI replacement for the old post-stake comm-init subflow.
+    // Read-only gate: block with a repair hint, never auto-fix. (increase-stake
+    // does not change activation state, so it keeps neither hook.)
+    okx_a2a::ensure_communication_ready_preflight()?;
     run(
         client,
         amount,
@@ -22,7 +30,9 @@ pub async fn handle_stake(
             next_hint: "stake transaction submitted; waiting for on-chain confirmation. Once confirmed, you become an active evaluator candidate and may be drawn into a jury panel.",
         },
     )
-    .await
+    .await?;
+    okx_a2a::refresh_agent_identities_silently();
+    Ok(())
 }
 
 pub async fn handle_increase_stake(

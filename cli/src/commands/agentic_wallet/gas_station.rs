@@ -5,7 +5,7 @@ use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_
 use crate::output;
 use crate::wallet_api::{GasStationStatus, WalletApiClient};
 
-use super::wallet::GasStationCommand;
+use super::GasStationCommand;
 
 pub async fn execute(cmd: GasStationCommand) -> Result<()> {
     match cmd {

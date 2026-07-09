@@ -87,7 +87,7 @@ The FINAL card ends with `> Reply **1** to confirm and run.` (localized) + the g
 
 ## 8. Passive need-user
 
-Run `agent pre-check --role user` (consent + uniqueness gate, same as §2). On consent required → run full consent flow per §2. On `canCreate:false` (user already exists) → use the existing one, skip create entirely. On `canCreate:true` → ask name only (skip photo). Then render the card → on confirm, execute. Post-success is ONE line, **no detail card, no Step 6**:
+Run `agent pre-check --role user` (consent + uniqueness gate, same as §2). On consent required → run full consent flow per §2. On `canCreate:false` (user already exists) → use the existing one, skip create entirely. On `canCreate:true` → ask name only (skip photo). Then render the card → on confirm, execute. Post-success is ONE line, **no detail card**:
 > "User identity #`<id>` created. Resuming the task-publish flow."
 
 (If a user already exists: "You already have a User identity #`<N>` (`<name>`) — using it to continue.") Hand back to the task flow with that single line; don't ask "want to publish a task?".
@@ -98,9 +98,9 @@ Run `agent create` with the collected fields (role/name/description/picture/serv
 
 ## 10. Post-success templates (verbatim except `#<id>`; localized; `#<id>` per SKILL §Invariants #id ladder — `newAgentId` primary)
 
-- **user (ONE line)** → then run SKILL.md §Step 5/6 Step 6 as a silent required communication subflow. No txHash, no question.
+- **user (ONE line)** — No txHash, no question. After emitting it, run the communication-init flow in [`chat-comm-init.md`](chat-comm-init.md) so the new agent can communicate (create has no CLI-level readiness gate).
   > User identity #`<id>` is live — say "publish a task for X" whenever you're ready and I'll take you through it.
-- **ASP (ONE line)** → then run SKILL.md §Step 5/6 Step 6 as a silent required communication subflow. Never mention active clients / agent counts / re-list agents; never a numbered menu; never a duplicate line.
+- **ASP (ONE line)** — Never mention active clients / agent counts / re-list agents; never a numbered menu; never a duplicate line. After emitting it, run the communication-init flow in [`chat-comm-init.md`](chat-comm-init.md) so the new agent can communicate (create has no CLI-level readiness gate).
   > ASP identity #`<id>` registered — not yet visible to others. Say "activate #`<id>`" to publish now, "add a service to #`<id>`" to offer more services, or "find ASPs doing X" to check the market first.
 - **evaluator (EXACTLY two lines)** — no stake number/amount, no trailing question, no detail card → proceed toward the staking handoff.
   > Evaluator identity #`<id>` registered.

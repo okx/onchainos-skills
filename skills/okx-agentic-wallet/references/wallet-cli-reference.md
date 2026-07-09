@@ -137,6 +137,8 @@ onchainos wallet history --chain <chain> --uop-hash <hash>
 
 `--chain` is required in detail mode. Right after a Gas Station broadcast, poll by `--order-id` (txHash may be async).
 
+List mode: always pass --limit (page size, default 20) and --page-num (page number) for paging. Detail mode returns a single record — do not pass --limit.
+
 List fields: `cursor`, `orderList[]` with `txHash`, `txStatus`, `txTime`, `direction` (send/receive), `chainSymbol`, `coinSymbol`, `coinAmount`, `serviceCharge`, `confirmedCount`, `assetChange[]` (`coinSymbol`/`coinAmount`/`direction` in/out). Detail adds `failReason`, `explorerUrl`, `input[]`, `output[]`.
 
 Transaction status: `0` Pending · `1` Success · `2` Failed · `3` Pending confirmation. `txTime` is Unix ms — convert for display.

@@ -22,6 +22,17 @@ use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_
 use crate::commands::Context;
 use crate::output;
 
+// A2A communication must be ready BEFORE an agent goes live (activate) or its
+// listing changes (update). The preflight is a READ-ONLY gate (okx-a2a
+// presence + `okx-a2a doctor`): when the environment is missing or doctor
+// reports blocking items, the mutation errors out with the reason and the
+// repair command (`okx-a2a doctor --fix`) — repairs are the user's explicit
+// move, never this CLI's. create and deactivate get no preflight (create does
+// not yet transact communication; deactivate takes an agent OFFLINE and must
+// never be blocked by a broken comms env) — their skills post-success flow
+// runs the communication init explicitly instead.
+use super::super::task::common::okx_a2a::ensure_communication_ready_preflight as ensure_a2a_ready_preflight;
+
 use super::args::{
     ActivateArgs, AgentStatusArgs, ConsentArgs, CreateArgs, FeedbackSubmitArgs, PrecheckArgs,
     UpdateArgs, UploadArgs, XmtpSignArgs,
@@ -69,11 +80,13 @@ pub async fn precheck(args: PrecheckArgs, ctx: &Context) -> Result<()> {
 }
 
 pub async fn update(args: UpdateArgs, ctx: &Context) -> Result<()> {
+    ensure_a2a_ready_preflight()?;
     output::success(update_impl(&args, ctx).await?);
     Ok(())
 }
 
 pub async fn activate(args: ActivateArgs, ctx: &Context) -> Result<()> {
+    ensure_a2a_ready_preflight()?;
     output::success(activate_impl(&args, ctx).await?);
     Ok(())
 }

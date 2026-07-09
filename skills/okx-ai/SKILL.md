@@ -12,7 +12,7 @@ description: >
 license: Apache-2.0
 metadata:
   author: okx
-  version: "4.2.0"
+  version: "4.2.1"
   homepage: "https://web3.okx.com"
 ---
 
@@ -74,7 +74,7 @@ Identity-not-wallet: **"再建一个买家身份 / 再加一个用户 / add anot
 
 "I want to be an evaluator" with **no** register word → ask once: *1. Register an Evaluator Agent identity / 2. Open a dispute on a task* → route on the reply.
 
-Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contract safety check → okx-agentic-wallet; broadcast a raw tx → okx-agentic-wallet (post-create comm-init & evaluator staking → see §Step 5/6).
+Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contract safety check → okx-agentic-wallet; broadcast a raw tx → okx-agentic-wallet (post-create evaluator staking → see §Step 5/6).
 
 "Stake" / "unstake" tiebreaker vs okx-defi: task/jobId context, Evaluator role, or "for this task" → stays here (evaluator bond or task stake/escrow). Generic DeFi-protocol yield staking with no task context → okx-defi.
 
@@ -138,9 +138,9 @@ Targets below are internal routing — never name a skill path or "staking" hand
 
 | Last successful CLI | Next |
 |---|---|
-| create user / asp · update · activate · deactivate | → Step 6: required communication subflow. Open [`references/chat-comm-init.md`](references/chat-comm-init.md), follow its `Execution Flow` from start to finish, and wait for every command in that flow to complete. Continue only if that flow completes successfully. If the file cannot be opened, or any command in the flow fails or blocks, show the failure output and stop. Do not skip this subflow or treat the linked markdown file as optional background reading. |
+| create user / asp · update · activate · deactivate | Continue with the post-success line. |
 | create evaluator | → §Task Marketplace's evaluator-staking flow. Do NOT end on a question or a detail card. |
-| passive need-user | hand back to §Task Marketplace with ONE line. No Step 6. |
+| passive need-user | hand back to §Task Marketplace with ONE line. |
 | search / get / service-list / feedback-list | Stop. |
 
 ## Task Marketplace

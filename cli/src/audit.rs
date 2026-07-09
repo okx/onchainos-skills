@@ -449,7 +449,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
 }
 
 use crate::commands::payment::PaymentCommand;
-use crate::commands::agentic_wallet::wallet::WalletCommand;
+use crate::commands::agentic_wallet::WalletCommand;
 use crate::commands::{
     competition::CompetitionCommand, defi::DefiCommand, gateway::GatewayCommand,
     leaderboard::LeaderboardCommand, market::MarketCommand, memepump::MemepumpCommand,
@@ -492,8 +492,8 @@ fn social_sub(c: &SocialCommand) -> &'static str {
     }
 }
 
-fn strategy_sub(c: &crate::commands::strategy::StrategyCommand) -> &'static str {
-    use crate::commands::strategy::StrategyCommand;
+fn strategy_sub(c: &crate::commands::agentic_wallet::strategy::StrategyCommand) -> &'static str {
+    use crate::commands::agentic_wallet::strategy::StrategyCommand;
     match c {
         StrategyCommand::CreateLimit(_) => "create-limit",
         StrategyCommand::Cancel(_) => "cancel",

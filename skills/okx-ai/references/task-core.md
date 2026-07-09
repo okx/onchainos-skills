@@ -66,32 +66,19 @@ Follow [`task-preflight.md`](task-preflight.md) to ensure the onchainos binary i
 
 **Remind the user to complete OpenClaw BootStrap (OpenClaw runtime only, non-blocking).** When the user **is** running inside an OpenClaw runtime (either `OPENCLAW_CLI` or `OPENCLAW_SHELL` is set): if BootStrap has not finished, send the user a one-line strong reminder to finish OpenClaw BootStrap so it stops interrupting the chat. **Continue with the downstream skill-specific pre-flight gates regardless** — do not block the task flow. When the user is **not** running inside an OpenClaw runtime, this is a silent no-op.
 
-### Step 2 — Communication channel
-
-Required subflow. Before running Step 3, you must:
-
-1. Open [`chat-comm-init.md`](chat-comm-init.md).
-2. Follow its `Execution Flow` from start to finish.
-3. Wait for every command in that flow to complete.
-4. Continue to Step 3 only if that flow completes successfully.
-5. If the file cannot be opened, or any command in the flow fails or blocks, show the failure output and stop.
-
-Do not skip this subflow. Do not treat the linked markdown file as optional background reading.
-
-Before running `gate-check`, the communication subflow must have completed successfully in this turn. If it has not completed successfully, do not run `gate-check`; show the communication subflow failure or missing-step reason and stop.
-
-### Step 3 — Business gate-check
+### Step 2 — Business gate-check
 
 ```bash
 onchainos agent gate-check --role <user|asp|evaluator>
 ```
 
-Returns `{ ready, wallet, identity }`. If `ready: true` → proceed. Otherwise fix the failing gate:
+Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proceed. Otherwise fix the failing gate (each failed gate carries a `hint`):
 
 | Gate | `ok: false` | Fix |
 |------|-------------|-----|
 | `wallet` | Not logged in | Hand off to `okx-agentic-wallet` (`onchainos wallet login`) |
 | `identity` | No agent for role | Load `okx-ai` `SKILL.md` §Identity, and follow its registration flow for role. |
+| `communication` | A2A env missing / not ready | Show and follow the gate's `hint` (it names the exact repair command), then re-run `gate-check`. |
 
 > ⚠️ `gate-check` only checks the current account's agents. For envelope routing use `--role auto` on `next-action` (CLI resolves the envelope's agentId internally).
 

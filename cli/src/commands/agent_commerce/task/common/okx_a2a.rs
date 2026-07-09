@@ -9,6 +9,198 @@
 use anyhow::Result;
 use std::process::Command;
 
+// ── Communication readiness preflight ──────────────────────────────────────
+
+/// Env flag that disables the readiness preflight entirely (tests / CI /
+/// power users who manage the a2a environment themselves).
+pub const SKIP_A2A_PREFLIGHT_ENV: &str = "ONCHAINOS_SKIP_A2A_PREFLIGHT";
+
+/// Build a command that resolves npm-installed CLIs on every platform.
+/// Windows CreateProcess only resolves `.exe` for a bare name, but npm lays
+/// down `okx-a2a.cmd` / `npm.cmd` shims — route through `cmd /C` there so the
+/// shell applies PATHEXT. Args here are fixed flag tokens (no spaces), so no
+/// extra quoting is needed.
+fn npm_cli_command(program: &str, args: &[&str]) -> Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").arg(program).args(args);
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new(program);
+        cmd.args(args);
+        cmd
+    }
+}
+
+fn run_silently(program: &str, args: &[&str]) -> Option<std::process::Output> {
+    npm_cli_command(program, args).output().ok()
+}
+
+/// Result of the read-only A2A readiness probe.
+enum CommReadiness {
+    /// A definitive positive verdict (or the probe was skipped via env).
+    Ready,
+    /// A DEFINITIVE negative: okx-a2a not installed, or doctor returned a valid
+    /// report whose readiness verdict is false. Callers block with this hint.
+    NotReady(String),
+    /// No usable verdict could be obtained even though okx-a2a is installed
+    /// (doctor crashed / produced no JSON / a build too old to have `doctor` /
+    /// a report without a readiness field). We must NOT hold user operations
+    /// hostage to a broken checker — callers proceed, emitting this warning.
+    Unverifiable(String),
+}
+
+/// READ-ONLY probe of the local A2A communication environment. Never installs,
+/// fixes, or prompts — repairs are explicitly the user's (or the AI session's)
+/// move via `okx-a2a doctor --fix`, which can do the interactive parts (plugin
+/// install, provider login) that a silent path cannot. Outcomes:
+/// - SKIP env set → Ready
+/// - `okx-a2a` not installed → NotReady (a definitive, knowable bad state)
+/// - doctor returns a valid readiness verdict → Ready / NotReady accordingly
+/// - okx-a2a present but doctor yields no usable verdict (crash / non-JSON /
+///   no `doctor` command / missing readiness field) → Unverifiable (proceed)
+fn probe_communication_readiness() -> CommReadiness {
+    if std::env::var(SKIP_A2A_PREFLIGHT_ENV).ok().as_deref() == Some("1") {
+        return CommReadiness::Ready;
+    }
+
+    let installed = run_silently("okx-a2a", &["--version"])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !installed {
+        return CommReadiness::NotReady(
+            "okx-a2a is not installed. Install and initialize it: \
+             run `npm i -g @okxweb3/a2a-node`, then `okx-a2a doctor --fix`."
+                .to_string(),
+        );
+    }
+
+    eprintln!("[onchainos] checking A2A communication readiness (okx-a2a doctor)...");
+    let report = run_silently("okx-a2a", &["doctor", "--json"])
+        .and_then(|out| serde_json::from_slice::<serde_json::Value>(&out.stdout).ok());
+    let Some(report) = report else {
+        return CommReadiness::Unverifiable(
+            "A2A readiness could not be verified: okx-a2a doctor produced no usable report \
+             (the installed build may be outdated or broken). Continuing without the check — \
+             if communication fails, run `okx-a2a doctor --fix` (or reinstall with \
+             `npm i -g @okxweb3/a2a-node@latest`)."
+                .to_string(),
+        );
+    };
+
+    // Read the readiness verdict. `ready` is the machine-readable field; fall
+    // back to `ok` (its alias). A report without either boolean is NOT a valid
+    // verdict — treat it as unverifiable, not as "not ready".
+    let verdict = report
+        .get("ready")
+        .and_then(|v| v.as_bool())
+        .or_else(|| report.get("ok").and_then(|v| v.as_bool()));
+    match verdict {
+        Some(true) => {
+            eprintln!("[onchainos] A2A communication is ready");
+            CommReadiness::Ready
+        }
+        Some(false) => {
+            let message = report
+                .get("userMessage")
+                .and_then(|v| v.as_str())
+                .unwrap_or("A2A communication is not fully ready");
+            eprintln!("[onchainos] A2A communication is NOT ready: {message}");
+            CommReadiness::NotReady(build_not_ready_hint(message, &report))
+        }
+        None => CommReadiness::Unverifiable(
+            "A2A readiness could not be verified: okx-a2a doctor returned no readiness verdict. \
+             Continuing without the check — if communication fails, run `okx-a2a doctor --fix`."
+                .to_string(),
+        ),
+    }
+}
+
+/// Assemble the user-facing not-ready hint: doctor's userMessage plus each
+/// blocking (non-optional) nextAction's why and command, and the repair
+/// command. Context-neutral so both the blocking error path and the
+/// gate-check `hint` can reuse it. Must state intent and action plainly (e.g.
+/// "The Hermes okx-a2a plugin was just installed and takes effect after the
+/// Hermes gateway restarts — run /restart inside Hermes").
+fn build_not_ready_hint(user_message: &str, report: &serde_json::Value) -> String {
+    let mut lines = vec![user_message.to_string()];
+    if let Some(actions) = report.get("nextActions").and_then(|v| v.as_array()) {
+        for action in actions {
+            let optional = action.get("optional").and_then(|v| v.as_bool()).unwrap_or(false);
+            if optional {
+                continue;
+            }
+            let why = action.get("why").and_then(|v| v.as_str()).unwrap_or("");
+            let command = action.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            match (why.is_empty(), command.is_empty()) {
+                (false, false) => lines.push(format!("- {why} (run: {command})")),
+                (false, true) => lines.push(format!("- {why}")),
+                (true, false) => lines.push(format!("- run: {command}")),
+                (true, true) => {}
+            }
+        }
+    }
+    lines.push("Run `okx-a2a doctor --fix` to repair the local A2A environment, then retry.".to_string());
+    lines.join("\n")
+}
+
+/// READ-ONLY A2A readiness gate, run BEFORE identity mutations
+/// (agent create / update / activate) and evaluator staking. Blocks ONLY on a
+/// definitive not-ready verdict (missing okx-a2a, or doctor says not ready);
+/// when readiness cannot be verified (broken checker), it proceeds with a
+/// warning rather than holding the user operation hostage. Never repairs.
+pub fn ensure_communication_ready_preflight() -> Result<()> {
+    match probe_communication_readiness() {
+        CommReadiness::Ready => Ok(()),
+        CommReadiness::NotReady(hint) => anyhow::bail!(
+            "A2A communication is not ready, so this operation was not executed. {hint}"
+        ),
+        CommReadiness::Unverifiable(note) => {
+            eprintln!("[onchainos] {note}");
+            Ok(())
+        }
+    }
+}
+
+/// Communication leg of `agent gate-check`, in the same `{ok, hint}` shape as
+/// the wallet / identity gates. Read-only: reports readiness, never repairs.
+/// Only a definitive not-ready verdict fails the gate; an unverifiable check
+/// stays `ok: true` (with a `note`) so a broken checker never blocks the flow.
+pub fn communication_gate_json() -> serde_json::Value {
+    match probe_communication_readiness() {
+        CommReadiness::Ready => serde_json::json!({ "ok": true }),
+        CommReadiness::NotReady(hint) => serde_json::json!({ "ok": false, "hint": hint }),
+        CommReadiness::Unverifiable(note) => serde_json::json!({ "ok": true, "note": note }),
+    }
+}
+
+/// Silently refresh the local A2A agent identities after a successful
+/// identity mutation (create / update / activate / deactivate), so the new
+/// or changed agent is picked up by the daemon immediately instead of on the
+/// next periodic sync. Waits for the daemon's completed refresh result (same
+/// semantics the LLM-driven ensure flow used). Best-effort: any failure —
+/// including okx-a2a missing or the daemon not running — degrades to a
+/// single stderr note. Honors the same skip env as the preflight.
+pub fn refresh_agent_identities_silently() {
+    if std::env::var(SKIP_A2A_PREFLIGHT_ENV).ok().as_deref() == Some("1") {
+        return;
+    }
+    eprintln!("[onchainos] refreshing A2A agent identities (okx-a2a agent refresh)...");
+    let ok = run_silently("okx-a2a", &["agent", "refresh", "--json"])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if ok {
+        eprintln!("[onchainos] A2A agent identities refreshed");
+    } else {
+        eprintln!("[onchainos] A2A agent refresh did not complete (non-fatal); the daemon syncs periodically, or run `okx-a2a agent refresh` manually");
+    }
+}
+
 // ── User-facing notifications ──────────────────────────────────────────────
 
 /// Bridge equivalent: `xmtp_dispatch_user '{"content": "..."}'`

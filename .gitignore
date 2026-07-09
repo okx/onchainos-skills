@@ -83,3 +83,6 @@ skills/okx-agent-task-workspace/
 
 # oli-flow session-local runtime state (never committed)
 .harness-paths
+
+# codegraph local index (never committed)
+.codegraph/
