@@ -43,8 +43,7 @@ Before the first `onchainos` command this session, read and follow [_shared/pref
 
 1. **Read the matched row's linked file first** (per the Intent Routing table) — it carries the flow and the commands you need. Never guess subcommand, flag, or file names.
 2. **When you need exact flags, defaults, or return-field schemas** that the domain file doesn't spell out, run `onchainos <group> <subcommand> --help` (the CLI is the source of truth), or load that domain's `-cli-reference.md` when the flow needs it (each domain file lists its own deeper files at the bottom). Don't load it up front.
-3. **Scripts / automation: append `--format json`** to every command for machine-readable output.
-4. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below.
+3. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below.
 
 ## Chain Name Support
 

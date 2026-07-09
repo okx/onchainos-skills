@@ -5,6 +5,9 @@
 #   • cli/Cargo.toml          ([package] version)
 #   • cli/Cargo.lock          (the onchainos-cli package entry)
 #   • skills/*/SKILL.md       (the frontmatter `version:` field of every skill)
+#   • package.json            (the top-level `"version"` field)
+#   • .claude-plugin/plugin.json / .cursor-plugin/plugin.json / .codex-plugin/plugin.json
+#                             (the top-level `"version"` field)
 #
 #   MAJOR   incompatible API changes              (4.0.0)
 #   MINOR   backwards-compatible new functionality (3.3.0)
@@ -21,6 +24,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CARGO_TOML="$SCRIPT_DIR/../cli/Cargo.toml"
 CARGO_LOCK="$SCRIPT_DIR/../cli/Cargo.lock"
 SKILLS_DIR="$SCRIPT_DIR/../skills"
+PACKAGE_JSON="$SCRIPT_DIR/../package.json"
+PLUGIN_JSONS=(
+  "$SCRIPT_DIR/../.claude-plugin/plugin.json"
+  "$SCRIPT_DIR/../.cursor-plugin/plugin.json"
+  "$SCRIPT_DIR/../.codex-plugin/plugin.json"
+)
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -155,6 +164,21 @@ update_skill_md() {
   mv "$tmp" "$file"
 }
 
+# replace the first top-level `"version": "x.y.z"` line in a JSON manifest
+# (package.json / *-plugin/plugin.json)
+update_json_version() {
+  local file="$1" tmp
+  tmp="$(mktemp)"
+  awk -v new="$NEW" '
+    !done && /^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+[^"]*"/ {
+      sub(/"[0-9]+\.[0-9]+\.[0-9]+[^"]*"/, "\"" new "\"")
+      done = 1
+    }
+    { print }
+  ' "$file" > "$tmp"
+  mv "$tmp" "$file"
+}
+
 # ── apply the new version everywhere ───────────────────────────────────────────
 
 update_cargo_toml "$CARGO_TOML"
@@ -176,6 +200,21 @@ if [[ -d "$SKILLS_DIR" ]]; then
   done
 fi
 
+PACKAGE_UPDATED=false
+if [[ -f "$PACKAGE_JSON" ]] && grep -qE '^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+[^"]*"' "$PACKAGE_JSON"; then
+  update_json_version "$PACKAGE_JSON"
+  PACKAGE_UPDATED=true
+fi
+
+PLUGIN_COUNT=0
+for plugin in "${PLUGIN_JSONS[@]}"; do
+  [[ -f "$plugin" ]] || continue
+  if grep -qE '^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+[^"]*"' "$plugin"; then
+    update_json_version "$plugin"
+    PLUGIN_COUNT=$((PLUGIN_COUNT + 1))
+  fi
+done
+
 # ── report ─────────────────────────────────────────────────────────────────────
 
 echo
@@ -189,4 +228,10 @@ else
   echo "  $(dim "cli/Cargo.lock skipped (onchainos-cli entry not found)")"
 fi
 echo "  $SKILL_COUNT SKILL.md file(s) updated"
+if [[ "$PACKAGE_UPDATED" == true ]]; then
+  echo "  package.json updated"
+else
+  echo "  $(dim "package.json skipped (version field not found)")"
+fi
+echo "  $PLUGIN_COUNT plugin.json file(s) updated"
 echo
