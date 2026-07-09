@@ -4,7 +4,7 @@ description: "OKX Agentic Wallet — the single skill for the user's wallet and 
 license: MIT
 metadata:
   author: okx
-  version: "4.2.0"
+  version: "4.2.1"
   homepage: "https://web3.okx.com"
 ---
 

@@ -3,6 +3,18 @@ use serde_json::Value;
 
 use crate::payment_notify;
 
+/// Serialize agent-facing JSON. **Compact by default** — this JSON is consumed
+/// by the agent (which renders it into tables/summaries for the user), so the
+/// pretty-print whitespace is pure token overhead. Set `ONCHAINOS_PRETTY=1` to
+/// get indented output when inspecting the CLI by hand.
+pub fn to_agent_json<T: Serialize>(value: &T) -> serde_json::Result<String> {
+    if std::env::var("ONCHAINOS_PRETTY").is_ok_and(|v| v == "1") {
+        serde_json::to_string_pretty(value)
+    } else {
+        serde_json::to_string(value)
+    }
+}
+
 #[derive(Serialize)]
 struct JsonOutput<T: Serialize> {
     ok: bool,
@@ -24,7 +36,7 @@ pub fn success_empty() {
         error: None,
         notifications: payment_notify::drain_events(),
     };
-    println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    println!("{}", to_agent_json(&out).unwrap());
 }
 
 /// Print a success response with data: `{ "ok": true, "data": ... }`
@@ -35,7 +47,7 @@ pub fn success<T: Serialize>(data: T) {
         error: None,
         notifications: payment_notify::drain_events(),
     };
-    println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    println!("{}", to_agent_json(&out).unwrap());
 }
 
 /// Print an error response: `{ "ok": false, "error": "<msg>" }`
@@ -46,7 +58,7 @@ pub fn error(msg: &str) {
         error: Some(msg.to_string()),
         notifications: payment_notify::drain_events(),
     };
-    println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    println!("{}", to_agent_json(&out).unwrap());
 }
 
 // ── Confirming ───────────────────────────────────────────────────────
@@ -87,7 +99,7 @@ pub fn confirming_scene(message: &str, next: &str, scene: Option<&str>) {
         next: next.to_string(),
         notifications: payment_notify::drain_events(),
     };
-    println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    println!("{}", to_agent_json(&out).unwrap());
 }
 
 /// Structured error type for CLI operations that require user confirmation.
@@ -132,7 +144,7 @@ pub fn setup_required(error_code: &str, message: &str, data: &serde_json::Value)
         "message": message,
         "data": data,
     });
-    println!("{}", serde_json::to_string_pretty(&v).unwrap());
+    println!("{}", to_agent_json(&v).unwrap());
 }
 
 /// Structured error type for CLI operations that require Gas Station setup

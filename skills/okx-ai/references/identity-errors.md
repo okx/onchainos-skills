@@ -50,6 +50,6 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 ### activate / submit-approval outcomes
 
 - `activate.approvalStatus: 2` → "Your agent is under review — usually ready within 24h; once approved it appears on the marketplace." **Stop.** Don't call `submit-approval`; no Step 5/6.
-- `submit-approval success:true` → see manage.md `activate + submitApproval` row (→ Step 6).
+- `submit-approval success:true` → see manage.md `activate + submitApproval` row.
 - `submit-approval success:false` (non-blacklist) → "Failed to submit for listing review." + raw line + "You can try again later." **Stop.**
 

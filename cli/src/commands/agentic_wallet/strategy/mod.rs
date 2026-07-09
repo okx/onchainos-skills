@@ -4,7 +4,7 @@
 use anyhow::Result;
 use clap::Subcommand;
 
-use super::Context;
+use crate::commands::Context;
 
 mod api;
 mod handlers;

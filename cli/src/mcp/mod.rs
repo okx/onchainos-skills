@@ -860,7 +860,7 @@ fn ok(data: Value) -> Result<String, String> {
     } else {
         serde_json::json!({ "data": data, "notifications": events })
     };
-    Ok(serde_json::to_string_pretty(&payload)
+    Ok(crate::output::to_agent_json(&payload)
         .unwrap_or_else(|e| format!("failed to serialize response: {e}")))
 }
 
