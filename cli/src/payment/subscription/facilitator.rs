@@ -11,7 +11,7 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use crate::subscription_types::{AllowanceStatus, BuyerSubscriptionListResp};
+use crate::payment::subscription::types::{AllowanceStatus, BuyerSubscriptionListResp};
 use crate::wallet_api::WalletApiClient;
 
 const BASE: &str = "/api/v6/pay/x402";

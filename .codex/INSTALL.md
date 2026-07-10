@@ -53,7 +53,7 @@ ls -la ~/.agents/skills/onchainos-skills
 You should see the Onchain OS skill set, including categories such as:
 
 - `okx-agentic-wallet`
-- `okx-dex`
+- `okx-dex-market`
 - `okx-defi`
 - `okx-ai`
 - `okx-guide`

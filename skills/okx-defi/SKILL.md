@@ -1,10 +1,10 @@
 ---
 name: okx-defi
-description: "OKX-aggregated DeFi (no specific DApp named) — product discovery, deposit/withdraw/claim execution, AND positions viewing. **If the user names ANY third-party protocol/DApp (Aave, Lido, PancakeSwap, Uniswap, Curve, Compound, Morpho, Pendle, Kamino, Raydium, Hyperliquid, Polymarket, …), route to okx-dapp-discovery — NOT here, even for 'show my Aave positions'.** INVEST triggers: 'invest in DeFi', 'earn yield', 'find best APY', 'deposit/stake for yield', 'search DeFi products', 'redeem/withdraw position', 'claim DeFi rewards', 'borrow against asset', 'repay loan', 'add/remove CLMM liquidity', 'APY/TVL history', 'depth chart', yield farming, lending, staking, liquidity pools. PORTFOLIO triggers: 'check my DeFi positions', 'view DeFi holdings/portfolio', 'my staking/lending positions', 'DeFi balance', 'DeFi 持仓', '我的DeFi资产'. Do NOT use for: DEX swaps (okx-agentic-wallet), token prices (okx-dex), wallet token balances (okx-agentic-wallet)."
+description: "OKX-aggregated DeFi (no specific DApp named) — product discovery, deposit/withdraw/claim execution, AND positions viewing. **If the user names ANY third-party protocol/DApp (Aave, Lido, PancakeSwap, Uniswap, Curve, Compound, Morpho, Pendle, Kamino, Raydium, Hyperliquid, Polymarket, …), route to okx-dapp-discovery — NOT here, even for 'show my Aave positions'.** INVEST triggers: 'invest in DeFi', 'earn yield', 'find best APY', 'deposit/stake for yield', 'search DeFi products', 'redeem/withdraw position', 'claim DeFi rewards', 'borrow against asset', 'repay loan', 'add/remove CLMM liquidity', 'APY/TVL history', 'depth chart', yield farming, lending, staking, liquidity pools. PORTFOLIO triggers: 'check my DeFi positions', 'view DeFi holdings/portfolio', 'my staking/lending positions', 'DeFi balance', 'DeFi 持仓', '我的DeFi资产'. Do NOT use for: DEX swaps (okx-agentic-wallet), token prices (okx-dex-market), wallet token balances (okx-agentic-wallet)."
 license: MIT
 metadata:
   author: okx
-  version: "4.2.1"
+  version: "4.2.2"
   homepage: "https://web3.okx.com"
 ---
 
@@ -38,7 +38,7 @@ Typical flow spans both: view positions (Portfolio) → redeem or claim (Invest)
 ## Skill Routing
 
 - For DApp-named investing/lending/staking/positions ("on Aave", "my Hyperliquid balance") → use `okx-dapp-discovery`
-- For token price/chart or token search by name/contract → use `okx-dex`
+- For token price/chart or token search by name/contract → use `okx-dex-market`
 - For DEX spot swap execution → use `okx-agentic-wallet`
 - For wallet token balances → use `okx-agentic-wallet`
 - For broadcasting signed transactions → use `okx-agentic-wallet`

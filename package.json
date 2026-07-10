@@ -1,6 +1,6 @@
 {
   "name": "onchainos-skills",
-  "version": "4.2.1",
+  "version": "4.2.2",
   "description": "onchainos skills for AI coding assistants — token search, market data, wallet balance, swap execution, and transaction broadcasting across 20+ chains",
   "keywords": [
     "claude-code",
@@ -45,7 +45,7 @@
   "scripts": {
     "sync-shared": "bash scripts/sync-shared.sh",
     "bumpVersion": "bash scripts/bump-version.sh",
-    "postinstall": "echo '\\n  onchainos-skills installed!\\n  Skills: okx-agentic-wallet, okx-dex, okx-defi, okx-ai, okx-guide, okx-agent-payments-protocol, okx-dapp-discovery, okx-growth-competition\\n  Docs: https://web3.okx.com\\n'"
+    "postinstall": "echo '\\n  onchainos-skills installed!\\n  Skills: okx-agentic-wallet, okx-dex-market, okx-defi, okx-ai, okx-guide, okx-agent-payments-protocol, okx-dapp-discovery, okx-growth-competition\\n  Docs: https://web3.okx.com\\n'"
   },
   "engines": {
     "node": ">=18"

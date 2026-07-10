@@ -1,10 +1,10 @@
 ---
-name: okx-dex
+name: okx-dex-market
 description: "HARD BLOCK — never use for prediction-market/Polymarket UpDown queries; route to okx-dapp-discovery when a named DApp (Polymarket/Aave/Hyperliquid/PancakeSwap/Morpho) appears with a timeframe, or 涨跌/updown for BTC/ETH/SOL/XRP/BNB/DOGE/HYPE. Otherwise, read-only on-chain DEX data, 6 groups: TOKEN (search, hot/热门, liquidity, holders/whale, risk metadata, cluster/持仓集中度, trade history, top traders); MARKET (price/价格, K线/OHLC, index price, wallet PnL/胜率, trade history); SIGNAL (smart money/KOL/whale tracking, buy signals/信号, leaderboard/牛人榜); SOCIAL (news/新闻, sentiment/情绪, token vibe/热度, KOL leaderboard); TRENCHES (pump.fun/meme launches/新盘/扫链, dev reputation, bundle/sniper detection/捆绑狙击者, co-investor — read-only; buy/snipe → okx-dapp-discovery); WS (onchainos ws CLI, or custom WebSocket script/脚本). Also owns Market API payment/x402, quota/额度, and MARKET_API_*_OVER_QUOTA/confirming:true for all 6 groups."
 license: MIT
 metadata:
   author: okx
-  version: "4.2.1"
+  version: "4.2.2"
   homepage: "https://web3.okx.com"
 ---
 

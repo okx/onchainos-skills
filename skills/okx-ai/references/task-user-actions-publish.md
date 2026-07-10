@@ -156,7 +156,6 @@ Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `ServiceDescri
      - Display each field from `fields` / `requiredAnyOf` to the user with its `name`, `type`, and `description`.
      - The user MUST fill in or explicitly confirm every field value. Do NOT auto-generate or infer values on behalf of the user.
      - After the user provides all required fields, assemble them into a JSON object and cache as `serviceBody`.
-   - Acceptance / delivery deadlines are now managed by the server — do NOT pass `--deadline-open` / `--deadline-submit`.
    - ⚠️ **Language matching**: field labels MUST match the user's language.
    - Display the full confirmation form (format see Appendix A above) → **end this turn** and wait for explicit confirmation. If refused, end.
    - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn.**

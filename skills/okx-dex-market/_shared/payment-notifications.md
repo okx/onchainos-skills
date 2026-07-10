@@ -6,7 +6,7 @@ and surfaces the following events in the response `notifications[]` array.
 
 This document is the canonical source for the 5 event codes, their user-facing
 copy, placeholder sources, and the agent handling procedure. It is consumed by
-the Market, Token, Signal, and Trenches capabilities of `okx-dex`.
+the Market, Token, Signal, and Trenches capabilities of `okx-dex-market`.
 
 ---
 

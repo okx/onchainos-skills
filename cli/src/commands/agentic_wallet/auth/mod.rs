@@ -1161,7 +1161,7 @@ pub(super) async fn cmd_logout() -> Result<()> {
         eprintln!("[DEBUG] cmd_logout: payment_cache.json deleted");
     }
 
-    crate::subscription_cache::SubscriptionCache::delete()?;
+    crate::payment::subscription::cache::SubscriptionCache::delete()?;
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG] cmd_logout: subscriptions.json deleted");
     }

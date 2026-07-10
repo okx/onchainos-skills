@@ -1,4 +1,4 @@
-# Keyword Glossary — okx-dex (Trenches)
+# Keyword Glossary — okx-dex-market (Trenches)
 
 | Chinese | English / Platform Terms | Maps To |
 |---|---|---|

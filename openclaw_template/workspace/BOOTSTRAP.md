@@ -85,7 +85,7 @@ ln -sf ~/.onchainos/skills/* skills/
 openclaw skills list
 ```
 
-Confirm onchainos skills are present (e.g. `okx-dex`, `okx-agentic-wallet`, `okx-defi`). If they do not appear, re-run the symlink command above and check `ls -la skills/` and `ls ~/.onchainos/skills/`. If still missing, re-run setup from Step 1.
+Confirm onchainos skills are present (e.g. `okx-dex-market`, `okx-agentic-wallet`, `okx-defi`). If they do not appear, re-run the symlink command above and check `ls -la skills/` and `ls ~/.onchainos/skills/`. If still missing, re-run setup from Step 1.
 
 **Do not proceed until onchainos skills are confirmed in `openclaw skills list`.**
 

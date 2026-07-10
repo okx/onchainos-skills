@@ -14,7 +14,7 @@ Collect all fields → show confirmation form → wait for explicit user confirm
 Step 1 -- Field collection (collect progressively in conversation; **only enter Step 2 when all fields are ready**)
 ================================================
 
-Description, Budget, Max budget, Currency: MUST come from user's explicit input — no guessing/auto-fill. Title and Summary: agent-generated. Acceptance/Delivery window: system defaults, do not ask or show.
+Description, Budget, Max budget, Currency: MUST come from user's explicit input — no guessing/auto-fill. Title and Summary: agent-generated. Acceptance/Delivery window: system defaults, do not ask (read-only display in confirmation).
 
 | Field | CLI flag | Constraint | How to collect |
 |---|---|---|---|

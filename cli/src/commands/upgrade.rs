@@ -61,13 +61,14 @@ const DEPRECATED_SKILLS: &[&str] = &[
     // Merged into `okx-defi` (former deprecated stubs, now removed).
     "okx-defi-invest",
     "okx-defi-portfolio",
-    // Merged into `okx-dex` (former deprecated stubs, now removed).
-    "okx-dex-market",
+    // Merged into `okx-dex-market` (former deprecated stubs, now removed).
     "okx-dex-signal",
     "okx-dex-social",
     "okx-dex-token",
     "okx-dex-trenches",
     "okx-dex-ws",
+    // Renamed to `okx-dex-market` (old umbrella name, now removed).
+    "okx-dex",
 ];
 
 #[derive(clap::Args)]
@@ -766,7 +767,10 @@ fn remove_deprecated_skills() -> Value {
         })
     };
 
-    eprintln!("Removing deprecated skills: {}...", DEPRECATED_SKILLS.join(", "));
+    eprintln!(
+        "Removing deprecated skills: {}...",
+        DEPRECATED_SKILLS.join(", ")
+    );
     // Spawn directly — no separate `npx --version` probe, since that call is
     // itself unbounded and could hang before the timeout guard below applies.
     // A missing npx surfaces here as a NotFound spawn error → reported as a skip.
@@ -802,7 +806,10 @@ fn remove_deprecated_skills() -> Value {
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return degrade("failed", "npx skills remove timed out after 30s".to_string());
+                    return degrade(
+                        "failed",
+                        "npx skills remove timed out after 30s".to_string(),
+                    );
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
@@ -1142,7 +1149,13 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
                     }
                 }
             } else {
-                ("ok", Some(target.version), false, false, current.to_string())
+                (
+                    "ok",
+                    Some(target.version),
+                    false,
+                    false,
+                    current.to_string(),
+                )
             }
         }
         Err(e) => {
@@ -1708,10 +1721,16 @@ ccc333\trefs/heads/main
 
     #[test]
     fn is_dev_build_path_detects_target_component() {
-        assert!(is_dev_build_path(Path::new("/repo/cli/target/release/onchainos")));
-        assert!(is_dev_build_path(Path::new("/repo/cli/target/debug/onchainos")));
+        assert!(is_dev_build_path(Path::new(
+            "/repo/cli/target/release/onchainos"
+        )));
+        assert!(is_dev_build_path(Path::new(
+            "/repo/cli/target/debug/onchainos"
+        )));
         assert!(!is_dev_build_path(Path::new("/usr/local/bin/onchainos")));
-        assert!(!is_dev_build_path(Path::new("/home/u/.local/bin/onchainos")));
+        assert!(!is_dev_build_path(Path::new(
+            "/home/u/.local/bin/onchainos"
+        )));
     }
 
     #[test]

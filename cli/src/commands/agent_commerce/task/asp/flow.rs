@@ -118,6 +118,16 @@ pub async fn generate_a2mcp_next_action(
     }
 }
 
+/// Extract the decision deadline (unix seconds) from a `job_rejected` event
+/// `message` JSON. Returns `None` when the field is absent, non-numeric, or
+/// `<= 0` (FR-4 / FR-5 graceful no-op).
+fn reject_expire_time(message: Option<&serde_json::Value>) -> Option<i64> {
+    message
+        .and_then(|m| m.get("expireTime"))
+        .and_then(|v| v.as_i64())
+        .filter(|&t| t > 0)
+}
+
 /// Generate the structured next-action prompt for the ASP based on event.
 ///
 /// `event_str` accepts either an event name (provider_applied / job_accepted / ...)
@@ -328,7 +338,10 @@ pub async fn generate_next_action(
 
         // ─── Scene 6: User Agent rejected the deliverable ─────────────────────────────────
         Event::JobRejected => {
-            let user_prompt = super::content::job_rejected_user_decision_prompt(&short_id);
+            // FR-4: thread the decision deadline from the inbound event message
+            // into the ASP arbitration card (unix seconds; filtered `> 0`).
+            let expire_time = reject_expire_time(message);
+            let user_prompt = super::content::job_rejected_user_decision_prompt(&short_id, expire_time);
             let to_flag = prefetched
                 .and_then(|p| p.user_agent_id.as_deref())
                 .filter(|s| !s.is_empty())
@@ -1154,3 +1167,32 @@ fn user_attachment_received_cli(
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── reject_expire_time extraction (FR-4) ─────────────────────────────
+
+    #[test]
+    fn reject_expire_time_extracts_positive() {
+        let now = chrono::Local::now().timestamp();
+        let msg = json!({ "event": "job_rejected", "expireTime": now + 86_400 });
+        assert_eq!(reject_expire_time(Some(&msg)), Some(now + 86_400));
+    }
+
+    #[test]
+    fn reject_expire_time_absent_is_none() {
+        let msg = json!({ "event": "job_rejected" });
+        assert_eq!(reject_expire_time(Some(&msg)), None);
+        assert_eq!(reject_expire_time(None), None);
+    }
+
+    #[test]
+    fn reject_expire_time_nonpositive_is_none() {
+        let msg = json!({ "expireTime": 0 });
+        assert_eq!(reject_expire_time(Some(&msg)), None);
+        let msg = json!({ "expireTime": -1 });
+        assert_eq!(reject_expire_time(Some(&msg)), None);
+    }
+}
