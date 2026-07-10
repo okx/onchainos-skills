@@ -7,7 +7,7 @@
 //! resolves a subId (cache or `--sub-id`) and personal-signs an `APP-Access`
 //! AccessProof header.
 //!
-//! The local subId cache is a convenience index only (see [`crate::subscription_cache`]).
+//! The local subId cache is a convenience index only (see [`crate::payment::subscription::cache`]).
 
 use std::io::Write;
 
@@ -19,10 +19,10 @@ use serde_json::{json, Value};
 use crate::chains;
 use crate::commands::payment::payment_flow;
 use crate::output;
-use crate::subscription_cache::{host_of, SubscriptionCache};
-use crate::subscription_facilitator;
-use crate::subscription_sign;
-use crate::subscription_types::{SubscriptionCacheEntry, SubscriptionPayload};
+use crate::payment::subscription::cache::{host_of, SubscriptionCache};
+use crate::payment::subscription::facilitator;
+use crate::payment::subscription::sign;
+use crate::payment::subscription::types::{SubscriptionCacheEntry, SubscriptionPayload};
 
 #[derive(Subcommand)]
 pub enum SubscriptionCommand {
@@ -313,8 +313,7 @@ async fn cmd_subscribe(accepts: &str, from: Option<&str>, url: Option<&str>) -> 
     let accepted = select_subscription_entry(&accepts_val)?;
     let (chain_index, chain_id, payer) =
         payment_flow::resolve_chain_and_payer(&accepted, from).await?;
-    let signed =
-        subscription_sign::sign_subscribe(&chain_index, chain_id, &payer, &accepted).await?;
+    let signed = sign::sign_subscribe(&chain_index, chain_id, &payer, &accepted).await?;
     let (hname, hvalue) = build_subscription_payment_header(&accepted, url, &signed.payload)?;
     cache_subscription(url, &signed.payload, &signed.sub_id, &signed.plan_id);
     let payload_v =
@@ -339,7 +338,7 @@ async fn cmd_change(
     let accepted = select_subscription_entry(&accepts_val)?;
     let (chain_index, chain_id, payer) =
         payment_flow::resolve_chain_and_payer(&accepted, from).await?;
-    let signed = subscription_sign::sign_change(
+    let signed = sign::sign_change(
         &chain_index,
         chain_id,
         &payer,
@@ -385,8 +384,7 @@ async fn cmd_access(
 
     let (chain_index, _chain_id, payer) =
         payment_flow::resolve_chain_and_payer_by_chain(chain, from).await?;
-    let (hname, hvalue) =
-        subscription_sign::build_access_proof(&chain_index, &payer, &resolved_sub).await?;
+    let (hname, hvalue) = sign::build_access_proof(&chain_index, &payer, &resolved_sub).await?;
 
     output::success(json!({
         "subId": resolved_sub,
@@ -412,7 +410,7 @@ async fn resolve_contract(
     let token = token.ok_or_else(|| {
         anyhow!("cancel requires --contract (subscription contract) or --token (to look it up)")
     })?;
-    let a = subscription_facilitator::allowance_status(payer, token, chain_index).await?;
+    let a = facilitator::allowance_status(payer, token, chain_index).await?;
     if a.subscription_contract.is_empty() {
         bail!("allowance-status returned no subscriptionContract for token {token}");
     }
@@ -436,7 +434,7 @@ async fn cmd_cancel(
         let new_sub_id = new_sub_id.ok_or_else(|| {
             anyhow!("cancel-pending requires --new-sub-id (the PENDING downgrade's newSubId)")
         })?;
-        let auth = subscription_sign::sign_cancel_pending_change(
+        let auth = sign::sign_cancel_pending_change(
             &chain_index,
             chain_id,
             &payer,
@@ -448,14 +446,8 @@ async fn cmd_cancel(
         let auth_v = serde_json::to_value(&auth).context("serialize pendingChangeCancelAuth")?;
         output::success(json!({ "pendingChangeCancelAuth": auth_v, "chainIndex": chain_index }));
     } else {
-        let auth = subscription_sign::sign_cancel(
-            &chain_index,
-            chain_id,
-            &payer,
-            sub_id,
-            &verifying_contract,
-        )
-        .await?;
+        let auth =
+            sign::sign_cancel(&chain_index, chain_id, &payer, sub_id, &verifying_contract).await?;
         // Don't mark the cache canceled here — this only signs the CancelAuth.
         // The sub stays active and billable until the contract executes; the
         // `my-subscriptions` reconcile corrects it once on-chain confirms.
@@ -473,7 +465,7 @@ async fn cmd_my_subscriptions(
 ) -> Result<()> {
     let (_chain_index, _chain_id, payer) =
         payment_flow::resolve_chain_and_payer_by_chain(chain, from).await?;
-    let resp = subscription_facilitator::my_subscriptions(&payer, limit, offset).await?;
+    let resp = facilitator::my_subscriptions(&payer, limit, offset).await?;
 
     // Reconcile the local cache from authoritative state.
     let mut cache = SubscriptionCache::load();
@@ -493,7 +485,7 @@ async fn cmd_my_subscriptions(
 async fn cmd_allowance_status(token: &str, chain: &str, from: Option<&str>) -> Result<()> {
     let (chain_index, _chain_id, payer) =
         payment_flow::resolve_chain_and_payer_by_chain(chain, from).await?;
-    let a = subscription_facilitator::allowance_status(&payer, token, &chain_index).await?;
+    let a = facilitator::allowance_status(&payer, token, &chain_index).await?;
     output::success(json!({
         "approvedAmount": a.approved_amount,
         "expiration": a.expiration,

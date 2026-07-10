@@ -60,7 +60,7 @@ For script requests, append `--format json` to all CLI commands.
 | Skill | Purpose | When to Use |
 |-------|---------|-------------|
 | okx-agentic-wallet | Wallet lifecycle (auth, balance, PnL, send, history, contract call), Gas Station, DEX swap, cross-chain bridge, limit-order strategy, transaction gateway, public-address portfolio, security scanning, audit log | User wants to operate their wallet or execute on-chain: log in, balance/PnL, send, call contracts, swap/trade, bridge, limit orders, broadcast/simulate a tx, look up a public address, safety-check a token/DApp/tx, or export the audit log |
-| okx-dex | Read-only on-chain DEX data: prices/charts/index/wallet PnL, smart money/KOL/whale tracking + buy signals + leaderboard, meme/pump.fun scanning + dev reputation + bundle detection (read-only), real-time WS monitoring/scripting, token search/metadata/rankings/liquidity/holders/top traders/cluster analysis, crypto news/sentiment/vibe | User asks for token prices, K-line data, wallet PnL, smart money/whale/KOL buying or signal alerts, new meme launches/dev reputation/bundle analysis, a WS script or real-time on-chain data stream, token rankings/holder info/cluster analysis, or news/sentiment/vibe score |
+| okx-dex-market | Read-only on-chain DEX data: prices/charts/index/wallet PnL, smart money/KOL/whale tracking + buy signals + leaderboard, meme/pump.fun scanning + dev reputation + bundle detection (read-only), real-time WS monitoring/scripting, token search/metadata/rankings/liquidity/holders/top traders/cluster analysis, crypto news/sentiment/vibe | User asks for token prices, K-line data, wallet PnL, smart money/whale/KOL buying or signal alerts, new meme launches/dev reputation/bundle analysis, a WS script or real-time on-chain data stream, token rankings/holder info/cluster analysis, or news/sentiment/vibe score |
 | okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred` — TEE or local-key), MPP (`charge` / `session` — open / voucher / topUp / close), and a2a-pay (paymentId-based create / pay / status). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session, pays for streaming / voucher / top-up payment-gated resources, or works with a paymentId / `a2a_...` link |
 | okx-defi | OKX-aggregated DeFi: product discovery, deposit, withdraw, claim rewards, plus positions overview | User wants to earn yield, stake, manage DeFi positions, or check DeFi positions across protocols |
 | okx-dapp-discovery | Third-party DApp routing — installs the matching plugin on demand and forwards the prompt to its quickstart | User names a specific third-party DApp (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, …) or asks "what dapps are available" |
@@ -147,7 +147,7 @@ Each session starts fresh. Workspace files are your memory — read them on star
 - **Transparency (mandatory):** Every response must cite its source. Before presenting results, always show:
   1. The **skill** or **workflow** that was invoked
   2. The exact **onchainos CLI command** that was executed
-  3. Example format: "Using **okx-dex** → `onchainos token search --query BONK`"
+  3. Example format: "Using **okx-dex-market** → `onchainos token search --query BONK`"
   4. If multiple commands were used, list each one
   This applies to **every** response — never present data without showing where it came from.
 - Use the **Output Template** from the matched workflow doc when running a workflow

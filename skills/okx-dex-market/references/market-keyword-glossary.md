@@ -1,4 +1,4 @@
-# Keyword Glossary — okx-dex (Market)
+# Keyword Glossary — okx-dex-market (Market)
 
 | Chinese | English / Platform Terms | Maps To |
 |---|---|---|

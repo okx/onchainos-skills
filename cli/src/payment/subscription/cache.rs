@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::subscription_types::{BuyerSubscriptionItem, SubscriptionCacheEntry};
+use crate::payment::subscription::types::{BuyerSubscriptionItem, SubscriptionCacheEntry};
 
 /// `SubscriptionState` integer → cache state string.
 fn state_label(state: u8) -> &'static str {

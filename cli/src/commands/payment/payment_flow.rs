@@ -504,7 +504,7 @@ pub(crate) async fn preflight_permit2_allowance(
     let required: alloy_primitives::U256 = required_amount.parse().with_context(|| {
         format!("invalid required amount (decimal uint256): {required_amount}")
     })?;
-    match crate::permit2_rpc::fetch_permit2_allowance(chain_index, asset, payer).await {
+    match crate::payment::permit2::rpc::fetch_permit2_allowance(chain_index, asset, payer).await {
         Ok(allowance) if allowance < required => bail!(
             "Permit2 allowance insufficient on token {} for chain {}. \
              Current allowance is {}, but this payment needs {}. \
@@ -537,7 +537,7 @@ pub(crate) fn permit2_timing_and_nonce(
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
     let valid_after = now
-        .saturating_sub(crate::permit2_types::CLOCK_SKEW_BACKDATE_SECS)
+        .saturating_sub(crate::payment::permit2::types::CLOCK_SKEW_BACKDATE_SECS)
         .to_string();
     let deadline = now
         .checked_add(max_timeout_seconds)
@@ -601,7 +601,7 @@ pub async fn sign_payment_with_preference(
         .map(|s| s.eq_ignore_ascii_case("period"))
         .unwrap_or(false);
     if is_subscription {
-        let signed = crate::subscription_sign::sign_subscribe(
+        let signed = crate::payment::subscription::sign::sign_subscribe(
             &chain_index,
             real_chain_id,
             payer_addr,
@@ -629,7 +629,7 @@ pub async fn sign_payment_with_preference(
         let chain_id = real_chain_id;
 
         if is_exact_permit2 {
-            let input = crate::permit2_eip712::ExactPermit2Input {
+            let input = crate::payment::permit2::eip712::ExactPermit2Input {
                 token: &params.asset,
                 amount: &params.amount,
                 spender: crate::chains::X402_EXACT_PERMIT2_PROXY,
@@ -640,7 +640,8 @@ pub async fn sign_payment_with_preference(
                 chain_id,
             };
             let payload =
-                crate::permit2_sign::sign_exact_permit2(&chain_index, payer_addr, &input).await?;
+                crate::payment::permit2::sign::sign_exact_permit2(&chain_index, payer_addr, &input)
+                    .await?;
             return Ok((
                 PaymentProof::Permit2 {
                     signature: payload.signature,
@@ -665,7 +666,7 @@ pub async fn sign_payment_with_preference(
             })?
             .to_string();
 
-        let input = crate::permit2_eip712::UptoPermit2Input {
+        let input = crate::payment::permit2::eip712::UptoPermit2Input {
             token: &params.asset,
             amount: &params.amount, // cap, not exact charge
             spender: crate::chains::X402_UPTO_PERMIT2_PROXY,
@@ -677,7 +678,8 @@ pub async fn sign_payment_with_preference(
             chain_id,
         };
         let payload =
-            crate::permit2_sign::sign_upto_permit2(&chain_index, payer_addr, &input).await?;
+            crate::payment::permit2::sign::sign_upto_permit2(&chain_index, payer_addr, &input)
+                .await?;
         return Ok((
             PaymentProof::Upto {
                 signature: payload.signature,
@@ -1036,7 +1038,7 @@ async fn sign_permit2_local_inner(
             })?
             .to_string();
 
-        let input = crate::permit2_eip712::UptoPermit2Input {
+        let input = crate::payment::permit2::eip712::UptoPermit2Input {
             token: &params.asset,
             amount: &params.amount, // cap, not exact charge
             spender: crate::chains::X402_UPTO_PERMIT2_PROXY,
@@ -1047,7 +1049,8 @@ async fn sign_permit2_local_inner(
             witness_valid_after: &valid_after,
             chain_id: real_chain_id,
         };
-        let payload = crate::permit2_sign::sign_upto_permit2_local(&pk_bytes, &payer_addr, &input)?;
+        let payload =
+            crate::payment::permit2::sign::sign_upto_permit2_local(&pk_bytes, &payer_addr, &input)?;
         return Ok((
             PaymentProof::Upto {
                 signature: payload.signature,
@@ -1058,7 +1061,7 @@ async fn sign_permit2_local_inner(
         ));
     }
 
-    let input = crate::permit2_eip712::ExactPermit2Input {
+    let input = crate::payment::permit2::eip712::ExactPermit2Input {
         token: &params.asset,
         amount: &params.amount,
         spender: crate::chains::X402_EXACT_PERMIT2_PROXY,
@@ -1068,7 +1071,8 @@ async fn sign_permit2_local_inner(
         witness_valid_after: &valid_after,
         chain_id: real_chain_id,
     };
-    let payload = crate::permit2_sign::sign_exact_permit2_local(&pk_bytes, &payer_addr, &input)?;
+    let payload =
+        crate::payment::permit2::sign::sign_exact_permit2_local(&pk_bytes, &payer_addr, &input)?;
     Ok((
         PaymentProof::Permit2 {
             signature: payload.signature,

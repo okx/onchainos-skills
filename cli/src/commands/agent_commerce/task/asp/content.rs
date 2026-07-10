@@ -137,11 +137,21 @@ pub fn job_accepted_user_notify_a2mcp(job_id: &str, agent_id: &str) -> String {
 ///
 /// The short jobId prefix lets the user tell tasks apart at a glance when
 /// multiple prompts are in flight concurrently.
-pub fn job_rejected_user_decision_prompt(short_id: &str) -> String {
+pub fn job_rejected_user_decision_prompt(short_id: &str, expire_time: Option<i64>) -> String {
+    // FR-4: append the decision-deadline reminder after the refund option. `None`
+    // (no expireTime, or not representable) ⇒ empty string, card unchanged (FR-5).
+    use super::super::common::deadline::{self, DeadlineKind};
+    let decision_deadline_line = deadline::deadline_reminder_line(
+        expire_time,
+        chrono::Local::now().timestamp(),
+        DeadlineKind::Decision,
+    )
+    .map(|l| format!("\n\x20\x20\x20\x20{l}"))
+    .unwrap_or_default();
     format!(
         "\x20\x20\x20\x20[Job {short_id} — you are the ASP] The User Agent rejected the deliverable. Choose:\n\
          \x20\x20\x20\x20A. File a dispute → reply 'file dispute, reason: <reason>'\n\
-         \x20\x20\x20\x20B. Agree to refund → reply 'agree to refund'"
+         \x20\x20\x20\x20B. Agree to refund → reply 'agree to refund'{decision_deadline_line}"
     )
 }
 
@@ -353,3 +363,32 @@ pub fn user_attachment_received_user_notify(job_id: &str) -> String {
     format!("[Job `{job_id}`] The User Agent sent an attachment (reference material for this task). File downloaded and saved locally.")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── job_rejected_user_decision_prompt decision-deadline reminder (FR-4) ──
+
+    #[test]
+    fn rejected_prompt_appends_decision_line_when_expire_present() {
+        let now = chrono::Local::now().timestamp();
+        let out = job_rejected_user_decision_prompt("0xabc", Some(now + 86_400));
+        assert!(
+            out.contains("\u{23f0} Decision deadline: 1 day(s)"),
+            "prompt should append the Decision reminder line; got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn rejected_prompt_no_reminder_when_expire_none() {
+        let out = job_rejected_user_decision_prompt("0xabc", None);
+        assert!(
+            !out.contains('\u{23f0}'),
+            "no reminder when expire_time is None; got:\n{out}"
+        );
+        assert!(
+            out.ends_with("agree to refund'"),
+            "card unchanged when None; got:\n{out}"
+        );
+    }
+}

@@ -104,7 +104,7 @@ Extended **≥ 75 confidence keywords**, **clarify-tier (50–74) keywords**, an
 
 **≥ 75 (trade verbs — install `pump-fun-plugin`):** buy pump.fun token, sell pump.fun token, snipe pump.fun, ape pump.fun, pump.fun trading, pump.fun bot. (ZH: glossary §5.)
 
-**Do NOT install for (route to `okx-dex` — analytical/read-only):** scan new pump.fun launches, pump.fun dev history, who aped pump.fun, bundler analysis, bonding curve progress (analytical), similar tokens by dev. (ZH: glossary §5.)
+**Do NOT install for (route to `okx-dex-market` — analytical/read-only):** scan new pump.fun launches, pump.fun dev history, who aped pump.fun, bundler analysis, bonding curve progress (analytical), similar tokens by dev. (ZH: glossary §5.)
 
 This verb-split is load-bearing — the disambiguation must hold at body level (see `SKILL.md` §3 step 0 pump.fun carve-out).
 

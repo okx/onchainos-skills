@@ -1,7 +1,7 @@
 //! Signing orchestration for the x402 `period` scheme.
 //!
 //! Every subscription signature goes through the TEE `eip712` path
-//! ([`crate::permit2_sign::tee_sign_eip712`]) so the contract can `ecrecover`
+//! ([`crate::payment::permit2::sign::tee_sign_eip712`]) so the contract can `ecrecover`
 //! `payer`.
 //!
 //! Subscribe / change are a double-sign: Permit2 `PermitSingle` (Permit2
@@ -16,14 +16,14 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rand::RngCore;
 use serde_json::Value;
 
-use crate::subscription_eip712::{
+use crate::payment::subscription::eip712::{
     access_proof_inner_hash, build_cancel_auth_typed_data,
     build_pending_change_cancel_auth_typed_data, build_permit_single_typed_data,
     build_subscription_terms_typed_data, hex0x, permit_single_struct_hash, terms_digest, SubDomain,
     SubscriptionTermsInput,
 };
-use crate::subscription_facilitator::allowance_status;
-use crate::subscription_types::{
+use crate::payment::subscription::facilitator::allowance_status;
+use crate::payment::subscription::types::{
     CancelAuth, PendingChangeCancelAuth, PermitDetailsWire, PermitSingleWire, SubscriptionPayload,
     SubscriptionTermsWire,
 };
@@ -309,7 +309,8 @@ async fn sign_double(
         &spender,
         &sig_deadline,
     )?);
-    let permit_sig = crate::permit2_sign::tee_sign_eip712(chain_index, payer, &permit_td).await?;
+    let permit_sig =
+        crate::payment::permit2::sign::tee_sign_eip712(chain_index, payer, &permit_td).await?;
 
     // 2) SubscriptionTerms (subscription domain) — permitHash binds the two sigs.
     let salt = random_bytes32_hex();
@@ -337,7 +338,8 @@ async fn sign_double(
         },
     };
     let terms_td = build_subscription_terms_typed_data(&terms_in);
-    let terms_sig = crate::permit2_sign::tee_sign_eip712(chain_index, payer, &terms_td).await?;
+    let terms_sig =
+        crate::payment::permit2::sign::tee_sign_eip712(chain_index, payer, &terms_td).await?;
 
     let sub_id = hex0x(terms_digest(&terms_in)?);
 
@@ -465,7 +467,7 @@ pub async fn sign_cancel(
         verifying_contract,
     };
     let td = build_cancel_auth_typed_data(0, sub_id, 0, &nonce, deadline, &d);
-    let signature = crate::permit2_sign::tee_sign_eip712(chain_index, payer, &td).await?;
+    let signature = crate::payment::permit2::sign::tee_sign_eip712(chain_index, payer, &td).await?;
     Ok(CancelAuth {
         action: 0,
         sub_id: sub_id.to_string(),
@@ -493,7 +495,7 @@ pub async fn sign_cancel_pending_change(
         verifying_contract,
     };
     let td = build_pending_change_cancel_auth_typed_data(sub_id, new_sub_id, &nonce, deadline, &d);
-    let signature = crate::permit2_sign::tee_sign_eip712(chain_index, payer, &td).await?;
+    let signature = crate::payment::permit2::sign::tee_sign_eip712(chain_index, payer, &td).await?;
     Ok(PendingChangeCancelAuth {
         sub_id: sub_id.to_string(),
         new_sub_id: new_sub_id.to_string(),
@@ -519,7 +521,8 @@ pub async fn build_access_proof(
     let timestamp = now_secs();
     let inner = access_proof_inner_hash(sub_id, payer, timestamp)?;
     let value_hex = hex0x(inner);
-    let signature = crate::permit2_sign::tee_sign_personal(chain_index, payer, &value_hex).await?;
+    let signature =
+        crate::payment::permit2::sign::tee_sign_personal(chain_index, payer, &value_hex).await?;
     let proof = serde_json::json!({
         "kind": "subscription-id",
         "subId": sub_id,

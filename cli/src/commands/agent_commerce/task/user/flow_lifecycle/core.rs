@@ -742,6 +742,7 @@ pub(crate) fn deliverable_received_cli(
                 service_params: None,
                 user_agent_address: None,
                 token_address: None,
+                expire_time: None,
             }
         });
         patched.deliverable = Some(crate::commands::agent_commerce::task::common::PreFetchedDeliverable {
@@ -978,6 +979,18 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         "job_submitted",
     );
 
+    // FR-2: append the review-deadline reminder to the acceptance card. `None`
+    // (no expireTime / expireConfig, or not representable) ⇒ empty string, so the
+    // card renders exactly as before (backward compatible, FR-5).
+    use crate::commands::agent_commerce::task::common::deadline::{self, DeadlineKind};
+    let review_deadline_line = deadline::deadline_reminder_line(
+        p.expire_time,
+        chrono::Local::now().timestamp(),
+        DeadlineKind::Review,
+    )
+    .map(|l| format!("{l}\n"))
+    .unwrap_or_default();
+
     format!(
     "MUST use `pending-decisions-v2 request` — NOT `onchainos agent user-notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\n\
      [Your next actions (strict order)]\n\n\
@@ -992,6 +1005,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
      B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
+     {review_deadline_line}\
      ```\n\n\
      ▸ deliverableType=text:\n\
      ```\n\
@@ -1003,6 +1017,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
      B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
+     {review_deadline_line}\
      ```\n\n\
      Push to user (localize `--user-content` and `--list-label` to user's language first):\n\n\
      {request_block}\n"
@@ -1385,5 +1400,85 @@ Part B continues
             }
             _ => panic!("expected Text"),
         }
+    }
+
+    // ── job_submitted_escrow review-deadline reminder (FR-2) ─────────────
+
+    fn escrow_ctx_with_expire(
+        expire_time: Option<i64>,
+    ) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+        use crate::commands::agent_commerce::task::common::{
+            PreFetchedDeliverable, PreFetchedTaskContext,
+        };
+        PreFetchedTaskContext {
+            title: "Test Task".to_string(),
+            description: String::new(),
+            token_symbol: "USDT".to_string(),
+            token_amount: "10".to_string(),
+            payment_mode: Some(1),
+            max_budget: None,
+            provider_agent_id: Some("558".to_string()),
+            user_agent_id: None,
+            visibility: None,
+            status: Some(2),
+            deliverable: Some(PreFetchedDeliverable {
+                path: "/tmp/deliverable.txt".to_string(),
+                deliverable_type: "text".to_string(),
+                original_name: "deliverable.txt".to_string(),
+                text_content: Some("hello".to_string()),
+            }),
+            service_id: None,
+            service_token_address: None,
+            service_token_amount: None,
+            service_params: None,
+            user_agent_address: None,
+            token_address: None,
+            expire_time,
+        }
+    }
+
+    #[test]
+    fn escrow_card_appends_review_line_when_expire_time_present() {
+        let now = chrono::Local::now().timestamp();
+        let p = escrow_ctx_with_expire(Some(now + 3 * 86_400));
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id: "0xabc",
+            agent_id: "426",
+            short_id: "0xabc",
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let out = job_submitted_escrow(&ctx);
+        assert!(
+            out.contains("⏰ Review deadline: 3 day(s)"),
+            "escrow card should append the Review reminder line; got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn escrow_card_no_reminder_when_expire_time_none() {
+        let p = escrow_ctx_with_expire(None);
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id: "0xabc",
+            agent_id: "426",
+            short_id: "0xabc",
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let out = job_submitted_escrow(&ctx);
+        assert!(
+            !out.contains('⏰'),
+            "no reminder line when expire_time is None; got:\n{out}"
+        );
     }
 }

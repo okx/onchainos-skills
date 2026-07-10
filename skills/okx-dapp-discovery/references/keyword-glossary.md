@@ -72,7 +72,7 @@ These verbs do **not** select a DApp by themselves (same role as the English gen
 | 中文 | Intent | Routes to |
 |---|---|---|
 | 购买 pump.fun / 卖 pump.fun / 狙击 pump.fun / pump.fun 下单 / 梭哈 / 帮我买 / 买最火的币 / 买这个 | WRITE (trade) | `pump-fun-plugin` |
-| 扫 pump.fun / pump.fun 开发者历史 / pump.fun 捆绑分析 / 开发者信息 / 捆绑狙击者 / 同车 | READ (research) | `okx-dex` |
+| 扫 pump.fun / pump.fun 开发者历史 / pump.fun 捆绑分析 / 开发者信息 / 捆绑狙击者 / 同车 | READ (research) | `okx-dex-market` |
 
 ---
 

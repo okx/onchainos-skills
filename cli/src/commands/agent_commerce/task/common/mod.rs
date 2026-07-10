@@ -12,6 +12,7 @@ use serde::Deserialize;
 pub mod claim;
 pub mod a2a_binding;
 pub mod config;
+pub mod deadline;
 pub mod deliverables;
 pub mod dispute_upload;
 pub mod in_progress;
@@ -156,11 +157,27 @@ pub struct PreFetchedTaskContext {
     pub service_params: Option<String>,
     pub user_agent_address: Option<String>,
     pub token_address: Option<String>,
+    /// Acceptance/review deadline (unix seconds). `Some` when the API returned a
+    /// positive `expireTime`, else `now()+expireConfig.reviewDeadline` when that
+    /// is positive, else `None` (no reminder — backward compatible).
+    pub expire_time: Option<i64>,
 }
 
 impl PreFetchedTaskContext {
     /// Build from the raw `serde_json::Value` returned by GET /task/{jobId}.
     pub fn from_api_response(v: &serde_json::Value) -> Self {
+        // FR-1: prefer server-precise expireTime; else approximate now()+reviewDeadline.
+        let expire_time = v
+            .get("expireTime")
+            .and_then(|x| x.as_i64())
+            .filter(|&t| t > 0)
+            .or_else(|| {
+                v.get("expireConfig")
+                    .and_then(|c| c.get("reviewDeadline"))
+                    .and_then(|x| x.as_i64())
+                    .filter(|&s| s > 0)
+                    .map(|secs| chrono::Local::now().timestamp() + secs)
+            });
         Self {
             title: v["title"].as_str().unwrap_or("").to_string(),
             description: v["description"].as_str().unwrap_or("").to_string(),
@@ -179,6 +196,7 @@ impl PreFetchedTaskContext {
             service_params: v["serviceParams"].as_str().map(String::from),
             user_agent_address: v["buyerAgentAddress"].as_str().map(String::from),
             token_address: v["tokenAddress"].as_str().map(String::from),
+            expire_time,
         }
     }
 
@@ -1387,4 +1405,66 @@ async fn build_context(
     }
 
     out
+}
+
+#[cfg(test)]
+mod expire_time_tests {
+    use super::PreFetchedTaskContext;
+    use serde_json::json;
+
+    const DAY: i64 = 86_400;
+
+    // AC-8: precise `expireTime` (> 0) is carried through verbatim.
+    #[test]
+    fn precise_expire_time_is_used() {
+        let now = chrono::Local::now().timestamp();
+        let v = json!({ "expireTime": now + 3 * DAY });
+        let ctx = PreFetchedTaskContext::from_api_response(&v);
+        assert_eq!(ctx.expire_time, Some(now + 3 * DAY));
+    }
+
+    // AC-8: `expireTime` absent, `expireConfig.reviewDeadline` positive ⇒
+    // approximate now()+reviewDeadline (assert within a small tolerance since
+    // `now()` is read internally).
+    #[test]
+    fn review_deadline_fallback_is_approximate_now_plus_secs() {
+        let before = chrono::Local::now().timestamp();
+        let v = json!({ "expireTime": null, "expireConfig": { "reviewDeadline": 259_200 } });
+        let ctx = PreFetchedTaskContext::from_api_response(&v);
+        let after = chrono::Local::now().timestamp();
+        let got = ctx.expire_time.expect("fallback should produce Some");
+        assert!(
+            got >= before + 259_200 && got <= after + 259_200,
+            "expire_time {got} not within [{}+259200, {}+259200]",
+            before,
+            after
+        );
+    }
+
+    // AC-8: neither field present ⇒ None (backward compatible, no reminder).
+    #[test]
+    fn neither_present_is_none() {
+        let v = json!({ "title": "x" });
+        let ctx = PreFetchedTaskContext::from_api_response(&v);
+        assert_eq!(ctx.expire_time, None);
+    }
+
+    // AC-8: `expireTime == 0` is filtered out; with no expireConfig it falls to None.
+    #[test]
+    fn zero_expire_time_falls_through_to_none() {
+        let v = json!({ "expireTime": 0 });
+        let ctx = PreFetchedTaskContext::from_api_response(&v);
+        assert_eq!(ctx.expire_time, None);
+    }
+
+    // AC-8: `expireTime == 0` but a positive reviewDeadline ⇒ approximate fallback.
+    #[test]
+    fn zero_expire_time_uses_review_deadline_fallback() {
+        let before = chrono::Local::now().timestamp();
+        let v = json!({ "expireTime": 0, "expireConfig": { "reviewDeadline": DAY } });
+        let ctx = PreFetchedTaskContext::from_api_response(&v);
+        let after = chrono::Local::now().timestamp();
+        let got = ctx.expire_time.expect("fallback should produce Some");
+        assert!(got >= before + DAY && got <= after + DAY);
+    }
 }
