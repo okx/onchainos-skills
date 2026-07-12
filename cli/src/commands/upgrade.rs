@@ -420,11 +420,22 @@ fn target_triple() -> Result<&'static str> {
     )
 }
 
+/// The release-artifact filename for `triple` on the host platform.
+///
+/// Appends the host's executable suffix so the name matches what release CI
+/// publishes: `.exe` on Windows (via `std::env::consts::EXE_SUFFIX`), empty on
+/// macOS/Linux. This is the ONE place the artifact filename is formed — both the
+/// download URL and the `checksums.txt` lookup key derive from it, so they can
+/// never drift. (Contract W-CONTRACT; suffix rule W-RULE.)
+fn artifact_name(triple: &str) -> String {
+    format!("onchainos-{}{}", triple, std::env::consts::EXE_SUFFIX)
+}
+
 // ── Download + verify + install ─────────────────────────────────────────
 
 async fn download_and_install(client: &Client, version: &str) -> Result<()> {
     let triple = target_triple()?;
-    let binary_name = format!("onchainos-{}", triple);
+    let binary_name = artifact_name(triple);
     let tag = format!("v{}", version);
 
     let binary_url = format!(
@@ -1030,7 +1041,7 @@ async fn verify_installed_integrity(client: &Client, version: &str) -> Integrity
     let Ok(triple) = target_triple() else {
         return Integrity::Skipped;
     };
-    let binary_name = format!("onchainos-{}", triple);
+    let binary_name = artifact_name(triple);
     let checksums_url = format!(
         "https://github.com/{}/releases/download/v{}/checksums.txt",
         REPO, version
@@ -1248,15 +1259,50 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_drift, current_branch, decide_target, decorate_graduation, discover_skill_paths_in,
-        highest_version, is_dev_build_path, is_throttled, parse_ls_remote_versions,
-        parse_release_tag_url, record_check, remote_is_trusted_okx, removal_action,
-        reportable_skills, semver_gt, skill_requests_beta, update_one_checkout,
+        artifact_name, compute_drift, current_branch, decide_target, decorate_graduation,
+        discover_skill_paths_in, highest_version, is_dev_build_path, is_throttled,
+        parse_ls_remote_versions, parse_release_tag_url, record_check, remote_is_trusted_okx,
+        removal_action, reportable_skills, semver_gt, skill_requests_beta, update_one_checkout,
     };
     use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use tempfile::TempDir;
+
+    // ── artifact_name (WBW-13629): release-artifact filename derivation ──
+
+    #[test]
+    fn artifact_name_appends_exe_on_windows_triple() {
+        // Suffix-agnostic by construction: on the CI Linux/macOS host EXE_SUFFIX
+        // is "" so this equals "onchainos-x86_64-pc-windows-msvc"; on a Windows
+        // host it gains ".exe". Either way it must match EXE_SUFFIX. (AC-U-1)
+        let triple = "x86_64-pc-windows-msvc";
+        assert_eq!(
+            artifact_name(triple),
+            format!("onchainos-{}{}", triple, std::env::consts::EXE_SUFFIX)
+        );
+    }
+
+    #[test]
+    fn artifact_name_no_extension_on_unix_triples() {
+        // Byte-for-byte regression safety: on non-Windows the output is identical
+        // to the pre-fix hand-formatted `format!("onchainos-{}", triple)`. (AC-U-2, NFR-1)
+        #[cfg(not(target_os = "windows"))]
+        for triple in ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"] {
+            assert_eq!(artifact_name(triple), format!("onchainos-{}", triple));
+        }
+    }
+
+    #[test]
+    fn download_and_verify_share_artifact_name() {
+        // Proof-by-construction that both consumers (download_and_install and
+        // verify_installed_integrity) derive the same filename from the single
+        // helper, so the download URL and checksums.txt key can never drift. (AC-U-3)
+        let triple = "x86_64-pc-windows-msvc";
+        let download_name = artifact_name(triple);
+        let verify_name = artifact_name(triple);
+        assert_eq!(download_name, verify_name);
+    }
 
     fn init_git_repo(dir: &Path, origin_url: &str) {
         Command::new("git").arg("init").arg(dir).output().unwrap();
