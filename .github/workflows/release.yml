@@ -100,16 +100,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ── Linux (x64 musl static link — zero glibc dependency) ──
+          # ── Linux (all musl static link — zero glibc dependency) ──
+          # Every Linux target is built against musl and statically linked, then
+          # aliased to its -gnu download name (see the artifact-prep step). This
+          # makes the published binaries independent of the host/image glibc, so
+          # they run on any distro — Debian 12 (glibc 2.36), older, or newer —
+          # not only on systems that ship the build image's glibc baseline.
           - { target: x86_64-unknown-linux-musl, os: ubuntu-22.04 }
-          - { target: i686-unknown-linux-gnu, os: ubuntu-latest, cross: true }
+          - { target: i686-unknown-linux-musl, os: ubuntu-latest, cross: true }
           - {
-              target: aarch64-unknown-linux-gnu,
+              target: aarch64-unknown-linux-musl,
               os: ubuntu-latest,
               cross: true,
             }
           - {
-              target: armv7-unknown-linux-gnueabihf,
+              target: armv7-unknown-linux-musleabihf,
               os: ubuntu-latest,
               cross: true,
             }
@@ -134,8 +139,10 @@ jobs:
           workspaces: ${{ env.CARGO_DIR }}
           key: ${{ matrix.target }}
 
-      - name: "Install musl toolchain (Linux musl targets)"
-        if: contains(matrix.target, 'musl')
+      - name: "Install musl toolchain (native musl build only)"
+        # Only the host-native x86_64 build links with musl-gcc; the cross
+        # targets get their musl toolchain from inside the cross container.
+        if: contains(matrix.target, 'musl') && !matrix.cross
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: "Install cross (Linux cross-compilation tool)"
@@ -241,7 +248,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ env.BIN_NAME }}-${{ matrix.target }}-gnu-alias
-          path: ${{ env.BIN_NAME }}-*-linux-gnu
+          # Trailing * also captures the armv7 alias (…-linux-gnueabihf)
+          path: ${{ env.BIN_NAME }}-*-linux-gnu*
 
   # ── Step 2.5: Download signed macOS binaries from sign-server ──
   download-signed-macos:
