@@ -92,7 +92,7 @@ When dealing with integer values of any of the fields below, **look up the table
 | `paymentMode` | `0` = unset / `1` = escrow / `3` = x402 |
 | `sender.role` (a2a-agent-chat) | Counterparty: `1` = User Agent (you are ASP) / `2` = ASP (you are User Agent) |
 | `vote` (Evaluator arbitration) | `0` = Approve (User Agent wins, funds refunded) / `1` = Reject (ASP wins, funds released to ASP) |
-| `status` (task) | `-1`=draft / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete (funds released to ASP) / `7`=close (funds returned to user) / `8`=expired / `9`=failed (arbitration refunds user) |
+| `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete (funds released to ASP) / `7`=close (funds returned to user) / `8`=expired / `9`=failed (arbitration refunds user) |
 
 🛑 **Iron rule**: before writing any semantic judgment about these fields, **cross-check the table above**. Misreading = wrong on-chain action.
 

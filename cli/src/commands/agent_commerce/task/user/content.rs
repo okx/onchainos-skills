@@ -405,28 +405,6 @@ pub fn create_task_designated_user_notify() -> String {
         .to_string()
 }
 
-// ── draft notifications ─────────────────────────────────────────
-
-/// Draft saved — user notification.
-pub fn draft_saved_user_notify() -> String {
-    "Draft saved (jobId: <jobId>). You can continue editing it later, or publish it when ready."
-        .to_string()
-}
-
-/// Draft publish success — no designated provider (public task).
-pub fn draft_publish_public_user_notify() -> String {
-    "Draft published (public); jobId: <jobId>; awaiting on-chain confirmation (~seconds). \
-     Once confirmed, ASPs will be able to discover and apply for this task."
-        .to_string()
-}
-
-/// Draft publish success — with designated provider.
-pub fn draft_publish_designated_user_notify() -> String {
-    "Draft published; jobId: <jobId>; designated provider: <providerName> (agentId: <agentId>); \
-     awaiting on-chain confirmation (~seconds). Once confirmed, the system will automatically connect with the designated provider."
-        .to_string()
-}
-
 // ── provider_conversation — single ASP accept/reject card ────────
 
 /// Canonical user-facing card for a single ASP accept/reject decision.

@@ -21,35 +21,6 @@ onchainos agent next-action --role user --agentId <agentId> --message '{"event":
 
 Follow the returned script verbatim. The confirmation form format is in **Appendix A** below.
 
-### 1.1 Draft tasks (save, edit, list, delete, publish)
-
-> **Session**: user session
-
-**Draft status**: `status = -1` (off-chain). Drafts do not enter the on-chain state machine and do not trigger chain events. Only after `draft publish` does the task enter the normal `job_created` → user flow.
-
-**Trigger**: "save as draft" / "draft list" / "update draft" / "delete draft" / "publish draft"
-
-#### Save as draft (from create-task flow or standalone)
-
-Draft creation requires only: **title**, **description** (≥20 chars), **descriptionSummary**. If a provider is designated, **serviceId** is also required. Other fields (budget, currency, service params, etc.) are optional for drafts.
-
-**Flow**: run the same `next-action` call as §1 → follow the returned playbook to collect fields → user says "save as draft" at any point → Step 6-D.
-
-#### List / Update / Delete drafts
-
-```bash
-onchainos agent draft list [--page 1] [--limit 20]
-onchainos agent draft update <jobId> [--title <txt>] [--description <txt>] [--budget <num>] ...
-onchainos agent draft delete <jobId>
-```
-
-#### Publish a draft
-
-1. `onchainos agent draft publish <jobId>` (⚠️ positional argument, NOT `--job-id`).
-2. Backend validates required fields; if any are missing, relay the error to the user. Use `draft update` to fix, then retry.
-
-The `jobId` is preserved — attachments from the draft phase carry over.
-
 ---
 
 ## Appendix A: Task Creation Confirmation Card Template
@@ -78,7 +49,7 @@ Display as a single `| Field | Value |` table:
 | Service Params | {"region": "Jiangsu"} |
 | Payment Mode | x402 |
 
-> Confirm? Once confirmed I will create the task on-chain immediately. Or save as draft?
+> Confirm? Once confirmed I will create the task on-chain immediately.
 
 **Example — Public task**:
 
@@ -92,7 +63,7 @@ Display as a single `| Field | Value |` table:
 | Max Budget | 0.15 |
 | Provider | Public task — no designated provider |
 
-> Confirm? Once confirmed I will create the public task on-chain. Or save as draft?
+> Confirm? Once confirmed I will create the public task on-chain.
 
 Rules: summary always in table; description > 200 chars → `See below` + prose below table; footer = blockquote asking confirmation.
 
