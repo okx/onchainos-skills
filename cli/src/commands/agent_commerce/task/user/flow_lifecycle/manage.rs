@@ -8,7 +8,7 @@ pub(crate) fn create_task() -> String {
 [Role] User Agent
 [Session Type] user session (talking directly to the user)
 
-Collect all fields → show confirmation form → wait for explicit user confirmation → call CLI. Default: `create-task` (Step 6). If user says \"save as draft\" / \"草稿\" → jump to Step 6-D.
+Collect all fields → show confirmation form → wait for explicit user confirmation → call CLI to publish (Step 6).
 
 ================================================
 Step 1 -- Field collection (collect progressively in conversation; **only enter Step 2 when all fields are ready**)
@@ -115,7 +115,7 @@ Step 5 -- Show the confirmation form
 Payment mode: A2A → `escrow`, A2MCP → `x402` (from serviceType; do not ask user).
 Public task: omit Service/Service desc/Service price/Service params/Payment mode rows.
 
-> Confirm and publish? Or save as draft?
+> Confirm and publish?
 
 → **End this turn**; wait for the user's reply.
 
@@ -124,12 +124,10 @@ Step 5.5 -- Route by user decision (separate turn from Step 5)
 ================================================
 
 - Confirm / publish → Step 6
-- \"save as draft\" / \"草稿\" → Step 6-D
 - Edit description → update → **re-run Step 4.5** (new description may match different ASPs) → Step 4.6 → Step 5
 - Edit budget/max-budget/serviceParams → update → Step 5
 - Edit currency → update → re-validate currency consistency → Step 5
 - Change ASP → Step 4.5 Branch B
-- Ambiguous → ask: publish or draft?
 
 ================================================
 Step 6 -- Publish (create-task)
@@ -160,61 +158,9 @@ After success, tell the user directly (you are in the user session, no `onchaino
 - Private: \"{create_designated}\"\n\
 - Public: \"{create_public}\"\n\
 Append `Insufficient ... balance` warning from CLI output if present. Localize.\n\n\
-**STOP** — after create-task + task-attach (if any), end this turn. Exception: if CLI output contains `[Watch]` block → read `skills/okx-ai/references/watch-core.md`, execute watch, then end. Do not say \"published\"/\"succeeded\" (only submitted). No other commands; no describing subsequent flow.\n\n\
-================================================\n\
-Step 6-D -- Draft path\n\
-================================================\n\
-Required: `--title` (≤30), `--description` (≥20), `--description-summary` (≤200). With provider → also `--service-id`.\n\n\
-```bash\n\
-onchainos agent draft create --title \"<title>\" --description \"<desc>\" --description-summary \"<summary>\" [--budget <n>] [--max-budget <n>] [--currency <sym>] [--provider <agentId> --service-id <id>] [--service-params '<params>'] [--service-token-address <addr>] [--service-token-amount <amt>]\n\
-```\n\
-Error → relay, do NOT auto-modify. After success → \"{draft_saved}\" Localize. End turn.\n",
+**STOP** — after create-task + task-attach (if any), end this turn. Exception: if CLI output contains `[Watch]` block → read `skills/okx-ai/references/watch-core.md`, execute watch, then end. Do not say \"published\"/\"succeeded\" (only submitted). No other commands; no describing subsequent flow.\n",
         create_designated = super::super::content::create_task_designated_user_notify(),
         create_public = super::super::content::create_task_public_user_notify(),
-        draft_saved = super::super::content::draft_saved_user_notify(),
-    )
-}
-
-// --- User-action: publish draft ----------------------------------------
-
-pub(crate) fn draft_publish(job_id: &str) -> String {
-    format!("\
-[Current Operation] Publish draft (draft_publish)
-[Role] User Agent
-[Session Type] user session (talking directly to the user)
-
-================================================
-Step 1 -- Call draft publish CLI
-================================================
-
-```bash
-onchainos agent draft publish {job_id}
-```
-`{job_id}` is a **positional argument**, NOT a flag. Do NOT use `--job-id`.
-
-Backend validates all required fields, checks balance, signs the transaction, and broadcasts on-chain.
-
-**Error handling**: if the CLI returns a validation error (missing fields, invalid values, insufficient balance, etc.), relay the error message to the user verbatim. **Do NOT auto-fix.** The user can update the draft via `draft update` and retry.
-
-================================================
-Step 2 -- Notify user
-================================================
-
-After success, tell the user directly (do NOT call `onchainos agent user-notify` — you are already in the user session):
-- No designated provider → \"{publish_public}\"
-- With designated provider → \"{publish_designated}\"
-If the CLI output contains a `Insufficient ... balance` warning line, append it to the message above.
-Localize to the user's language.
-
-===============================================================
-**STOP** -- after draft publish + watch (if prompted), you **MUST end this turn**
-===============================================================
-**Exception: `[Watch]` hint** -- if the CLI output contains a `[Watch]` block, you MUST first read `skills/okx-ai/references/watch-core.md` (if not already read this session), then execute the watch per its §Run watch using the jobId in the `[Watch]` block, before ending the turn. Do NOT short-circuit by guessing the bash command.
-**Do not say \"task published\" or \"publish succeeded\"** -- draft publish only submits the transaction; it is not yet confirmed on-chain.
-**Do not call any other onchainos agent commands** (except the watch above) -- all further actions are driven by on-chain events.
-===============================================================\n",
-        publish_public = super::super::content::draft_publish_public_user_notify(),
-        publish_designated = super::super::content::draft_publish_designated_user_notify(),
     )
 }
 

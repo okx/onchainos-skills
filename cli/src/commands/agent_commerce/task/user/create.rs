@@ -302,3 +302,121 @@ pub async fn handle_create(
     println!("🛑 Do NOT call set-payment-mode.");
     Ok(())
 }
+
+// ─── Field validation helpers (shared with prepare-create) ───────────────
+
+fn validate_title(title: &str) -> Result<()> {
+    if title.is_empty() {
+        anyhow::bail!("title must not be empty");
+    }
+    if title.chars().count() > MAX_TITLE_CHARS {
+        anyhow::bail!(
+            "title may not exceed {MAX_TITLE_CHARS} characters (currently {})",
+            title.chars().count()
+        );
+    }
+    Ok(())
+}
+
+fn validate_description_body(desc: &str) -> Result<()> {
+    let len = desc.chars().count();
+    if len < MIN_DESCRIPTION_CHARS {
+        anyhow::bail!("description is too short (minimum {MIN_DESCRIPTION_CHARS} chars, currently {len})");
+    }
+    if len > MAX_DESCRIPTION_CHARS {
+        anyhow::bail!("description may not exceed {MAX_DESCRIPTION_CHARS} chars (currently {len})");
+    }
+    Ok(())
+}
+
+fn validate_description_opt(desc: Option<&str>) -> Result<()> {
+    if let Some(d) = desc {
+        validate_description_body(d)?;
+    }
+    Ok(())
+}
+
+/// Validate task fields without network calls.
+/// Used by `prepare-create` (common/mod.rs) to give early field-level feedback.
+pub(crate) fn validate_draft_fields(
+    description: Option<&str>,
+    title: Option<&str>,
+    budget: Option<f64>,
+    max_budget: Option<f64>,
+    currency: Option<&str>,
+) -> serde_json::Value {
+    let mut checks = Vec::<serde_json::Value>::new();
+    let mut errors = Vec::<String>::new();
+
+    if let Some(d) = description {
+        match validate_description_opt(Some(d)) {
+            Ok(()) => checks.push(serde_json::json!({"field": "description", "ok": true, "chars": d.chars().count()})),
+            Err(e) => {
+                let msg = e.to_string();
+                checks.push(serde_json::json!({"field": "description", "ok": false, "error": msg}));
+                errors.push(msg);
+            }
+        }
+    }
+
+    if let Some(t) = title {
+        match validate_title(t) {
+            Ok(()) => checks.push(serde_json::json!({"field": "title", "ok": true, "chars": t.chars().count()})),
+            Err(e) => {
+                let msg = e.to_string();
+                checks.push(serde_json::json!({"field": "title", "ok": false, "error": msg}));
+                errors.push(msg);
+            }
+        }
+    }
+
+    if let Some(c) = currency {
+        match normalize_currency(c) {
+            Ok(norm) => checks.push(serde_json::json!({"field": "currency", "ok": true, "normalized": norm})),
+            Err(e) => {
+                let msg = e.to_string();
+                checks.push(serde_json::json!({"field": "currency", "ok": false, "error": msg}));
+                errors.push(msg);
+            }
+        }
+    }
+
+    if let Some(b) = budget {
+        match validate_budget(b).and_then(|()| validate_budget_decimals(b)) {
+            Ok(()) => checks.push(serde_json::json!({"field": "budget", "ok": true, "value": b})),
+            Err(e) => {
+                let msg = e.to_string();
+                checks.push(serde_json::json!({"field": "budget", "ok": false, "error": msg}));
+                errors.push(msg);
+            }
+        }
+    }
+
+    if let Some(mb) = max_budget {
+        match validate_budget(mb).and_then(|()| validate_budget_decimals(mb)) {
+            Ok(()) => checks.push(serde_json::json!({"field": "max_budget", "ok": true, "value": mb})),
+            Err(e) => {
+                let msg = e.to_string();
+                checks.push(serde_json::json!({"field": "max_budget", "ok": false, "error": msg}));
+                errors.push(msg);
+            }
+        }
+    }
+
+    if let (Some(b), Some(mb)) = (budget, max_budget) {
+        if mb < b {
+            let msg = format!("max_budget ({mb}) must be >= budget ({b})");
+            checks.push(serde_json::json!({"field": "max_budget_vs_budget", "ok": false, "error": msg}));
+            errors.push(msg);
+        } else {
+            checks.push(serde_json::json!({"field": "max_budget_vs_budget", "ok": true}));
+        }
+    }
+
+    if errors.is_empty() {
+        serde_json::json!({"ok": true, "checks": checks})
+    } else {
+        serde_json::json!({"ok": false, "checks": checks, "errors": errors})
+    }
+}
+

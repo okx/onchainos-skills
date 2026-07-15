@@ -7,7 +7,7 @@
 ## Reading Order
 
 1. **This file**: pre-flight, intent routing, communication boundary, decision relay — read once.
-2. **[`task-user-actions-publish.md`](task-user-actions-publish.md)**: on demand — read when the user wants to publish a task or manage drafts.
+2. **[`task-user-actions-publish.md`](task-user-actions-publish.md)**: on demand — read when the user wants to publish a task.
 3. **[`task-user-actions.md`](task-user-actions.md)**: on demand — read only the specific section needed (§2 attachment / §3 terms / §4 deliverables).
 4. **[`task-cli-reference.md`](task-cli-reference.md)**: do NOT read full file. Use `grep` for the specific command you need.
 
@@ -22,7 +22,6 @@
 | Intent | Trigger examples | Route to |
 |---|---|---|
 | Publish task | "发布任务 / create a task / 帮我发个任务" | [`task-user-actions-publish.md`](task-user-actions-publish.md) |
-| Draft operations | "save as draft / 草稿列表 / publish draft" | [`task-user-actions-publish.md`](task-user-actions-publish.md) §1.1 |
 | Add attachment / image | "补充附件 / attach file to task" | [`task-user-actions.md`](task-user-actions.md) §2 |
 | Switch provider / set public / stop task | "换服务商 / switch provider / 关闭任务 / stop task" | [`task-user-actions.md`](task-user-actions.md) §3 |
 | View deliverables | "查看交付物 / view deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |

@@ -51,7 +51,7 @@ If the user's message matched a **continuation-style** phrase (`继续监听` / 
 **Step 1 — Recall the jobId from this conversation's transcript.** Search in this order, take the FIRST hit:
 
 1. The most recent CLI `[Watch]` block emitted earlier in this conversation (the jobId is the `--job-id <X>` value in its `okx-a2a user watch ...` command).
-2. The most recent successful `agent create-task` / `agent publish-draft` stdout (jobId printed as `jobId: 0x...`).
+2. The most recent successful `agent create-task` stdout (jobId printed as `jobId: 0x...`).
 3. The most recent jobId referenced in any rendered `notification` / `decision_request` in this conversation.
 
 **Step 2 — Route by recall result**:
@@ -66,7 +66,7 @@ If the user's message matched a **continuation-style** phrase (`继续监听` / 
 **Entries that REQUIRE the banner (only these two)**:
 
 1. **Trigger-phrase entry** — this turn's user message matched a §Triggers phrase (e.g. `监听任务进展` / `历史消息` / `task watch`). **Exception**: a continuation-style phrase (`继续监听` / `keep watching` / ...) only triggers the banner when the recall fails and the watch falls back to global — see §Continuation triggers for the full rule.
-2. **CLI `[Watch]` block entry** — a command earlier in this turn emitted a `[Watch]` block in stdout: a hint block that starts with `[Watch]` and instructs the current call to run `okx-a2a user watch ...` (typical sample: `` [Watch] Read `skills/okx-ai/references/watch-core.md` now, then start the monitor: ``, output by `agent create-task` / `agent publish-draft`).
+2. **CLI `[Watch]` block entry** — a command earlier in this turn emitted a `[Watch]` block in stdout: a hint block that starts with `[Watch]` and instructs the current call to run `okx-a2a user watch ...` (typical sample: `` [Watch] Read `skills/okx-ai/references/watch-core.md` now, then start the monitor: ``, output by `agent create-task`).
 
 Any watch call that does not match one of these two entries **must NOT** emit the banner — all session-continuation paths (dispatch resume, wake fire, etc.) are excluded.
 
@@ -108,7 +108,7 @@ The session ends when §Stop condition fires, or when the user starts a **new** 
 - Do NOT use `/loop`, Cron, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, or any self-rolled polling around `onchainos agent status` / `agent active-tasks`.
 - 🛑 Once started, the watch loop stops **only** when a §Stop condition fires. Until then you have no authority to end it — not by Ctrl-C'ing the in-flight call, not by skipping the next re-enter, not because output "looked thin", "felt slow", or you wanted to "restart cleanly". Silence is the healthy state of a long-poll.
 - Do NOT pass `--from-now`. By default watch returns the full backlog of unread events first, then long-polls for new ones; `--from-now` skips the backlog and silently drops any event the user hasn't seen yet (watch is destructive read — those events are gone for good).
-- Do NOT pass `--job-id` **except in the post-publish `[Watch]` block**. `user watch` is a user-session-wide monitor by default; narrowing to one job defeats its purpose and misses cross-task events. The single exception is the CLI `[Watch]` block emitted by `agent create-task` / `agent publish-draft`, which intentionally narrows the first watch call to the freshly-published `jobId` so the user only sees that task's notifications immediately after publish. Trigger-phrase entries (e.g. `监听任务进展` / `task watch`) and any §Dispatch re-entry must still run watch **without** `--job-id`.
+- Do NOT pass `--job-id` **except in the post-publish `[Watch]` block**. `user watch` is a user-session-wide monitor by default; narrowing to one job defeats its purpose and misses cross-task events. The single exception is the CLI `[Watch]` block emitted by `agent create-task`, which intentionally narrows the first watch call to the freshly-published `jobId` so the user only sees that task's notifications immediately after publish. Trigger-phrase entries (e.g. `监听任务进展` / `task watch`) and any §Dispatch re-entry must still run watch **without** `--job-id`.
 - 🛑 **Run `okx-a2a user watch` / `okx-a2a user outdated-list` exactly as written. Do NOT append `| grep` / `| tail` / `| head` / `| awk` / `| sed` / `| jq` / shell redirects.** Both commands emit a single structured JSON document — any pipe/truncation breaks the JSON and silently drops items. If output looks noisy with `[DEBUG]` lines mixed in, those belong on stderr and never affect the JSON on stdout; do not "clean" stdout. Pipe = data loss.
 - 🛑 **Always run `okx-a2a user watch` in the foreground.** On Claude Code, the Bash tool exposes a `run_in_background` parameter — you **MUST** call watch with `run_in_background: false` (the default). Backgrounding the watch breaks the entire dispatch loop: stdout (the JSON with items) is no longer returned synchronously to the same tool call, so you can't dispatch by `kind`, can't render `userContent`, can't claim `decision_request` items, can't even know if watch returned anything. Watch is a single long-poll that must block this turn until it returns; the long-poll IS the wait. If you find yourself reaching for `run_in_background: true` because "watch takes too long", you are misusing the tool — that wait is the design.
 
