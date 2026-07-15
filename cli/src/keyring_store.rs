@@ -12,7 +12,6 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 
 use crate::file_keyring;
-use crate::wallet_store;
 
 const SERVICE: &str = "onchainos";
 const UNIFIED_KEY: &str = "agentic-wallet";
@@ -27,10 +26,11 @@ const UNIFIED_KEY: &str = "agentic-wallet";
 /// This keeps macOS/Windows behaviour identical to the original code —
 /// file_keyring is never touched when the OS keyring is healthy.
 ///
-/// If file_keyring also fails (corrupted / undecryptable), we purge stale
-/// data and return Ok(empty) so callers like `store()` can still write
-/// fresh credentials — breaking the "expired → re-login → still expired"
-/// loop.
+/// If file_keyring fails (corrupted / undecryptable), we surface an actionable
+/// `Err` to the caller instead of silently purging every credential — silently
+/// clearing hides the fault and traps the user in an "expired → re-login →
+/// still expired" loop with no explanation (spec §3 / §8.5 #7). The caller maps
+/// the error to exit code 1.
 pub fn read_blob() -> Result<HashMap<String, String>> {
     if cfg!(target_os = "linux") {
         // Linux: file_keyring is the durable cross-process store.
@@ -47,14 +47,14 @@ fn read_blob_linux() -> Result<HashMap<String, String>> {
     match file_keyring::read_blob() {
         Ok(map) if !map.is_empty() => return Ok(map),
         Ok(_) => {} // file empty/missing — try OS keyring
-        Err(e) => {
-            eprintln!(
-                "Warning: failed to read credentials ({}). \
-                 Clearing corrupted data — please login again: onchainos wallet login",
-                e
-            );
-            purge_stale_credentials();
-            return Ok(HashMap::new());
+        Err(_) => {
+            // Credential corruption is surfaced to the caller instead of being
+            // silently purged: silently clearing all credentials hides the fault
+            // and forces the user through an "expired → re-login → still expired"
+            // loop with no explanation. See spec §3 / §8.5 #7.
+            return Err(anyhow::anyhow!(
+                "Credentials corrupted. Please login again: onchainos wallet login"
+            ));
         }
     }
     // File was empty — try OS keyring (in-session data or legacy install).
@@ -76,29 +76,13 @@ fn read_blob_os_first() -> Result<HashMap<String, String>> {
     }
     match file_keyring::read_blob() {
         Ok(map) => Ok(map),
-        Err(e) => {
-            eprintln!(
-                "Warning: failed to read credentials ({}). \
-                 Clearing corrupted data — please login again: onchainos wallet login",
-                e
-            );
-            purge_stale_credentials();
-            Ok(HashMap::new())
+        Err(_) => {
+            // Same as the Linux path: surface corruption to the caller rather
+            // than silently purging every credential. See spec §3 / §8.5 #7.
+            Err(anyhow::anyhow!(
+                "Credentials corrupted. Please login again: onchainos wallet login"
+            ))
         }
-    }
-}
-
-/// Remove all credential artifacts (OS keyring, file keyring, session.json)
-/// so the user can start fresh with `onchainos wallet login`.
-fn purge_stale_credentials() {
-    if let Err(e) = os_clear_all() {
-        eprintln!("Warning: failed to clear OS keyring: {e}");
-    }
-    if let Err(e) = file_keyring::clear_all() {
-        eprintln!("Warning: failed to clear file keyring: {e}");
-    }
-    if let Err(e) = wallet_store::delete_session() {
-        eprintln!("Warning: failed to delete session.json: {e}");
     }
 }
 
@@ -196,5 +180,72 @@ fn os_clear_all() -> Result<()> {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
         Err(err) => Err(err).context("failed to clear keyring"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Run `f` inside a sandboxed `ONCHAINOS_HOME` so credential files live in a
+    /// throwaway dir. Mirrors `file_keyring::tests::with_temp_home` and shares the
+    /// same `TEST_ENV_MUTEX` so env-var mutation is serialized across modules.
+    fn with_temp_home<F: FnOnce()>(name: &str, f: F) {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join(format!("ks_{name}"));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).ok();
+        }
+        fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        f();
+        std::env::remove_var("ONCHAINOS_HOME");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn read_blob_returns_err_when_file_keyring_corrupted() {
+        with_temp_home("corrupt_returns_err", || {
+            // Write a valid blob so the machine-identity + keyring.enc exist.
+            let mut map = HashMap::new();
+            map.insert("access_token".to_string(), "tok-123".to_string());
+            file_keyring::write_blob(&map).unwrap();
+
+            // Corrupt keyring.enc: long enough to clear the salt+nonce length
+            // check but undecryptable, so file_keyring::read_blob() returns Err.
+            let path = crate::home::onchainos_home().unwrap().join("keyring.enc");
+            fs::write(
+                &path,
+                b"this is not valid encrypted data at all, needs to be long enough for salt+nonce",
+            )
+            .unwrap();
+
+            let err = read_blob().expect_err("corrupted keyring must return Err");
+            let msg = format!("{err:#}").to_lowercase();
+            assert!(
+                msg.contains("please login again"),
+                "error message should guide the user to re-login, got: {err:#}"
+            );
+        });
+    }
+
+    #[test]
+    fn read_blob_returns_ok_for_valid_blob() {
+        with_temp_home("valid_ok", || {
+            let mut map = HashMap::new();
+            map.insert("access_token".to_string(), "tok-123".to_string());
+            map.insert("refresh_token".to_string(), "ref-456".to_string());
+            file_keyring::write_blob(&map).unwrap();
+
+            let loaded = read_blob().expect("valid blob must return Ok");
+            assert_eq!(loaded.get("access_token").unwrap(), "tok-123");
+            assert_eq!(loaded.get("refresh_token").unwrap(), "ref-456");
+        });
     }
 }

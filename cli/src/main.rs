@@ -179,6 +179,10 @@ fn main() {
 async fn run() {
     dotenvy::dotenv().ok();
 
+    if let Err(e) = crate::home::self_heal_permissions() {
+        eprintln!("Warning: {e}");
+    }
+
     let mut cli = Cli::parse();
 
     // The agent subsystem runs only on XLayer (chainId=196, chain name "xlayer").

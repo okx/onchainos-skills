@@ -675,7 +675,7 @@ impl WalletApiClient {
             || std::env::var("OKX_BASE_URL").is_ok()
             || option_env!("OKX_BASE_URL").is_some();
         let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
-        doh.prepare();
+        doh.prepare()?;
 
         let mut builder = Client::builder().timeout(std::time::Duration::from_secs(30));
         if let Some((host, addr)) = doh.resolve_override() {

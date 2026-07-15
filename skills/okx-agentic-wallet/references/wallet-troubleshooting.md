@@ -20,4 +20,5 @@ Load on a wallet operation failure or edge case.
 ## Common
 - **Region restriction (error code 50125 or 80001)**: do NOT show the raw code. Display: "Service is not available in your region. Please switch to a supported region and try again."
 - **Not logged in** (`not logged in`): session expired or store missing. Tell the user to run `wallet login` + `wallet verify`.
+- **Credentials corrupted** (`Credentials corrupted. Please login again`): the credential store (`keyring.enc` / session) exists but is unreadable — distinct from *not logged in*. Do not retry the failing command blindly (it keeps hitting the same unreadable store); have the user re-authenticate with `wallet login` + `wallet verify`.
 - **Confirming response (exit code 2, error code 81362)**: not an error — the backend needs confirmation. Handle via SKILL.md → Confirming Response.

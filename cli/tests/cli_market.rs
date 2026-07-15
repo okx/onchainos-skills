@@ -6,8 +6,12 @@
 
 mod common;
 
-use common::{assert_ok_and_extract_data, onchainos, run_with_retry, tokens};
+use common::{
+    assert_ok_and_extract_data, fresh_home, onchainos, parse_stdout_json, run_with_retry, scrubbed,
+    tokens,
+};
 use predicates::prelude::*;
+use serde_json::Value;
 
 // ─── price ──────────────────────────────────────────────────────────
 
@@ -549,4 +553,56 @@ fn market_portfolio_token_pnl_missing_token_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
+}
+
+// ─── atomic_write refactor: DoH-path boundary (integration-plan IT-003/IT-104) ──
+//
+// Source plan: oli-docs/zoeiw2gxqiyzhzkaxejlhhkzgyc/integration-plan.csv.
+// IT-003 is the golden network path (DoH helper resolved from the home-only bin
+// dir is accepted); IT-104 is the offline boundary rejection.
+
+#[test]
+fn market_price_it_003_usdc_ethereum_golden() {
+    // A user can still fetch a token price after the storage change (spec §6,
+    // §8.7 positive case). Live network path → run through the retry helper.
+    let output = run_with_retry(&[
+        "market",
+        "price",
+        "--address",
+        tokens::ETH_USDC,
+        "--chain",
+        "ethereum",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(data.is_array(), "expected array of price entries: {data}");
+}
+
+#[test]
+fn market_price_it_104_doh_binary_path_outside_home_rejected() {
+    // A DoH helper path outside the home folder must be rejected before the
+    // network call (spec §3, §8.7, AC#7). OKX_DOH_BINARY_PATH=/etc/hosts resolves
+    // outside onchainos_home(), so the command must bail (exit 1). Offline row.
+    let (_tmp, home) = fresh_home("cli_market_doh");
+
+    let output = scrubbed(&mut onchainos(), &home)
+        .env("OKX_DOH_BINARY_PATH", "/etc/hosts")
+        .args([
+            "market",
+            "price",
+            "--address",
+            tokens::ETH_USDC,
+            "--chain",
+            "ethereum",
+        ])
+        .output()
+        .expect("run onchainos market price");
+
+    assert_eq!(output.status.code(), Some(1), "outside-home DoH path must exit 1");
+    let json = parse_stdout_json(&output);
+    assert_eq!(json["ok"], Value::Bool(false));
+    let err = json["error"].as_str().expect("error field is a string");
+    assert!(
+        err.contains("OKX_DOH_BINARY_PATH must resolve to a path under"),
+        "error must reject the outside-home DoH path (spec §3, §8.7); got: {err}"
+    );
 }
