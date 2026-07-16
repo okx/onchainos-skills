@@ -90,7 +90,11 @@ pub(super) async fn cmd_status() -> Result<()> {
     }
 
     let session = wallet_store::load_session()?.unwrap_or_default();
-    let blob = keyring_store::read_blob().unwrap_or_default();
+    // Propagate keyring corruption instead of swallowing it: read_blob returns
+    // Ok(empty) for "not logged in" (no entry) and Err only on a corrupted
+    // store, so `?` surfaces "Credentials corrupted. Please login again" here
+    // rather than silently reporting loggedIn:false (spec §3 / §8.5 #7, P1#7).
+    let blob = keyring_store::read_blob()?;
 
     if cfg!(feature = "debug-log") {
         eprintln!(
