@@ -65,6 +65,7 @@ reports
 
 # Oli / fe-sdd-to-a pipeline artifacts (per-run docs; never committed)
 oli-docs/
+output.md
 .wiki-to-oli-launch.sh
 onboard.md
 docs/agent
