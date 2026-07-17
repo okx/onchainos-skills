@@ -143,12 +143,16 @@ pub enum CompetitionCommand {
         wallet: Option<String>,
         /// Sort type: 1=PnL%, 7=PnL. The exact values for a
         /// given competition come from `competition detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend`;
-        /// future activities may add more. Default 1 matches the typical primary leaderboard.
-        #[arg(long, default_value = "1")]
-        sort_type: i32,
+        /// future activities may add more. Defaults to 1 (typical primary leaderboard). Mutually exclusive with --all.
+        #[arg(long)]
+        sort_type: Option<i32>,
         /// Max leaderboard entries to return (default 20, max 100)
         #[arg(long, default_value = "20")]
         limit: u32,
+        /// Fetch ALL leaderboards in one call (enumerated from `detail`, non-board columns filtered).
+        /// Returns {activityId, boards:[…]}. Mutually exclusive with --sort-type.
+        #[arg(long)]
+        all: bool,
     },
     /// Get user participation and reward status (omit --activity-id to check all activities).
     /// Always uses the active user's accountId — no wallet args needed.
@@ -175,6 +179,13 @@ pub enum CompetitionCommand {
     /// Claim competition rewards: pre-checks rewardStatus, fetches calldata,
     /// signs each entry via TEE session, broadcasts, and returns txHash array.
     /// Requires wallet login.
+    ///
+    /// Confirming-gate override: this verb intentionally does NOT emit an
+    /// `output::CliConfirming` gate. A reward claim only *receives* value (it
+    /// cannot spend user funds), so it is non-interactive by design — the
+    /// claim-and-submit flow is invoked with `force = true` (see below).
+    /// Confirming gates are reserved for value-spending verbs
+    /// (send/swap/sign/approve/broadcast/withdraw) per the output-envelope policy.
     Claim {
         /// Activity ID
         #[arg(long)]
@@ -217,14 +228,33 @@ pub async fn execute(ctx: &Context, command: CompetitionCommand) -> Result<()> {
             wallet,
             sort_type,
             limit,
+            all,
         } => {
-            let identity = resolve_competition_identity(
-                &mut client,
-                &activity_id,
-                wallet.as_deref(),
-            )
-            .await?;
-            rank(&mut client, &activity_id, &identity, sort_type, limit).await?
+            if all {
+                if sort_type.is_some() {
+                    return Err(crate::commands::sink::CodedError::invalid_input(
+                        "sort-type",
+                        "--all is mutually exclusive with --sort-type",
+                    )
+                    .into());
+                }
+                let identity =
+                    resolve_competition_identity(&mut client, &activity_id, wallet.as_deref())
+                        .await?;
+                rank_all(&mut client, &activity_id, &identity, limit).await?
+            } else {
+                let identity =
+                    resolve_competition_identity(&mut client, &activity_id, wallet.as_deref())
+                        .await?;
+                rank(
+                    &mut client,
+                    &activity_id,
+                    &identity,
+                    sort_type.unwrap_or(1),
+                    limit,
+                )
+                .await?
+            }
         }
         CompetitionCommand::UserStatus { activity_id } => {
             let account_id = load_selected_account_id()?;
@@ -317,7 +347,34 @@ pub async fn detail(client: &mut ApiClient, activity_id: &str) -> Result<Value> 
         }
     }
 
+    // FR-5: pre-sum the prize pool (top-level + every tabConfigs[] distribution).
+    let total = compute_total_prize_pool(&data);
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert("totalPrizePool".to_string(), total);
+    }
+
     Ok(data)
+}
+
+/// FR-5: merge `prizePoolDistribution[]` (top-level, if present) + every
+/// `tabConfigs[].prizePoolDistribution[]`, sum by `rewardUnit`, and return the
+/// `totalPrizePool` object — or `Value::Null` when there is no distribution.
+fn compute_total_prize_pool(data: &Value) -> Value {
+    let mut distributions: Vec<Value> = Vec::new();
+    if let Some(arr) = data.get("prizePoolDistribution").and_then(Value::as_array) {
+        distributions.extend(arr.iter().cloned());
+    }
+    if let Some(tabs) = data.get("tabConfigs").and_then(Value::as_array) {
+        for tab in tabs {
+            if let Some(arr) = tab.get("prizePoolDistribution").and_then(Value::as_array) {
+                distributions.extend(arr.iter().cloned());
+            }
+        }
+    }
+    match crate::commands::sink::sum_prize_pool(&distributions) {
+        Some(tp) => serde_json::to_value(tp).unwrap_or(Value::Null),
+        None => Value::Null,
+    }
 }
 
 /// GET /priapi/v1/dapp/agentic/competition/rank
@@ -593,6 +650,121 @@ pub async fn rank_for_mcp(
     limit: u32,
 ) -> Result<Value> {
     rank(client, activity_id, identity, sort_type, limit).await
+}
+
+/// FR-6: fetch EVERY leaderboard for an activity in one call.
+///
+/// 1. Call `detail` once to enumerate the de-duplicated
+///    `tabConfigs[].rankFieldConfig[].sortValueMap.descend` values, filtering out
+///    `descend <= 0` (non-leaderboard columns).
+/// 2. Fetch each board **sequentially** (reusing the single `&mut ApiClient`), in
+///    enumeration order.
+///
+/// Output: `{activityId, boards:[…]}`. A failed board becomes `{sortType, error}`;
+/// overall succeeds if ≥1 board is fetched. Hard errors: detail enumeration fails
+/// → `upstream_error`; enumeration empty → `no_leaderboards`.
+pub async fn rank_all(
+    client: &mut ApiClient,
+    activity_id: &str,
+    identity: &CompetitionIdentity,
+    limit: u32,
+) -> Result<Value> {
+    let detail_data = detail(client, activity_id).await.map_err(|e| {
+        crate::commands::sink::CodedError::new("upstream_error", None, format!("{e:#}"))
+    })?;
+
+    // Enumerate de-duplicated descend sort types, preserving first-seen order.
+    let sort_types = enumerate_sort_types(&detail_data);
+
+    if sort_types.is_empty() {
+        return Err(crate::commands::sink::CodedError::new(
+            "no_leaderboards",
+            None,
+            "activity has no leaderboard config",
+        )
+        .into());
+    }
+
+    let mut boards: Vec<Value> = Vec::with_capacity(sort_types.len());
+    for st in sort_types {
+        match rank(client, activity_id, identity, st, limit).await {
+            Ok(mut board) => {
+                if let Some(obj) = board.as_object_mut() {
+                    obj.insert("sortType".to_string(), json!(st));
+                }
+                boards.push(board);
+            }
+            Err(e) => boards.push(error_board(st, &e)),
+        }
+    }
+
+    finalize_rank_all(activity_id, boards)
+}
+
+/// Enumerate the de-duplicated, leaderboard-only sort types from a competition
+/// `detail` payload, preserving first-seen order.
+///
+/// Pure (no I/O) so the fragile, line-shape-dependent parsing is unit-testable:
+/// * reads `tabConfigs[].rankFieldConfig[].sortValueMap.descend`;
+/// * accepts both JSON-number and numeric-string `descend` values;
+/// * filters out `descend <= 0` (non-leaderboard columns — `descend == 0` was an
+///   observed live-data footgun);
+/// * de-duplicates while preserving first-seen order.
+fn enumerate_sort_types(detail_data: &Value) -> Vec<i32> {
+    let mut sort_types: Vec<i32> = Vec::new();
+    if let Some(tabs) = detail_data.get("tabConfigs").and_then(Value::as_array) {
+        for tab in tabs {
+            let Some(rfcs) = tab.get("rankFieldConfig").and_then(Value::as_array) else {
+                continue;
+            };
+            for rfc in rfcs {
+                let descend = rfc
+                    .get("sortValueMap")
+                    .and_then(|m| m.get("descend"))
+                    .and_then(|d| {
+                        d.as_i64()
+                            .or_else(|| d.as_str().and_then(|s| s.parse::<i64>().ok()))
+                    });
+                if let Some(v) = descend {
+                    if v > 0 {
+                        let v = v as i32;
+                        if !sort_types.contains(&v) {
+                            sort_types.push(v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    sort_types
+}
+
+/// Shape a single failed board into the `{sortType, error}` envelope so one
+/// board's failure never aborts the others.
+fn error_board(sort_type: i32, e: &anyhow::Error) -> Value {
+    json!({
+        "sortType": sort_type,
+        "error": {
+            "code": "upstream_error",
+            "message": format!("board {sort_type} request failed: {e:#}"),
+        }
+    })
+}
+
+/// Assemble the final `{activityId, boards}` result. Overall succeeds only if at
+/// least one board was fetched (a board with no top-level `error` key); if every
+/// board failed, surface a single `upstream_error` (per the FR-6 contract).
+fn finalize_rank_all(activity_id: &str, boards: Vec<Value>) -> Result<Value> {
+    let any_success = boards.iter().any(|b| b.get("error").is_none());
+    if !any_success {
+        return Err(crate::commands::sink::CodedError::new(
+            "upstream_error",
+            None,
+            "all leaderboards failed to fetch",
+        )
+        .into());
+    }
+    Ok(json!({ "activityId": activity_id, "boards": boards }))
 }
 
 const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
@@ -1285,5 +1457,139 @@ mod tests {
     fn format_utc8_seconds_handles_out_of_range() {
         // chrono returns None for genuinely invalid timestamps
         assert!(format_utc8_seconds(i64::MAX).is_none());
+    }
+
+    #[test]
+    fn compute_total_prize_pool_from_tabconfigs() {
+        let data = json!({
+            "tabConfigs": [
+                { "prizePoolDistribution": [ { "totalReward": "40000", "rewardUnit": "USDC" } ] },
+                { "prizePoolDistribution": [ { "totalReward": "200", "rewardUnit": "DJT" } ] }
+            ]
+        });
+        let tp = compute_total_prize_pool(&data);
+        assert_eq!(tp["display"], "40,000 USDC + 200 DJT");
+        assert_eq!(tp["amountByUnit"][0]["amount"], "40000");
+        assert_eq!(tp["amountByUnit"][0]["rewardUnit"], "USDC");
+    }
+
+    #[test]
+    fn compute_total_prize_pool_merges_top_level_and_tabs_same_unit() {
+        let data = json!({
+            "prizePoolDistribution": [ { "totalReward": "10000", "rewardUnit": "USDC" } ],
+            "tabConfigs": [
+                { "prizePoolDistribution": [ { "totalReward": "30000", "rewardUnit": "USDC" } ] }
+            ]
+        });
+        let tp = compute_total_prize_pool(&data);
+        assert_eq!(tp["display"], "40,000 USDC");
+    }
+
+    #[test]
+    fn compute_total_prize_pool_empty_is_null() {
+        assert_eq!(compute_total_prize_pool(&json!({})), Value::Null);
+        assert_eq!(
+            compute_total_prize_pool(&json!({ "tabConfigs": [] })),
+            Value::Null
+        );
+    }
+
+    // ── FR-6: rank --all sortType enumeration + board fault-tolerance ──
+
+    #[test]
+    fn enumerate_sort_types_dedups_preserving_order() {
+        let data = json!({
+            "tabConfigs": [
+                { "rankFieldConfig": [
+                    { "sortValueMap": { "descend": 1 } },
+                    { "sortValueMap": { "descend": 7 } },
+                ] },
+                { "rankFieldConfig": [
+                    { "sortValueMap": { "descend": 7 } }, // dup of an earlier tab
+                    { "sortValueMap": { "descend": 3 } },
+                ] },
+            ]
+        });
+        assert_eq!(enumerate_sort_types(&data), vec![1, 7, 3]);
+    }
+
+    #[test]
+    fn enumerate_sort_types_filters_non_positive() {
+        // descend == 0 (the observed live-data footgun) and negatives are
+        // non-leaderboard columns and must be dropped.
+        let data = json!({
+            "tabConfigs": [
+                { "rankFieldConfig": [
+                    { "sortValueMap": { "descend": 0 } },
+                    { "sortValueMap": { "descend": -1 } },
+                    { "sortValueMap": { "descend": 2 } },
+                ] },
+            ]
+        });
+        assert_eq!(enumerate_sort_types(&data), vec![2]);
+    }
+
+    #[test]
+    fn enumerate_sort_types_parses_string_and_number_forms() {
+        // `descend` arrives as either a JSON number or a numeric string.
+        let data = json!({
+            "tabConfigs": [
+                { "rankFieldConfig": [
+                    { "sortValueMap": { "descend": "5" } },   // numeric string
+                    { "sortValueMap": { "descend": 6 } },     // number
+                    { "sortValueMap": { "descend": "0" } },   // string zero → filtered
+                    { "sortValueMap": { "descend": "abc" } }, // unparseable → skipped
+                ] },
+            ]
+        });
+        assert_eq!(enumerate_sort_types(&data), vec![5, 6]);
+    }
+
+    #[test]
+    fn enumerate_sort_types_empty_config_is_empty() {
+        assert!(enumerate_sort_types(&json!({})).is_empty());
+        assert!(enumerate_sort_types(&json!({ "tabConfigs": [] })).is_empty());
+        assert!(enumerate_sort_types(&json!({ "tabConfigs": [ { "rankFieldConfig": [] } ] })).is_empty());
+        // A tab missing rankFieldConfig entirely is skipped, not an error.
+        assert!(enumerate_sort_types(&json!({ "tabConfigs": [ { "other": 1 } ] })).is_empty());
+    }
+
+    #[test]
+    fn finalize_rank_all_tolerates_single_board_failure() {
+        // One board failed; the others must still be returned intact.
+        let ok_board = json!({ "sortType": 1, "list": [ { "rank": 1 } ] });
+        let bad_board = error_board(7, &anyhow::anyhow!("boom"));
+        let out = finalize_rank_all("42", vec![ok_board.clone(), bad_board.clone()])
+            .expect("at least one board succeeded → overall Ok");
+        assert_eq!(out["activityId"], "42");
+        let boards = out["boards"].as_array().unwrap();
+        assert_eq!(boards.len(), 2);
+        assert_eq!(boards[0], ok_board);
+        assert_eq!(boards[1]["sortType"], 7);
+        assert_eq!(boards[1]["error"]["code"], "upstream_error");
+    }
+
+    #[test]
+    fn finalize_rank_all_all_failed_is_upstream_error() {
+        let boards = vec![
+            error_board(1, &anyhow::anyhow!("boom1")),
+            error_board(7, &anyhow::anyhow!("boom7")),
+        ];
+        let err = finalize_rank_all("42", boards).expect_err("all boards failed → Err");
+        let coded = err
+            .downcast_ref::<crate::commands::sink::CodedError>()
+            .expect("coded error");
+        assert_eq!(coded.code, "upstream_error");
+    }
+
+    #[test]
+    fn error_board_shape_carries_sort_type_and_code() {
+        let b = error_board(3, &anyhow::anyhow!("kaboom"));
+        assert_eq!(b["sortType"], 3);
+        assert_eq!(b["error"]["code"], "upstream_error");
+        assert!(b["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("board 3"));
     }
 }

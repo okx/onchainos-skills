@@ -70,6 +70,7 @@ onchainos competition detail --activity-id <id>
 - `participateChainIds`: the **trading-chain set** — only trades on chains in this array count toward the competition standing. Returned by **both `list` and `detail`** endpoints. Trading-eligibility = `participateChainIds`. Claim path = `chainId`.
 - `startTime` / `endTime`: raw Unix seconds (do not display; use the `*Formatted` siblings).
 - `tabConfigs[]`: per-leaderboard config. `rankFieldConfig[].title` / `.key` / `.sortValueMap.descend` drive the rank tool. `prizePoolDistribution[].rules[]` (`interval`, `reward`) + `rewardUnit` / `totalReward` / `rewardType` (`5`=volume, `7`=PnL, `8`=boost) populate the details template. May be empty on pre-prod.
+- `totalPrizePool`: CLI-pre-summed reward pool — `{ amountByUnit: [{amount, rewardUnit}], display: "50,000 USDC" }` (multi-unit `display` joined by ` + `). Merges top-level + all `tabConfigs[].prizePoolDistribution[]`, grouped by `rewardUnit` with exact decimal-string sums. `null` when no distribution; `partial: true` if one entry was unparseable. Render `display` directly — do NOT sum yourself.
 
 ---
 
@@ -91,6 +92,7 @@ onchainos competition rank --activity-id <id> [--wallet <addr>] --sort-type <typ
 | `--wallet` | No | (uses active account's `accountId` instead) | Optional wallet address — pass to query someone else's rank (chain-validated against the activity). |
 | `--sort-type` | Yes | 1 | Currently observed: 1=PnL%, 7=PnL. Future activities may add more — discover via `competition detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend`. |
 | `--limit` | No | 20 | Max entries in `allRankInfos` (max 100; applied client-side) |
+| `--all` | No | — | Fetch ALL leaderboards in one call (enumerated from `detail`, non-board columns filtered). Mutually exclusive with `--sort-type`. Returns `{activityId, boards:[…]}`. |
 
 **Output:**
 ```json
@@ -111,6 +113,8 @@ onchainos competition rank --activity-id <id> [--wallet <addr>] --sort-type <typ
   "rewardTokenSymbol": "HIPPO"
 }
 ```
+
+**`--all` output:** `{ "activityId": "<id>", "boards": [ { "sortType": <n>, "allRankInfos": [...], "myRankInfo": {...}, "rankUpdateTime": <ms> }, … ] }`. A failed board becomes `{sortType, error}`; overall `ok:true` if ≥1 board succeeds. Enumeration failure → `errorCode:"upstream_error"`; no leaderboards → `errorCode:"no_leaderboards"`.
 
 `format`: `1`=number, `2`=percentage, `3`=token amount with unit. `userTotal` semantics come from `tabConfigs[].rankFieldConfig[].title` / `.key`.
 

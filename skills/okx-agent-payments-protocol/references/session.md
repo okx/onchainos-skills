@@ -1,5 +1,11 @@
 # `session` intent (channel: open / voucher / topUp / close)
 
+> **CLI down-sink:** voucher reuse-vs-sign, cumulative math, the
+> top-up inequality, resign-on-drift, and refund-on-close are now decided by the
+> CLI. Run `onchainos payment session <open|voucher|topup|close>` and relay
+> `data.{strategy, needsTopUp, cumulative_amount, refund, recovery, reason_text}`
+> — don't recompute them. NL→command routing for each op stays here.
+
 > Loaded from `../SKILL.md` when the dispatcher decoded a `WWW-Authenticate: Payment` 402 challenge with `intent="session"`. Decode + display + wallet-status check have already happened upstream — start here at "Phase S1: Open Channel".
 >
 > **Also enter this reference for any mid-session operation** (close / topUp / settle / voucher / refund) when the user mentions an existing `channel_id`, even without a fresh 402. Jump directly to the matching phase below.

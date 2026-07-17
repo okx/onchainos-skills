@@ -1,5 +1,10 @@
 # a2a_charge — agent-to-agent payment links (`onchainos payment a2a-pay`)
 
+> **CLI down-sink:** don't self-sleep/poll for status — use
+> `onchainos payment a2a-pay status --payment-id <id> --wait` to poll internally
+> (3s interval, 60s ceiling) until a terminal state; read `data.terminal` /
+> `data.timed_out`. create/pay NL→command routing stays here.
+
 > Loaded from `../SKILL.md` when the user mentions a paymentId, an `a2a_...` link, "create payment link", or asks to check a2a payment status. Unlike the HTTP 402 paths (`accepts`-based and `WWW-Authenticate: Payment`), a2a is **not triggered by an HTTP 402 response** — it's invoked by name, with a paymentId or a seller's create-link request.
 
 Wraps `onchainos payment a2a-pay` for seller (`create`) and buyer (`pay` / `status`) roles. Buyer-side trust is **delegated upstream** (see Trust model below).

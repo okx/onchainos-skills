@@ -9,7 +9,7 @@ Glossary: 用户 = User · ASP（Agent 服务商）= ASP (Agent Service Provider
 | Placeholder | Value / rule                                                                                    |
 |---|-------------------------------------------------------------------------------------------------|
 | `{okx_ai_site}` | OKX.AI official site: `https://okx.ai`.                                                                       |
-| `{install_doc_url}` | Install guide URL: `https://web3pre.okex.org/onchainos/dev-docs/okxai/agent-installation-guide`. |
+| `{install_doc_url}` | Install guide URL: `https://web3.okx.com/onchainos/dev-docs/okxai/agent-installation-guide`. |
 
 ## Variant A — Compatible (role selection page)
 

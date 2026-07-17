@@ -365,10 +365,7 @@ fn resolve_entry(
 /// agent-commerce buyer flow) that receive `accepts` as the raw HTTP-402 body
 /// and want to sign exactly what the server said without consulting the
 /// stored default-asset preference.
-pub async fn x402_pay_from_accepts(
-    accepts: &str,
-    from: Option<String>,
-) -> Result<PaymentProof> {
+pub async fn x402_pay_from_accepts(accepts: &str, from: Option<String>) -> Result<PaymentProof> {
     let accepts_value: Value =
         serde_json::from_str(accepts).context("accepts must be a valid JSON array")?;
     let (proof, _entry) =
@@ -475,11 +472,7 @@ pub(crate) fn prepare_resolved_entry(
 /// Returns `(is_upto, is_exact_permit2)`; `(false, false)` means the
 /// entry should follow a non-Permit2 code path (e.g. exact + EIP-3009).
 pub(crate) fn detect_permit2_route(entry: &Value, params: &ResolvedEntry) -> (bool, bool) {
-    let scheme_lower = params
-        .scheme
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let scheme_lower = params.scheme.as_deref().unwrap_or("").to_ascii_lowercase();
     let asset_transfer_method = entry
         .get("extra")
         .and_then(|e| e.get("assetTransferMethod"))
@@ -501,9 +494,9 @@ pub(crate) async fn preflight_permit2_allowance(
     payer: &str,
     required_amount: &str,
 ) -> Result<()> {
-    let required: alloy_primitives::U256 = required_amount.parse().with_context(|| {
-        format!("invalid required amount (decimal uint256): {required_amount}")
-    })?;
+    let required: alloy_primitives::U256 = required_amount
+        .parse()
+        .with_context(|| format!("invalid required amount (decimal uint256): {required_amount}"))?;
     match crate::payment::permit2::rpc::fetch_permit2_allowance(chain_index, asset, payer).await {
         Ok(allowance) if allowance < required => bail!(
             "Permit2 allowance insufficient on token {} for chain {}. \
@@ -624,8 +617,7 @@ pub async fn sign_payment_with_preference(
     if is_upto || is_exact_permit2 {
         preflight_permit2_allowance(&chain_index, &params.asset, payer_addr, &params.amount)
             .await?;
-        let (valid_after, deadline, nonce) =
-            permit2_timing_and_nonce(params.max_timeout_seconds)?;
+        let (valid_after, deadline, nonce) = permit2_timing_and_nonce(params.max_timeout_seconds)?;
         let chain_id = real_chain_id;
 
         if is_exact_permit2 {
@@ -1290,10 +1282,929 @@ pub(crate) fn parse_eip155_chain_id(network: &str) -> Result<u64> {
     })
 }
 
+// ════════════════════════════════════════════════════════════════════════
+//  Two-phase quote/pay support
+// ════════════════════════════════════════════════════════════════════════
+
+use super::state::{self, Candidate, ParamSpec, PaymentState};
+
+/// True unless `chain_id` is classified as a testnet by the chain registry.
+/// Delegates to [`crate::chains::is_mainnet_chain`], which consults the dynamic
+/// chain cache and the static registry rather than a hardcoded testnet blacklist
+/// (the old blacklist mis-judged unrecognised testnets like Sepolia as mainnet).
+pub fn is_mainnet_chain(chain_id: &str) -> bool {
+    crate::chains::is_mainnet_chain(chain_id)
+}
+
+/// Scheme priority within a tie (lower = preferred). `upto` is semantically
+/// exact-with-a-Permit2-cap, so it is docked adjacent to `exact` (ahead of
+/// `charge`) rather than left in the catch-all bucket. Note this rank only
+/// breaks ties between candidates of the same token+network+mainnet class; it
+/// does not decide multi-scheme *triggering* (that is the `{exact,
+/// aggr_deferred, charge}` set in `rank_candidates`, which excludes `upto`).
+fn scheme_rank(scheme: &str) -> u8 {
+    match scheme {
+        "aggr_deferred" => 0,
+        "exact" => 1,
+        "upto" => 2,
+        "charge" => 3,
+        _ => 4,
+    }
+}
+
+/// Lexicographic candidate comparator (`Less` = `a` is the better pick):
+/// ① same token → smaller atomic `amount` wins (never compared across tokens);
+/// ② mainnet before testnet; ③ scheme priority `aggr_deferred > exact > upto > charge`.
+fn cmp_candidates(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    if a.token_symbol == b.token_symbol {
+        let av = a.amount.parse::<u128>().unwrap_or(u128::MAX);
+        let bv = b.amount.parse::<u128>().unwrap_or(u128::MAX);
+        match av.cmp(&bv) {
+            Ordering::Equal => {}
+            other => return other,
+        }
+    }
+    match (a.is_mainnet, b.is_mainnet) {
+        (true, false) => return Ordering::Less,
+        (false, true) => return Ordering::Greater,
+        _ => {}
+    }
+    scheme_rank(&a.scheme).cmp(&scheme_rank(&b.scheme))
+}
+
+/// Rank payment candidates into `(candidates, alternatives)` per architecture §5:
+///
+/// - Fewer than 2 distinct trigger schemes (`exact`/`aggr_deferred`/`charge`) →
+///   no multi-scheme card: pick the single best, `recommended:true`, no alternatives.
+/// - All candidates zero-balance → `recommended:null` on every candidate, list
+///   all as `candidates`, no auto-pick.
+/// - Otherwise → payable-first ranking; winner `recommended:true` in
+///   `candidates`, the rest `recommended:false` (ordered) in `alternatives`.
+pub fn rank_candidates(candidates: Vec<Candidate>) -> (Vec<Candidate>, Vec<Candidate>) {
+    use std::collections::HashSet;
+    if candidates.is_empty() {
+        return (vec![], vec![]);
+    }
+
+    let distinct_trigger: HashSet<&str> = candidates
+        .iter()
+        .map(|c| c.scheme.as_str())
+        .filter(|s| matches!(*s, "exact" | "aggr_deferred" | "charge"))
+        .collect();
+    let multi = distinct_trigger.len() >= 2;
+    let any_balance = candidates.iter().any(|c| c.has_balance);
+
+    // Payable candidates first, then by the lexicographic comparator.
+    let mut ranked = candidates;
+    ranked.sort_by(|a, b| match (a.has_balance, b.has_balance) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => cmp_candidates(a, b),
+    });
+
+    if !multi {
+        // Single candidate card: best entry recommended, no alternatives.
+        let mut best = ranked.remove(0);
+        best.recommended = Some(true);
+        return (vec![best], vec![]);
+    }
+
+    if !any_balance {
+        // No spendable balance anywhere → no auto-pick.
+        for c in ranked.iter_mut() {
+            c.recommended = None;
+        }
+        return (ranked, vec![]);
+    }
+
+    let mut winner = ranked.remove(0);
+    winner.recommended = Some(true);
+    for c in ranked.iter_mut() {
+        c.recommended = Some(false);
+    }
+    (vec![winner], ranked)
+}
+
+// ── Two-phase pay ───────────────────────────────────────────────────────
+
+/// `payment pay --payment-id` `data` shape (stability contract).
+#[derive(serde::Serialize)]
+struct PayResult {
+    /// Duplicated inside `data` per the task-system contract. The
+    /// envelope-level `ok` governs the exit code; this mirrors success/failure.
+    ok: bool,
+    #[serde(rename = "paymentId")]
+    payment_id: String,
+    scheme: String,
+    /// `success` | `failed` | `pending`.
+    status: String,
+    #[serde(rename = "txHash")]
+    tx_hash: Option<String>,
+    result: Value,
+    error: Option<String>,
+    #[serde(rename = "decodedReceipt")]
+    decoded_receipt: Option<Value>,
+}
+
+fn now_unix() -> u64 {
+    chrono::Utc::now().timestamp().max(0) as u64
+}
+
+/// Parse repeatable `--param key=value`; malformed → `invalid_input`.
+fn parse_kv(param: &[String]) -> Result<Vec<(String, String)>> {
+    param
+        .iter()
+        .map(|raw| {
+            let (k, v) = raw
+                .split_once('=')
+                .ok_or_else(|| anyhow!("invalid_input: --param must be key=value, got '{raw}'"))?;
+            let k = k.trim();
+            if k.is_empty() {
+                bail!("invalid_input: --param key must not be empty");
+            }
+            Ok((k.to_string(), v.to_string()))
+        })
+        .collect()
+}
+
+/// Human-facing confirming prompt for a two-phase pay (built from persisted state).
+///
+/// `selected_index` is an **accepts[] index** — the exact same index space
+/// `pay_from_state` signs (`raw_accepts[i]`) and that `cli_command_spec.md`
+/// defines `--selected-index` against. The preview therefore describes the
+/// candidate whose `accepts_index` equals `selected_index` (candidates are
+/// reordered by `rank_candidates`, so indexing `candidates[i]` directly would
+/// describe a *different* entry than the one signed — a fund-moving
+/// misrepresentation at the confirming gate). When no candidate carries that
+/// back-reference (rare same-scheme entries dropped from the ranked card), the
+/// preview falls back to the raw `accepts[i]` entry, still the signed one.
+fn pay_confirming(
+    st: &PaymentState,
+    selected_index: Option<usize>,
+) -> crate::output::CliConfirming {
+    let ch = &st.decoded_challenge;
+    // Rich preview: the candidate at the SAME accepts index the signer uses.
+    let picked = match selected_index {
+        Some(i) => st.candidates.iter().find(|c| c.accepts_index == i),
+        None => st
+            .candidates
+            .iter()
+            .find(|c| c.recommended == Some(true))
+            .or_else(|| st.candidates.first()),
+    };
+    let message = if let Some(c) = picked {
+        format!(
+            "Will pay {} {} ({}, {}) to {} - confirm to proceed",
+            c.amount_human, c.token_symbol, c.scheme, c.chain_name, ch.recipient
+        )
+    } else if let Some(a) = selected_index.and_then(|i| st.accepts.get(i)) {
+        // Fallback: no matching candidate, but the raw accepts entry (which the
+        // signer will use) is authoritative. Describe it directly.
+        format!(
+            "Will pay {} {} ({}) to {} - confirm to proceed",
+            a.amount, a.asset, a.scheme, ch.recipient
+        )
+    } else {
+        format!(
+            "Will pay {} to {} - confirm to proceed",
+            ch.amount_human, ch.recipient
+        )
+    };
+    let mut next = format!("onchainos payment pay --payment-id {}", st.payment_id);
+    if let Some(i) = selected_index {
+        next.push_str(&format!(" --selected-index {i}"));
+    }
+    next.push_str(" --yes");
+    crate::output::CliConfirming {
+        message,
+        next,
+        scene: None,
+    }
+}
+
+/// MCP / handler entry point for two-phase pay. Returns the `PayResult` `data`
+/// value. When `yes` is false, returns `Err(CliConfirming)` so both the CLI
+/// (exit 2) and MCP (`{confirming,...}`) render the gate identically.
+pub async fn fetch_pay(
+    payment_id: &str,
+    selected_index: Option<usize>,
+    param: &[String],
+    yes: bool,
+) -> Result<Value> {
+    let owner = state::current_owner_id().unwrap_or_default();
+    let st = state::read(payment_id, &owner, now_unix())?;
+
+    // Validate --selected-index against the persisted accepts.
+    if let Some(i) = selected_index {
+        if i >= st.raw_accepts.len() {
+            bail!(
+                "invalid_input: --selected-index {i} is out of range (accepts has {} entr{})",
+                st.raw_accepts.len(),
+                if st.raw_accepts.len() == 1 {
+                    "y"
+                } else {
+                    "ies"
+                }
+            );
+        }
+    }
+    let biz_params = parse_kv(param)?;
+
+    // Confirming gate — a paymentId proves a quote occurred, not that the human
+    // approved the spend. STOP here unless --yes/--force. No signing/network yet.
+    if !yes {
+        return Err(pay_confirming(&st, selected_index).into());
+    }
+
+    let data = pay_from_state(&st, selected_index, &biz_params).await?;
+    Ok(data)
+}
+
+/// Sign (TEE) → assemble header → replay to the merchant → decode receipt.
+/// Merchant non-200 *after* signing is a recorded `status:"failed"` (not an
+/// error — funds may have moved), so this returns `Ok` with the outcome.
+async fn pay_from_state(
+    st: &PaymentState,
+    selected_index: Option<usize>,
+    biz_params: &[(String, String)],
+) -> Result<Value> {
+    // Narrow accepts to the user's choice (or let the signer auto-select).
+    let accepts_for_sign = match selected_index {
+        Some(i) => json!([st.raw_accepts[i].clone()]),
+        None => Value::Array(st.raw_accepts.clone()),
+    };
+
+    let (proof, entry) = sign_payment_with_preference(&accepts_for_sign, None, None, None).await?;
+    let scheme = entry
+        .get("scheme")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Assemble the v2 PAYMENT-SIGNATURE header (needs the challenge `resource`).
+    let (header_name, header_value) = match st.resource.as_ref() {
+        Some(resource) => assemble_v2_payment_header(&proof, &entry, resource)?,
+        None => {
+            // v1 challenge — no resource to bind; fall back to raw proof header.
+            let encoded = B64.encode(serde_json::to_vec(&proof.to_pay_json())?);
+            ("PAYMENT-SIGNATURE", encoded)
+        }
+    };
+
+    // Replay the request with the signed header + business params, honoring the
+    // persisted paid-call method + per-param carrier plan (A2MCP outputSchema).
+    let (status, tx_hash, result, error, decoded_receipt) = replay_merchant(
+        &st.endpoint_url,
+        &st.method,
+        &st.param_plan,
+        header_name,
+        &header_value,
+        biz_params,
+        &proof,
+        &entry,
+    )
+    .await;
+
+    if status == "success" {
+        state::cleanup(&st.payment_id);
+    }
+
+    let ok = status == "success";
+    let out = PayResult {
+        ok,
+        payment_id: st.payment_id.clone(),
+        scheme,
+        status,
+        tx_hash,
+        result,
+        error,
+        decoded_receipt,
+    };
+    serde_json::to_value(out).map_err(Into::into)
+}
+
+/// Replay the paid request to the merchant. Never returns `Err` — a transport /
+/// non-200 outcome after signing is reported as `status:"failed"` so the
+/// already-signed authorization is recorded rather than lost.
+///
+/// The request is assembled per the persisted `method` + `param_plan`
+/// (A2MCP `outputSchema`) via [`http_carrier::build_request`], so a POST/body,
+/// header, or path-carrier endpoint is replayed correctly — not just GET+query.
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
+async fn replay_merchant(
+    url: &str,
+    method: &str,
+    plan: &[ParamSpec],
+    header_name: &str,
+    header_value: &str,
+    biz_params: &[(String, String)],
+    proof: &PaymentProof,
+    entry: &Value,
+) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = (proof, entry);
+            return (
+                "failed".into(),
+                None,
+                Value::Null,
+                Some(e.to_string()),
+                None,
+            );
+        }
+    };
+    let resp = super::http_carrier::build_request(&client, method, url, biz_params, plan)
+        .header(header_name, header_value)
+        .send()
+        .await;
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                "failed".into(),
+                None,
+                Value::Null,
+                Some(e.to_string()),
+                None,
+            )
+        }
+    };
+    let status_code = resp.status();
+    let payment_response = resp
+        .headers()
+        .get("PAYMENT-RESPONSE")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let body_text = resp.text().await.unwrap_or_default();
+    let result: Value =
+        serde_json::from_str(&body_text).unwrap_or(Value::String(body_text.clone()));
+
+    let decoded_receipt = payment_response
+        .as_deref()
+        .and_then(|h| super::decode_receipt::decode_receipt(Some(h), None).ok())
+        .and_then(|r| serde_json::to_value(r).ok());
+    let tx_hash = decoded_receipt
+        .as_ref()
+        .and_then(|r| r.get("transaction"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    if status_code.is_success() {
+        ("success".into(), tx_hash, result, None, decoded_receipt)
+    } else if status_code.as_u16() == 402 {
+        // Facilitator still settling — non-terminal.
+        (
+            "pending".into(),
+            tx_hash,
+            result,
+            Some(format!(
+                "facilitator non-terminal: HTTP {}",
+                status_code.as_u16()
+            )),
+            decoded_receipt,
+        )
+    } else {
+        (
+            "failed".into(),
+            tx_hash,
+            result,
+            Some(format!("merchant returned HTTP {}", status_code.as_u16())),
+            decoded_receipt,
+        )
+    }
+}
+
+// ── Session down-sink decision math ─────────────────────────────────────
+
+/// Parameters for `fetch_session` (mirrors the MCP `payment_session` tool).
+#[derive(Default)]
+pub struct SessionParams {
+    pub action: String,
+    pub channel_id: Option<String>,
+    pub challenge: Option<String>,
+    pub unit_amount: Option<String>,
+    pub cumulative_amount: Option<String>,
+    pub escrow: Option<String>,
+    pub chain_id: Option<u64>,
+    pub deposit: Option<String>,
+    pub from: Option<String>,
+    /// A previously-signed voucher signature. Its presence is the reuse-vs-sign
+    /// signal: supplied ⇒ `strategy:"reuse"` (unless a drift or a classified
+    /// rejection forces a resign). Never persisted; never logged as a secret here.
+    pub reuse_signature: Option<String>,
+    /// The seller-reported cumulative from a `70015` drift error. When it
+    /// differs from `cumulative_amount`, the client's prior voucher is stale: the
+    /// cumulative is recomputed on top of this figure and `strategy` is forced to
+    /// `"sign"` (a fresh signature — reuse cannot ride a drifted base).
+    pub server_cumulative: Option<String>,
+}
+
+/// `payment session` decision `data` shape (added fields).
+#[derive(serde::Serialize, Default)]
+pub struct SessionData {
+    pub strategy: String,
+    pub cumulative_amount: String,
+    #[serde(rename = "needsTopUp")]
+    pub needs_top_up: bool,
+    #[serde(rename = "sessionSnapshot")]
+    pub session_snapshot: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refund: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_text: Option<String>,
+}
+
+/// top-up guard: `current_cum + unit_amount > deposit`.
+pub fn needs_top_up(current_cum: u128, unit_amount: u128, deposit: u128) -> bool {
+    current_cum.saturating_add(unit_amount) > deposit
+}
+
+/// refund on close: `deposit - final_cum` (saturating; never negative).
+pub fn compute_refund(deposit: u128, final_cum: u128) -> u128 {
+    deposit.saturating_sub(final_cum)
+}
+
+/// Rejection classifier. Returns the machine token, or `None` when the
+/// voucher is acceptable.
+pub fn classify_recovery(
+    current_cum: u128,
+    unit_amount: u128,
+    deposit: u128,
+) -> Option<&'static str> {
+    if current_cum.saturating_add(unit_amount) > deposit {
+        Some("amount_exceeds_deposit")
+    } else if unit_amount == 0 {
+        Some("delta_too_small")
+    } else {
+        None
+    }
+}
+
+fn parse_u128_or_zero(s: &Option<String>) -> u128 {
+    s.as_deref()
+        .and_then(|v| v.parse::<u128>().ok())
+        .unwrap_or(0)
+}
+
+/// MCP / session entry point: compute the reuse-vs-sign strategy, cumulative
+/// math, top-up need, refund, and recovery classification for a channel op.
+/// Pure decision layer — the actual signing stays in the CLI session handlers,
+/// which feed it the channel's persisted deposit / prior cumulative.
+pub async fn fetch_session(params: SessionParams) -> Result<Value> {
+    let current_cum = parse_u128_or_zero(&params.cumulative_amount);
+    let unit = parse_u128_or_zero(&params.unit_amount);
+    let deposit = parse_u128_or_zero(&params.deposit);
+    let has_deposit = params.deposit.is_some();
+
+    // server-reported cumulative drift (`70015`). When the seller reports a
+    // cumulative that differs from the client's assumption, the previously-signed
+    // voucher is stale: recompute the cumulative on top of the server figure and
+    // resign (reuse cannot ride a drifted base).
+    let drift = params
+        .server_cumulative
+        .as_deref()
+        .and_then(|s| s.parse::<u128>().ok())
+        .filter(|srv| *srv != current_cum);
+    let base_cum = drift.unwrap_or(current_cum);
+    let new_cum = base_cum.saturating_add(unit);
+
+    let needs = has_deposit && needs_top_up(base_cum, unit, deposit);
+    let recovery = if has_deposit {
+        classify_recovery(base_cum, unit, deposit).map(|s| s.to_string())
+    } else {
+        None
+    };
+
+    // reuse-vs-sign: a supplied prior signature means reuse, unless a drift
+    // or a classified rejection forces a fresh signature.
+    //
+    // top-up override: when the channel needs a top-up (the voucher would exceed the
+    // deposit) neither `sign` nor `reuse` is a valid next action — signing an
+    // over-deposit voucher cannot succeed. Emit an unambiguous `topup` so the
+    // agent's only signalled action is to fund the channel first, rather than the
+    // self-contradictory `sign`.
+    let strategy = if needs {
+        "topup"
+    } else if drift.is_some() {
+        "sign"
+    } else if params.reuse_signature.is_some() && recovery.is_none() {
+        "reuse"
+    } else {
+        "sign"
+    }
+    .to_string();
+
+    let mut reason_text = recovery.as_deref().map(|r| match r {
+        "amount_exceeds_deposit" => "voucher cumulative exceeds the channel deposit".to_string(),
+        "delta_too_small" => "voucher delta is zero — nothing to authorize".to_string(),
+        "invalid_signature" => "voucher signature failed verification".to_string(),
+        other => other.to_string(),
+    });
+    if drift.is_some() && reason_text.is_none() {
+        reason_text = Some(format!(
+            "voucher cumulative drifted (70015): server cumulative {base_cum}, \
+             recomputed to {new_cum} and resigned"
+        ));
+    }
+
+    let refund = if params.action == "close" && has_deposit {
+        Some(compute_refund(deposit, new_cum).to_string())
+    } else {
+        None
+    };
+
+    let data = SessionData {
+        strategy,
+        cumulative_amount: new_cum.to_string(),
+        needs_top_up: needs,
+        session_snapshot: json!({
+            "channelId": params.channel_id,
+            "deposit": params.deposit,
+            "cumulative": new_cum.to_string(),
+        }),
+        refund,
+        recovery,
+        reason_text,
+    };
+    serde_json::to_value(data).map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::await_holding_lock)] // TEST_ENV_MUTEX serializes process-wide env vars across async tests
     use super::*;
+
+    // ── rank_candidates (business rule) ───────────────────────────────
+    fn cand(
+        scheme: &str,
+        token: &str,
+        amount: &str,
+        mainnet: bool,
+        has_balance: bool,
+    ) -> Candidate {
+        Candidate {
+            scheme: scheme.into(),
+            accepts_index: 0,
+            chain_id: if mainnet {
+                "8453".into()
+            } else {
+                "1952".into()
+            },
+            chain_name: if mainnet {
+                "Base".into()
+            } else {
+                "X Layer Testnet".into()
+            },
+            is_mainnet: mainnet,
+            token_symbol: token.into(),
+            amount: amount.into(),
+            amount_human: amount.into(),
+            has_balance,
+            recommended: None,
+        }
+    }
+
+    #[test]
+    fn rank_same_token_picks_smallest_amount() {
+        let (c, alt) = rank_candidates(vec![
+            cand("exact", "USDC", "10000", true, true),
+            cand("aggr_deferred", "USDC", "5000", true, true),
+        ]);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].amount, "5000");
+        assert_eq!(c[0].recommended, Some(true));
+        assert_eq!(alt.len(), 1);
+        assert_eq!(alt[0].recommended, Some(false));
+    }
+
+    #[test]
+    fn rank_mainnet_beats_testnet() {
+        let (c, _alt) = rank_candidates(vec![
+            cand("exact", "DAI", "5000", false, true),
+            cand("aggr_deferred", "USDC", "5000", true, true),
+        ]);
+        assert!(c[0].is_mainnet);
+        assert_eq!(c[0].token_symbol, "USDC");
+    }
+
+    #[test]
+    fn rank_scheme_priority_aggr_over_exact() {
+        // Different tokens, both mainnet → amount criterion skipped, scheme decides.
+        let (c, _alt) = rank_candidates(vec![
+            cand("exact", "USDC", "5000", true, true),
+            cand("aggr_deferred", "DAI", "5000", true, true),
+        ]);
+        assert_eq!(c[0].scheme, "aggr_deferred");
+    }
+
+    #[test]
+    fn scheme_rank_docks_upto_adjacent_to_exact() {
+        // upto (exact-with-a-Permit2-cap) must rank ahead of charge, adjacent to
+        // exact — not in the catch-all bucket behind charge (tie-break fix).
+        assert!(scheme_rank("aggr_deferred") < scheme_rank("exact"));
+        assert!(scheme_rank("exact") < scheme_rank("upto"));
+        assert!(scheme_rank("upto") < scheme_rank("charge"));
+        assert!(scheme_rank("charge") < scheme_rank("period"));
+    }
+
+    #[test]
+    fn rank_all_zero_balance_recommends_null() {
+        let (c, alt) = rank_candidates(vec![
+            cand("exact", "USDC", "5000", true, false),
+            cand("aggr_deferred", "DAI", "5000", true, false),
+        ]);
+        assert_eq!(c.len(), 2);
+        assert!(c.iter().all(|x| x.recommended.is_none()));
+        assert!(alt.is_empty());
+    }
+
+    #[test]
+    fn rank_single_scheme_no_trigger() {
+        let (c, alt) = rank_candidates(vec![cand("exact", "USDC", "5000", true, false)]);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].recommended, Some(true));
+        assert!(alt.is_empty());
+    }
+
+    // ── pay_confirming index-space alignment (fund-safety) ────────────
+    //
+    // Regression guard: `pay_confirming`'s preview MUST describe the exact
+    // accepts entry `pay_from_state` signs. `rank_candidates` reorders the
+    // multi-scheme card, so a naive `candidates[selected_index]` lookup would
+    // describe a different scheme/amount than the one signed.
+    #[test]
+    fn pay_confirming_previews_the_entry_the_signer_will_sign() {
+        use super::state::{AcceptEntry, DecodedChallenge};
+
+        // accepts[0] = exact / 10000 USDC ; accepts[1] = aggr_deferred / 5000 USDC.
+        // rank picks the smaller same-token amount → aggr_deferred (accepts_index 1)
+        // becomes the winner and is stored FIRST in st.candidates, ahead of the
+        // exact candidate (accepts_index 0). Signing raw_accepts[0] must be
+        // previewed as the exact/10000 entry, NOT candidates[0] (aggr_deferred).
+        let winner = Candidate {
+            scheme: "aggr_deferred".into(),
+            accepts_index: 1,
+            chain_id: "8453".into(),
+            chain_name: "Base".into(),
+            is_mainnet: true,
+            token_symbol: "USDC".into(),
+            amount: "5000".into(),
+            amount_human: "0.005".into(),
+            has_balance: true,
+            recommended: Some(true),
+        };
+        let alt = Candidate {
+            scheme: "exact".into(),
+            accepts_index: 0,
+            chain_id: "8453".into(),
+            chain_name: "Base".into(),
+            is_mainnet: true,
+            token_symbol: "USDC".into(),
+            amount: "10000".into(),
+            amount_human: "0.01".into(),
+            has_balance: true,
+            recommended: Some(false),
+        };
+        let st = PaymentState {
+            payment_id: "pid-reorder".into(),
+            owner_wallet: "acc-1".into(),
+            created_at: 1_000,
+            expires_at: 9_999_999_999,
+            accepts: vec![
+                AcceptEntry {
+                    index: 0,
+                    scheme: "exact".into(),
+                    amount: "10000".into(),
+                    asset: "USDC".into(),
+                    network: "eip155:8453".into(),
+                },
+                AcceptEntry {
+                    index: 1,
+                    scheme: "aggr_deferred".into(),
+                    amount: "5000".into(),
+                    asset: "USDC".into(),
+                    network: "eip155:8453".into(),
+                },
+            ],
+            decoded_challenge: DecodedChallenge {
+                amount: "10000".into(),
+                amount_human: "0.01".into(),
+                decimals: 6,
+                recipient: "0xRECIPIENT".into(),
+                expires: 0,
+                supported: true,
+                unsupported_reason: None,
+            },
+            // Stored winner-first, exactly as quote.rs persists (winner ++ alternatives).
+            candidates: vec![winner, alt],
+            known_params: serde_json::Map::new(),
+            merchant_body: String::new(),
+            endpoint_url: "https://merchant.example/x".into(),
+            raw_accepts: vec![
+                json!({"scheme":"exact","amount":"10000","network":"eip155:8453"}),
+                json!({"scheme":"aggr_deferred","amount":"5000","network":"eip155:8453"}),
+            ],
+            resource: None,
+            method: state::default_http_method(),
+            param_plan: vec![],
+        };
+
+        // selecting accepts index 0 → signer uses the exact/10000 entry, so the
+        // preview must name exact + 0.01 (the exact amount_human), NOT the ranked
+        // winner (aggr_deferred / 0.005).
+        let c0 = pay_confirming(&st, Some(0));
+        assert!(
+            c0.message.contains("exact"),
+            "preview must describe the signed scheme (exact): {}",
+            c0.message
+        );
+        assert!(
+            c0.message.contains("0.01"),
+            "preview must show the exact entry amount (0.01): {}",
+            c0.message
+        );
+        assert!(
+            !c0.message.contains("aggr_deferred"),
+            "preview must NOT describe the ranked winner when index 0 is chosen: {}",
+            c0.message
+        );
+        assert!(c0.next.contains("--selected-index 0"));
+
+        // selecting accepts index 1 → aggr_deferred / 0.005.
+        let c1 = pay_confirming(&st, Some(1));
+        assert!(
+            c1.message.contains("aggr_deferred") && c1.message.contains("0.005"),
+            "preview for index 1 must describe aggr_deferred/0.005: {}",
+            c1.message
+        );
+
+        // no index → the recommended winner (aggr_deferred).
+        let cn = pay_confirming(&st, None);
+        assert!(cn.message.contains("aggr_deferred"), "got: {}", cn.message);
+        assert!(!cn.next.contains("--selected-index"));
+    }
+
+    // ── session decision math ──────────────────────────────────────────
+    #[test]
+    fn is_mainnet_chain_flags_testnet_indices() {
+        // Known testnet (X Layer testnet) → not mainnet; everything else → mainnet.
+        assert!(!is_mainnet_chain("1952"));
+        assert!(is_mainnet_chain("8453")); // Base
+        assert!(is_mainnet_chain("196")); // X Layer
+        assert!(is_mainnet_chain("1")); // Ethereum
+    }
+
+    #[test]
+    fn session_needs_top_up_guard() {
+        assert!(needs_top_up(40, 20, 50)); // 60 > 50
+        assert!(!needs_top_up(10, 20, 50)); // 30 <= 50
+    }
+
+    #[test]
+    fn session_refund_is_saturating() {
+        assert_eq!(compute_refund(100, 30), 70);
+        assert_eq!(compute_refund(30, 100), 0);
+    }
+
+    #[test]
+    fn session_recovery_classification() {
+        assert_eq!(
+            classify_recovery(40, 20, 50),
+            Some("amount_exceeds_deposit")
+        );
+        assert_eq!(classify_recovery(10, 0, 50), Some("delta_too_small"));
+        assert_eq!(classify_recovery(10, 20, 50), None);
+    }
+
+    #[tokio::test]
+    async fn fetch_session_close_computes_refund() {
+        let params = SessionParams {
+            action: "close".into(),
+            deposit: Some("100000".into()),
+            cumulative_amount: Some("40000".into()),
+            unit_amount: Some("0".into()),
+            ..Default::default()
+        };
+        let data = fetch_session(params).await.unwrap();
+        assert_eq!(data["refund"], "60000");
+        assert_eq!(data["cumulative_amount"], "40000");
+    }
+
+    #[tokio::test]
+    async fn fetch_session_reuse_strategy_when_signature_supplied() {
+        // a supplied prior signature ⇒ reuse (no drift, voucher acceptable).
+        let params = SessionParams {
+            action: "voucher".into(),
+            reuse_signature: Some("0xdeadbeef".into()),
+            cumulative_amount: Some("100".into()),
+            unit_amount: Some("50".into()),
+            deposit: Some("1000".into()),
+            ..Default::default()
+        };
+        let data = fetch_session(params).await.unwrap();
+        assert_eq!(data["strategy"], "reuse");
+        assert_eq!(data["cumulative_amount"], "150");
+        assert_eq!(data["needsTopUp"], false);
+    }
+
+    #[tokio::test]
+    async fn fetch_session_sign_strategy_without_reuse_signature() {
+        // no prior signature ⇒ sign.
+        let params = SessionParams {
+            action: "voucher".into(),
+            cumulative_amount: Some("100".into()),
+            unit_amount: Some("50".into()),
+            ..Default::default()
+        };
+        let data = fetch_session(params).await.unwrap();
+        assert_eq!(data["strategy"], "sign");
+    }
+
+    #[tokio::test]
+    async fn fetch_session_voucher_computes_needs_top_up() {
+        // 40 + 20 = 60 > 50 ⇒ needsTopUp true, computed by the CLI.
+        let params = SessionParams {
+            action: "voucher".into(),
+            cumulative_amount: Some("40".into()),
+            unit_amount: Some("20".into()),
+            deposit: Some("50".into()),
+            ..Default::default()
+        };
+        let data = fetch_session(params).await.unwrap();
+        assert_eq!(data["needsTopUp"], true);
+        // when a top-up is required, strategy must be the unambiguous `topup`
+        // (never `sign`) — signing an over-deposit voucher cannot succeed.
+        assert_eq!(data["strategy"], "topup");
+    }
+
+    #[tokio::test]
+    async fn fetch_session_drift_forces_resign_and_recomputes() {
+        // client assumed cum 100, server reports 130 (70015).
+        // Even though a reuse signature is offered, the drift forces a resign and
+        // the cumulative is recomputed on top of the server figure: 130 + 20 = 150.
+        let params = SessionParams {
+            action: "voucher".into(),
+            reuse_signature: Some("0xstale".into()),
+            cumulative_amount: Some("100".into()),
+            server_cumulative: Some("130".into()),
+            unit_amount: Some("20".into()),
+            deposit: Some("1000".into()),
+            ..Default::default()
+        };
+        let data = fetch_session(params).await.unwrap();
+        assert_eq!(data["strategy"], "sign", "drift must resign, not reuse");
+        assert_eq!(data["cumulative_amount"], "150");
+        assert!(data["reason_text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("70015"));
+    }
+
+    #[tokio::test]
+    async fn fetch_session_no_drift_when_server_matches_client() {
+        // server_cumulative equal to the client's assumption is NOT a drift.
+        let params = SessionParams {
+            action: "voucher".into(),
+            reuse_signature: Some("0xok".into()),
+            cumulative_amount: Some("100".into()),
+            server_cumulative: Some("100".into()),
+            unit_amount: Some("50".into()),
+            deposit: Some("1000".into()),
+            ..Default::default()
+        };
+        let data = fetch_session(params).await.unwrap();
+        assert_eq!(data["strategy"], "reuse");
+        assert_eq!(data["cumulative_amount"], "150");
+    }
+
+    #[tokio::test]
+    async fn fetch_session_top_up_overrides_sign_and_reuse() {
+        // an unacceptable voucher (amount exceeds deposit) needs a
+        // top-up, so strategy must be `topup` — not `sign` and not `reuse` —
+        // even when a reuse signature was offered. `topup` is the only
+        // non-contradictory signal (recovery still classifies the reason).
+        let params = SessionParams {
+            action: "voucher".into(),
+            reuse_signature: Some("0xreuse".into()),
+            cumulative_amount: Some("40".into()),
+            unit_amount: Some("20".into()),
+            deposit: Some("50".into()),
+            ..Default::default()
+        };
+        let data = fetch_session(params).await.unwrap();
+        assert_eq!(data["strategy"], "topup");
+        assert_eq!(data["needsTopUp"], true);
+        assert_eq!(data["recovery"], "amount_exceeds_deposit");
+    }
 
     #[test]
     fn select_accept_prefers_exact() {
@@ -1403,6 +2314,18 @@ mod tests {
         let bare = json!({});
         assert_eq!(
             detect_permit2_route(&bare, &resolved_entry_with_scheme("exact")),
+            (false, false)
+        );
+
+        // charge → neither Permit2 branch, so `sign_payment_with_preference`
+        // takes the standard EIP-3009 TEE path (same as a plain exact) and
+        // `pay_from_state` can sign + replay a `--selected-index` charge
+        // candidate. Regression guard for the quote/pay charge-signability
+        // question: charge must NOT be routed to Permit2/upto and must NOT be
+        // rejected here.
+        let charge_entry = json!({"extra": {"assetTransferMethod": "eip3009"}});
+        assert_eq!(
+            detect_permit2_route(&charge_entry, &resolved_entry_with_scheme("charge")),
             (false, false)
         );
     }
@@ -1651,7 +2574,10 @@ mod tests {
         let v = proof.to_pay_json();
         assert_eq!(v["signature"], "0xdeadbeef");
         assert_eq!(v["permit2Authorization"]["witness"]["facilitator"], "0xF");
-        assert!(v.get("sessionCert").is_none(), "upto no longer emits sessionCert");
+        assert!(
+            v.get("sessionCert").is_none(),
+            "upto no longer emits sessionCert"
+        );
         let obj = v.as_object().expect("top-level must be an object");
         let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
         keys.sort();
@@ -2219,5 +3145,106 @@ mod tests {
         // other resolved params pass through
         assert_eq!(params.network, "eip155:196");
         assert_eq!(params.max_timeout_seconds, 300);
+    }
+
+    // ── replay_merchant status mapping (mock merchant, hermetic) ──────────
+    //
+    // The full `payment pay` command cannot run hermetically: the sign step
+    // before the replay (`sign_payment_with_preference`) needs a logged-in
+    // wallet, keyring session, and live OKX wallet-backend calls. But the
+    // replay seam itself — the HTTP round-trip that maps the merchant status to
+    // `success` / `pending` / `failed` — is fully mockable. These tests stand up
+    // a one-shot local HTTP merchant and assert the 402 → `"pending"` and
+    // 200 → `"success"` branches end-to-end through the real reqwest client
+    // (closing the "402 → pending replay is only covered by unit status-mapping"
+    // gap called out in review).
+
+    /// Bind a one-shot HTTP merchant on an ephemeral loopback port that answers
+    /// the first request with `status_line` + `body`, then closes. Returns the
+    /// URL to hit and the server thread handle.
+    fn spawn_mock_merchant(
+        status_line: &'static str,
+        body: &'static str,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock merchant");
+        let addr = listener.local_addr().expect("mock merchant addr");
+        let url = format!("http://{addr}/pay");
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                // Drain the request so the client's write completes before we
+                // reply (a single read covers a small GET's headers).
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        (url, handle)
+    }
+
+    fn dummy_proof() -> PaymentProof {
+        PaymentProof::Eip3009 {
+            signature: "sig".into(),
+            authorization: json!({}),
+            session_cert: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_merchant_maps_402_to_pending() {
+        let (url, handle) = spawn_mock_merchant("402 Payment Required", r#"{"status":"settling"}"#);
+        let proof = dummy_proof();
+        let entry = json!({});
+        let (status, _tx, result, error, _receipt) = replay_merchant(
+            &url,
+            "GET",
+            &[],
+            "PAYMENT-SIGNATURE",
+            "dummy-header",
+            &[],
+            &proof,
+            &entry,
+        )
+        .await;
+        let _ = handle.join();
+        assert_eq!(status, "pending", "402 must map to a non-terminal pending");
+        assert!(
+            error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("non-terminal"),
+            "pending error must flag non-terminal: {error:?}"
+        );
+        // The merchant JSON body is surfaced verbatim for the caller/agent.
+        assert_eq!(result["status"].as_str(), Some("settling"));
+    }
+
+    #[tokio::test]
+    async fn replay_merchant_maps_200_to_success() {
+        let (url, handle) = spawn_mock_merchant("200 OK", r#"{"ok":true}"#);
+        let proof = dummy_proof();
+        let entry = json!({});
+        let (status, _tx, _result, error, _receipt) = replay_merchant(
+            &url,
+            "GET",
+            &[],
+            "PAYMENT-SIGNATURE",
+            "dummy-header",
+            &[],
+            &proof,
+            &entry,
+        )
+        .await;
+        let _ = handle.join();
+        assert_eq!(status, "success", "200 must map to success");
+        assert!(error.is_none(), "success must carry no error: {error:?}");
     }
 }

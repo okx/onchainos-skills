@@ -1,6 +1,6 @@
 [package]
 name = "onchainos-cli"
-version = "4.2.5"
+version = "4.2.6"
 edition = "2021"
 
 [[bin]]
@@ -71,6 +71,7 @@ hpke = "0.12"
 
 # URL encoding
 url = "2"
+percent-encoding = "2"
 
 # Hostname (gethostname syscall for file_keyring)
 libc = "0.2"

@@ -1,5 +1,11 @@
 # Multi-scheme recommendation (SKILL.md Step A3.5)
 
+> **CLI down-sink:** balance-fetch, has-balance filtering, tie-break
+> scoring, and recommendation-card math now live in the CLI. `onchainos payment
+> quote` returns `candidates` / `alternatives` already ranked — present
+> `recommended:true`, confirm the selection, then `payment pay --payment-id`.
+> This file is retained for the legacy manual A3.5 path only.
+
 Loaded from `SKILL.md` **Step A3.5** when the combined candidate pool contains **2 or more** of `{exact, aggr_deferred, charge}`. Single-candidate flows skip this file and go straight to Step A4. This file owns the full recommend-and-confirm flow and hands the **selected candidate** back to Step A4 / Step A6.
 
 > **🔇 Silence rule for A3.5 internals.** Substeps A3.5.1–A3.5.4 (candidate enumeration, wallet-status check, balance fetch, address/chain-mapping normalization, balance filtering, tie-breaker application) are **internal** — produce **no user-facing narration** during them. The only A3.5 output the user sees is (a) the login prompt in A3.5.2 *if* the wallet isn't logged in, and (b) the recommendation card / alternatives list in A3.5.5. Do **not** announce "I'm checking your balance", "Let me verify the chain mapping", "After filtering, X candidates remain", "Per Rule 2 carve-out…", or any other progress chatter between Step A3 finishing and the recommendation card appearing. Just go silent and emit the card.

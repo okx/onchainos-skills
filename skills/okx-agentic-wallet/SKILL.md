@@ -4,7 +4,7 @@ description: "OKX Agentic Wallet — the single skill for the user's wallet and 
 license: MIT
 metadata:
   author: okx
-  version: "4.2.5"
+  version: "4.2.6"
   homepage: "https://web3.okx.com"
 ---
 
@@ -70,7 +70,7 @@ Never pass `--force` on the FIRST invocation of a state-changing command. Add `-
 ## Security & Global Notes
 
 - **Credential protection**: never log, display, or ask for session tokens, `clientId`, API keys, private keys, seed phrases, or passwords. Never expose: `accessToken`, `refreshToken`, `apiKey`, `secretKey`, `passphrase`, `sessionKey`, `sessionCert`, `teeId`, `encryptedSessionSk`, `signingKey`, raw tx data. Show raw `accountName` (never raw `accountId` to the user).
-- **Address integrity (funds-loss risk)**: any on-chain identifier shown to the user (wallet address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout. Never reproduce an identifier from memory, expand an abbreviated form, or re-type it across messages — re-invoke the CLI (`wallet addresses --format json` or `wallet status`) and copy from fresh stdout. Never paraphrase, normalize case, insert spaces, or line-break inside an identifier. Always display the **full** `txHash`.
+- **Address integrity (funds-loss risk)**: any on-chain identifier shown to the user (wallet address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout. Never reproduce an identifier from memory, expand an abbreviated form, or re-type it across messages — re-invoke the CLI (`wallet addresses` or `wallet status`) and copy from fresh stdout. Never paraphrase, normalize case, insert spaces, or line-break inside an identifier. Always display the **full** `txHash`.
 - **No address hallucination**: never fabricate a contract address — malicious tokens clone legitimate names. Only use addresses from a token lookup or the user's explicit input.
 - **Recipient validation**: EVM `0x`-prefixed, 42 chars; Solana Base58, 32–44 chars. Validate before sending.
 - **Transaction simulation**: the CLI runs pre-execution simulation; if `executeResult` is false → show `executeErrorMsg`, do NOT broadcast.

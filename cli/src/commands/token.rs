@@ -23,6 +23,9 @@ pub enum TokenCommand {
         /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
         #[arg(long)]
         cursor: Option<String>,
+        /// Auto-paginate up to N total results (1-500, max 10 pages) → {items,nextCursor,fetchedCount}
+        #[arg(long)]
+        max_results: Option<String>,
     },
     /// Get token basic info (name, symbol, decimals, logo)
     Info {
@@ -50,6 +53,9 @@ pub enum TokenCommand {
         /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
         #[arg(long)]
         cursor: Option<String>,
+        /// Auto-paginate up to N total results (1-500, max 10 pages) → {items,nextCursor,fetchedCount}
+        #[arg(long)]
+        max_results: Option<String>,
     },
     /// Get detailed price info (price, market cap, liquidity, volume, 24h change)
     PriceInfo {
@@ -205,6 +211,9 @@ pub enum TokenCommand {
         /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
         #[arg(long)]
         cursor: Option<String>,
+        /// Auto-paginate up to N total results (1-500, max 10 pages) → {items,nextCursor,fetchedCount}
+        #[arg(long)]
+        max_results: Option<String>,
     },
     /// Get advanced token info (risk, creator, dev stats, holder concentration)
     AdvancedInfo {
@@ -232,6 +241,9 @@ pub enum TokenCommand {
         /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
         #[arg(long)]
         cursor: Option<String>,
+        /// Auto-paginate up to N total results (1-500, max 10 pages) → {items,nextCursor,fetchedCount}
+        #[arg(long)]
+        max_results: Option<String>,
     },
     /// Get token trade history on DEX, with optional tag and wallet filters
     Trades {
@@ -304,6 +316,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             chains,
             limit,
             cursor,
+            max_results,
         } => {
             if query.trim().is_empty() {
                 anyhow::bail!("Parameter --query cannot be empty");
@@ -316,6 +329,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                     &resolved_chains,
                     limit.as_deref(),
                     cursor.as_deref(),
+                    max_results.as_deref(),
                 )
                 .await?,
             );
@@ -332,6 +346,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             tag_filter,
             limit,
             cursor,
+            max_results,
         } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
@@ -344,6 +359,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                     tag_filter,
                     limit.as_deref(),
                     cursor.as_deref(),
+                    max_results.as_deref(),
                 )
                 .await?,
             );
@@ -405,6 +421,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             is_freeze,
             limit,
             cursor,
+            max_results,
         } => {
             output::success(
                 fetch_hot_tokens(
@@ -454,6 +471,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                         is_freeze,
                         limit,
                         cursor,
+                        max_results,
                     },
                 )
                 .await?,
@@ -471,6 +489,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             tag_filter,
             limit,
             cursor,
+            max_results,
         } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
@@ -483,6 +502,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                     tag_filter,
                     limit.as_deref(),
                     cursor.as_deref(),
+                    max_results.as_deref(),
                 )
                 .await?,
             );
@@ -543,6 +563,53 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
     Ok(())
 }
 
+/// FR-3 shared finalizer for the paginated token endpoints. `base` carries every
+/// query param EXCEPT `cursor` (the varying one). When `max_results` is supplied,
+/// drives per-item auto-pagination and returns the aggregated
+/// `{items,nextCursor,fetchedCount[,partial,error]}` shape; otherwise a single page
+/// (byte-identical to today).
+async fn finalize_token_page(
+    client: &mut ApiClient,
+    path: &'static str,
+    base: Vec<(String, String)>,
+    cursor: Option<String>,
+    max_results: Option<&str>,
+) -> Result<Value> {
+    let max_results = crate::commands::sink::parse_max_results(max_results)?;
+    if let Some(n) = max_results {
+        let shape = crate::commands::sink::PageShape {
+            items_key: "list",
+            cursor_key: "cursor",
+            mode: crate::commands::sink::CursorMode::PerItem,
+        };
+        let base_client = client.clone();
+        let base_q = base.clone();
+        let agg = crate::commands::sink::auto_paginate(cursor, n as usize, &shape, move |cur| {
+            let mut c = base_client.clone();
+            let base_q = base_q.clone();
+            async move {
+                let mut q: Vec<(&str, &str)> = base_q
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                if let Some(ref cc) = cur {
+                    q.push(("cursor", cc.as_str()));
+                }
+                c.get(path, &q).await
+            }
+        })
+        .await;
+        return Ok(serde_json::to_value(agg)?);
+    }
+    let mut q: Vec<(&str, &str)> = base.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    if let Some(ref cc) = cursor {
+        if !cc.is_empty() {
+            q.push(("cursor", cc.as_str()));
+        }
+    }
+    client.get(path, &q).await
+}
+
 /// GET /api/v6/dex/market/token/search
 pub async fn fetch_search(
     client: &mut ApiClient,
@@ -550,6 +617,7 @@ pub async fn fetch_search(
     chains: &str,
     limit: Option<&str>,
     cursor: Option<&str>,
+    max_results: Option<&str>,
 ) -> Result<Value> {
     let resolved_chains = crate::chains::resolve_chains(chains);
     if let Some(s) = limit {
@@ -561,15 +629,19 @@ pub async fn fetch_search(
             "--limit must be between 1 and 100, got {n}"
         );
     }
-    let mut params = vec![
-        ("chains", resolved_chains.as_str()),
-        ("search", query),
-        ("limit", limit.unwrap_or("20")),
+    let base: Vec<(String, String)> = vec![
+        ("chains".to_string(), resolved_chains),
+        ("search".to_string(), query.to_string()),
+        ("limit".to_string(), limit.unwrap_or("20").to_string()),
     ];
-    if let Some(c) = cursor {
-        params.push(("cursor", c));
-    }
-    client.get("/api/v6/dex/market/token/search", &params).await
+    finalize_token_page(
+        client,
+        "/api/v6/dex/market/token/search",
+        base,
+        cursor.map(str::to_string),
+        max_results,
+    )
+    .await
 }
 
 /// POST /api/v6/dex/market/token/basic-info — body is JSON array
@@ -588,6 +660,7 @@ pub async fn fetch_holders(
     tag_filter: Option<u8>,
     limit: Option<&str>,
     cursor: Option<&str>,
+    max_results: Option<&str>,
 ) -> Result<Value> {
     if let Some(s) = limit {
         let n: u64 = s
@@ -599,16 +672,20 @@ pub async fn fetch_holders(
         );
     }
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
-    let mut params = vec![
-        ("chainIndex", chain_index),
-        ("tokenContractAddress", address),
-        ("tagFilter", tag_str.as_str()),
-        ("limit", limit.unwrap_or("20")),
+    let base: Vec<(String, String)> = vec![
+        ("chainIndex".to_string(), chain_index.to_string()),
+        ("tokenContractAddress".to_string(), address.to_string()),
+        ("tagFilter".to_string(), tag_str),
+        ("limit".to_string(), limit.unwrap_or("20").to_string()),
     ];
-    if let Some(c) = cursor {
-        params.push(("cursor", c));
-    }
-    client.get("/api/v6/dex/market/token/holder", &params).await
+    finalize_token_page(
+        client,
+        "/api/v6/dex/market/token/holder",
+        base,
+        cursor.map(str::to_string),
+        max_results,
+    )
+    .await
 }
 
 /// GET /api/v6/dex/market/token/top-liquidity — top 5 liquidity pools for a token
@@ -745,6 +822,9 @@ pub struct HotTokensParams {
     pub limit: Option<String>,
     /// Pagination cursor. Pass the cursor value from the last item of the previous response to fetch the next page. Omit for first page.
     pub cursor: Option<String>,
+    /// Auto-paginate up to N total entries (1..=500, max 10 pages). Returns {items,nextCursor,fetchedCount}
+    /// in one call instead of manual cursor-chasing. Omit for a single page (default behavior).
+    pub max_results: Option<String>,
 }
 
 /// GET /api/v6/dex/market/token/hot-token — hot token list by trending score or X mentions
@@ -760,6 +840,7 @@ pub async fn fetch_hot_tokens(client: &mut ApiClient, params: HotTokensParams) -
     }
     let hot_limit = params.limit.unwrap_or_else(|| "20".to_string());
     let hot_cursor = params.cursor;
+    let hot_max_results = params.max_results;
     let chain_index = params
         .chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
@@ -806,7 +887,7 @@ pub async fn fetch_hot_tokens(client: &mut ApiClient, params: HotTokensParams) -
     let is_mint = params.is_mint.unwrap_or_default();
     let is_freeze = params.is_freeze.unwrap_or_default();
 
-    let mut req_params = vec![
+    let req_params = vec![
         ("rankingType", params.ranking_type.as_str()),
         ("chainIndex", chain_index.as_str()),
         ("rankBy", rank_by.as_str()),
@@ -857,12 +938,18 @@ pub async fn fetch_hot_tokens(client: &mut ApiClient, params: HotTokensParams) -
         ("isFreeze", is_freeze.as_str()),
         ("limit", hot_limit.as_str()),
     ];
-    if let Some(ref c) = hot_cursor {
-        req_params.push(("cursor", c.as_str()));
-    }
-    client
-        .get("/api/v6/dex/market/token/hot-token", &req_params)
-        .await
+    let base: Vec<(String, String)> = req_params
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    finalize_token_page(
+        client,
+        "/api/v6/dex/market/token/hot-token",
+        base,
+        hot_cursor,
+        hot_max_results.as_deref(),
+    )
+    .await
 }
 
 /// GET /api/v6/dex/market/token/advanced-info
@@ -890,6 +977,7 @@ pub async fn fetch_top_trader(
     tag_filter: Option<u8>,
     limit: Option<&str>,
     cursor: Option<&str>,
+    max_results: Option<&str>,
 ) -> Result<Value> {
     if let Some(s) = limit {
         let n: u64 = s
@@ -901,18 +989,20 @@ pub async fn fetch_top_trader(
         );
     }
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
-    let mut params = vec![
-        ("chainIndex", chain_index),
-        ("tokenContractAddress", address),
-        ("tagFilter", tag_str.as_str()),
-        ("limit", limit.unwrap_or("20")),
+    let base: Vec<(String, String)> = vec![
+        ("chainIndex".to_string(), chain_index.to_string()),
+        ("tokenContractAddress".to_string(), address.to_string()),
+        ("tagFilter".to_string(), tag_str),
+        ("limit".to_string(), limit.unwrap_or("20").to_string()),
     ];
-    if let Some(c) = cursor {
-        params.push(("cursor", c));
-    }
-    client
-        .get("/api/v6/dex/market/token/top-trader", &params)
-        .await
+    finalize_token_page(
+        client,
+        "/api/v6/dex/market/token/top-trader",
+        base,
+        cursor.map(str::to_string),
+        max_results,
+    )
+    .await
 }
 
 /// GET /api/v6/dex/market/trades — token trade history
@@ -1057,12 +1147,51 @@ pub async fn fetch_report(
         );
     }
 
-    Ok(serde_json::json!({
+    Ok(compose_report(
+        address,
+        chain_index,
+        info,
+        price,
+        advanced,
+        security,
+    ))
+}
+
+/// Assemble the composite `token report` object. Extracted as a pure function so
+/// the FR-2 contract (nested `requestTime` from each sub-call passes through
+/// verbatim — never stripped, never replaced by a local clock) is unit-testable.
+fn compose_report(
+    address: &str,
+    chain_index: &str,
+    info: Option<Value>,
+    price: Option<Value>,
+    advanced: Option<Value>,
+    security: Option<Value>,
+) -> Value {
+    serde_json::json!({
         "address":     address,
         "chain":       chain_index,
         "info":        info,
         "priceInfo":   price,
         "advancedInfo": advanced,
         "security":    security,
-    }))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// FR-2: an upstream `requestTime` inside a token sub-response must survive
+    /// verbatim through report composition (never stripped / clock-replaced).
+    #[test]
+    fn request_time_passes_through_report_composition() {
+        let info = json!({ "requestTime": 1_721_000_000_000u64, "symbol": "ETH" });
+        let price = json!({ "requestTime": 1_721_000_000_111u64, "price": "1" });
+        let report = compose_report("0xabc", "1", Some(info), Some(price), None, None);
+        assert_eq!(report["info"]["requestTime"], 1_721_000_000_000u64);
+        assert_eq!(report["priceInfo"]["requestTime"], 1_721_000_000_111u64);
+        assert_eq!(report["advancedInfo"], Value::Null);
+    }
 }

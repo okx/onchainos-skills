@@ -257,6 +257,8 @@ onchainos defi deposit \
 | `dataList[].from` | String | Sender address (user wallet) |
 | `dataList[].to` | String | Target contract address |
 | `dataList[].value` | String | Native token value (e.g. `"0x0"` for no native transfer) |
+| `dataList[].valueNormalized` | String | Minimal-unit **decimal integer string** derived from `value` (hex→decimal; `""`/`null`/`"0x0"`→`"0"`). Pass directly to `wallet contract-call --amt`. |
+| `dataList[].valueNormalizeError` | String | Present only when `value` could not be parsed; `valueNormalized` is then `"0"` (not guessed). Stop executing that step and relay this. |
 | `dataList[].serializedData` | String | Transaction data: EVM=hex (0x prefix), Solana=base58, Sui=base64 BCS |
 | `dataList[].originalData` | String | ABI metadata JSON (EVM only) |
 | `dataList[].signatureData` | String | Permit signature data (if applicable) |

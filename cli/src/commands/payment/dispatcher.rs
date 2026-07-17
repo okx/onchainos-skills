@@ -2,6 +2,7 @@ use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_
 use crate::commands::payment::a2a_pay::{self, A2aPayCommand};
 use crate::commands::payment::addr::{is_valid_evm_address, parse_recipient_addr};
 use crate::commands::payment::payment_flow;
+use crate::commands::payment::{decode_receipt, quote, session_state};
 use crate::output;
 use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
@@ -23,14 +24,56 @@ pub enum PaymentCommand {
         /// base64 of the decoded 402 payload `{x402Version, resource, accepts}`
         /// — i.e. the raw `PAYMENT-REQUIRED` header value (base64 or base64url).
         /// The CLI decodes it, signs the selected accepts entry, and (v2) returns
-        /// `{authorization_header, header_name, scheme, wallet}`.
+        /// `{authorization_header, header_name, scheme, wallet}`. Legacy sign-only
+        /// mode; mutually exclusive with `--payment-id`.
+        #[arg(
+            long,
+            required_unless_present = "payment_id",
+            conflicts_with = "payment_id"
+        )]
+        payload: Option<String>,
+        /// Two-phase mode: complete the payment persisted by `payment quote`.
+        /// Reads the paymentId state, signs via TEE, replays to the merchant, and
+        /// returns the receipt. Never re-fetches the 402.
         #[arg(long)]
-        payload: String,
+        payment_id: Option<String>,
         /// Optional 0-based index into the payload's `accepts[]` to sign. Use it
         /// to pin the exact scheme the user chose from a multi-scheme prompt.
         /// Omit to let the CLI auto-select (exact > aggr_deferred > first).
         #[arg(long)]
         selected_index: Option<usize>,
+        /// Additional business param, repeatable: --param key=value. Passed to the
+        /// merchant on replay (two-phase mode).
+        #[arg(long = "param")]
+        param: Vec<String>,
+        /// Approve the fund-moving payment (bypass the confirming gate). Without
+        /// it, two-phase `pay` returns a confirming prompt (exit 2).
+        #[arg(long, visible_alias = "force")]
+        yes: bool,
+    },
+    /// Probe a 402/A2MCP endpoint, parse the challenge, preflight balance,
+    /// rank candidates, and persist a paymentId. Never signs.
+    Quote {
+        /// The A2MCP / merchant endpoint to probe.
+        url: String,
+        /// Known business param, repeatable: --param key=value
+        #[arg(long = "param")]
+        param: Vec<String>,
+        /// HTTP method to probe the endpoint with (GET by default). Use POST/PUT/
+        /// PATCH for A2MCP endpoints whose paid call is not a GET — known params
+        /// then ride in the JSON body instead of the query string.
+        #[arg(long, default_value = "GET")]
+        method: String,
+    },
+    /// Decode an x402 PAYMENT-RESPONSE header or a charge receipt into
+    /// {status, transaction, amount, payer, chainId}. Read-only.
+    DecodeReceipt {
+        /// x402 PAYMENT-RESPONSE header (base64/base64url).
+        #[arg(long, required_unless_present = "receipt", conflicts_with = "receipt")]
+        header: Option<String>,
+        /// Raw charge receipt JSON.
+        #[arg(long)]
+        receipt: Option<String>,
     },
     /// Sign an x402 payment locally with a hex private key (reads EVM_PRIVATE_KEY env var).
     /// Supports `exact + EIP-3009`, `exact + Permit2`, and `upto`; `aggr_deferred` is TEE-only.
@@ -245,8 +288,25 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
     match cmd {
         PaymentCommand::X402Pay {
             payload,
+            payment_id,
             selected_index,
-        } => cmd_pay(&payload, selected_index).await,
+            param,
+            yes,
+        } => {
+            if let Some(pid) = payment_id {
+                // Two-phase mode: complete a previously-quoted payment.
+                cmd_pay_two_phase(&pid, selected_index, &param, yes).await
+            } else {
+                // Legacy sign-only mode — byte-for-byte unchanged.
+                let payload = payload
+                    .ok_or_else(|| anyhow!("--payload is required unless --payment-id is set"))?;
+                cmd_pay(&payload, selected_index).await
+            }
+        }
+        PaymentCommand::Quote { url, param, method } => quote::run(&url, &param, &method).await,
+        PaymentCommand::DecodeReceipt { header, receipt } => {
+            cmd_decode_receipt(header.as_deref(), receipt.as_deref())
+        }
         PaymentCommand::Eip3009Sign { payload } => {
             // Local-key supports `exact + EIP-3009`, `exact + Permit2`, and `upto`
             // (no `aggr_deferred` — that needs a TEE-resident session key).
@@ -491,6 +551,36 @@ async fn cmd_pay(payload: &str, selected_index: Option<usize>) -> Result<()> {
     Ok(())
 }
 
+/// Two-phase `payment pay --payment-id`: delegate to `fetch_pay`, which
+/// enforces the confirming gate and the classified error tokens.
+///
+/// - `Err(CliConfirming)` → propagate so `main.rs` renders `{confirming,...}`
+///   at exit 2 (the first `confirming` use in the payment family).
+/// - `Ok(data)` → `output::success` (exit 0, including `status:"failed"` /
+///   `"pending"` which are recorded outcomes, not errors).
+/// - Any other `Err` (`quote_expired_or_missing` / `cross_user_payment_id` /
+///   `invalid_input` / signing failure) → propagate so `main.rs` renders
+///   `output::error` at exit 1.
+async fn cmd_pay_two_phase(
+    payment_id: &str,
+    selected_index: Option<usize>,
+    param: &[String],
+    yes: bool,
+) -> Result<()> {
+    let data = payment_flow::fetch_pay(payment_id, selected_index, param, yes).await?;
+    output::success(data);
+    Ok(())
+}
+
+/// `payment decode-receipt`: decode a PAYMENT-RESPONSE header or a
+/// charge receipt into the normalized shape. Malformed input → `invalid_input`
+/// propagates as `Err` → `main.rs` `output::error` (exit 1).
+fn cmd_decode_receipt(header: Option<&str>, receipt: Option<&str>) -> Result<()> {
+    let data = decode_receipt::fetch_decode_receipt(header, receipt)?;
+    output::success(data);
+    Ok(())
+}
+
 /// Decode the base64 `--payload` (the raw decoded 402 payload — shell-safe, no
 /// JSON-array quoting) into the `(accepts, resource)` the signer needs.
 ///
@@ -652,7 +742,7 @@ fn decode_challenge_request(challenge: &serde_json::Value) -> Result<serde_json:
 ///   2. base64-encoded JSON (`PAYMENT-REQUIRED` / `PAYMENT-RESPONSE` /
 ///      `Payment-Receipt`), trying standard + url-safe, padded + unpadded;
 ///   3. plain JSON (an x402 v1 body that was never base64-encoded).
-fn decode_payment_blob(input: &str) -> Result<Value> {
+pub(crate) fn decode_payment_blob(input: &str) -> Result<Value> {
     use base64::engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 
     let trimmed = input.trim();
@@ -1500,6 +1590,57 @@ async fn cmd_mpp_charge(
     Ok(())
 }
 
+/// Merge the decision-layer `data` fields (`strategy`, `cumulative_amount`,
+/// `needsTopUp`, `sessionSnapshot`, `refund`, `recovery`, `reason_text`) from
+/// `payment_flow::fetch_session` into a session handler's base output object, so
+/// every session sub-op emits the spec'd fields — the CLI (not the agent) does
+/// the reuse/sign + cumulative + top-up + refund arithmetic. Best-effort: on any
+/// error the base output is emitted unchanged rather than failing a fund-adjacent
+/// command that has already produced its authorization header.
+async fn emit_session(mut base: Value, params: payment_flow::SessionParams) {
+    if let Ok(decision) = payment_flow::fetch_session(params).await {
+        if let (Some(obj), Some(extra)) = (base.as_object_mut(), decision.as_object()) {
+            for (k, v) in extra {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    output::success(base);
+}
+
+/// Persist the channel deposit + initial cumulative at `open`, so later
+/// `voucher`/`close` can compute `needsTopUp`/`refund` from the real deposit.
+/// Best-effort: a persistence failure never blocks emitting the open credential.
+fn persist_channel_open(channel_id: &str, payer_addr: &str, deposit: &str, initial_cum: &str) {
+    let now = session_state::now_unix();
+    let _ = session_state::ChannelState {
+        channel_id: channel_id.to_string(),
+        owner_wallet: payer_addr.to_string(),
+        deposit: deposit.to_string(),
+        cumulative: initial_cum.to_string(),
+        created_at: now,
+        updated_at: now,
+    }
+    .write();
+}
+
+/// Decision-layer params for `open`: strategy=sign (initial voucher), cumulative =
+/// the baseline, deposit for the top-up guard.
+fn session_open_params(
+    channel_id: &str,
+    deposit: &str,
+    initial_cum: &str,
+) -> payment_flow::SessionParams {
+    payment_flow::SessionParams {
+        action: "open".to_string(),
+        channel_id: Some(channel_id.to_string()),
+        cumulative_amount: Some(initial_cum.to_string()),
+        unit_amount: Some("0".to_string()),
+        deposit: Some(deposit.to_string()),
+        ..Default::default()
+    }
+}
+
 /// onchainos payment session open: Open payment channel.
 /// - feePayer=true (default): TEE-sign EIP-3009 deposit + initial voucher → transaction payload.
 /// - feePayer=false: require --tx-hash AND --salt of the client-broadcast open tx;
@@ -1643,17 +1784,22 @@ async fn cmd_mpp_session_open(
             }
         });
         let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
-        output::success(json!({
-            "protocol": "mpp",
-            "action": "session_open",
-            "mode": "hash",
-            "authorization_header": authorization_header,
-            "channel_id": channel_id,
-            "escrow": escrow,
-            "chain_id": chain_id,
-            "deposit": deposit,
-            "wallet": payer_addr,
-        }));
+        persist_channel_open(&channel_id, payer_addr, deposit, &initial_cum);
+        emit_session(
+            json!({
+                "protocol": "mpp",
+                "action": "session_open",
+                "mode": "hash",
+                "authorization_header": authorization_header,
+                "channel_id": channel_id,
+                "escrow": escrow,
+                "chain_id": chain_id,
+                "deposit": deposit,
+                "wallet": payer_addr,
+            }),
+            session_open_params(&channel_id, deposit, &initial_cum),
+        )
+        .await;
         return Ok(());
     }
 
@@ -1725,18 +1871,34 @@ async fn cmd_mpp_session_open(
 
     let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
 
-    output::success(json!({
-        "protocol": "mpp",
-        "action": "session_open",
-        "mode": "transaction",
-        "authorization_header": authorization_header,
-        "channel_id": channel_id,
-        "escrow": escrow,
-        "chain_id": chain_id,
-        "deposit": deposit,
-        "wallet": payer_addr,
-    }));
+    persist_channel_open(&channel_id, payer_addr, deposit, &initial_cum);
+    emit_session(
+        json!({
+            "protocol": "mpp",
+            "action": "session_open",
+            "mode": "transaction",
+            "authorization_header": authorization_header,
+            "channel_id": channel_id,
+            "escrow": escrow,
+            "chain_id": chain_id,
+            "deposit": deposit,
+            "wallet": payer_addr,
+        }),
+        session_open_params(&channel_id, deposit, &initial_cum),
+    )
+    .await;
     Ok(())
+}
+
+/// Viability gate for advancing the persisted session cumulative after signing a
+/// voucher. Advance only when the voucher moves the cumulative forward (`unit > 0`)
+/// and — when the deposit is known — the new cumulative stays within it. When the
+/// deposit is unknown we still advance (best-effort). Mirrors `fetch_session`'s
+/// `needsTopUp` predicate: a voucher that over-spends the deposit / needs top-up
+/// (which the seller rejects) must NOT push the local cumulative forward, or the
+/// next voucher's `unit = new − prior` baseline becomes optimistic.
+fn voucher_advances_cumulative(unit: u128, new_cum_u: u128, deposit_u: Option<u128>) -> bool {
+    unit > 0 && deposit_u.is_none_or(|d| new_cum_u <= d)
 }
 
 /// onchainos payment session voucher: sign EIP-712 voucher (or wrap an existing
@@ -1803,15 +1965,59 @@ async fn cmd_mpp_session_voucher(
 
     let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
 
-    output::success(json!({
-        "protocol": "mpp",
-        "action": "voucher",
-        "mode": mode,
-        "authorization_header": authorization_header,
-        "channel_id": channel_id,
-        "cumulative_amount": cumulative_amount,
-        "signature": voucher_sig,
-    }));
+    // Decision layer: pull the channel's persisted deposit + prior
+    // cumulative so the CLI — not the agent — computes strategy/needsTopUp.
+    // The voucher flag is the ABSOLUTE new cumulative; the prior cumulative comes
+    // from persisted state (0 if unknown), and unit = new − prior.
+    let prior = session_state::read(channel_id);
+    let prior_cum = prior
+        .as_ref()
+        .map(|s| s.cumulative.clone())
+        .unwrap_or_else(|| "0".to_string());
+    let deposit = prior.as_ref().map(|s| s.deposit.clone());
+    let new_cum_u = cumulative_amount.parse::<u128>().unwrap_or(0);
+    let prior_cum_u = prior_cum.parse::<u128>().unwrap_or(0);
+    let unit = new_cum_u.saturating_sub(prior_cum_u);
+
+    // Advance persisted cumulative only when the voucher is viable — i.e.
+    // unit > 0 and (deposit known ⇒ new cumulative within deposit). The stored
+    // value is the just-SIGNED cumulative, NOT one the seller has confirmed; a
+    // voucher that over-spends the deposit / needs top-up will be rejected by
+    // the seller, so advancing on it would make the next voucher's
+    // `unit = new − prior` baseline optimistic. When the deposit is unknown we
+    // still advance (best-effort). Over-deposit / top-up drift is ultimately
+    // corrected by the 70015 `server_cumulative` re-sign (seller SDK is the
+    // final authority). Same `needsTopUp` predicate as `fetch_session`.
+    let deposit_u = deposit.as_deref().and_then(|d| d.parse::<u128>().ok());
+    let viable = voucher_advances_cumulative(unit, new_cum_u, deposit_u);
+    if viable {
+        if let Some(mut s) = prior {
+            s.cumulative = cumulative_amount.to_string();
+            s.updated_at = session_state::now_unix();
+            let _ = s.write();
+        }
+    }
+
+    emit_session(
+        json!({
+            "protocol": "mpp",
+            "action": "voucher",
+            "mode": mode,
+            "authorization_header": authorization_header,
+            "channel_id": channel_id,
+            "signature": voucher_sig,
+        }),
+        payment_flow::SessionParams {
+            action: "voucher".to_string(),
+            channel_id: Some(channel_id.to_string()),
+            cumulative_amount: Some(prior_cum),
+            unit_amount: Some(unit.to_string()),
+            deposit,
+            reuse_signature: reuse_signature.map(str::to_string),
+            ..Default::default()
+        },
+    )
+    .await;
     Ok(())
 }
 
@@ -1913,15 +2119,52 @@ async fn cmd_mpp_session_topup(
 
     let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
 
-    output::success(json!({
-        "protocol": "mpp",
-        "action": "session_topup",
-        "mode": if tx_hash.is_some() { "hash" } else { "transaction" },
-        "authorization_header": authorization_header,
-        "channel_id": channel_id,
-        "additional_deposit": additional_deposit,
-        "wallet": payer_addr,
-    }));
+    // Grow the persisted channel deposit by the additional amount so the
+    // next `voucher`'s top-up guard / `close`'s refund see the new balance.
+    let prior = session_state::read(channel_id);
+    let prior_cum = prior
+        .as_ref()
+        .map(|s| s.cumulative.clone())
+        .unwrap_or_else(|| "0".to_string());
+    let new_deposit = prior
+        .as_ref()
+        .map(|s| {
+            (s.deposit.parse::<u128>().unwrap_or(0))
+                .saturating_add(additional_deposit.parse::<u128>().unwrap_or(0))
+                .to_string()
+        })
+        .unwrap_or_else(|| additional_deposit.to_string());
+    let now = session_state::now_unix();
+    let _ = session_state::ChannelState {
+        channel_id: channel_id.to_string(),
+        owner_wallet: payer_addr.to_string(),
+        deposit: new_deposit.clone(),
+        cumulative: prior_cum.clone(),
+        created_at: prior.as_ref().map(|s| s.created_at).unwrap_or(now),
+        updated_at: now,
+    }
+    .write();
+
+    emit_session(
+        json!({
+            "protocol": "mpp",
+            "action": "session_topup",
+            "mode": if tx_hash.is_some() { "hash" } else { "transaction" },
+            "authorization_header": authorization_header,
+            "channel_id": channel_id,
+            "additional_deposit": additional_deposit,
+            "wallet": payer_addr,
+        }),
+        payment_flow::SessionParams {
+            action: "topup".to_string(),
+            channel_id: Some(channel_id.to_string()),
+            cumulative_amount: Some(prior_cum),
+            unit_amount: Some("0".to_string()),
+            deposit: Some(new_deposit),
+            ..Default::default()
+        },
+    )
+    .await;
     Ok(())
 }
 
@@ -1962,13 +2205,38 @@ async fn cmd_mpp_session_close(
 
     let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
 
-    output::success(json!({
-        "protocol": "mpp",
-        "action": "session_close",
-        "authorization_header": authorization_header,
-        "channel_id": channel_id,
-        "cumulative_amount": cumulative_amount,
-    }));
+    // Decision layer: refund = deposit − final_cum, from the channel's
+    // persisted deposit. `--cumulative-amount` is the final ABSOLUTE cum.
+    let prior = session_state::read(channel_id);
+    let prior_cum = prior
+        .as_ref()
+        .map(|s| s.cumulative.clone())
+        .unwrap_or_else(|| "0".to_string());
+    let deposit = prior.as_ref().map(|s| s.deposit.clone());
+    let final_cum_u = cumulative_amount.parse::<u128>().unwrap_or(0);
+    let prior_cum_u = prior_cum.parse::<u128>().unwrap_or(0);
+    let unit = final_cum_u.saturating_sub(prior_cum_u);
+
+    emit_session(
+        json!({
+            "protocol": "mpp",
+            "action": "session_close",
+            "authorization_header": authorization_header,
+            "channel_id": channel_id,
+        }),
+        payment_flow::SessionParams {
+            action: "close".to_string(),
+            channel_id: Some(channel_id.to_string()),
+            cumulative_amount: Some(prior_cum),
+            unit_amount: Some(unit.to_string()),
+            deposit,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // Channel is closed — drop its persisted state.
+    session_state::cleanup(channel_id);
     Ok(())
 }
 
@@ -2056,8 +2324,9 @@ mod tests {
             PaymentCommand::X402Pay {
                 payload,
                 selected_index,
+                ..
             } => {
-                assert_eq!(payload, b64);
+                assert_eq!(payload.as_deref(), Some(b64));
                 assert_eq!(selected_index, None);
             }
             _ => panic!("expected X402Pay"),
@@ -2074,10 +2343,99 @@ mod tests {
     }
 
     #[test]
-    fn cli_x402_pay_requires_payload() {
+    fn cli_x402_pay_requires_payload_or_payment_id() {
+        // Neither --payload nor --payment-id → clap rejects.
         assert!(TestCli::try_parse_from(["test", "pay"]).is_err());
         // legacy flags are gone
         assert!(TestCli::try_parse_from(["test", "pay", "--accepts", "[]"]).is_err());
+        // --payload and --payment-id are mutually exclusive.
+        assert!(
+            TestCli::try_parse_from(["test", "pay", "--payload", "x", "--payment-id", "p"])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn cli_pay_two_phase_parses_payment_id_yes_force() {
+        // Two-phase mode: --payment-id, --selected-index, --param, --yes.
+        match TestCli::parse_from([
+            "test",
+            "pay",
+            "--payment-id",
+            "pay_abc",
+            "--selected-index",
+            "0",
+            "--param",
+            "orderId=1",
+            "--yes",
+        ])
+        .command
+        {
+            PaymentCommand::X402Pay {
+                payment_id,
+                selected_index,
+                param,
+                yes,
+                payload,
+            } => {
+                assert_eq!(payment_id.as_deref(), Some("pay_abc"));
+                assert_eq!(selected_index, Some(0));
+                assert_eq!(param, vec!["orderId=1".to_string()]);
+                assert!(yes);
+                assert!(payload.is_none());
+            }
+            _ => panic!("expected X402Pay"),
+        }
+        // --force is a visible alias of --yes.
+        match TestCli::parse_from(["test", "pay", "--payment-id", "p", "--force"]).command {
+            PaymentCommand::X402Pay { yes, .. } => assert!(yes),
+            _ => panic!("expected X402Pay"),
+        }
+    }
+
+    #[test]
+    fn cli_quote_parses_url_and_params() {
+        match TestCli::parse_from([
+            "test",
+            "quote",
+            "https://m.example/x",
+            "--param",
+            "a=1",
+            "--param",
+            "b=2",
+        ])
+        .command
+        {
+            PaymentCommand::Quote { url, param, method } => {
+                assert_eq!(url, "https://m.example/x");
+                assert_eq!(param, vec!["a=1".to_string(), "b=2".to_string()]);
+                assert_eq!(method, "GET"); // default when --method is omitted
+            }
+            _ => panic!("expected Quote"),
+        }
+    }
+
+    #[test]
+    fn cli_decode_receipt_requires_one_of_header_or_receipt() {
+        // header form
+        match TestCli::parse_from(["test", "decode-receipt", "--header", "b64"]).command {
+            PaymentCommand::DecodeReceipt { header, receipt } => {
+                assert_eq!(header.as_deref(), Some("b64"));
+                assert!(receipt.is_none());
+            }
+            _ => panic!("expected DecodeReceipt"),
+        }
+        // neither → error; both → error (mutually exclusive).
+        assert!(TestCli::try_parse_from(["test", "decode-receipt"]).is_err());
+        assert!(TestCli::try_parse_from([
+            "test",
+            "decode-receipt",
+            "--header",
+            "h",
+            "--receipt",
+            "r"
+        ])
+        .is_err());
     }
 
     // ── eip3009-sign CLI parsing ─────────────────────────────────────
@@ -3017,5 +3375,42 @@ mod tests {
             names,
             vec!["name", "version", "chainId", "verifyingContract"]
         );
+    }
+
+    // ── voucher_advances_cumulative (session viability gate) ──────────
+    // Locks in the P2-1 fix (commit 7ff655ed): the persisted session cumulative
+    // is advanced only for a viable voucher, so a rejected over-deposit voucher
+    // cannot make the next voucher's `unit = new − prior` baseline optimistic.
+
+    #[test]
+    fn voucher_advances_when_within_known_deposit() {
+        // unit > 0 and new cumulative within deposit ⇒ advance.
+        assert!(voucher_advances_cumulative(50, 150, Some(200)));
+    }
+
+    #[test]
+    fn voucher_advances_at_exact_deposit_boundary() {
+        // new cumulative == deposit is still within budget ⇒ advance.
+        assert!(voucher_advances_cumulative(200, 200, Some(200)));
+    }
+
+    #[test]
+    fn voucher_does_not_advance_over_deposit() {
+        // new_cum > deposit (needs top-up / seller rejects) ⇒ do NOT advance.
+        assert!(!voucher_advances_cumulative(50, 250, Some(200)));
+    }
+
+    #[test]
+    fn voucher_advances_when_deposit_unknown() {
+        // deposit = None ⇒ advance best-effort (only bounded by unit > 0).
+        assert!(voucher_advances_cumulative(50, 250, None));
+    }
+
+    #[test]
+    fn voucher_does_not_advance_when_unit_zero() {
+        // unit == 0 (no forward progress) ⇒ do NOT advance, even within deposit.
+        assert!(!voucher_advances_cumulative(0, 100, Some(200)));
+        // ...and also when the deposit is unknown.
+        assert!(!voucher_advances_cumulative(0, 100, None));
     }
 }

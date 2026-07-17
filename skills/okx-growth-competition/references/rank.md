@@ -4,11 +4,10 @@
 
 ## Check leaderboard (full board)
 
-When the user says "view leaderboard" without specifying which one, you MUST:
+When the user says "view leaderboard" without specifying which one, make ONE call:
 
-1. Call `competition_detail` for the activity and enumerate `tabConfigs[].rankFieldConfig[].sortValueMap.descend` — this is the full set of leaderboards the activity exposes.
-2. Call `competition_rank` ONCE PER `sort_type` (one HTTP call per leaderboard) so you have data for every leaderboard.
-3. Render ALL of them in the response — one section per leaderboard. Do NOT silently default to a single leaderboard (e.g. only `sort_type=1`) when the activity has more than one.
+1. Call `competition rank --activity-id <id> --all [--wallet <addr>] [--limit 20]`. The CLI enumerates every leaderboard from `detail` (filtering non-board columns) and returns `data.boards[]` — one entry per `sort_type`, each with the full single-board payload (`allRankInfos`, `myRankInfo`, `rankUpdateTime`). Do NOT fan out per `sort_type` yourself.
+2. Render every entry in `data.boards[]` — one section per board. A board that failed carries `{sortType, error}`; render the others normally.
 
 Only ask the user to pick one when there are clearly too many to fit (≥ 3 leaderboards on a single competition). With 1–2 leaderboards, always show all by default.
 
@@ -40,8 +39,8 @@ After the leaderboards, append a "Your rank" section using the **CASE 1 / 2 / 3 
 A user can simultaneously appear on multiple leaderboards (e.g. PnL% AND PnL). When the user asks "what's my rank?", you MUST query every leaderboard the activity exposes, then render one of the three fixed templates below.
 
 **Required flow:**
-1. Call `competition_detail` → enumerate `tabConfigs[].rankFieldConfig[].sortValueMap.descend` to get the full set of `sort_type` values for this activity.
-2. For EACH `sort_type`, call `competition_rank --sort-type <descend>` and capture `myRankInfo` plus the leaderboard's threshold (lowest `userTotal` in `allRankInfos`).
+1. Call `competition rank --activity-id <id> --all [--wallet <addr>]` once — `data.boards[]` already covers every `sort_type`.
+2. For each board in `data.boards[]`, read `myRankInfo` plus the threshold (lowest `userTotal` in `allRankInfos`).
 3. Classify the result:
    - **CASE 1** — user has `currentRank > 0` on every leaderboard
    - **CASE 2** — user has `currentRank > 0` on at least one but not all

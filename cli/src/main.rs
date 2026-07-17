@@ -264,10 +264,16 @@ async fn run() {
                     output::setup_required(&s.error_code, &s.message, &s.data);
                     std::process::exit(3);
                 }
-                Err(e) => {
-                    output::error(&format!("{e:#}"));
-                    std::process::exit(1);
-                }
+                Err(e) => match e.downcast::<commands::sink::CodedError>() {
+                    Ok(c) => {
+                        output::error_coded(&c.code, c.field.as_deref(), &c.message);
+                        std::process::exit(1);
+                    }
+                    Err(e) => {
+                        output::error(&format!("{e:#}"));
+                        std::process::exit(1);
+                    }
+                },
             },
         }
     }

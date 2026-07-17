@@ -17,12 +17,14 @@ onchainos social news-latest [options]
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--token-symbols` | No | - | Comma-separated coin symbols, max 20 (e.g. `BTC,ETH`) |
-| `--begin` | No | now − 72h | Begin timestamp (Unix milliseconds); max lookback 180d |
-| `--end` | No | now | End timestamp (Unix milliseconds) |
+| `--since` | No | - | Relative window (grammar `<int><s\|m\|h\|d>`, e.g. `30m`, `24h`, `7d`); the CLI computes the range and returns `data.resolvedWindow {begin,end}`. Mutually exclusive with `--begin`/`--end` — do NOT pass both. |
+| `--begin` | No | now − 72h | Begin timestamp (Unix milliseconds); max lookback 180d. Absolute alternative to `--since`. |
+| `--end` | No | now | End timestamp (Unix milliseconds). Absolute alternative to `--since`. |
 | `--importance` | No | - | `1`=high, `2`=medium, `3`=low |
 | `--platform` | No | - | Single platform identifier (e.g. `blockbeats`); see `news-platforms` |
 | `--limit` | No | `10` | Page size, range `[1, 50]` |
 | `--cursor` | No | - | Pagination cursor from previous response |
+| `--max-results` | No | - | Auto-paginate across pages until N items are collected (1–500). The CLI aggregates pages and returns `data.items` + `data.nextCursor` + `data.fetchedCount`. News uses page-level cursors, so a whole final page is kept and the result may slightly exceed N. Mutually exclusive intent with manual `--limit`/`--cursor` paging. |
 | `--detail-level` | No | `1` | `1`=summary only, `2`=include full `content` |
 | `--language` | No | `en_US` | Locale (e.g. `en_US`, `zh_CN`, `ja_JP`) |
 
@@ -81,9 +83,11 @@ onchainos social news-by-symbol --token-symbols <symbols> [options]
 | `--platform` | No | - | Single platform identifier |
 | `--limit` | No | `10` | Page size, range `[1, 50]` |
 | `--cursor` | No | - | Pagination cursor |
+| `--max-results` | No | - | Auto-paginate across pages until N items are collected (1–500). The CLI aggregates pages and returns `data.items` + `data.nextCursor` + `data.fetchedCount`. News uses page-level cursors, so a whole final page is kept and the result may slightly exceed N. Mutually exclusive intent with manual `--limit`/`--cursor` paging. |
 | `--detail-level` | No | `1` | `1`=summary, `2`=full body |
-| `--begin` | No | now − 72h | Begin timestamp (Unix ms); max lookback 180d |
-| `--end` | No | now | End timestamp (Unix ms) |
+| `--since` | No | - | Relative window (grammar `<int><s\|m\|h\|d>`, e.g. `30m`, `24h`, `7d`); the CLI computes the range and returns `data.resolvedWindow {begin,end}`. Mutually exclusive with `--begin`/`--end` — do NOT pass both. |
+| `--begin` | No | now − 72h | Begin timestamp (Unix ms); max lookback 180d. Absolute alternative to `--since`. |
+| `--end` | No | now | End timestamp (Unix ms). Absolute alternative to `--since`. |
 | `--language` | No | `en_US` | Locale (e.g. `en_US`, `zh_CN`) |
 
 **Return fields**: same shape as `news-latest`.
@@ -116,11 +120,13 @@ onchainos social news-search --keyword <keyword> [options]
 | `--importance` | No | - | `1`=high, `2`=medium, `3`=low |
 | `--platform` | No | - | Single platform identifier |
 | `--token-symbols` | No | - | Comma-separated coin symbols, max 20 |
-| `--begin` | No | now − 72h | Begin timestamp (Unix ms); max lookback 180d |
-| `--end` | No | now | End timestamp (Unix ms) |
+| `--since` | No | - | Relative window (grammar `<int><s\|m\|h\|d>`, e.g. `30m`, `24h`, `7d`); the CLI computes the range and returns `data.resolvedWindow {begin,end}`. Mutually exclusive with `--begin`/`--end` — do NOT pass both. |
+| `--begin` | No | now − 72h | Begin timestamp (Unix ms); max lookback 180d. Absolute alternative to `--since`. |
+| `--end` | No | now | End timestamp (Unix ms). Absolute alternative to `--since`. |
 | `--detail-level` | No | `1` | `1`=summary, `2`=full body |
 | `--limit` | No | `10` | Page size, range `[1, 50]` |
 | `--cursor` | No | - | Pagination cursor |
+| `--max-results` | No | - | Auto-paginate across pages until N items are collected (1–500). The CLI aggregates pages and returns `data.items` + `data.nextCursor` + `data.fetchedCount`. News uses page-level cursors, so a whole final page is kept and the result may slightly exceed N. Mutually exclusive intent with manual `--limit`/`--cursor` paging. |
 | `--language` | No | `en_US` | Locale (e.g. `en_US`, `zh_CN`) |
 
 **Return fields**: same shape as `news-latest`.

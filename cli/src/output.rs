@@ -61,6 +61,31 @@ pub fn error(msg: &str) {
     println!("{}", to_agent_json(&out).unwrap());
 }
 
+/// Print a structured error response with a machine-readable code:
+/// `{ "ok": false, "error": "<msg>", "errorCode": "<code>", "errorField": "<field>"? }`
+///
+/// Exit code 1 (the default error path — no `CliConfirming` / `CliSetupRequired`
+/// downcast). `error` stays a human-readable string (backward-compatible with
+/// every existing consumer); the sibling `errorCode` (+ optional `errorField`)
+/// make the case machine-distinguishable, mirroring the `setup_required`
+/// `errorCode` precedent. Used for the new validation errors (invalid_input,
+/// upstream_error, no_leaderboards).
+pub fn error_coded(code: &str, field: Option<&str>, message: &str) {
+    let mut v = serde_json::json!({
+        "ok": false,
+        "error": message,
+        "errorCode": code,
+    });
+    if let Some(f) = field {
+        v["errorField"] = Value::String(f.to_string());
+    }
+    let events = payment_notify::drain_events();
+    if !events.is_empty() {
+        v["notifications"] = Value::Array(events);
+    }
+    println!("{}", to_agent_json(&v).unwrap());
+}
+
 // ── Confirming ───────────────────────────────────────────────────────
 
 #[derive(Serialize)]

@@ -152,7 +152,7 @@ onchainos wallet contract-call \
   --to <dataList[N].to> \
   --chain <chainIndex> \
   --input-data <dataList[N].serializedData> \
-  --value <value_in_UI_units> \
+  --amt <dataList[N].valueNormalized> \
   --biz-type defi
 ```
 
@@ -162,7 +162,7 @@ onchainos wallet contract-call \
   --to <dataList[N].to> \
   --chain 196 \
   --input-data <dataList[N].serializedData> \
-  --value <value_in_UI_units> \
+  --amt <dataList[N].valueNormalized> \
   --biz-type defi
 ```
 
@@ -177,7 +177,7 @@ onchainos wallet contract-call \
 
 `contract-call` handles TEE signing and broadcasting internally — no separate broadcast step needed.
 
-**`--value` unit conversion**: `dataList[].value` is in minimal units (wei). `contract-call --value` expects UI units. Convert: `value_UI = value / 10^nativeToken.decimal` (e.g. 18 for ETH/POL, 9 for SOL). If `value` is `""`, `"0"`, or `"0x0"`, use `"0"`.
+**`--amt` value**: pass `dataList[N].valueNormalized` directly — it is already a minimal-unit integer string computed by the CLI (hex→decimal, empty/`"0x0"`→`"0"`). No conversion. If a step carries `valueNormalizeError`, do NOT execute that step — relay the error and stop.
 
 **`--chain` mapping**: `contract-call` and `gateway broadcast` require `realChainIndex` (e.g. `1`=Ethereum, `137`=Polygon, `56`=BSC, `501`=Solana, `196`=XLayer).
 

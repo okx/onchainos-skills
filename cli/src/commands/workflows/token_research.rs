@@ -36,14 +36,14 @@ pub(crate) async fn fetch_and_assemble(
     let (mut c1, mut c2, mut c3) = (client.clone(), client.clone(), client.clone());
     let addr = address.to_string();
     let (holders, cluster, top_traders, signals) = tokio::join!(
-        token::fetch_holders(client, address, chain_index, None, Some("100"), None),
+        token::fetch_holders(client, address, chain_index, None, Some("100"), None, None),
         token::fetch_cluster_by_address(
             &mut c1,
             "/api/v6/dex/market/token/cluster/overview",
             address,
             chain_index,
         ),
-        token::fetch_top_trader(&mut c2, address, chain_index, None, Some("20"), None),
+        token::fetch_top_trader(&mut c2, address, chain_index, None, Some("20"), None, None),
         signal::fetch_list(
             &mut c3,
             chain_index,
@@ -127,7 +127,7 @@ pub async fn search_and_select(
     query: &str,
     chain_index: &str,
 ) -> Result<Value> {
-    let results = token::fetch_search(client, query, chain_index, Some("5"), None).await?;
+    let results = token::fetch_search(client, query, chain_index, Some("5"), None, None).await?;
     let items = results.as_array().cloned().unwrap_or_default();
 
     if items.is_empty() {
