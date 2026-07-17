@@ -1,5 +1,9 @@
 # `charge` intent (one-shot)
 
+> **CLI down-sink:** receipt-decode is now `onchainos payment
+> decode-receipt (--header <b64> | --receipt <json>)`. Transaction-vs-hash mode
+> routing stays with the agent.
+
 > Loaded from `../SKILL.md` when the dispatcher decoded a `WWW-Authenticate: Payment` 402 challenge with `intent="charge"`. Decode + display + wallet-status check have already happened upstream — start here at "Decide mode".
 
 One-shot payment. CLI TEE-signs an EIP-3009 authorization (or wraps a client-broadcast tx hash) and returns a ready `authorization_header`. Optional `methodDetails.splits[]` (max 10 entries) splits the amount across multiple recipients in a single signed authorization.

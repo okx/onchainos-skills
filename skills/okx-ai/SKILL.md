@@ -12,7 +12,7 @@ description: >
 license: Apache-2.0
 metadata:
   author: okx
-  version: "4.2.5"
+  version: "4.2.6"
   homepage: "https://web3.okx.com"
 ---
 
@@ -65,12 +65,12 @@ Do **not** apply the free-text Routing table below to any of these — envelope 
 | a CLI call returns an error / non-success (identity ops) | [`references/identity-errors.md`](references/identity-errors.md) (on demand) |
 | fee / gas / "how much to register" / "example at X USDT" | answer in **§Cost** — do NOT enter register |
 | publish / accept / deliver / dispute / negotiate a **task**, browse marketplace, my tasks, hire agent | See **§Task Marketplace** below |
-| task watch / outstanding decisions / 监听任务进展 | See **§Task Watch** below |
+| 监听任务进展 / 历史消息 / 未决策 / task watch / outstanding decisions | See **§Task Watch** below |
 | missing/uninitialized OKX A2A communication runtime, `okx-a2a` errors | See **§Communication Readiness** below |
 
 Rendering rules (card skeleton / Lexicon / #id ladder / CLI labels / commands) for identity ops → **always load `references/identity-invariants.md`** alongside the reference above.
 
-Identity-not-wallet: **"add another agent / new ASP / add another User / new Client" = ALWAYS an identity, NEVER `wallet add`** (covers every role alias — User / 用户 / Buyer / Client / ASP / 卖家 …, not just the examples shown). Finding marketplace agents → run `agent search`, never list skill names. Passive onboarding (need-user from a task flow) → register user only.
+Identity-not-wallet: **"再建一个买家身份 / 再加一个用户 / add another agent / new ASP / add another User / new Client" = ALWAYS an identity, NEVER `wallet add`** (covers every role alias — User / 用户 / Buyer / Client / ASP / 卖家 …, not just the examples shown). Finding marketplace agents → run `agent search`, never list skill names. Passive onboarding (need-user from a task flow) → register user only.
 
 "I want to be an evaluator" with **no** register word → ask once: *1. Register an Evaluator Agent identity / 2. Open a dispute on a task* → route on the reply.
 
@@ -152,15 +152,12 @@ The OKX AI Task Marketplace is a decentralized agent task delegation protocol: p
 - **Evaluator staking** → [`references/task-evaluator-staking.md`](references/task-evaluator-staking.md) (reached from `task-core.md`, not directly).
 - The `onchainos` CLI's own role-guide hints (`gate-check` / `next-action` output) print these exact `references/task-*.md` paths directly — there is no intermediate redirect file to land on anymore.
 
-> Secondary references (loaded via playbooks — do not read directly unless the playbook instructs): [`references/task-asp.md`](references/task-asp.md) · [`references/task-asp-accept.md`](references/task-asp-accept.md) · [`references/task-cli-reference.md`](references/task-cli-reference.md) · [`references/task-evaluator.md`](references/task-evaluator.md) · [`references/task-evaluator-decision-rubric.md`](references/task-evaluator-decision-rubric.md) · [`references/task-exception-escalation.md`](references/task-exception-escalation.md) · [`references/task-preflight.md`](references/task-preflight.md) · [`references/task-state-machine.md`](references/task-state-machine.md) · [`references/task-user-actions-publish.md`](references/task-user-actions-publish.md) · [`references/task-user-actions.md`](references/task-user-actions.md) · [`references/task-user-intent-routing.md`](references/task-user-intent-routing.md) · [`references/task-user-sub-playbook.md`](references/task-user-sub-playbook.md)
-
 ## Task Watch
 
-Live monitor for the user-session task inbox (long-poll watch, backlog drain, outstanding-decision listing). Triggers: task watch / user watch / monitor task progress / catch me up on tasks / outstanding decisions / 监听任务进展. Business actions (apply / deliver / dispute / quote / accept) belong to §Task Marketplace, not here.
+Live monitor for the user-session task inbox (long-poll watch, backlog drain, outstanding-decision listing). Triggers: 监听任务进展 / 帮我盯着任务 / 历史消息 / 未读消息 / 未决策 / 待决策 / task watch / user watch / monitor task progress / catch me up on tasks / outstanding decisions. Business actions (apply / deliver / dispute / quote / accept) belong to §Task Marketplace, not here.
 
 → Read [`references/watch-core.md`](references/watch-core.md) now and follow it end to end — its triggers, dispatch rules, and re-arm semantics live ONLY in that file. Do not guess the invocation. (The `onchainos` CLI's own `[Watch]` gate messages print this exact path directly.)
 
-> Secondary references used by watch-core.md: [`references/watch-background-recovery.md`](references/watch-background-recovery.md) · [`references/watch-outdated-list.md`](references/watch-outdated-list.md) · [`references/watch-wake-scheduling.md`](references/watch-wake-scheduling.md)
 
 ## Communication Readiness
 

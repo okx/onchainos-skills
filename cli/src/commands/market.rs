@@ -73,12 +73,15 @@ pub enum MarketCommand {
         /// Chain name or ID (e.g. ethereum, solana, xlayer)
         #[arg(long)]
         chain: String,
-        /// Start timestamp (milliseconds)
+        /// Start timestamp (milliseconds). Supply with --end, OR use --since instead.
         #[arg(long)]
-        begin: String,
-        /// End timestamp (milliseconds)
+        begin: Option<String>,
+        /// End timestamp (milliseconds). Supply with --begin, OR use --since instead.
         #[arg(long)]
-        end: String,
+        end: Option<String>,
+        /// Relative time window: <int><s|m|h|d>, e.g. 24h, 7d. Mutually exclusive with --begin/--end.
+        #[arg(long)]
+        since: Option<String>,
         /// Page size (1-100, default 20)
         #[arg(long)]
         limit: Option<String>,
@@ -180,6 +183,7 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             chain,
             begin,
             end,
+            since,
             limit,
             cursor,
             token,
@@ -189,8 +193,9 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
                 ctx,
                 &address,
                 &chain,
-                &begin,
-                &end,
+                begin.as_deref(),
+                end.as_deref(),
+                since.as_deref(),
                 limit.as_deref(),
                 cursor.as_deref(),
                 token.as_deref(),
@@ -361,23 +366,59 @@ async fn portfolio_overview(
 }
 
 /// GET /api/v6/dex/market/portfolio/dex-history
+///
+/// Window rule (validated before request): exactly one of `since` XOR (`begin` AND `end`).
+/// On `since`, resolves the relative window and adds `data.resolvedWindow`.
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_portfolio_dex_history(
     client: &mut ApiClient,
     chain_index: &str,
     address: &str,
-    begin: &str,
-    end: &str,
+    begin: Option<&str>,
+    end: Option<&str>,
+    since: Option<&str>,
     limit: Option<&str>,
     cursor: Option<&str>,
     token: Option<&str>,
     tx_type: Option<&str>,
 ) -> Result<Value> {
+    let begin = begin.filter(|s| !s.is_empty());
+    let end = end.filter(|s| !s.is_empty());
+
+    let mut resolved_window: Option<crate::commands::sink::ResolvedWindow> = None;
+    let (begin_val, end_val) = if let Some(s) = since.filter(|s| !s.is_empty()) {
+        if begin.is_some() || end.is_some() {
+            return Err(crate::commands::sink::CodedError::invalid_input(
+                "since",
+                "--since is mutually exclusive with --begin/--end",
+            )
+            .into());
+        }
+        let now = crate::commands::sink::now_ms();
+        let w = crate::commands::sink::resolve_since_window(s, now).map_err(|e| {
+            crate::commands::sink::CodedError::invalid_input("since", format!("{e}"))
+        })?;
+        let pair = (w.begin.to_string(), w.end.to_string());
+        resolved_window = Some(w);
+        pair
+    } else {
+        match (begin, end) {
+            (Some(b), Some(e)) => (b.to_string(), e.to_string()),
+            _ => {
+                return Err(crate::commands::sink::CodedError::invalid_input(
+                    "since",
+                    "supply --since <dur> OR --begin+--end",
+                )
+                .into())
+            }
+        }
+    };
+
     let mut query: Vec<(&str, &str)> = vec![
         ("chainIndex", chain_index),
         ("walletAddress", address),
-        ("begin", begin),
-        ("end", end),
+        ("begin", begin_val.as_str()),
+        ("end", end_val.as_str()),
     ];
     if let Some(l) = limit {
         query.push(("limit", l));
@@ -391,9 +432,13 @@ pub async fn fetch_portfolio_dex_history(
     if let Some(ty) = tx_type {
         query.push(("type", ty));
     }
-    client
+    let mut data = client
         .get("/api/v6/dex/market/portfolio/dex-history", &query)
-        .await
+        .await?;
+    if let (Some(w), Some(obj)) = (resolved_window, data.as_object_mut()) {
+        obj.insert("resolvedWindow".to_string(), serde_json::to_value(w)?);
+    }
+    Ok(data)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -401,8 +446,9 @@ async fn portfolio_dex_history(
     ctx: &Context,
     address: &str,
     chain: &str,
-    begin: &str,
-    end: &str,
+    begin: Option<&str>,
+    end: Option<&str>,
+    since: Option<&str>,
     limit: Option<&str>,
     cursor: Option<&str>,
     token: Option<&str>,
@@ -417,6 +463,7 @@ async fn portfolio_dex_history(
             address,
             begin,
             end,
+            since,
             limit,
             cursor,
             token,
@@ -487,4 +534,30 @@ async fn portfolio_token_pnl(ctx: &Context, address: &str, chain: &str, token: &
     let mut client = ctx.client_async().await?;
     output::success(fetch_portfolio_token_pnl(&mut client, &chain_index, address, token).await?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// FR-2: the kline transform only reshapes candle arrays; a top-level object
+    /// carrying `requestTime` must pass through unchanged (guards the `other => other`
+    /// branch against a future rewrite that drops sibling fields).
+    #[test]
+    fn request_time_survives_kline_transform() {
+        let v = json!({ "requestTime": 1_721_000_000_000u64, "candles": [] });
+        let out = kline_to_named_objects(v.clone());
+        assert_eq!(out, v);
+        assert_eq!(out["requestTime"], 1_721_000_000_000u64);
+    }
+
+    #[test]
+    fn kline_transform_names_candle_array_fields() {
+        let raw = json!([["1700000000000", "1.0", "2.0", "0.5", "1.5", "10", "15", "1"]]);
+        let out = kline_to_named_objects(raw);
+        assert_eq!(out[0]["ts"], "1700000000000");
+        assert_eq!(out[0]["o"], "1.0");
+        assert_eq!(out[0]["confirm"], "1");
+    }
 }

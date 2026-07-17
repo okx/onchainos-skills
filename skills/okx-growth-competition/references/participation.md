@@ -111,7 +111,7 @@ Registered successfully! This competition runs on {supportedChains}, with a tota
 **Field-mapping rules**
 
 - `{supportedChains}` ← computed from `data.participateChainIds` per [Shared field mapping](#shared-field-mapping). Lead sentence and closing question share the same string; do not list chains separately.
-- `{totalPrizePool}` ← total reward pool (sum of all `prizePoolDistribution[].totalReward` + `rewardUnit`, e.g. `500 DJT`).
+- `{totalPrizePool}` ← `data.totalPrizePool.display` from `competition detail` (render-ready, thousands-separated, e.g. `50,000 USDC`; multiple units joined by ` + `). If `totalPrizePool` is `null`, render "no prize-pool info". Do NOT sum `prizePoolDistribution[]` yourself.
 
 ### Other errors
 

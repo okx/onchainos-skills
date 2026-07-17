@@ -12,6 +12,7 @@ pub mod payment;
 pub mod portfolio;
 pub mod security;
 pub mod signal;
+pub(crate) mod sink;
 pub mod social;
 pub mod swap;
 pub mod token;

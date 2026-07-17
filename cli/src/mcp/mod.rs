@@ -13,8 +13,8 @@ use tokio::sync::Mutex;
 
 use crate::client::ApiClient;
 use crate::commands::{
-    competition, cross_chain, defi, gateway, leaderboard, market, memepump, portfolio, signal,
-    social, swap, token, tracker, workflows,
+    competition, cross_chain, defi, gateway, leaderboard, market, memepump, payment, portfolio,
+    signal, social, swap, token, tracker, workflows,
 };
 
 // ── DeFi ──────────────────────────────────────────────────────────────
@@ -277,6 +277,9 @@ struct TokenSearchParams {
     limit: Option<String>,
     /// Pagination cursor. Pass the cursor value from the last item of the previous response to fetch the next page. Omit for first page.
     cursor: Option<String>,
+    /// Auto-paginate up to N total entries (1..=500, max 10 pages). Returns {items,nextCursor,fetchedCount}
+    /// in one call instead of manual cursor-chasing. Omit for a single page (default behavior).
+    max_results: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -342,6 +345,9 @@ struct TokenTagAddressParams {
     limit: Option<String>,
     /// Pagination cursor. Pass the cursor value from the last item of the previous response to fetch the next page. Omit for first page.
     cursor: Option<String>,
+    /// Auto-paginate up to N total entries (1..=500, max 10 pages). Returns {items,nextCursor,fetchedCount}
+    /// in one call instead of manual cursor-chasing. Omit for a single page (default behavior).
+    max_results: Option<String>,
 }
 
 // ── Memepump ──────────────────────────────────────────────────────────
@@ -372,10 +378,12 @@ struct PortfolioPnlDexHistoryParams {
     address: String,
     /// Chain name (e.g. ethereum, solana)
     chain: String,
-    /// Start timestamp (milliseconds)
-    begin: String,
-    /// End timestamp (milliseconds)
-    end: String,
+    /// Start timestamp (milliseconds). Supply with `end`, OR use `since` instead.
+    begin: Option<String>,
+    /// End timestamp (milliseconds). Supply with `begin`, OR use `since` instead.
+    end: Option<String>,
+    /// Relative time window: <positive-int><s|m|h|d>, e.g. "24h", "7d". Supply this OR begin+end.
+    since: Option<String>,
     /// Page size (1-100, default 20)
     limit: Option<String>,
     /// Pagination cursor from previous response
@@ -642,6 +650,9 @@ struct CompetitionRankParams {
     sort_type: Option<i32>,
     /// Max leaderboard entries (default 20, max 100)
     limit: Option<u32>,
+    /// Fetch ALL leaderboards for the activity in one call (enumerated from competition_detail).
+    /// Returns {activityId, boards:[…]}. Mutually exclusive with sort_type.
+    all: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -825,6 +836,89 @@ struct CrossChainBridgesParams {
     to_chain: Option<String>,
 }
 
+// ── Payment: two-phase quote/pay ────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+struct PaymentQuoteParams {
+    /// The A2MCP / merchant endpoint URL to probe.
+    url: String,
+    /// Known business params as "key=value" strings (optional, repeatable).
+    #[serde(default)]
+    param: Vec<String>,
+    /// HTTP method to probe with ("GET" by default). Use "POST"/"PUT"/"PATCH"
+    /// for A2MCP endpoints whose paid call is not a GET — known params then ride
+    /// in the JSON body instead of the query string.
+    #[serde(default = "default_quote_method")]
+    method: String,
+}
+
+fn default_quote_method() -> String {
+    "GET".to_string()
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PaymentPayParams {
+    /// The paymentId returned by payment_quote.
+    payment_id: String,
+    /// User-confirmed 0-based index into accepts[] (optional).
+    selected_index: Option<usize>,
+    /// Additional business params as "key=value" strings (optional).
+    #[serde(default)]
+    param: Vec<String>,
+    /// Approve the fund-moving payment (bypass the confirming gate). Default false.
+    #[serde(default)]
+    yes: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PaymentDecodeReceiptParams {
+    /// x402 PAYMENT-RESPONSE header value (base64/base64url). Provide this OR receipt.
+    header: Option<String>,
+    /// Raw charge receipt JSON string. Provide this OR header.
+    receipt: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PaymentSessionParams {
+    /// Operation: "open" | "voucher" | "topup" | "close".
+    action: String,
+    /// Channel id (required for voucher/topup/close).
+    channel_id: Option<String>,
+    /// WWW-Authenticate / 402 challenge value (as required by the op).
+    challenge: Option<String>,
+    /// Per-voucher unit amount (atomic string), for voucher.
+    unit_amount: Option<String>,
+    /// Prior authorized cumulative amount (atomic string). The decision layer
+    /// adds unit_amount to this; omit for the first voucher (treated as 0).
+    /// NOTE: this is the PRIOR cumulative (unit_amount is added on top), NOT the
+    /// absolute new cumulative — the opposite of the CLI's
+    /// `payment session voucher --cumulative-amount`, which takes the absolute
+    /// new cumulative and derives `unit = new − prior` internally (the CLI has
+    /// persisted session state; this stateless MCP entry does not).
+    cumulative_amount: Option<String>,
+    /// Escrow address (op-dependent).
+    escrow: Option<String>,
+    /// Chain id (op-dependent).
+    chain_id: Option<u64>,
+    /// Deposit amount for open/topup (atomic string).
+    deposit: Option<String>,
+    /// Payer address (optional; defaults to selected account).
+    from: Option<String>,
+    /// Existing voucher signature to reuse (reuse-vs-sign signal).
+    reuse_signature: Option<String>,
+    /// Seller-reported cumulative from a 70015 drift error; forces a resign.
+    server_cumulative: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PaymentA2aStatusParams {
+    /// The a2a payment id.
+    payment_id: String,
+    /// Poll to terminal state (3s interval, 60s ceiling). Default false = one-shot.
+    #[serde(default)]
+    wait: bool,
+}
+
 #[derive(Clone)]
 pub struct McpServer {
     tool_router: ToolRouter<Self>,
@@ -890,10 +984,7 @@ fn resolve_competition_addresses(
 /// input parses as a number we use it directly; otherwise we resolve via
 /// `competition::resolve_activity_id_by_name`. This avoids the wasted
 /// "first call fails with bad request, retry with id" pattern.
-async fn resolve_activity_identifier(
-    client: &mut ApiClient,
-    raw: &str,
-) -> anyhow::Result<String> {
+async fn resolve_activity_identifier(client: &mut ApiClient, raw: &str) -> anyhow::Result<String> {
     if raw.parse::<u64>().is_ok() {
         return Ok(raw.to_string());
     }
@@ -923,6 +1014,24 @@ fn err(e: anyhow::Error) -> Result<String, String> {
         return Err(serde_json::to_string(&payload).unwrap_or_else(|_| c.message.clone()));
     }
 
+    // `CodedError` carries a machine code + optional field; surface the same
+    // structured envelope the CLI prints via `output::error_coded`, so MCP
+    // callers can distinguish validation failures (invalid_input, etc.).
+    if let Some(c) = e.downcast_ref::<crate::commands::sink::CodedError>() {
+        let mut payload = serde_json::json!({
+            "ok": false,
+            "error": c.message,
+            "errorCode": c.code,
+        });
+        if let Some(f) = &c.field {
+            payload["errorField"] = serde_json::Value::String(f.clone());
+        }
+        if !events.is_empty() {
+            payload["notifications"] = serde_json::Value::Array(events);
+        }
+        return Err(serde_json::to_string(&payload).unwrap_or_else(|_| c.message.clone()));
+    }
+
     let base = format!("{e:#}");
     if events.is_empty() {
         Err(base)
@@ -934,9 +1043,97 @@ fn err(e: anyhow::Error) -> Result<String, String> {
 
 #[tool_router]
 impl McpServer {
+    // ── Payment: two-phase quote/pay ────────────────────────────────────
+    // These delegate to `commands::payment::fetch_*`, which self-construct a
+    // WalletApiClient — they do NOT lock `self.client` (payment does not use the
+    // shared ApiClient). Bodies are thin: fetch → ok/err.
+
+    #[tool(
+        name = "payment_quote",
+        description = "Probe an HTTP 402 / A2MCP endpoint, parse the challenge, preflight balance, rank candidates, and return a paymentId to confirm before paying. Read-only; never signs."
+    )]
+    async fn payment_quote(
+        &self,
+        Parameters(p): Parameters<PaymentQuoteParams>,
+    ) -> Result<String, String> {
+        match payment::fetch_quote(&p.url, &p.param, &p.method).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "payment_pay",
+        description = "Complete a previously-quoted payment by paymentId: sign via TEE, replay to the merchant, and return the receipt. Fund-moving; returns a confirming prompt unless yes=true."
+    )]
+    async fn payment_pay(
+        &self,
+        Parameters(p): Parameters<PaymentPayParams>,
+    ) -> Result<String, String> {
+        match payment::fetch_pay(&p.payment_id, p.selected_index, &p.param, p.yes).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "payment_decode_receipt",
+        description = "Decode an x402 PAYMENT-RESPONSE header or a charge receipt into a normalized {status, transaction, amount, payer, chainId}. No auth, no funds."
+    )]
+    async fn payment_decode_receipt(
+        &self,
+        Parameters(p): Parameters<PaymentDecodeReceiptParams>,
+    ) -> Result<String, String> {
+        match payment::fetch_decode_receipt(p.header.as_deref(), p.receipt.as_deref()) {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "payment_session",
+        description = "Run an MPP channel-session op (open/voucher/topup/close); the CLI decides reuse-vs-sign, cumulative amount, top-up need, and refund."
+    )]
+    async fn payment_session(
+        &self,
+        Parameters(p): Parameters<PaymentSessionParams>,
+    ) -> Result<String, String> {
+        let params = payment::SessionParams {
+            action: p.action,
+            channel_id: p.channel_id,
+            challenge: p.challenge,
+            unit_amount: p.unit_amount,
+            cumulative_amount: p.cumulative_amount,
+            escrow: p.escrow,
+            chain_id: p.chain_id,
+            deposit: p.deposit,
+            from: p.from,
+            reuse_signature: p.reuse_signature,
+            server_cumulative: p.server_cumulative,
+        };
+        match payment::fetch_session(params).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "payment_a2a_status",
+        description = "Query an a2a-pay payment's status; with wait=true, poll internally (3s/60s) until terminal or timeout."
+    )]
+    async fn payment_a2a_status(
+        &self,
+        Parameters(p): Parameters<PaymentA2aStatusParams>,
+    ) -> Result<String, String> {
+        match payment::a2a_pay::fetch_status(&p.payment_id, p.wait).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
     #[tool(
         name = "token_search",
-        description = "Search tokens by name/symbol/address across chains. Default limit is 20 to prevent token overflow. Use cursor for pagination."
+        description = "Search tokens by name/symbol/address across chains. Default limit is 20 to prevent token overflow. Use cursor for pagination, or pass max_results (1-500) to auto-paginate up to N results in one call — the response then becomes {items, nextCursor, fetchedCount} (items is the aggregated list; nextCursor continues beyond N; fetchedCount is how many were pulled)."
     )]
     async fn token_search(
         &self,
@@ -949,6 +1146,7 @@ impl McpServer {
             chains,
             p.limit.as_deref(),
             p.cursor.as_deref(),
+            p.max_results.as_deref(),
         )
         .await
         {
@@ -978,7 +1176,7 @@ impl McpServer {
 
     #[tool(
         name = "token_holders",
-        description = "Get token holder distribution. Default limit is 20 to prevent token overflow. Use cursor for pagination."
+        description = "Get token holder distribution. Default limit is 20 to prevent token overflow. Use cursor for pagination, or pass max_results (1-500) to auto-paginate up to N holders in one call — the response then becomes {items, nextCursor, fetchedCount}."
     )]
     async fn token_holders(
         &self,
@@ -996,6 +1194,7 @@ impl McpServer {
             p.tag_filter,
             p.limit.as_deref(),
             p.cursor.as_deref(),
+            p.max_results.as_deref(),
         )
         .await
         {
@@ -1343,7 +1542,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_latest",
-        description = "Latest crypto news feed (across all coins by default). Optional filters: token_symbols (comma-separated, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), importance ('1'=High/'2'=Medium/'3'=Low), platform, language ('en_US' default / 'zh_CN'). Pagination via limit range [1, 50] + cursor. detail_level='2' includes full article body."
+        description = "Latest crypto news feed (across all coins by default). Optional filters: token_symbols (comma-separated, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), since (relative window <int><s|m|h|d> e.g. 24h/7d, mutually exclusive with begin/end), importance ('1'=High/'2'=Medium/'3'=Low), platform, language ('en_US' default / 'zh_CN'). Pagination via limit range [1, 50] + cursor, OR pass max_results (1-500) to auto-paginate up to N articles in one call — the response then becomes {items, nextCursor, fetchedCount}. detail_level='2' includes full article body."
     )]
     async fn social_news_latest(
         &self,
@@ -1357,7 +1556,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_by_symbol",
-        description = "News filtered by coin symbol(s). token_symbols required (comma-separated, max 20). sort_by: '1'=Latest (default), '2'=Hot. sentiment: '1'=Bullish/'2'=Bearish/'3'=Neutral. importance: '1'=High/'2'=Medium/'3'=Low. begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback). limit range [1, 50]."
+        description = "News filtered by coin symbol(s). token_symbols required (comma-separated, max 20). sort_by: '1'=Latest (default), '2'=Hot. sentiment: '1'=Bullish/'2'=Bearish/'3'=Neutral. importance: '1'=High/'2'=Medium/'3'=Low. begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), OR since (relative window <int><s|m|h|d> e.g. 24h/7d, mutually exclusive with begin/end). limit range [1, 50], OR pass max_results (1-500) to auto-paginate up to N articles in one call — the response then becomes {items, nextCursor, fetchedCount}."
     )]
     async fn social_news_by_symbol(
         &self,
@@ -1371,7 +1570,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_search",
-        description = "Full-text crypto news search. keyword required. Optional sort_by ('1'=Latest/'2'=Hot), sentiment, importance, platform, token_symbols (additional filter, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), detail_level, limit range [1, 50], cursor, language."
+        description = "Full-text crypto news search. keyword required. Optional sort_by ('1'=Latest/'2'=Hot), sentiment, importance, platform, token_symbols (additional filter, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback) OR since (relative window <int><s|m|h|d> e.g. 24h/7d, mutually exclusive with begin/end), detail_level, limit range [1, 50], cursor, OR pass max_results (1-500) to auto-paginate up to N articles in one call — the response then becomes {items, nextCursor, fetchedCount}. language."
     )]
     async fn social_news_search(
         &self,
@@ -1852,6 +2051,7 @@ impl McpServer {
             p.tag_filter,
             p.limit.as_deref(),
             p.cursor.as_deref(),
+            p.max_results.as_deref(),
         )
         .await
         {
@@ -1909,8 +2109,9 @@ impl McpServer {
             &mut *self.client.lock().await,
             &chain_index,
             &p.address,
-            &p.begin,
-            &p.end,
+            p.begin.as_deref(),
+            p.end.as_deref(),
+            p.since.as_deref(),
             p.limit.as_deref(),
             p.cursor.as_deref(),
             p.token.as_deref(),
@@ -2212,11 +2413,11 @@ impl McpServer {
                 Ok(v) => v,
                 Err(e) => return err(e),
             };
-        let to_token =
-            match crate::token_alias::resolve_and_validate(&to_chain_index, &p.to, "to") {
-                Ok(v) => v,
-                Err(e) => return err(e),
-            };
+        let to_token = match crate::token_alias::resolve_and_validate(&to_chain_index, &p.to, "to")
+        {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
         let sort = p.sort.as_deref();
         // Hold a single guard across resolve_amount_arg + fetch_quote so the
         // pair runs as one atomic unit on the shared ApiClient.
@@ -2267,12 +2468,12 @@ impl McpServer {
         let chain_idx = crate::chains::resolve_chain(&p.from_chain).to_string();
         let tx_hash = match (p.tx_hash, p.order_id) {
             (Some(h), None) => h,
-            (None, Some(oid)) => match cross_chain::resolve_order_id_to_tx_hash(&oid, &chain_idx)
-                .await
-            {
-                Ok(h) => h,
-                Err(e) => return err(e),
-            },
+            (None, Some(oid)) => {
+                match cross_chain::resolve_order_id_to_tx_hash(&oid, &chain_idx).await {
+                    Ok(h) => h,
+                    Err(e) => return err(e),
+                }
+            }
             (Some(_), Some(_)) => {
                 return Err("provide tx_hash OR order_id, not both".to_string());
             }
@@ -2482,7 +2683,7 @@ impl McpServer {
 
     #[tool(
         name = "defi_invest",
-        description = "One-step DeFi deposit. Internally handles: detail check, prepare, precision conversion, V3 calculate-entry, calldata generation. Amount must be in minimal units (integer). For V3 pools pass range (e.g. 5 for ±5%). Returns calldata for signing."
+        description = "One-step DeFi deposit. Internally handles: detail check, prepare, precision conversion, V3 calculate-entry, calldata generation. Amount must be in minimal units (integer). For V3 pools pass range (e.g. 5 for ±5%). Returns calldata for signing: each dataList[] step carries a valueNormalized field (minimal-unit decimal integer) — pass it verbatim as wallet contract-call --amt; do NOT re-convert or divide by decimals. If a step could not be normalized it also carries valueNormalizeError and valueNormalized='0' — surface that instead of guessing."
     )]
     async fn defi_invest(
         &self,
@@ -2511,7 +2712,7 @@ impl McpServer {
 
     #[tool(
         name = "defi_withdraw",
-        description = "One-step DeFi withdrawal. Internally handles: position-detail lookup, parameter construction, calldata generation. For full exit use ratio='1'. For V3 pools pass token_id + ratio."
+        description = "One-step DeFi withdrawal. Internally handles: position-detail lookup, parameter construction, calldata generation. For full exit use ratio='1'. For V3 pools pass token_id + ratio. Returns calldata for signing: each dataList[] step carries a valueNormalized field (minimal-unit decimal integer) — pass it verbatim as wallet contract-call --amt; do NOT re-convert or divide by decimals. A step that could not be normalized also carries valueNormalizeError and valueNormalized='0'."
     )]
     async fn defi_withdraw(
         &self,
@@ -2558,7 +2759,7 @@ impl McpServer {
 
     #[tool(
         name = "competition_detail",
-        description = "Get trading competition details (rules, prize pool, timeline). `activity_id` accepts a numeric id or the activity `name` / `shortName` — both resolved server-side. Returns `chainId` (claim chain), `participateChainIds` (trading chains), pre-formatted UTC+8 time strings `startTimeFormatted` / `endTimeFormatted` (already end in `(UTC+8)` — render verbatim, do not recompute, do not re-append the suffix), `tabConfigs[]` (leaderboards), `prizePoolDistribution[]` (read `rules[]` for actual rank distribution — never derive rank rules by dividing the pool). Identify the activity by `name` — never expose `activityId` / `chainIndex`."
+        description = "Get trading competition details (rules, prize pool, timeline). `activity_id` accepts a numeric id or the activity `name` / `shortName` — both resolved server-side. Returns `chainId` (claim chain), `participateChainIds` (trading chains), pre-formatted UTC+8 time strings `startTimeFormatted` / `endTimeFormatted` (already end in `(UTC+8)` — render verbatim, do not recompute, do not re-append the suffix), `tabConfigs[]` (leaderboards), `prizePoolDistribution[]` (read `rules[]` for actual rank distribution — never derive rank rules by dividing the pool), and a pre-summed `totalPrizePool` object `{amountByUnit:[{amount, rewardUnit}], display}` (the exact prize pool summed per reward unit) — render `totalPrizePool.display` verbatim, do NOT sum the distributions yourself. Identify the activity by `name` — never expose `activityId` / `chainIndex`."
     )]
     async fn competition_detail(
         &self,
@@ -2577,7 +2778,7 @@ impl McpServer {
 
     #[tool(
         name = "competition_rank",
-        description = "Get ONE leaderboard for a trading competition: top-N entries (`allRankInfos[]`) plus the user's own rank (`myRankInfo`). `activity_id` accepts a numeric id or activity `name` / `shortName`. Scoped by `sort_type` — discover available values from `competition_detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend` (do not hardcode). A competition can have multiple leaderboards (PnL%, PnL, ...); to answer 'my overall rank', call once per `sort_type` so every board is covered. `nickName` is already backend-masked — render verbatim, do not re-mask. `format` field: 1=number, 2=percentage, 3=token+unit. `rankUpdateTime` ships alongside `rankUpdateTimeFormatted` (UTC+8 string ending in `(UTC+8)`) — render the formatted field verbatim."
+        description = "Get trading competition leaderboard(s). Two modes: (1) default — ONE leaderboard scoped by `sort_type`: top-N entries (`allRankInfos[]`) plus the user's own rank (`myRankInfo`); (2) `all=true` — fetch EVERY leaderboard for the activity in a SINGLE call, returning `{activityId, boards:[…]}` where each board is one sort_type's result (a failed board is `{sortType, error}`, the rest still return). `all` is mutually exclusive with `sort_type`. To answer 'my overall rank' across all boards, prefer `all=true` — do NOT fan out one call per sort_type. `activity_id` accepts a numeric id or activity `name` / `shortName`. Available `sort_type` values come from `competition_detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend` (do not hardcode). `nickName` is already backend-masked — render verbatim, do not re-mask. `format` field: 1=number, 2=percentage, 3=token+unit. `rankUpdateTime` ships alongside `rankUpdateTimeFormatted` (UTC+8 string ending in `(UTC+8)`) — render the formatted field verbatim."
     )]
     async fn competition_rank(
         &self,
@@ -2598,6 +2799,27 @@ impl McpServer {
             Ok(id) => id,
             Err(e) => return err(e),
         };
+        // FR-6: `all` fetches every leaderboard; mutually exclusive with sort_type.
+        if p.all == Some(true) {
+            if p.sort_type.is_some() {
+                return err(crate::commands::sink::CodedError::invalid_input(
+                    "sort-type",
+                    "all is mutually exclusive with sort_type",
+                )
+                .into());
+            }
+            return match competition::rank_all(
+                &mut client,
+                &resolved_id,
+                &identity,
+                p.limit.unwrap_or(20),
+            )
+            .await
+            {
+                Ok(data) => ok(data),
+                Err(e) => err(e),
+            };
+        }
         match competition::rank_for_mcp(
             &mut client,
             &resolved_id,
@@ -2632,12 +2854,8 @@ impl McpServer {
             },
             None => None,
         };
-        match competition::user_status_all_for_mcp(
-            &mut client,
-            activity_id.as_deref(),
-            &account_id,
-        )
-        .await
+        match competition::user_status_all_for_mcp(&mut client, activity_id.as_deref(), &account_id)
+            .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -2656,10 +2874,11 @@ Returns `joined: true` plus `activityId` (internal — never show to the user) a
         Parameters(p): Parameters<CompetitionJoinParams>,
     ) -> Result<String, String> {
         let mut client = self.client.lock().await;
-        let (evm_wallet, sol_wallet) = match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
-            Ok(pair) => pair,
-            Err(e) => return err(e),
-        };
+        let (evm_wallet, sol_wallet) =
+            match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
+                Ok(pair) => pair,
+                Err(e) => return err(e),
+            };
         let activity_id =
             match competition::resolve_activity_id_by_name(&mut client, &p.activity_name).await {
                 Ok(id) => id,
@@ -2691,22 +2910,18 @@ Pre-check rejections (rewardStatus 0/2/3, code 11002, code 11008) are semantic �
         Parameters(p): Parameters<CompetitionClaimParams>,
     ) -> Result<String, String> {
         let mut client = self.client.lock().await;
-        let (evm_wallet, sol_wallet) = match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
-            Ok(pair) => pair,
-            Err(e) => return err(e),
-        };
+        let (evm_wallet, sol_wallet) =
+            match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
+                Ok(pair) => pair,
+                Err(e) => return err(e),
+            };
         let activity_id =
             match competition::resolve_activity_id_by_name(&mut client, &p.activity_name).await {
                 Ok(id) => id,
                 Err(e) => return err(e),
             };
-        match competition::claim_and_submit(
-            &mut client,
-            &activity_id,
-            &evm_wallet,
-            &sol_wallet,
-        )
-        .await
+        match competition::claim_and_submit(&mut client, &activity_id, &evm_wallet, &sol_wallet)
+            .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -2742,7 +2957,7 @@ Pre-check rejections (rewardStatus 0/2/3, code 11002, code 11008) are semantic �
 
     #[tool(
         name = "defi_collect",
-        description = "One-step DeFi reward claim. Internally handles: position-detail lookup, reward check, expectOutputList construction, calldata generation. Skips if no rewards available."
+        description = "One-step DeFi reward claim. Internally handles: position-detail lookup, reward check, expectOutputList construction, calldata generation. Skips if no rewards available. Returns calldata for signing: each dataList[] step carries a valueNormalized field (minimal-unit decimal integer) — pass it verbatim as wallet contract-call --amt; do NOT re-convert or divide by decimals. A step that could not be normalized also carries valueNormalizeError and valueNormalized='0'."
     )]
     async fn defi_collect(
         &self,

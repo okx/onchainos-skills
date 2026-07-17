@@ -32,6 +32,10 @@ When one of the following commands is used, show the related workflow hint after
 | 8 | `onchainos market portfolio-recent-pnl` | Recent PnL by token for a wallet |
 | 9 | `onchainos market portfolio-token-pnl` | Per-token PnL snapshot (realized/unrealized) |
 
+### `portfolio-dex-history` time window
+
+`onchainos market portfolio-dex-history --address <addr> --chain <chain>` needs a time window: pass **either** `--since 24h`/`--since 7d` (CLI computes it and returns `data.resolvedWindow {begin,end}`) **or** absolute `--begin <ms> --end <ms>`. Supplying neither, or `--since` together with `--begin`/`--end`, returns a structured `invalid_input` error.
+
 <IMPORTANT>
 **Index price** → `onchainos market index` only when the user explicitly asks for "aggregate price", "index price", "综合价格", "指数价格", or a cross-exchange composite price. For all other price / 行情 / "how much is X" queries → use `onchainos market price`.
 
@@ -69,9 +73,7 @@ Present next actions conversationally — never expose command paths to the user
 
 ## Data Freshness
 
-### `requestTime` Field
-
-When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the data snapshot was taken. When chaining commands (e.g., fetching price then using that timestamp as a range boundary), use the `requestTime` from the most recent response as the reference point — not the current wall clock time.
+Render `requestTime` (Unix ms) as-is. Do NOT chain off a previous response's `requestTime`; for a relative window use `--since` on `portfolio-dex-history`.
 
 ## Additional Resources
 

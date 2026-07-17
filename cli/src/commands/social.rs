@@ -63,6 +63,12 @@ pub struct SocialNewsLatestParams {
     pub detail_level: Option<String>,
     /// Locale of returned text, e.g. "en_US" (default), "zh_CN".
     pub language: Option<String>,
+    /// Relative time window: <positive-int><s|m|h|d>, e.g. "24h", "7d". Sets end=now, begin=now-duration.
+    /// Mutually exclusive with begin/end. Prefer this over computing timestamps yourself.
+    pub since: Option<String>,
+    /// Auto-paginate up to N total news entries (1..=500, max 10 pages). Whole-page truncation
+    /// (page-level cursor); returns {items,nextCursor,fetchedCount}. Omit for a single page.
+    pub max_results: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -88,6 +94,12 @@ pub struct SocialNewsBySymbolParams {
     pub end: Option<String>,
     /// Locale of returned text, e.g. "en_US" (default), "zh_CN".
     pub language: Option<String>,
+    /// Relative time window: <positive-int><s|m|h|d>, e.g. "24h", "7d". Sets end=now, begin=now-duration.
+    /// Mutually exclusive with begin/end. Prefer this over computing timestamps yourself.
+    pub since: Option<String>,
+    /// Auto-paginate up to N total news entries (1..=500, max 10 pages). Whole-page truncation
+    /// (page-level cursor); returns {items,nextCursor,fetchedCount}. Omit for a single page.
+    pub max_results: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -114,6 +126,12 @@ pub struct SocialNewsSearchParams {
     pub cursor: Option<String>,
     /// Locale of returned text, e.g. "en_US" (default), "zh_CN".
     pub language: Option<String>,
+    /// Relative time window: <positive-int><s|m|h|d>, e.g. "24h", "7d". Sets end=now, begin=now-duration.
+    /// Mutually exclusive with begin/end. Prefer this over computing timestamps yourself.
+    pub since: Option<String>,
+    /// Auto-paginate up to N total news entries (1..=500, max 10 pages). Whole-page truncation
+    /// (page-level cursor); returns {items,nextCursor,fetchedCount}. Omit for a single page.
+    pub max_results: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -202,6 +220,12 @@ pub enum SocialCommand {
         /// Locale (e.g. en_US, zh_CN).
         #[arg(long)]
         language: Option<String>,
+        /// Relative time window: <int><s|m|h|d>, e.g. 24h, 7d. Mutually exclusive with --begin/--end.
+        #[arg(long)]
+        since: Option<String>,
+        /// Auto-paginate up to N total entries (1-500, max 10 pages) → {items,nextCursor,fetchedCount}.
+        #[arg(long)]
+        max_results: Option<String>,
     },
     /// News filtered by coin symbol(s).
     NewsBySymbol {
@@ -234,6 +258,12 @@ pub enum SocialCommand {
         end: Option<String>,
         #[arg(long)]
         language: Option<String>,
+        /// Relative time window: <int><s|m|h|d>, e.g. 24h, 7d. Mutually exclusive with --begin/--end.
+        #[arg(long)]
+        since: Option<String>,
+        /// Auto-paginate up to N total entries (1-500, max 10 pages) → {items,nextCursor,fetchedCount}.
+        #[arg(long)]
+        max_results: Option<String>,
     },
     /// Full-text news search.
     NewsSearch {
@@ -266,6 +296,12 @@ pub enum SocialCommand {
         cursor: Option<String>,
         #[arg(long)]
         language: Option<String>,
+        /// Relative time window: <int><s|m|h|d>, e.g. 24h, 7d. Mutually exclusive with --begin/--end.
+        #[arg(long)]
+        since: Option<String>,
+        /// Auto-paginate up to N total entries (1-500, max 10 pages) → {items,nextCursor,fetchedCount}.
+        #[arg(long)]
+        max_results: Option<String>,
     },
     /// Get the full body of a single article by id.
     NewsDetail {
@@ -342,6 +378,8 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
             cursor,
             detail_level,
             language,
+            since,
+            max_results,
         } => {
             let p = SocialNewsLatestParams {
                 token_symbols,
@@ -353,6 +391,8 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
                 cursor,
                 detail_level,
                 language,
+                since,
+                max_results,
             };
             let mut client = ctx.client_async().await?;
             output::success(fetch_news_latest(&mut client, p).await?);
@@ -370,6 +410,8 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
             begin,
             end,
             language,
+            since,
+            max_results,
         } => {
             let p = SocialNewsBySymbolParams {
                 token_symbols,
@@ -383,6 +425,8 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
                 begin,
                 end,
                 language,
+                since,
+                max_results,
             };
             let mut client = ctx.client_async().await?;
             output::success(fetch_news_by_symbol(&mut client, p).await?);
@@ -401,6 +445,8 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
             limit,
             cursor,
             language,
+            since,
+            max_results,
         } => {
             let p = SocialNewsSearchParams {
                 keyword,
@@ -415,6 +461,8 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
                 limit,
                 cursor,
                 language,
+                since,
+                max_results,
             };
             let mut client = ctx.client_async().await?;
             output::success(fetch_news_search(&mut client, p).await?);
@@ -518,25 +566,134 @@ fn push_if_present<'a>(query: &mut Vec<(&'a str, &'a str)>, key: &'a str, val: O
     }
 }
 
+/// Push an owned `(key, value)` pair when the value is present and non-empty.
+fn push_owned(query: &mut Vec<(String, String)>, key: &str, val: Option<String>) {
+    if let Some(v) = val {
+        if !v.is_empty() {
+            query.push((key.to_string(), v));
+        }
+    }
+}
+
+/// Shared FR-1 (`--since`) + FR-3 (`--max-results`) finalization for the three
+/// `news-*` endpoints. `base` carries every endpoint-specific query param EXCEPT
+/// `begin`/`end`/`limit`/`cursor` (those are handled here so the window/pagination
+/// logic lives in one place).
+///
+/// - `--since` (mutually exclusive with `--begin`/`--end`) resolves to `begin`/`end`
+///   and adds `data.resolvedWindow`.
+/// - `--max-results` drives page-level auto-pagination → `{items,nextCursor,fetchedCount}`.
+///
+/// Omitting both reproduces today's single-page output byte-for-byte.
+#[allow(clippy::too_many_arguments)]
+async fn finalize_news(
+    client: &mut ApiClient,
+    path: &'static str,
+    mut base: Vec<(String, String)>,
+    since: Option<String>,
+    begin: Option<String>,
+    end: Option<String>,
+    limit: Option<String>,
+    cursor: Option<String>,
+    max_results: Option<String>,
+) -> Result<Value> {
+    // FR-1: relative window (validated before any request).
+    let mut resolved_window: Option<crate::commands::sink::ResolvedWindow> = None;
+    if let Some(s) = since.as_deref() {
+        let has_begin = begin.as_deref().is_some_and(|v| !v.is_empty());
+        let has_end = end.as_deref().is_some_and(|v| !v.is_empty());
+        if has_begin || has_end {
+            return Err(crate::commands::sink::CodedError::invalid_input(
+                "since",
+                "--since is mutually exclusive with --begin/--end",
+            )
+            .into());
+        }
+        let now = crate::commands::sink::now_ms();
+        let w = crate::commands::sink::resolve_since_window(s, now).map_err(|e| {
+            crate::commands::sink::CodedError::invalid_input("since", format!("{e}"))
+        })?;
+        base.push(("begin".to_string(), w.begin.to_string()));
+        base.push(("end".to_string(), w.end.to_string()));
+        resolved_window = Some(w);
+    } else {
+        push_owned(&mut base, "begin", begin);
+        push_owned(&mut base, "end", end);
+    }
+
+    // FR-3: cursor auto-pagination (validated before any request).
+    let max_results = crate::commands::sink::parse_max_results(max_results.as_deref())?;
+    if let Some(n) = max_results {
+        let shape = crate::commands::sink::PageShape {
+            items_key: "list",
+            cursor_key: "cursor",
+            mode: crate::commands::sink::CursorMode::PageLevel,
+        };
+        let base_client = client.clone();
+        let base_q = base.clone();
+        let limit_owned = limit.clone();
+        let agg = crate::commands::sink::auto_paginate(cursor, n as usize, &shape, move |cur| {
+            let mut c = base_client.clone();
+            let base_q = base_q.clone();
+            let limit_owned = limit_owned.clone();
+            async move {
+                let mut q: Vec<(&str, &str)> = base_q
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                if let Some(ref l) = limit_owned {
+                    if !l.is_empty() {
+                        q.push(("limit", l.as_str()));
+                    }
+                }
+                if let Some(ref cc) = cur {
+                    q.push(("cursor", cc.as_str()));
+                }
+                c.get(path, &q).await
+            }
+        })
+        .await;
+        let mut data = serde_json::to_value(agg)?;
+        if let (Some(w), Some(obj)) = (resolved_window, data.as_object_mut()) {
+            obj.insert("resolvedWindow".to_string(), serde_json::to_value(w)?);
+        }
+        return Ok(data);
+    }
+
+    // Single-page path.
+    push_owned(&mut base, "limit", limit);
+    push_owned(&mut base, "cursor", cursor);
+    let q: Vec<(&str, &str)> = base.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let mut data = client.get(path, &q).await?;
+    if let (Some(w), Some(obj)) = (resolved_window, data.as_object_mut()) {
+        obj.insert("resolvedWindow".to_string(), serde_json::to_value(w)?);
+    }
+    Ok(data)
+}
+
 /// GET /api/v6/dex/market/social/news/latest
 ///
 /// Note: `content` in the news payload is the intentional article body and
 /// must NOT be stripped — `strip_tweet_bodies` is vibe-only.
-pub async fn fetch_news_latest(
-    client: &mut ApiClient,
-    p: SocialNewsLatestParams,
-) -> Result<Value> {
-    let mut q: Vec<(&str, &str)> = Vec::new();
-    push_if_present(&mut q, "tokenSymbols", p.token_symbols.as_deref());
-    push_if_present(&mut q, "begin", p.begin.as_deref());
-    push_if_present(&mut q, "end", p.end.as_deref());
-    push_if_present(&mut q, "importance", p.importance.as_deref());
-    push_if_present(&mut q, "platform", p.platform.as_deref());
-    push_if_present(&mut q, "limit", p.limit.as_deref());
-    push_if_present(&mut q, "cursor", p.cursor.as_deref());
-    push_if_present(&mut q, "detailLevel", p.detail_level.as_deref());
-    push_if_present(&mut q, "language", p.language.as_deref());
-    client.get("/api/v6/dex/market/social/news/latest", &q).await
+pub async fn fetch_news_latest(client: &mut ApiClient, p: SocialNewsLatestParams) -> Result<Value> {
+    let mut base: Vec<(String, String)> = Vec::new();
+    push_owned(&mut base, "tokenSymbols", p.token_symbols);
+    push_owned(&mut base, "importance", p.importance);
+    push_owned(&mut base, "platform", p.platform);
+    push_owned(&mut base, "detailLevel", p.detail_level);
+    push_owned(&mut base, "language", p.language);
+    finalize_news(
+        client,
+        "/api/v6/dex/market/social/news/latest",
+        base,
+        p.since,
+        p.begin,
+        p.end,
+        p.limit,
+        p.cursor,
+        p.max_results,
+    )
+    .await
 }
 
 /// GET /api/v6/dex/market/social/news/by-symbol
@@ -544,40 +701,49 @@ pub async fn fetch_news_by_symbol(
     client: &mut ApiClient,
     p: SocialNewsBySymbolParams,
 ) -> Result<Value> {
-    let mut q: Vec<(&str, &str)> = vec![("tokenSymbols", p.token_symbols.as_str())];
-    push_if_present(&mut q, "sortBy", p.sort_by.as_deref());
-    push_if_present(&mut q, "sentiment", p.sentiment.as_deref());
-    push_if_present(&mut q, "importance", p.importance.as_deref());
-    push_if_present(&mut q, "platform", p.platform.as_deref());
-    push_if_present(&mut q, "limit", p.limit.as_deref());
-    push_if_present(&mut q, "cursor", p.cursor.as_deref());
-    push_if_present(&mut q, "detailLevel", p.detail_level.as_deref());
-    push_if_present(&mut q, "begin", p.begin.as_deref());
-    push_if_present(&mut q, "end", p.end.as_deref());
-    push_if_present(&mut q, "language", p.language.as_deref());
-    client
-        .get("/api/v6/dex/market/social/news/by-symbol", &q)
-        .await
+    let mut base: Vec<(String, String)> = vec![("tokenSymbols".to_string(), p.token_symbols)];
+    push_owned(&mut base, "sortBy", p.sort_by);
+    push_owned(&mut base, "sentiment", p.sentiment);
+    push_owned(&mut base, "importance", p.importance);
+    push_owned(&mut base, "platform", p.platform);
+    push_owned(&mut base, "detailLevel", p.detail_level);
+    push_owned(&mut base, "language", p.language);
+    finalize_news(
+        client,
+        "/api/v6/dex/market/social/news/by-symbol",
+        base,
+        p.since,
+        p.begin,
+        p.end,
+        p.limit,
+        p.cursor,
+        p.max_results,
+    )
+    .await
 }
 
 /// GET /api/v6/dex/market/social/news/search
-pub async fn fetch_news_search(
-    client: &mut ApiClient,
-    p: SocialNewsSearchParams,
-) -> Result<Value> {
-    let mut q: Vec<(&str, &str)> = vec![("keyword", p.keyword.as_str())];
-    push_if_present(&mut q, "sortBy", p.sort_by.as_deref());
-    push_if_present(&mut q, "sentiment", p.sentiment.as_deref());
-    push_if_present(&mut q, "importance", p.importance.as_deref());
-    push_if_present(&mut q, "platform", p.platform.as_deref());
-    push_if_present(&mut q, "tokenSymbols", p.token_symbols.as_deref());
-    push_if_present(&mut q, "begin", p.begin.as_deref());
-    push_if_present(&mut q, "end", p.end.as_deref());
-    push_if_present(&mut q, "detailLevel", p.detail_level.as_deref());
-    push_if_present(&mut q, "limit", p.limit.as_deref());
-    push_if_present(&mut q, "cursor", p.cursor.as_deref());
-    push_if_present(&mut q, "language", p.language.as_deref());
-    client.get("/api/v6/dex/market/social/news/search", &q).await
+pub async fn fetch_news_search(client: &mut ApiClient, p: SocialNewsSearchParams) -> Result<Value> {
+    let mut base: Vec<(String, String)> = vec![("keyword".to_string(), p.keyword)];
+    push_owned(&mut base, "sortBy", p.sort_by);
+    push_owned(&mut base, "sentiment", p.sentiment);
+    push_owned(&mut base, "importance", p.importance);
+    push_owned(&mut base, "platform", p.platform);
+    push_owned(&mut base, "tokenSymbols", p.token_symbols);
+    push_owned(&mut base, "detailLevel", p.detail_level);
+    push_owned(&mut base, "language", p.language);
+    finalize_news(
+        client,
+        "/api/v6/dex/market/social/news/search",
+        base,
+        p.since,
+        p.begin,
+        p.end,
+        p.limit,
+        p.cursor,
+        p.max_results,
+    )
+    .await
 }
 
 /// GET /api/v6/dex/market/social/news/detail
@@ -706,5 +872,20 @@ mod tests {
         let snapshot = v.clone();
         strip_tweet_bodies(&mut v);
         assert_eq!(v, snapshot);
+    }
+
+    /// FR-2: `requestTime` / `ts` must survive the compliance strip verbatim —
+    /// guards against a future forbidden-field list accidentally dropping them.
+    #[test]
+    fn request_time_survives_strip_tweet_bodies() {
+        let mut v = json!({
+            "requestTime": 1_721_000_000_000u64,
+            "ts": 1_721_000_000_000u64,
+            "list": [{ "content": "leak", "handle": "a" }]
+        });
+        strip_tweet_bodies(&mut v);
+        assert_eq!(v["requestTime"], 1_721_000_000_000u64);
+        assert_eq!(v["ts"], 1_721_000_000_000u64);
+        assert!(v["list"][0].get("content").is_none());
     }
 }

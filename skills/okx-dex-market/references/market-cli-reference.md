@@ -161,15 +161,18 @@ onchainos market portfolio-overview --address <address> --chain <chain> --time-f
 Get DEX transaction history for a wallet in reverse chronological order (up to 1000 records, 100 per request).
 
 ```bash
-onchainos market portfolio-dex-history --address <address> --chain <chain> --begin <ms> --end <ms> [options]
+onchainos market portfolio-dex-history --address <address> --chain <chain> (--since <window> | --begin <ms> --end <ms>) [options]
 ```
+
+This command needs a time window: supply **either** `--since` (relative) **or** `--begin` + `--end` (absolute). Supplying neither, or `--since` together with `--begin`/`--end`, returns a structured `invalid_input` error.
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Wallet address |
 | `--chain` | Yes | - | Chain name or ID |
-| `--begin` | Yes | - | Start timestamp (Unix milliseconds) |
-| `--end` | Yes | - | End timestamp (Unix milliseconds) |
+| `--since` | Conditional | - | Relative window (grammar `<int><s\|m\|h\|d>`, e.g. `30m`, `24h`, `7d`); the CLI computes the range and returns `data.resolvedWindow {begin,end}`. Required when `--begin`/`--end` are omitted; mutually exclusive with them. |
+| `--begin` | Conditional | - | Start timestamp (Unix milliseconds). Required together with `--end` when `--since` is omitted; mutually exclusive with `--since`. |
+| `--end` | Conditional | - | End timestamp (Unix milliseconds). Required together with `--begin` when `--since` is omitted; mutually exclusive with `--since`. |
 | `--limit` | No | `20` | Records per page (max 100) |
 | `--cursor` | No | - | Pagination cursor from previous response |
 | `--token` | No | - | Filter by token contract address |
@@ -287,7 +290,9 @@ onchainos market portfolio-overview --address <wallet> --chain ethereum --time-f
 **User says:** "Show my DEX trade history on Ethereum for the last 30 days"
 
 ```bash
-# compute begin/end timestamps first
+# relative window (CLI computes begin/end and echoes data.resolvedWindow)
+onchainos market portfolio-dex-history --address <wallet> --chain ethereum --since 30d
+# or an absolute window
 onchainos market portfolio-dex-history --address <wallet> --chain ethereum \
   --begin <start_ms> --end <end_ms>
 # -> Display paginated DEX transaction list

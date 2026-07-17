@@ -1,10 +1,10 @@
 ---
 name: okx-agent-payments-protocol
-description: "Use when an agent hits HTTP 402 / payment-required, or the user mentions x402, x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, permit2, upto, metered billing, a payment channel / voucher / session, channelId / channel_id, opening / closing / topping up / settling / refunding a channel, a paymentId or a2a_ link, creating / checking a payment link, A2MCP / an A2MCP endpoint, or sending a request to / calling an Agent's endpoint with a concrete endpoint URL. Covers x402 (exact, exact+Permit2, upto, aggr_deferred), MPP (charge / session), and a2a-pay paymentId flows. Any close / topup / settle / voucher / refund near a channel_id or session is an MPP mid-session op. The full bilingual trigger list (including Chinese) lives in the skill body."
+description: "Use when an agent hits HTTP 402 / payment-required, or the user mentions x402, x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, permit2, upto, metered billing, a payment channel / voucher / session, channelId / channel_id, opening / closing / topping up / settling / refunding a channel, a paymentId or a2a_ link, creating / checking a payment link, A2MCP / an A2MCP endpoint, or sending a request to / calling an Agent's endpoint with a concrete endpoint URL. Covers x402 (exact, exact+Permit2, upto, aggr_deferred), MPP (charge / session), and a2a-pay paymentId flows. Any close / topup / settle / voucher / refund near a channel_id or session is an MPP mid-session op. Two-phase quote/pay: `payment quote`, `payment pay --payment-id`, `decode-receipt`. The full bilingual trigger list (including Chinese) lives in the skill body."
 license: MIT
 metadata:
   author: okx
-  version: "4.2.5"
+  version: "4.2.6"
   homepage: "https://web3.okx.com"
 ---
 
@@ -67,13 +67,16 @@ Each 402 signal (or paymentId) → CLI command → reference. Detailed gating + 
 
 | Signal | Command | Reference |
 |---|---|---|
-| 402 + `PAYMENT-REQUIRED` (v2) / body `x402Version` (v1) | `payment pay --payload [--selected-index]` | **Success (v2): none** — replay the returned `authorization_header` directly (Step A6). On error / legacy v1, load `references/accepts-schemes.md` (covers `exact` / `aggr_deferred` / `upto` + Permit2; the CLI-output field tells you which scheme — `permit2Authorization` = `upto` / `exact`+Permit2, `sessionCert` = `aggr_deferred`, `authorization` = `exact`) |
+| 402 + `PAYMENT-REQUIRED` (v2) / body `x402Version` (v1) — one **or many** `accepts[]` schemes (`exact` / `exact`+Permit2 / `upto` / `aggr_deferred`) | **Primary — Path A:** `payment quote <url>` → confirm → `payment pay --payment-id --yes`. Single-scheme and multi-scheme take the **same** quote flow (the CLI decodes, converts, balance-checks, signs, **replays**, and returns the receipt). Even if you already curled the raw 402, re-enter via `payment quote <url>` — never assemble a header by hand and never jump straight to sign-only. **Compat only:** `payment pay --payload [--selected-index]` (sign-only + manual replay) when `quote` is unavailable. | Success path loads **no** reference. `references/accepts-schemes.md` only for: post-pay scheme-specific receipt reading, `Permit2 allowance insufficient` one-time approve, `pay-local`, the `pay --payload` compat path, or legacy x402 v1 (the CLI-output field tells you which scheme — `permit2Authorization` = `upto` / `exact`+Permit2, `sessionCert` = `aggr_deferred`, `authorization` = `exact`) |
 | 402 offer with an `accepts[]` entry whose `scheme == "period"` (a.k.a. `permit2_subscription`) — recurring/subscription billing | `payment subscription subscribe/access/change/cancel/cancel-pending/my-subscriptions/allowance-status` | `references/subscription.md` |
 | 402 + `WWW-Authenticate: Payment`, `intent="charge"` | `payment charge --challenge` | `references/charge.md` |
 | 402 + `WWW-Authenticate: Payment`, `intent="session"` (or mid-session `channel_id`) | `payment session open/voucher/topup/close` | `references/session.md` |
 | paymentId / `a2a_…` link / create-or-check payment link | `payment a2a-pay create/pay/status` | `references/a2a_charge.md` |
+| A2MCP / 402 endpoint URL, "pay this endpoint", entry A/B payment node | `payment quote <url> [--param k=v ...] [--method GET \| POST \| ...]` | (inline — Path A) |
+| User confirmed the quoted payment (currency/amount/scheme chosen) | `payment pay --payment-id <id> [--selected-index <n>] --yes` | (inline — Path A) |
+| Need to decode a `PAYMENT-RESPONSE` header or a charge receipt | `payment decode-receipt (--header <b64> \| --receipt <json>)` | (inline — read-only) |
 
-> **Don't load a reference on the success path.** When `onchainos payment pay` returns an `authorization_header` (x402 v2 — the normal `exact` / `aggr_deferred` / `upto` outcome), replay directly per Step A6 and skip `references/accepts-schemes.md` entirely. Load it only on a **failure / legacy** path: `Permit2 allowance insufficient` → `references/accepts-schemes.md` (one-time approve), or a legacy x402 v1 raw proof → its "Legacy: x402 v1" section. `charge` / `session` / `a2a_charge` are always loaded — those are multi-phase flows.
+> **Don't load a reference on the success path.** On the primary Path A flow, `onchainos payment pay --payment-id --yes` signs, replays, and returns the settled receipt directly — skip `references/accepts-schemes.md` entirely (this holds for a single `accepts[]` scheme exactly as for multi-scheme). On the compat `pay --payload` path the CLI returns an `authorization_header` you replay yourself — same rule, no reference on success. Load `references/accepts-schemes.md` only on a **failure / legacy** path: `Permit2 allowance insufficient` → `references/accepts-schemes.md` (one-time approve), or a legacy x402 v1 raw proof → its "Legacy: x402 v1" section. `charge` / `session` / `a2a_charge` are always loaded — those are multi-phase flows.
 
 > **Channel mid-session ops** (close / topup / settle / voucher / refund mentioned with an active `channel_id`, regardless of fresh 402) → stay here, jump straight into `references/session.md` at the matching phase. **Do NOT** search for a separate `close-channel` / `topup-channel` / `settle-channel` tool — they're all `onchainos payment session ...` subcommands.
 
@@ -81,7 +84,60 @@ Each 402 signal (or paymentId) → CLI command → reference. Detailed gating + 
 
 # Path A: HTTP 402
 
-## Step A1: Start from the original response
+## Path A (accepts-based): quote → confirm → pay — PREFERRED 2-round flow
+
+**For an `accepts`-based 402 / A2MCP endpoint, the CLI does all mechanical work.
+You do exactly two reasoning rounds.** (For `WWW-Authenticate: Payment` charge /
+session challenges, skip this and use the protocol-detection steps below.)
+
+### Step A1 — Extract params (round 1)
+From the user prompt (Entry A) or the task payment node (Entry B), extract the
+endpoint `url` and any known business params. Do NOT curl, decode, or convert
+anything yourself.
+
+### Step A2 — Quote
+Run: `onchainos payment quote <url> [--param key=value ...] [--method GET|POST|...]`
+The CLI probes the endpoint, parses the 402, checks your wallet balance, ranks
+candidates, and writes a `paymentId`.
+
+> **Probe method** — the CLI probes with `GET` by default. When the service
+> declaration or the user's intent says the endpoint's initial call is **not GET**
+> (e.g. the Bazaar `outputSchema.method` / business mind-map declares `"POST"`, or
+> the user says "POST this endpoint"), pass `--method POST` (or the correct verb).
+> Known business params then ride in the JSON **body** instead of the query string.
+> Probing a POST-only A2MCP endpoint with the default GET can return 405 / a non-402
+> response → `endpoint_unreachable` instead of the payment challenge. (The paid replay
+> still uses `outputSchema.method` regardless — this flag only fixes the initial probe.)
+
+Read `data`:
+- `summary` — the human one-liner. `needsConfirm` is always true here.
+- `candidates[]` (with `recommended:true`) and `alternatives[]` — the ranked schemes. Each carries `acceptsIndex` — its position in `accepts[]` (the ranked order differs from `accepts[]`, so never treat a candidate's list position as the index).
+- `missingParams[]` + `merchantBody` — params the CLI could not fill; find the rest in `merchantBody`.
+- `walletError` — if `login_required`, tell the user to log in, then re-quote.
+- `recommended:null` on every candidate ⇒ no balance anywhere; present the list and ask.
+
+### Step A3 — Confirm (round 2)  ⚠ MANDATORY — never skip
+Use `AskUserQuestion` to confirm: currency/amount, the chosen scheme, and any
+`missingParams`. Pass the chosen candidate's **`acceptsIndex`** as `--selected-index`
+(NOT its position in `candidates[]`/`alternatives[]`) so the CLI signs exactly the
+entry the user approved. **You MUST stop and confirm before paying — do not auto-pay.**
+
+### Step A4 — Pay
+Run: `onchainos payment pay --payment-id <id> --selected-index <n> --yes [--param key=value ...]`
+`--yes` is required (the fund-moving confirming gate). `pay` signs the quoted payload,
+replays, and returns the receipt — it never re-fetches the 402. Read `data.status`:
+- `success` → report `txHash`; (Entry B) the task system marks the node paid.
+- `failed` → surface `data.error`; offer retry.
+- `pending` → poll / await terminal, then continue.
+
+> To decode a returned `PAYMENT-RESPONSE` header or a charge receipt at any time,
+> run `onchainos payment decode-receipt (--header <b64> | --receipt <json>)`.
+
+---
+
+## Step A1: Start from the original response (legacy / WWW-Authenticate detail)
+
+> **⚠️ `accepts`-based 402 → go back to Path A `payment quote`.** The steps below are the **legacy manual path** (decode → assemble → replay yourself) plus the shared decode detail for `WWW-Authenticate: Payment` charge / session challenges. If the 402 you hold is **`accepts`-based** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1 — `exact` / `exact`+Permit2 / `upto` / `aggr_deferred`, whether a **single** scheme or many), do **not** continue here: discard your raw 402 and re-enter at **Path A** with `payment quote <url>`. The quote flow runs the same mandatory confirm gate and returns the same receipt schema for single- and multi-scheme alike — a single scheme is not a shortcut for skipping `quote`. Continue below **only** for the `WWW-Authenticate: Payment` charge / session detail, or when `payment quote` is genuinely unavailable and you must fall back to the explicit `pay --payload` sign-only compat path.
 
 You already have the original HTTP response. If it is **not 402**, return the body directly. Otherwise → Step A2.
 
@@ -257,7 +313,7 @@ onchainos wallet status
 
 | Path | Action |
 |---|---|
-| **`accepts`-based** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1) | Run `onchainos payment pay --payload '<raw_402 from Step A3>'`. If Step A3.5 ran and the user picked an accepts-based candidate, add `--selected-index <index in decoded.accepts>` so the CLI signs exactly that entry; omit it for a single candidate (CLI auto-selects). The CLI decodes, signs from the selected account, and returns `{authorization_header, header_name, scheme, wallet}` — **no hand-assembly**.<br>**Success (normal path)** — `authorization_header` present → go straight to Replay below; do **NOT** load any scheme reference.<br>If the user picked the local-key fallback, run `onchainos payment pay-local --payload '<raw_402>'` instead (same success rule; supports `exact + EIP-3009`, `exact + Permit2`, and `upto` — `aggr_deferred` is TEE-only).<br>**`Permit2 allowance insufficient` error** (`upto` / `exact`+permit2, first payment for that token) → load **`references/accepts-schemes.md`** for the one-time approve, then retry the pay.<br>**Legacy v1** — CLI returns a raw proof (`signature`+`authorization`, no `authorization_header`) → load **`references/accepts-schemes.md`** and follow its "Legacy: x402 v1" section to assemble the `X-PAYMENT` header. |
+| **`accepts`-based** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1) | **Primary — Path A:** you should already be on the `payment quote <url>` → confirm → `payment pay --payment-id --yes` flow (top of Path A); it signs, replays, and returns the receipt — no hand-assembly, and no reference load on success. This is identical for a single `accepts[]` scheme and for multi-scheme.<br>**Compat / fallback only** (`quote` unavailable, or an explicit legacy request): run `onchainos payment pay --payload '<raw_402 from Step A3>'`. If Step A3.5 ran and the user picked an accepts-based candidate, add `--selected-index <index in decoded.accepts>` so the CLI signs exactly that entry; omit it for a single candidate (CLI auto-selects). The CLI decodes, signs from the selected account, and returns `{authorization_header, header_name, scheme, wallet}` — **no hand-assembly**; then go to Replay below.<br>If the user picked the local-key fallback, run `onchainos payment pay-local --payload '<raw_402>'` instead (same success rule; supports `exact + EIP-3009`, `exact + Permit2`, and `upto` — `aggr_deferred` is TEE-only).<br>**`Permit2 allowance insufficient` error** (`upto` / `exact`+permit2, first payment for that token) → load **`references/accepts-schemes.md`** for the one-time approve, then retry the pay.<br>**Legacy v1** — CLI returns a raw proof (`signature`+`authorization`, no `authorization_header`) → load **`references/accepts-schemes.md`** and follow its "Legacy: x402 v1" section to assemble the `X-PAYMENT` header. |
 
 | `period` (subscription / `permit2_subscription`) | Load **`references/subscription.md`** at "Decide operation" (subscribe vs access vs change vs cancel). First-time offer → `payment subscription subscribe`; already-active resource → `payment subscription access` (never re-subscribe); upgrade/downgrade → `change`; teardown → `cancel` / `cancel-pending`. |
 | **`WWW-Authenticate: Payment`, `intent="charge"`** | Load **`references/charge.md`** at "Decide mode". |
@@ -322,6 +378,9 @@ After a successful payment + response, suggest conversationally:
 
 | Just completed | Suggest |
 |---|---|
+| `payment quote` returned `needsConfirm:true` | `AskUserQuestion` to confirm, then `payment pay --payment-id <id> --selected-index <n> --yes` |
+| `payment pay` returned `status:"success"` | Report `txHash`; if a `PAYMENT-RESPONSE` header is present, `payment decode-receipt --header <b64>` |
+| `payment pay` returned `status:"pending"` | `payment a2a-pay status --payment-id <id> --wait` (a2a) or await the facilitator callback |
 | Successful HTTP 402 replay | Check balance impact via `okx-agentic-wallet`; or make another request to the same resource |
 | Successful a2a payment | Verify post-payment balance via `okx-agentic-wallet` |
 | 402 on replay (expired) | Retry with a fresh signature |

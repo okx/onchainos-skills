@@ -7,7 +7,7 @@ Detailed parameter tables, return field schemas, and usage examples for all 13 t
 Search for tokens by name, symbol, or contract address.
 
 ```bash
-onchainos token search --query <query> [--chains <chains>] [--limit <n>] [--cursor <cursor>]
+onchainos token search --query <query> [--chains <chains>] [--limit <n>] [--cursor <cursor>] [--max-results <n>]
 ```
 
 | Param | Required | Default | Description |
@@ -16,6 +16,9 @@ onchainos token search --query <query> [--chains <chains>] [--limit <n>] [--curs
 | `--chains` | No | `"1,501"` | Chain names or IDs, comma-separated (e.g., `"ethereum,solana"` or `"196,501"`) |
 | `--limit` | No | `20` | Number of results per page (max 100) |
 | `--cursor` | No | - | Pagination cursor — pass the `cursor` field from the last item of the previous response to get the next page |
+| `--max-results` | No | - | Auto-paginate across pages until N items are collected (1–500). The CLI aggregates pages and returns `data.items` + `data.nextCursor` + `data.fetchedCount`; do NOT chase per-item cursors yourself. Mutually exclusive intent with manual `--limit`/`--cursor` paging. |
+
+> When `--max-results` is supplied, the top-level `data` is `{ items, nextCursor, fetchedCount }`: `items` is the aggregated array of result objects (fields below), `nextCursor` is the cursor to resume from (`null` when exhausted), and `fetchedCount` is the number of items returned.
 
 **Return fields**:
 
@@ -104,7 +107,7 @@ onchainos token price-info --address <address> [--chain <chain>]
 Get token holder distribution (top 100), with optional tag filter.
 
 ```bash
-onchainos token holders --address <address> [--chain <chain>] [--tag-filter <n>] [--limit <n>] [--cursor <cursor>]
+onchainos token holders --address <address> [--chain <chain>] [--tag-filter <n>] [--limit <n>] [--cursor <cursor>] [--max-results <n>]
 ```
 
 | Param | Required | Default | Description |
@@ -114,6 +117,9 @@ onchainos token holders --address <address> [--chain <chain>] [--tag-filter <n>]
 | `--tag-filter` | No | - | Filter by holder tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler |
 | `--limit` | No | `20` | Number of results per page (max 100) |
 | `--cursor` | No | - | Pagination cursor — pass the `cursor` field from the last item of the previous response to get the next page |
+| `--max-results` | No | - | Auto-paginate across pages until N items are collected (1–500). The CLI aggregates pages and returns `data.items` + `data.nextCursor` + `data.fetchedCount`; do NOT chase per-item cursors yourself. Mutually exclusive intent with manual `--limit`/`--cursor` paging. |
+
+> When `--max-results` is supplied, the top-level `data` is `{ items, nextCursor, fetchedCount }`: `items` is the aggregated array of holder objects (fields below), `nextCursor` is the cursor to resume from (`null` when exhausted), and `fetchedCount` is the number of items returned.
 
 **Return fields** (top 100 holders):
 
@@ -164,7 +170,7 @@ onchainos token liquidity --address <address> [--chain <chain>]
 Get hot token list ranked by trending score or X/Twitter mentions (max 100 results).
 
 ```bash
-onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by <field>] [--time-frame <frame>] [--limit <n>] [--cursor <cursor>] [options]
+onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by <field>] [--time-frame <frame>] [--limit <n>] [--cursor <cursor>] [--max-results <n>] [options]
 ```
 
 **Core parameters**:
@@ -177,6 +183,9 @@ onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by 
 | `--time-frame` | No | - | Window: `1`=5min, `2`=1h, `3`=4h, `4`=24h |
 | `--limit` | No | `20` | Number of results per page (max 100) |
 | `--cursor` | No | - | Pagination cursor — pass the `cursor` field from the last item of the previous response to get the next page |
+| `--max-results` | No | - | Auto-paginate across pages until N items are collected (1–500). The CLI aggregates pages and returns `data.items` + `data.nextCursor` + `data.fetchedCount`; do NOT chase per-item cursors yourself. Mutually exclusive intent with manual `--limit`/`--cursor` paging. |
+
+> When `--max-results` is supplied, the top-level `data` is `{ items, nextCursor, fetchedCount }`: `items` is the aggregated array of token objects (fields below), `nextCursor` is the cursor to resume from (`null` when exhausted), and `fetchedCount` is the number of items returned.
 
 **Filter parameters** (all optional):
 
@@ -275,7 +284,7 @@ onchainos token advanced-info --address <address> [--chain <chain>]
 Get top traders (profit addresses) for a token.
 
 ```bash
-onchainos token top-trader --address <address> [--chain <chain>] [--tag-filter <n>] [--limit <n>] [--cursor <cursor>]
+onchainos token top-trader --address <address> [--chain <chain>] [--tag-filter <n>] [--limit <n>] [--cursor <cursor>] [--max-results <n>]
 ```
 
 | Param | Required | Default | Description |
@@ -285,6 +294,9 @@ onchainos token top-trader --address <address> [--chain <chain>] [--tag-filter <
 | `--tag-filter` | No | - | Filter by trader tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler |
 | `--limit` | No | `20` | Number of results per page (max 100) |
 | `--cursor` | No | - | Pagination cursor — pass the `cursor` field from the last item of the previous response to get the next page |
+| `--max-results` | No | - | Auto-paginate across pages until N items are collected (1–500). The CLI aggregates pages and returns `data.items` + `data.nextCursor` + `data.fetchedCount`; do NOT chase per-item cursors yourself. Mutually exclusive intent with manual `--limit`/`--cursor` paging. |
+
+> When `--max-results` is supplied, the top-level `data` is `{ items, nextCursor, fetchedCount }`: `items` is the aggregated array of trader objects (fields below), `nextCursor` is the cursor to resume from (`null` when exhausted), and `fetchedCount` is the number of items returned.
 
 **Return fields**:
 

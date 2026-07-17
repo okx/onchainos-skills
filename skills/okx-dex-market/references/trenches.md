@@ -80,15 +80,7 @@ Present next actions conversationally — never expose command paths to the user
 
 ## Data Freshness
 
-### `requestTime` Field
-
-When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the data snapshot was taken. When chaining commands (e.g., fetching token details after a list scan), use the `requestTime` from the most recent response as the reference point — not the current wall clock time.
-
-### Per-Command Cache
-
-| Command | Cache |
-|---|---|
-| `memepump aped-wallet` (with `--wallet`) | 0 – 1 s |
+Render `requestTime` (Unix ms) as-is — the upstream snapshot time. Do NOT chain off a previous response's `requestTime`.
 
 ## Additional Resources
 

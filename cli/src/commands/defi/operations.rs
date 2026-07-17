@@ -149,7 +149,38 @@ pub(crate) async fn cmd_invest(
         });
     }
 
+    annotate_datalist_value_normalized(&mut result);
     Ok(result)
+}
+
+/// FR-4: annotate each `dataList[]` step with `valueNormalized` — a minimal-unit
+/// decimal integer string derived from the step's `value` (directly passable to
+/// `wallet contract-call --amt`). On an unparseable `value`, set
+/// `valueNormalizeError` and `valueNormalized="0"` (not guessed). The original
+/// `value` is left untouched. Shared by `cmd_invest`/`cmd_withdraw`/`cmd_collect`,
+/// so CLI and MCP get parity automatically.
+fn annotate_datalist_value_normalized(result: &mut Value) {
+    let Some(arr) = result.get_mut("dataList").and_then(|v| v.as_array_mut()) else {
+        return;
+    };
+    for step in arr.iter_mut() {
+        let Some(obj) = step.as_object_mut() else {
+            continue;
+        };
+        let raw = obj.get("value").cloned().unwrap_or(Value::Null);
+        match crate::commands::sink::normalize_amount(&raw) {
+            crate::commands::sink::AmountNorm::Value(v) => {
+                obj.insert("valueNormalized".to_string(), Value::String(v));
+            }
+            crate::commands::sink::AmountNorm::Error(reason) => {
+                obj.insert("valueNormalizeError".to_string(), Value::String(reason));
+                obj.insert(
+                    "valueNormalized".to_string(),
+                    Value::String("0".to_string()),
+                );
+            }
+        }
+    }
 }
 
 // ── Standard (non-V3) invest ────────────────────────────────────────
@@ -647,7 +678,7 @@ pub(crate) async fn cmd_withdraw(
             bail!("V3 Pool withdrawal requires --ratio (e.g. --ratio 1 for full exit).");
         }
         // V3: only needs token_id + ratio, no user_input
-        return fetch_exit(
+        let mut result = fetch_exit(
             client,
             investment_id,
             &chain_index,
@@ -661,7 +692,9 @@ pub(crate) async fn cmd_withdraw(
             slippage,
             None,
         )
-        .await;
+        .await?;
+        annotate_datalist_value_normalized(&mut result);
+        return Ok(result);
     }
 
     // ── Non-V3 path ──
@@ -723,7 +756,7 @@ pub(crate) async fn cmd_withdraw(
         None
     };
 
-    fetch_exit(
+    let mut result = fetch_exit(
         client,
         investment_id,
         &chain_index,
@@ -737,7 +770,9 @@ pub(crate) async fn cmd_withdraw(
         slippage,
         user_input.as_deref(),
     )
-    .await
+    .await?;
+    annotate_datalist_value_normalized(&mut result);
+    Ok(result)
 }
 
 /// Token info extracted from position-detail
@@ -992,7 +1027,7 @@ pub(crate) async fn cmd_collect(
         platform_id
     };
 
-    fetch_claim(
+    let mut result = fetch_claim(
         client,
         address,
         &chain_index,
@@ -1003,5 +1038,52 @@ pub(crate) async fn cmd_collect(
         principal_index,
         expect_output.as_deref(),
     )
-    .await
+    .await?;
+    annotate_datalist_value_normalized(&mut result);
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn annotate_datalist_normalizes_hex_decimal_and_flags_bad() {
+        let mut result = json!({
+            "dataList": [
+                { "value": "0x1a", "to": "0xabc" },
+                { "value": "0x0" },
+                { "value": "abc" },
+                { "value": "123456" }
+            ],
+            "other": "preserved"
+        });
+        annotate_datalist_value_normalized(&mut result);
+        let steps = result["dataList"].as_array().unwrap();
+        // hex → decimal
+        assert_eq!(steps[0]["valueNormalized"], "26");
+        assert_eq!(steps[0]["value"], "0x1a"); // original untouched
+        assert_eq!(steps[0]["to"], "0xabc");
+        // 0x0 → "0"
+        assert_eq!(steps[1]["valueNormalized"], "0");
+        // unparseable → error + "0"
+        assert_eq!(steps[2]["valueNormalized"], "0");
+        assert_eq!(steps[2]["valueNormalizeError"], "unparseable value 'abc'");
+        // decimal integer passthrough
+        assert_eq!(steps[3]["valueNormalized"], "123456");
+        // sibling fields preserved
+        assert_eq!(result["other"], "preserved");
+    }
+
+    #[test]
+    fn annotate_datalist_noop_when_missing_or_not_array() {
+        let mut no_list = json!({ "foo": 1 });
+        annotate_datalist_value_normalized(&mut no_list);
+        assert_eq!(no_list, json!({ "foo": 1 }));
+
+        let mut non_array = json!({ "dataList": "oops" });
+        annotate_datalist_value_normalized(&mut non_array);
+        assert_eq!(non_array, json!({ "dataList": "oops" }));
+    }
 }

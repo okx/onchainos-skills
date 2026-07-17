@@ -49,7 +49,7 @@ When one of the following commands is used, show the related workflow hint after
 - For hot-tokens without chain → defaults to all chains; specify `--chain` to narrow
 - For search, `--chains` defaults to `"1,501"` (Ethereum + Solana)
 - **Chain uncertainty for cluster commands**: If the user doesn't know whether their chain supports cluster analysis, suggest running `onchainos token cluster-supported-chains` first before calling cluster-overview / cluster-top-holders / cluster-list.
-- **Pagination** (`token search`, `token hot-tokens`, `token holders`, `token top-trader`): All four commands support `--limit` (default `20`, max `100`) and `--cursor`. The `cursor` field on each response item points to its position; pass the **last item's `cursor`** value as `--cursor` on the next call to page forward. When `cursor` is `null` on the last item, all pages have been returned.
+- **Pagination** (`token search`, `token hot-tokens`, `token holders`, `token top-trader`): pass `--max-results <N>` (1–500) to auto-paginate in one call — the CLI aggregates pages and returns top-level `data.items`, `data.nextCursor`, and `data.fetchedCount`. Do NOT chase per-item cursors yourself. `--limit`/`--cursor` still work for manual single-page control.
 
 ### Step 2: Call and Display
 
@@ -79,17 +79,7 @@ Present next actions conversationally — never expose command paths to the user
 
 ## Data Freshness
 
-### `requestTime` Field
-
-When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the data snapshot was taken. When chaining commands (e.g., using price data as input to a follow-up query), use the `requestTime` from the most recent response as the reference point — not the current wall clock time.
-
-### Per-Command Cache
-
-| Command | Cache |
-|---|---|
-| `token holders` | 0 – 3 s |
-| `token hot-tokens` | 0 – 3 s |
-| `token top-trader` | 0 – 3 s |
+Render `requestTime` (Unix ms) as-is — it is the upstream data snapshot time. Do NOT chain off a previous response's `requestTime`; for a relative window use `--since` where the command supports it.
 
 ## Additional Resources
 

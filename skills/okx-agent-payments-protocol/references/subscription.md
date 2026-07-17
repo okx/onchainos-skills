@@ -9,7 +9,7 @@ The `period` scheme is recurring (subscription) billing. The buyer **subscribes 
 |---|---|
 | New `period` 402 offer, no active sub for this host | `payment subscription subscribe --accepts '<json>' --url <url>` |
 | Resource already has an active sub (check `my-subscriptions` first) | `payment subscription access --url <url>` — **never re-subscribe** |
-| Change-offer 402 (`extra.changeFrom`), upgrade/downgrade | `payment subscription change --accepts '<json>' --sub-id <cur>` |
+| Change-offer 402 (`extra.changeFrom`), upgrade/downgrade | `payment subscription access` (proof) → proof-carrying probe → `payment subscription change --accepts '<json>' --sub-id <cur>` (see `change` — never probe naked) |
 | Cancel an active sub | `payment subscription cancel --sub-id <s> --contract <c>` |
 | Revoke a scheduled (not-yet-effective) downgrade | `payment subscription cancel-pending --sub-id <s> --new-sub-id <n> --contract <c>` |
 | Inspect state / reconcile cache | `payment subscription my-subscriptions` · `payment subscription allowance-status --token <t>` |
@@ -60,6 +60,13 @@ onchainos payment subscription allowance-status --token <addr> [--chain <name|in
 | `--sub-id` | yes | the subId being changed (from `my-subscriptions`, matched by host); overrides `extra.changeFrom.fromSubId` |
 | `--from` | no | payer address; default = selected account |
 | `--url` | no | cache key for the resulting subscription |
+
+**Pre-flight probe (upgrade/downgrade) — carry an `APP-Access` proof, do NOT probe naked.** The change endpoint only returns a full change-offer with `extra.changeFrom` (the `direction` + `fromSubId` of the current subscription) when the probing request proves ownership of the current subscription. A **naked probe** (no proof) returns an offer **missing** `extra.changeFrom`, which fails `change` signing (`change` requires `--accepts` to carry `extra.changeFrom`) and forces a wasteful re-probe with the proof — one extra LLM round-trip + one extra CLI call. Always probe with the proof attached from the start:
+1. `payment subscription access --url <change endpoint>` — generates the current subscription's `APP-Access` proof (replay `.data.accessHeaderValue` under the `APP-Access` header).
+2. Probe the change endpoint **with that `APP-Access` header attached** → the 402 returns the change-offer carrying `extra.changeFrom` (matching `direction` / `fromSubId`) in a single probe.
+3. `payment subscription change --accepts '<that offer>' --sub-id <cur>` → sign.
+
+Required sequence: `access` (proof) → one proof-carrying probe of the change endpoint → `change`. Never do `naked probe → missing changeFrom → re-probe`.
 
 ### `cancel`
 | Param | Required | Description |
