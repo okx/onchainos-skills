@@ -597,7 +597,6 @@ fn portfolio_sub(c: &PortfolioCommand) -> &'static str {
 fn wallet_sub(c: &WalletCommand) -> &'static str {
     match c {
         WalletCommand::Login { .. } => "login",
-        WalletCommand::Verify { .. } => "verify",
         WalletCommand::Add => "add",
         WalletCommand::Switch { .. } => "switch",
         WalletCommand::Status => "status",

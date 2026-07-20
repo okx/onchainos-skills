@@ -244,7 +244,12 @@ impl DohManager {
     /// Always returns the UA regardless of current mode — the binary and proxy
     /// nodes both need it.
     pub fn doh_user_agent(&self) -> String {
-        format!("OKX/@okx_ai/onchainos-cli/{}", env!("CARGO_PKG_VERSION"))
+        format!(
+            "OKX/@okx_ai/onchainos-cli/{} ({}; {})",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
     }
 }
 

@@ -4,7 +4,7 @@ description: "OKX Agentic Wallet — the single skill for the user's wallet and 
 license: MIT
 metadata:
   author: okx
-  version: "4.2.6"
+  version: "4.3.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -18,12 +18,13 @@ Match the user intent to a row, then **read that row's linked file first** — i
 
 | User Intent | Reference |
 | --- | --- |
-| Sign in / connect / OTP verify / API-Key login / logout; add / switch account; login status | [wallet](references/wallet.md) |
+| Sign in / connect / social login (Google / Apple / Email) / logout; add / switch account; login status | [wallet](references/wallet.md) |
 | My wallet address / QR code; check my (logged-in) balance / holdings | [wallet](references/wallet.md) |
 | Send / transfer native or ERC-20 / SPL tokens | [wallet](references/wallet.md) |
 | Call a contract (approve / deposit / withdraw / custom function) | [wallet](references/wallet.md) |
 | Transaction history / tx detail / order status; sign a message (personalSign / EIP-712) | [wallet](references/wallet.md) |
 | Policy / spending limit / whitelist; export wallet / mnemonic; MEV protection for a contract-call; third-party Solana plugin write pre-flight | [wallet](references/wallet.md) |
+| Apple-login wallet differs from the OKX Wallet App / "missing" balance; rename a wallet or account; how transaction signing works (TEE) | [account-faq](references/account-faq.md) |
 | Pay gas with a stablecoin on Solana; enable / disable / change default gas token / status; a `send` / `contract-call` returns `gasStationUsed` or a Gas Station Confirming; Gas Station FAQ / "check order" | [gas-station](references/gas-station.md) |
 | Swap / trade / buy / sell / convert tokens; quote; best route; calldata-only swap; liquidity sources; ERC-20 approval for a DEX | [swap](references/swap.md) |
 | Bridge / cross-chain swap / move tokens between chains; bridge quote / fee comparison; supported bridges; track cross-chain arrival | [bridge](references/bridge.md) |
@@ -69,8 +70,8 @@ Never pass `--force` on the FIRST invocation of a state-changing command. Add `-
 
 ## Security & Global Notes
 
-- **Credential protection**: never log, display, or ask for session tokens, `clientId`, API keys, private keys, seed phrases, or passwords. Never expose: `accessToken`, `refreshToken`, `apiKey`, `secretKey`, `passphrase`, `sessionKey`, `sessionCert`, `teeId`, `encryptedSessionSk`, `signingKey`, raw tx data. Show raw `accountName` (never raw `accountId` to the user).
-- **Address integrity (funds-loss risk)**: any on-chain identifier shown to the user (wallet address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout. Never reproduce an identifier from memory, expand an abbreviated form, or re-type it across messages — re-invoke the CLI (`wallet addresses` or `wallet status`) and copy from fresh stdout. Never paraphrase, normalize case, insert spaces, or line-break inside an identifier. Always display the **full** `txHash`.
+- **Credential protection**: never log, display, or ask for session tokens, `clientId`, API keys, private keys, seed phrases, or passwords. Never expose: `accessToken`, `refreshToken`, `apiKey`, `secretKey`, `passphrase`, `sessionKey`, `sessionCert`, `teeId`, `saTeeId`, `encryptedSessionSk`, `signingKey`, raw tx data. Show raw `accountName` (never raw `accountId` to the user).
+- **Address integrity (funds-loss risk)**: any on-chain identifier shown to the user (wallet address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout. Never reproduce an identifier from memory, expand an abbreviated form, or re-type it across messages — re-invoke the CLI (`wallet addresses --format json` or `wallet status`) and copy from fresh stdout. Never paraphrase, normalize case, insert spaces, or line-break inside an identifier. Always display the **full** `txHash`.
 - **No address hallucination**: never fabricate a contract address — malicious tokens clone legitimate names. Only use addresses from a token lookup or the user's explicit input.
 - **Recipient validation**: EVM `0x`-prefixed, 42 chars; Solana Base58, 32–44 chars. Validate before sending.
 - **Transaction simulation**: the CLI runs pre-execution simulation; if `executeResult` is false → show `executeErrorMsg`, do NOT broadcast.

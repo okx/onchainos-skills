@@ -24,8 +24,9 @@ pub struct WalletsJson {
     pub accounts_map: HashMap<String, AccountMapEntry>,
     #[serde(default)]
     pub accounts: Vec<AccountInfo>,
+    /// Login method from `loginInfo.loginType`; empty when not provided.
     #[serde(default)]
-    pub is_ak: bool,
+    pub login_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -127,16 +128,15 @@ pub struct ChainCacheJson {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionJson {
+    /// SA TEE id; strategy `createOrder` sends this as `verifySignInfo.teeId`.
     #[serde(default)]
-    pub tee_id: String,
+    pub sa_tee_id: String,
     #[serde(default)]
     pub session_cert: String,
     #[serde(default)]
     pub encrypted_session_sk: String,
     #[serde(default)]
     pub session_key_expire_at: String,
-    #[serde(default)]
-    pub api_key: String,
 }
 
 // ── Path helpers ────────────────────────────────────────────────────
@@ -463,7 +463,7 @@ mod tests {
                 account_name: "My Wallet".to_string(),
                 is_default: true,
             }],
-            is_ak: false,
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&w).unwrap();
@@ -730,61 +730,56 @@ mod tests {
     #[test]
     fn session_json_serde_roundtrip() {
         let s = SessionJson {
-            tee_id: "tee-123".to_string(),
+            sa_tee_id: "sa-tee-123".to_string(),
             session_cert: "cert-abc".to_string(),
             encrypted_session_sk: "esk-xyz".to_string(),
             session_key_expire_at: "1700000000".to_string(),
-            api_key: "ak-key".to_string(),
         };
         let json = serde_json::to_string(&s).unwrap();
         let parsed: SessionJson = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.tee_id, "tee-123");
+        assert_eq!(parsed.sa_tee_id, "sa-tee-123");
         assert_eq!(parsed.session_cert, "cert-abc");
         assert_eq!(parsed.encrypted_session_sk, "esk-xyz");
         assert_eq!(parsed.session_key_expire_at, "1700000000");
-        assert_eq!(parsed.api_key, "ak-key");
     }
 
     #[test]
     fn session_json_camel_case_field_names() {
         let s = SessionJson {
-            tee_id: "t".to_string(),
+            sa_tee_id: "t".to_string(),
             encrypted_session_sk: "e".to_string(),
             session_key_expire_at: "1".to_string(),
             ..Default::default()
         };
         let json = serde_json::to_string(&s).unwrap();
-        assert!(json.contains("\"teeId\""));
+        assert!(json.contains("\"saTeeId\""));
         assert!(json.contains("\"sessionCert\""));
         assert!(json.contains("\"encryptedSessionSk\""));
         assert!(json.contains("\"sessionKeyExpireAt\""));
-        assert!(json.contains("\"apiKey\""));
     }
 
     #[test]
     fn session_json_default_is_empty() {
         let s = SessionJson::default();
-        assert!(s.tee_id.is_empty());
+        assert!(s.sa_tee_id.is_empty());
         assert!(s.session_cert.is_empty());
         assert!(s.encrypted_session_sk.is_empty());
         assert!(s.session_key_expire_at.is_empty());
-        assert!(s.api_key.is_empty());
     }
 
     #[test]
     fn save_and_load_session() {
         with_temp_home("save_load_session", || {
             let s = SessionJson {
-                tee_id: "tee1".to_string(),
+                sa_tee_id: "sa-tee1".to_string(),
                 session_cert: "cert1".to_string(),
                 encrypted_session_sk: "esk1".to_string(),
                 session_key_expire_at: "999".to_string(),
-                api_key: "ak1".to_string(),
             };
             save_session(&s).unwrap();
             let loaded = load_session().unwrap().unwrap();
-            assert_eq!(loaded.tee_id, "tee1");
-            assert_eq!(loaded.api_key, "ak1");
+            assert_eq!(loaded.sa_tee_id, "sa-tee1");
+            assert_eq!(loaded.session_key_expire_at, "999");
         });
     }
 
@@ -810,6 +805,26 @@ mod tests {
     fn delete_session_noop_when_missing() {
         with_temp_home("delete_session_noop", || {
             delete_session().unwrap();
+        });
+    }
+
+    /// Login clears the batch balance cache so `balance --all` can't keep
+    /// summing a previous identity's accounts (insert-only cache never prunes).
+    #[test]
+    fn delete_balance_cache_clears_stale_accounts() {
+        with_temp_home("delete_balance_cache_stale", || {
+            let entry = BalanceCacheEntry {
+                updated_at: 1,
+                data: serde_json::json!([]),
+                total_value_usd: "100.00".to_string(),
+            };
+            set_batch_balance_cache(&[("stale-acc".to_string(), entry)]).unwrap();
+            assert_eq!(load_balance_cache().unwrap().accounts.len(), 1);
+
+            delete_balance_cache().unwrap();
+
+            assert!(load_balance_cache().unwrap().accounts.is_empty());
+            assert!(get_batch_balance_cache(i64::MAX).unwrap().is_none());
         });
     }
 }

@@ -378,6 +378,115 @@ fn sum_cache_total(cache: &wallet_store::BalanceCacheJson) -> String {
     format!("{:.2}", normalized)
 }
 
+/// The batch balance endpoint does not reliably honor its `accountIds` filter
+/// and may return accounts outside the request (e.g. other accounts in a shared
+/// project). Keep only groups whose `accountId` is in `requested`, so totals
+/// reflect the current wallet's accounts only.
+fn retain_requested_accounts(data: &mut Value, requested: &[&str]) {
+    if let Some(arr) = data.as_array_mut() {
+        arr.retain(|g| {
+            g["accountId"]
+                .as_str()
+                .map(|aid| requested.contains(&aid))
+                .unwrap_or(false)
+        });
+    }
+}
+
+/// Copy of `cache` restricted to `account_ids`. Guards the `--all` total against
+/// stale entries left by a previous identity (the cache is insert-only).
+fn cache_for_accounts(
+    cache: &wallet_store::BalanceCacheJson,
+    account_ids: &[&str],
+) -> wallet_store::BalanceCacheJson {
+    wallet_store::BalanceCacheJson {
+        batch_updated_at: cache.batch_updated_at,
+        accounts: cache
+            .accounts
+            .iter()
+            .filter(|(k, _)| account_ids.contains(&k.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    }
+}
+
+/// Account-identity part of the login summary (no balance): the account's name,
+/// EVM/Solana addresses, and total account count, from the local wallets store.
+fn login_identity_summary(wallets: &WalletsJson, account_id: &str) -> Value {
+    let account_name = wallets
+        .accounts
+        .iter()
+        .find(|a| a.account_id == account_id)
+        .map(|a| a.account_name.as_str())
+        .unwrap_or("");
+    json!({
+        "accountName": account_name,
+        "evmAddress": get_evm_address(wallets, account_id),
+        "solAddress": get_sol_address(wallets, account_id),
+        "accountCount": wallets.accounts.len().max(wallets.accounts_map.len()),
+    })
+}
+
+/// Login-success summary: current account's name/addresses, account count, and
+/// `totalValueUsd` summed **across all accounts** via one live `balance_batch`
+/// call (no cache read → always fresh). Also refreshes the batch-balance cache
+/// so a subsequent `balance --all` is fresh without `--force`. Balance is
+/// best-effort — `totalValueUsd` is empty if the call fails.
+pub(super) async fn login_account_summary(
+    client: &mut WalletApiClient,
+    access_token: &str,
+    wallets: &WalletsJson,
+    account_id: &str,
+) -> Value {
+    let mut summary = login_identity_summary(wallets, account_id);
+
+    let account_ids: Vec<&str> = wallets.accounts_map.keys().map(|k| k.as_str()).collect();
+    let total_value_usd = if account_ids.is_empty() {
+        String::new()
+    } else {
+        match client.balance_batch(access_token, &account_ids.join(",")).await {
+            Ok(mut data) => {
+                enrich_with_usd_value(&mut data);
+                retain_requested_accounts(&mut data, &account_ids);
+                // Refresh the batch cache (one per-account entry) so a later
+                // `balance --all` reads these fresh values without --force.
+                if let Some(arr) = data.as_array() {
+                    let now = chrono::Utc::now().timestamp();
+                    let entries: Vec<(String, BalanceCacheEntry)> = arr
+                        .iter()
+                        .filter_map(|group| {
+                            let aid = group["accountId"].as_str()?.to_string();
+                            let account_data = Value::Array(vec![group.clone()]);
+                            let total = compute_total_value_usd(&account_data);
+                            Some((
+                                aid,
+                                BalanceCacheEntry {
+                                    updated_at: now,
+                                    data: account_data,
+                                    total_value_usd: total,
+                                },
+                            ))
+                        })
+                        .collect();
+                    let _ = wallet_store::set_batch_balance_cache(&entries);
+                }
+                compute_total_value_usd(&data)
+            }
+            Err(e) => {
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[DEBUG][login_account_summary] balance failed (best-effort): {e:#}");
+                }
+                String::new()
+            }
+        }
+    };
+
+    if let Some(obj) = summary.as_object_mut() {
+        obj.insert("totalValueUsd".to_string(), json!(total_value_usd));
+    }
+    summary
+}
+
 // ── cmd_balance ───────────────────────────────────────────────────────
 
 /// onchainos wallet balance [--all] [--chain <chain>] [--token-address <addr>] [--force]
@@ -431,6 +540,7 @@ pub(super) async fn cmd_balance(
 
         if !force {
             if let Some(cached) = wallet_store::get_batch_balance_cache(BATCH_BALANCE_TTL)? {
+                let cached = cache_for_accounts(&cached, &account_ids);
                 let total_usd = sum_cache_total(&cached);
                 if cfg!(feature = "debug-log") {
                     eprintln!(
@@ -450,10 +560,11 @@ pub(super) async fn cmd_balance(
         }
 
         let ids_joined = account_ids.join(",");
-        let data = client
+        let mut data = client
             .balance_batch(&access_token, &ids_joined)
             .await
             .map_err(format_api_error)?;
+        retain_requested_accounts(&mut data, &account_ids);
         if cfg!(feature = "debug-log") {
             eprintln!(
                 "[DEBUG][cmd_balance] scenario=all, balance_batch response_len={}",
@@ -484,6 +595,7 @@ pub(super) async fn cmd_balance(
         wallet_store::set_batch_balance_cache(&entries)?;
 
         let cached = wallet_store::load_balance_cache()?;
+        let cached = cache_for_accounts(&cached, &account_ids);
         let total_usd = sum_cache_total(&cached);
         output::success(json!({
             "totalValueUsd": total_usd,
@@ -994,6 +1106,34 @@ mod tests {
         assert_eq!(get_sol_address(&w, "unknown"), "");
     }
 
+    #[test]
+    fn login_identity_summary_resolves_name_addresses_and_count() {
+        let mut w = make_wallets_multi_chain();
+        w.accounts = vec![crate::wallet_store::AccountInfo {
+            project_id: "p".to_string(),
+            account_id: "acc-1".to_string(),
+            account_name: "Account 1".to_string(),
+            is_default: true,
+        }];
+        let s = login_identity_summary(&w, "acc-1");
+        assert_eq!(s["accountName"], "Account 1");
+        assert_eq!(s["evmAddress"], "0xEVM");
+        assert_eq!(s["solAddress"], "SolanaAddr");
+        // accounts.len()=1, accounts_map.len()=2 → max = 2
+        assert_eq!(s["accountCount"], 2);
+    }
+
+    #[test]
+    fn login_identity_summary_unknown_account_blank_name_and_addresses() {
+        let w = make_wallets_multi_chain();
+        let s = login_identity_summary(&w, "unknown");
+        assert_eq!(s["accountName"], "");
+        assert_eq!(s["evmAddress"], "");
+        assert_eq!(s["solAddress"], "");
+        // accounts.len()=0, accounts_map.len()=2 → max = 2
+        assert_eq!(s["accountCount"], 2);
+    }
+
     // ── sum_cache_total ───────────────────────────────────────────────
 
     #[test]
@@ -1024,6 +1164,39 @@ mod tests {
         use wallet_store::BalanceCacheJson;
         let cache = BalanceCacheJson::default();
         assert_eq!(sum_cache_total(&cache), "0.00");
+    }
+
+    #[test]
+    fn retain_requested_accounts_drops_unrequested_groups() {
+        // Backend returns 3 accounts; only "acc-1" was requested.
+        let mut data = json!([
+            { "accountId": "acc-1", "tokenAssets": [{ "usdValue": "8.00" }] },
+            { "accountId": "acc-2", "tokenAssets": [{ "usdValue": "100.00" }] },
+            { "accountId": "acc-3", "tokenAssets": [{ "usdValue": "36.00" }] },
+        ]);
+        retain_requested_accounts(&mut data, &["acc-1"]);
+        assert_eq!(data.as_array().unwrap().len(), 1);
+        assert_eq!(data[0]["accountId"], "acc-1");
+        assert_eq!(compute_total_value_usd(&data), "8.00");
+    }
+
+    #[test]
+    fn cache_for_accounts_keeps_only_requested() {
+        use wallet_store::{BalanceCacheEntry, BalanceCacheJson};
+        let mut cache = BalanceCacheJson::default();
+        for (id, usd) in [("acc-1", "8.00"), ("stale", "100.00")] {
+            cache.accounts.insert(
+                id.to_string(),
+                BalanceCacheEntry {
+                    updated_at: 0,
+                    data: Value::Null,
+                    total_value_usd: usd.to_string(),
+                },
+            );
+        }
+        let filtered = cache_for_accounts(&cache, &["acc-1"]);
+        assert_eq!(filtered.accounts.len(), 1);
+        assert_eq!(sum_cache_total(&filtered), "8.00");
     }
 
     #[test]

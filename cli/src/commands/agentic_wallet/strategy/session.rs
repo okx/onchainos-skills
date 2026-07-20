@@ -12,8 +12,8 @@ use crate::wallet_store;
 pub struct WalletSession {
     pub account_id: String,
     pub session_cert: String,
-    /// SA TEE id (embedded in `verifySignInfo.teeId`).
-    pub tee_id: String,
+    /// SA TEE id (sent as `verifySignInfo.teeId` in `createOrder`).
+    pub sa_tee_id: String,
     /// Base64 ed25519 signing seed; `Zeroizing` wipes on drop.
     pub seed_b64: Zeroizing<String>,
     pub evm_address: String,
@@ -60,7 +60,7 @@ pub fn load() -> Result<WalletSession> {
     Ok(WalletSession {
         account_id,
         session_cert: session.session_cert,
-        tee_id: session.tee_id,
+        sa_tee_id: session.sa_tee_id,
         seed_b64,
         evm_address,
         sol_address,
