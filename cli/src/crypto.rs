@@ -1,8 +1,8 @@
 //! Cryptographic helpers for the onchainos wallet.
 //!
 //! This module consolidates all signing & key-exchange primitives so that
-//! wallet commands (`cmd_login_ak`, `cmd_verify`, `sign_and_broadcast`, …)
-//! can share a single implementation without duplication.
+//! wallet commands (`cmd_login_social`, `sign_and_broadcast`, …) can share a
+//! single implementation without duplication.
 
 use alloy_primitives::Address;
 use alloy_sol_types::sol;
@@ -23,22 +23,6 @@ pub fn generate_x25519_session_keypair() -> (String, String) {
     let session_private_key = base64::engine::general_purpose::STANDARD.encode(secret.to_bytes());
     let temp_pub_key = base64::engine::general_purpose::STANDARD.encode(public.as_bytes());
     (session_private_key, temp_pub_key)
-}
-
-// ── HMAC-SHA256 for AK login ────────────────────────────────────────────
-
-/// HMAC-SHA256 sign for AK login.
-///
-/// `message = "{timestamp}{method}{path}{params}"` → HMAC-SHA256 → base64.
-pub fn ak_sign(timestamp: u64, method: &str, path: &str, params: &str, secret_key: &str) -> String {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-
-    let message = format!("{}{}{}{}", timestamp, method, path, params);
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret_key.as_bytes())
-        .expect("HMAC can take key of any size");
-    mac.update(message.as_bytes());
-    base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
 }
 
 // ── HPKE decryption ─────────────────────────────────────────────────────
@@ -819,15 +803,5 @@ mod tests {
              4f243883c33f044991cdfc88d4424999424c81705ee5377623a12d16a8e2ad3f\
              1c",
         );
-    }
-
-    #[test]
-    fn ak_sign_produces_base64() {
-        let sig = ak_sign(1700000000, "GET", "/path", "?a=1", "secret");
-        // HMAC-SHA256 output is 32 bytes → 44 base64 chars (with padding)
-        assert_eq!(sig.len(), 44);
-        assert!(base64::engine::general_purpose::STANDARD
-            .decode(&sig)
-            .is_ok());
     }
 }

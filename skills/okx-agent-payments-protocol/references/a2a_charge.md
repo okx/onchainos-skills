@@ -11,7 +11,7 @@ Wraps `onchainos payment a2a-pay` for seller (`create`) and buyer (`pay` / `stat
 
 ## Pre-flight
 
-`create` and `pay` need a live wallet session — the dispatcher's Step B2 already checked it. If you entered here directly, run `onchainos wallet status` first; not logged in → `onchainos wallet login` (AK) or `onchainos wallet login <email>` (OTP). Never sign without a live session.
+`create` and `pay` need a live wallet session — the dispatcher's Step B2 already checked it. If you entered here directly, run `onchainos wallet status` first; not logged in → `onchainos wallet login`. Never sign without a live session.
 
 ---
 

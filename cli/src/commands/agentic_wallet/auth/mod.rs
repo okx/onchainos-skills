@@ -5,14 +5,10 @@ use anyhow::{bail, Result};
 use base64::Engine;
 use serde_json::json;
 
-use super::locale::{detect_system_locale, normalize_locale};
-use crate::audit;
 use crate::keyring_store;
 use crate::output;
 use crate::wallet_api::{ApiCodeError, WalletApiClient};
-use crate::wallet_store::{
-    self, AccountMapEntry, AddressInfo, LoginCache, SessionJson, WalletsJson,
-};
+use crate::wallet_store::{self, AccountMapEntry, AddressInfo, SessionJson, WalletsJson};
 
 // ── Token / session helpers ──────────────────────────────────────────
 
@@ -109,9 +105,9 @@ pub(super) fn ensure_tokens() -> Result<(String, String)> {
 /// Returns a valid accessToken, refreshing only when it is actually expired.
 ///
 /// Flow:
-///   1. session_key expired           → try AK re-login, else anonymous fallback
-///   2. no tokens in keychain         → try AK re-login, else anonymous fallback
-///   3. refresh_token expired         → prompt user, try AK re-login, else anonymous fallback
+///   1. session_key expired           → bail, ask the user to log in again
+///   2. no tokens in keychain         → bail, ask the user to log in again
+///   3. refresh_token expired         → bail, ask the user to log in again
 ///   4. access_token expired          → call auth_refresh, store new tokens, return new JWT
 ///   5. access_token still valid      → return as-is
 pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
@@ -137,10 +133,10 @@ pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
     if is_session_key_expired(expire_at) {
         if cfg!(feature = "debug-log") {
             eprintln!(
-                "[DEBUG][ensure_tokens_refreshed] session key expired → relogin_or_anonymous"
+                "[DEBUG][ensure_tokens_refreshed] session key expired → session expired (bail)"
             );
         }
-        return relogin_or_anonymous().await;
+        return session_expired_err();
     }
 
     // ── Step 2: read tokens from keychain ────────────────────────────
@@ -151,10 +147,10 @@ pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
         _ => {
             if cfg!(feature = "debug-log") {
                 eprintln!(
-                    "[DEBUG][ensure_tokens_refreshed] no refresh_token → relogin_or_anonymous"
+                    "[DEBUG][ensure_tokens_refreshed] no refresh_token → session expired (bail)"
                 );
             }
-            return relogin_or_anonymous().await;
+            return session_expired_err();
         }
     };
 
@@ -163,10 +159,10 @@ pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
         _ => {
             if cfg!(feature = "debug-log") {
                 eprintln!(
-                    "[DEBUG][ensure_tokens_refreshed] no access_token → relogin_or_anonymous"
+                    "[DEBUG][ensure_tokens_refreshed] no access_token → session expired (bail)"
                 );
             }
-            return relogin_or_anonymous().await;
+            return session_expired_err();
         }
     };
 
@@ -188,10 +184,10 @@ pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
         eprintln!("Session expired. Please log in again: onchainos wallet login");
         if cfg!(feature = "debug-log") {
             eprintln!(
-                "[DEBUG][ensure_tokens_refreshed] refresh_token expired → relogin_or_anonymous"
+                "[DEBUG][ensure_tokens_refreshed] refresh_token expired → session expired (bail)"
             );
         }
-        return relogin_or_anonymous().await;
+        return session_expired_err();
     }
 
     // ── Step 4: access_token expired → refresh via API ───────────────
@@ -255,44 +251,10 @@ pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
     Ok(access_token)
 }
 
-/// When the session or refresh token is expired: attempt AK re-login using env vars.
-///
-/// - AK env vars present → auto re-login → return new JWT
-/// - AK env vars absent → bail with a clear message (wallet APIs require a valid JWT;
-///   returning "" would only cause an opaque 401 downstream)
-async fn relogin_or_anonymous() -> Result<String> {
-    let ak = std::env::var("OKX_API_KEY").or_else(|_| std::env::var("OKX_ACCESS_KEY"));
-    let sk = std::env::var("OKX_SECRET_KEY");
-    let pp = std::env::var("OKX_PASSPHRASE");
-
-    match (ak, sk, pp) {
-        (Ok(api_key), Ok(secret_key), Ok(passphrase)) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][relogin_or_anonymous] AK env vars found, attempting re-login");
-            }
-            cmd_login_ak(&api_key, &secret_key, &passphrase, None).await?;
-            let blob = keyring_store::read_blob()?;
-            let access_token = blob.get("access_token").cloned().unwrap_or_default();
-            if access_token.is_empty() {
-                bail!("AK re-login succeeded but access_token was not stored — please retry");
-            }
-            if cfg!(feature = "debug-log") {
-                eprintln!(
-                    "[DEBUG][relogin_or_anonymous] AK re-login successful, access_token_len={}",
-                    access_token.len()
-                );
-            }
-            Ok(access_token)
-        }
-        _ => {
-            if cfg!(feature = "debug-log") {
-                eprintln!(
-                    "[DEBUG][relogin_or_anonymous] no AK env vars, session cannot be recovered"
-                );
-            }
-            bail!("session expired, please login again: onchainos wallet login")
-        }
-    }
+/// Called when the session/refresh token is expired. Social login can't be
+/// recovered automatically, so bail and ask the user to log in again.
+fn session_expired_err() -> Result<String> {
+    bail!("session expired, please login again: onchainos wallet login")
 }
 
 /// Decode JWT and check if it is expired.
@@ -301,16 +263,6 @@ pub(super) fn is_token_expired(token: &str) -> bool {
         .map(|exp| {
             let now = chrono::Utc::now().timestamp();
             now >= exp
-        })
-        .unwrap_or(true)
-}
-
-/// Check if token expires within `secs` seconds.
-fn token_expires_within_secs(token: &str, secs: i64) -> bool {
-    token_exp_timestamp(token)
-        .map(|exp| {
-            let now = chrono::Utc::now().timestamp();
-            exp - now <= secs
         })
         .unwrap_or(true)
 }
@@ -347,512 +299,315 @@ pub(crate) fn format_api_error(e: anyhow::Error) -> anyhow::Error {
     }
 }
 
-// ── Login ────────────────────────────────────────────────────────────
+// ── Social login ─────────────────────────────────────────────────────
 
-/// Derive the planned login mode for THIS invocation of `cmd_login`.
-///
-/// Rules (spec §1.3, M3):
-/// - Email clap arg present (non-empty) → `Some("email")`
-/// - Email arg absent AND all three `OKX_API_KEY` + `OKX_SECRET_KEY` +
-///   `OKX_PASSPHRASE` env vars are non-empty → `Some("ak")`
-/// - Otherwise → `None` (caller bails before mode-diff check matters).
-fn derive_current_mode(email_arg: Option<&str>) -> Option<&'static str> {
-    if let Some(e) = email_arg {
-        if !e.is_empty() {
-            return Some("email");
+/// Path of the social-login page, joined onto the effective base URL.
+const SOCIAL_LOGIN_PATH: &str = "/account/sociallogin";
+
+/// Effective base URL for the login page (same resolution as `WalletApiClient`).
+fn social_login_base_url() -> String {
+    std::env::var("OKX_BASE_URL")
+        .ok()
+        .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
+        .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string())
+}
+
+/// Build the login-page URL
+/// `<base>/account/sociallogin?authSessionId=..&tempPubKey=..&clientType=agent-cli`.
+/// `temp_pub_key` is base64 (may contain `+ / =`), so params are percent-encoded.
+fn build_login_url(base_url: &str, auth_session_id: &str, temp_pub_key: &str) -> String {
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("authSessionId", auth_session_id)
+        .append_pair("tempPubKey", temp_pub_key)
+        .append_pair("clientType", "agent-cli")
+        .finish();
+    format!(
+        "{}{}?{}",
+        base_url.trim_end_matches('/'),
+        SOCIAL_LOGIN_PATH,
+        query
+    )
+}
+
+/// What one `session/result` poll means for the polling loop.
+enum PollOutcome {
+    /// accessToken present → login complete.
+    Ready,
+    /// Backend says not-ready yet (code 10018 or `Ok` without a token) → keep
+    /// polling; this is the normal "user hasn't finished login" state.
+    Pending,
+    /// No-code transport/parse error (network down, persistent 5xx) → keep
+    /// polling, but count toward the consecutive-failure short-circuit so a
+    /// hard outage doesn't make the user wait the full timeout.
+    Transient,
+    /// Terminal backend error → stop.
+    Terminal,
+}
+
+/// Classify one `session_result` outcome. `Ok` is Ready only with a non-empty
+/// accessToken (else Pending); an `Err` is Pending for code 10018, Transient
+/// for a no-code transport/parse error, and Terminal for any other backend code.
+fn classify_poll(result: &Result<serde_json::Value>) -> PollOutcome {
+    match result {
+        Ok(data) => {
+            let has_token = data
+                .get("accessToken")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.is_empty());
+            if has_token {
+                PollOutcome::Ready
+            } else {
+                PollOutcome::Pending
+            }
         }
-    }
-    let ak_ok = std::env::var("OKX_API_KEY")
-        .or_else(|_| std::env::var("OKX_ACCESS_KEY"))
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-    let sk_ok = std::env::var("OKX_SECRET_KEY")
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-    let pp_ok = std::env::var("OKX_PASSPHRASE")
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-    if ak_ok && sk_ok && pp_ok {
-        Some("ak")
-    } else {
-        None
+        Err(e) => match e.downcast_ref::<ApiCodeError>().map(|a| a.code.as_str()) {
+            Some("10018") => PollOutcome::Pending,
+            None => PollOutcome::Transient,
+            Some(_) => PollOutcome::Terminal,
+        },
     }
 }
 
-/// CLI defensive login-diff pre-check.
-///
-/// Detects three scenarios that would silently overwrite the locally bound
-/// account if not confirmed:
-///
-/// 1. **Mode switch** — `last_login_mode != current_mode` (email ↔ ak). Scene
-///    line names the two modes.
-/// 2. **Same-mode different-account (email)** — both sides are `email` and the
-///    email address differs from the persisted one (PII-masked in the scene
-///    line).
-/// 3. **Same-mode different-account (ak)** — both sides are `ak` and the
-///    incoming `api_key` differs from the one persisted in `session.json`
-///    (PII-masked in the scene line). This subsumes the older standalone
-///    AK-switch `bail!()` guard so the AK→AK case shares the unified exit-2
-///    confirming envelope + audit events with the other two scenarios.
-///
-/// `current_email` is the email arg of `wallet login` (only populated on the
-/// email path; `None` for the AK env-driven path).
-///
-/// `current_api_key` is the API key from `$OKX_API_KEY` (or alias) for the
-/// AK env-driven path; `None` for the email path. Used only to detect the
-/// AK→AK same-mode account-switch case.
-///
-/// Audit table (per spec §5.2 unified write rule, extended with `switch_kind`):
-///
-/// | `would_fire` | `force` | Audit writes (in order)                                     | Control flow                  |
-/// |--------------|---------|-------------------------------------------------------------|-------------------------------|
-/// | false        | —       | none                                                        | `Ok(())` — proceed normally   |
-/// | true         | false   | `login_mode_prompt_shown`                                   | `Err(CliConfirming)` (exit 2) |
-/// | true         | true    | `login_mode_prompt_shown` THEN `login_mode_prompt_user_choice` | `Ok(())` — proceed with login |
-///
-/// `switch_kind=mode|account` is included in audit args so off-box telemetry
-/// can distinguish the two scenarios. `user_choice=no` is never written by the
-/// CLI (accepted gap: the CLI cannot observe a No answer).
-fn check_login_mode_diff(
-    current_mode: &'static str,
-    current_email: Option<&str>,
-    current_api_key: Option<&str>,
-    force: bool,
-) -> Result<()> {
-    let t = if cfg!(feature = "debug-log") {
-        Some(std::time::Instant::now())
-    } else {
-        None
-    };
+/// Consecutive no-code (transport) failures after which polling gives up
+/// instead of retrying until the full timeout. At the 2s cadence this is ~10s
+/// of continuous failure; any successful poll or backend `10018` resets it.
+const MAX_CONSECUTIVE_TRANSIENT_POLLS: u32 = 5;
 
-    // Load wallets first — both scenarios need access to the persisted email.
-    let wallets = match wallet_store::load_wallets() {
-        Ok(Some(w)) => w,
-        _ => {
-            if let Some(start) = t {
-                eprintln!(
-                    "[DEBUG] mode-diff check (no wallets): {:?}",
-                    start.elapsed()
-                );
-            }
-            return Ok(());
-        }
-    };
+/// Default social-login poll timeout when `SOCIAL_LOGIN_TIMEOUT_SECS` is unset
+/// or invalid (5 minutes).
+const SOCIAL_LOGIN_TIMEOUT_DEFAULT_SECS: u64 = 300;
+/// Minimum accepted override; values below this fall back to the default.
+const SOCIAL_LOGIN_TIMEOUT_FLOOR_SECS: u64 = 10;
 
-    let last_mode = match super::common::derive_last_login_mode(&wallets.email, wallets.is_ak) {
-        Some(m) => m,
-        None => {
-            if let Some(start) = t {
-                eprintln!(
-                    "[DEBUG] mode-diff check (no last mode): {:?}",
-                    start.elapsed()
-                );
-            }
-            return Ok(());
-        }
-    };
-
-    // Decide scenario and the scene-specific line. The four scenarios are
-    // dispatched by the (last_mode, current_mode) pair. Each arm builds the
-    // user-facing scene line and tags the audit event via `switch_kind`.
-    //
-    // Display rules:
-    //   - User-facing labels are `Email` and `API Key` (Title Case / spaced);
-    //     internal mode tokens stay lowercase in audit args and comparisons.
-    //   - On mode switch, the `Email` side carries the masked email of the
-    //     *email* account in parentheses, regardless of direction. The
-    //     `API Key` side never displays the key itself (api_keys are more
-    //     sensitive than emails and the user already knows the env value).
-    //   - On same-mode email switch, both old and new emails are masked
-    //     using `mask_email`.
-    //   - On same-mode AK switch, no key (masked or otherwise) appears in
-    //     the message; a fixed line tells the user their env api_key has
-    //     diverged from the persisted one.
-    let (scene_line, switch_kind) = match (last_mode, current_mode) {
-        ("email", "ak") => {
-            // Mode switch: persisted=email, this login=ak. The Email side
-            // is OLD — show its masked form in parens.
-            (
-                format!(
-                    "Login method: Email ({}) → API Key",
-                    super::common::mask_email(&wallets.email),
-                ),
-                "mode",
-            )
-        }
-        ("ak", "email") => {
-            // Mode switch: persisted=ak, this login=email. The Email side
-            // is NEW — show the new email's masked form in parens.
-            let new_email = current_email.unwrap_or("");
-            (
-                format!(
-                    "Login method: API Key → Email ({})",
-                    super::common::mask_email(new_email),
-                ),
-                "mode",
-            )
-        }
-        ("email", "email") => {
-            // Same-mode account switch (email). Compare addresses,
-            // case-insensitive + whitespace-trimmed. Empty new email
-            // shouldn't reach here in practice (cmd_login rejects empty
-            // email arg before calling us), but guard anyway.
-            let new_raw = current_email.unwrap_or("");
-            let new_norm = new_raw.trim().to_lowercase();
-            let old_norm = wallets.email.trim().to_lowercase();
-            if new_norm.is_empty() || old_norm.is_empty() || new_norm == old_norm {
-                if let Some(start) = t {
-                    eprintln!(
-                        "[DEBUG] mode-diff check (no-op, same email): {:?}",
-                        start.elapsed()
-                    );
-                }
-                return Ok(());
-            }
-            (
-                format!(
-                    "Account: {} → {}",
-                    super::common::mask_email(&wallets.email),
-                    super::common::mask_email(new_raw),
-                ),
-                "account",
-            )
-        }
-        ("ak", "ak") => {
-            // Same-mode account switch (ak). Compare api_keys; the persisted
-            // key lives in session.json (not wallets.json). If session is
-            // missing or empty, the comparison is undefined — fall through
-            // to no-op (matches the previous AK-switch guard's
-            // `if let Ok(Some(..))` tolerance). Same-value comparison is
-            // also a no-op.
-            //
-            // When the gate fires the scene line is a fixed PII-clean
-            // sentence — no key (masked or otherwise) appears in the
-            // user-facing message. The user already knows the value of
-            // their `OKX_API_KEY` env var; the CLI's job is to flag that
-            // it diverges from the persisted one.
-            let new_key = current_api_key.unwrap_or("").trim();
-            let old_key = match wallet_store::load_session() {
-                Ok(Some(session)) => session.api_key,
-                _ => String::new(),
-            };
-            if new_key.is_empty() || old_key.is_empty() || new_key == old_key {
-                if let Some(start) = t {
-                    eprintln!(
-                        "[DEBUG] mode-diff check (no-op, same ak / missing session): {:?}",
-                        start.elapsed()
-                    );
-                }
-                return Ok(());
-            }
-            (
-                "The API Key in your env has changed".to_string(),
-                "account",
-            )
-        }
-        _ => {
-            // Unknown (mode, mode) combination — should never occur given
-            // `derive_last_login_mode` and `derive_current_mode` only
-            // return "email" / "ak". Defensive: no-op.
-            if let Some(start) = t {
-                eprintln!(
-                    "[DEBUG] mode-diff check (no-op, unknown mode pair): {:?}",
-                    start.elapsed()
-                );
-            }
-            return Ok(());
-        }
-    };
-
-    audit::log(
-        "cli",
-        "login_mode_prompt_shown",
-        true,
-        Duration::ZERO,
-        Some(vec![
-            format!("current_mode={current_mode}"),
-            format!("last_login_mode={last_mode}"),
-            format!("switch_kind={switch_kind}"),
-        ]),
-        None,
-    );
-
-    if force {
-        // Skill-first Yes path: paired prompt_shown + user_choice=yes events
-        // back-to-back so the audit trail is complete.
-        audit::log(
-            "cli",
-            "login_mode_prompt_user_choice",
-            true,
-            Duration::ZERO,
-            Some(vec![
-                format!("current_mode={current_mode}"),
-                format!("last_login_mode={last_mode}"),
-                format!("switch_kind={switch_kind}"),
-                "user_choice=yes".to_string(),
-            ]),
-            None,
-        );
-
-        if let Some(start) = t {
-            eprintln!("[DEBUG] mode-diff check (force): {:?}", start.elapsed());
-        }
-        return Ok(());
-    }
-
-    // CLI defensive path: emit confirming + exit 2. The first line is the
-    // skill discriminator (substring `not the account you used last time` is
-    // matched verbatim — never translated). Scene line is filled per scenario
-    // above; reassurance + Yes/No prompt are shared.
-    let message = format!(
-        "⚠️ This is not the account you used last time.\n\
-         {scene_line}\n\
-         Your previous account's assets are untouched and still accessible — log in with the original account to view them.\n\
-         Continue? [Yes / No]"
-    );
-
-    let confirming = output::CliConfirming {
-        message,
-        next: "If the user confirms, re-run the same command with --force flag appended to proceed.".to_string(),
-        scene: None,
-    };
-
-    if let Some(start) = t {
-        eprintln!(
-            "[DEBUG] mode-diff check (gate fires): {:?}",
-            start.elapsed()
-        );
-    }
-    Err(confirming.into())
+/// Resolve the poll timeout from a raw `SOCIAL_LOGIN_TIMEOUT_SECS` value.
+/// Unset / unparseable / below-floor inputs all fall back to the default.
+fn resolve_social_login_timeout_secs(raw: Option<&str>) -> u64 {
+    raw.and_then(|v| v.parse::<u64>().ok())
+        .filter(|&v| v >= SOCIAL_LOGIN_TIMEOUT_FLOOR_SECS)
+        .unwrap_or(SOCIAL_LOGIN_TIMEOUT_DEFAULT_SECS)
 }
 
-/// onchainos wallet login [email] [--locale <locale>] [--force]
-pub(super) async fn cmd_login(
-    email: Option<&str>,
-    locale: Option<&str>,
-    force: bool,
-) -> Result<()> {
-    if let Some(email) = email {
-        if email.is_empty() {
-            bail!("email is required");
-        }
+/// Poll `session/result` until login completes or the deadline elapses.
+/// Cadence: 3s interval, default 300s (5 min) timeout (override via
+/// `SOCIAL_LOGIN_TIMEOUT_SECS`, floor 10s).
+async fn poll_session_result(
+    client: &mut WalletApiClient,
+    auth_session_id: &str,
+) -> Result<serde_json::Value> {
+    let interval = Duration::from_secs(3);
+    let timeout_secs = resolve_social_login_timeout_secs(
+        std::env::var("SOCIAL_LOGIN_TIMEOUT_SECS").ok().as_deref(),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
+    let mut consecutive_transient: u32 = 0;
 
-        if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG] cmd_login: email={email}, locale={locale:?}");
-        }
-
-        // Login-diff pre-check: fires before any auth API call when (a) the
-        // previous session used `ak` and this login uses `email` (mode
-        // switch), or (b) this email differs from the persisted one (same-
-        // mode different-account, prevents silent OTP redirect to a new
-        // address). `current_api_key` is None on the email path. Runs
-        // before locale validation so an exit-2 confirming response is
-        // returned without any side-effect (including the stderr fallback
-        // warning).
-        check_login_mode_diff("email", Some(email), None, force)?;
-
-        // Normalize --locale (zh*→zh_CN, en*→en_US, others pass through);
-        // an invalid value is dropped (email path tolerates a missing locale).
-        let normalized_locale: Option<String> = match locale {
-            Some(loc) => match normalize_locale(loc) {
-                Some(norm) => Some(norm),
-                None => {
-                    eprintln!("locale '{loc}' is invalid, omitting locale field");
-                    None
+    loop {
+        let result = client.session_result(auth_session_id).await;
+        match classify_poll(&result) {
+            PollOutcome::Ready => return result,
+            PollOutcome::Terminal => {
+                // Terminal is only produced for an Err result (see classify_poll);
+                // move the error out without unwrapping.
+                return Err(result
+                    .err()
+                    .map_or_else(|| anyhow::anyhow!("login failed"), format_api_error));
+            }
+            PollOutcome::Transient => {
+                consecutive_transient += 1;
+                if consecutive_transient >= MAX_CONSECUTIVE_TRANSIENT_POLLS {
+                    // A sustained transport failure — stop instead of retrying
+                    // silently until the full timeout.
+                    return Err(result.err().map_or_else(
+                        || anyhow::anyhow!("login polling failed"),
+                        format_api_error,
+                    ));
                 }
-            },
-            None => None,
-        };
-        // sysLocale comes from the OS; unreadable/invalid → omitted (silent).
-        let sys_locale = detect_system_locale();
-
-        let mut client = WalletApiClient::new()?;
-        let resp = client
-            .auth_init(email, normalized_locale.as_deref(), sys_locale.as_deref())
-            .await
-            .map_err(format_api_error)?;
-
-        if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG] auth_init response: flow_id={}", resp.flow_id);
-        }
-
-        let mut cache = wallet_store::load_cache()?;
-        cache.login = Some(LoginCache {
-            email: email.to_string(),
-            flow_id: resp.flow_id.clone(),
-        });
-        wallet_store::save_cache(&cache)?;
-
-        output::success_empty();
-        Ok(())
-    } else {
-        let ak = std::env::var("OKX_API_KEY").or_else(|_| std::env::var("OKX_ACCESS_KEY"));
-        let sk = std::env::var("OKX_SECRET_KEY");
-        let pp = std::env::var("OKX_PASSPHRASE");
-
-        match (ak, sk, pp) {
-            (Ok(api_key), Ok(secret_key), Ok(passphrase)) => {
                 if cfg!(feature = "debug-log") {
                     eprintln!(
-                        "[DEBUG] cmd_login: AK flow, api_key_len={}, secret_key_len={}, passphrase_len={}, locale={locale:?}",
-                        api_key.len(), secret_key.len(), passphrase.len(),
+                        "[DEBUG][poll_session_result] transient error ({consecutive_transient}/{MAX_CONSECUTIVE_TRANSIENT_POLLS}), retrying"
                     );
                 }
-
-                // Login-diff pre-check: handles all three scenarios in a
-                // single gate — mode switch (email → ak), same-mode email
-                // account switch (N/A on this branch), and same-mode AK
-                // account switch (different api_key vs persisted session).
-                // The old standalone AK-switch `bail!()` guard has been
-                // folded into this call; on AK→AK with a different key the
-                // function returns `Err(CliConfirming)` with exit 2 and
-                // emits `login_mode_prompt_shown` (switch_kind=account).
-                check_login_mode_diff("ak", None, Some(&api_key), force)?;
-
-                cmd_login_ak(&api_key, &secret_key, &passphrase, locale).await
             }
-            _ => {
-                bail!("to log in with email, run `onchainos wallet login <email>`; or set OKX_API_KEY, OKX_SECRET_KEY, OKX_PASSPHRASE env vars for API Key login");
+            PollOutcome::Pending => {
+                consecutive_transient = 0;
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[DEBUG][poll_session_result] not ready, polling");
+                }
             }
         }
+
+        if std::time::Instant::now() >= deadline {
+            bail!("login timed out waiting for the result. The login link is still valid — finish login in the browser, then check the result again (`onchainos wallet login --phase poll`), or start a fresh login (`onchainos wallet login --phase init`)");
+        }
+        tokio::time::sleep(interval).await;
     }
 }
 
-/// AK login: auth/ak/init → auth/ak/verify in one shot (no OTP needed).
-async fn cmd_login_ak(
-    api_key: &str,
-    secret_key: &str,
-    passphrase: &str,
-    locale: Option<&str>,
+
+/// Best-effort, non-blocking open of a URL in the system browser: spawns the
+/// opener detached and returns immediately, so the caller never blocks on it.
+/// Returns `false` on spawn failure or when `ONCHAINOS_NO_BROWSER` is set.
+fn try_open_browser(url: &str) -> bool {
+    if std::env::var_os("ONCHAINOS_NO_BROWSER").is_some() {
+        return false;
+    }
+    open::that_detached(url).is_ok()
+}
+
+/// Whether `url` is safe to hand to the system opener: only `http`/`https`,
+/// never `file://` or other schemes the OS would dispatch to a local handler.
+fn is_browsable_url(url: &str) -> bool {
+    url::Url::parse(url)
+        .map(|u| matches!(u.scheme(), "http" | "https"))
+        .unwrap_or(false)
+}
+
+/// Keyring keys holding the in-progress login state between phased `login`
+/// invocations (`init` writes them, `poll` reads then clears them). The
+/// session private key is a secret, so it lives in the keyring — never a
+/// plaintext file.
+///
+/// `PENDING_AUTH_SESSION_ID` points at the most-recent `init` session and is
+/// used by a `--phase poll` with no explicit `--session-id`. The session
+/// private key is stored per-session under `pending_session_key:<id>`. A new
+/// `init` discards the previous pending session's key, so at most one pending
+/// session is retained: a timed-out `poll` can still be retried (its state is
+/// only cleared on success), but starting over abandons the prior session.
+const PENDING_AUTH_SESSION_ID: &str = "pending_auth_session_id";
+const PENDING_SESSION_KEY_PREFIX: &str = "pending_session_key:";
+
+/// Keyring key holding the session private key for a given auth session id.
+fn pending_session_key_name(auth_session_id: &str) -> String {
+    format!("{PENDING_SESSION_KEY_PREFIX}{auth_session_id}")
+}
+
+/// Mint a fresh login session: `(auth_session_id, session_private_key, login_url)`.
+/// `temp_pub_key` travels in the URL so the page can HPKE-encrypt the session
+/// seed; `session_private_key` stays local and is later stored as `session_key`.
+fn new_login_session() -> (String, String, String) {
+    let auth_session_id = uuid::Uuid::new_v4().to_string();
+    let (session_private_key, temp_pub_key) = crate::crypto::generate_x25519_session_keypair();
+    let login_url = build_login_url(&social_login_base_url(), &auth_session_id, &temp_pub_key);
+    (auth_session_id, session_private_key, login_url)
+}
+
+/// Poll for the verify result, persist the session, and emit the account
+/// summary. Shared by the `poll` phase and the legacy all-in-one flow.
+async fn complete_login(
+    client: &mut WalletApiClient,
+    auth_session_id: &str,
+    session_private_key: &str,
 ) -> Result<()> {
-    let mut client = WalletApiClient::new()?;
+    let result = poll_session_result(client, auth_session_id).await?;
 
-    let init_resp = client
-        .ak_auth_init(api_key)
-        .await
-        .map_err(format_api_error)?;
+    let resp: crate::wallet_api::VerifyResponse = serde_json::from_value(result)
+        .map_err(|e| anyhow::anyhow!("social login: failed to parse result: {e}"))?;
+    let email = resp.login_info.email.clone();
+    let login_type = resp.login_info.login_type.clone();
 
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG] ak_auth_init response: nonce={}, iss={}",
-            init_resp.nonce, init_resp.iss
-        );
+    save_verify_result(client, &resp, session_private_key, &email).await?;
+
+    // Best-effort balance + identity → login-success summary for the skill.
+    let wallets = wallet_store::load_wallets()?.unwrap_or_default();
+    let mut summary =
+        super::balance::login_account_summary(client, &resp.access_token, &wallets, &resp.account_id)
+            .await;
+    if let Some(obj) = summary.as_object_mut() {
+        obj.insert("accountId".to_string(), json!(resp.account_id));
+        obj.insert("loginType".to_string(), json!(login_type));
+        obj.insert("email".to_string(), json!(email));
+        obj.insert("isNew".to_string(), json!(resp.is_new));
     }
-
-    let (session_private_key, temp_pub_key) = crate::crypto::generate_x25519_session_keypair();
-
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG] X25519 keypair: temp_pub_key={}, session_private_key_len={}",
-            temp_pub_key,
-            session_private_key.len()
-        );
-    }
-
-    // Normalize --locale; the AK signed string requires a non-empty value,
-    // so a missing/invalid locale defaults to canonical "en_US".
-    let locale_val = locale
-        .and_then(normalize_locale)
-        .unwrap_or_else(|| "en_US".to_string());
-    // sysLocale from OS — body only, NOT folded into the signed string (Q3).
-    let sys_locale = detect_system_locale();
-    let timestamp = chrono::Utc::now().timestamp_millis() as u64;
-    let method = "GET";
-    let sign_path = "/web3/ak/agentic/login";
-    let params = format!(
-        "?locale={}&nonce={}&iss={}",
-        locale_val, init_resp.nonce, init_resp.iss
-    );
-    let sign = crate::crypto::ak_sign(timestamp, method, sign_path, &params, secret_key);
-    let timestamp_str = timestamp.to_string();
-
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG] ak_auth_verify request: api_key_len={}, passphrase_len={}, timestamp={}, method={}, sign_path={}, params={}, sign_len={}",
-            api_key.len(), passphrase.len(), timestamp_str, method, sign_path, params, sign.len()
-        );
-    }
-
-    let resp = client
-        .ak_auth_verify(
-            &temp_pub_key,
-            api_key,
-            passphrase,
-            &timestamp_str,
-            &sign,
-            &locale_val,
-            sys_locale.as_deref(),
-        )
-        .await
-        .map_err(format_api_error)?;
-
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG] ak_auth_verify response: ok, proceeding to save_verify_result");
-    }
-
-    save_verify_result(&mut client, &resp, &session_private_key, "", api_key).await
+    output::success(summary);
+    Ok(())
 }
 
-/// onchainos wallet verify <otp>
-pub(super) async fn cmd_verify(otp: &str) -> Result<()> {
-    if otp.is_empty() {
-        bail!("otp is required");
+/// Phase `init`: mint the login session, persist its state for `poll`,
+/// best-effort open the URL, and return `{ loginUrl, authSessionId, opened }`.
+pub(super) async fn cmd_login_init() -> Result<()> {
+    // Drop the previous pending session's key so repeated `init`s don't accumulate.
+    if let Some(prev) = keyring_store::get_opt(PENDING_AUTH_SESSION_ID).filter(|s| !s.is_empty()) {
+        let _ = keyring_store::delete(&pending_session_key_name(&prev));
     }
 
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG] cmd_verify: otp_len={}", otp.len());
-    }
+    let (auth_session_id, session_private_key, login_url) = new_login_session();
 
-    let cache = wallet_store::load_cache()?;
-    let login = cache
-        .login
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let email = &login.email;
-    let flow_id = &login.flow_id;
+    let pending_key = pending_session_key_name(&auth_session_id);
+    keyring_store::store(&[
+        (PENDING_AUTH_SESSION_ID, auth_session_id.as_str()),
+        (pending_key.as_str(), session_private_key.as_str()),
+    ])?;
 
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG] cmd_verify: email={email}, flow_id={flow_id}");
-    }
+    // Best-effort, non-blocking open; `loginUrl` is returned regardless.
+    let opened = is_browsable_url(&login_url) && try_open_browser(&login_url);
 
-    let (session_private_key, temp_pub_key) = crate::crypto::generate_x25519_session_keypair();
-
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG] X25519 keypair: temp_pub_key={}, session_private_key_len={}",
-            temp_pub_key,
-            session_private_key.len()
-        );
-    }
-
-    let mut client = WalletApiClient::new()?;
-
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG] auth_verify request: email={email}, flow_id={flow_id}, otp_len={}, temp_pub_key={}",
-            otp.len(), temp_pub_key
-        );
-    }
-
-    let resp = client
-        .auth_verify(email, flow_id, otp, &temp_pub_key)
-        .await
-        .map_err(format_api_error)?;
-
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG] auth_verify response: ok, proceeding to save_verify_result");
-    }
-
-    save_verify_result(&mut client, &resp, &session_private_key, email, "").await
+    output::success(json!({
+        "loginUrl": login_url,
+        "authSessionId": auth_session_id,
+        "opened": opened,
+    }));
+    Ok(())
 }
 
-/// Common post-verify logic: persist credentials, fetch accounts, output result.
+/// Phase `open`: best-effort open of the login URL in the system browser.
+/// Never fatal — a `false` result just means the user opens it manually.
+pub(super) async fn cmd_login_open(url: &str) -> Result<()> {
+    if !is_browsable_url(url) {
+        bail!("`--url` must be an http(s) URL");
+    }
+    let opened = try_open_browser(url);
+    output::success(json!({ "opened": opened }));
+    Ok(())
+}
+
+/// Phase `poll`: using the state saved by `init`, poll for the verify result,
+/// persist the session, then clear the ephemeral state.
+///
+/// `session_id` selects which `init` session to complete. When `None`, the
+/// most-recent `init` session (`PENDING_AUTH_SESSION_ID`) is used — this is the
+/// common single-login path. Passing an explicit id targets a specific session;
+/// note a newer `init` discards the previous session's key, so only the most
+/// recent pending session can still be polled.
+pub(super) async fn cmd_login_poll(session_id: Option<&str>) -> Result<()> {
+    let auth_session_id = match session_id.filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None => keyring_store::get_opt(PENDING_AUTH_SESSION_ID)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no login in progress — run `onchainos wallet login --phase init` first"
+                )
+            })?,
+    };
+
+    let pending_key = pending_session_key_name(&auth_session_id);
+    let session_private_key = keyring_store::get_opt(&pending_key)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no login in progress for this session — run `onchainos wallet login --phase init` first"
+            )
+        })?;
+
+    let mut client = WalletApiClient::new()?;
+    complete_login(&mut client, &auth_session_id, &session_private_key).await?;
+
+    // Clear the ephemeral state only after a successful login, so a timed-out
+    // `poll` can be retried against the same session.
+    let _ = keyring_store::delete(&pending_key);
+    if keyring_store::get_opt(PENDING_AUTH_SESSION_ID).as_deref() == Some(auth_session_id.as_str()) {
+        let _ = keyring_store::delete(PENDING_AUTH_SESSION_ID);
+    }
+    Ok(())
+}
+
+/// Persist credentials and fetch accounts. Emits no output — the caller prints
+/// the login-success summary.
 async fn save_verify_result(
     client: &mut WalletApiClient,
     resp: &crate::wallet_api::VerifyResponse,
     session_private_key: &str,
     email: &str,
-    api_key: &str,
 ) -> Result<()> {
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -860,11 +615,39 @@ async fn save_verify_result(
             resp.is_new, resp.project_id, resp.account_id
         );
         eprintln!(
-            "[DEBUG] keyring data lengths: refresh_token={}, access_token={}, tee_id={}, session_cert={}, encrypted_session_sk={}, session_key_expire_at={}, session_key={}",
-            resp.refresh_token.len(), resp.access_token.len(), resp.tee_id.len(),
+            "[DEBUG] keyring data lengths: refresh_token={}, access_token={}, sa_tee_id={}, session_cert={}, encrypted_session_sk={}, session_key_expire_at={}, session_key={}",
+            resp.refresh_token.len(), resp.access_token.len(), resp.sa_tee_id.len(),
             resp.session_cert.len(), resp.encrypted_session_sk.len(),
             resp.session_key_expire_at.len(), session_private_key.len()
         );
+    }
+
+    // Login silently rebinds the local wallet. We don't prompt, but when it
+    // rebinds to a *different* wallet identity we leave an audit trail so the
+    // switch is traceable. Keyed on `email` (the wallet identity) — NOT
+    // `selected_account_id`, which `wallet switch` mutates to a sub-account and
+    // would false-positive on every re-login after a switch. Emails are masked
+    // in the log (never store raw PII). Best-effort.
+    let previous_email = wallet_store::load_wallets()
+        .ok()
+        .flatten()
+        .map(|w| w.email)
+        .filter(|e| !e.is_empty());
+    if let Some(prev) = previous_email {
+        if prev != email {
+            crate::audit::log(
+                "cli",
+                "login_account_switch",
+                true,
+                std::time::Duration::ZERO,
+                Some(vec![
+                    format!("previous_email={}", super::common::mask_email(&prev)),
+                    format!("new_email={}", super::common::mask_email(email)),
+                    format!("login_type={}", resp.login_info.login_type),
+                ]),
+                None,
+            );
+        }
     }
 
     let wallets = WalletsJson {
@@ -874,16 +657,20 @@ async fn save_verify_result(
         selected_account_id: resp.account_id.clone(),
         accounts_map: HashMap::new(),
         accounts: vec![],
-        is_ak: !api_key.is_empty(),
+        // Login method from the backend; empty if not provided.
+        login_type: resp.login_info.login_type.clone(),
     };
     wallet_store::save_wallets(&wallets)?;
 
+    // Login resets the account set → drop the insert-only batch balance cache
+    // so `balance --all` won't keep summing previous identities' accounts.
+    wallet_store::delete_balance_cache()?;
+
     wallet_store::save_session(&SessionJson {
-        tee_id: resp.tee_id.clone(),
+        sa_tee_id: resp.sa_tee_id.clone(),
         session_cert: resp.session_cert.clone(),
         encrypted_session_sk: resp.encrypted_session_sk.clone(),
         session_key_expire_at: resp.session_key_expire_at.clone(),
-        api_key: api_key.to_string(),
     })?;
 
     keyring_store::store(&[
@@ -896,23 +683,15 @@ async fn save_verify_result(
         eprintln!("[DEBUG] session.json + keyring store: ok");
     }
 
-    fetch_and_save_account_list(client, &resp.access_token, &resp.project_id).await;
+    // Use the verify result's account/address set when present (social login);
+    // otherwise fall back to the account/list API calls.
+    if resp.all_account_address_list.is_empty() {
+        fetch_and_save_account_list(client, &resp.access_token, &resp.project_id).await;
+    } else {
+        apply_all_account_address_list(&resp.all_account_address_list);
+    }
     wallet_store::clear_login_cache()?;
 
-    let account_name = wallet_store::load_wallets()?
-        .and_then(|w| {
-            w.accounts
-                .iter()
-                .find(|a| a.account_id == resp.account_id)
-                .map(|a| a.account_name.clone())
-        })
-        .unwrap_or_default();
-
-    output::success(json!({
-        "accountId": resp.account_id,
-        "accountName": account_name,
-        "isNew": resp.is_new,
-    }));
     Ok(())
 }
 
@@ -1258,18 +1037,6 @@ mod tests {
     }
 
     #[test]
-    fn token_expires_within_secs_true_when_close() {
-        let exp = chrono::Utc::now().timestamp() + 30;
-        assert!(token_expires_within_secs(&make_jwt(exp), 60));
-    }
-
-    #[test]
-    fn token_expires_within_secs_false_when_far() {
-        let exp = chrono::Utc::now().timestamp() + 3600;
-        assert!(!token_expires_within_secs(&make_jwt(exp), 60));
-    }
-
-    #[test]
     fn ed25519_sign_hex_basic() {
         use ed25519_dalek::{SigningKey, Verifier, VerifyingKey};
 
@@ -1357,7 +1124,6 @@ mod tests {
             email: "user@test.com".to_string(),
             project_id: "proj-1".to_string(),
             selected_account_id: "acc-old".to_string(),
-            is_ak: true,
             accounts: vec![AccountInfo {
                 project_id: "proj-1".to_string(),
                 account_id: "acc-old".to_string(),
@@ -1402,7 +1168,6 @@ mod tests {
         assert_eq!(saved.email, "user@test.com");
         assert_eq!(saved.project_id, "proj-1");
         assert_eq!(saved.selected_account_id, "acc-old");
-        assert!(saved.is_ak);
 
         // accounts overwritten
         assert_eq!(saved.accounts.len(), 1);
@@ -1471,614 +1236,98 @@ mod tests {
         assert!(crate::crypto::hpke_decrypt_session_sk(&short_b64, &key_b64).is_err());
     }
 
-    // ── cmd_login mode-diff tests (T5) ───────────────────────────────
+    #[test]
+    fn build_login_url_percent_encodes_temp_pub_key() {
+        // base64 chars + / = must be percent-encoded so the page gets them intact.
+        let url = build_login_url("https://web3pre.okex.org", "sess-123", "AB+/=cd");
+        assert!(url.starts_with("https://web3pre.okex.org/account/sociallogin?"));
+        assert!(url.contains("authSessionId=sess-123"));
+        assert!(url.contains("tempPubKey=AB%2B%2F%3Dcd"));
+        assert!(url.contains("clientType=agent-cli"));
+    }
 
-    /// Build a fresh sandbox dir under `target/test_tmp/<name>`, set
-    /// `ONCHAINOS_HOME` to it, and remove all OKX_* AK env vars so each test
-    /// starts from a clean slate. The caller MUST hold `TEST_ENV_MUTEX`.
-    fn cmd_login_mode_diff_sandbox(name: &str) -> std::path::PathBuf {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("test_tmp")
-            .join(name);
-        if dir.exists() {
-            std::fs::remove_dir_all(&dir).ok();
+    #[test]
+    fn build_login_url_trims_base_trailing_slash() {
+        let url = build_login_url("https://x.com/", "s", "k");
+        assert!(url.starts_with("https://x.com/account/sociallogin?"));
+        assert!(!url.contains(".com//account"));
+    }
+
+    #[test]
+    fn is_browsable_url_accepts_http_and_https_only() {
+        assert!(is_browsable_url(
+            "https://web3pre.okex.org/account/sociallogin?x=1"
+        ));
+        assert!(is_browsable_url("http://localhost:8080/login"));
+        // Non-http(s) schemes and unparseable inputs are rejected so the OS
+        // opener never dispatches them to a local handler.
+        assert!(!is_browsable_url("file:///etc/passwd"));
+        assert!(!is_browsable_url("javascript:alert(1)"));
+        assert!(!is_browsable_url("ftp://example.com"));
+        assert!(!is_browsable_url("not a url"));
+        assert!(!is_browsable_url(""));
+    }
+
+    #[test]
+    fn classify_poll_ready_only_with_non_empty_token() {
+        let with_token: Result<serde_json::Value> =
+            Ok(serde_json::json!({ "accessToken": "tok" }));
+        let no_token: Result<serde_json::Value> = Ok(serde_json::json!({ "foo": 1 }));
+        let empty_token: Result<serde_json::Value> =
+            Ok(serde_json::json!({ "accessToken": "" }));
+        assert!(matches!(classify_poll(&with_token), PollOutcome::Ready));
+        assert!(matches!(classify_poll(&no_token), PollOutcome::Pending));
+        assert!(matches!(classify_poll(&empty_token), PollOutcome::Pending));
+    }
+
+    #[test]
+    fn classify_poll_pending_for_10018_backend_code() {
+        let not_ready: Result<serde_json::Value> = Err(ApiCodeError {
+            code: "10018".to_string(),
+            msg: "not ready".to_string(),
+            http_status: 200,
         }
-        std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("ONCHAINOS_HOME", &dir);
-        std::env::remove_var("OKX_API_KEY");
-        std::env::remove_var("OKX_ACCESS_KEY");
-        std::env::remove_var("OKX_SECRET_KEY");
-        std::env::remove_var("OKX_PASSPHRASE");
-        dir
-    }
-
-    fn cmd_login_mode_diff_cleanup() {
-        std::env::remove_var("ONCHAINOS_HOME");
-        std::env::remove_var("OKX_API_KEY");
-        std::env::remove_var("OKX_ACCESS_KEY");
-        std::env::remove_var("OKX_SECRET_KEY");
-        std::env::remove_var("OKX_PASSPHRASE");
-    }
-
-    /// Read `audit.jsonl` from the sandbox dir and return only the entry
-    /// lines whose `command` starts with `login_mode_prompt_` (skipping the
-    /// device-header line + any unrelated entries).
-    fn cmd_login_mode_diff_audit_lines(dir: &std::path::Path) -> Vec<serde_json::Value> {
-        let path = dir.join("audit.jsonl");
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
-        content
-            .lines()
-            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-            .filter(|v| {
-                v.get("command")
-                    .and_then(|c| c.as_str())
-                    .map(|c| c.starts_with("login_mode_prompt_"))
-                    .unwrap_or(false)
-            })
-            .collect()
-    }
-
-    // ── derive_current_mode ───────────────────────────────────────────
-
-    #[test]
-    fn derive_current_mode_email_arg_returns_email() {
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_derive_email_arg");
-        assert_eq!(derive_current_mode(Some("user@example.com")), Some("email"));
-        cmd_login_mode_diff_cleanup();
+        .into());
+        assert!(matches!(classify_poll(&not_ready), PollOutcome::Pending));
     }
 
     #[test]
-    fn derive_current_mode_email_empty_string_falls_through() {
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_derive_empty_email");
-        // Empty email string is treated like absent → falls through to AK env,
-        // which has been cleared, so result is None.
-        assert_eq!(derive_current_mode(Some("")), None);
-        cmd_login_mode_diff_cleanup();
+    fn classify_poll_transient_for_no_code_transport_error() {
+        // A no-code transport/parse error keeps polling but counts toward the
+        // consecutive-failure short-circuit (distinct from backend 10018).
+        let transport: Result<serde_json::Value> = Err(anyhow::anyhow!("connection refused"));
+        assert!(matches!(classify_poll(&transport), PollOutcome::Transient));
     }
 
     #[test]
-    fn derive_current_mode_all_three_ak_envs_returns_ak() {
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_derive_ak");
-        std::env::set_var("OKX_API_KEY", "ak-test");
-        std::env::set_var("OKX_SECRET_KEY", "sk-test");
-        std::env::set_var("OKX_PASSPHRASE", "pp-test");
-        assert_eq!(derive_current_mode(None), Some("ak"));
-        cmd_login_mode_diff_cleanup();
+    fn classify_poll_terminal_for_other_backend_codes() {
+        let err: Result<serde_json::Value> = Err(ApiCodeError {
+            code: "-1".to_string(),
+            msg: "failed".to_string(),
+            http_status: 200,
+        }
+        .into());
+        assert!(matches!(classify_poll(&err), PollOutcome::Terminal));
     }
 
     #[test]
-    fn derive_current_mode_partial_ak_envs_returns_none() {
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_derive_partial_ak");
-        std::env::set_var("OKX_API_KEY", "ak-test");
-        // SECRET_KEY and PASSPHRASE missing → not "ak"
-        assert_eq!(derive_current_mode(None), None);
-        cmd_login_mode_diff_cleanup();
+    fn social_login_timeout_defaults_when_unset_or_invalid() {
+        assert_eq!(resolve_social_login_timeout_secs(None), 300);
+        assert_eq!(resolve_social_login_timeout_secs(Some("")), 300);
+        assert_eq!(resolve_social_login_timeout_secs(Some("abc")), 300);
+        assert_eq!(resolve_social_login_timeout_secs(Some("-5")), 300);
     }
 
     #[test]
-    fn derive_current_mode_email_arg_wins_over_ak_envs() {
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_derive_email_beats_ak");
-        std::env::set_var("OKX_API_KEY", "ak-test");
-        std::env::set_var("OKX_SECRET_KEY", "sk-test");
-        std::env::set_var("OKX_PASSPHRASE", "pp-test");
-        assert_eq!(derive_current_mode(Some("u@e.com")), Some("email"));
-        cmd_login_mode_diff_cleanup();
-    }
-
-    // ── check_login_mode_diff truth table (spec §5.2) ────────────────
-
-    #[test]
-    fn cmd_login_mode_diff_fires_when_email_to_ak_no_force() {
-        // Scenario (a): wallets.json has lastLoginMode=email (is_ak=false,
-        // email non-empty); current_mode=ak; force=false → exit 2 +
-        // CliConfirming with discriminator; ONE prompt_shown audit, NO
-        // user_choice audit.
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_email_to_ak");
-
-        let prev = WalletsJson {
-            email: "prev@example.com".to_string(),
-            is_ak: false,
-            ..Default::default()
-        };
-        wallet_store::save_wallets(&prev).unwrap();
-
-        let res = check_login_mode_diff("ak", None, None, false);
-        let err = res.expect_err("mode-diff must fire");
-        let confirming = err
-            .downcast_ref::<output::CliConfirming>()
-            .expect("must be CliConfirming");
-        assert!(confirming
-            .message
-            .contains("not the account you used last time"));
-        // Scene line for Email→AK mode switch: Email side carries the
-        // masked persisted email in parens; API Key side does not show
-        // the key.
-        assert!(confirming
-            .message
-            .contains("Login method: Email (p***v@example.com) → API Key"));
-        assert!(confirming
-            .message
-            .starts_with("⚠️ This is not the account you used last time"));
-        assert_eq!(
-            confirming.next,
-            "If the user confirms, re-run the same command with --force flag appended to proceed."
-        );
-
-        let entries = cmd_login_mode_diff_audit_lines(&dir);
-        assert_eq!(entries.len(), 1, "exactly one prompt_shown entry");
-        assert_eq!(entries[0]["command"], "login_mode_prompt_shown");
-        let args = entries[0]["args"].as_array().expect("args present");
-        let arg_strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
-        // Audit args keep the internal lowercase tokens; display form is
-        // user-facing only.
-        assert!(arg_strs.contains(&"current_mode=ak"));
-        assert!(arg_strs.contains(&"last_login_mode=email"));
-        assert!(arg_strs.contains(&"switch_kind=mode"));
-        assert!(!arg_strs.iter().any(|s| s.contains("user_choice")));
-
-        cmd_login_mode_diff_cleanup();
+    fn social_login_timeout_honors_valid_override() {
+        assert_eq!(resolve_social_login_timeout_secs(Some("10")), 10);
+        assert_eq!(resolve_social_login_timeout_secs(Some("60")), 60);
     }
 
     #[test]
-    fn cmd_login_mode_diff_fires_when_ak_to_email_no_force() {
-        // Scenario (b): wallets.json has lastLoginMode=ak (is_ak=true);
-        // current_mode=email; force=false → exit 2 + audit pair reversed.
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_ak_to_email");
-
-        let prev = WalletsJson {
-            email: String::new(),
-            is_ak: true,
-            ..Default::default()
-        };
-        wallet_store::save_wallets(&prev).unwrap();
-
-        let res = check_login_mode_diff("email", Some("new@example.com"), None, false);
-        let err = res.expect_err("mode-diff must fire");
-        let confirming = err
-            .downcast_ref::<output::CliConfirming>()
-            .expect("must be CliConfirming");
-        assert!(confirming
-            .message
-            .contains("not the account you used last time"));
-        // Mirror direction: ak → email. The Email side is NEW — show the
-        // new email's masked form in parens.
-        assert!(confirming
-            .message
-            .contains("Login method: API Key → Email (n***w@example.com)"));
-
-        let entries = cmd_login_mode_diff_audit_lines(&dir);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0]["command"], "login_mode_prompt_shown");
-        let args = entries[0]["args"].as_array().expect("args present");
-        let arg_strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
-        assert!(arg_strs.contains(&"current_mode=email"));
-        assert!(arg_strs.contains(&"last_login_mode=ak"));
-        assert!(arg_strs.contains(&"switch_kind=mode"));
-
-        cmd_login_mode_diff_cleanup();
-    }
-
-    #[test]
-    fn cmd_login_mode_diff_no_prompt_when_no_prior_wallets() {
-        // Scenario (c): no wallets.json on disk → derive returns None → no
-        // prompt; no audit entries.
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_no_prior");
-
-        let res = check_login_mode_diff("email", Some("anyone@example.com"), None, false);
-        assert!(res.is_ok(), "no wallets.json → proceed normally");
-
-        let entries = cmd_login_mode_diff_audit_lines(&dir);
-        assert!(entries.is_empty(), "no audit entries written");
-
-        cmd_login_mode_diff_cleanup();
-    }
-
-    #[test]
-    fn cmd_login_mode_diff_no_prompt_when_same_email() {
-        // Scenario (d): wallets.json has lastLoginMode=email with email
-        // "prev@example.com"; current_mode=email AND current_email matches
-        // (case-insensitive after trim) → no prompt; no audit entries.
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_same_email");
-
-        let prev = WalletsJson {
-            email: "prev@example.com".to_string(),
-            is_ak: false,
-            ..Default::default()
-        };
-        wallet_store::save_wallets(&prev).unwrap();
-
-        // Same email (varied casing + surrounding whitespace) must still be
-        // treated as the same account.
-        let res = check_login_mode_diff("email", Some("  PREV@Example.com  "), None, false);
-        assert!(res.is_ok());
-
-        let entries = cmd_login_mode_diff_audit_lines(&dir);
-        assert!(entries.is_empty());
-
-        cmd_login_mode_diff_cleanup();
-    }
-
-    #[test]
-    fn cmd_login_mode_diff_fires_when_email_to_different_email_no_force() {
-        // Same-mode different-account scenario: wallets.json has
-        // lastLoginMode=email with email "prev@example.com"; current_mode=email
-        // BUT current_email="new@example.com" → fires the same exit-2
-        // confirming envelope. Scene line uses masked emails (PII §8.1).
-        // Audit args include switch_kind=account so off-box telemetry can
-        // split this case from a mode switch.
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_email_to_email");
-
-        let prev = WalletsJson {
-            email: "prev@example.com".to_string(),
-            is_ak: false,
-            ..Default::default()
-        };
-        wallet_store::save_wallets(&prev).unwrap();
-
-        let res = check_login_mode_diff("email", Some("newalice@example.com"), None, false);
-        let err = res.expect_err("same-mode different-account must fire");
-        let confirming = err
-            .downcast_ref::<output::CliConfirming>()
-            .expect("must be CliConfirming");
-        assert!(confirming
-            .message
-            .contains("not the account you used last time"));
-        // PII §8.1 regression: raw email local parts must NOT appear.
-        assert!(
-            !confirming.message.contains("prev@example.com"),
-            "raw old email leaked: {}",
-            confirming.message
-        );
-        assert!(
-            !confirming.message.contains("newalice@example.com"),
-            "raw new email leaked: {}",
-            confirming.message
-        );
-        // Masked forms (first char + last char + domain) should appear.
-        assert!(
-            confirming.message.contains("p***v@example.com"),
-            "old masked email missing: {}",
-            confirming.message
-        );
-        assert!(
-            confirming.message.contains("n***e@example.com"),
-            "new masked email missing: {}",
-            confirming.message
-        );
-
-        let entries = cmd_login_mode_diff_audit_lines(&dir);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0]["command"], "login_mode_prompt_shown");
-        let args = entries[0]["args"].as_array().expect("args present");
-        let arg_strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
-        assert!(arg_strs.contains(&"current_mode=email"));
-        assert!(arg_strs.contains(&"last_login_mode=email"));
-        assert!(arg_strs.contains(&"switch_kind=account"));
-        // Audit args MUST NOT carry the raw email either.
-        assert!(
-            !arg_strs.iter().any(|s| s.contains("prev@example.com")
-                || s.contains("newalice@example.com")),
-            "audit args leaked raw email"
-        );
-
-        cmd_login_mode_diff_cleanup();
-    }
-
-    #[test]
-    fn cmd_login_mode_diff_force_bypasses_and_writes_paired_audit() {
-        // Scenario (f): mode-diff with --force → no prompt; login proceeds;
-        // audit contains TWO new entries back-to-back: prompt_shown THEN
-        // user_choice (user_choice=yes).
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_force_pair");
-
-        let prev = WalletsJson {
-            email: "prev@example.com".to_string(),
-            is_ak: false,
-            ..Default::default()
-        };
-        wallet_store::save_wallets(&prev).unwrap();
-
-        let res = check_login_mode_diff("ak", None, None, true);
-        assert!(res.is_ok(), "--force must bypass the gate");
-
-        let entries = cmd_login_mode_diff_audit_lines(&dir);
-        assert_eq!(entries.len(), 2, "paired prompt_shown + user_choice");
-        assert_eq!(entries[0]["command"], "login_mode_prompt_shown");
-        assert_eq!(entries[1]["command"], "login_mode_prompt_user_choice");
-
-        let user_args = entries[1]["args"].as_array().expect("args");
-        let user_arg_strs: Vec<&str> = user_args.iter().filter_map(|v| v.as_str()).collect();
-        assert!(user_arg_strs.contains(&"current_mode=ak"));
-        assert!(user_arg_strs.contains(&"last_login_mode=email"));
-        assert!(user_arg_strs.contains(&"switch_kind=mode"));
-        assert!(user_arg_strs.contains(&"user_choice=yes"));
-
-        cmd_login_mode_diff_cleanup();
-    }
-
-    #[test]
-    fn cmd_login_mode_diff_force_no_diff_writes_no_audit() {
-        // Last row of the truth table: would_fire=false + force=true → no
-        // audit writes; proceed normally.
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_force_no_diff");
-
-        let prev = WalletsJson {
-            email: "prev@example.com".to_string(),
-            is_ak: false,
-            ..Default::default()
-        };
-        wallet_store::save_wallets(&prev).unwrap();
-
-        // Same mode (email) + same email + force=true → would_fire=false → no audit.
-        let res = check_login_mode_diff("email", Some("prev@example.com"), None, true);
-        assert!(res.is_ok());
-
-        let entries = cmd_login_mode_diff_audit_lines(&dir);
-        assert!(entries.is_empty());
-
-        cmd_login_mode_diff_cleanup();
-    }
-
-    #[test]
-    fn cmd_login_mode_diff_confirming_payload_shape() {
-        // Confirming payload contract — message is the 4-line template:
-        //   1. discriminator "This is not the account you used last time."
-        //   2. scene line (depends on scenario — for Email→AK mode switch,
-        //      "Login method: Email (<masked>) → API Key")
-        //   3. asset-safety reassurance
-        //   4. "Continue? [Yes / No]"
-        // `next` is the verbatim skill re-invocation instruction. Re-verified
-        // standalone so message-format regressions are easy to spot.
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        cmd_login_mode_diff_sandbox("cmd_login_mode_diff_payload_shape");
-
-        let prev = WalletsJson {
-            email: "prev@example.com".to_string(),
-            is_ak: false,
-            ..Default::default()
-        };
-        wallet_store::save_wallets(&prev).unwrap();
-
-        let err = check_login_mode_diff("ak", None, None, false).expect_err("fires");
-        let c = err
-            .downcast_ref::<output::CliConfirming>()
-            .expect("CliConfirming");
-        let expected_msg = "⚠️ This is not the account you used last time.\n\
-             Login method: Email (p***v@example.com) → API Key\n\
-             Your previous account's assets are untouched and still accessible — log in with the original account to view them.\n\
-             Continue? [Yes / No]";
-        assert_eq!(c.message, expected_msg);
-        assert_eq!(
-            c.next,
-            "If the user confirms, re-run the same command with --force flag appended to proceed."
-        );
-
-        cmd_login_mode_diff_cleanup();
-    }
-
-    #[test]
-    fn cmd_login_mode_diff_no_prompt_when_same_ak_mode_no_session() {
-        // Edge: last=ak, current=ak, but session.json is missing on disk.
-        // Without the previous api_key, the comparison is undefined →
-        // no-op (preserves the old AK-switch guard's `if let Ok(Some(..))`
-        // tolerance). Documents the no-session fall-through path.
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_same_ak_no_session");
-
-        let prev = WalletsJson {
-            email: String::new(),
-            is_ak: true,
-            ..Default::default()
-        };
-        wallet_store::save_wallets(&prev).unwrap();
-        // Note: no save_session — session.json is absent.
-
-        let res = check_login_mode_diff("ak", None, Some("anyKey-abcd-1234-5678"), false);
-        assert!(res.is_ok(), "missing session → no prompt");
-
-        let entries = cmd_login_mode_diff_audit_lines(&dir);
-        assert!(entries.is_empty(), "no audit entries written");
-
-        cmd_login_mode_diff_cleanup();
-    }
-
-    #[test]
-    fn cmd_login_mode_diff_no_prompt_when_same_ak_same_key() {
-        // last=ak with api_key="abcd1234-5678-90ab-cdef-1234567890ab",
-        // current=ak with the SAME api_key → no prompt; no audit entries.
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_same_ak_same_key");
-
-        let prev = WalletsJson {
-            email: String::new(),
-            is_ak: true,
-            ..Default::default()
-        };
-        wallet_store::save_wallets(&prev).unwrap();
-
-        let same_key = "abcd1234-5678-90ab-cdef-1234567890ab";
-        wallet_store::save_session(&wallet_store::SessionJson {
-            api_key: same_key.to_string(),
-            ..Default::default()
-        })
-        .unwrap();
-
-        let res = check_login_mode_diff("ak", None, Some(same_key), false);
-        assert!(res.is_ok(), "same ak + same key → no prompt");
-
-        let entries = cmd_login_mode_diff_audit_lines(&dir);
-        assert!(entries.is_empty(), "no audit entries written");
-
-        cmd_login_mode_diff_cleanup();
-    }
-
-    #[test]
-    fn cmd_login_mode_diff_fires_when_same_ak_different_key() {
-        // Same-mode different-account scenario for AK: wallets.json has
-        // is_ak=true, session.json has api_key="OLDKEY...". Caller passes
-        // a different api_key → fires exit-2 confirming envelope with
-        // mask_api_key applied to BOTH keys in the scene line. Audit args
-        // include switch_kind=account (mirrors the email1→email2 case).
-        // Replaces the previous AK-switch `bail!()` guard with the unified
-        // confirming flow.
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_ak_to_different_ak");
-
-        let prev = WalletsJson {
-            email: String::new(),
-            is_ak: true,
-            ..Default::default()
-        };
-        wallet_store::save_wallets(&prev).unwrap();
-
-        let old_key = "OLDKEY1234-5678-90ab-cdef-1234567890ab";
-        let new_key = "NEWKEY5678-9012-34cd-ef01-5678901234ef";
-        wallet_store::save_session(&wallet_store::SessionJson {
-            api_key: old_key.to_string(),
-            ..Default::default()
-        })
-        .unwrap();
-
-        let res = check_login_mode_diff("ak", None, Some(new_key), false);
-        let err = res.expect_err("same-mode different-ak must fire");
-        let confirming = err
-            .downcast_ref::<output::CliConfirming>()
-            .expect("must be CliConfirming");
-        assert!(confirming
-            .message
-            .contains("not the account you used last time"));
-        // PII §8.1 regression: raw api_keys must NOT appear in the message.
-        assert!(
-            !confirming.message.contains(old_key),
-            "raw old api_key leaked: {}",
-            confirming.message
-        );
-        assert!(
-            !confirming.message.contains(new_key),
-            "raw new api_key leaked: {}",
-            confirming.message
-        );
-        // Same-mode AK switch uses a fixed PII-clean sentence — no key
-        // (masked or otherwise) appears in the user-facing message. The
-        // user already knows the env value; we only flag the divergence.
-        assert!(
-            confirming
-                .message
-                .contains("The API Key in your env has changed"),
-            "scene line shape wrong: {}",
-            confirming.message
-        );
-
-        let entries = cmd_login_mode_diff_audit_lines(&dir);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0]["command"], "login_mode_prompt_shown");
-        let args = entries[0]["args"].as_array().expect("args present");
-        let arg_strs: Vec<&str> = args.iter().filter_map(|v| v.as_str()).collect();
-        assert!(arg_strs.contains(&"current_mode=ak"));
-        assert!(arg_strs.contains(&"last_login_mode=ak"));
-        assert!(arg_strs.contains(&"switch_kind=account"));
-        // Audit args MUST NOT carry raw api_keys either.
-        assert!(
-            !arg_strs.iter().any(|s| s.contains(old_key) || s.contains(new_key)),
-            "audit args leaked raw api_key"
-        );
-
-        cmd_login_mode_diff_cleanup();
-    }
-
-    #[test]
-    fn cmd_login_mode_diff_audit_disk_failure_control_flow_unchanged() {
-        // Scenario (k) / FR-4-AC-3: when audit::log cannot write to disk
-        // (simulated by replacing audit.jsonl with a directory so the append
-        // path fails), control flow MUST remain identical to the
-        // writable-disk case. `audit::log` swallows I/O errors internally
-        // (see `audit.rs:try_log`), so `check_login_mode_diff` keeps
-        // returning the expected `Err(CliConfirming)` for the (would_fire,
-        // !force) row and the expected `Ok(())` for the (would_fire, force)
-        // row regardless of audit success.
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = cmd_login_mode_diff_sandbox("cmd_login_mode_diff_audit_disk_fail");
-
-        let prev = WalletsJson {
-            email: "prev@example.com".to_string(),
-            is_ak: false,
-            ..Default::default()
-        };
-        wallet_store::save_wallets(&prev).unwrap();
-
-        // Force audit writes to fail: place a directory at audit.jsonl so
-        // OpenOptions::append(true).open(...) returns an error every call.
-        let audit_path = dir.join("audit.jsonl");
-        std::fs::create_dir_all(&audit_path).unwrap();
-
-        // (would_fire=true, force=false) — control flow must still be Err.
-        let err = check_login_mode_diff("ak", None, None, false).expect_err("must still fire");
-        let confirming = err
-            .downcast_ref::<output::CliConfirming>()
-            .expect("must be CliConfirming");
-        assert!(confirming
-            .message
-            .contains("not the account you used last time"));
-
-        // (would_fire=true, force=true) — control flow must still be Ok.
-        let ok = check_login_mode_diff("ak", None, None, true);
-        assert!(ok.is_ok(), "--force path must still succeed");
-
-        // Audit lines remain unreadable (directory at audit.jsonl), so the
-        // helper returns an empty list — confirms writes silently failed.
-        let entries = cmd_login_mode_diff_audit_lines(&dir);
-        assert!(
-            entries.is_empty(),
-            "audit writes must be silently dropped when disk is unwritable"
-        );
-
-        cmd_login_mode_diff_cleanup();
+    fn social_login_timeout_below_floor_falls_back_to_default() {
+        // Sub-floor values are rejected and fall back to the default (not clamped).
+        assert_eq!(resolve_social_login_timeout_secs(Some("9")), 300);
+        assert_eq!(resolve_social_login_timeout_secs(Some("0")), 300);
     }
 }

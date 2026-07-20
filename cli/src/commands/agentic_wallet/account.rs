@@ -76,7 +76,6 @@ pub(super) async fn cmd_status() -> Result<()> {
                 "currentAccountId": "",
                 "currentAccountName": "",
                 "accountCount": 0,
-                "lastLoginMode": serde_json::Value::Null,
             }));
             return Ok(());
         }
@@ -129,18 +128,11 @@ pub(super) async fn cmd_status() -> Result<()> {
         );
     }
 
-    // Determine loginType and apiKey
-    let (login_type, api_key): (serde_json::Value, serde_json::Value) = if !logged_in {
-        (serde_json::Value::Null, serde_json::Value::Null)
-    } else if wallets.is_ak {
-        let ak = if session.api_key.is_empty() {
-            String::new()
-        } else {
-            session.api_key.clone()
-        };
-        (json!("ak"), json!(ak))
+    // loginType from `wallets.login_type`; empty → null, no inference.
+    let login_type: serde_json::Value = if !logged_in || wallets.login_type.is_empty() {
+        serde_json::Value::Null
     } else {
-        (json!("email"), serde_json::Value::Null)
+        json!(wallets.login_type)
     };
 
     // Query policy for the current account when logged in
@@ -158,23 +150,14 @@ pub(super) async fn cmd_status() -> Result<()> {
         serde_json::Value::Null
     };
 
-    // spec §1.4: surface the last login mode derived from existing
-    // `email` + `is_ak` so the skill can detect mode-diff before
-    // re-invoking `wallet login`. No new persisted field is needed.
-    let last_login_mode = super::common::derive_last_login_mode(&wallets.email, wallets.is_ak)
-        .map(serde_json::Value::from)
-        .unwrap_or(serde_json::Value::Null);
-
     output::success(json!({
         "email": wallets.email,
         "loggedIn": logged_in,
         "loginType": login_type,
-        "apiKey": api_key,
         "currentAccountId": wallets.selected_account_id,
         "currentAccountName": current_account_name,
         "accountCount": wallets.accounts.len(),
         "policy": policy,
-        "lastLoginMode": last_login_mode,
     }));
     Ok(())
 }

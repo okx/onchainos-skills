@@ -233,9 +233,7 @@ impl ApiClient {
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
-        if doh.is_proxy() {
-            builder = builder.user_agent(doh.doh_user_agent());
-        }
+        builder = builder.user_agent(doh.doh_user_agent());
 
         Ok(Self {
             http: builder.build()?,
@@ -269,9 +267,7 @@ impl ApiClient {
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
-        if doh.is_proxy() {
-            builder = builder.user_agent(doh.doh_user_agent());
-        }
+        builder = builder.user_agent(doh.doh_user_agent());
 
         Ok(Self {
             http: builder.build()?,
@@ -425,6 +421,7 @@ impl ApiClient {
     /// - `Content-Type: application/json`
     /// - `ok-client-version: <version>`
     /// - `Ok-Access-Client-type: agent-cli`
+    /// - `platform: agent-cli`
     pub(crate) fn anonymous_headers() -> reqwest::header::HeaderMap {
         use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
         let mut map = HeaderMap::new();
@@ -437,6 +434,7 @@ impl ApiClient {
             "Ok-Access-Client-type",
             HeaderValue::from_static("agent-cli"),
         );
+        map.insert("platform", HeaderValue::from_static("agent-cli"));
         map
     }
 
@@ -515,9 +513,7 @@ impl ApiClient {
         if let Some((host, addr)) = self.doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
-        if self.doh.is_proxy() {
-            builder = builder.user_agent(self.doh.doh_user_agent());
-        }
+        builder = builder.user_agent(self.doh.doh_user_agent());
         self.http = builder.build()?;
         Ok(())
     }
@@ -2092,6 +2088,22 @@ mod tests {
             .to_str()
             .unwrap();
         assert_eq!(v, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn platform_header_agent_cli_on_all_modes() {
+        // `platform: agent-cli` mirrors `Ok-Access-Client-type`: carried on
+        // every request regardless of auth mode (anonymous / JWT / AK).
+        for h in [
+            ApiClient::anonymous_headers(),
+            ApiClient::jwt_headers("tok"),
+            ApiClient::ak_headers("k", "p", "ts", "s"),
+        ] {
+            assert_eq!(
+                h.get("platform").expect("platform").to_str().unwrap(),
+                "agent-cli"
+            );
+        }
     }
 
     #[test]

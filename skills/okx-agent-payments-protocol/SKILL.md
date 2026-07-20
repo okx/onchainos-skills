@@ -4,7 +4,7 @@ description: "Use when an agent hits HTTP 402 / payment-required, or the user me
 license: MIT
 metadata:
   author: okx
-  version: "4.2.6"
+  version: "4.3.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -307,7 +307,7 @@ onchainos wallet status
 
 - **Logged in** → Step A6.
 - **Not logged in (`accepts`-based path)** → ask the user to choose between (1) wallet login (TEE signing) or (2) local private key (`onchainos payment pay-local`, supports `exact + EIP-3009`, `exact + Permit2`, and `upto` — `aggr_deferred` not supported, requires TEE session key). Don't read files or check env vars until the user picks.
-- **Not logged in (`WWW-Authenticate: Payment` path)** → ask the user to log in via email OTP or AK. **TEE-only — no local-key fallback for this path** (only the `accepts`-based path has one).
+- **Not logged in (`WWW-Authenticate: Payment` path)** → ask the user to log in via `onchainos wallet login`. **TEE-only — no local-key fallback for this path** (only the `accepts`-based path has one).
 
 ## Step A6: Hand off to the scheme/intent reference
 
@@ -342,7 +342,7 @@ If the user says only "I want to pay" without a paymentId — STOP and ask the u
 Both `create` and `pay` require a live wallet session. Run `onchainos wallet status`:
 
 - **Logged in** → proceed (load the reference and follow it).
-- **Not logged in** → ask the user to log in via `onchainos wallet login` or `onchainos wallet login <email>`. **Do NOT sign without a live session.**
+- **Not logged in** → ask the user to log in via `onchainos wallet login`. **Do NOT sign without a live session.**
 
 ## Step B3: Hand off to `references/a2a_charge.md`
 

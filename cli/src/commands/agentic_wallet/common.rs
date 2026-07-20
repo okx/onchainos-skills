@@ -1,25 +1,5 @@
 pub const ERR_NOT_LOGGED_IN: &str = "not logged in";
 
-/// Derive the most recent login mode from the persisted `wallets.json`
-/// fields. No new field is stored on disk — `is_ak` and `email` already
-/// encode the mode of the last successful login.
-///
-/// - `is_ak == true`            → `Some("ak")`
-/// - `is_ak == false && email`  → `Some("email")`
-/// - both empty / not logged in → `None`
-///
-/// Used by `cmd_status` (read-only display) and `cmd_login` (mode-diff
-/// pre-check) so both surfaces share the same derivation rule.
-pub(super) fn derive_last_login_mode(email: &str, is_ak: bool) -> Option<&'static str> {
-    if is_ak {
-        Some("ak")
-    } else if !email.is_empty() {
-        Some("email")
-    } else {
-        None
-    }
-}
-
 /// Mask an email address for display in user-facing prompts and audit logs.
 /// Keeps the first and last char of the local part, full domain. Local parts
 /// of length ≤ 2 collapse to first-char-plus-stars. UTF-8 safe via char iter.
@@ -89,36 +69,6 @@ pub(crate) fn handle_confirming_error(e: anyhow::Error, force: bool) -> anyhow::
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── derive_last_login_mode ───────────────────────────────────────
-
-    #[test]
-    fn derive_last_login_mode_ak_empty_email_returns_ak() {
-        // FR-1-AC-2: is_ak=true with empty email → "ak".
-        assert_eq!(derive_last_login_mode("", true), Some("ak"));
-    }
-
-    #[test]
-    fn derive_last_login_mode_ak_with_email_returns_ak() {
-        // FR-1 priority-note defensive case: is_ak=true wins even when
-        // email is non-empty (combination doesn't occur in practice but
-        // the priority is part of the contract).
-        assert_eq!(derive_last_login_mode("user@example.com", true), Some("ak"));
-    }
-
-    #[test]
-    fn derive_last_login_mode_email_only_returns_email() {
-        assert_eq!(
-            derive_last_login_mode("user@example.com", false),
-            Some("email")
-        );
-    }
-
-    #[test]
-    fn derive_last_login_mode_empty_returns_none() {
-        // Fresh / not-logged-in state: both signals empty/false.
-        assert_eq!(derive_last_login_mode("", false), None);
-    }
 
     // ── mask_email ───────────────────────────────────────────────────
 

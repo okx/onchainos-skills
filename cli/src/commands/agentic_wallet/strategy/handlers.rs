@@ -183,6 +183,13 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     let mut client = ctx.client_async().await?;
     let session = session::load()?;
 
+    // A pre-upgrade session.json has no SA TEE id (`saTeeId` was added with
+    // strategy support); createOrder would send an empty `teeId` and be rejected
+    // by BE. Fail early with an actionable message instead of a silent reject.
+    if session.sa_tee_id.is_empty() {
+        bail!("please re-login with `onchainos wallet login` before placing strategy orders");
+    }
+
     // Resolve alias → chainIndex, then whitelist-check pre-flight to give
     // a friendly error instead of round-tripping BE for 10106.
     let resolved_chain = crate::chains::resolve_chain(&args.chain_id);
@@ -300,7 +307,8 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
         sign_msg: intent_str,
         signature,
         session_cert: session.session_cert.clone(),
-        tee_id: session.tee_id.clone(),
+        // BE contract: `verifySignInfo.teeId` carries the SA TEE id (`saTeeId`).
+        tee_id: session.sa_tee_id.clone(),
     };
 
     let req = CreateOrderReq {
