@@ -420,3 +420,18 @@ pub(crate) fn validate_draft_fields(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::validate_budget;
+
+    // Regression test migrated from the (now-deleted) draft.rs test module
+    // when the draft feature was removed on master (WBW-13520). draft.rs held
+    // the only coverage of validate_budget in the repo. Guards the semantics
+    // settled in MR !150 discussion d2c53d84: a zero budget is legal; only a
+    // negative budget is rejected.
+    #[test]
+    fn validate_budget_zero_ok_negative_err() {
+        assert!(validate_budget(0.0).is_ok());
+        assert!(validate_budget(-1.0).is_err());
+    }
+}

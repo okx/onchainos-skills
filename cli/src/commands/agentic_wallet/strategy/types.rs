@@ -47,7 +47,7 @@ pub struct VerifySignInfo {
     pub signature: String,
     #[serde(rename = "sessionCert")]
     pub session_cert: String,
-    /// SA TEE id (BE contract 2026-05-07); sourced from `session.json::teeId`.
+    /// SA TEE id (BE contract 2026-05-07); sourced from `session.json::saTeeId`.
     #[serde(rename = "teeId")]
     pub tee_id: String,
 }

@@ -1,12 +1,29 @@
 # `accepts`-based schemes — `exact` / `aggr_deferred` / `upto` (+ Permit2)
 
-> Loaded from `../SKILL.md` **only on a failure or legacy path**. On the success path `onchainos payment pay` returns a ready `authorization_header` — you replay it directly (SKILL.md Step A6) and do **not** load this file. Load it when: `pay` returns `Permit2 allowance insufficient` (one-time approve), a legacy x402 v1 raw proof, or you need to interpret a scheme-specific settlement result.
+> **CLI down-sink:** the primary path for **every** `accepts`-based 402 —
+> single scheme (`exact` / `exact`+Permit2 / `upto` / `aggr_deferred`) or multi-scheme —
+> is now `onchainos payment quote <url>` → confirm → `onchainos payment pay
+> --payment-id --yes` (SKILL.md Path A). `quote` accepts a single-element `accepts[]`
+> exactly like a multi-scheme one (it rejects only an empty array), runs the same
+> mandatory confirm gate, and `pay --payment-id` signs + **replays** + returns the
+> settled receipt — so a single scheme is **not** a shortcut for skipping `quote`, you
+> do **not** load this file on the success path, and you do **not** hand-assemble a
+> header. This file is retained only for: post-pay scheme-specific receipt reading, the
+> one-time Permit2 approve, the `pay-local` local-key fallback, the explicit `pay
+> --payload` sign-only compat, and legacy x402 v1.
 
-All three schemes share one signing surface: `onchainos payment pay --payload '<base64 PAYMENT-REQUIRED>' [--selected-index <n>]` decodes the payload, signs the chosen `accepts` entry via TEE, **assembles the header itself** (embedding `sessionCert` into `accepted.extra` for `aggr_deferred` only — without clobbering `name` / `version`), and returns `{authorization_header, header_name, scheme, wallet}`. You never assemble or merge anything. The local-key fallback `pay-local` signs **`exact + EIP-3009`, `exact + Permit2`, and `upto`** locally — only `aggr_deferred` is unsupported (it needs a TEE-resident session key).
+> Loaded from `../SKILL.md` **only on a failure / legacy / compat path** — never on the
+> primary `quote → pay --payment-id` success path. Load it when: `pay` returns
+> `Permit2 allowance insufficient` (one-time approve), you need to interpret a
+> scheme-specific settlement result, a legacy x402 v1 raw proof arrives, or you must
+> fall back to the explicit `pay --payload` sign-only path because `payment quote` is
+> genuinely unavailable.
 
-## Interpreting the settlement result (after Replay)
+**Compat sign-only surface (`pay --payload`).** When you must bypass `quote` (explicit legacy request, or `quote` unavailable), all three schemes share one signing surface: `onchainos payment pay --payload '<base64 PAYMENT-REQUIRED>' [--selected-index <n>]` decodes the payload, signs the chosen `accepts` entry via TEE, **assembles the header itself** (embedding `sessionCert` into `accepted.extra` for `aggr_deferred` only — without clobbering `name` / `version`), and returns `{authorization_header, header_name, scheme, wallet}`; you then replay it yourself. You never assemble or merge anything. On the primary Path A flow `pay --payment-id` does this signing **and** the replay for you. The local-key fallback `pay-local` signs **`exact + EIP-3009`, `exact + Permit2`, and `upto`** locally — only `aggr_deferred` is unsupported (it needs a TEE-resident session key).
 
-Replay = resend the original request with `<header_name>: <authorization_header>` (here `PAYMENT-SIGNATURE`), expect `HTTP 200`, then decode the `PAYMENT-RESPONSE` header locally (`echo '<value>' | base64 -d | jq .`). Read by scheme:
+## Interpreting the settlement result
+
+On the primary Path A flow the settled receipt comes straight from `payment pay --payment-id` (or `payment decode-receipt --header <b64> | --receipt <json>`). On the compat `pay --payload` path, Replay = resend the original request with `<header_name>: <authorization_header>` (here `PAYMENT-SIGNATURE`), expect `HTTP 200`, then decode the `PAYMENT-RESPONSE` header locally (`echo '<value>' | base64 -d | jq .`). Either way, read the result by scheme:
 
 | `scheme` | How to read the result |
 |---|---|

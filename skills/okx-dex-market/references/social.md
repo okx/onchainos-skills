@@ -51,8 +51,8 @@
 - `--platform` is a single source identifier — call `social news-platforms` first when the user says "only blockbeats" / "from theblock" and the platform key is unclear.
 - `--detail-level` defaults to `1` (summary). Use `2` only when the user explicitly wants full article text in a list — otherwise prefer fetching one article via `news-detail` to keep responses short.
 - `--language` defaults to `en_US`. If the user is writing in Chinese, pass `--language zh_CN`.
-- `--begin` / `--end` are Unix milliseconds. If the user says "last 24h" / "this week", compute the timestamps before calling.
-- **Pagination**: all news list endpoints (`news-latest`, `news-by-symbol`, `news-search`) support `--limit` (default `10`, max `50`) and `--cursor`. Use the response's `cursor` field for the next page; `cursor: null` means the last page.
+- Relative windows: pass `--since 24h` / `--since 7d` (grammar `<int><s|m|h|d>`) and the CLI computes the window — it returns `data.resolvedWindow {begin,end}` for you to display as the data range. `--begin`/`--end` (Unix ms) still work for absolute windows; do NOT pass `--since` together with `--begin`/`--end`.
+- **Pagination**: for `news-latest` / `news-by-symbol` / `news-search`, pass `--max-results <N>` (1–500) to auto-paginate — the CLI returns aggregated `data.items` + `data.nextCursor` + `data.fetchedCount`. News uses page-level cursors, so a whole final page is kept (result may slightly exceed N). `--limit`/`--cursor` still work for manual paging.
 
 **Sentiment:**
 - `--time-frame`: `1` = 1h (default), `2` = 4h, `3` = 24h. Map user phrasing: "last hour / 一小时" → `1`; "last 4 hours / 四小时" → `2`; "today / last 24h / 24小时 / 一天" → `3`. Anything longer than 24h is not supported here — for week/month ranges, look at vibe instead.
@@ -100,13 +100,7 @@ Present next actions conversationally — never expose command paths to the user
 
 ## Data Freshness
 
-### `requestTime` / `ts` Fields
-
-News and sentiment responses use a `ts` field (Unix milliseconds) on the top-level data object; vibe responses use `requestTime` on each result. Always display the snapshot time alongside results so the user knows when the data is from. When chaining commands (e.g. converting "last 24h" into `--begin` / `--end`), use the most recent response's timestamp as the reference point — not the wall clock.
-
-### Cursor Semantics
-
-For news endpoints, `cursor` is opaque — pass it back unchanged. Treat `cursor: null` as the terminal page; do not invent a synthetic cursor or retry.
+Render the response snapshot time (`requestTime` / `ts`, Unix ms) as-is. Do NOT compute reference points off a previous response; for a relative window use `--since 24h` / `--since 7d`.
 
 ## Additional Resources
 

@@ -24,6 +24,7 @@ use zeroize::Zeroize;
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
+use crate::output;
 use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
 
@@ -83,10 +84,14 @@ pub enum A2aPayCommand {
     Create(Box<CreateArgs>),
     /// Buyer: fetch challenge by id, sign EIP-3009, submit credential.
     Pay(PayArgs),
-    /// Query payment status by id.
+    /// Query payment status by id. With --wait, poll internally (3s interval,
+    /// 60s ceiling) until a terminal state or timeout.
     Status {
         #[arg(long = "payment-id")]
         payment_id: String,
+        /// Poll internally (3s interval, 60s ceiling) until terminal or timeout.
+        #[arg(long)]
+        wait: bool,
     },
 }
 
@@ -96,7 +101,7 @@ pub async fn execute(cmd: A2aPayCommand) -> Result<()> {
             "charge" => {
                 let params = ChargeParams::try_from(*args)?;
                 let out = create_payment_charge(params).await?;
-                println!("{}", serde_json::to_string_pretty(&out)?);
+                output::success(out);
                 Ok(())
             }
             other => bail!("unknown --type '{other}', expected 'charge'"),
@@ -109,12 +114,12 @@ pub async fn execute(cmd: A2aPayCommand) -> Result<()> {
                 recipient_address: args.recipient_address,
             };
             let out = pay(params).await?;
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            output::success(out);
             Ok(())
         }
-        A2aPayCommand::Status { payment_id } => {
-            let out = status(payment_id).await?;
-            println!("{}", serde_json::to_string_pretty(&out)?);
+        A2aPayCommand::Status { payment_id, wait } => {
+            let data = fetch_status(&payment_id, wait).await?;
+            output::success(data);
             Ok(())
         }
     }
@@ -285,9 +290,16 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][a2a-pay] GET /p/{} response={resp}", p.payment_id);
     }
-    if let Some(err_msg) = resp.get("errorMessage").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+    if let Some(err_msg) = resp
+        .get("errorMessage")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
         let status = resp["status"].as_str().unwrap_or("unknown");
-        bail!("payment {} 不可用 (status={status}): {err_msg}", p.payment_id);
+        bail!(
+            "payment {} unavailable (status={status}): {err_msg}",
+            p.payment_id
+        );
     }
     let challenge = resp
         .get("challenge")
@@ -303,9 +315,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .ok_or_else(|| anyhow!("challenge.data.intent missing"))?
         .to_string();
     if intent != "charge" {
-        bail!(
-            "pay() supports only 'charge' intent; got '{intent}' — use sign_escrow() for escrow"
-        );
+        bail!("pay() supports only 'charge' intent; got '{intent}' — use sign_escrow() for escrow");
     }
     let expires_str = data
         .get("expires")
@@ -550,17 +560,14 @@ pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
     let from_addr: Address = from_addr_str
         .parse()
         .context("agentic-wallet address is not a valid EVM address")?;
-    let hook_data_bytes = hex::decode(p.hook_data.trim_start_matches("0x"))
-        .context("hook_data is not valid hex")?;
+    let hook_data_bytes =
+        hex::decode(p.hook_data.trim_start_matches("0x")).context("hook_data is not valid hex")?;
     let salt = parse_bytes32_hex(&p.salt, "salt")?;
 
-    let escrow_addr: Address = p
-        .escrow_contract
-        .parse()
-        .context("escrow_contract parse")?;
+    let escrow_addr: Address = p.escrow_contract.parse().context("escrow_contract parse")?;
     let fields = EscrowAuthFields {
         from: from_addr,
-        provider: p.hook.parse().context("provider parse")?,  // TODO: use provider or hook?
+        provider: p.hook.parse().context("provider parse")?, // TODO: use provider or hook?
         receiver: p.receiver.parse().context("receiver parse")?,
         arbitrator: p.arbitrator.parse().context("arbitrator parse")?,
         currency: p.currency.parse().context("currency parse")?,
@@ -769,8 +776,64 @@ pub async fn status(payment_id: String) -> Result<StatusOutput> {
     })
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────
+// ── Status with optional wait ────────────────────────────────────────────
 
+/// Terminal a2a-pay states — polling stops here.
+pub fn is_terminal_status(s: &str) -> bool {
+    matches!(s, "completed" | "failed" | "expired" | "cancelled")
+}
+
+/// `payment a2a-pay status --wait` `data` shape.
+#[derive(serde::Serialize)]
+pub struct A2aStatusData {
+    pub status: String,
+    pub terminal: bool,
+    pub timed_out: bool,
+}
+
+/// MCP / handler entry point. `wait=false` → one-shot GET. `wait=true` → poll
+/// (3s interval, 60s ceiling) until a terminal state or timeout, so the agent
+/// never self-sleeps.
+pub async fn fetch_status(payment_id: &str, wait: bool) -> Result<Value> {
+    const INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
+    const CEILING: std::time::Duration = std::time::Duration::from_secs(60);
+
+    let out = status(payment_id.to_string()).await?;
+    if !wait || is_terminal_status(&out.status) {
+        return serde_json::to_value(A2aStatusData {
+            terminal: is_terminal_status(&out.status),
+            timed_out: false,
+            status: out.status,
+        })
+        .map_err(Into::into);
+    }
+
+    let start = std::time::Instant::now();
+    let mut last = out.status;
+    loop {
+        if start.elapsed() >= CEILING {
+            return serde_json::to_value(A2aStatusData {
+                status: last,
+                terminal: false,
+                timed_out: true,
+            })
+            .map_err(Into::into);
+        }
+        tokio::time::sleep(INTERVAL).await;
+        let out = status(payment_id.to_string()).await?;
+        last = out.status;
+        if is_terminal_status(&last) {
+            return serde_json::to_value(A2aStatusData {
+                status: last,
+                terminal: true,
+                timed_out: false,
+            })
+            .map_err(Into::into);
+        }
+    }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
 /// Validate that `s` is a positive decimal amount in whole tokens (e.g. "50",
 /// "0.01", ".5"). Rejects empty / non-numeric / signed / scientific-notation /
 /// zero values. The string is passed to the wire unchanged after validation —
@@ -831,6 +894,16 @@ fn unix_now() -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_status_classifier() {
+        for s in ["completed", "failed", "expired", "cancelled"] {
+            assert!(is_terminal_status(s), "{s} should be terminal");
+        }
+        for s in ["pending", "settling", "unknown", ""] {
+            assert!(!is_terminal_status(s), "{s} should be non-terminal");
+        }
+    }
 
     #[test]
     fn validates_evm_address() {

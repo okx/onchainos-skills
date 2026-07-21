@@ -143,6 +143,57 @@ fn chain_index_of(c: &serde_json::Value) -> Option<String> {
     })
 }
 
+/// Known testnet chainIndices in the static registry, used only when the
+/// dynamic chain cache does not classify the chain. Everything else recognised
+/// by the registry is mainnet.
+pub const TESTNET_CHAIN_INDICES: &[&str] = &["1952"];
+
+/// Whether `chain_index` is a mainnet chain, per the chain registry.
+///
+/// Resolution order mirrors [`ensure_supported_chain`] / [`resolve_chain`]:
+/// 1. Dynamic — a matching `chain_cache.json` entry classifies the chain (an
+///    explicit `isTestnet` / `testnet` boolean wins; otherwise a `chainName`
+///    containing "test" marks it a testnet).
+/// 2. Static — the known-testnet set, then the `SUPPORTED_CHAIN_INDICES`
+///    mainnet allowlist.
+/// 3. Unknown — chains absent from both the cache and the static registry are
+///    treated as NON-mainnet, so an unrecognised testnet (e.g. Sepolia) is never
+///    mis-ranked ahead of a known mainnet by the mainnet-first ordering.
+///    (The previous implementation used a testnet blacklist that defaulted every
+///    unknown chain to mainnet — the exact bug this corrects.)
+pub fn is_mainnet_chain(chain_index: &str) -> bool {
+    if let Ok(cache) = crate::wallet_store::load_chain_cache() {
+        if let Some(entry) = cache
+            .chains
+            .iter()
+            .find(|c| chain_index_of(c).as_deref() == Some(chain_index))
+        {
+            return chain_entry_is_mainnet(entry);
+        }
+    }
+    if TESTNET_CHAIN_INDICES.contains(&chain_index) {
+        return false;
+    }
+    SUPPORTED_CHAIN_INDICES.contains(&chain_index)
+}
+
+/// Classify a dynamic chain-cache entry as mainnet. An explicit boolean flag
+/// (`isTestnet` / `testnet`) is authoritative when the backend supplies one;
+/// otherwise fall back to a `chainName` "test" heuristic (mainnet unless the
+/// name signals a testnet).
+fn chain_entry_is_mainnet(entry: &serde_json::Value) -> bool {
+    for key in ["isTestnet", "testnet"] {
+        if let Some(is_testnet) = entry.get(key).and_then(|v| v.as_bool()) {
+            return !is_testnet;
+        }
+    }
+    let name = entry
+        .get("chainName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    !name.to_lowercase().contains("test")
+}
+
 /// Resolve comma-separated chain names to comma-separated chainIndex values.
 pub fn resolve_chains(names: &str) -> String {
     names
@@ -384,5 +435,38 @@ mod tests {
     fn resolve_chains_handles_xlayer_test_in_list() {
         // The comma-separated resolver must also honor the alias.
         assert_eq!(resolve_chains("ethereum,xlayer_test,arbitrum"), "1,1952,42161");
+    }
+
+    #[test]
+    fn is_mainnet_chain_uses_registry_not_blacklist() {
+        // Known mainnet chains in SUPPORTED_CHAIN_INDICES → mainnet.
+        assert!(is_mainnet_chain("1"));
+        assert!(is_mainnet_chain("8453"));
+        assert!(is_mainnet_chain("196"));
+        // Known testnet → not mainnet.
+        assert!(!is_mainnet_chain("1952"));
+        // Regression guard: an unrecognised chain (e.g. Sepolia = 11155111) must NOT
+        // be assumed mainnet — the old blacklist defaulted unknowns to mainnet.
+        assert!(!is_mainnet_chain("11155111"));
+        assert!(!is_mainnet_chain("99999"));
+        assert!(!is_mainnet_chain(""));
+    }
+
+    #[test]
+    fn chain_entry_is_mainnet_honors_flag_then_name() {
+        // Explicit boolean flag wins.
+        assert!(!chain_entry_is_mainnet(&serde_json::json!({
+            "chainIndex": "8453", "chainName": "Base", "isTestnet": true
+        })));
+        assert!(chain_entry_is_mainnet(&serde_json::json!({
+            "chainIndex": "8453", "chainName": "Base", "isTestnet": false
+        })));
+        // No flag → name heuristic ("test" ⇒ testnet).
+        assert!(!chain_entry_is_mainnet(&serde_json::json!({
+            "chainIndex": "1952", "chainName": "X Layer Testnet"
+        })));
+        assert!(chain_entry_is_mainnet(&serde_json::json!({
+            "chainIndex": "1", "chainName": "Ethereum"
+        })));
     }
 }

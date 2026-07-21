@@ -40,7 +40,7 @@ The Skill Quality Prize is an independently judged award. During the competition
 
 - Chain line ← `{supportedChains}` — see `participation.md` → Shared field mapping.
 - `{startTime}` / `{endTime}` ← `startTimeFormatted` / `endTimeFormatted` (CLI-formatted, already ends in `(UTC+8)` — render verbatim).
-- `{totalPrizePool}` ← sum of all `prizePoolDistribution[].totalReward` plus `rewardUnit` (e.g. `50,000 USDC`).
+- `{totalPrizePool}` ← `data.totalPrizePool.display` from `competition detail` (render-ready; multi-unit joined by ` + `). `null` → render "no prize-pool info". Do NOT sum `prizePoolDistribution[]` yourself.
 - `{roiPoolAmount}` ← totalReward of the realized-PnL% tab.
 - `{pnlPoolAmount}` ← totalReward of the realized-PnL tab.
 - `{participationPoolAmount}` ← totalReward of the participation prize tab.

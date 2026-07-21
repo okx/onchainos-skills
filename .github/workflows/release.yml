@@ -208,7 +208,7 @@ jobs:
         if: runner.os == 'Windows' && env.SM_API_KEY != ''
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://github.com/ebourg/jsign/releases/download/7.0/jsign-7.0.jar" `
+          Invoke-WebRequest -Uri "https://github.com/ebourg/jsign/releases/download/7.5/jsign-7.5.jar" `
             -OutFile "${{ runner.temp }}\jsign.jar"
 
       - name: "Sign Windows binary (DigiCert ONE via jsign)"

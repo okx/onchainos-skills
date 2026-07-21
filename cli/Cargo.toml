@@ -1,6 +1,6 @@
 [package]
 name = "onchainos-cli"
-version = "4.2.5"
+version = "4.3.0"
 edition = "2021"
 
 [[bin]]
@@ -71,17 +71,17 @@ hpke = "0.12"
 
 # URL encoding
 url = "2"
+percent-encoding = "2"
 
 # Hostname (gethostname syscall for file_keyring)
 libc = "0.2"
-
-# OS locale detection (sysLocale CLI reporting)
-sys-locale = "0.3"
 
 # Utils
 hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
 qrcode = { version = "0.14", default-features = false }
+# Cross-platform browser open (macOS/Windows/Linux + WSL); failure is caught, never fatal
+open = "5"
 
 # MCP Server
 rmcp = { version = "1.1.1", features = ["transport-io"] }

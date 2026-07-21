@@ -6,7 +6,10 @@ Policy configuration and wallet export **must be completed by the user on the We
 
 ## Templates
 
-**IMPORTANT**: Print the matching template verbatim (translated to the user's language). The link and trailing navigation sentence are chosen by `loginType` (from `wallet status`, or the `login` / `verify` response). If `loginType` is unknown, run `onchainos wallet status` first; treat any unrecognized value as `email`.
+**IMPORTANT**: Print the matching template verbatim. The link and trailing navigation sentence are chosen by `loginType` (from `wallet status`, or the `login` response) — the table has an `email` row and an `ak` row. Row selection is **internal — never explain it to the user**: pick the row by `loginType` and render it directly (do NOT add phrases like "Google login uses the email flow"). If `loginType` is unknown or unrecognized, run `onchainos wallet status` first and treat it as `email`.
+
+**Wallet export — Google / Apple:** when `loginType` is `google` or `apple`, reply with exactly this notice, verbatim, as the complete response:
+> Wallet export is currently not supported for accounts logged in with Google or Apple. It will be supported in a future update.
 
 ### Template: Wallet Export
 
@@ -66,7 +69,7 @@ e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I i
 
 **Required sequence — follow exactly, no steps may be skipped or reordered:**
 
-**Step 1.** Confirm the user is logged in (so `accountId` is available locally). `onchainos wallet status` will surface it.
+**Step 1.** Run `onchainos wallet status` (confirms login, surfaces `accountId`, and gives `loginType`). **Only** when `loginType` is `google` or `apple`, output the **Google/Apple notice** (above). For every other value (`email`, `ak`, or empty/unknown), continue to Step 2 — export is supported.
 
 **Step 2.** Call `onchainos competition user-status` (no `--activity-id`). The command uses the active session's `accountId` automatically — no wallet args needed.
 

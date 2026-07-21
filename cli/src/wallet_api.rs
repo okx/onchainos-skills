@@ -136,16 +136,13 @@ pub struct WalletApiClient {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InitResponse {
-    pub flow_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct VerifyResponse {
     pub refresh_token: String,
     pub access_token: String,
-    pub tee_id: String,
+    /// SA TEE id used by the strategy `createOrder` `verifySignInfo.teeId`.
+    /// `#[serde(default)]`: not every login flow (AK / refresh) returns it.
+    #[serde(default)]
+    pub sa_tee_id: String,
     pub session_cert: String,
     pub encrypted_session_sk: String,
     #[serde(deserialize_with = "string_or_number")]
@@ -157,6 +154,28 @@ pub struct VerifyResponse {
     pub is_new: bool,
     #[serde(default)]
     pub address_list: Vec<VerifyAddressInfo>,
+    /// All accounts + addresses; populated only for social login (`source=web`),
+    /// letting us refresh accounts without an account/list call. Empty otherwise.
+    #[serde(default)]
+    pub all_account_address_list: Vec<RefreshAccountItem>,
+    /// Account identity + login method, as returned by the backend.
+    #[serde(default)]
+    pub login_info: LoginInfo,
+}
+
+/// `loginInfo` block from a verify response. `login_type` is the login method
+/// (`email` / `google` / `apple` / `ak`); the rest is display identity.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginInfo {
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub nickname: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub login_type: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -171,12 +190,6 @@ pub struct VerifyAddressInfo {
     pub address_type: String,
     #[serde(default, deserialize_with = "nullable_string")]
     pub chain_path: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AkInitResponse {
-    pub nonce: String,
-    pub iss: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -681,9 +694,7 @@ impl WalletApiClient {
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
-        if doh.is_proxy() {
-            builder = builder.user_agent(doh.doh_user_agent());
-        }
+        builder = builder.user_agent(doh.doh_user_agent());
 
         Ok(Self {
             http: builder.build()?,
@@ -697,9 +708,7 @@ impl WalletApiClient {
         if let Some((host, addr)) = self.doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
-        if self.doh.is_proxy() {
-            builder = builder.user_agent(self.doh.doh_user_agent());
-        }
+        builder = builder.user_agent(self.doh.doh_user_agent());
         self.http = builder.build()?;
         Ok(())
     }
@@ -1326,109 +1335,6 @@ impl WalletApiClient {
 
     // ── Public API methods ──────────────────────────────────────────
 
-    /// POST /priapi/v5/wallet/agentic/auth/init
-    pub async fn auth_init(
-        &mut self,
-        email: &str,
-        locale: Option<&str>,
-        sys_locale: Option<&str>,
-    ) -> Result<InitResponse> {
-        let mut body = json!({ "email": email });
-        if let Some(loc) = locale {
-            body["locale"] = serde_json::Value::String(loc.to_string());
-        }
-        // camelCase key (backend ignores lowercase `syslocale`); falls back to NOT_FOUND.
-        body["sysLocale"] =
-            serde_json::Value::String(sys_locale.unwrap_or("NOT_FOUND").to_string());
-        let data = self
-            .post_public("/priapi/v5/wallet/agentic/auth/init", &body)
-            .await?;
-        // data is an array, take first element
-        let arr = data
-            .as_array()
-            .context("auth/init: expected data to be an array")?;
-        let item = arr.first().context("auth/init: data array is empty")?;
-        let resp: InitResponse =
-            serde_json::from_value(item.clone()).context("auth/init: failed to parse response")?;
-        Ok(resp)
-    }
-
-    /// POST /priapi/v5/wallet/agentic/auth/verify
-    pub async fn auth_verify(
-        &mut self,
-        email: &str,
-        flow_id: &str,
-        otp: &str,
-        temp_pub_key: &str,
-    ) -> Result<VerifyResponse> {
-        let body = json!({
-            "email": email,
-            "flowId": flow_id,
-            "otp": otp,
-            "tempPubKey": temp_pub_key,
-        });
-        let data = self
-            .post_public("/priapi/v5/wallet/agentic/auth/verify", &body)
-            .await?;
-        let arr = data
-            .as_array()
-            .context("auth/verify: expected data to be an array")?;
-        let item = arr.first().context("auth/verify: data array is empty")?;
-        let resp: VerifyResponse = serde_json::from_value(item.clone())
-            .context("auth/verify: failed to parse response")?;
-        Ok(resp)
-    }
-
-    /// POST /priapi/v5/wallet/agentic/auth/ak/init
-    pub async fn ak_auth_init(&mut self, api_key: &str) -> Result<AkInitResponse> {
-        let body = json!({ "apiKey": api_key });
-        let data = self
-            .post_public("/priapi/v5/wallet/agentic/auth/ak/init", &body)
-            .await?;
-        let arr = data
-            .as_array()
-            .context("ak/init: expected data to be an array")?;
-        let item = arr.first().context("ak/init: data array is empty")?;
-        let resp: AkInitResponse =
-            serde_json::from_value(item.clone()).context("ak/init: failed to parse response")?;
-        Ok(resp)
-    }
-
-    /// POST /priapi/v5/wallet/agentic/auth/ak/verify
-    #[allow(clippy::too_many_arguments)]
-    pub async fn ak_auth_verify(
-        &mut self,
-        temp_pub_key: &str,
-        api_key: &str,
-        passphrase: &str,
-        timestamp: &str,
-        sign: &str,
-        locale: &str,
-        sys_locale: Option<&str>,
-    ) -> Result<VerifyResponse> {
-        let mut body = json!({
-            "tempPubKey": temp_pub_key,
-            "apiKey": api_key,
-            "passphrase": passphrase,
-            "timestamp": timestamp,
-            "sign": sign,
-            "locale": locale,
-        });
-        // camelCase key; NOT in the AK signed string (Q3); falls back to NOT_FOUND.
-        body["sysLocale"] =
-            serde_json::Value::String(sys_locale.unwrap_or("NOT_FOUND").to_string());
-        let data = self
-            .post_public("/priapi/v5/wallet/agentic/auth/ak/verify", &body)
-            .await?;
-        let arr = data
-            .as_array()
-            .context("ak/verify: expected data to be an array")?;
-        let item = arr.first().context("ak/verify: data array is empty")?;
-        let resp: VerifyResponse =
-            serde_json::from_value(item.clone()).context("ak/verify: failed to parse response")?;
-        Ok(resp)
-    }
-
     /// POST /priapi/v5/wallet/agentic/auth/refresh
     pub async fn auth_refresh(&mut self, refresh_token: &str) -> Result<RefreshResponse> {
         let body = json!({ "refreshToken": refresh_token });
@@ -1442,6 +1348,24 @@ impl WalletApiClient {
         let resp: RefreshResponse = serde_json::from_value(item.clone())
             .context("auth/refresh: failed to parse response")?;
         Ok(resp)
+    }
+
+    /// POST /priapi/v5/wallet/agentic/auth/session/result
+    ///
+    /// Look up the verify result by `authSessionId` (the UUID in the social-login
+    /// link). On `code=0` returns the raw `data[0]` (VerifyResponse-shaped); while
+    /// login is incomplete the backend returns `code=10018`, surfaced as an
+    /// `ApiCodeError` for the caller to treat as "keep polling".
+    pub async fn session_result(&mut self, auth_session_id: &str) -> Result<Value> {
+        let body = json!({ "authSessionId": auth_session_id });
+        let data = self
+            .post_public("/priapi/v5/wallet/agentic/auth/session/result", &body)
+            .await?;
+        let arr = data
+            .as_array()
+            .context("session/result: expected data to be an array")?;
+        let item = arr.first().context("session/result: data array is empty")?;
+        Ok(item.clone())
     }
 
     /// POST /priapi/v5/wallet/agentic/account/create
@@ -1859,13 +1783,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_init_response() {
-        let json = r#"{"flowId": "abc-123"}"#;
-        let resp: InitResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.flow_id, "abc-123");
-    }
-
-    #[test]
     fn is_invalid_token_error_matches_both_client_formats() {
         // ApiClient surfaces non-zero codes as `API error (code=N): msg`.
         assert!(is_invalid_token_error(&anyhow::anyhow!(
@@ -1895,6 +1812,7 @@ mod tests {
             "refreshToken": "rt",
             "accessToken": "at",
             "teeId": "tee1",
+            "saTeeId": "sa-tee1",
             "sessionCert": "cert",
             "encryptedSessionSk": "esk",
             "sessionKeyExpireAt": "2025-12-31",
@@ -1910,7 +1828,7 @@ mod tests {
         let resp: VerifyResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.refresh_token, "rt");
         assert_eq!(resp.access_token, "at");
-        assert_eq!(resp.tee_id, "tee1");
+        assert_eq!(resp.sa_tee_id, "sa-tee1");
         assert_eq!(resp.session_cert, "cert");
         assert_eq!(resp.encrypted_session_sk, "esk");
         assert_eq!(resp.session_key_expire_at, "2025-12-31");
@@ -1922,6 +1840,26 @@ mod tests {
         assert_eq!(resp.address_list[0].chain_index, "1");
         assert_eq!(resp.address_list[0].account_id, ""); // no accountId in new format → default ""
         assert_eq!(resp.address_list[1].address, "SoLaddr");
+    }
+
+    #[test]
+    fn parse_verify_response_without_sa_tee_id_defaults_empty() {
+        // Not every flow returns `saTeeId` (AK / refresh); `#[serde(default)]`
+        // must keep parsing and leave it empty rather than erroring.
+        let json = r#"{
+            "refreshToken": "rt",
+            "accessToken": "at",
+            "teeId": "tee1",
+            "sessionCert": "cert",
+            "encryptedSessionSk": "esk",
+            "sessionKeyExpireAt": "2025-12-31",
+            "projectId": "proj",
+            "accountId": "acc",
+            "accountName": "My Wallet",
+            "isNew": false
+        }"#;
+        let resp: VerifyResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.sa_tee_id, "");
     }
 
     #[test]

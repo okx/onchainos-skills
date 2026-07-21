@@ -20,24 +20,14 @@ fn resolve_trade_type(s: &str) -> &str {
 }
 
 /// Parse a human-friendly duration string (e.g. "30m", "1h", "0") into milliseconds.
+///
+/// Delegates to the shared `sink::parse_duration_ms` (single source of truth).
+/// Behavior is preserved for existing `s|m|h` inputs; `d` (days) is now
+/// additionally accepted — an additive superset, no regression. `allow_zero=true`
+/// keeps the pre-refactor "disable" semantics: `0` / `0s` / `0m` / `0h` all
+/// parse to `0`, which `run_ws_session` treats as "no idle timeout".
 fn parse_duration_ms(s: &str) -> Result<u64> {
-    let s = s.trim();
-    if s == "0" {
-        return Ok(0);
-    }
-    let (num, suffix) = if let Some(n) = s.strip_suffix('m') {
-        (n, 60_000u64)
-    } else if let Some(n) = s.strip_suffix('h') {
-        (n, 3_600_000u64)
-    } else if let Some(n) = s.strip_suffix('s') {
-        (n, 1_000u64)
-    } else {
-        bail!("invalid --idle-timeout '{}'; use e.g. 30m, 1h, 0", s);
-    };
-    let n: u64 = num
-        .parse()
-        .map_err(|_| anyhow::anyhow!("invalid --idle-timeout '{}'; use e.g. 30m, 1h, 0", s))?;
-    Ok(n * suffix)
+    crate::commands::sink::parse_duration_ms(s, "idle-timeout", true)
 }
 
 #[derive(Subcommand)]

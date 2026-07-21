@@ -183,6 +183,10 @@ const REDACT_FULL: &[&str] = &[
     "--input-data",
     "--data",
     "--message",
+    // Two-phase payment: the base64 402 payload and free-form
+    // business params can carry sensitive challenge / order data — never log them.
+    "--payload",
+    "--param",
 ];
 
 /// Flags whose next positional value is an address / email — keep prefix + suffix.
@@ -450,8 +454,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
     }
 }
 
-use crate::commands::payment::PaymentCommand;
 use crate::commands::agentic_wallet::WalletCommand;
+use crate::commands::payment::PaymentCommand;
 use crate::commands::{
     competition::CompetitionCommand, defi::DefiCommand, gateway::GatewayCommand,
     leaderboard::LeaderboardCommand, market::MarketCommand, memepump::MemepumpCommand,
@@ -596,7 +600,6 @@ fn portfolio_sub(c: &PortfolioCommand) -> &'static str {
 fn wallet_sub(c: &WalletCommand) -> &'static str {
     match c {
         WalletCommand::Login { .. } => "login",
-        WalletCommand::Verify { .. } => "verify",
         WalletCommand::Add => "add",
         WalletCommand::Switch { .. } => "switch",
         WalletCommand::Status => "status",
@@ -629,6 +632,8 @@ fn payment_sub(c: &PaymentCommand) -> String {
     use crate::commands::payment::{DefaultAction, SessionCommand};
     match c {
         PaymentCommand::X402Pay { .. } => "pay".to_string(),
+        PaymentCommand::Quote { .. } => "quote".to_string(),
+        PaymentCommand::DecodeReceipt { .. } => "decode-receipt".to_string(),
         PaymentCommand::Eip3009Sign { .. } => "pay-local".to_string(),
         PaymentCommand::Default { action } => match action {
             DefaultAction::Set { .. } => "default-set".to_string(),
@@ -908,6 +913,40 @@ mod tests {
         let out = redact_args(&args);
         assert_eq!(out[5], "--signed-tx");
         assert_eq!(out[6], "[REDACTED]");
+    }
+
+    #[test]
+    fn redact_payload_full() {
+        // Two-arg form: `payment pay --payload <b64>`.
+        let args = vec_s(&[
+            "onchainos",
+            "payment",
+            "pay",
+            "--payload",
+            "eyJhY2NlcHRzIjpbXX0",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[3], "--payload");
+        assert_eq!(out[4], "[REDACTED]");
+        // Equals form.
+        let args = vec_s(&["onchainos", "payment", "pay", "--payload=eyJhIjoxfQ"]);
+        let out = redact_args(&args);
+        assert_eq!(out[3], "--payload=[REDACTED]");
+    }
+
+    #[test]
+    fn redact_param_full() {
+        let args = vec_s(&[
+            "onchainos",
+            "payment",
+            "quote",
+            "https://m.example/x",
+            "--param",
+            "orderId=secret-42",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[4], "--param");
+        assert_eq!(out[5], "[REDACTED]");
     }
 
     #[test]
