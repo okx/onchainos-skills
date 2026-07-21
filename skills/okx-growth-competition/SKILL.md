@@ -4,7 +4,7 @@ description: "List OKX Agentic Wallet exclusive trading competitions, register u
 license: MIT
 metadata:
   author: okx
-  version: "4.2.6"
+  version: "4.3.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -76,7 +76,7 @@ If the user's intent does not clearly map to one of the above, ask which they me
 > Read `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 **Cross-skill routing on common errors**:
-- `not logged in` → walk the user through the `okx-agentic-wallet` login flow (email → OTP), then retry the original action.
+- `not logged in` → walk the user through the `okx-agentic-wallet` login flow (run `onchainos wallet login`), then retry the original action.
 - Backend status codes (`--status` filter / `status` / `joinStatus` / `rewardStatus`) and error code messages (`11002` / `11003` / `11008` / `1860402` / `address limit reached` / `Sui-chain` / region-blocked / `not eligible`): see `references/cli-reference.md`.
 
 ## Command Index

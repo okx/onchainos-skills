@@ -40,7 +40,7 @@ Already known from `onchainos wallet status` (run earlier). Pick the right banne
 
 Pull `evmAddress`, `solAddress`, and the total USD balance from the `onchainos wallet balance` response. Never fabricate.
 
-**MUST**: **Stale-session fallback.** `wallet status` can report `loggedIn: true` from cached credentials while the session's refresh token has already expired — in that case `wallet balance` fails (e.g. `{"ok": false, "error": "Refresh token expired. Log in again."}`) or comes back without the address / balance fields. When the balance call fails or is missing those fields: do **NOT** render the logged-in banner and do **NOT** show partial or fabricated data. Tell the user their session has expired and they need to log in again, then route to **Login Method Choice** in `how-to-play.md`. After re-login completes, resume per **Post-login routing** (render the logged-in Welcome Banner with the now-valid addresses + balance).
+**MUST**: **Stale-session fallback.** `wallet status` can report `loggedIn: true` from cached credentials while the session's refresh token has already expired — in that case `wallet balance` fails (e.g. `{"ok": false, "error": "Refresh token expired. Log in again."}`) or comes back without the address / balance fields. When the balance call fails or is missing those fields: do **NOT** render the logged-in banner and do **NOT** show partial or fabricated data. Tell the user their session has expired and they need to log in again, then route to **Login** in `how-to-play.md`. After re-login completes, resume per **Post-login routing** (render the logged-in Welcome Banner with the now-valid addresses + balance).
 
 > **Do NOT call `onchainos wallet qrcode`** — QR codes are not part of the banner anymore. The CLI subcommand still exists for direct use, but the welcome flow no longer renders QR block art.
 
@@ -158,12 +158,12 @@ Route by pick **description** (not the raw number — the number shifts between 
 
 | Reply | Variant | Description | Login gate? | Target |
 |---|---|---|---|---|
-| `1` | A + B | OKX.AI featured | **Yes** (logged-out → Login Method Choice → resume) | `ai-guide.md` |
+| `1` | A + B | OKX.AI featured | **Yes** (logged-out → Login → resume) | `ai-guide.md` |
 | `2` | A | 🔥 Polymarket Top 3 | No | invoke `okx-dapp-discovery` (it routes to / installs `polymarket-plugin`) |
 | `2` | B | 💰 USDC APY | No | invoke `okx-defi` |
 | `3` | A | 💰 USDC APY | No | invoke `okx-defi` |
-| `3` | B | ☕ Daily on-chain brief | **Yes** (logged-out → Login Method Choice → resume) | `~/.onchainos/workflows/daily-brief.md` |
-| `4` | A | ☕ Daily on-chain brief | **Yes** (logged-out → Login Method Choice → resume) | `~/.onchainos/workflows/daily-brief.md` |
+| `3` | B | ☕ Daily on-chain brief | **Yes** (logged-out → Login → resume) | `~/.onchainos/workflows/daily-brief.md` |
+| `4` | A | ☕ Daily on-chain brief | **Yes** (logged-out → Login → resume) | `~/.onchainos/workflows/daily-brief.md` |
 
 ### 4.1 Reply `1` — OKX.AI featured (login-gated, both variants)
 
@@ -172,7 +172,7 @@ OKX.AI is the primary featured option. Auth handling:
 - **Logged-in user**: load `ai-guide.md` directly. One-line bridge ("Handing off to OKX.AI — meet your Agent.").
 - **Logged-out user**:
   1. One-line bridging copy ("OKX.AI needs a wallet logged in — I'll walk you through login first, then we'll pick this up right after.").
-  2. Route to **Login Method Choice** in `how-to-play.md`.
+  2. Route to **Login** in `how-to-play.md`.
   3. Remember the original pick. After login completes, **automatically resume** by loading `ai-guide.md` — do NOT re-render the welcome banner, do NOT ask the user to re-state.
 
 ### 4.2 Reply `2` / Reply `3` (Variant A) — skill picks, no login gate
@@ -189,12 +189,12 @@ Daily brief assumes an authenticated wallet (most CLI commands inside need login
 - **Logged-in user**: load `~/.onchainos/workflows/daily-brief.md` directly and follow it.
 - **Logged-out user**:
   1. One-line bridging copy ("This one needs the wallet logged in — I'll walk you through login first, then we'll pick this up right after.").
-  2. Route to **Login Method Choice** in `how-to-play.md`.
+  2. Route to **Login** in `how-to-play.md`.
   3. Remember the original pick. After login completes, **automatically resume** by loading `daily-brief.md` — do NOT re-render the welcome banner, do NOT ask the user to re-state. (Symmetric with the OKX.AI path.)
 
 ### 4.4 "login" reply (logged-out only)
 
-When a logged-out user replies `login` (or similar), route to **Login Method Choice** in `how-to-play.md`. After login completes, render the **logged-in** Welcome Banner so the user sees their addresses + balance. Do NOT auto-load any pick target in this branch — the user asked to log in, not to run a specific pick.
+When a logged-out user replies `login` (or similar), route to **Login** in `how-to-play.md`. After login completes, render the **logged-in** Welcome Banner so the user sees their addresses + balance. Do NOT auto-load any pick target in this branch — the user asked to log in, not to run a specific pick.
 
 ### 4.5 Free-form text (any state)
 
@@ -220,7 +220,7 @@ That one isn't available here right now — anything else from the menu work for
 
 ### 4.7 Login abandonment — any login-gated route
 
-If a user picks a login-gated option (Reply `1` OKX.AI in either variant; Reply `4` Daily brief in Variant A; Reply `3` Daily brief in Variant B) and then **abandons the Login Method Choice flow** (does not complete login), the flow stops at Login Method Choice. The originally-picked target (`ai-guide.md` or `daily-brief.md`) is **NOT auto-resumed**, and the welcome banner is **NOT re-rendered**. Surface the abandonment as a clean exit; if the user later re-engages, treat the new turn as a fresh request.
+If a user picks a login-gated option (Reply `1` OKX.AI in either variant; Reply `4` Daily brief in Variant A; Reply `3` Daily brief in Variant B) and then **abandons the Login flow** (does not complete login), the flow stops at Login. The originally-picked target (`ai-guide.md` or `daily-brief.md`) is **NOT auto-resumed**, and the welcome banner is **NOT re-rendered**. Surface the abandonment as a clean exit; if the user later re-engages, treat the new turn as a fresh request.
 
 ### 4.8 Downstream-skill load failure
 

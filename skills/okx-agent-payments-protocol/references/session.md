@@ -330,7 +330,7 @@ Use **`../SKILL.md` → "Reading seller errors"** (priority order + `❌ Seller 
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `not logged in` / `session expired` | Wallet session missing or expired | `onchainos wallet login` or `onchainos wallet login <email>` |
+| `not logged in` / `session expired` | Wallet session missing or expired | `onchainos wallet login` |
 | Voucher rejected: `70012 amount_exceeds_deposit` | cum > channel deposit | Phase S2b TopUp first |
 | Voucher rejected: `70000 invalid_params` (cum not strictly increasing) | new_cum ≤ current_cum | Increase strictly; ensure you're tracking current_cum |
 | Voucher rejected: `70013 voucher_delta_too_small` | Delta below `minVoucherDelta` | Raise cum by at least the minimum |

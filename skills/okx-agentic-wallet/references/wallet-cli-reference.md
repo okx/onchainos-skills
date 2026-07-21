@@ -6,25 +6,22 @@ Exact syntax, parameters, and key return fields for `onchainos wallet` subcomman
 
 ## Account
 
-### `wallet login [email]`
+### `wallet login`
 
-Start login. With `email` → sends OTP. Without `email` → silent API-Key login (reads `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` from env).
+Social login (Google / Apple / Email via browser), orchestrated in phases via `--phase` (default `init`).
 
 ```bash
-onchainos wallet login [email] [--locale <locale>] [--force]
+onchainos wallet login [--phase init|open|poll] [--url <url>] [--session-id <id>]
 ```
 
 | Param | Required | Description |
 |---|---|---|
-| `email` | No | Email to receive OTP. Omit for AK login. |
-| `--locale` | No | OTP email language, underscore form (`zh_CN`, `en_US`, `ja_JP`). Unrecognized values fall back to `en_US`. Omit if language is unclear. |
-| `--force` | No | Re-login; skip the account-switch confirmation. Only after a Confirming response (see SKILL.md → Confirming Response). |
+| `--phase` | No | `init` (default): mint + return the login URL, best-effort open the browser. `open`: open `--url` in the browser (internal orchestration step). `poll`: poll for the login result using the `init` session. |
+| `--url` | For `open` | Login URL to open. Required when `--phase open`. |
+| `--session-id` | No | Auth session id to poll (`--phase poll`). Defaults to the most recent `init` session when omitted. |
 
-Returns `{}` on email-OTP success; `accountId` / `accountName` on silent AK login.
-
-### `wallet verify <otp>`
-
-Verify the emailed OTP to finish login. Returns `accountId`, `accountName`, and `isNew` (true → new user; trigger Policy + Export templates, see [portal-actions.md](wallet-portal-actions.md)).
+- `--phase init` → returns `{ loginUrl, authSessionId, opened }`.
+- `--phase poll` → returns `accountId`, `accountName`, `loginType`, `isNew`, addresses, `totalValueUsd` (true `isNew` → new user; trigger Policy + Export templates, see [portal-actions.md](wallet-portal-actions.md)).
 
 ### `wallet add`
 

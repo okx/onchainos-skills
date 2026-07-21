@@ -47,7 +47,7 @@
 //! - `ONCHAINOS_HOME` points at a fresh isolated dir under
 //!   `cli/target/test_tmp/cli_wallet_testnet/` (the agent sandbox denies
 //!   writes to `/var/folders/.../T/` so `tempfile::tempdir()` is unsafe
-//!   here; mirrors the convention from `cli_wallet_login_mode.rs`).
+//!   here).
 //! - All `OKX_*` env vars and `OKX_BASE_URL` are scrubbed from the inherited
 //!   environment so the binary cannot silently fall through to host
 //!   credentials.

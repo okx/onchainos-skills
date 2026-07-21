@@ -4,23 +4,39 @@ Wallet lifecycle: authentication, balance, addresses, token transfers, transacti
 
 ## Authentication
 
-Commands that need auth (balance, send, contract-call, history, sign-message) require login. Check state first, log in if needed. Two methods: **email + OTP**, or **API Key** (no email).
+Commands that need auth (balance, send, contract-call, history, sign-message) require login. **Social login opens a browser login page where the user completes sign-in.**
 
 1. **Check state.** Run `wallet status`; if `data.loggedIn` is `true`, proceed. Otherwise (or on re-login request) continue.
-2. **Email login.** Show verbatim (translate to the user's language):
-   > You need to log in with your email first before adding a wallet. What is your email address?
-   > We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/home/api-access-and-usage
-
-   On email, run `wallet login <email> [--locale <locale>]`, then show verbatim:
-   > **English**: "A verification code has been sent to **{email}**. Please check your inbox and tell me the code."
-   > **Chinese**: "验证码已发送到 **{email}**，请查收邮件并告诉我验证码。"
-
-   On the code, run `wallet verify <code>`. Infer `--locale` (underscore form, e.g. `zh_CN`); if unclear, omit it — never force `en_US`.
-3. **API Key login** (user declines email). Re-offer the AK option; if accepted, run `wallet login` with no email (CLI reads `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` from env).
-4. **Account-switch gate.** `wallet login` may return a Confirming whose `message` contains `not the account you used last time`. Handle via SKILL.md → Confirming Response (Yes → re-run with `--force`; No → cancel). Leave that discriminator phrase in English when translating.
-5. **After login.** Show accounts via `wallet balance`. If the `verify` / `login` response has `"isNew": true`, output the Policy Settings template then the Wallet Export template ([portal-actions.md](wallet-portal-actions.md)); if `false`, skip.
+2. **Log in** — orchestrate `init` → auto-poll:
+   a. **Get the link.** Run `wallet login --phase init` — it returns `{ loginUrl, authSessionId, opened }` immediately and best-effort opens the browser. Keep `authSessionId` for the poll.
+   b. **Show the link + reminder** (translate to the user's language; keep the structure, substitute `authSessionId` and `loginUrl`):
+      > Your login link is ready — I'll open it in your browser.
+      > • Session ID (session_id): `<authSessionId>`
+      > • Login link (if the browser didn't open, click to open it manually): `<loginUrl>`
+      >
+      > Fetching the login result will block your other operations for up to 5 minutes.
+   c. **Auto-poll.** Immediately run `wallet login --phase poll --session-id <authSessionId>` (the id from step a) — don't wait for the user. On timeout / no result, tell the user you couldn't get it yet: finish login on the already-open page and tell you to re-check (same id), or start over from `--phase init` (new id); don't guess whether a previous session is still valid.
+3. **After login.** Render the Account Info template (below) from the `poll` response. If the response has `"isNew": true`, output the Policy Settings template then the Wallet Export template ([portal-actions.md](wallet-portal-actions.md)); if `false`, skip.
 
 Login creates the first account automatically — never call `wallet add` for it. Use `wallet add` only when already logged in and the user explicitly wants another account (then output the Policy Settings template, see [portal-actions.md](wallet-portal-actions.md)).
+
+### Template: Account Info (login success)
+
+Render verbatim from the `wallet login --phase poll` response `data`:
+
+> **Account Info**
+> - Login method: {method}{ ({email}) }
+> - Current account: OKX Wallet - {accountName} ({accountCount} accounts total)
+> - Total assets: ${totalValueUsd}
+>
+> **Addresses**
+> - EVM: {evmAddress}
+> - Solana: {solAddress}
+
+Field rules:
+- `{method}` ← `loginType`: `email`→"Email", `google`→"Google", `apple`→"Apple", `ak`→"API Key".
+- Append ` ({email})` only if `email` is non-empty; otherwise omit the parentheses.
+- Omit the "Total assets" line if `totalValueUsd` is empty; omit an address line if its value (`evmAddress` / `solAddress`) is empty.
 
 ## Parameter Rules
 

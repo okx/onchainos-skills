@@ -7,34 +7,47 @@ pub mod common;
 pub mod gas_station;
 pub mod geoblock;
 pub mod history;
-pub mod locale;
 pub mod plugin;
 pub mod sign;
 pub mod strategy;
 pub mod transfer;
 
 use anyhow::{bail, Result};
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 use qrcode::{render::unicode, QrCode};
+
+/// Stage of the social-login flow. The skill orchestrates `init` → `open` →
+/// `poll` so the login URL is returned immediately (before the browser opens),
+/// avoiding a stall if the browser can't launch. `init` is the default, so a
+/// bare `wallet login` just mints and returns the login URL.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Default)]
+pub enum LoginPhase {
+    /// Generate the login URL and return it. No browser, no polling.
+    #[default]
+    Init,
+    /// Open the given `--url` in the system browser (best-effort). Internal
+    /// step in the skill's orchestration — not a user-facing command.
+    Open,
+    /// Poll for the login result (using state from `init`) and persist it.
+    Poll,
+}
 
 #[derive(Subcommand)]
 pub enum WalletCommand {
-    /// Start login flow — sends OTP to email, or AK login if no email provided
+    /// Start social login (Google / Apple / Email via browser). A bare `login`
+    /// mints and returns the login URL (`--phase init`); the skill orchestrates
+    /// `init` → `open` → `poll`.
     Login {
-        /// Email address to receive OTP (optional — omit for AK login)
-        email: Option<String>,
-        /// Locale for OTP email template. Supported: "en_US", "zh_CN".
-        /// Invalid values fall back to "en_US" with a stderr warning.
+        /// Login phase. Defaults to `init` (mint + return the login URL).
+        #[arg(long, value_enum, default_value_t = LoginPhase::Init)]
+        phase: LoginPhase,
+        /// Login URL to open — required for `--phase open`.
         #[arg(long)]
-        locale: Option<String>,
-        /// Force re-login, skip API Key switch confirmation
-        #[arg(long, default_value_t = false)]
-        force: bool,
-    },
-    /// Verify OTP code from email
-    Verify {
-        /// One-time password received via email
-        otp: String,
+        url: Option<String>,
+        /// Auth session id to poll — used by `--phase poll`. Defaults to the
+        /// most recent `init` session when omitted.
+        #[arg(long = "session-id")]
+        session_id: Option<String>,
     },
     /// Add a new wallet account
     Add,
@@ -423,11 +436,19 @@ fn cmd_qrcode(address: &str) -> Result<()> {
 pub async fn execute(command: WalletCommand) -> Result<()> {
     match command {
         WalletCommand::Login {
-            email,
-            locale,
-            force,
-        } => auth::cmd_login(email.as_deref(), locale.as_deref(), force).await,
-        WalletCommand::Verify { otp } => auth::cmd_verify(&otp).await,
+            phase,
+            url,
+            session_id,
+        } => match phase {
+            LoginPhase::Init => auth::cmd_login_init().await,
+            LoginPhase::Open => {
+                let Some(url) = url.as_deref() else {
+                    bail!("`--url` is required for `--phase open`");
+                };
+                auth::cmd_login_open(url).await
+            }
+            LoginPhase::Poll => auth::cmd_login_poll(session_id.as_deref()).await,
+        },
         WalletCommand::Add => auth::cmd_add().await,
         WalletCommand::Switch { account_id } => account::cmd_switch(&account_id).await,
         WalletCommand::Status => account::cmd_status().await,

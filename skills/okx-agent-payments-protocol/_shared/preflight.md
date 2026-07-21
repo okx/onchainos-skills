@@ -1,6 +1,6 @@
 # Shared Pre-flight Check
 
-> Shared across all onchainos skills. Run ONCE at the start of each conversation, before the first `onchainos` command; don't repeat it on later turns.
+> Run ONCE at the start of each conversation, before the first `onchainos` command; don't repeat it on later turns.
 
 ## Default — do this, then stop
 
@@ -15,4 +15,4 @@
 
 - **The `onchainos preflight` command above errored with "command not found"** (onchainos not installed) → download `install.sh` + `installer-checksums.txt` for the latest release, verify SHA256, run it, then re-run preflight (append `--beta` if this skill's version contains `-beta`; `install.ps1` on Windows). Stop only if the install itself fails.
 - **A later onchainos command fails** → don't auto-reinstall; report the error and suggest a manual reinstall.
-- **A command is rate-limited** → the shared API key is throttled; suggest a personal key at the [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal), and remind the user to add any `.env` to `.gitignore`.
+- **A global install printed `PromptScript does not support global skill installation`** (only with `npx skills add … --yes -g`) → known upstream `npx skills` limitation: the skill files installed correctly. Tell the user it's safe to ignore.
