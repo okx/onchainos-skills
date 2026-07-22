@@ -159,8 +159,10 @@ pub fn delete(key: &str) -> Result<()> {
 }
 
 /// Store multiple credentials at once (single read + single write).
+/// On an unreadable/corrupted store, overwrites from empty instead of erroring,
+/// so the login write path can always re-establish credentials.
 pub fn store(credentials: &[(&str, &str)]) -> Result<()> {
-    let mut map = read_blob()?;
+    let mut map = read_blob().unwrap_or_default();
     for (key, value) in credentials {
         map.insert(key.to_string(), value.to_string());
     }
@@ -232,6 +234,32 @@ mod tests {
                 msg.contains("please login again"),
                 "error message should guide the user to re-login, got: {err:#}"
             );
+        });
+    }
+
+    #[test]
+    fn store_recovers_from_corrupted_keyring() {
+        // read_blob() hard-errors on corruption, but store() (the login write
+        // path) must self-heal by overwriting rather than trap the user.
+        with_temp_home("store_recovers_corrupt", || {
+            let mut map = HashMap::new();
+            map.insert("access_token".to_string(), "stale-tok".to_string());
+            file_keyring::write_blob(&map).unwrap();
+
+            // Corrupt keyring.enc so read_blob() returns Err.
+            let path = crate::home::onchainos_home().unwrap().join("keyring.enc");
+            fs::write(
+                &path,
+                b"this is not valid encrypted data at all, needs to be long enough for salt+nonce",
+            )
+            .unwrap();
+            read_blob().expect_err("precondition: corrupted keyring must read as Err");
+
+            // store() (the login write path) must succeed and overwrite.
+            store(&[("access_token", "fresh-tok")]).expect("store must self-heal over corruption");
+
+            let loaded = read_blob().expect("blob must be readable after store recovery");
+            assert_eq!(loaded.get("access_token").unwrap(), "fresh-tok");
         });
     }
 
