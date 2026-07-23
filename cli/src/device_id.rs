@@ -11,10 +11,21 @@
 //!
 //! Stateful / I/O layer (spec §9.1 / §A.1 / §A.2):
 //! - `get_cached_device_id` — public entry point; memoized via `OnceLock`.
-//! - `ensure_device_id` — get-or-create pipeline (keyring read + validate,
-//!   else generate).
+//! - `ensure_device_id` — get-or-create pipeline (session.json read +
+//!   validate, else generate).
 //! - `generate_device_id` — `machine_uid`/sha256 or UUID fallback, then
-//!   best-effort keyring persist.
+//!   best-effort persist to `session.json`.
+//!
+//! Storage: the persisted value lives in the non-sensitive on-disk session
+//! metadata (`wallet_store::SessionJson.device_id`, at
+//! `$ONCHAINOS_HOME/session.json`), NOT the OS keyring. The device id is a
+//! forgeable, non-credential identifier that is also reported in plaintext
+//! via the header, so it belongs beside other session metadata rather than
+//! next to tokens / private keys. A missing file or empty field is a cache
+//! miss: the value is deterministically re-derived
+//! (`sha256(machine_id + "onchainos")`) and re-persisted, so clearing
+//! `session.json` yields the identical id on any machine with a readable
+//! hardware id.
 //!
 //! Value format (spec §4.3): a 64-char lowercase-hex SHA-256 digest OR a
 //! 36-char UUIDv4, always pure ASCII.
@@ -27,13 +38,6 @@ use uuid::Uuid;
 /// Fixed namespace suffix concatenated after the machine id before hashing
 /// (spec §5.2 — never changed).
 const NAMESPACE_SUFFIX: &[u8] = b"onchainos";
-
-/// Keyring key under which the derived device id is persisted (spec §8.3).
-///
-/// Lives in the existing unified blob (`SERVICE="onchainos"`,
-/// `UNIFIED_KEY="agentic-wallet"`) alongside the auth credentials; the
-/// device id is explicitly non-sensitive (forgeable, non-credential).
-const KEYRING_KEY: &str = "device_id";
 
 /// Process-lifetime memoization cell for the device id (spec §9.1 / §A.6).
 ///
@@ -55,20 +59,56 @@ pub fn get_cached_device_id() -> Option<&'static str> {
 
 /// Get-or-create pipeline for the device id (spec §A.2).
 ///
-/// Reads the persisted value from the keyring: a valid value is returned as-is
-/// (no regeneration); a missing or invalid value falls through to
-/// `generate_device_id`. Never panics — keyring failures are absorbed
+/// Reads the persisted value from `session.json`: a valid value is returned
+/// as-is (no regeneration); a missing/empty or invalid value falls through to
+/// `generate_device_id`. Never panics — session I/O failures are absorbed
 /// (best-effort contract §3.3).
 fn ensure_device_id() -> Option<String> {
-    if let Some(existing) = crate::keyring_store::get_opt(KEYRING_KEY) {
+    if let Some(existing) = read_persisted_device_id() {
         if is_valid_device_id(&existing) {
             if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG] device-id: loaded from keyring cache");
+                eprintln!("[DEBUG] device-id: loaded from session.json cache");
             }
             return Some(existing);
         }
     }
     generate_device_id()
+}
+
+/// Absent-tolerant read of the persisted device id from `session.json`
+/// (spec §A.2). A missing file, a missing/empty `device_id` field, or any read
+/// error all collapse to `None` (a cache miss → regenerate) — the device id is
+/// non-sensitive session metadata, never a hard dependency.
+fn read_persisted_device_id() -> Option<String> {
+    match crate::wallet_store::load_session() {
+        Ok(Some(session)) if !session.device_id.is_empty() => Some(session.device_id),
+        _ => None,
+    }
+}
+
+/// Best-effort persist of the device id into `session.json`, preserving every
+/// other session field (spec §A.2 / §3.3). Loads the current session (or a
+/// default when absent), sets `device_id`, and writes it back. A load or write
+/// failure is swallowed — the value is still usable for this process and is
+/// re-derived deterministically next run; the error never propagates.
+fn persist_device_id(value: &str) {
+    let mut session = crate::wallet_store::load_session()
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    session.device_id = value.to_string();
+    match crate::wallet_store::save_session(&session) {
+        Ok(()) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG] device-id: persisted to session.json");
+            }
+        }
+        Err(_) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG] device-id: persist failed, value usable this process only");
+            }
+        }
+    }
 }
 
 /// Generate a fresh device id and best-effort persist it (spec §A.2 / §A.3).
@@ -97,18 +137,7 @@ fn generate_device_id() -> Option<String> {
         }
     };
 
-    match crate::keyring_store::set(KEYRING_KEY, &value) {
-        Ok(()) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG] device-id: persisted to keyring");
-            }
-        }
-        Err(_) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG] device-id: persist failed, value usable this process only");
-            }
-        }
-    }
+    persist_device_id(&value);
 
     Some(value)
 }
@@ -228,21 +257,19 @@ mod tests {
     #[test]
     fn get_or_create_persists() {
         with_temp_home("get_or_create_persists", || {
-            // NOTE: no fresh-keyring precondition here. `with_temp_home` isolates
-            // only `ONCHAINOS_HOME` (which scopes the `file_keyring` `keyring.enc`),
-            // but on Linux the `keyring` crate's `linux-native` keyutils backend is
-            // a session-global kernel store NOT scoped by `ONCHAINOS_HOME`, so a
-            // `device_id` persisted by an earlier test-run process can survive there.
-            // Asserting an empty keyring purely from a fresh home is therefore
-            // invalid on Linux CI. We instead assert the behavior actually under
-            // test: get-or-create returns a valid value, persists it, and is stable
-            // across calls — which holds regardless of pre-existing OS-keyring state.
+            // `session.json` lives under `ONCHAINOS_HOME`, which `with_temp_home`
+            // points at a fresh dir — so (unlike the OS keyring) there is
+            // genuinely no persisted value yet.
+            assert!(read_persisted_device_id().is_none());
+
             let first = ensure_device_id().expect("first ensure returns Some");
             assert!(is_valid_device_id(&first));
 
-            // The generated value is now persisted in the keyring.
-            let persisted =
-                crate::keyring_store::get_opt("device_id").expect("value persisted to keyring");
+            // The generated value is now persisted in session.json.
+            let persisted = crate::wallet_store::load_session()
+                .expect("session loads")
+                .expect("session.json written")
+                .device_id;
             assert_eq!(persisted, first);
 
             // A second ensure reads the identical value back (no regeneration).
@@ -253,17 +280,17 @@ mod tests {
 
     #[test]
     fn invalid_persisted_value_regenerates() {
-        // Empty string: invalid → regenerate.
+        // Empty field: treated as absent (cache miss) → regenerate.
         with_temp_home("invalid_empty", || {
-            crate::keyring_store::set("device_id", "").unwrap();
+            persist_device_id("");
             let regenerated = ensure_device_id().expect("regenerates over empty value");
             assert!(is_valid_device_id(&regenerated));
             assert!(regenerated.len() == 64 || regenerated.len() == 36);
         });
 
-        // 100-char string: invalid length → regenerate.
+        // 100-char field: present but invalid length → regenerate.
         with_temp_home("invalid_100_chars", || {
-            crate::keyring_store::set("device_id", &"a".repeat(100)).unwrap();
+            persist_device_id(&"a".repeat(100));
             let regenerated = ensure_device_id().expect("regenerates over 100-char value");
             assert!(is_valid_device_id(&regenerated));
             assert!(regenerated.len() == 64 || regenerated.len() == 36);
@@ -281,8 +308,9 @@ mod tests {
 
     #[test]
     fn failure_absorbed_no_panic() {
-        // Best-effort contract §3.3: `ensure_device_id()` never panics, even
-        // when persistence goes through the volatile-only keyring fallback.
+        // Best-effort contract §3.3: `ensure_device_id()` never panics and
+        // returns a usable value even when the session.json persist is a no-op
+        // or fails — the value stays valid for this process regardless.
         with_temp_home("failure_absorbed_no_panic", || {
             let value = ensure_device_id().expect("returns Some even if persist is best-effort");
             assert!(is_valid_device_id(&value));
