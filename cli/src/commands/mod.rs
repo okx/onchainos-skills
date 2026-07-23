@@ -10,6 +10,7 @@ pub mod market;
 pub mod memepump;
 pub mod payment;
 pub mod portfolio;
+pub(crate) mod risk_classify;
 pub mod security;
 pub mod signal;
 pub(crate) mod sink;

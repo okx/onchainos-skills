@@ -1712,7 +1712,12 @@ impl McpServer {
         )
         .await
         {
-            Ok(data) => ok(data),
+            Ok(mut data) => {
+                // SW2 (§10.2): MCP consumers see the same always-on per-route
+                // action/reason classification as the CLI path.
+                swap::classify_swap_response(&mut data);
+                ok(data)
+            }
             Err(e) => err(e),
         }
     }
@@ -1740,7 +1745,12 @@ impl McpServer {
         )
         .await
         {
-            Ok(data) => ok(data),
+            Ok(mut data) => {
+                // SW2 (§10.2): MCP consumers see the same always-on per-route
+                // action/reason classification as the CLI path.
+                swap::classify_swap_response(&mut data);
+                ok(data)
+            }
             Err(e) => err(e),
         }
     }

@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use super::Context;
 use crate::client::ApiClient;
 use crate::commands::common::wait_tx_onchain;
+use crate::commands::risk_classify::classify_swap_route;
 use crate::output;
 use crate::token_alias::{resolve_token_address, validate_address_for_chain};
 use crate::validators::{readable_to_minimal_str, validate_amount, validate_slippage};
@@ -182,17 +183,18 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
                 &chain_index,
             )
             .await?;
-            output::success(
-                fetch_quote(
-                    &mut client,
-                    &chain_index,
-                    &from,
-                    &to,
-                    &raw_amount,
-                    &swap_mode,
-                )
-                .await?,
-            );
+            let mut quote = fetch_quote(
+                &mut client,
+                &chain_index,
+                &from,
+                &to,
+                &raw_amount,
+                &swap_mode,
+            )
+            .await?;
+            // SW2 (§1.4 / §2.4): always-on per-route risk classification.
+            classify_swap_response(&mut quote);
+            output::success(quote);
         }
         SwapCommand::Swap {
             from,
@@ -217,22 +219,23 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
                 &chain_index,
             )
             .await?;
-            output::success(
-                fetch_swap(
-                    &mut client,
-                    &chain_index,
-                    &from,
-                    &to,
-                    &raw_amount,
-                    slippage.as_deref(),
-                    &wallet,
-                    &swap_mode,
-                    &gas_level,
-                    tips.as_deref(),
-                    max_auto_slippage.as_deref(),
-                )
-                .await?,
-            );
+            let mut swap = fetch_swap(
+                &mut client,
+                &chain_index,
+                &from,
+                &to,
+                &raw_amount,
+                slippage.as_deref(),
+                &wallet,
+                &swap_mode,
+                &gas_level,
+                tips.as_deref(),
+                max_auto_slippage.as_deref(),
+            )
+            .await?;
+            // SW2 (§1.4 / §2.4): always-on per-route risk classification.
+            classify_swap_response(&mut swap);
+            output::success(swap);
         }
         SwapCommand::Approve {
             token,
@@ -321,6 +324,46 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
     Ok(())
 }
 
+/// Locate the per-route objects inside a quote/swap response so SW2 can
+/// classify each one in place (§1.4 / §2.4). Two response shapes are handled
+/// while preserving the outer shape:
+/// - **quote**: `data` is an array (or a single object) whose entries carry
+///   `fromToken`/`toToken` directly — the entry itself is the route.
+/// - **swap**: each entry wraps the route under `routerResult` (alongside a
+///   `tx` sibling) — descend into `routerResult` so the appended
+///   `action`/`reason` land next to the tokens `classify_swap_route` reads.
+///
+/// Returns disjoint mutable references; the caller applies `classify_swap_route`
+/// to each. Non-array, non-object roots (e.g. `null`) yield the value itself,
+/// which `classify_swap_route` leaves untouched.
+fn swap_routes_mut(value: &mut Value) -> Vec<&mut Value> {
+    // Descend into `routerResult` (swap shape) when present, else the entry
+    // itself (quote shape).
+    fn route_of(entry: &mut Value) -> &mut Value {
+        if entry.get("routerResult").is_some_and(Value::is_object) {
+            entry
+                .get_mut("routerResult")
+                .expect("routerResult checked present and object")
+        } else {
+            entry
+        }
+    }
+
+    match value {
+        Value::Array(items) => items.iter_mut().map(route_of).collect(),
+        other => vec![route_of(other)],
+    }
+}
+
+/// SW2 (§1.4 / §2.4 / §10.2): apply always-on per-route risk classification to a
+/// fetched quote/swap response in place. Single source of truth for the route-walk
+/// and classify loop so the CLI (`execute`) and MCP (`swap_quote` / `swap_swap`)
+/// paths stay byte-identical — avoids the two-copy drift PRD §3.3 warns against.
+pub(crate) fn classify_swap_response(value: &mut Value) {
+    for route in swap_routes_mut(value) {
+        classify_swap_route(route);
+    }
+}
 
 /// Resolve the effective raw amount from either --amount (raw) or --readable-amount (human-readable).
 /// If --readable-amount is given, fetches token decimals via token info and converts.
@@ -1857,5 +1900,126 @@ mod tests {
         let (approve, swap) = extract_batch_hashes(&hashes, false, false);
         assert_eq!(approve, None);
         assert_eq!(swap, "0xswap");
+    }
+
+    // ── SW2 per-route action/reason post-processing (T-sw2, §1.4 / §2.4) ──
+    //
+    // These exercise `swap_routes_mut` + `classify_swap_route` together: the
+    // route-walk must locate each route object across both response shapes
+    // (quote element carries `toToken`/`fromToken` directly; swap element wraps
+    // them under `routerResult`) and the classifier appends `action`/`reason`
+    // in place. The taxRate boundary is TBC[4]-blocked and owned by T-tax.
+
+    #[test]
+    fn swap_routes_mut_quote_to_token_honeypot_blocks() {
+        // Quote shape: array of route objects with tokens at the top level.
+        let mut quote = json!([
+            {
+                "fromToken": { "isHoneyPot": false },
+                "toToken": { "isHoneyPot": true }
+            }
+        ]);
+        for route in swap_routes_mut(&mut quote) {
+            classify_swap_route(route);
+        }
+        assert_eq!(quote[0]["action"], json!("block"));
+        assert!(quote[0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("to-token is a honeypot"));
+        // Outer shape preserved: array stays an array.
+        assert!(quote.is_array());
+    }
+
+    #[test]
+    fn swap_routes_mut_swap_from_token_honeypot_warns() {
+        // Swap shape: array element wraps the route under `routerResult`; the
+        // walk must descend so the appended fields land next to the tokens.
+        let mut swap = json!([
+            {
+                "routerResult": {
+                    "fromToken": { "isHoneyPot": true },
+                    "toToken": { "isHoneyPot": false }
+                },
+                "tx": { "to": "0xrouter" }
+            }
+        ]);
+        for route in swap_routes_mut(&mut swap) {
+            classify_swap_route(route);
+        }
+        assert_eq!(swap[0]["routerResult"]["action"], json!("warn"));
+        assert!(swap[0]["routerResult"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("exit allowed"));
+        // Sibling `tx` is untouched by classification.
+        assert_eq!(swap[0]["tx"]["to"], json!("0xrouter"));
+    }
+
+    #[test]
+    fn swap_routes_mut_clean_route_is_ok_with_empty_reason() {
+        let mut quote = json!([
+            {
+                "fromToken": { "isHoneyPot": false },
+                "toToken": { "isHoneyPot": false }
+            }
+        ]);
+        for route in swap_routes_mut(&mut quote) {
+            classify_swap_route(route);
+        }
+        assert_eq!(quote[0]["action"], json!("ok"));
+        assert_eq!(quote[0]["reason"], json!(""));
+    }
+
+    #[test]
+    fn swap_routes_mut_preserves_object_outer_shape() {
+        // Single object at root (not array-wrapped) stays an object.
+        let mut quote = json!({
+            "fromToken": { "isHoneyPot": false },
+            "toToken": { "isHoneyPot": true }
+        });
+        for route in swap_routes_mut(&mut quote) {
+            classify_swap_route(route);
+        }
+        assert!(quote.is_object());
+        assert_eq!(quote["action"], json!("block"));
+    }
+
+    #[test]
+    fn swap_routes_mut_classifies_every_route_in_array() {
+        // Multiple quote routes are each classified independently.
+        let mut quote = json!([
+            { "fromToken": { "isHoneyPot": false }, "toToken": { "isHoneyPot": true } },
+            { "fromToken": { "isHoneyPot": false }, "toToken": { "isHoneyPot": false } }
+        ]);
+        for route in swap_routes_mut(&mut quote) {
+            classify_swap_route(route);
+        }
+        assert_eq!(quote[0]["action"], json!("block"));
+        assert_eq!(quote[1]["action"], json!("ok"));
+    }
+
+    #[test]
+    fn classify_swap_response_applies_classification_to_quote_shape() {
+        // The shared helper drives the route-walk + classify loop that both the
+        // CLI `swap::execute` arms and the MCP `swap_quote`/`swap_swap` tools now
+        // call, so classifying through it proves both paths carry the SW2
+        // `action`/`reason` fields (integration gap, spec §10.2).
+        let mut quote = json!([
+            { "fromToken": { "isHoneyPot": false }, "toToken": { "isHoneyPot": true } },
+            { "fromToken": { "isHoneyPot": false }, "toToken": { "isHoneyPot": false } }
+        ]);
+        classify_swap_response(&mut quote);
+        // Honeypot to-token route → block + reason substring.
+        assert_eq!(quote[0]["action"], json!("block"));
+        assert!(quote[0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("to-token is a honeypot"));
+        // Clean route → ok with empty reason.
+        assert_eq!(quote[1]["action"], json!("ok"));
+        assert_eq!(quote[1]["reason"], json!(""));
+        // Outer shape preserved: array stays an array.
+        assert!(quote.is_array());
     }
 }
