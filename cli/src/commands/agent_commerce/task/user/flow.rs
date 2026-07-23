@@ -221,6 +221,10 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 ///
 /// The `event_str` parameter accepts both event names (job_created / provider_applied / ...)
 /// and status names (created / submitted / ...), uniformly parsed by state_machine.
+// Each parameter is a distinct piece of envelope/context data the playbook needs;
+// bundling them into a params struct would ripple through every call site for no
+// behavioral gain, so the extra-argument lint is accepted here rather than fixed.
+#[allow(clippy::too_many_arguments)]
 pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>, prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>, message: Option<&serde_json::Value>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
