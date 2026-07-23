@@ -227,12 +227,13 @@ pub(crate) fn provider_conversation_cli_inner(
 
     let is_after_reject = prefetched_items.is_some();
 
-    if !is_after_reject
-        && pending_v2::has_pending_for_job(job_id, "user") {
+    if !is_after_reject {
+        if pending_v2::has_pending_for_job(job_id, "user") {
             return format!(
                 "[provider_conversation] Duplicate event — pending decision already exists for job {short_id}. End turn.\n"
             );
         }
+    }
 
     let items: Vec<serde_json::Value> = match prefetched_items {
         Some(v) => v,
@@ -240,7 +241,7 @@ pub(crate) fn provider_conversation_cli_inner(
             Ok(v) => v.into_iter()
                 .filter(|item| {
                     item.get("jobId").and_then(|v| v.as_str()) == Some(job_id)
-                        || !item.get("jobId").is_some_and(|v| v.is_string())
+                        || !item.get("jobId").map_or(false, |v| v.is_string())
                 })
                 .collect(),
             Err(e) => return format!("[provider_conversation] ERROR: task requests failed: {e}\n"),
@@ -351,7 +352,7 @@ pub(crate) fn provider_conversation_reject_cli(ctx: &FlowContext<'_>, group_id: 
         Ok(v) => v.into_iter()
             .filter(|item| {
                 item.get("jobId").and_then(|v| v.as_str()) == Some(job_id)
-                    || !item.get("jobId").is_some_and(|v| v.is_string())
+                    || !item.get("jobId").map_or(false, |v| v.is_string())
             })
             .collect(),
         Err(e) => return format!("[provider_conversation_reject] ERROR: task requests failed: {e}\n"),
@@ -395,7 +396,7 @@ pub(crate) async fn provider_conversation_auto_consume(ctx: &FlowContext<'_>) ->
             Ok(v) => v.into_iter()
                 .filter(|item| {
                     item.get("jobId").and_then(|v| v.as_str()) == Some(job_id)
-                        || !item.get("jobId").is_some_and(|v| v.is_string())
+                        || !item.get("jobId").map_or(false, |v| v.is_string())
                 })
                 .collect(),
             Err(e) => {

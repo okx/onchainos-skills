@@ -8,7 +8,7 @@
 //!   1. GET /task/{jobId}  → buyerAgentId + title
 //!   2. okx-a2a session create   (creates the group + records the sessionKey)
 //!   3. okx-a2a xmtp-send        (the first message to the User Agent — peer-to-peer
-//!      business message, NOT system-relay `session send`)
+//!                                business message, NOT system-relay `session send`)
 //!
 //! Replaces the old two-step playbook (`okx-a2a session create` + `okx-a2a xmtp-send`)
 //! that the LLM had to chain manually — fewer turns, no sessionKey passing
