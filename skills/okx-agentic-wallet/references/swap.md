@@ -68,12 +68,7 @@ Use `nextSteps.checkSwapStatus` verbatim. After Reply 1, if `txStatus` is not `S
 
 ## Risk Controls
 
-**CLI-classified (SW2, always-on).** `swap quote` / `swap swap` append `action` (`ok` / `warn` / `block`) and `reason` to every route — read them, never re-derive from raw `isHoneyPot` / `taxRate`. The CLI applies this per-route matrix (kept here for transparency; exit code stays 0 — classification, not rejection):
-
-| Signal | Buy side (to-token) | Sell side (from-token) |
-|---|---|---|
-| `isHoneyPot == true` | `block` — to-token is a honeypot | `warn` — from-token is a honeypot; exit allowed |
-| tax rate `> 10%` | `warn` — to-token tax exceeds 10% | `warn` — from-token tax exceeds 10% |
+**CLI-classified (SW2, always-on).** `swap quote` / `swap swap` append `action` (`ok` / `warn` / `block`) and `reason` to every route by combining the trade direction (buy vs sell) with honeypot and high-tax (`taxRate > 10%`) signals — read `action` only, never re-derive the verdict from raw `isHoneyPot` / `taxRate` (exit code stays 0 — classification, not rejection).
 
 Respond: `block` → halt, require an explicit override; `warn` → surface the `reason` and ask; `ok` → proceed. You may still show the exact `taxRate` from the route for display; the verdict itself comes from `action`.
 
