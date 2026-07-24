@@ -7,7 +7,7 @@
 ```bash
 onchainos strategy create-limit --chain-id <id|alias> --from-token <address> --to-token <address> \
   --amount <decimal-string> --direction <buy|sell> --trigger-price <usd> \
-  [--current-price <usd>] [--slippage <percent>] [--mev-protection <on|off|default>] [--expires-in <secs>]
+  [--current-price <usd>] [--slippage <percent>] [--mev-protection <on|off|default>] [--expires-in <secs>] [--wait]
 ```
 
 | Flag | Required | Notes |
@@ -21,18 +21,23 @@ onchainos strategy create-limit --chain-id <id|alias> --from-token <address> --t
 | `--slippage` | N | Percent, default `15`. Pass a plain number (`20%` → `20`; `0.05` = 0.05%, not 5%). |
 | `--mev-protection` | N | `on` / `off` / `default` (default = BE picks). |
 | `--expires-in` | N | TTL in seconds. Default `604800` (7 days). |
+| `--wait` | N | bool `[UNIT: bool]`, default `false`. Wait for terminal state: fixed 3 s sleep, then re-query + merge (see Output). |
 
 Output: `{orderId, status:<int>, statusLabel, estimatedWaitTime:<int|null>, eventCursor:<string|null>}`. Solana returns `estimatedWaitTime=0`; other chains follow the async wait pattern.
 
+**belowMinimum (exit 0, no order created):** below the $1 USD minimum — caught by the local pre-check OR by normalizing backend `100010` — the CLI returns `{belowMinimum:true, minFromAmount:<string>, fromSymbol:<string>}` instead. `minFromAmount = ceil(1.0 / from_token_price)` as an integer string; both paths emit identical shape. Render per [strategy.md](strategy.md) Step 2.
+
+**`--wait` merge:** appends `settled:<bool>`; when settled, also `transactionInfo` / `executionHistoryList` / `fromToken` / `toToken` / `orderStatusUpdateTime`. `status` / `statusLabel` reflect the re-query.
+
 ## `strategy cancel`
 
-Pass exactly one flag:
+Pass exactly one target selector:
 ```bash
-onchainos strategy cancel --order-id <id>
-onchainos strategy cancel --order-ids id1,id2,...
+onchainos strategy cancel --order-id <id> [--wait]
+onchainos strategy cancel --order-ids id1,id2,... [--wait]
 onchainos strategy cancel --all
 ```
-Output `{updateNum:N, estimatedWaitTime:null|n}`. `updateNum` is the count BE accepted, not the count that reached terminal state — re-query with `list` after the wait.
+`--wait` (bool, `[UNIT: bool]`) waits for terminal state (fixed 3 s + per-order re-query/merge). **`--all` + `--wait` is rejected** before any cancel is sent (`code: invalid_input`, `field: wait`, exit 1) — use `--order-id` / `--order-ids` with `--wait`, or omit `--wait` for bulk cancel. Output without `--wait`: `{updateNum:N, estimatedWaitTime:null|n}`; with `--wait`: `{settled:<bool>, orders:[{orderId, settled, status, statusLabel, ...}]}` (top-level `settled` = logical AND across orders). `updateNum` is the count BE accepted, not the count that reached terminal state — re-query with `list` if you did not pass `--wait`.
 
 ## `strategy list`
 
@@ -45,9 +50,10 @@ Modes: `--order-id <id>` → single-order detail (`openOrderDetail`); omit → p
 ## `strategy resume`
 
 ```bash
-onchainos strategy resume                     # auto-discover all SUSPENDED + canResume=true
-onchainos strategy resume --order-ids id1,id2  # explicit
+onchainos strategy resume [--wait]                      # auto-discover all SUSPENDED + canResume=true
+onchainos strategy resume --order-ids id1,id2 [--wait]  # explicit
 ```
+`--wait` (bool, `[UNIT: bool]`) waits for terminal state (fixed 3 s + per-order re-query/merge), same `{settled, orders:[...]}` shape as `cancel --wait`.
 
 ## strategyType enum + derivation
 
@@ -100,7 +106,7 @@ Match by integer code, not msg string.
 | 100005 | WALLET_ADDRESS_BLACKLISTED | Address flagged; ask the user to contact support — do not retry. |
 | 100007 | TEE_SIGN_FAILURE | Transient — retry once. |
 | 100008 | TEE_SERVICE_UNAVAILABLE | Temporarily unavailable; retry later. |
-| 100010 | ORDER_AMOUNT_TOO_SMALL | Below the $1 USD minimum; increase `--amount` and retry. |
+| 100010 | ORDER_AMOUNT_TOO_SMALL | Below the $1 USD minimum. For `create-limit` the CLI normalizes this to a `belowMinimum` response at exit 0 (see create-limit Output) — you won't see it as an error there; elsewhere, increase `--amount` and retry. |
 | 100012 | LIMIT_ORDER_INSUFFICIENT_BALANCE | Insufficient balance; suggest `wallet balance`. |
 
 ## Execution event codes (`executionHistoryList[].code`)

@@ -290,3 +290,105 @@ fn swap_liquidity_unknown_chain_9999_rejected_with_unsupported_chain_error() {
 // (lines 16–28). That test asserts ok=true, that data is a non-empty array,
 // and that entries carry a `chainIndex` field — a strict superset of IT-005's
 // "stdout contains ok / exit 0" requirement. No new fn added.
+
+// ─── SW2 always-on risk classification (WWINFRA-3509) ───────────────────
+//
+// Integration-plan rows IT-005 … IT-007. SW2 appends `action` (ok/warn/block)
+// and `reason` to every route object in the quote/swap response (spec §2.4).
+// These tests assert the wiring — that the `action` field is emitted on each
+// route — not the honeypot/tax matrix values, which are unit-tested in
+// `risk_classify.rs` (the tax branch is a documented TBC seam). All three are
+// `live` golden rows on anonymous/AK read endpoints and go through the shared
+// `run_with_retry` helper.
+
+// Solana native-token placeholder used by the OKX aggregator (system program).
+const SOL_NATIVE: &str = "11111111111111111111111111111111";
+
+/// Assert the SW2 classification appended an `action` field to every route in a
+/// non-empty `data` route array. SW2 appends `action` at the entry top level for
+/// the `quote` shape, but under each entry's `routerResult` object for the `swap`
+/// shape (see `swap.rs::swap_routes_mut`), so accept either nesting.
+#[track_caller]
+fn assert_routes_have_action(data: &serde_json::Value, label: &str) {
+    let routes = data
+        .as_array()
+        .unwrap_or_else(|| panic!("{label}: expected a route array, got: {data}"));
+    assert!(!routes.is_empty(), "{label}: expected at least one route: {data}");
+    let has_action = |route: &serde_json::Value| {
+        route.get("action").is_some()
+            || route
+                .get("routerResult")
+                .and_then(|rr| rr.get("action"))
+                .is_some()
+    };
+    assert!(
+        routes.iter().all(has_action),
+        "{label}: every route must carry an appended 'action' field (top level or under routerResult): {data}"
+    );
+}
+
+/// IT-005 — `swap quote` (ETH→USDC on ethereum) appends a risk `action` to each
+/// route.
+#[test]
+fn swap_quote_appends_risk_action_per_route() {
+    let output = run_with_retry(&[
+        "swap",
+        "quote",
+        "--from",
+        tokens::EVM_NATIVE,
+        "--to",
+        tokens::ETH_USDC,
+        "--amount",
+        "10000000000000000",
+        "--chain",
+        "ethereum",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert_routes_have_action(&data, "IT-005 swap quote");
+}
+
+/// IT-006 — `swap swap` (read-only calldata preview, ETH→USDC on ethereum)
+/// appends a risk `action` to each route.
+#[test]
+fn swap_swap_appends_risk_action_per_route() {
+    let output = run_with_retry(&[
+        "swap",
+        "swap",
+        "--from",
+        tokens::EVM_NATIVE,
+        "--to",
+        tokens::ETH_USDC,
+        "--amount",
+        "10000000000000000",
+        "--chain",
+        "ethereum",
+        "--slippage",
+        "1",
+        "--wallet",
+        VITALIK,
+        "--swap-mode",
+        "exactIn",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert_routes_have_action(&data, "IT-006 swap swap");
+}
+
+/// IT-007 — SW2 is chain-independent: a `swap quote` on solana (native→USDC)
+/// carries the same appended `action` field per route as EVM routes (spec §7).
+#[test]
+fn swap_quote_solana_appends_risk_action_per_route() {
+    let output = run_with_retry(&[
+        "swap",
+        "quote",
+        "--from",
+        SOL_NATIVE,
+        "--to",
+        tokens::SOL_USDC,
+        "--amount",
+        "100000000",
+        "--chain",
+        "solana",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert_routes_have_action(&data, "IT-007 swap quote solana");
+}

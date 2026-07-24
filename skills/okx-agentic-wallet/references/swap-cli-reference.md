@@ -18,7 +18,7 @@ Read-only price estimate. **No `--slippage`.**
 onchainos swap quote --from <addr> --to <addr> --readable-amount <amt> --chain <chain> [--swap-mode <exactIn|exactOut>]
 ```
 
-`--readable-amount` (human units, CLI converts) or `--amount` (raw minimal units) — one of. Key return: `toTokenAmount`, `fromTokenAmount`, `estimateGasFee`, `tradeFee` (USD), `priceImpactPercent`, `dexRouterList[]` (`dexName`, `percentage`), and per-side `fromToken` / `toToken` with `isHoneyPot`, `taxRate`, `decimal`, `tokenUnitPrice`.
+`--readable-amount` (human units, CLI converts) or `--amount` (raw minimal units) — one of. Key return: `toTokenAmount`, `fromTokenAmount`, `estimateGasFee`, `tradeFee` (USD), `priceImpactPercent`, `dexRouterList[]` (`dexName`, `percentage`), and per-side `fromToken` / `toToken` with `isHoneyPot`, `taxRate`, `decimal`, `tokenUnitPrice`. Each route also carries the always-on SW2 fields `action` (`ok` / `warn` / `block`) and `reason` (semicolon-joined, deduplicated; empty string when `ok`) — the CLI classifies honeypot / tax-rate risk per route; read them, do not recompute (see [swap.md](swap.md) Risk Controls).
 
 ## `swap execute`
 
@@ -54,7 +54,7 @@ onchainos swap swap --from <addr> --to <addr> --readable-amount <amt> --chain <c
   [--slippage <pct>] [--swap-mode <exactIn|exactOut>] [--tips <sol>] [--max-auto-slippage <pct>]
 ```
 
-Returns `routerResult` (same shape as `quote`) and `tx` (`to`, `data`, `gas`, `gasPrice`, `value`, `minReceiveAmount`). Present the pair summary + tx fields; for an EVM non-native token, run `swap approve` first and present its calldata separately. Solana: `--tips` embeds Jito calldata. EVM: `--mev-protection` is not supported here — recommend a MEV-protected RPC.
+Returns `routerResult` (same shape as `quote`, including the always-on per-route `action` / `reason`) and `tx` (`to`, `data`, `gas`, `gasPrice`, `value`, `minReceiveAmount`). Present the pair summary + tx fields; for an EVM non-native token, run `swap approve` first and present its calldata separately. Solana: `--tips` embeds Jito calldata. EVM: `--mev-protection` is not supported here — recommend a MEV-protected RPC.
 
 ## `swap approve`
 

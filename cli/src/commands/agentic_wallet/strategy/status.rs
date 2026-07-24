@@ -226,6 +226,15 @@ pub fn is_upgrade_required(e: &anyhow::Error) -> bool {
         .unwrap_or(false)
 }
 
+/// True if `e` wraps a `StrategyApiError { kind: OrderAmountTooSmall }` (100010).
+/// Mirrors `is_upgrade_required`; callers use it to normalize the backend
+/// below-minimum rejection into the F1 `belowMinimum` output (tech-design §1.5).
+pub fn is_order_amount_too_small(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<StrategyApiError>()
+        .map(|s| matches!(s.kind, StrategyError::OrderAmountTooSmall))
+        .unwrap_or(false)
+}
+
 // ── Execution events (executionHistoryList[].code) ──
 //
 // Catalog of TEE swap-trade engine event codes. The `message` column is the
@@ -439,6 +448,30 @@ mod tests {
         assert!(!super::is_upgrade_required(&err));
         let err = anyhow::anyhow!("network down");
         assert!(!super::is_upgrade_required(&err));
+    }
+
+    // ── is_order_amount_too_small (F1 §1.5) ──────────────────────
+
+    #[test]
+    fn is_order_amount_too_small_detects_100010_via_typed_error() {
+        let v = json!({ "code": 100010, "msg": "order amount too small" });
+        let err = check_response(&v).unwrap_err();
+        assert!(super::is_order_amount_too_small(&err));
+    }
+
+    #[test]
+    fn is_order_amount_too_small_rejects_other_codes() {
+        // 60018 is a different typed error — must not normalize to belowMinimum.
+        let v = json!({ "code": 60018, "msg": "upgrade required" });
+        let err = check_response(&v).unwrap_err();
+        assert!(!super::is_order_amount_too_small(&err));
+    }
+
+    #[test]
+    fn is_order_amount_too_small_rejects_plain_anyhow_errors() {
+        // Untyped errors must never be treated as the 100010 case.
+        let err = anyhow::anyhow!("x");
+        assert!(!super::is_order_amount_too_small(&err));
     }
 
     // ── is_terminal_event ────────────────────────────────────────

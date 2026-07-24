@@ -7,14 +7,35 @@ Syntax, parameters, return fields, and risk catalogs for the 5 `onchainos securi
 Batch token risk / honeypot detection (all chains).
 
 ```bash
-onchainos security token-scan --tokens "<chainId>:<addr>[,...]"   # primary mode (max 50 pairs)
-onchainos security token-scan [--chain <chain>]                    # logged-in wallet shortcut
-onchainos security token-scan --address <addr> [--chain <chain>]   # public-address shortcut
+onchainos security token-scan --tokens "<chainId>:<addr>[,...]" [--trade-direction <buy|sell>]   # primary mode (max 50 pairs)
+onchainos security token-scan [--chain <chain>] [--trade-direction <buy|sell>]                    # logged-in wallet shortcut
+onchainos security token-scan --address <addr> [--chain <chain>] [--trade-direction <buy|sell>]   # public-address shortcut
 ```
 
 `--tokens`: comma-separated `chainId:contractAddress` (chain as name or ID). The `--chain` / `--address` modes query the balance API first, then batch-scan. Native tokens (empty contract address) are skipped in all modes.
 
-Return (per token): `chainId`, `tokenAddress`, `isChainSupported`, `riskLevel` (`CRITICAL`/`HIGH`/`MEDIUM`/`LOW`), `buyTaxes` / `sellTaxes` (string|null), and the boolean labels below.
+`--trade-direction <buy|sell>` (optional, `[UNIT: enum]`, case-insensitive): direction of the token being scanned — `buy` (receiving, stricter) or `sell` (spending, allows exit). Omit for raw scan results with no action classification.
+
+**Return without `--trade-direction`** (byte-identical to the pre-classification behavior) — a raw array; per token: `chainId`, `tokenAddress`, `isChainSupported`, `riskLevel` (`CRITICAL` / `HIGH` / `MEDIUM` / `LOW`), `buyTaxes` / `sellTaxes` (string|null), and the boolean labels below.
+
+**Return with `--trade-direction`** — an object `{ tokens, combinedAction, tradeDirection }`. Each `tokens[]` entry keeps all raw fields above plus:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `normalizedRiskLevel` | String | `CRITICAL` / `HIGH` / `MEDIUM` / `LOW`; missing / null / unrecognized → `HIGH`. |
+| `action` | String | `block` / `pause` / `warn` / `safe`, from the CLI's riskLevel×direction matrix (below). |
+| `isNative` | bool | `true` when the token has no contract address. |
+
+Top level: `combinedAction` = strictest `action` across all non-native tokens (severity `block` > `pause` > `warn` > `safe`; `safe` when none), `tradeDirection` = echo of the flag. Exit code is 0 even for `block` — the CLI classifies, the agent decides (see [security.md](security.md)).
+
+CLI riskLevel×direction matrix (returned in `action`; do NOT recompute — kept here for transparency):
+
+| riskLevel | buy | sell |
+|---|---|---|
+| CRITICAL | block | warn |
+| HIGH | pause | warn |
+| MEDIUM | warn | warn |
+| LOW | safe | safe |
 
 ### Token risk label catalog
 
@@ -26,7 +47,7 @@ Return (per token): `chainId`, `tokenAddress`, `isChainSupported`, `riskLevel` (
 
 Tax thresholds feed `riskLevel` server-side (do NOT recompute): ≥50% → contributes CRITICAL; 21–50% → HIGH; 0–21% → MEDIUM; 0/null → no tax risk. Display tax % when non-null; omit when null.
 
-Interpretation: read `riskLevel` (authoritative); collect `true` boolean labels for display (include `isHasAssetEditAuth` only on Solana); if `riskLevel` is non-LOW but no label is true, display "flagged by composite analysis, no specific label identified". Apply the buy/sell action matrix (see [security.md](security.md)).
+Interpretation: read `riskLevel` (authoritative); collect `true` boolean labels for display (include `isHasAssetEditAuth` only on Solana); if `riskLevel` is non-LOW but no label is true, display "flagged by composite analysis, no specific label identified". With `--trade-direction` the CLI already resolves the verdict — read the returned `action` / `combinedAction`, do not apply the matrix by hand (see [security.md](security.md)).
 
 ## `security dapp-scan`
 

@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use tokio::task::JoinSet;
 
 use super::Context;
+use crate::commands::risk_classify::{self, combined_action, TokenResult, TradeDirection};
 use crate::{chains, output};
 
 /// Max tokens per token-scan API request.
@@ -33,6 +34,12 @@ pub enum SecurityCommand {
         /// (e.g. ethereum, solana, xlayer, 1, 501, 196).
         #[arg(long)]
         chain: Option<String>,
+
+        /// Trade direction of the token being scanned in this transaction: buy (receiving, stricter) or sell (spending, allows exit). Omit to get raw scan results without action classification.
+        ///
+        /// [UNIT: enum]
+        #[arg(long, value_parser = risk_classify::parse_trade_direction_value)]
+        trade_direction: Option<TradeDirection>,
     },
 
     /// DApp / URL security scan — detect phishing sites, blacklisted domains
@@ -123,7 +130,17 @@ pub async fn execute(ctx: &Context, cmd: SecurityCommand) -> Result<()> {
             tokens,
             address,
             chain,
-        } => token_scan(ctx, tokens.as_deref(), address.as_deref(), chain.as_deref()).await,
+            trade_direction,
+        } => {
+            token_scan(
+                ctx,
+                tokens.as_deref(),
+                address.as_deref(),
+                chain.as_deref(),
+                trade_direction,
+            )
+            .await
+        }
         SecurityCommand::Approvals {
             address,
             chain,
@@ -182,15 +199,16 @@ async fn token_scan(
     tokens: Option<&str>,
     address: Option<&str>,
     chain: Option<&str>,
+    trade_direction: Option<TradeDirection>,
 ) -> Result<()> {
     match (tokens, address) {
         // Path 3 (2.2.2): explicit chainId:contractAddress — direct scan
-        (Some(t), _) => token_scan_explicit(ctx, t).await,
+        (Some(t), _) => token_scan_explicit(ctx, t, trade_direction).await,
 
         // Path 2 (2.2.1): public address — query portfolio API then scan
         (None, Some(addr)) => {
             let pairs = fetch_tokens_by_address(ctx, addr, chain).await?;
-            run_batch_scan(ctx, pairs).await
+            run_batch_scan(ctx, pairs, trade_direction).await
         }
 
         // Path 1: logged-in Agentic Wallet — query wallet balance API then scan
@@ -209,13 +227,17 @@ async fn token_scan(
                 )
             })?;
             let pairs = fetch_tokens_from_wallet(&access_token, &account_id, chain).await?;
-            run_batch_scan(ctx, pairs).await
+            run_batch_scan(ctx, pairs, trade_direction).await
         }
     }
 }
 
 /// Path 3: scan an explicit comma-separated list of chainId:contractAddress pairs (max 50).
-async fn token_scan_explicit(ctx: &Context, tokens: &str) -> Result<()> {
+async fn token_scan_explicit(
+    ctx: &Context,
+    tokens: &str,
+    trade_direction: Option<TradeDirection>,
+) -> Result<()> {
     let mut client = ctx.client_async().await?;
 
     let token_list: Vec<Value> = tokens
@@ -246,7 +268,10 @@ async fn token_scan_explicit(ctx: &Context, tokens: &str) -> Result<()> {
 
     let body = json!({ "source": "onchain_os_cli", "tokenList": token_list });
     let result = client.post("/api/v6/security/token-scan", &body).await?;
-    output::success(result);
+    match result {
+        Value::Array(arr) => emit_token_scan(arr, trade_direction),
+        other => output::success(other),
+    }
     Ok(())
 }
 
@@ -303,9 +328,13 @@ async fn fetch_tokens_by_address(
 
 /// Shared: dispatch token pairs to token-scan API in concurrent batches of 50.
 /// Merges all batch results into a single array output.
-async fn run_batch_scan(ctx: &Context, token_pairs: Vec<(String, String)>) -> Result<()> {
+async fn run_batch_scan(
+    ctx: &Context,
+    token_pairs: Vec<(String, String)>,
+    trade_direction: Option<TradeDirection>,
+) -> Result<()> {
     if token_pairs.is_empty() {
-        output::success(Value::Array(vec![]));
+        emit_token_scan(Vec::new(), trade_direction);
         return Ok(());
     }
 
@@ -336,8 +365,54 @@ async fn run_batch_scan(ctx: &Context, token_pairs: Vec<(String, String)>) -> Re
         }
     }
 
-    output::success(Value::Array(all_results));
+    emit_token_scan(all_results, trade_direction);
     Ok(())
+}
+
+/// Build the classified token-scan object (§2.1) from a raw backend scan array.
+///
+/// Each token gets `normalizedRiskLevel`, `action`, and `isNative` appended (all
+/// original fields preserved); the top-level object carries `combinedAction`
+/// (strictest non-native action, `safe` if none) and the echoed `tradeDirection`.
+/// Classification is delegated to the shared `risk_classify` matrix.
+fn classify_tokens(tokens: Vec<Value>, trade_direction: TradeDirection) -> Value {
+    let classified: Vec<TokenResult> = tokens
+        .iter()
+        .map(|token| TokenResult::classify(token, trade_direction))
+        .collect();
+
+    let combined = combined_action(&classified);
+
+    let enriched: Vec<Value> = tokens
+        .into_iter()
+        .zip(classified)
+        .map(|(mut token, result)| {
+            if let Some(obj) = token.as_object_mut() {
+                obj.insert(
+                    "normalizedRiskLevel".to_string(),
+                    Value::from(result.normalized_risk_level().as_str()),
+                );
+                obj.insert("action".to_string(), Value::from(result.action().as_str()));
+                obj.insert("isNative".to_string(), Value::from(result.is_native()));
+            }
+            token
+        })
+        .collect();
+
+    json!({
+        "tokens": enriched,
+        "combinedAction": combined.as_str(),
+        "tradeDirection": trade_direction.as_str(),
+    })
+}
+
+/// Emit token-scan output: the classified object (§2.1) when a trade direction
+/// is set, otherwise the raw array — byte-identical to the pre-flag behavior.
+fn emit_token_scan(results: Vec<Value>, trade_direction: Option<TradeDirection>) {
+    match trade_direction {
+        Some(dir) => output::success(classify_tokens(results, dir)),
+        None => output::success(Value::Array(results)),
+    }
 }
 
 /// Parse portfolio balance response into (chainIndex, tokenContractAddress) pairs.
@@ -771,5 +846,89 @@ mod tests {
         let (ci, addr) = parse_token("  56 : 0xdef  ").unwrap();
         assert_eq!(ci, "56");
         assert_eq!(addr, "0xdef");
+    }
+
+    // ── classify_tokens (T-sec) ───────────────────────────────────────────────
+
+    #[test]
+    fn classify_tokens_buy_critical_non_native_blocks() {
+        let raw = vec![json!({
+            "tokenContractAddress": "0xbad",
+            "riskLevel": "CRITICAL",
+            "symbol": "SCAM"
+        })];
+        let out = classify_tokens(raw, TradeDirection::Buy);
+
+        assert_eq!(out["tradeDirection"], json!("buy"));
+        assert_eq!(out["combinedAction"], json!("block"));
+
+        let token = &out["tokens"][0];
+        assert_eq!(token["normalizedRiskLevel"], json!("CRITICAL"));
+        assert_eq!(token["action"], json!("block"));
+        assert_eq!(token["isNative"], json!(false));
+        // original fields preserved verbatim
+        assert_eq!(token["symbol"], json!("SCAM"));
+        assert_eq!(token["riskLevel"], json!("CRITICAL"));
+    }
+
+    #[test]
+    fn classify_tokens_sell_critical_warns() {
+        let raw = vec![json!({"tokenContractAddress": "0xbad", "riskLevel": "CRITICAL"})];
+        let out = classify_tokens(raw, TradeDirection::Sell);
+        assert_eq!(out["tokens"][0]["action"], json!("warn"));
+        assert_eq!(out["combinedAction"], json!("warn"));
+        assert_eq!(out["tradeDirection"], json!("sell"));
+    }
+
+    #[test]
+    fn classify_tokens_sell_low_is_safe() {
+        let raw = vec![json!({"tokenContractAddress": "0xok", "riskLevel": "LOW"})];
+        let out = classify_tokens(raw, TradeDirection::Sell);
+        assert_eq!(out["tokens"][0]["action"], json!("safe"));
+        assert_eq!(out["combinedAction"], json!("safe"));
+    }
+
+    #[test]
+    fn classify_tokens_native_marked_and_excluded_from_combined() {
+        // Native token (no contract address) classifies as `block` on buy, but it
+        // is excluded from `combinedAction`, which then follows the non-native LOW
+        // token → `safe`.
+        let raw = vec![
+            json!({"riskLevel": "CRITICAL"}), // native
+            json!({"tokenContractAddress": "0xok", "riskLevel": "LOW"}), // non-native
+        ];
+        let out = classify_tokens(raw, TradeDirection::Buy);
+        assert_eq!(out["tokens"][0]["isNative"], json!(true));
+        assert_eq!(out["tokens"][1]["isNative"], json!(false));
+        assert_eq!(out["combinedAction"], json!("safe"));
+    }
+
+    #[test]
+    fn classify_tokens_missing_risk_level_defaults_high_buy_pause() {
+        let raw = vec![
+            json!({"tokenContractAddress": "0xa"}), // missing riskLevel
+            json!({"tokenContractAddress": "0xb", "riskLevel": null}), // null
+            json!({"tokenContractAddress": "0xc", "riskLevel": "???"}), // unknown
+        ];
+        let out = classify_tokens(raw, TradeDirection::Buy);
+        for i in 0..3 {
+            assert_eq!(out["tokens"][i]["normalizedRiskLevel"], json!("HIGH"));
+            assert_eq!(out["tokens"][i]["action"], json!("pause")); // HIGH + buy → pause
+        }
+        assert_eq!(out["combinedAction"], json!("pause"));
+    }
+
+    #[test]
+    fn classify_tokens_empty_array_is_safe() {
+        let out = classify_tokens(vec![], TradeDirection::Buy);
+        assert_eq!(out["tokens"], json!([]));
+        assert_eq!(out["combinedAction"], json!("safe"));
+        assert_eq!(out["tradeDirection"], json!("buy"));
+    }
+
+    #[test]
+    fn trade_direction_rejects_invalid_value() {
+        // Invalid --trade-direction is rejected at parse time (clap → exit 2).
+        assert!(risk_classify::parse_trade_direction_value("xyz").is_err());
     }
 }
