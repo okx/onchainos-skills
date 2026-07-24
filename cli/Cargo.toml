@@ -79,6 +79,8 @@ libc = "0.2"
 # Utils
 hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
+# Device fingerprint (machine_uid::get() reads /etc/machine-id / MachineGuid / IOPlatformUUID); pin 0.3 per spec §11.2 TBC[2] — do NOT upgrade to 0.6
+machine-uid = "0.3"
 qrcode = { version = "0.14", default-features = false }
 # Cross-platform browser open (macOS/Windows/Linux + WSL); failure is caught, never fatal
 open = "5"

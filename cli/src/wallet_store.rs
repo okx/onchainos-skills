@@ -137,6 +137,14 @@ pub struct SessionJson {
     pub encrypted_session_sk: String,
     #[serde(default)]
     pub session_key_expire_at: String,
+    /// Stable per-machine device id sent as the `device-id` request header
+    /// (see `crate::device_id`). Non-sensitive — it is a sha256 hash / UUIDv4
+    /// that is also reported in plaintext via the header — so it lives in this
+    /// on-disk session metadata rather than in the OS keyring alongside
+    /// tokens / private keys. Empty string ⇒ absent (a cache miss that makes
+    /// `device_id` re-derive and re-persist the value).
+    #[serde(default)]
+    pub device_id: String,
 }
 
 // ── Path helpers ────────────────────────────────────────────────────
@@ -734,6 +742,8 @@ mod tests {
             session_cert: "cert-abc".to_string(),
             encrypted_session_sk: "esk-xyz".to_string(),
             session_key_expire_at: "1700000000".to_string(),
+            device_id: "d0f3de61e3704af433758f3ea65c56723b37354844eceaffdd6a229dd76f2289"
+                .to_string(),
         };
         let json = serde_json::to_string(&s).unwrap();
         let parsed: SessionJson = serde_json::from_str(&json).unwrap();
@@ -741,6 +751,10 @@ mod tests {
         assert_eq!(parsed.session_cert, "cert-abc");
         assert_eq!(parsed.encrypted_session_sk, "esk-xyz");
         assert_eq!(parsed.session_key_expire_at, "1700000000");
+        assert_eq!(
+            parsed.device_id,
+            "d0f3de61e3704af433758f3ea65c56723b37354844eceaffdd6a229dd76f2289"
+        );
     }
 
     #[test]
@@ -756,6 +770,7 @@ mod tests {
         assert!(json.contains("\"sessionCert\""));
         assert!(json.contains("\"encryptedSessionSk\""));
         assert!(json.contains("\"sessionKeyExpireAt\""));
+        assert!(json.contains("\"deviceId\""));
     }
 
     #[test]
@@ -765,6 +780,7 @@ mod tests {
         assert!(s.session_cert.is_empty());
         assert!(s.encrypted_session_sk.is_empty());
         assert!(s.session_key_expire_at.is_empty());
+        assert!(s.device_id.is_empty());
     }
 
     #[test]
@@ -775,11 +791,13 @@ mod tests {
                 session_cert: "cert1".to_string(),
                 encrypted_session_sk: "esk1".to_string(),
                 session_key_expire_at: "999".to_string(),
+                device_id: "device-abc".to_string(),
             };
             save_session(&s).unwrap();
             let loaded = load_session().unwrap().unwrap();
             assert_eq!(loaded.sa_tee_id, "sa-tee1");
             assert_eq!(loaded.session_key_expire_at, "999");
+            assert_eq!(loaded.device_id, "device-abc");
         });
     }
 
