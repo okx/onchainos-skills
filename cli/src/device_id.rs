@@ -49,8 +49,8 @@ static DEVICE_ID: OnceLock<Option<String>> = OnceLock::new();
 
 /// Returns the cached device id, computing it on the first call (spec §A.1).
 ///
-/// The first call runs the get-or-create pipeline exactly once (keyring read,
-/// optional `machine_uid::get()`, optional keyring write); every subsequent
+/// The first call runs the get-or-create pipeline exactly once (session.json
+/// read, optional `machine_uid::get()`, optional session.json write); every subsequent
 /// call is a pure memory read from the `OnceLock`. Returns `None` when
 /// computation failed, in which case the caller skips the `device-id` header.
 pub fn get_cached_device_id() -> Option<&'static str> {

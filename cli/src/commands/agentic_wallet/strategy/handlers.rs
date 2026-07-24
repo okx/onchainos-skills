@@ -199,18 +199,47 @@ async fn fetch_token_price(
     Ok(price)
 }
 
-/// Build the F1 `belowMinimum` success payload (§2.2). Called by BOTH the local
-/// pre-check (§1.2) and the backend-`100010` fallback (§1.5) so their output is
-/// byte-identical. `min_from_amount` is the smallest whole-token from-amount
-/// worth >= $1 USD: `ceil(MIN_ORDER_USD / from_token_price)` as an integer
-/// string. `from_token_price` is USD-per-token; `from_symbol` is the ticker.
-fn build_below_minimum(from_token_price: f64, from_symbol: &str) -> serde_json::Value {
-    let min_from_amount = (MIN_ORDER_USD / from_token_price).ceil() as i64;
+/// Build the `belowMinimum` success payload. `minFromAmount` is the smallest
+/// from-token amount worth >= $1 USD, in readable units at the token's decimal
+/// precision. `from_token_price` is USD-per-token, `from_symbol` is the ticker,
+/// `from_decimals` is the from-token's decimals.
+fn build_below_minimum(
+    from_token_price: f64,
+    from_symbol: &str,
+    from_decimals: u32,
+) -> serde_json::Value {
     json!({
         "belowMinimum": true,
-        "minFromAmount": min_from_amount.to_string(),
+        "minFromAmount": format_min_from_amount(from_token_price, from_decimals),
         "fromSymbol": from_symbol,
     })
+}
+
+/// Smallest readable from-amount that clears the `$1` floor at `from_token_price`:
+/// `MIN_ORDER_USD / from_token_price`, rounded up at `min(from_decimals, 8)`
+/// decimals, trailing zeros stripped. Rounding up keeps the amount >= $1; the
+/// precision never exceeds the token's decimals, so the value stays divisible.
+/// Returns `"0"` when `from_token_price` is not finite or not positive.
+fn format_min_from_amount(from_token_price: f64, from_decimals: u32) -> String {
+    if !from_token_price.is_finite() || from_token_price <= 0.0 {
+        return "0".to_string();
+    }
+    let precision = from_decimals.min(8);
+    let scale = 10f64.powi(precision as i32);
+    let raw = MIN_ORDER_USD / from_token_price;
+    let rounded_up = (raw * scale).ceil() / scale;
+    let s = format!("{:.*}", precision as usize, rounded_up);
+    // Strip trailing zeros only when a decimal point is present.
+    let trimmed = if s.contains('.') {
+        s.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        s.as_str()
+    };
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
@@ -320,7 +349,11 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
         let amount_f64: f64 = args.amount.parse().unwrap_or(f64::NAN);
         let usd_value = amount_f64 * from_token_price;
         if usd_value.is_finite() && usd_value < MIN_ORDER_USD {
-            output::success(build_below_minimum(from_token_price, &from_symbol));
+            output::success(build_below_minimum(
+                from_token_price,
+                &from_symbol,
+                from_decimals,
+            ));
             return Ok(());
         }
     }
@@ -414,7 +447,11 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     // `belowMinimum` output at exit 0 as the local pre-check; no order created.
     let order = match created {
         Err(e) if is_order_amount_too_small(&e) => {
-            output::success(build_below_minimum(from_token_price, &from_symbol));
+            output::success(build_below_minimum(
+                from_token_price,
+                &from_symbol,
+                from_decimals,
+            ));
             return Ok(());
         }
         Err(e) => return Err(e),
@@ -1346,9 +1383,9 @@ mod tests {
     // ── build_below_minimum (F1 §2.2) ────────────────────────────
 
     #[test]
-    fn build_below_minimum_ceils_min_from_amount() {
-        // ceil(1.0 / 0.1) = 10 → "10"; shape matches §2.2 exactly.
-        let v = build_below_minimum(0.1, "USDC");
+    fn build_below_minimum_whole_amount_has_no_decimal_tail() {
+        // 1.0 / 0.1 = 10 → "10"; a whole result carries no decimal tail.
+        let v = build_below_minimum(0.1, "USDC", 6);
         assert_eq!(v["belowMinimum"], serde_json::json!(true));
         assert_eq!(v["minFromAmount"], serde_json::json!("10"));
         assert_eq!(v["fromSymbol"], serde_json::json!("USDC"));
@@ -1356,18 +1393,41 @@ mod tests {
 
     #[test]
     fn build_below_minimum_price_one_gives_one() {
-        // ceil(1.0 / 1.0) = 1 → "1".
-        let v = build_below_minimum(1.0, "USDC");
+        // 1.0 / 1.0 = 1 → "1".
+        let v = build_below_minimum(1.0, "USDC", 6);
         assert_eq!(v["minFromAmount"], serde_json::json!("1"));
         assert_eq!(v["fromSymbol"], serde_json::json!("USDC"));
     }
 
     #[test]
-    fn build_below_minimum_rounds_up_fractional_minimum() {
-        // price 0.3 → 1/0.3 = 3.33… → ceil → 4.
-        let v = build_below_minimum(0.3, "PEPE");
-        assert_eq!(v["minFromAmount"], serde_json::json!("4"));
+    fn build_below_minimum_returns_divisible_not_whole_token() {
+        // 1 / 0.3 = 3.33… → rounded up at 8-dp precision: 3.33333334.
+        let v = build_below_minimum(0.3, "PEPE", 18);
+        assert_eq!(v["minFromAmount"], serde_json::json!("3.33333334"));
         assert_eq!(v["fromSymbol"], serde_json::json!("PEPE"));
+    }
+
+    #[test]
+    fn build_below_minimum_high_price_token_is_fractional() {
+        // 1 / 60000 ≈ 0.0000166… → 0.00001667 (rounded up at 8 dp).
+        let v = build_below_minimum(60000.0, "WBTC", 8);
+        assert_eq!(v["minFromAmount"], serde_json::json!("0.00001667"));
+    }
+
+    #[test]
+    fn build_below_minimum_tiny_price_does_not_overflow() {
+        // 1 / 1e-9 = 1e9 → renders as a plain integer string.
+        let v = build_below_minimum(1e-9, "MEME", 6);
+        assert_eq!(v["minFromAmount"], serde_json::json!("1000000000"));
+    }
+
+    #[test]
+    fn build_below_minimum_zero_or_nonfinite_price_falls_back_to_zero() {
+        assert_eq!(build_below_minimum(0.0, "X", 6)["minFromAmount"], serde_json::json!("0"));
+        assert_eq!(
+            build_below_minimum(f64::NAN, "X", 6)["minFromAmount"],
+            serde_json::json!("0")
+        );
     }
 
     // ── enrich_execution_history ────────────────────────────────

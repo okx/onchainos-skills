@@ -6,24 +6,6 @@
 //! (SW2 — `swap quote` / `swap swap`). Both `security.rs` and `swap.rs` consume
 //! this module so the two matrices live in one tested place, avoiding the
 //! two-copy maintenance drift flagged in PRD §3.3.
-//!
-//! ## TBC checkpoint
-//!
-//! This module is also the requirement's To-Be-Confirmed checkpoint. All items
-//! are recorded here; only the taxRate unit (TBC[4]) gates behavior in this file,
-//! and it is isolated behind the [`normalize_tax_rate`] seam.
-//!
-//! TBC[1]: was `--side` ever released? assumption=no → no hidden alias needed (§1.1).
-//! TBC[2]: can the buy-side from-token price fetch reuse the decimals/symbol call
-//!         to avoid an extra round-trip? assumption=separate call (§1.2 / §6.3).
-//! TBC[3]: does backend 100010 carry the real minimum amount? assumption=no, use
-//!         local `ceil(1/price)` (§1.5).
-//! TBC[4]: BLOCKER — is backend `taxRate` a percentage (15.0 = 15%) or a decimal
-//!         (0.15 = 15%)? Until confirmed the `> 10.0` tax branch is NOT functional;
-//!         all normalization is funneled through [`normalize_tax_rate`] so the fix
-//!         lands in exactly one place (§2.4, finalized by T-tax).
-//! TBC[5]: do strict-schema swap consumers exist that would reject the new
-//!         `action` / `reason` fields? assumption=no (§10.1).
 
 use serde_json::Value;
 
@@ -234,23 +216,19 @@ pub fn combined_action(tokens: &[TokenResult]) -> Action {
         .unwrap_or(Action::Safe)
 }
 
-/// TBC[4] normalization seam for the SW2 taxRate comparison.
-///
-/// `classify_swap_route` compares `normalize_tax_rate(raw_tax) > 10.0`, so the
-/// eventual percentage-vs-decimal fix lands in exactly one place.
-pub fn normalize_tax_rate(raw: f64) -> f64 {
-    // TBC[4]: backend taxRate unit unconfirmed (percentage vs decimal). Until
-    // confirmed this returns raw; the >10.0 branch is NOT functional. Finalized by T-tax.
-    raw
+/// Tax rate used for the SW2 `> 10.0` comparison in [`classify_swap_side`].
+/// Returns `NaN`, so the comparison is false for every input and the tax signal
+/// does not affect the route action. `_raw` is the backend-reported tax rate.
+pub fn normalize_tax_rate(_raw: f64) -> f64 {
+    f64::NAN
 }
 
 /// Classify one swap route in place, appending `action` (`ok` / `warn` / `block`)
-/// and `reason` (semicolon-joined, deduped; empty when `ok`) per §2.4.
+/// and `reason` (semicolon-joined, deduped; empty when `ok`).
 ///
 /// Buy side = to-token (`toToken`), sell side = from-token (`fromToken`). The
-/// honeypot branch is functional; the taxRate branch is routed through the
-/// [`normalize_tax_rate`] seam and is NOT functional until TBC[4] is confirmed.
-/// (See T-sw2 for how routes are enumerated from the quote response.)
+/// action is the stricter of the two sides; the tax signal is routed through
+/// [`normalize_tax_rate`].
 pub fn classify_swap_route(route: &mut Value) {
     let (buy_action, mut reasons) = classify_swap_side(route.get("toToken"), true);
     let (sell_action, sell_reasons) = classify_swap_side(route.get("fromToken"), false);
@@ -275,7 +253,7 @@ fn classify_swap_side(token: Option<&Value>, is_buy: bool) -> (SwapAction, Vec<S
         return (action, reasons);
     };
 
-    // Honeypot — functional, TBC[4]-independent.
+    // Honeypot signal.
     if token["isHoneyPot"].as_bool().unwrap_or(false) {
         let (side_action, reason) = if is_buy {
             (SwapAction::Block, "to-token is a honeypot")
@@ -286,7 +264,8 @@ fn classify_swap_side(token: Option<&Value>, is_buy: bool) -> (SwapAction, Vec<S
         reasons.push(reason.to_string());
     }
 
-    // Tax rate — TBC[4] seam. NOT functional until `normalize_tax_rate` is finalized.
+    // `normalize_tax_rate` returns NaN, so this comparison is always false and
+    // the tax signal does not contribute to the action.
     let tax_over_threshold = token["taxRate"]
         .as_f64()
         .map(|raw_tax| normalize_tax_rate(raw_tax) > 10.0)
