@@ -148,10 +148,10 @@ impl TokenResult {
     /// Classify a single backend token object for the given trade direction.
     /// Reads `riskLevel` (missing/unknown → `HIGH` per §2.1) and derives
     /// `is_native` from the absence of a non-empty contract address.
-    pub fn classify(token: &Value, direction: TradeDirection) -> Self {
+    pub fn classify(token: &Value, trade_direction: TradeDirection) -> Self {
         let normalized_risk_level = normalize_risk_level(token["riskLevel"].as_str());
         let is_native = token_is_native(token);
-        let action = resolve_action(normalized_risk_level, direction);
+        let action = resolve_action(normalized_risk_level, trade_direction);
         Self {
             normalized_risk_level,
             is_native,
@@ -210,8 +210,8 @@ pub fn normalize_risk_level(raw: Option<&str>) -> RiskLevel {
 }
 
 /// The riskLevel × tradeDirection action matrix (§2.1).
-pub fn resolve_action(risk: RiskLevel, direction: TradeDirection) -> Action {
-    match (risk, direction) {
+pub fn resolve_action(risk: RiskLevel, trade_direction: TradeDirection) -> Action {
+    match (risk, trade_direction) {
         (RiskLevel::Critical, TradeDirection::Buy) => Action::Block,
         (RiskLevel::Critical, TradeDirection::Sell) => Action::Warn,
         (RiskLevel::High, TradeDirection::Buy) => Action::Pause,
