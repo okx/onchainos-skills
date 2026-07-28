@@ -491,6 +491,18 @@ async fn tx_scan(
 ) -> Result<()> {
     let chain_index = chains::resolve_chain(chain);
     let family = chains::chain_family(&chain_index);
+
+    // tx-scan only supports Solana and EVM chains. chain_family() uses loose
+    // bucketing that labels Sui/Tron/TON as "evm" for display purposes, so we
+    // must explicitly reject known non-EVM chains here before dispatching.
+    const NON_EVM_CHAIN_INDEXES: &[&str] = &["784", "195", "607"]; // Sui, Tron, TON
+    if family != "solana" && NON_EVM_CHAIN_INDEXES.contains(&chain_index.as_str()) {
+        bail!(
+            "Chain '{}' (family: {}) is not supported for security tx-scan. Only EVM and Solana chains are supported.",
+            chain, family
+        );
+    }
+
     let mut client = ctx.client_async().await?;
 
     match family {

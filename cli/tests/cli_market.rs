@@ -368,6 +368,10 @@ fn market_portfolio_dex_history_missing_chain_fails() {
 
 #[test]
 fn market_portfolio_dex_history_missing_begin_fails() {
+    // `--begin`/`--end` are optional-but-paired (unlike `--address`/`--chain`,
+    // which are clap-required and fail on stderr); supplying only one trips
+    // the app-level mutual-requirement check, which reports on stdout as the
+    // usual JSON error envelope (exit 1), not a clap usage error on stderr.
     onchainos()
         .args([
             "market",
@@ -381,7 +385,7 @@ fn market_portfolio_dex_history_missing_begin_fails() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("required"));
+        .stdout(predicate::str::contains("--begin+--end"));
 }
 
 #[test]
@@ -399,7 +403,7 @@ fn market_portfolio_dex_history_missing_end_fails() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("required"));
+        .stdout(predicate::str::contains("--begin+--end"));
 }
 
 // ─── portfolio-recent-pnl ───────────────────────────────────────────

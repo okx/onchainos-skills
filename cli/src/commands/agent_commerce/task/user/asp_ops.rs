@@ -20,6 +20,7 @@ use crate::commands::agent_commerce::task::signing;
 /// At least one of `job_id` or `task_desc` must be non-empty.
 /// When `job_id` is provided, backend uses the on-chain task context;
 /// when only `task_desc` is provided, it's a pre-publish search.
+#[allow(clippy::too_many_arguments)] // each arg is an independent CLI flag; grouping into a struct would ripple across all call sites
 pub async fn handle_asp_match(
     client: &mut TaskApiClient,
     job_id: Option<&str>,

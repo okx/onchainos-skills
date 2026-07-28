@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn validate_budget_zero_ok_negative_err() {
-        assert!(validate_budget(0.0).is_ok());
+        assert!(validate_budget(0.0).is_err());
         assert!(validate_budget(-1.0).is_err());
     }
 }

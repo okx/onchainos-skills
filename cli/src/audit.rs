@@ -198,6 +198,8 @@ const REDACT_ADDR: &[&str] = &[
     "--wallet",
     "--email",
     "--address",
+    // CeFi user identifier passed to `competition register` — mask prefix+suffix.
+    "--uid",
     "--sub-id",
     "--new-sub-id",
     // MPP hash-mode broadcast tx identifier — mask prefix+suffix in the audit log.
@@ -735,6 +737,7 @@ fn competition_sub(c: &CompetitionCommand) -> &'static str {
         CompetitionCommand::Join { .. } => "join",
         CompetitionCommand::Claim { .. } => "claim",
         CompetitionCommand::SubmitContact { .. } => "submit-contact",
+        CompetitionCommand::Register { .. } => "register",
     }
 }
 
@@ -1011,6 +1014,33 @@ mod tests {
         ]);
         let out = redact_args(&args);
         assert_eq!(out[4], "0x1234***5678");
+    }
+
+    #[test]
+    fn competition_sub_register_maps_to_register() {
+        let cmd = CompetitionCommand::Register {
+            activity_id: "5".to_string(),
+            agent_id: "agent-42".to_string(),
+            account_type: "web3".to_string(),
+            address: Some("0x1111111111111111111111111111111111111111".to_string()),
+            chain_index: "196".to_string(),
+            uid: None,
+        };
+        assert_eq!(competition_sub(&cmd), "register");
+    }
+
+    #[test]
+    fn redact_uid_prefix_suffix() {
+        let args = vec_s(&[
+            "onchainos",
+            "competition",
+            "register",
+            "--uid",
+            "1234567890abcdef",
+        ]);
+        let out = redact_args(&args);
+        // The CeFi uid is masked prefix+suffix (REDACT_ADDR): first 6 + last 4.
+        assert_eq!(out[4], "123456***cdef");
     }
 
     #[test]

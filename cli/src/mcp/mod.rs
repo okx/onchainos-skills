@@ -674,6 +674,22 @@ struct CompetitionJoinParams {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct CompetitionRegisterParams {
+    /// Activity ID for the competition. Defaults to "5" (the current OKX.AI trading hackathon) when omitted.
+    activity_id: Option<String>,
+    /// The user's Trading ASP agent id to register (from a prior `agent get-my-agents` result).
+    agent_id: String,
+    /// Competition account type: "web3" (current wallet's X Layer address) or "cefi" (an OKX UID).
+    account_type: String,
+    /// Optional competition wallet address. If omitted, auto-resolves the current account's X Layer (EVM) address.
+    address: Option<String>,
+    /// Chain ID to register on. Defaults to "196" (X Layer) when omitted.
+    chain_index: Option<String>,
+    /// OKX UID for the competition account. Required when `account_type` is "cefi".
+    uid: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct CompetitionClaimParams {
     /// Activity name from a previous `competition_list` / `competition_user_status` response. Internal id is resolved server-side; do NOT pass numeric ids.
     activity_name: String,
@@ -975,6 +991,26 @@ fn resolve_competition_addresses(
         evm.clone().unwrap_or(default_evm),
         sol.clone().unwrap_or(default_sol),
     ))
+}
+
+/// Apply the CLI's clap defaults for `competition_register`: `activity_id` → "5"
+/// (the current hackathon) and `chain_index` → "196" (X Layer). Pure so the
+/// param-mapping layer is unit-testable without a live backend.
+fn competition_register_defaults(p: &CompetitionRegisterParams) -> (String, String) {
+    let activity_id = p.activity_id.clone().unwrap_or_else(|| "5".to_string());
+    let chain_index = p.chain_index.clone().unwrap_or_else(|| "196".to_string());
+    (activity_id, chain_index)
+}
+
+/// CeFi competition registration requires a `uid`; web3 does not. Mirrors the
+/// CLI-side `competition::require_uid_for_cefi` (private to that module) so the
+/// MCP tool runs the identical pre-request validation before delegating to
+/// `competition::register`. Pure so it is unit-testable.
+fn require_uid_for_cefi(account_type: &str, uid: Option<&str>) -> anyhow::Result<()> {
+    if account_type == "cefi" && uid.is_none() {
+        anyhow::bail!("--uid is required for CeFi account registration");
+    }
+    Ok(())
 }
 
 /// For competition_detail / competition_rank: the AI may pass either the
@@ -2909,6 +2945,48 @@ Returns `joined: true` plus `activityId` (internal — never show to the user) a
     }
 
     #[tool(
+        name = "competition_register",
+        description = "Register the user's Trading ASP for a trading competition (hackathon). Requires wallet login. \
+Pass `agent_id` (the user's Trading ASP, from a prior `agent get-my-agents` result) and `account_type` — \"web3\" for the current wallet's X Layer address, or \"cefi\" for an OKX UID (in which case `uid` is REQUIRED). \
+`activity_id` defaults to \"5\" (the current hackathon) and `chain_index` to \"196\" (X Layer). \
+When `address` is omitted it auto-resolves the current account's X Layer (EVM) address. \
+Returns `registered: true` plus the echoed registration details."
+    )]
+    async fn competition_register(
+        &self,
+        Parameters(p): Parameters<CompetitionRegisterParams>,
+    ) -> Result<String, String> {
+        let (activity_id, chain_index) = competition_register_defaults(&p);
+        // CeFi registration requires a uid; validate before any wallet/network
+        // access (mirrors the CLI `execute()` arm ordering).
+        if let Err(e) = require_uid_for_cefi(&p.account_type, p.uid.as_deref()) {
+            return err(e);
+        }
+        // Auto-resolve the current account's X Layer (EVM) address when omitted
+        // (both web3 & cefi register on X Layer).
+        let address = match &p.address {
+            Some(a) => a.clone(),
+            None => match competition::resolve_registration_evm_address() {
+                Ok(a) => a,
+                Err(e) => return err(e),
+            },
+        };
+        match competition::register(
+            &activity_id,
+            &p.agent_id,
+            &p.account_type,
+            &address,
+            &chain_index,
+            p.uid.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
         name = "competition_claim",
         description = "Atomic competition reward claim: fetch calldata → TEE-sign → broadcast on-chain → return tx hashes. Requires wallet login. Pass `activity_name` from a prior result. \
 SAFETY: Do NOT chain `gateway_broadcast` after this — the on-chain submission already happened inside this tool. Do NOT re-run claim on partial success — successful entries are already on-chain and will hit the dedup guard. \
@@ -3214,4 +3292,61 @@ pub async fn serve(base_url_override: Option<&str>) -> Result<()> {
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn competition_register_applies_defaults() {
+        // Minimal JSON carries only the two required fields; the optionals stay
+        // absent so the handler's defaults apply.
+        let p: CompetitionRegisterParams = serde_json::from_value(serde_json::json!({
+            "agent_id": "agent-123",
+            "account_type": "web3",
+        }))
+        .expect("minimal params must deserialize");
+        assert_eq!(p.agent_id, "agent-123");
+        assert_eq!(p.account_type, "web3");
+        assert!(p.activity_id.is_none());
+        assert!(p.chain_index.is_none());
+
+        let (activity_id, chain_index) = competition_register_defaults(&p);
+        assert_eq!(activity_id, "5");
+        assert_eq!(chain_index, "196");
+    }
+
+    #[test]
+    fn competition_register_defaults_respect_explicit_values() {
+        let p: CompetitionRegisterParams = serde_json::from_value(serde_json::json!({
+            "activity_id": "9",
+            "agent_id": "agent-123",
+            "account_type": "web3",
+            "chain_index": "1",
+        }))
+        .expect("params must deserialize");
+        let (activity_id, chain_index) = competition_register_defaults(&p);
+        assert_eq!(activity_id, "9");
+        assert_eq!(chain_index, "1");
+    }
+
+    #[test]
+    fn competition_register_cefi_without_uid_errors() {
+        // Pure validation (no live backend): run the shared cefi-uid check the
+        // handler runs, then route it through the MCP `err()` envelope exactly as
+        // the handler does, and assert the `--uid` message survives.
+        let e = require_uid_for_cefi("cefi", None).expect_err("cefi without uid must error");
+        let envelope = err(e).expect_err("err() returns the Err variant");
+        assert!(
+            envelope.contains("--uid is required"),
+            "envelope should carry the --uid message, got: {envelope}"
+        );
+    }
+
+    #[test]
+    fn require_uid_for_cefi_allows_web3_and_cefi_with_uid() {
+        assert!(require_uid_for_cefi("web3", None).is_ok());
+        assert!(require_uid_for_cefi("cefi", Some("12345")).is_ok());
+    }
 }

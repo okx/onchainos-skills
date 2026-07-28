@@ -1,6 +1,6 @@
 ---
 name: okx-growth-competition
-description: "List OKX Agentic Wallet exclusive trading competitions, register users for contests, track participation and leaderboard rankings, and claim won rewards. Use when users want to list available trading competitions or trading cups, view competition rules / prize pool / total prizes, register or sign up or enroll or join a contest, check the leaderboard (who is winning) or their own rank (am I in the prize zone, what is my place), ask did I win or query participation / claim status, claim won rewards or prizes from completed competitions, see which wallet account they registered with, or submit Telegram / WeChat / Email / Twitter contact for prize delivery to top-tier winners."
+description: "List OKX Agentic Wallet exclusive trading competitions, register users for contests, track participation and leaderboard rankings, claim won rewards, and register a Trading ASP agent for the OKX.AI trading hackathon (交易黑客松). Use when users want to list available trading competitions or trading cups, view competition rules / prize pool / total prizes, register or join a contest, check the leaderboard (who is winning) or their own rank (am I in the prize zone, what is my place), ask did I win or query participation / claim status, claim won rewards or prizes from completed competitions, see which wallet account they registered with, submit Telegram / WeChat / Email / Twitter contact for prize delivery to top-tier winners, or sign up / 报名 their Trading ASP agent for the OKX.AI hackathon (黑客松)."
 license: MIT
 metadata:
   author: okx
@@ -16,6 +16,7 @@ Agentic Wallet exclusive trading competitions. Full lifecycle split across focus
 - **Details** (rules / prize pool / four reward sections) — `references/details.md`
 - **Rank** (leaderboard / my own rank with CASE 1/2/3 templates) — `references/rank.md`
 - **Claim** (reward status check / atomic claim / contact collection) — `references/claim.md`
+- **Hackathon** (register a Trading ASP agent for the OKX.AI trading hackathon) — `references/hackathon-registration.md`
 - **CLI reference** (commands, parameters, return schemas) — `references/cli-reference.md`
 
 This SKILL.md holds the **global rules** (facts, identity invariants, routing, output rules, time formatting, status codes, error handling) that ALL references depend on. Always read this file first; then jump into the matching reference for the user's intent.
@@ -68,8 +69,11 @@ Quick router (user intent → reference file + section):
 | "check my status / did I win" | `references/claim.md` | Check Participation Status |
 | "claim reward / claim my prize" | `references/claim.md` | Step 6 — Claim Reward |
 | Top-tier winner contact follow-up (`needContact: true` after claim) | `references/claim.md` | Contact collection (top-tier winners only) |
+| "register / sign up my Trading ASP for the OKX.AI hackathon / 报名黑客松" | `references/hackathon-registration.md` | Flow |
 
 If the user's intent does not clearly map to one of the above, ask which they meant before responding — do **not** invent a freeform format.
+
+> **`register` (hackathon) vs `join` (a competition) — do not conflate.** A request naming the OKX.AI **hackathon** / 交易黑客松 / 黑客松, or asking to register a **Trading ASP agent**, routes to `references/hackathon-registration.md` (`competition register`). A plain "join / register for `<competition>`" routes to `references/participation.md` Step 3 (`competition join`). They hit different backends — the full disambiguation rule lives in `hackathon-registration.md`.
 
 ## Pre-flight
 
@@ -92,6 +96,7 @@ All MCP tools mirror the CLI; MCP variants accept `activity_name` (server-resolv
 | 5 | `onchainos competition join --activity-id <id> --evm-wallet <addr> --sol-wallet <addr> --chain-index <chain_id>` | Wallet login | Register the active account for the competition |
 | 6 | `onchainos competition claim --activity-id <id> --evm-wallet <addr> --sol-wallet <addr>` | Wallet login | Atomic claim — signs + broadcasts inside the call. See `references/claim.md`. |
 | 7 | `onchainos competition submit-contact --activity-id <id> --contact-type <Telegram\|WeChat\|Email\|Twitter> --contact-value <text>` | Wallet login | Record contact for a top-tier winner; only after a claim with `needContact: true`. See `references/claim.md`. |
+| 8 | `onchainos competition register --agent-id <id> --account-type <web3\|cefi> [--activity-id <id>] [--address <addr>] [--chain-index <id>] [--uid <uid>]` | Wallet login | Register a Trading ASP for the OKX.AI trading hackathon. See `references/hackathon-registration.md`. |
 
 `--status` (request filter): `0`=active, `1`=ended, `2`=all
 `activityStatus` (response field): **`3`=active, `4`=ended** — different from the request filter
