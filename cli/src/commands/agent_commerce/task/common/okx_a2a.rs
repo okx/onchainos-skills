@@ -430,67 +430,11 @@ pub fn session_history(job_id: &str, to_agent_id: &str) -> Result<String> {
 
 // ── Pending task requests ────────────────────────────────────────────────
 
-/// Bridge equivalent: `xmtp_get_pending_list` / `xmtp_pending_list`
-/// `okx-a2a task requests --json` — list pending XMTP task requests (ASPs
-/// trying to reach the user). Returns the raw item array as
-/// `Vec<serde_json::Value>` so callers can extract whichever fields they
-/// need (typical: `agentId` / `name` / `serviceName` / `creditScore` /
-/// `completedTaskCount`).
-///
-/// Requires daemon running. The CLI response shape may wrap items under
-/// `items` / `requests` / `pending`, or use a top-level array — this helper
-/// tries each in order and falls back to an empty vec.
-pub fn task_requests() -> Result<Vec<serde_json::Value>> {
-    let out = Command::new("okx-a2a")
-        .args(["task", "requests", "--json"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a task requests exit {status}: {stderr}", status = out.status);
-    }
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout)
-        .map_err(|e| anyhow::anyhow!("task requests stdout not valid JSON: {e}"))?;
-    let arr = json.get("payload").and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    Ok(arr)
-}
-
-/// Bridge equivalent: `xmtp_deny_pending_conversation` / `xmtp_deny_conversation`
-/// `okx-a2a task reject --group-id <id> [--agent-id <id>] [--json]` — reject
-/// a pending XMTP conversation. Note: keyed by **groupId** (the XMTP group),
-/// not jobId.
-///
-/// Requires daemon running. Queued command — does not wait for the final
-/// result.
-pub fn task_reject(group_id: &str, content: Option<&str>) -> Result<()> {
-    let mut args: Vec<String> = vec![
-        "task".into(), "reject".into(),
-        "--group-id".into(), group_id.into(),
-    ];
-    if let Some(c) = content {
-        args.push("--content".into());
-        args.push(c.into());
-    }
-    args.push("--json".into());
-    let out = Command::new("okx-a2a")
-        .args(&args)
-        .output()
-        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a task reject exit {status}: {stderr}", status = out.status);
-    }
-    Ok(())
-}
-
 /// Reject all pending ASP messages for a given job (batch drain).
 /// `okx-a2a task reject --job-id <jobId> --json`
 ///
 /// Used after successful confirm-accept (R14) to clear remaining ASP
-/// messages in the queue so they don't trigger further provider_conversation
-/// events for an already-accepted task.
+/// messages in the queue for an already-accepted task.
 pub fn task_reject_by_job(job_id: &str, content: Option<&str>) -> Result<()> {
     let mut args: Vec<String> = vec![
         "task".into(), "reject".into(),

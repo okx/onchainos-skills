@@ -178,6 +178,13 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
         .endpoint
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    // `freeTrial` hours: trim; an EMPTY string and an ABSENT key are equivalent —
+    // both mean "no trial" — so collapse "" to None. The field is then omitted
+    // from the wire payload, and a missing `freeTrial` is read as no trial.
+    service.free_trial = service
+        .free_trial
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     if service.service_name.is_empty() {
         bail!("missing required field in --service: serviceName");
@@ -185,28 +192,91 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
     if service.service_description.is_empty() {
         bail!("missing required field in --service: serviceDescription");
     }
+    // Normalize subscription tiers: trim, canonicalize the interval case, and
+    // drop fully-blank entries (a stray `[{}]` must not count as pricing).
+    for tier in &mut service.subscription {
+        tier.interval = tier.interval.trim().to_ascii_lowercase();
+        tier.fee = tier.fee.trim().to_string();
+    }
+    service
+        .subscription
+        .retain(|t| !(t.interval.is_empty() && t.fee.is_empty()));
+
+    // Fee is a PLAIN NUMBER only — USDT is the implicit, only currency. A
+    // currency token / symbol / any extra text is rejected (validate-listing
+    // surfaces the same rule as a P1 finding; create/update bypass validate so
+    // we enforce it here too). The single-purchase `fee` and every
+    // subscription-tier `fee` share this contract.
     match service.service_type.as_str() {
         "A2A" => {
             // Product spec: A2A services do not have an endpoint field.
             service.endpoint = None;
+            // Subscription-priced A2A carries an EMPTY single-purchase `fee`
+            // (`""`); an empty `fee` together with a non-empty `subscription` is
+            // the subscription billing model.
+            let has_single_fee = !service.fee.is_empty();
+            let has_subscription = !service.subscription.is_empty();
+            // Pricing: an A2A service must carry EXACTLY ONE billing model — a
+            // single-purchase fee XOR a subscription. Never neither, and never
+            // both (the two models are mutually exclusive).
+            if !has_single_fee && !has_subscription {
+                bail!("invalid --service for A2A: provide a single-purchase fee or a subscription (exactly one)");
+            }
+            if has_single_fee && has_subscription {
+                bail!("invalid --service for A2A: choose one billing model — a single-purchase fee OR a subscription, not both");
+            }
+            // Subscription tiers: interval currently limited to `month`; each
+            // fee is a plain number.
+            for tier in &service.subscription {
+                if tier.interval != "month" {
+                    bail!(
+                        "invalid subscription interval in --service: {} (only 'month' is supported)",
+                        tier.interval
+                    );
+                }
+                if !is_plain_number(&tier.fee) {
+                    bail!("invalid subscription fee in --service: must be a plain number (USDT is the default currency)");
+                }
+            }
+            // A real single price must be a plain number; an empty `fee` (the
+            // subscription model) is exempt (it is not a price).
+            if has_single_fee && !is_plain_number(&service.fee) {
+                bail!("invalid fee in --service: must be a plain number (USDT is the default currency)");
+            }
+            // An empty `fee` is the explicit "no single price" marker (the
+            // subscription model); it is forwarded verbatim as `""`. The CLI
+            // never fabricates a price from it.
+            // freeTrial: a free-trial duration in HOURS, valid ONLY on a
+            // subscription-priced A2A service (a non-empty `subscription`). When
+            // present it must be a positive integer number of hours.
+            if let Some(trial) = service.free_trial.as_deref() {
+                if !has_subscription {
+                    bail!("invalid --service for A2A: freeTrial is only allowed on a subscription-priced service");
+                }
+                if !is_positive_integer(trial) {
+                    bail!("invalid freeTrial in --service: must be a positive integer number of hours");
+                }
+            }
         }
         "A2MCP" => {
+            // A2MCP structure is unchanged: single-purchase fee only.
+            if !service.subscription.is_empty() {
+                bail!("invalid --service: A2MCP services do not support subscription pricing");
+            }
+            if service.free_trial.is_some() {
+                bail!("invalid --service: A2MCP services do not support freeTrial");
+            }
             if service.fee.is_empty() {
                 bail!("missing required field in --service for A2MCP: fee");
+            }
+            if !is_plain_number(&service.fee) {
+                bail!("invalid fee in --service: must be a plain number (USDT is the default currency)");
             }
             if service.endpoint.is_none() {
                 bail!("missing required field in --service for A2MCP: endpoint");
             }
         }
         other => bail!("invalid serviceType in --service: {other} (expected: A2A or A2MCP)"),
-    }
-
-    // Fee is a PLAIN NUMBER only — USDT is the implicit, only currency. A
-    // currency token / symbol / any extra text is rejected (validate-listing
-    // surfaces the same rule as a P1 finding; create/update bypass validate so
-    // we enforce it here too). Empty A2A fee already returned above as allowed.
-    if !service.fee.is_empty() && !is_plain_number(&service.fee) {
-        bail!("invalid fee in --service: must be a plain number (USDT is the default currency)");
     }
 
     // operation × id consistency (update-only directive). `operation` is set
@@ -244,6 +314,15 @@ pub(super) fn is_plain_number(s: &str) -> bool {
                 && frac.bytes().all(|b| b.is_ascii_digit())
         }
     }
+}
+
+/// True when `s` is a POSITIVE integer: digits only (`^\d+$`) with at least one
+/// non-zero digit. No sign, no decimal point, no whitespace. `"0"` / `"00"` are
+/// rejected (a zero-hour trial is meaningless — omit the field instead). Used
+/// for the `freeTrial` hour count, shared by `normalize_service` (create/update)
+/// and `validate` (QA) so both paths enforce the identical contract.
+pub(super) fn is_positive_integer(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && s.bytes().any(|b| b != b'0')
 }
 
 /// East-Asian display width of `s`: every code point in a wide (full-width)
@@ -548,8 +627,8 @@ pub(super) use rating::score_to_stars;
 // the freshly-computed one.
 
 /// Map the canonical `role` token to its English display label (`user` → "User",
-/// `asp` → "ASP", `evaluator` → "Evaluator"). The skill localizes these (User →
-/// 用户, ASP → 服务提供商). Callers only ever pass a canonical token (computed by
+/// `asp` → "ASP", `evaluator` → "Evaluator"). The skill layer localizes these
+/// labels for display. Callers only ever pass a canonical token (computed by
 /// [`role_token_from_value`]). Unknown → `None` (omit; do not guess).
 fn role_label(role: &str) -> Option<&'static str> {
     match role.trim() {
@@ -601,7 +680,7 @@ fn for_each_agent_row(v: &mut Value, mut f: impl FnMut(&mut Value)) {
 }
 
 /// Map the raw `status` (int or string) to its canonical English label per
-/// `SKILL.md §Invariants Lexicon`. `1`/`active` → active, `2` → not listed,
+/// `identity-invariants.md §Lexicon`. `1`/`active` → active, `2` → not listed,
 /// `3`/`4`/`5` → unavailable. Unknown → `None`.
 fn status_label(status: &Value) -> Option<&'static str> {
     let key = match status {
@@ -773,8 +852,86 @@ fn first_fee(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<Stri
     })
 }
 
+/// Format an A2A service's `subscription` tiers for display. Each tier renders
+/// as `<fee> USDT / month` (only the `month` interval is supported today; any other
+/// interval is appended verbatim as `<fee> USDT / <interval>`). Reads
+/// tolerantly (string or number fee, camel/Pascal keys). Empty / absent
+/// subscription → empty Vec. A non-empty result means the service is
+/// subscription-priced (its single-purchase `fee` is empty by contract).
+fn format_subscription_tiers(map: &serde_json::Map<String, Value>) -> Vec<String> {
+    let Some(tiers) = map
+        .get("subscription")
+        .or_else(|| map.get("Subscription"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    tiers
+        .iter()
+        .filter_map(|t| {
+            let Value::Object(t) = t else { return None };
+            let fee = first_fee(t, &["fee", "Fee", "feeAmount"])?;
+            let interval = first_str(t, &["interval", "Interval"]).unwrap_or("month");
+            let period = if interval.eq_ignore_ascii_case("month") {
+                "month".to_string()
+            } else {
+                interval.to_string()
+            };
+            Some(format!("{fee} USDT / {period}"))
+        })
+        .collect()
+}
+
+/// Format a service's `freeTrial` (duration in HOURS, subscription-priced A2A
+/// only) for display. `"72"` → `"3 days"` (whole days collapse to a day count),
+/// otherwise `"<n> hours"`; singular handled (`"1 day"` / `"1 hour"`). Reads
+/// tolerantly (camel/Pascal keys, string or number). Returns `None` when the
+/// field is absent / blank / not a positive integer — callers render `—`.
+///
+/// A free trial is a subscription-only concept: the write side
+/// (`normalize_service` / `validate.rs` P7) forbids `freeTrial` on a service
+/// that isn't subscription-priced. This mirrors that invariant on the READ side
+/// too — a service with no subscription returns `None` even if the backend row
+/// carries a stray `freeTrial`, so an "orphan" trial never surfaces on the
+/// service-list table or the detail card.
+fn format_free_trial(map: &serde_json::Map<String, Value>) -> Option<String> {
+    // Subscription-only: no subscription tiers ⇒ no trial, regardless of any
+    // stray `freeTrial` value in the row.
+    if format_subscription_tiers(map).is_empty() {
+        return None;
+    }
+    let raw = first_fee(map, &["freeTrial"])?;
+    let raw = raw.trim();
+    if !is_positive_integer(raw) {
+        return None;
+    }
+    let hours: u64 = raw.parse().ok()?;
+    let label = if hours.is_multiple_of(24) {
+        let days = hours / 24;
+        format!("{days} day{}", if days == 1 { "" } else { "s" })
+    } else {
+        format!("{hours} hour{}", if hours == 1 { "" } else { "s" })
+    };
+    Some(label)
+}
+
+/// Fee-slot text for a service that has NEITHER a single-purchase price nor a
+/// subscription. An A2MCP in this state is missing REQUIRED data (create/update
+/// forbid an empty A2MCP fee), so it renders `—` (unknown) rather than implying
+/// the service is free; any other type renders `free`. Keeps the three display
+/// paths (detail card / service-list / search top-service) consistent.
+fn unpriced_fee_label(is_a2mcp: bool) -> String {
+    if is_a2mcp {
+        "—".to_string()
+    } else {
+        "free".to_string()
+    }
+}
+
 /// Format a single ASP service into its card value string, mirroring
 /// references/discover.md §detail's `<ServiceName> — <Type>, <Fee or free>[, <Endpoint>]`.
+/// A subscription-priced A2A service shows its monthly tier(s) in the fee slot
+/// (`<N> USDT / month`) instead of a single-purchase price.
 /// `Type` maps `A2MCP`→"API service" / `A2A`→"agent-to-agent" (verbatim
 /// otherwise); A2A omits the endpoint from the value string. Returns `None`
 /// when there is no service name to anchor the row.
@@ -791,12 +948,20 @@ fn format_service_value(service: &Value) -> Option<String> {
         "" => (String::new(), false),
         other => (other.to_string(), false),
     };
+    let is_a2mcp = raw_type.eq_ignore_ascii_case("A2MCP");
 
+    // Subscription-priced A2A → show the monthly tier(s) in the fee slot;
+    // otherwise a single-purchase price (`<N> USDT`), or — when unpriced — `—`
+    // for an A2MCP (missing required fee) / `free` for other types.
+    let subscription = format_subscription_tiers(s);
     let fee = first_fee(s, &["fee", "Fee", "feeAmount"]);
-    let fee_str = match (is_a2a, fee.as_deref()) {
-        (true, None) => "negotiable".to_string(),
-        (_, Some(f)) => format!("{f} USDT"),
-        (_, None) => "free".to_string(),
+    let fee_str = if !subscription.is_empty() {
+        subscription.join(", ")
+    } else {
+        match fee.as_deref() {
+            Some(f) => format!("{f} USDT"),
+            None => unpriced_fee_label(is_a2mcp),
+        }
     };
 
     let endpoint = if is_a2a {
@@ -812,6 +977,9 @@ fn format_service_value(service: &Value) -> Option<String> {
         segments.push(type_label);
     }
     segments.push(fee_str);
+    if let Some(trial) = format_free_trial(s) {
+        segments.push(format!("{trial} free trial"));
+    }
     if let Some(ep) = endpoint {
         segments.push(ep);
     }
@@ -1144,22 +1312,29 @@ fn format_top_service(service: &Value) -> Option<String> {
     let name = first_str(s, &["serviceName", "ServiceName", "name"])?;
 
     let raw_type = first_str(s, &["serviceType", "ServiceType", "servicetype"]).unwrap_or("");
-    let (type_label, is_a2a) = match raw_type.to_ascii_uppercase().as_str() {
-        "A2MCP" => ("API service".to_string(), false),
-        "A2A" => ("agent-to-agent".to_string(), true),
-        "" => (String::new(), false),
-        other => (other.to_string(), false),
+    let type_label = match raw_type.to_ascii_uppercase().as_str() {
+        "A2MCP" => "API service".to_string(),
+        "A2A" => "agent-to-agent".to_string(),
+        "" => String::new(),
+        other => other.to_string(),
     };
+    let is_a2mcp = raw_type.eq_ignore_ascii_case("A2MCP");
 
-    // feeAmount (search) + feeToken (verbatim). A2A with no fee set → "negotiable";
-    // an explicit 0 (and any other amount) renders as the amount, e.g. "0 USDT".
+    // Subscription-priced A2A → show the monthly tier(s) in the fee slot.
+    // Otherwise feeAmount (search) + feeToken (verbatim); an explicit 0 (and any
+    // other amount) renders as the amount, e.g. "0 USDT". No single price and no
+    // subscription → `—` for an A2MCP (missing required fee) / `free` otherwise.
+    let subscription = format_subscription_tiers(s);
     let fee = first_fee(s, &["feeAmount", "fee", "Fee"]);
     let fee_token = first_str(s, &["feeToken", "FeeToken"]);
-    let fee_str = match (is_a2a, fee.as_deref(), fee_token) {
-        (true, None, _) => "negotiable".to_string(),
-        (_, Some(f), Some(t)) => format!("{f} {t}"),
-        (_, Some(f), None) => f.to_string(),
-        (_, None, _) => "free".to_string(),
+    let fee_str = if !subscription.is_empty() {
+        subscription.join(", ")
+    } else {
+        match (fee.as_deref(), fee_token) {
+            (Some(f), Some(t)) => format!("{f} {t}"),
+            (Some(f), None) => f.to_string(),
+            (None, _) => unpriced_fee_label(is_a2mcp),
+        }
     };
 
     let mut segments: Vec<String> = Vec::new();
@@ -1167,6 +1342,10 @@ fn format_top_service(service: &Value) -> Option<String> {
         segments.push(type_label);
     }
     segments.push(fee_str);
+    // Note: the free-trial flag is intentionally NOT appended here — the
+    // Top-service cell is a ≤40-char teaser and a trailing trial segment would
+    // be truncated away. The trial surfaces in the full service-list table
+    // (`build_service_cells`) and the detail card (`format_service_value`).
     let full = format!("{name} ({})", segments.join(", "));
     Some(truncate_name(&full, 40))
 }
@@ -1188,12 +1367,16 @@ pub(super) fn add_search_cells(v: &mut Value) {
 // ─── §4 service-list row cells ────────────────────────────────────────────
 //
 // Columns (references/discover.md §service-list), in order:
-//   # | Name | Type | Fee | Endpoint | Description
+//   # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description
 // service-list returns PascalCase keys
 // (`ServiceName` / `ServiceType` / `Fee` / `Endpoint`); we read tolerantly.
 // Type: A2MCP → "API service", A2A → "agent-to-agent" (verbatim otherwise).
-// Fee: `<n> USDT` or `free` (A2A → its fee or `free`). Endpoint: `—` for A2A,
-// the URL for A2MCP. Description: truncated per references/discover.md §service-list (≤ 80 chars).
+// Fee: `<n> USDT`; subscription-priced A2A → `—`; unpriced A2MCP → `—`, other
+// unpriced → `free`. Subscription: each
+// monthly tier `<n> USDT / month`, or `—` when there is none (or A2MCP). Free
+// trial: `<n> days`/`hours` when a subscription trial is set, else `—` (single
+// fee / A2MCP never have one). Endpoint: `—` for A2A, the URL for A2MCP.
+// Description: truncated per references/discover.md §service-list (≤ 80 chars).
 fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     let Value::Object(s) = service else {
         return None;
@@ -1207,15 +1390,31 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
         "" => ("—".to_string(), false),
         other => (other.to_string(), false),
     };
+    let is_a2mcp = raw_type.eq_ignore_ascii_case("A2MCP");
 
-    // Fee: A2A with no fee set → "negotiable"; an explicit 0 and any other amount
-    // → `<n> USDT`; A2MCP with no fee → `free`.
+    // Fee: subscription-priced A2A → `—` (price lives in the Subscription
+    // column); an explicit 0 and any other single price → `<n> USDT`; unpriced →
+    // `—` for an A2MCP (missing required fee) / `free` for other types.
+    let subscription = format_subscription_tiers(s);
     let fee = first_fee(s, &["fee", "Fee", "feeAmount"]);
-    let fee_str = match (is_a2a, fee.as_deref()) {
-        (true, None) => "negotiable".to_string(),
-        (_, Some(f)) => format!("{f} USDT"),
-        (_, None) => "free".to_string(),
+    let fee_str = if !subscription.is_empty() {
+        "—".to_string()
+    } else {
+        match fee.as_deref() {
+            Some(f) => format!("{f} USDT"),
+            None => unpriced_fee_label(is_a2mcp),
+        }
     };
+
+    // Subscription: each monthly tier → `<n> USDT / month`; empty (or A2MCP) → `—`.
+    let subscription_str = if subscription.is_empty() {
+        "—".to_string()
+    } else {
+        subscription.join(", ")
+    };
+
+    // Free trial: `<n> days`/`hours` when a subscription trial is set; `—` otherwise.
+    let free_trial = format_free_trial(s).unwrap_or_else(|| "—".to_string());
 
     // Endpoint: `—` for A2A; the URL for A2MCP (absent → `—`).
     let endpoint = if is_a2a {
@@ -1236,6 +1435,8 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
         cell("Name", name),
         cell("Type", type_label),
         cell("Fee", fee_str),
+        cell("Subscription", subscription_str),
+        cell("Free trial", free_trial),
         cell("Endpoint", endpoint),
         cell("Description", description),
     ])

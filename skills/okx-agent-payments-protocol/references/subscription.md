@@ -21,6 +21,7 @@ The `period` scheme is recurring (subscription) billing. The buyer **subscribes 
 | Command | How to read the result |
 |---|---|
 | subscribe / change | replay `.data.paymentHeaderValue` under header `.data.paymentHeaderName` (`PAYMENT-SIGNATURE`); persist `.data.subId` (the CLI also caches host→subId) |
+| subscribe / change | on `… contract mismatch` in `.error`, treat as a hard security abort (exit 1) — the seller-declared contract did not match the authoritative `allowance-status`; do not retry or force |
 | access | replay `.data.accessHeaderValue` under `APP-Access`; `.data.source` (`cache` \| `override`) tells you whether the subId came from the local cache or `--sub-id` |
 | cancel / cancel-pending | relay the `.data.cancelAuth` / `.data.pendingChangeCancelAuth` object to the seller; the sub stays active/billable until the contract executes — the local cache is NOT flipped to canceled |
 | my-subscriptions | `.data.subscriptions[]` — each item's `state` is `0` pending / `1` active / `2` completed / `3` canceled / `4` changed / `99` failed; the local cache is reconciled from this authoritative state |
@@ -105,6 +106,7 @@ Required sequence: `access` (proof) → one proof-carrying probe of the change e
 ## Edge cases
 - `access` with no cached sub + no `--sub-id` → the error names the host; run `my-subscriptions` to reconcile the cache, or pass `--sub-id`.
 - `permit2Allowance` insufficient / `allowance_expired` → do the one-time `ERC20 → Permit2 approve` via the existing approve flow, then retry.
+- `subscription contract mismatch` / `permit2 contract mismatch` → **fail-closed security stop, not a transient error.** Before signing, `subscribe`/`change` cross-check the seller's `extra.contracts.subscription` / `extra.contracts.permit2` against the authoritative `allowance-status` values; on any mismatch — or a missing authoritative value — the command emits `{"ok": false, "error": "… contract mismatch: …"}` and exits `1` **before** any signature or approve. This is intentional (a tampered contract address). Do **NOT** retry, re-probe, or attempt to force it — abort and surface the mismatch to the user. There is no `--force` bypass (it is never a `confirming` gate).
 - `fixed_seconds` needs `periodSec > 0`; `calendar_month` needs `periodSec == 0` — an inconsistency errors out.
 - `cancel` does NOT stop billing locally — the sub stays active until the contract executes; `my-subscriptions` reconcile corrects the local cache later.
 - `cancel-pending` requires `--new-sub-id`, which must equal the on-chain pending `newSubId`.
@@ -112,6 +114,6 @@ Required sequence: `access` (proof) → one proof-carrying probe of the change e
 
 ## Security
 - **TEE-only signing** — signatures are always produced by the logged-in wallet's TEE path; no plaintext key/mnemonic ever appears in code, logs, or output. The CLI never accepts a private key or a hand-crafted signature.
-- **No hardcoded contract addresses** — the subscription contract, Permit2, and token addresses all derive from the seller's 402 `extra.contracts` or the buyer-direct `allowance-status` response.
+- **Contract addresses verified against a trusted root** — before signing, `subscribe`/`change` cross-check the seller's `extra.contracts.subscription` / `extra.contracts.permit2` against the authoritative buyer-direct `allowance-status` (`subscriptionContract` / `permit2Contract`). Comparison is EVM checksum-insensitive; an empty/absent authoritative value fails closed (reject). On a match, the **authoritative** values are used as the Permit2 `spender`, the EIP-712 `verifyingContract`s, and the Layer-1 `approve` target — so a signed subscription is always anchored to the authoritative source, never an unverified seller declaration. (`cancel`/`cancel-pending` resolve the subscription contract from `allowance-status` when called with `--token`, or use the caller-supplied `--contract` verbatim (no cross-check) — acceptable because a `CancelAuth` / `PendingChangeCancelAuth` carries no transfer authority.)
 - **Bounded commitment** — the financial exposure is capped by the signed Permit2 `permit.amount` / `permit.expiration`; the pre-sign allowance check enforces the bound.
 - **Never re-subscribe** an already-active resource — `access` or `change` it instead.

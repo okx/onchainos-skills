@@ -9,15 +9,14 @@
 //! - `flow_lifecycle.rs` — task execution + arbitration + terminal states
 
 use crate::commands::agent_commerce::task::common::config::TASK_MIN_VERSION;
-use crate::commands::agent_commerce::task::common::util::short_job_id;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
+use crate::commands::agent_commerce::task::common::util::short_job_id;
 use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 
 // ── Localization constants (shared across flow_negotiate / flow_lifecycle) ────
 //
 // Each constant produces byte-for-byte identical output when interpolated via
 // `format!("{CONST}")` — zero prompt-level risk.
-
 
 /// Shared switch-asp routing text for user_decision_* handlers.
 /// Covers: user-reject → asp-match → service extraction → set-asp (or set_asp_params decision).
@@ -106,7 +105,8 @@ pub(super) struct FlowContext<'a> {
     pub title_in_extract: &'a str,
     pub terminal_session_hint: String,
     pub payment_mode: Option<i64>,
-    pub prefetched: Option<&'a crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    pub prefetched:
+        Option<&'a crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
     /// Verbatim `--data` arg from `next-action`, used by event handlers that
     /// need user-routed input (e.g. `reject_review` reading the rejection
     /// reason extracted from the relayed `user_decision_job_submitted` reply).
@@ -156,7 +156,6 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent confirm-accept {job_id}  # Confirm accept (reads provider/token/amount from task detail API)"),
             format!("  onchainos agent direct-accept {job_id} --provider-agent-id <agentId> --token-symbol <sym> --token-amount <amt>  # x402 phase 2b: call after endpoint interaction"),
             format!("  onchainos agent close {job_id}          # Close task"),
-            format!("  onchainos agent set-public {job_id}     # Convert to public task"),
             format!("  onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params '<params>' --service-token-address <addr> --service-token-amount <amt>  # Re-set ASP + service (off-chain, triggers job_created)"),
             format!("  onchainos agent reject-apply {job_id}  # Reject the current provider's apply (off-chain)"),
         ],
@@ -177,7 +176,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Disputed => vec![
             next_action("job_disputed"),
-            "(passive) Evidence is auto-submitted by the CLI on `job_disputed` (chat history + saved deliverables under ~/.onchainos/deliverables/user/<jobId>/); manual `dispute upload` is not supported.".to_string(),
+            "(passive) Evidence is auto-submitted by the CLI on `job_disputed` / `sub_asp_dispute` (chat history + saved deliverables under ~/.onchainos/deliverables/user/<jobId>/; subscription uploads capped at 20 files via --max-files); manual `dispute upload` is not supported.".to_string(),
         ],
         Status::Completed => vec![
             next_action("job_completed"),
@@ -215,14 +214,23 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     }
 }
 
-
-
 /// Generate the structured next-action prompt for the client/user based on event.
 ///
 /// The `event_str` parameter accepts both event names (job_created / provider_applied / ...)
 /// and status names (created / submitted / ...), uniformly parsed by state_machine.
-pub async fn generate_next_action(job_id: &str, event_str: &str, agent_id: &str, job_title: Option<&str>, data: Option<&str>, payment_mode: Option<i64>, prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>, message: Option<&serde_json::Value>) -> String {
-    use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
+pub async fn generate_next_action(
+    job_id: &str,
+    event_str: &str,
+    agent_id: &str,
+    job_title: Option<&str>,
+    data: Option<&str>,
+    payment_mode: Option<i64>,
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    message: Option<&serde_json::Value>,
+) -> String {
+    use crate::commands::agent_commerce::task::common::state_machine::{
+        parse_status_or_event, Event,
+    };
 
     let version_prefix = format!(
         "[Protocol version] When calling `okx-a2a xmtp-send`, the `--payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
@@ -319,75 +327,33 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
 
     let body = match event {
         // ─── Negotiation / matching phase → flow_negotiate ──────────────────────────
-        Event::JobCreated => {
-            super::flow_negotiate::job_created(&ctx).await
-        }
-        Event::Other(ref s) if s == "provider_conversation" => {
-            let vis = prefetched.and_then(|p| p.visibility).unwrap_or(1);
-            if vis == 0 {
-                super::flow_negotiate::provider_conversation_auto_consume(&ctx).await
-            } else {
-                // Private task: ASPs cannot discover or contact-user for private tasks.
-                // Silently ignore unexpected provider_conversation; end turn.
-                "Private task — unexpected provider contact. No action needed. End turn.\n".to_string()
-            }
-        }
-        Event::Other(ref s) if s == "provider_conversation_reject" => {
-            let gid = message
-                .and_then(|m| m.get("groupId"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if gid.is_empty() {
-                format!("[Error] provider_conversation_reject requires `groupId` in --message. Call:\n\
-                         onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId>\"}}'\n")
-            } else {
-                super::flow_negotiate::provider_conversation_reject_cli(&ctx, gid)
-            }
-        }
-        Event::Other(ref s) if s == "provider_conversation_pick" => {
-            let dp_id = message
-                .and_then(|m| m.get("provider"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if dp_id.is_empty() {
-                format!("[Error] provider_conversation_pick requires `provider` in --message. Call:\n\
-                         onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<ASP agentId>\"}}'\n")
-            } else {
-                let _ = super::negotiate::save_designated_provider(job_id, dp_id);
-                super::flow_negotiate::provider_conversation_pick_cli(job_id, agent_id, &short_id, dp_id, title_display, prefetched).await
-            }
-        }
-        Event::Other(ref s) if s == "designated_a2a" || s == "designated_x402" || s == "designated_error" => {
-            let dp_id = super::negotiate::get_designated_provider(job_id).ok().flatten().unwrap_or_default();
+        Event::JobCreated => super::flow_negotiate::job_created(&ctx).await,
+        Event::Other(ref s)
+            if s == "designated_a2a" || s == "designated_x402" || s == "designated_error" =>
+        {
+            let dp_id = super::negotiate::get_designated_provider(job_id)
+                .ok()
+                .flatten()
+                .unwrap_or_default();
             if dp_id.is_empty() {
                 format!("[Error] designated_* pseudo-event requires `provider` field. Call: onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"{s}\",\"jobId\":\"{job_id}\",\"provider\":\"<ASP agentId>\"}}'\n")
             } else {
                 match s.as_str() {
-                    "designated_a2a" => super::flow_negotiate::designated::branch_a2a_cli(job_id, agent_id, &dp_id)
-                        .unwrap_or_else(|| "[Designated ASP route: A2A] Setup done. **End this turn.**\n".to_string()),
-                    "designated_x402" => super::flow_negotiate::designated::branch_x402(job_id, agent_id, &short_id, &dp_id, None),
-                    _ => super::flow_negotiate::designated::branch_error(job_id, agent_id, &short_id, &dp_id),
+                    "designated_a2a" => {
+                        super::flow_negotiate::designated::branch_a2a_cli(job_id, agent_id, &dp_id)
+                            .unwrap_or_else(|| {
+                                "[Designated ASP route: A2A] Setup done. **End this turn.**\n"
+                                    .to_string()
+                            })
+                    }
+                    "designated_x402" => super::flow_negotiate::designated::branch_x402(
+                        job_id, agent_id, &short_id, &dp_id, None,
+                    ),
+                    _ => super::flow_negotiate::designated::branch_error(
+                        job_id, agent_id, &short_id, &dp_id,
+                    ),
                 }
             }
-        }
-        Event::Other(ref s) if s == "auto_advance_next" => {
-            let failed_provider = message
-                .and_then(|m| m.get("failedProvider"))
-                .and_then(|v| v.as_str());
-            if let Some(fp) = failed_provider {
-                let _ = super::negotiate::mark_failed(job_id, fp);
-            }
-            // Safety: ensure designated-provider is cleared even if mark_failed
-            // was skipped (missing failedProvider field from LLM)
-            let _ = super::negotiate::clear_designated_provider(job_id);
-            super::flow_negotiate::provider_conversation_auto_consume(&ctx).await
-        }
-        Event::JobVisibilityChanged => {
-            let visibility = message
-                .and_then(|m| m.get("visibility"))
-                .and_then(|v| v.as_i64())
-                .unwrap_or(1);
-            super::flow_negotiate::job_visibility_changed(&ctx, visibility)
         }
         Event::JobPaymentModeChanged => super::flow_negotiate::job_payment_mode_changed(&ctx),
         Event::NegotiateReply => super::flow_negotiate::negotiate_reply(&ctx).await,
@@ -398,30 +364,22 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 .and_then(|m| m.get("overMostBudget"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-            let visibility = message
-                .and_then(|m| m.get("visibility"))
-                .and_then(|v| v.as_i64())
-                .or_else(|| prefetched.and_then(|p| p.visibility))
-                .unwrap_or(1);
-            super::flow_lifecycle::provider_applied(&ctx, over_most_budget, visibility).await
+            super::flow_lifecycle::provider_applied(&ctx, over_most_budget).await
         }
-        Event::JobProviderReject => {
-            let visibility = message
-                .and_then(|m| m.get("visibility"))
-                .and_then(|v| v.as_i64())
-                .or_else(|| prefetched.and_then(|p| p.visibility))
-                .unwrap_or(1);
-            super::flow_negotiate::provider_reject(&ctx, visibility).await
-        }
+        Event::JobProviderReject => super::flow_negotiate::provider_reject(&ctx).await,
         Event::JobAccepted => super::flow_lifecycle::job_accepted(&ctx),
         Event::DeliverableReceived => {
-            super::flow_lifecycle::deliverable_received_cli(&ctx, message)
+            super::flow_lifecycle::deliverable_received_cli(&ctx, message).await
         }
         Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx),
         Event::JobRejected => super::flow_lifecycle::job_rejected(&ctx),
         Event::JobDisputed => super::flow_lifecycle::job_disputed(&ctx),
-        Event::Other(ref s) if s == "approve_review" => super::flow_lifecycle::approve_review(&ctx).await,
-        Event::Other(ref s) if s == "reject_review" => super::flow_lifecycle::reject_review(&ctx).await,
+        Event::Other(ref s) if s == "approve_review" => {
+            super::flow_lifecycle::approve_review(&ctx).await
+        }
+        Event::Other(ref s) if s == "reject_review" => {
+            super::flow_lifecycle::reject_review(&ctx).await
+        }
         Event::JobCompleted => super::flow_lifecycle::job_completed(&ctx, message),
         Event::DisputeResolved => super::flow_lifecycle::dispute_resolved(&ctx),
         Event::JobRefunded => super::flow_lifecycle::job_refunded(&ctx),
@@ -433,11 +391,31 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::ReviewDeadlineWarn => super::flow_lifecycle::review_deadline_warn(&ctx),
         Event::RewardClaimed => super::flow_lifecycle::reward_claimed(&ctx),
         Event::WakeupNotify => super::flow_lifecycle::wakeup_notify(&ctx),
-        Event::Other(ref s) if s == "create_task" => super::flow_lifecycle::create_task(),
+        Event::Other(ref s) if s == "create_task" => super::flow_lifecycle::create_task(message),
         Event::Other(ref s) if s == "close" => super::flow_lifecycle::close_task(&ctx).await,
-        Event::Other(ref s) if s == "set_public" => super::flow_lifecycle::set_public(&ctx).await,
-        Event::AttachmentAdded => {
-            super::flow_lifecycle::attachment_added_cli(&ctx, message)
+        Event::AttachmentAdded => super::flow_lifecycle::attachment_added_cli(&ctx, message),
+        // ─── Subscription lifecycle events ──────────────────────────────────────────────
+        Event::SubCreated => super::flow_lifecycle::subscription::sub_created(&ctx, message),
+        Event::SubCancel => super::flow_lifecycle::subscription::sub_cancel(&ctx, message),
+        Event::SubUserReject => super::flow_lifecycle::subscription::sub_user_reject(&ctx, message),
+        Event::SubAspAgree => super::flow_lifecycle::subscription::sub_asp_agree(&ctx, message),
+        Event::SubAspDispute => super::flow_lifecycle::subscription::sub_asp_dispute(&ctx, message),
+        Event::SubTrialIntoActive => {
+            super::flow_lifecycle::subscription::sub_trial_into_active(&ctx, message)
+        }
+        Event::SubRenew => super::flow_lifecycle::subscription::sub_renew(&ctx, message),
+        Event::SubExpireWarn => super::flow_lifecycle::subscription::sub_expire_warn(&ctx).await,
+        Event::SubCompleteNotify => {
+            super::flow_lifecycle::subscription::sub_complete_notify(&ctx, message)
+        }
+        Event::SubCloseNotify => {
+            super::flow_lifecycle::subscription::sub_close_notify(&ctx, message)
+        }
+        Event::SubFailedNotify => {
+            super::flow_lifecycle::subscription::sub_failed_notify(&ctx, message)
+        }
+        Event::SubRejectRefundNotify => {
+            super::flow_lifecycle::subscription::sub_reject_refund_notify(&ctx, message)
         }
         // ─── Events the user never receives + unknown fallback ──────────────────────────
         Event::Staked
@@ -445,7 +423,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         | Event::UnstakeClaimed
         | Event::UnstakeCancelled
         | Event::StakeStopped
-        | Event::CooldownEntered => super::flow_lifecycle::staked_and_unknown(event.as_str(), job_id),
+        | Event::CooldownEntered => {
+            super::flow_lifecycle::staked_and_unknown(event.as_str(), job_id)
+        }
 
         // ─── user_decision_* relay router (user-side scenes) ───
         // User-decision relays arrive as system-shaped envelopes with
@@ -471,7 +451,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      # For reject_review — pass the extracted rejection reason via message.data (empty string if user gave no reason; the handler falls back to a default):\n\
                      onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"reject_review\",\"jobId\":\"{job_id}\",\"data\":\"<extracted reason from user's reply, or empty>\"}}'\n\
                      ```\n\
-                     If the reply is **truly ambiguous** (e.g. non-committal `hmm` / `got it` / unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=approve  B=reject\".\n"
+                     If the reply is **truly ambiguous** (e.g. non-committal `hmm` / `got it` / unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (or none, if it says `[to: backup]` / you run in a backup sub — NEVER your own agentId) and `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=approve  B=reject\".\n"
                 ),
                 "cli_failed" => format!(
                     "[User decision relay] source_event=`cli_failed`, user's verbatim reply: `{reply}`\n\n\
@@ -480,7 +460,51 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20• **Dismiss** — user takes manual control of this step (typical intents: B / 选B / dismiss / 不再提示 / skip prompts / 我自己处理 / let me handle it). Action: end the turn. Do not re-prompt; the user owns this step now.\n\
                      \x20\x20• **New instruction** — user gives a corrective instruction in natural language (e.g. `把 token-symbol 改成 USDT 再试` / `change --token-symbol to USDT and retry` / `用 endpoint https://... 重试` / `先 cancel 那个 unstake`). Action: parse the modification, rebuild the CLI invocation with the user's adjustment, and execute once. Treat the result as a fresh attempt (success → continue the original scene; failure → enqueue another `cli_failed` decision).\n\n\
                      Do NOT execute any on-chain action that wasn't part of the original failed command — the user reply only authorizes retry/edit of the failed step, not unrelated new actions.\n\
-                     If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event cli_failed`. **`--user-content` and `--list-label` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
+                     If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (or none, if it says `[to: backup]` / you run in a backup sub — NEVER your own agentId) and `--source-event cli_failed`. **`--user-content` and `--list-label` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
+                ),
+                "autotrade_consent" => format!(
+                    "[User decision relay] source_event=`autotrade_consent`, user's verbatim reply: `{reply}`\n\n\
+                     The push was a FIRST-TIME auto-copy-trade consent for THIS subscription (per-job). \
+                     **Semantic mapping** — decide which of three the user chose, then run the consent-set command \
+                     (it also executes/surfaces the current held signal). Do NOT read the deliverable.\n\n\
+                     \x20\x20• **A = auto + cap** — execute this one AND auto-execute this subscription from now on, up to a per-trade cap the user gives in stablecoin dollars (USDT by default) (typical: A / 自动 / 一直跟 / auto — plus a number like `100` / `100u` / `每笔100`). Extract the cap number; if the user ALSO named a payment stablecoin (用USDC / with USDC / USDC支付 — whitelist: usdc | usdt), append ` --quote <usdc|usdt>` to the command below; if they named none, OMIT --quote entirely (defaults to USDT and preserves any stored choice). Then run:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent autotrade-consent-set --job-id {job_id} --agent-id {agent_id} --mode auto --cap <CAP_U>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20• **B = manual (this one only)** — run this one, then ask each time (typical: B / 仅本次 / 就这次 / just this once). If the user named a payment stablecoin (用USDC / with USDC), append ` --quote <usdc|usdt>`; otherwise omit it. Run:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent autotrade-consent-set --job-id {job_id} --agent-id {agent_id} --mode manual\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20• **C = decline** — do not execute (typical: C / 不跟 / 不执行 / no / decline). Run:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent autotrade-consent-set --job-id {job_id} --agent-id {agent_id} --mode decline\n\
+                     \x20\x20\x20\x20```\n\
+                     The command returns the next action in `data`: an execution card (`autoTrade:true` → run its `command` verbatim, **then follow the card's `resultGuidance` to report the outcome**: a command carrying `--notify-job-id` (dex) pushes its own success/failure notification from inside the CLI — do NOT run `onchainos agent user-notify` again for it (that double-notifies); any other command (plugin) → fill the card's `notificationTemplate` (localize; on failure the reason + that manual operation is possible) and push it via `onchainos agent user-notify --content \"<filled notificationTemplate>\"` — never as plain reply text (a background session's reply never reaches the user). No auto-retry; NEVER execute silently or leave the result unreported), a pushed decision (`decisionPushed:true` → the replay needs another user choice (e.g. plugin install / over-cap) and the CLI has ALREADY pushed that card to the user — do NOT push anything else, just end the turn; if a decision payload arrives WITHOUT `decisionPushed` the direct push failed — run its `command` verbatim, filling `--user-content` with the payload's `userContent` verbatim (it is already in the user's language; do NOT re-translate), then end the turn), a manual command (`autoExecute:false` → present its `command` to the user to run), or a notify/ack (`notificationPushed:true` → the CLI already delivered the notice to the user — end the turn; without it, tell the user via `onchainos agent user-notify`; no run).\
+                     If **A but no cap number was given**, or the reply is **truly ambiguous**, re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT the flag when it says `[to: backup]` or you run in a backup sub — NEVER pass your own agentId) and `--source-event autotrade_consent`; **localize `--user-content`/`--list-label`**. Reference (English): \"Please choose: A=auto (give a per-trade cap in USDT)  B=just this once  C=don't execute\".\n"
+                ),
+                "autotrade_over_cap" => format!(
+                    "[User decision relay] source_event=`autotrade_over_cap`, user's verbatim reply: `{reply}`\n\n\
+                     This subscription is on AUTO but this trade exceeded the per-trade cap. **Semantic mapping** — two options:\n\n\
+                     \x20\x20• **Raise the cap and execute** — user wants it through (typical: A / 放行 / 提高上限 / raise to <N> / 这次也自动). Extract the new cap (≥ this trade's amount; if the user just says \"allow / 放行\" without a number, use this trade's amount from the over-cap prompt). Run:\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent autotrade-consent-set --job-id {job_id} --agent-id {agent_id} --mode auto --cap <NEW_CAP_U>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20It returns an execution card → run its `command` verbatim, **then follow the card's `resultGuidance` to report the outcome**: a command carrying `--notify-job-id` (dex) pushes its own success/failure notification from inside the CLI — do NOT run `onchainos agent user-notify` again for it (double-notify); any other command (plugin) → fill the card's `notificationTemplate` (localize; on failure the reason + that manual operation is possible) and push it via `onchainos agent user-notify --content \"<filled notificationTemplate>\"` — never as plain reply text (a background session's reply never reaches the user). No auto-retry; never execute silently or leave the result unreported. A `decisionPushed:true` payload means the CLI already pushed a follow-up decision card to the user — push nothing, end the turn (without `decisionPushed`: run its `command` verbatim, `--user-content` = the payload's `userContent` verbatim — already in the user's language, do NOT re-translate).\n\
+                     \x20\x20• **Skip this one** — keep the cap, don't execute (typical: B / 跳过 / 不做这笔 / skip). End the turn; optionally tell the user it was skipped. Do NOT run any command.\n\
+                     If ambiguous, re-ask via `pending-decisions-v2 request` with `--source-event autotrade_over_cap` (localized). Reference (English): \"Over your per-trade cap. A=raise the cap and execute  B=skip this one\".\n"
+                ),
+                "autotrade_plugin_install" => format!(
+                    "[User decision relay] source_event=`autotrade_plugin_install`, user's verbatim reply: `{reply}`\n\n\
+                     Auto-executing this copy-trade needs a plugin that is NOT installed yet. The decision card names it (its `requiresPlugin` field, or the `[Auto Copy-Trade plugin] <name>` label). **Semantic mapping** — two options:\n\n\
+                     \x20\x20• **A = install & execute** (typical: A / 安装 / 装 / install / 同意 / yes). Two steps IN ORDER:\n\
+                     \x20\x20\x20\x201. Install the named plugin via `okx-dapp-discovery` — read `skills/okx-dapp-discovery/SKILL.md` and follow its install flow for `<name>` (e.g. `polymarket-plugin`). This runs in THIS user session, so its install-consent prompt is visible to the user.\n\
+                     \x20\x20\x20\x202. After the plugin is installed, run (replays the held signal execute-once; future signals then run automatically):\n\
+                     \x20\x20\x20\x20```bash\n\
+                     \x20\x20\x20\x20onchainos agent autotrade-consent-set --job-id {job_id} --agent-id {agent_id} --mode plugin-approved --plugin <name>\n\
+                     \x20\x20\x20\x20```\n\
+                     \x20\x20\x20\x20It returns an execution card (`autoTrade:true` → run its `command` verbatim, **then follow the card's `resultGuidance` to report the outcome**: a command carrying `--notify-job-id` (dex) pushes its own success/failure notification from inside the CLI — do NOT run `onchainos agent user-notify` again for it (double-notify); any other command (plugin) → fill the card's `notificationTemplate` (localize; on failure the reason + that manual operation is possible) and push it via `onchainos agent user-notify --content \"<filled notificationTemplate>\"` — never as plain reply text (a background session's reply never reaches the user); no auto-retry, never execute silently or leave the result unreported), a notify (`notificationPushed:true` → the CLI already delivered it — end the turn; without it, tell the user via `onchainos agent user-notify`), or a pushed decision (`decisionPushed:true` → the CLI already pushed the follow-up card to the user — push nothing, end the turn; without `decisionPushed`: run its `command` verbatim, `--user-content` = the payload's `userContent` verbatim — already in the user's language, do NOT re-translate).\n\
+                     \x20\x20• **B = skip** — don't install, don't execute (typical: B / 跳过 / 不装 / skip / no). End the turn; optionally tell the user it was skipped. Do NOT run any command.\n\
+                     If the install is declined or fails, tell the user it can be done manually later; do NOT auto-retry. If ambiguous, re-ask via `pending-decisions-v2 request` with `--source-event autotrade_plugin_install` (localized). Reference (English): \"This copy-trade needs the <name> plugin. A=install & execute  B=skip\".\n"
                 ),
                 "asp_match_pick" => {
                     // CLI mode (Claude Code / Codex): drop the passive "Waiting for ASP to accept"
@@ -538,28 +562,11 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20`--user-content` template (canonical English; localize per user's language):\n\
                      \x20\x20\x20\x20[Job <shortJobId> — you are the User Agent] All matched ASPs have been tried; no match found. Choose next step:\n\
                      \x20\x20\x20\x20A. Specify an ASP — provide the ASP's agentId\n\
-                     \x20\x20\x20\x20B. Make the job public — let more ASPs discover it\n\
-                     \x20\x20\x20\x20C. Close the job — cancel and refund\n\
-                     \x20\x20• **Make public** — typical intents: B / 选B / `public` / `公开` / `公开任务`. Action: `onchainos agent set-public {job_id}`.\n\
-                     \x20\x20• **Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
-                     If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event asp_match_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, or see more ASPs, list the task publicly, or cancel.\"\n"
+                     \x20\x20\x20\x20B. Close the job — cancel and refund\n\
+                     \x20\x20• **Close** — typical intents: B / `close` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
+                     If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (or none, if it says `[to: backup]` / you run in a backup sub — NEVER your own agentId) and `--source-event asp_match_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, see more ASPs, or cancel.\"\n"
                     )
                 },
-                "provider_pending" => format!(
-                    "[User decision relay] source_event=`provider_pending`, user's verbatim reply: `{reply}`\n\n\
-                     The push was a single-ASP accept/reject card. Extract `[asp: <agentId>]` and `[groupId: <gid>]` from the `--llm-content` block above. **Semantic mapping** — decide:\n\n\
-                     \x20\x20• **Accept** — typical intents: 1 / `accept` / `接受` / `yes` / `好` / `可以`. Run:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_pick\",\"jobId\":\"{job_id}\",\"provider\":\"<asp agentId from llm-content>\"}}'\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20Follow the returned playbook verbatim.\n\
-                     \x20\x20• **Reject** — typical intents: 2 / `reject` / `拒绝` / `no` / `不` / `换一个` / `next`. Run:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"provider_conversation_reject\",\"jobId\":\"{job_id}\",\"groupId\":\"<groupId from llm-content>\"}}'\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20Follow the returned playbook (shows next ASP or close options if none remain).\n\n\
-                     If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event provider_pending`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"Please reply 1 (accept) or 2 (reject).\"\n"
-                ),
                 "not_provider" | "no_asp_found" | "provider_offline" | "x402_invalid" | "over_budget" => {
                     // CLI mode (Claude Code / Codex): drop the passive "Waiting for ASP to accept"
                     // phrase — it reads as a turn-end cue to LLM-driven watch loops and suppresses re-arm.
@@ -617,10 +624,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20Please describe the input for this service (serviceParams):\n\
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
                      \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
-                     \x20\x20\x20\x20If user said A / specify but **did NOT include an agentId** (e.g. just `A`, `选A`, `换一个 ASP`): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` (or none, if from a backup sub) and `--source-event {source}`; `--user-content` and `--list-label` must be localized to the user's language; `--user-content` must ask for the agentId (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
-                     \x20\x20• **B — Make public** — typical intents: B / 选B / `public` / `公开`. Action: `onchainos agent set-public {job_id}`.\n\
-                     \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
-                     If ambiguous (unrelated chitchat / non-committal `hmm` / `got it`): re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=specify another ASP (include the agentId)  B=make public  C=close the job\".\n"
+                     \x20\x20\x20\x20If user said A / specify but **did NOT include an agentId** (e.g. just `A`, `选A`, `换一个 ASP`): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (or none, if it says `[to: backup]` / you run in a backup sub — NEVER your own agentId) and `--source-event {source}`; `--user-content` and `--list-label` must be localized to the user's language; `--user-content` must ask for the agentId (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
+                     \x20\x20• **B — Close** — typical intents: B / `close` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
+                     If ambiguous (unrelated chitchat / non-committal `hmm` / `got it`): re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=specify another ASP (include the agentId)  B=close the job\".\n"
                     )
                 },
                 "negotiate_over_budget" => {
@@ -633,7 +639,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                     };
                     format!(
                     "[User decision relay] source_event=`negotiate_over_budget`, user's verbatim reply: `{reply}`\n\n\
-                     The push was during negotiation when the ASP's quote exceeded max_budget — different A/B/C from the designated-flow `over_budget` (this one offers `view ASP list` not `make public`). **Semantic mapping** — decide:\n\n\
+                     The push was during negotiation when the ASP's quote exceeded max_budget — offers `view ASP list` / specify another ASP / close. **Semantic mapping** — decide:\n\n\
                      \x20\x20• **A — View ASP list** — typical intents: A / 选A / `推荐` / `recommend` / `列表` / `list` / `看看有谁`. Action: `onchainos agent asp-match --job-id {job_id}` → compose the ASP list as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick`. **All footer keywords must be localized** (e.g. Chinese: 回复\"更多\", NOT 回复\"more\").\n\
                      \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId in the reply** (e.g. `B 864` / `指定 864` / `换 864`). Action (switch-asp flow):\n\
                      \x20\x20\x20\x201. Reject current ASP (safe even if none active):\n\
@@ -695,12 +701,11 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                     };
                     format!(
                     "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\
-                     {scene_lead} Options: A=browse / B=designate / (C=make public if private) / last=close. **Semantic mapping**:\n\n\
+                     {scene_lead} Options: A=browse / B=designate / C=close. **Semantic mapping**:\n\n\
                      \x20\x20• **A — Browse ASP list** — typical intents: A / 选A / `推荐` / `列表` / `list` / `浏览`. Action: `onchainos agent asp-match --job-id {job_id}` → compose the ASP list as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick`. **All footer keywords must be localized**.\n\
                      \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId** (e.g. `B 864` / `指定 864`). Action (switch-asp flow):\n\
                      {switch_asp}\
-                     \x20\x20• **C — Make public** — typical intents: C / 选C / `public` / `公开`. Action: `onchainos agent set-public {job_id}`. (Harmless no-op if already public.)\n\
-                     \x20\x20• **Close** (last option, C or D) — typical intents: `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
+                     \x20\x20• **C — Close** — typical intents: C / `close` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
                      If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized**.\n"
                 )},
                 "x402_price_mismatch" => format!(
@@ -752,8 +757,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20`--user-content` template (translate to user's language):\n\
                      \x20\x20\x20\x20The x402 endpoint's actual price is <amountHuman> <tokenSymbol>, which exceeds your max budget (<maxBudget>). Choose next step:\n\
                      \x20\x20\x20\x20A. Specify another ASP — provide the agentId\n\
-                     \x20\x20\x20\x20B. Make the job public\n\
-                     \x20\x20\x20\x20C. Close the job\n\
+                     \x20\x20\x20\x20B. Close the job\n\
                      \x20\x20\x20\x20→ **end this turn** and wait for the user's reply.\n\n\
                      \x20\x202. **Price-mismatch**: Read `feeAmount` from the `[IR_CONTEXT]` block. If both values > 0 AND `|amountHuman - feeAmount| / feeAmount > 0.01` (delta > 1%):\n\
                      \x20\x20\x20\x20Push a `x402_ir_price_confirm` decision card:\n\
@@ -898,17 +902,23 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
     // okx-a2a session status / sessions_spawn / pending-decisions-v2 request).
     // Skip every preamble (the IRON RULEs do not apply) and version_prefix
     // (no `okx-a2a xmtp-send` call to validate).
-    let use_cli_minimal = matches!(event_str,
-            "job_created" | "provider_conversation_pick" |
+    let use_cli_minimal = matches!(
+        event_str,
+        "job_created" |
             "negotiate_reply" |
             "provider_applied" | "job_accepted" | "deliverable_received" | "approve_review" | "job_completed" |
             "job_expired" | "job_auto_refunded" |
             "submit_expired" | "reject_expired" |
-            "close" | "set_public"
-        );
-    let core = if use_cli_minimal
-        || event_str == "create_task"
-    {
+            "close" |
+            // Subscription notifications are self-contained display bodies (they call only
+            // `user-notify` / `session-cleanup`, no IRON-RULE commands), so skip the shared
+            // preamble + xmtp version prefix.
+            "sub_created" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
+            "sub_trial_into_active" | "sub_renew" | "sub_expire_warn" |
+            "sub_complete_notify" | "sub_close_notify" | "sub_failed_notify" |
+            "sub_reject_refund_notify"
+    );
+    let core = if use_cli_minimal || event_str == "create_task" {
         body
     } else {
         format!("{preamble_slim}{prefetched_block}{body}")
@@ -927,4 +937,212 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         );
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const AGENT_ID: &str = "864";
+    const JOB_ID: &str = "0xsub01";
+
+    async fn run(event: &str, msg: serde_json::Value) -> String {
+        generate_next_action(
+            JOB_ID,
+            event,
+            AGENT_ID,
+            Some("My Sub"),
+            None,
+            None,
+            None,
+            Some(&msg),
+        )
+        .await
+    }
+
+    // Every user-side subscription event renders a display notification, never a decision.
+    const USER_NON_TERMINAL: [&str; 5] = [
+        "sub_created",
+        "sub_trial_into_active",
+        "sub_renew",
+        "sub_user_reject",
+        "sub_asp_dispute",
+    ];
+    const USER_TERMINAL: [&str; 5] = [
+        "sub_cancel",
+        "sub_asp_agree",
+        "sub_complete_notify",
+        "sub_close_notify",
+        "sub_failed_notify",
+    ];
+
+    #[tokio::test]
+    async fn subscription_events_render_notify_and_never_decide() {
+        for evt in USER_NON_TERMINAL.iter().chain(USER_TERMINAL.iter()) {
+            let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
+            assert!(!out.is_empty(), "{evt}: body must be non-empty");
+            assert!(
+                out.contains("onchainos agent user-notify"),
+                "{evt}: must use the user-notify scaffold"
+            );
+            assert!(
+                !out.contains("pending-decisions"),
+                "{evt}: display-only — must NOT push pending-decisions"
+            );
+            assert!(
+                !out.contains("pending_v2"),
+                "{evt}: display-only — must NOT push pending_v2"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_subscription_events_carry_cleanup_hint() {
+        // Unconditionally terminal events always append the cleanup hint.
+        const ALWAYS_TERMINAL: [&str; 4] = [
+            "sub_asp_agree",
+            "sub_complete_notify",
+            "sub_close_notify",
+            "sub_failed_notify",
+        ];
+        for evt in ALWAYS_TERMINAL {
+            let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
+            assert!(
+                out.contains("session-cleanup"),
+                "{evt}: terminal event must append the cleanup hint"
+            );
+        }
+        // `sub_cancel` terminal-ness branches on `trialType`: a trial cancel
+        // (trialType=1) closes the subscription (terminal → cleanup hint); a formal-period cancel
+        // (trialType=0) only turns auto-renew off (non-terminal → NO cleanup hint).
+        let trial_cancel = run(
+            "sub_cancel",
+            json!({ "event": "sub_cancel", "jobId": JOB_ID, "cancelResult": "success", "trialType": 1 }),
+        )
+        .await;
+        assert!(
+            trial_cancel.contains("session-cleanup"),
+            "sub_cancel trialType=1 is terminal → cleanup hint"
+        );
+        let formal_cancel = run(
+            "sub_cancel",
+            json!({ "event": "sub_cancel", "jobId": JOB_ID, "cancelResult": "success", "trialType": 0 }),
+        )
+        .await;
+        assert!(
+            !formal_cancel.contains("session-cleanup"),
+            "sub_cancel trialType=0 is non-terminal → NO cleanup hint"
+        );
+        for evt in USER_NON_TERMINAL {
+            let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
+            assert!(
+                !out.contains("session-cleanup"),
+                "{evt}: non-terminal event must NOT append the cleanup hint"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sub_created_renders_amount_verbatim() {
+        let out = run(
+            "sub_created",
+            json!({ "event": "sub_created", "jobId": JOB_ID, "tokenSymbol": "USDT", "tokenAmount": "12.34" }),
+        )
+        .await;
+        assert!(out.contains("12.34 USDT"), "amount echoed verbatim: {out}");
+    }
+
+    #[tokio::test]
+    async fn sub_created_trial_branch_renders_trial_started_not_first_charge() {
+        let out = run(
+            "sub_created",
+            json!({
+                "event": "sub_created", "jobId": JOB_ID, "trialType": 1,
+                "tokenSymbol": "USDT", "tokenAmount": "12.34",
+                "trialStartTime": 1_700_000_000, "trialEndTime": 1_700_500_000
+            }),
+        )
+        .await;
+        assert!(
+            out.contains("[Trial Started]"),
+            "trialType=1 → trial copy: {out}"
+        );
+        assert!(
+            !out.contains("First charge") && !out.contains("[Subscribed]"),
+            "trial order must not claim a completed first charge: {out}"
+        );
+
+        // trialType=0 and absent trialType must both keep the paid-subscribe copy.
+        for msg in [
+            json!({ "event": "sub_created", "jobId": JOB_ID, "trialType": 0,
+                    "tokenSymbol": "USDT", "tokenAmount": "12.34" }),
+            json!({ "event": "sub_created", "jobId": JOB_ID,
+                    "tokenSymbol": "USDT", "tokenAmount": "12.34" }),
+        ] {
+            let out = run("sub_created", msg).await;
+            assert!(
+                out.contains("[Subscribed]"),
+                "paid path keeps Sub-1-2 copy: {out}"
+            );
+            assert!(
+                out.contains("First charge of 12.34 USDT completed"),
+                "{out}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sub_reject_refund_notify_is_display_only_auto_refund() {
+        let out = run(
+            "sub_reject_refund_notify",
+            json!({
+                "event": "sub_reject_refund_notify", "jobId": JOB_ID, "jobTitle": "My Sub",
+                "subStartTime": 1_700_000_000, "subEndTime": 1_700_500_000,
+                "rejectWindowEndsAt": 1_700_600_000,
+                "tokenAmount": "0.0005", "tokenSymbol": "USDT"
+            }),
+        )
+        .await;
+        // Product-confirmed (2026-07-24): backend auto-refunds; the client only displays the
+        // Sub-4-6 auto-refund notice. NO decision card, NO client-side claim, NO auto-execute.
+        assert!(out.contains("[Auto-Refund]"), "Sub-4-6 auto-refund copy: {out}");
+        assert!(
+            out.contains("automatically issued a full refund of 0.0005 USDT to your wallet"),
+            "amount slot verbatim: {out}"
+        );
+        assert!(
+            !out.contains("pending-decisions"),
+            "no decision card — refund is automatic: {out}"
+        );
+        assert!(
+            !out.contains("claim-auto-refund") && !out.contains("claimAutoRefund"),
+            "client must not claim (backend auto-refunds): {out}"
+        );
+        // Terminal notice (RefundSettled → Failed): carries the user-notify display scaffold.
+        assert!(out.contains("user-notify"), "display notification: {out}");
+    }
+
+    #[tokio::test]
+    async fn dispute_resolved_uses_online_copy_for_subscriptions_too() {
+        use crate::commands::agent_commerce::task::common::PreFetchedTaskContext;
+        // Product decision 2026-07-24: arbitration copy uses the existing online version — a
+        // subscription dispute (jobType=1) must render the SAME online [Dispute Won]/[Dispute Lost]
+        // copy as a task dispute, with no subscription-specific arbitration variant.
+        let p = PreFetchedTaskContext::from_api_response(&json!({
+            "title": "My Sub", "tokenAmount": "0.0005", "tokenSymbol": "USDT",
+            "providerAgentId": "5263", "status": 9
+        }));
+        let out = generate_next_action(
+            JOB_ID, "dispute_resolved", AGENT_ID, Some("My Sub"), None, None, Some(&p),
+            Some(&json!({ "event": "dispute_resolved", "jobId": JOB_ID, "jobType": 1,
+                          "subStartTime": 1_700_000_000, "subEndTime": 1_700_500_000 })),
+        )
+        .await;
+        assert!(out.contains("[Dispute Won]"), "subscription dispute uses online copy: {out}");
+        assert!(
+            !out.contains("ruled in your favor"),
+            "no subscription-specific arbitration copy: {out}"
+        );
+    }
 }

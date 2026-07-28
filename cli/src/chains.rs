@@ -134,6 +134,36 @@ pub fn resolve_chain(name: &str) -> String {
     }
 }
 
+/// Inverse of [`resolve_chain`]: map a chainIndex to its canonical primary name.
+///
+/// Returns the name that `resolve_chain` round-trips back to the same index, for
+/// every entry in [`SUPPORTED_CHAIN_INDICES`] (see the round-trip test). Used to
+/// build the `--chain <name>` argument of assembled recipe commands (FR-1/FR-6).
+/// Returns `None` for unknown indices.
+pub fn chain_name_for_index(chain_index: &str) -> Option<&'static str> {
+    let name = match chain_index {
+        "1" => "ethereum",
+        "10" => "optimism",
+        "56" => "bsc",
+        "137" => "polygon",
+        "195" => "tron",
+        "196" => "xlayer",
+        "250" => "fantom",
+        "324" => "zksync",
+        "501" => "solana",
+        "534352" => "scroll",
+        "607" => "ton",
+        "784" => "sui",
+        "1952" => "xlayer_test",
+        "8453" => "base",
+        "42161" => "arbitrum",
+        "43114" => "avalanche",
+        "59144" => "linea",
+        _ => return None,
+    };
+    Some(name)
+}
+
 /// Extract `chainIndex` from a chain entry, accepting either string or numeric serialization.
 fn chain_index_of(c: &serde_json::Value) -> Option<String> {
     c.get("chainIndex").and_then(|v| {
@@ -435,6 +465,27 @@ mod tests {
     fn resolve_chains_handles_xlayer_test_in_list() {
         // The comma-separated resolver must also honor the alias.
         assert_eq!(resolve_chains("ethereum,xlayer_test,arbitrum"), "1,1952,42161");
+    }
+
+    #[test]
+    fn chain_name_for_index_round_trips_all_supported() {
+        // FR-1/FR-6: chain_name_for_index must be the exact inverse of resolve_chain
+        // for every supported index. ∀ i, resolve_chain(chain_name_for_index(i)) == i.
+        for &idx in SUPPORTED_CHAIN_INDICES {
+            let name = chain_name_for_index(idx)
+                .unwrap_or_else(|| panic!("no canonical name for supported chainIndex {idx}"));
+            assert_eq!(
+                resolve_chain(name),
+                idx,
+                "round-trip failed: chain_name_for_index({idx})={name} did not resolve back"
+            );
+        }
+    }
+
+    #[test]
+    fn chain_name_for_index_unknown_is_none() {
+        assert_eq!(chain_name_for_index("99999"), None);
+        assert_eq!(chain_name_for_index(""), None);
     }
 
     #[test]

@@ -1056,7 +1056,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<PaymentQuoteParams>,
     ) -> Result<String, String> {
-        match payment::fetch_quote(&p.url, &p.param, &p.method).await {
+        match payment::fetch_quote(&p.url, &p.param, &p.method, None).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

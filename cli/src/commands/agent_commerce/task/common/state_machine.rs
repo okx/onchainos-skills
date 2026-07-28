@@ -215,8 +215,6 @@ pub enum Event {
     JobExpired,
     /// TaskMarket.close on-chain / Close tx result (notifies the initiating client).
     JobClosed,
-    /// TaskMarket.setVisibility on-chain (notifies the initiating client).
-    JobVisibilityChanged,
     /// TaskMarket.setPaymentMode on-chain (notifies the initiating client).
     JobPaymentModeChanged,
 
@@ -304,15 +302,43 @@ pub enum Event {
     /// Envelope shape (per-task fan-out):
     /// `{ agentId, message: { event: "wakeup_notify", source: "system",
     ///                         jobId: <real jobId>, jobStatus: <real status string>,
-    ///                         paymentMode, visibility, ... } }`
+    ///                         paymentMode, ... } }`
     /// Upon receipt the agent **must not** call next-action with `wakeup_notify`;
     /// instead, read `message.jobStatus` to get the real status, then call next-action again with
     /// that as `--event` to resume the script for the current status. See the WakeupNotify arm
     /// in flow.rs for details.
     WakeupNotify,
 
+    // ── Subscription lifecycle (display-class; parse + render + end turn) ──────
+    /// Subscription created on-chain/backend (notifies buyer/user).
+    SubCreated,
+    /// ASP selected for the subscription (notifies ASP).
+    SubAspSelected,
+    /// Subscription cancelled — carries `cancelResult` + free-text `failReason` (notifies user).
+    SubCancel,
+    /// User rejected current period delivery (DeliveryRejected); notifies user + ASP.
+    SubUserReject,
+    /// ASP agreed to a refund/settlement on the subscription (notifies user + ASP).
+    SubAspAgree,
+    /// Subscription dispute opened (notifies user + ASP).
+    SubAspDispute,
+    /// Trial period rolled into the active period (notifies user).
+    SubTrialIntoActive,
+    /// Subscription renewed — carries `renewResult` + free-text `failReason` (notifies user).
+    SubRenew,
+    /// Subscription nearing expiry — 3 days before, daily reminder; notifies user.
+    SubExpireWarn,
+    /// Subscription completed (notifies user + ASP).
+    SubCompleteNotify,
+    /// Subscription closed (notifies user + ASP).
+    SubCloseNotify,
+    /// Subscription failed (notifies user + ASP).
+    SubFailedNotify,
+    /// ASP missed the rejection response window; user can claim refund via claimAutoRefund.
+    SubRejectRefundNotify,
+
     /// An event name returned by the backend that this enum does not recognize (also used to carry
-    /// user-instruction pseudo events: dispute_raise / agree_refund / close / set_public).
+    /// user-instruction pseudo events: dispute_raise / agree_refund / close).
     Other(String),
 }
 
@@ -335,7 +361,6 @@ impl Event {
             "dispute_resolved"          => Event::DisputeResolved,
             "job_expired"               => Event::JobExpired,
             "job_closed"                => Event::JobClosed,
-            "job_visibility_changed"    => Event::JobVisibilityChanged,
             "job_payment_mode_changed"  => Event::JobPaymentModeChanged,
             // Arbitration lifecycle
             "evaluator_selected"        => Event::EvaluatorSelected,
@@ -372,6 +397,20 @@ impl Event {
             "negotiate_reply"           => Event::NegotiateReply,
             // Network / restart recovery
             "wakeup_notify"             => Event::WakeupNotify,
+            // Subscription lifecycle (display-class)
+            "sub_created"               => Event::SubCreated,
+            "sub_asp_selected"          => Event::SubAspSelected,
+            "sub_cancel"                => Event::SubCancel,
+            "sub_user_reject"           => Event::SubUserReject,
+            "sub_asp_agree"             => Event::SubAspAgree,
+            "sub_asp_dispute"           => Event::SubAspDispute,
+            "sub_trial_into_active"     => Event::SubTrialIntoActive,
+            "sub_renew"                 => Event::SubRenew,
+            "sub_expire_warn"           => Event::SubExpireWarn,
+            "sub_complete_notify"       => Event::SubCompleteNotify,
+            "sub_close_notify"          => Event::SubCloseNotify,
+            "sub_failed_notify"         => Event::SubFailedNotify,
+            "sub_reject_refund_notify"  => Event::SubRejectRefundNotify,
             other                       => Event::Other(other.to_string()),
         }
     }
@@ -393,7 +432,6 @@ impl Event {
             Event::DisputeResolved        => "dispute_resolved",
             Event::JobExpired             => "job_expired",
             Event::JobClosed              => "job_closed",
-            Event::JobVisibilityChanged   => "job_visibility_changed",
             Event::JobPaymentModeChanged  => "job_payment_mode_changed",
             Event::EvaluatorSelected      => "evaluator_selected",
             Event::RevealStarted          => "reveal_started",
@@ -420,6 +458,19 @@ impl Event {
             Event::DeliverableReceived    => "deliverable_received",
             Event::NegotiateReply         => "negotiate_reply",
             Event::WakeupNotify           => "wakeup_notify",
+            Event::SubCreated             => "sub_created",
+            Event::SubAspSelected         => "sub_asp_selected",
+            Event::SubCancel              => "sub_cancel",
+            Event::SubUserReject          => "sub_user_reject",
+            Event::SubAspAgree            => "sub_asp_agree",
+            Event::SubAspDispute          => "sub_asp_dispute",
+            Event::SubTrialIntoActive     => "sub_trial_into_active",
+            Event::SubRenew               => "sub_renew",
+            Event::SubExpireWarn          => "sub_expire_warn",
+            Event::SubCompleteNotify      => "sub_complete_notify",
+            Event::SubCloseNotify         => "sub_close_notify",
+            Event::SubFailedNotify        => "sub_failed_notify",
+            Event::SubRejectRefundNotify  => "sub_reject_refund_notify",
             Event::Other(s)               => s.as_str(),
         }
     }
@@ -428,7 +479,6 @@ impl Event {
         match self {
             Event::JobAutoRefunded    => "auto-refund failed",
             Event::JobClosed          => "close failed",
-            Event::JobVisibilityChanged  => "visibility toggle failed",
             Event::JobPaymentModeChanged => "payment mode switch failed",
             Event::RewardClaimed      => "reward claim failed",
             Event::DisputeApproved    => "dispute initiation failed",
@@ -439,6 +489,8 @@ impl Event {
             Event::UnstakeCancelled   => "unstake cancellation failed",
             Event::StakeStopped       => "stop staking failed",
             Event::CooldownEntered    => "cooldown entry failed",
+            Event::SubCancel          => "cancel subscription failed",
+            Event::SubUserReject      => "reject subscription delivery failed",
             _                         => "transaction failed",
         }
     }
@@ -486,8 +538,8 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::ReviewDeadlineWarn                                           => Status::Submitted,
         Event::JobExpired                                                   => Status::Expired,
         Event::JobClosed                                                    => Status::Close,
-        // visibility/paymentMode are pass-through events that do not change status; not allowed outside of created, so expect Created
-        Event::JobVisibilityChanged | Event::JobPaymentModeChanged         => Status::Created,
+        // paymentMode is a pass-through event that does not change status; not allowed outside of created, so expect Created
+        Event::JobPaymentModeChanged                                        => Status::Created,
         // Staking / slashing / reward lifecycle is decoupled from task status
         Event::Staked
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
@@ -502,6 +554,12 @@ pub fn status_when_event(e: &Event) -> Status {
         // wake-up is a pass-through event; the real status lives in envelope.message.jobStatus.
         // Return a placeholder status here — agents must not drive next-action with wakeup_notify.
         Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),
+        // Subscription lifecycle is display-only and drives no task status.
+        Event::SubCreated | Event::SubAspSelected | Event::SubCancel
+        | Event::SubUserReject | Event::SubAspAgree | Event::SubAspDispute
+        | Event::SubTrialIntoActive | Event::SubRenew | Event::SubExpireWarn
+        | Event::SubCompleteNotify | Event::SubCloseNotify
+        | Event::SubFailedNotify | Event::SubRejectRefundNotify            => Status::Other("subscription".to_string()),
         Event::Other(_)                                                     => Status::Other("unknown".to_string()),
     }
 }
@@ -537,6 +595,141 @@ pub fn parse_status_or_event(s: &str) -> Event {
     }
     let status = Status::parse(s);
     entry_event(&status).unwrap_or(Event::Other(s.to_string()))
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Subscription Status (SubStatus) — separate from the task Status enum
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Subscription lifecycle status, aligned with the contract's `SubStatus` enum.
+///
+/// Unlike task `Status`, subscription status uses numeric codes from the backend
+/// (field `subStatus` in subscribe-detail API response). Trial vs active is
+/// distinguished by `trialType` (0=active, 1=trial), not by a separate status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubStatus {
+    /// DB record created, not yet on-chain (transient; client rarely sees this).
+    Init,      // -1
+    /// Subscription active (trial if trialType=1, paid if trialType=0).
+    Active,    // 1
+    /// User rejected delivery; waiting for ASP response (1-day window).
+    Rejected,  // 3
+    /// ASP escalated to dispute; awaiting DM resolution.
+    Disputed,  // 4
+    /// Terminal: subscription completed normally or DM ruled ASP-wins.
+    Completed, // 6
+    /// Terminal: closed (trial cancel / expired / on-chain failure).
+    Closed,    // 7
+    /// Terminal: refund settled (ASP agreed / auto-refund / DM ruled user-wins).
+    Failed,    // 9
+}
+
+impl SubStatus {
+    pub fn from_code(code: i64) -> Self {
+        match code {
+            -1 => SubStatus::Init,
+             1 => SubStatus::Active,
+             3 => SubStatus::Rejected,
+             4 => SubStatus::Disputed,
+             6 => SubStatus::Completed,
+             7 => SubStatus::Closed,
+             9 => SubStatus::Failed,
+             _ => SubStatus::Init,
+        }
+    }
+
+    pub fn code(self) -> i64 {
+        match self {
+            SubStatus::Init      => -1,
+            SubStatus::Active    =>  1,
+            SubStatus::Rejected  =>  3,
+            SubStatus::Disputed  =>  4,
+            SubStatus::Completed =>  6,
+            SubStatus::Closed    =>  7,
+            SubStatus::Failed    =>  9,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SubStatus::Init      => "Init",
+            SubStatus::Active    => "Active",
+            SubStatus::Rejected  => "Rejected",
+            SubStatus::Disputed  => "Disputed",
+            SubStatus::Completed => "Completed",
+            SubStatus::Failed    => "Failed",
+            SubStatus::Closed    => "Closed",
+        }
+    }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(self, SubStatus::Completed | SubStatus::Failed | SubStatus::Closed)
+    }
+
+    /// Valid transitions from this status.
+    pub fn valid_targets(self) -> &'static [SubStatus] {
+        match self {
+            SubStatus::Init => &[SubStatus::Active, SubStatus::Closed],
+            SubStatus::Active => &[
+                SubStatus::Active,    // trial→active (trialType flip) or renew
+                SubStatus::Rejected,  // user reject delivery
+                SubStatus::Completed, // all periods done / expired after grace
+                SubStatus::Closed,    // trial cancel / renew fail beyond grace
+            ],
+            SubStatus::Rejected => &[
+                SubStatus::Failed,    // ASP agree refund / user claim auto-refund
+                SubStatus::Disputed,  // ASP escalate
+            ],
+            SubStatus::Disputed => &[
+                SubStatus::Completed, // DM rules ASP wins
+                SubStatus::Failed,    // DM rules user wins
+            ],
+            SubStatus::Completed | SubStatus::Failed | SubStatus::Closed => &[],
+        }
+    }
+
+    pub fn can_transition_to(self, target: SubStatus) -> bool {
+        self.valid_targets().contains(&target)
+    }
+}
+
+/// Map a subscription event to the `SubStatus` the subscription is expected to be in
+/// AFTER the event fires. Returns `None` for events that don't change subscription status
+/// or are ambiguous (e.g. `sub_renew` success keeps Active, failure may lead to Closed).
+pub fn sub_status_after_event(e: &Event) -> Option<SubStatus> {
+    match e {
+        Event::SubCreated | Event::SubAspSelected => Some(SubStatus::Active),
+        Event::SubTrialIntoActive                 => Some(SubStatus::Active),
+        Event::SubRenew                           => None, // success=Active, fail=eventually Closed
+        Event::SubExpireWarn                       => None, // warning only, no status change
+        Event::SubCancel                          => None, // trial=Closed, active=Active(termsHash cleared)
+        Event::SubUserReject                      => Some(SubStatus::Rejected),
+        Event::SubAspAgree                        => Some(SubStatus::Failed),
+        Event::SubAspDispute                      => Some(SubStatus::Disputed),
+        Event::SubCompleteNotify                  => Some(SubStatus::Completed),
+        Event::SubCloseNotify                     => Some(SubStatus::Closed),
+        Event::SubFailedNotify                    => Some(SubStatus::Failed),
+        Event::SubRejectRefundNotify              => Some(SubStatus::Rejected),
+        _                                         => None,
+    }
+}
+
+/// Parse a subscription status from the backend's string or numeric representation.
+/// Accepts both the numeric code as string ("-1", "0", ..., "6") and the name ("Active", "active", etc.).
+pub fn parse_sub_status(s: &str) -> SubStatus {
+    if let Ok(code) = s.parse::<i64>() {
+        return SubStatus::from_code(code);
+    }
+    match s.to_ascii_lowercase().as_str() {
+        "init"      => SubStatus::Init,
+        "active"    => SubStatus::Active,
+        "rejected"  => SubStatus::Rejected,
+        "disputed"  => SubStatus::Disputed,
+        "completed" => SubStatus::Completed,
+        "failed"    => SubStatus::Failed,
+        "closed"    => SubStatus::Closed,
+        _           => SubStatus::Init,
+    }
 }
 
 #[cfg(test)]
@@ -598,5 +791,181 @@ mod tests {
         assert_eq!(parse_status_or_event("job_provider_reject"), Event::JobProviderReject);
         assert_eq!(parse_status_or_event("job_user_reject"), Event::JobUserReject);
         assert_eq!(parse_status_or_event("job_asp_selected"), Event::JobAspSelected);
+    }
+
+    // ── Subscription event tests ──────────────────────────────────────
+
+    #[test]
+    fn sub_event_parse_roundtrip() {
+        let events = [
+            ("sub_created",           Event::SubCreated),
+            ("sub_asp_selected",      Event::SubAspSelected),
+            ("sub_cancel",            Event::SubCancel),
+            ("sub_user_reject",       Event::SubUserReject),
+            ("sub_asp_agree",         Event::SubAspAgree),
+            ("sub_asp_dispute",       Event::SubAspDispute),
+            ("sub_trial_into_active", Event::SubTrialIntoActive),
+            ("sub_renew",             Event::SubRenew),
+            ("sub_expire_warn",       Event::SubExpireWarn),
+            ("sub_complete_notify",   Event::SubCompleteNotify),
+            ("sub_close_notify",      Event::SubCloseNotify),
+            ("sub_failed_notify",     Event::SubFailedNotify),
+            ("sub_reject_refund_notify", Event::SubRejectRefundNotify),
+        ];
+        for (s, expected) in events {
+            let parsed = Event::parse(s);
+            assert_eq!(parsed, expected, "parse failed for {s}");
+            assert_eq!(parsed.as_str(), s, "as_str roundtrip failed for {s}");
+        }
+    }
+
+    // INVARIANT (load-bearing across files): all display-class sub_* events map to the synthetic
+    // "subscription" status. `check_status_freshness` (agent_commerce/mod.rs) keys its freshness-gate
+    // EXEMPTION on `expected == Status::Other("subscription")`; if any sub_* event stops mapping here,
+    // that event silently becomes freshness-gated and its notification is dropped on live subscriptions.
+    #[test]
+    fn sub_events_use_subscription_status_placeholder() {
+        for event in [
+            Event::SubCreated, Event::SubAspSelected, Event::SubCancel,
+            Event::SubUserReject, Event::SubAspAgree, Event::SubAspDispute,
+            Event::SubTrialIntoActive, Event::SubRenew, Event::SubExpireWarn,
+            Event::SubCompleteNotify, Event::SubCloseNotify, Event::SubFailedNotify,
+            Event::SubRejectRefundNotify,
+        ] {
+            assert_eq!(
+                status_when_event(&event),
+                Status::Other("subscription".to_string()),
+                "subscription event {:?} should map to Status::Other(subscription)",
+                event
+            );
+        }
+    }
+
+    #[test]
+    fn misspelled_subscription_event_falls_to_other() {
+        assert_eq!(
+            Event::parse("sub_creted"),
+            Event::Other("sub_creted".to_string())
+        );
+        assert!(matches!(
+            Event::parse("sub_dispute_resolved"),
+            Event::Other(_)
+        ));
+        assert!(matches!(Event::parse("sub_trial_cancel"), Event::Other(_)));
+        assert!(matches!(
+            Event::parse("sub_complete_close"),
+            Event::Other(_)
+        ));
+    }
+
+    // ── SubStatus tests ───────────────────────────────────────────────
+
+    #[test]
+    fn sub_status_from_code_roundtrip() {
+        for code in [-1, 1, 3, 4, 6, 7, 9] {
+            let s = SubStatus::from_code(code);
+            assert_eq!(s.code(), code, "code roundtrip failed for {code}");
+        }
+    }
+
+    #[test]
+    fn sub_status_unknown_code_defaults_to_init() {
+        assert_eq!(SubStatus::from_code(0), SubStatus::Init);
+        assert_eq!(SubStatus::from_code(99), SubStatus::Init);
+        assert_eq!(SubStatus::from_code(-2), SubStatus::Init);
+        assert_eq!(SubStatus::from_code(2), SubStatus::Init);
+        assert_eq!(SubStatus::from_code(5), SubStatus::Init);
+    }
+
+    #[test]
+    fn sub_status_terminal_flags() {
+        assert!(!SubStatus::Init.is_terminal());
+        assert!(!SubStatus::Active.is_terminal());
+        assert!(!SubStatus::Rejected.is_terminal());
+        assert!(!SubStatus::Disputed.is_terminal());
+        assert!(SubStatus::Completed.is_terminal());
+        assert!(SubStatus::Failed.is_terminal());
+        assert!(SubStatus::Closed.is_terminal());
+    }
+
+    #[test]
+    fn sub_status_valid_transitions() {
+        assert!(SubStatus::Init.can_transition_to(SubStatus::Active));
+        assert!(SubStatus::Init.can_transition_to(SubStatus::Closed));
+        assert!(!SubStatus::Init.can_transition_to(SubStatus::Failed));
+
+        assert!(SubStatus::Active.can_transition_to(SubStatus::Rejected));
+        assert!(SubStatus::Active.can_transition_to(SubStatus::Completed));
+        assert!(SubStatus::Active.can_transition_to(SubStatus::Closed));
+        assert!(!SubStatus::Active.can_transition_to(SubStatus::Failed));
+
+        assert!(SubStatus::Rejected.can_transition_to(SubStatus::Failed));
+        assert!(SubStatus::Rejected.can_transition_to(SubStatus::Disputed));
+        assert!(!SubStatus::Rejected.can_transition_to(SubStatus::Active));
+
+        assert!(SubStatus::Disputed.can_transition_to(SubStatus::Completed));
+        assert!(SubStatus::Disputed.can_transition_to(SubStatus::Failed));
+        assert!(!SubStatus::Disputed.can_transition_to(SubStatus::Active));
+
+        // Terminal states cannot transition
+        assert!(!SubStatus::Completed.can_transition_to(SubStatus::Active));
+        assert!(!SubStatus::Failed.can_transition_to(SubStatus::Active));
+        assert!(!SubStatus::Closed.can_transition_to(SubStatus::Active));
+    }
+
+    #[test]
+    fn sub_status_after_event_mapping() {
+        assert_eq!(sub_status_after_event(&Event::SubCreated), Some(SubStatus::Active));
+        assert_eq!(sub_status_after_event(&Event::SubAspSelected), Some(SubStatus::Active));
+        assert_eq!(sub_status_after_event(&Event::SubTrialIntoActive), Some(SubStatus::Active));
+        assert_eq!(sub_status_after_event(&Event::SubUserReject), Some(SubStatus::Rejected));
+        assert_eq!(sub_status_after_event(&Event::SubAspAgree), Some(SubStatus::Failed));
+        assert_eq!(sub_status_after_event(&Event::SubAspDispute), Some(SubStatus::Disputed));
+        assert_eq!(sub_status_after_event(&Event::SubCompleteNotify), Some(SubStatus::Completed));
+        assert_eq!(sub_status_after_event(&Event::SubCloseNotify), Some(SubStatus::Closed));
+        assert_eq!(sub_status_after_event(&Event::SubFailedNotify), Some(SubStatus::Failed));
+        assert_eq!(sub_status_after_event(&Event::SubRejectRefundNotify), Some(SubStatus::Rejected));
+        // Ambiguous events return None
+        assert_eq!(sub_status_after_event(&Event::SubRenew), None);
+        assert_eq!(sub_status_after_event(&Event::SubExpireWarn), None);
+        assert_eq!(sub_status_after_event(&Event::SubCancel), None);
+        // Non-subscription events return None
+        assert_eq!(sub_status_after_event(&Event::JobCreated), None);
+    }
+
+    #[test]
+    fn parse_sub_status_from_code_string() {
+        assert_eq!(parse_sub_status("-1"), SubStatus::Init);
+        assert_eq!(parse_sub_status("1"), SubStatus::Active);
+        assert_eq!(parse_sub_status("6"), SubStatus::Completed);
+        assert_eq!(parse_sub_status("7"), SubStatus::Closed);
+        assert_eq!(parse_sub_status("9"), SubStatus::Failed);
+    }
+
+    #[test]
+    fn parse_sub_status_from_name() {
+        assert_eq!(parse_sub_status("Active"), SubStatus::Active);
+        assert_eq!(parse_sub_status("active"), SubStatus::Active);
+        assert_eq!(parse_sub_status("REJECTED"), SubStatus::Rejected);
+        assert_eq!(parse_sub_status("completed"), SubStatus::Completed);
+        assert_eq!(parse_sub_status("garbage"), SubStatus::Init);
+    }
+
+    #[test]
+    fn job_visibility_changed_is_no_longer_a_live_event() {
+        // The public task type (and its visibility toggle) has been removed, so
+        // `job_visibility_changed` must no longer parse to a dedicated Event variant —
+        // it falls through to Event::Other (and, per parse_status_or_event, since it is
+        // not a status name either, stays Event::Other).
+        assert_eq!(Event::parse("job_visibility_changed"), Event::Other("job_visibility_changed".to_string()));
+        assert_eq!(
+            parse_status_or_event("job_visibility_changed"),
+            Event::Other("job_visibility_changed".to_string())
+        );
+        // The event-string round-trip table contains no JobVisibilityChanged: no live
+        // Event variant serialises back to "job_visibility_changed".
+        for evt in [Event::JobClosed, Event::JobPaymentModeChanged, Event::JobCreated] {
+            assert_ne!(evt.as_str(), "job_visibility_changed");
+        }
     }
 }

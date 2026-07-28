@@ -11,7 +11,7 @@ Next step: <user action / what you'll do>
 `<raw CLI line — verbatim, never translated>`
 ```
 
-Translate, don't parrot — the friendly line is for the user; the raw line sits in inline code for debug. **Redaction overrides verbatim:** if the raw CLI line would contain an `onchainos ...` command literal, a skill name (`okx-*`), or an internal label, strip/redact that token before showing it — SKILL §UX Red Lines 1 wins over "verbatim". **Never auto-retry** a business error (retry once only on 5xx / network, per SKILL §Gates No-poll). Never chase a failure with `agent get-agents` / `agent get-my-agents` — the error is authoritative. Each row resumes at a concrete step. An unlisted string → put it in the raw line and ask how to proceed.
+Translate, don't parrot — the friendly line is for the user; the raw line sits in inline code for debug. **Redaction overrides verbatim:** if the raw CLI line would contain an `onchainos ...` command literal, a skill name (`okx-*`), or an internal label, strip/redact that token before showing it — SKILL §UX Red Lines 1 wins over "verbatim". **Never auto-retry** a business error (retry once only on 5xx / network, per SKILL §Gates One-call rule). Never chase a failure with `agent get-agents` / `agent get-my-agents` — the error is authoritative. Each row resumes at a concrete step. An unlisted string → put it in the raw line and ask how to proceed.
 
 ## CLI `bail!` rows (usually never reach the user — you collect params upfront)
 
@@ -22,7 +22,7 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 | `missing required parameter: <flag>` | "`<flag>` can't be empty." → re-ask it. `--agent-id` → ask which agent (`agent get-my-agents` if needed); `--file` → ask path. |
 | `unexpected argument '<v>' found` (positional) | User typed e.g. `update 42`. Re-ask in plain language; you supply the flag yourself, never echo it. |
 | `missing required field in --service: serviceName`/`: serviceDescription` | "Service <name/description> can't be empty." → re-ask that field. |
-| `missing required field in --service: fee`/`: endpoint` | API service needs a fee (a plain number, USDT implied, ≤6 dp) / a public https endpoint → re-ask. Gloss type once (SKILL §Invariants Lexicon); never echo `A2MCP`. |
+| `missing required field in --service: fee`/`: endpoint` | API service needs a fee (a plain number, USDT implied, ≤6 dp) / a public https endpoint → re-ask. Gloss type once (identity-invariants.md §Lexicon); never echo `A2MCP`. |
 | `invalid fee in --service` | "The fee must be a plain number (USDT is the default — don't add a currency)." → re-ask the fee as a bare number, e.g. `10`. |
 | `invalid serviceType` | "Type must be API service or agent to agent." → re-render numbered type prompt. Never echo `A2MCP`/`A2A`. |
 | `invalid value for --role` | "Role must be User / ASP / Evaluator." → re-render numbered role prompt. Never echo the enum. |

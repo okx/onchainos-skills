@@ -17,15 +17,13 @@
 mod agreerefund;
 mod apply;
 mod asp_reject;
-mod contact_user;
 mod content;
 mod deliver;
 mod dispute_confirm;
 mod dispute_raise;
-pub mod find_jobs;
 pub mod flow;
 mod asp_claim;
-pub mod recommend_task;
+pub mod subscription;
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -70,6 +68,10 @@ pub enum ProviderCommand {
         /// the providerAgentId field in job detail may be null, so reverse lookup is unreliable.
         #[arg(long = "agent-id")]
         agent_id: String,
+        /// Single-line JSON auto-trade signal (omitting `signalTime`); structure-validated
+        /// and `signalTime`-stamped before any send. Empty ⇒ ordinary delivery.
+        #[arg(long, default_value = "")]
+        autotrade: String,
     },
     /// ASP agrees to refund (agreeRefund API → sign → broadcast)
     AgreeRefund {
@@ -89,18 +91,6 @@ pub enum ProviderCommand {
         /// Optional decline reason surfaced to the User Agent's backend record.
         #[arg(long, default_value = "")]
         reason: String,
-    },
-    /// ASP cold-start: create the group with the User Agent + send the
-    /// self-intro/interest opener in one shot. Replaces the old two-step
-    /// (`okx-a2a session create` + `okx-a2a xmtp-send` opener) CLI playbook.
-    /// The opener content is the canonical template — no customization
-    /// flag to keep negotiations consistent and prevent LLM injection of
-    /// price / work content / fabricated `[intent:*]` literals.
-    ContactUser {
-        job_id: String,
-        /// ASP agentId (required).
-        #[arg(long = "agent-id")]
-        agent_id: String,
     },
     /// ASP claims after submit→complete timeout (claimAutoComplete API → sign → broadcast)
     ClaimAutoComplete {
@@ -190,6 +180,11 @@ pub enum DisputeCommand {
         /// are appended in addition to the auto-attached deliverables from the manifest.
         #[arg(long = "file")]
         files: Vec<String>,
+        /// Cap the number of auto-attached manifest files (most recent N kept).
+        /// Subscription tasks may accumulate many deliverables; this prevents
+        /// oversized uploads. Explicit `--file` entries are not counted.
+        #[arg(long)]
+        max_files: Option<usize>,
     },
 }
 
@@ -201,14 +196,12 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
             apply::handle_apply(&mut client, &job_id, &token_amount, &token_symbol, &agent_id).await,
-        ProviderCommand::Deliver { job_id, file, message: _, deliverable_text, agent_id } =>
-            deliver::handle_deliver(&mut client, &job_id, &file, &deliverable_text, &agent_id).await,
+        ProviderCommand::Deliver { job_id, file, message: _, deliverable_text, agent_id, autotrade } =>
+            deliver::handle_deliver(&mut client, &job_id, &file, &deliverable_text, &agent_id, &autotrade).await,
         ProviderCommand::AgreeRefund { job_id, agent_id } =>
             agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await,
         ProviderCommand::AspReject { job_id, agent_id, reason } =>
             asp_reject::handle_asp_reject(&mut client, &job_id, &agent_id, &reason).await,
-        ProviderCommand::ContactUser { job_id, agent_id } =>
-            contact_user::handle_contact_user(&mut client, &job_id, &agent_id).await,
         ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
             asp_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
         ProviderCommand::Status { job_id, agent_id } => {
@@ -281,9 +274,9 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
             dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await,
         DisputeCommand::Confirm { job_id, reason, agent_id } =>
             dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &reason, &agent_id).await,
-        DisputeCommand::Upload { job_id, agent_id, role, text, files } =>
+        DisputeCommand::Upload { job_id, agent_id, role, text, files, max_files } =>
             dispute_upload::handle_upload_evidence(
-                &mut client, &job_id, &agent_id, &role, text.as_deref(), &files,
+                &mut client, &job_id, &agent_id, &role, text.as_deref(), &files, max_files,
             ).await,
     }
 }

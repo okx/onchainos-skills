@@ -13,7 +13,7 @@ use crate::commands::Context;
 
 use super::args::ValidateListingArgs;
 use super::models::AgentService;
-use super::utils::{display_width, is_plain_number, normalize_role};
+use super::utils::{display_width, is_plain_number, is_positive_integer, normalize_role};
 
 // ─── CLI entry point (hidden — not shown in --help) ─────────────────────────
 
@@ -79,6 +79,7 @@ fn parse_services_lenient(raw: &str) -> std::result::Result<Vec<AgentService>, (
                 s.fee = s.fee.trim().to_string();
                 s.service_type = s.service_type.trim().to_string();
                 s.endpoint = s.endpoint.as_ref().map(|e| e.trim().to_string());
+                s.free_trial = s.free_trial.as_ref().map(|t| t.trim().to_string());
             }
             Ok(services)
         }
@@ -459,8 +460,8 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
         }
     }
 
-    // ── Fee (U4/P1) — plain number only, USDT implicit ───────────────────
-    check_fee(index, svc, is_a2mcp, findings);
+    // ── Pricing (U4/P1..P6) — single fee XOR subscription ────────────────
+    check_pricing(index, svc, is_a2mcp, is_a2a, findings);
 
     // ── Description (D1-D7) on servicedescription ────────────────────────
     // Always run: an empty / blank description is itself a D1 (handled by the
@@ -469,56 +470,165 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
     check_service_description(index, &svc.service_description, findings);
 }
 
-fn check_fee(index: usize, svc: &AgentService, is_a2mcp: bool, findings: &mut Vec<Finding>) {
-    let field = format!("service[{index}].fee");
+// Pricing QA. A2MCP: single-purchase `fee` required (plain number), no
+// subscription. A2A: EXACTLY ONE of a single-purchase `fee` XOR a
+// `subscription` — never neither (P2) and never both (P6); the two models are
+// mutually exclusive. Every fee (single or per-tier) is a plain number, and
+// the only supported interval today is `month`. A subscription-priced A2A
+// carries an EMPTY single `fee` (`""`) — that is the "no single price" marker.
+// USDT is the implicit, only currency, so ANY extra text — a symbol, a
+// parenthetical, or negotiation wording — makes a fee non-numeric and is
+// rejected (P1/P5).
+fn check_pricing(
+    index: usize,
+    svc: &AgentService,
+    is_a2mcp: bool,
+    is_a2a: bool,
+    findings: &mut Vec<Finding>,
+) {
+    let fee_field = format!("service[{index}].fee");
+    let sub_field = format!("service[{index}].subscription");
     let fee = svc.fee.trim();
+    // Empty `fee` is the subscription "no single price" marker.
+    let fee_present = !fee.is_empty();
+    let has_subscription = !svc.subscription.is_empty();
+    let bad_fee = |findings: &mut Vec<Finding>| {
+        findings.push(Finding::block(
+            &fee_field,
+            "P1",
+            "Fee must be a plain number.",
+            "Use a plain number, e.g. 10 — USDT is the default currency; do not add a currency symbol, parenthetical, or any other text.",
+        ));
+    };
 
-    if fee.is_empty() {
-        if is_a2mcp {
+    let trial = svc.free_trial.as_deref().map(str::trim).unwrap_or("");
+    let trial_field = format!("service[{index}].freeTrial");
+
+    if is_a2mcp {
+        // Subscription is not allowed on A2MCP.
+        if has_subscription {
+            findings.push(Finding::block(
+                &sub_field,
+                "P3",
+                "A2MCP services do not support subscription pricing.",
+                "Remove the subscription field for A2MCP services.",
+            ));
+        }
+        // Free trial is a subscription-only concept → not allowed on A2MCP.
+        if !trial.is_empty() {
+            findings.push(Finding::block(
+                &trial_field,
+                "P7",
+                "A2MCP services do not support a free trial.",
+                "Remove the freeTrial field for A2MCP services.",
+            ));
+        }
+        if !fee_present {
             // U4 + P1 for empty A2MCP fee.
             findings.push(Finding::block(
-                &field,
+                &fee_field,
                 "U4",
                 "A2MCP service has an empty fee.",
                 "Set an explicit fee, e.g. 10, or 0 for a free service.",
             ));
             findings.push(Finding::block(
-                &field,
+                &fee_field,
                 "P1",
                 "A2MCP fee is required.",
                 "Provide a plain number, e.g. 10 (USDT is the default currency).",
             ));
+        } else if !is_plain_number(fee) {
+            bad_fee(findings);
         }
-        // A2A: fee optional → skip silently.
         return;
     }
 
-    // P1 format: the fee must be a PLAIN NUMBER (spec field 4: amount only,
-    // USDT is the default unit and is never typed). USDT being the implicit,
-    // only currency, ANY extra text — a currency token / symbol, a
-    // parenthetical note, or negotiation wording — makes the whole string
-    // non-numeric and is rejected here. (The spec no longer enumerates the
-    // parenthetical / negotiation cases separately; P1 subsumes them.)
-    if !is_plain_number(fee) {
-        findings.push(Finding::block(
-            &field,
-            "P1",
-            "Fee must be a plain number.",
-            "Use a plain number, e.g. 10 — USDT is the default currency; do not add a currency symbol, parenthetical, or any other text.",
-        ));
+    if is_a2a {
+        // A2A must be priced by EXACTLY ONE model — a single fee XOR a
+        // subscription. Never neither (P2), never both (P6).
+        if !fee_present && !has_subscription {
+            findings.push(Finding::block(
+                &fee_field,
+                "P2",
+                "A2A service has no pricing.",
+                "Provide a single-purchase fee or a monthly subscription fee (exactly one).",
+            ));
+        }
+        if fee_present && has_subscription {
+            findings.push(Finding::block(
+                &fee_field,
+                "P6",
+                "A2A service sets both a single-purchase fee and a subscription.",
+                "Choose one billing model — a single-purchase fee or a monthly subscription, not both.",
+            ));
+        }
+        if fee_present && !is_plain_number(fee) {
+            bad_fee(findings);
+        }
+        for tier in &svc.subscription {
+            if !tier.interval.trim().eq_ignore_ascii_case("month") {
+                findings.push(Finding::block(
+                    &sub_field,
+                    "P4",
+                    &format!("Unsupported subscription interval '{}'.", tier.interval.trim()),
+                    "Only monthly subscription is supported — set interval to 'month'.",
+                ));
+            }
+            if !is_plain_number(tier.fee.trim()) {
+                findings.push(Finding::block(
+                    &sub_field,
+                    "P5",
+                    "Subscription fee must be a plain number.",
+                    "Use a plain number, e.g. 10 — USDT is the default currency; do not add a currency symbol or any other text.",
+                ));
+            }
+        }
+        // Free trial (subscription-only): valid only alongside a subscription,
+        // and must be a positive integer number of hours.
+        if !trial.is_empty() {
+            if !has_subscription {
+                findings.push(Finding::block(
+                    &trial_field,
+                    "P7",
+                    "freeTrial is only valid on a subscription-priced service.",
+                    "Remove freeTrial, or price this service with a monthly subscription.",
+                ));
+            }
+            if !is_positive_integer(trial) {
+                findings.push(Finding::block(
+                    &trial_field,
+                    "P8",
+                    "freeTrial must be a positive integer number of hours.",
+                    "Use a whole number of hours, e.g. 72; do not use decimals, 0, or any extra text.",
+                ));
+            }
+        }
+        return;
+    }
+
+    // Unknown serviceType (T1 already flags the type) — validate fee format only.
+    if fee_present && !is_plain_number(fee) {
+        bad_fee(findings);
     }
 }
 
-// Service description is a TWO-part structure per the okx.ai display spec
-// (field 5) and the backend `AgentLlmReviewServiceImpl.checkServiceDesc`:
-//   part 1 — core-capability summary
-//   part 2 — what the user must provide — REQUIRED
-// Parts are the FIRST and LAST non-empty lines (any middle lines are ignored
-// for the per-part length gate but still count toward the total). Lengths are
-// measured in EAST-ASIAN DISPLAY WIDTH (`display_width`: CJK = 2, ASCII = 1),
-// matching the backend exactly. Limits (width units): each part ≤ 400, total
-// ≤ 800 — i.e. the spec's "≤ 200 chars per part / ≤ 400 chars total" counted
-// in CJK characters.
+// Service description is a THREE-part structure per the okx.ai display spec
+// (field 5):
+//   part 1 — core-capability summary        — REQUIRED
+//   part 2 — what the user must provide      — REQUIRED
+//   part 3 — delivery note (交付物说明)       — OPTIONAL here. The spec makes it
+//            REQUIRED for trading-signal services, but "is this a trading-signal
+//            service?" is a SEMANTIC judgment left to the skill's QA layer
+//            (register.md §4), never decided by this mechanical validator.
+// Parts are the non-empty lines positionally: part 1 = line 1, part 2 = line 2,
+// part 3 = every remaining non-empty line joined. At least parts 1 and 2 must be
+// present (fewer → D1). Lengths are measured in EAST-ASIAN DISPLAY WIDTH
+// (`display_width`: CJK = 2, ASCII = 1). Limits (width units): each part ≤ 400,
+// total ≤ 1200 — i.e. the spec's "≤ 200 chars per part / ≤ 600 chars total"
+// counted in CJK characters. D9 additionally blocks deterministic profit /
+// return-guarantee wording ("稳赚 / 保证收益 / 翻倍" …); the trading-signal
+// requirements (declared markets, signal example, no abbreviations, in-scope
+// markets) are semantic and live in the skill layer, not here.
 fn check_service_description(index: usize, desc: &str, findings: &mut Vec<Finding>) {
     let field = |sub: &str| format!("service[{index}].{sub}");
     let fd = field("servicedescription");
@@ -529,19 +639,19 @@ fn check_service_description(index: usize, desc: &str, findings: &mut Vec<Findin
         findings.push(Finding::block(
             &fd,
             "D1",
-            "Service description must have 2 parts: a core-capability summary and what the user must provide, on separate lines.",
-            "Put the core-capability summary on the first line and what the user must provide on a second line.",
+            "Service description must have at least 2 parts: a core-capability summary and what the user must provide, on separate lines (a delivery note is a recommended 3rd line).",
+            "Put the core-capability summary on line 1 and what the user must provide on line 2 (optionally a delivery note on line 3).",
         ));
         return;
     }
 
-    // D2 total display width <= 800 (= 400 CJK characters).
-    if display_width(desc) > 800 {
+    // D2 total display width <= 1200 (= 600 CJK characters).
+    if display_width(desc) > 1200 {
         findings.push(Finding::block(
             &fd,
             "D2",
-            "Service description is too long (limit: 400 CJK characters, i.e. 800 half-width).",
-            "Trim the description to 400 CJK characters (800 half-width) or fewer.",
+            "Service description is too long (limit: 600 CJK characters, i.e. 1200 half-width).",
+            "Trim the description to 600 CJK characters (1200 half-width) or fewer.",
         ));
     }
 
@@ -563,36 +673,54 @@ fn check_service_description(index: usize, desc: &str, findings: &mut Vec<Findin
             "Remove the 0x address.",
         ));
     }
-
-    // Two-part structure: part 1 = first non-empty line, part 2 = last non-empty
-    // line. When there is only one non-empty line, part 2 is absent → D1.
-    let mut first: Option<&str> = None;
-    let mut last: Option<&str> = None;
-    for line in desc.split('\n') {
-        let t = line.trim();
-        if !t.is_empty() {
-            if first.is_none() {
-                first = Some(t);
-            }
-            last = Some(t);
-        }
+    // D9 profit / return-guarantee wording (deterministic forbidden phrases).
+    if contains_profit_guarantee(desc) {
+        findings.push(Finding::block(
+            &fd,
+            "D9",
+            "Service description contains profit / return-guarantee wording (e.g. 稳赚 / 保证收益 / 翻倍 / guaranteed returns).",
+            "Remove any guaranteed-profit or guaranteed-return claims — describe the capability, not a promised outcome.",
+        ));
     }
-    let part1 = first.unwrap_or("");
-    // part2 exists only when the last non-empty line differs from the first.
-    let part2 = match (first, last) {
-        (Some(f), Some(l)) if !std::ptr::eq(f, l) && f != l => Some(l),
-        _ => None,
-    };
+    // U1 test/environment marker — the spec's universal ban ("所有字段不允许
+    // 包含 (pre)、(test)") applies to EVERY field, service description included.
+    if has_test_marker(desc) {
+        findings.push(Finding::block(
+            &fd,
+            "U1",
+            "Service description contains a test/environment marker.",
+            "Remove the test/environment marker.",
+        ));
+    }
 
-    if part2.is_none() {
+    // Three-part structure, positional: part 1 = 1st non-empty line, part 2 =
+    // 2nd, part 3 = every remaining non-empty line joined. Parts 1 and 2 are
+    // both required; fewer than 2 non-empty lines → D1.
+    let lines: Vec<&str> = desc
+        .split('\n')
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    if lines.len() < 2 {
         findings.push(Finding::block(
             &fd,
             "D1",
-            "Service description must have 2 parts: a core-capability summary and what the user must provide, on separate lines.",
-            "Put the core-capability summary on the first line and what the user must provide on a second line.",
+            "Service description must have at least 2 parts: a core-capability summary and what the user must provide, on separate lines (a delivery note is a recommended 3rd line).",
+            "Put the core-capability summary on line 1 and what the user must provide on line 2 (optionally a delivery note on line 3).",
         ));
         return;
     }
+
+    let part1 = lines[0];
+    let part2 = lines[1];
+    // part 3 = the 3rd non-empty line onward, joined — so no trailing content
+    // escapes the per-part length gate. Absent when there are only 2 lines.
+    let part3: Option<String> = if lines.len() > 2 {
+        Some(lines[2..].join("\n"))
+    } else {
+        None
+    };
 
     // D3 part 1 (core-capability summary) display width <= 400 (= 200 CJK characters).
     if display_width(part1) > 400 {
@@ -604,13 +732,22 @@ fn check_service_description(index: usize, desc: &str, findings: &mut Vec<Findin
         ));
     }
     // D4 part 2 (what the user must provide) display width <= 400 (= 200 CJK characters).
-    if let Some(p2) = part2 {
-        if display_width(p2) > 400 {
+    if display_width(part2) > 400 {
+        findings.push(Finding::block(
+            &fd,
+            "D4",
+            "Description part 2 (what the user must provide) is too long (limit: 200 CJK characters, i.e. 400 half-width).",
+            "Shorten what-the-user-must-provide to 200 CJK characters (400 half-width) or fewer.",
+        ));
+    }
+    // D5 part 3 (delivery note) display width <= 400 (= 200 CJK characters).
+    if let Some(p3) = &part3 {
+        if display_width(p3) > 400 {
             findings.push(Finding::block(
                 &fd,
-                "D4",
-                "Description part 2 (what the user must provide) is too long (limit: 200 CJK characters, i.e. 400 half-width).",
-                "Shorten what-the-user-must-provide to 200 CJK characters (400 half-width) or fewer.",
+                "D5",
+                "Description part 3 (delivery note) is too long (limit: 200 CJK characters, i.e. 400 half-width).",
+                "Shorten the delivery note to 200 CJK characters (400 half-width) or fewer.",
             ));
         }
     }
@@ -717,19 +854,50 @@ fn contains_hex_address(s: &str) -> bool {
     false
 }
 
-/// U3: negative-capability phrases (case-insensitive substring).
+/// U3: negative-capability phrases (case-insensitive substring). Scoped to the
+/// spec's "目前不支持"-style negative info — a capability GAP / "not yet" framing
+/// that signals an incomplete product. It deliberately does NOT match a bare
+/// "不支持": the field-5 part-3 delivery note states whether copy-trading is
+/// supported ("支持跟单" / "不支持跟单"), and that permanent delivery attribute —
+/// used verbatim in the spec's own correct example — must pass QA.
 fn contains_negative_capability(s: &str) -> bool {
     let lower = s.to_ascii_lowercase();
     const EN: &[&str] = &[
         "currently not supported",
-        "does not support",
         "not supported yet",
+        "not yet supported",
     ];
     if EN.iter().any(|p| lower.contains(p)) {
         return true;
     }
-    // CJK phrases are not ASCII-lowercased meaningfully; match on raw.
-    s.contains("暂不支持") || s.contains("不支持")
+    // CJK: match only the temporal "currently / for-now not supported" gap
+    // phrasing — never a bare "不支持" (which false-positives on "不支持跟单").
+    s.contains("暂不支持") || s.contains("目前不支持")
+}
+
+/// D9: profit / return-guarantee wording (deterministic phrase check). Blocks
+/// the spec's forbidden "收益承诺" wording — 稳赚 / 保证收益 / 翻倍 and close
+/// equivalents — in either language. Kept to unambiguous guarantee phrases so a
+/// legitimate capability description is not falsely blocked.
+fn contains_profit_guarantee(s: &str) -> bool {
+    // CJK phrases (match on raw — not ASCII-lowercased).
+    const CJK: &[&str] = &[
+        "稳赚", "稳赚不赔", "保证收益", "收益保证", "保本", "包赚", "必赚", "翻倍", "零风险",
+    ];
+    if CJK.iter().any(|p| s.contains(p)) {
+        return true;
+    }
+    let lower = s.to_ascii_lowercase();
+    const EN: &[&str] = &[
+        "guaranteed return",
+        "guaranteed returns",
+        "guaranteed profit",
+        "guaranteed income",
+        "guaranteed gains",
+        "risk-free",
+        "risk free",
+    ];
+    EN.iter().any(|p| lower.contains(p))
 }
 
 

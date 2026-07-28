@@ -14,6 +14,8 @@ pub struct CreateArgs {
     #[arg(long)]
     pub role: Option<String>,
     /// Agent description. Required for `asp`; optional for `user` / `evaluator`.
+    /// For `asp` it must be ≤500 characters and carry no URLs, no 0x addresses,
+    /// and no test/env markers.
     #[arg(long)]
     pub description: Option<String>,
     /// Profile-picture URL (upload an image via `agent upload` first, then pass
@@ -21,12 +23,55 @@ pub struct CreateArgs {
     /// avatar`); optional for `user` / `evaluator` (omitted → default avatar).
     #[arg(long)]
     pub picture: Option<String>,
-    /// Service list as a JSON array. Element keys: `serviceName`,
-    /// `serviceDescription`, `serviceType` (`A2A` | `A2MCP`), `fee` (A2MCP
-    /// required, A2A optional — plain number, USDT implied, ≤6 decimals),
-    /// `endpoint` (A2MCP only; A2A must omit it). Required for `asp`: at least
-    /// one service (empty → `ASP agents require at least one service`); ignored
-    /// for `user` / `evaluator`.
+    /// Service list as a JSON array (required for `asp`: ≥1 service; ignored
+    /// for `user` / `evaluator`).
+    ///
+    /// Element keys:
+    ///   • serviceName        — required. 5–30 chars; must differ from the agent
+    ///                          name; no price info and no test/env markers.
+    ///   • serviceDescription — required. A newline-separated THREE-part structure:
+    ///                          line 1 = core-capability summary (required); line 2
+    ///                          = what the user must provide (required); line 3+ =
+    ///                          delivery note (optional here, but expected
+    ///                          for trading-signal services — state the delivery
+    ///                          format and whether copy-trading is supported, with a
+    ///                          concrete example). Each part ≤200 CJK chars (400
+    ///                          half-width); whole text ≤600 CJK chars (1200
+    ///                          half-width). No URLs, no 0x addresses, no test/env
+    ///                          markers, and no guaranteed-profit / risk-free wording.
+    ///   • serviceType        — `A2A` (agent-to-agent) or `A2MCP` (API service).
+    ///   • fee                — single-purchase price. A plain number as a JSON
+    ///                          string ("10"), USDT implied, ≤6 decimals. An
+    ///                          EMPTY string ("") means "no single price"
+    ///                          (subscription-priced A2A) and is forwarded
+    ///                          verbatim.
+    ///   • subscription       — A2A only. Array of monthly tiers, e.g.
+    ///                          [{"interval":"month","fee":"10"}]. `interval` is
+    ///                          currently limited to "month"; each `fee` is a
+    ///                          plain number.
+    ///   • freeTrial          — OPTIONAL. Free-trial duration in HOURS for a
+    ///                          subscription-priced service. A positive integer
+    ///                          string ("72" = 3 days). Only allowed when
+    ///                          `subscription` is non-empty; forbidden on
+    ///                          single-purchase A2A and on A2MCP. Absent or an
+    ///                          empty "" both mean NO trial (equivalent).
+    ///   • endpoint           — A2MCP only (https://…); A2A must omit it.
+    ///
+    /// Pricing rules:
+    ///   • A2MCP — `fee` is REQUIRED and must be a real plain number (an empty
+    ///     `fee` is rejected); `subscription` is forbidden.
+    ///   • A2A   — EXACTLY ONE billing model: a single-purchase `fee` XOR a
+    ///     non-empty `subscription`. Never neither, and never both (the two
+    ///     models are mutually exclusive).
+    ///
+    /// The three-part serviceDescription is a single string with `\n` separators,
+    /// e.g. "Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported, e.g. X Layer | $TOKEN | BUY | 0.042-0.045 | slippage <=1% | position 5% | valid within 24h".
+    ///
+    /// Examples:
+    ///   A2MCP:            [{"serviceName":"Realtime price feed","serviceDescription":"Provides realtime token quotes\nUser provides the token address and chain\nReturns JSON price and timestamp","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]
+    ///   A2A single only:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported, e.g. X Layer | $TOKEN | BUY | 0.042-0.045 | slippage <=1% | position 5% | valid within 24h","serviceType":"A2A","fee":"0.11"}]
+    ///   A2A sub only:     [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]
+    ///   A2A sub + trial:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}],"freeTrial":"72"}]
     #[arg(long)]
     pub service: Option<String>,
 }
@@ -75,15 +120,36 @@ pub struct UpdateArgs {
     pub picture: Option<String>,
     /// Optional. Incremental service changes as a JSON array — only the services
     /// you want to add / modify / remove, NOT the full list. Element keys:
-    /// `serviceName`, `serviceDescription`, `serviceType` (`A2A` | `A2MCP`),
-    /// `fee` (A2MCP required — plain number, USDT implied, ≤6 decimals),
-    /// `endpoint` (A2MCP only), plus `operation`: `create` (new service, no
-    /// `id`) / `update` (modify, carry the existing service `id`) / `delete`
-    /// (remove, carry the existing service `id`). Omitted → the `services` field
-    /// is left out entirely (omission does NOT clear existing services).
+    /// `serviceName` (5–30 chars, distinct from the agent name),
+    /// `serviceDescription` (newline-separated THREE-part structure: line 1 =
+    /// core-capability summary, line 2 = what the user must provide, line 3+ =
+    /// optional delivery note with a concrete example; each part ≤200
+    /// CJK chars, whole text ≤600 CJK chars; no URLs / 0x addresses / test markers
+    /// / guaranteed-profit wording), `serviceType` (`A2A` | `A2MCP`),
+    /// `fee` (single-purchase price — plain number, USDT implied, ≤6 decimals),
+    /// `subscription` (A2A only — array of `{interval, fee}`, `interval`
+    /// limited to `"month"`), `freeTrial` (OPTIONAL — free-trial duration in
+    /// HOURS as a positive integer string, e.g. `"72"`; only allowed on a
+    /// subscription-priced service, forbidden on single-purchase A2A / A2MCP;
+    /// absent or an empty `""` both mean NO trial, so an update that omits it
+    /// leaves the service with no trial), `endpoint` (A2MCP only), plus `operation`:
+    /// `create` (new service, no `id`) / `update` (modify, carry the existing
+    /// service `id`) / `delete` (remove, carry the existing service `id`).
+    /// Same pricing rules as create: A2MCP requires a real `fee` (a plain
+    /// number — an empty `fee` is rejected) and forbids `subscription`; A2A
+    /// carries EXACTLY ONE billing model — a single-purchase `fee` XOR a
+    /// `subscription`, never both. The billing model is transmitted on every
+    /// update: a subscription-priced service sends `fee: ""` (the "no single
+    /// price" marker, forwarded verbatim) together with its `subscription`; a
+    /// single-priced service sends `subscription: []` together with a real
+    /// `fee`. Omitting the whole `services` flag changes no service (omission
+    /// does NOT clear existing services).
     ///
     /// Example — add one A2MCP service and delete an existing one:
     ///   --service '[{"operation":"create","serviceName":"Price feed","serviceDescription":"Realtime prices","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"},{"operation":"delete","id":"svc_123"}]'
+    ///
+    /// Example — update a subscription-priced A2A service (empty single fee):
+    ///   --service '[{"operation":"update","id":"7","serviceName":"…","serviceDescription":"…","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]'
     #[arg(long)]
     pub service: Option<String>,
 }
@@ -262,6 +328,31 @@ pub struct FeedbackListArgs {
     /// Results per page. Omitted → backend default.
     #[arg(long = "page-size")]
     pub page_size: Option<String>,
+}
+
+/// `onchainos agent task-feedback`: fetch the feedback a given rater (the review
+/// INITIATOR) left for a specific task. Read-only; hits `GET /agent/task-feedback`.
+/// Returns the backend `data` array verbatim. When the rater already reviewed the
+/// task it holds one review row (the echoed `agentId`, `taskId` and `chainIndex`
+/// plus `feedbackId` and `comment`); otherwise it is empty, which also serves as
+/// the duplicate-review guard before `feedback-submit`.
+#[derive(Args, Clone, Debug)]
+pub struct TaskFeedbackArgs {
+    /// The rater's agent id — the review INITIATOR (backend `feedBackAgentId`),
+    /// NOT the agent being reviewed. Required (runtime-enforced).
+    #[arg(
+        long = "agent-id",
+        help = "Required. The rater's agent id."
+    )]
+    pub agent_id: Option<String>,
+    /// The ERC-8004 task id the review is about. Required (runtime-enforced).
+    #[arg(
+        long = "task-id",
+        help = "Required. The task id being reviewed."
+    )]
+    pub task_id: Option<String>,
+    // chainIndex is not a flag: agent identities live on XLayer only, so the CLI
+    // always sends chainIndex=196 (see task_feedback_impl).
 }
 
 /// `onchainos agent xmtp-sign`: sign an arbitrary message with the local

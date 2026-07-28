@@ -2,7 +2,7 @@
 
 Loaded when: the user registers / creates an agent (any role), or arrives via passive need-user. Pairs with SKILL.md. (For update / fix-rejected-listing → load `identity-update.md` instead.)
 
-The CLI does the work — `validate-listing` returns the QA `findings[]`, `create` always returns `newAgentId` — a string id when the WS push succeeded, `null` when it timed out. You collect fields → render the §Invariants card → confirm → invoke once → render the post-success template. Never re-implement a rule table or reconstruct an id.
+The CLI does the work — `validate-listing` returns the QA `findings[]`, `create` always returns `newAgentId` — a string id when the WS push succeeded, `null` when it timed out. You collect fields → render the identity-invariants.md §Card skeleton card → confirm → invoke once → render the post-success template. Never re-implement a rule table or reconstruct an id.
 
 ---
 
@@ -36,8 +36,31 @@ Run `agent pre-check --role <role>` (internal — never shown). It fetches the w
   1. **Name** — brand name (CN 2–12 chars / EN 3–25 chars; no test markers / celebrity names)
   2. **Description** — one-sentence summary of what the Agent does (required, ≤500 chars)
   3. **Avatar — required**: send an image file (§5).
-- **Step 2 · Service** — Service name (5–30 noun phrase; not same as agent name / no price in name) · Description (**2 parts on separate lines**: ① core-capability summary — what it does + who it's for; ② what the user must provide — e.g. "1. wallet address 2. amount 3. chain". Each part ≤200 CJK chars, total ≤400 CJK chars; **no example prompts, no GitHub/wallet links, no tech-stack details, no disclaimers**) · Type (API service → pass `A2MCP` / agent-to-agent → pass `A2A`) · Fee — a **plain number sent as a string** (e.g. `"10"` — quoted in the JSON, never a bare number). **The currency is always USDT — tell the user (localized) that the amount is digits only, USDT is the default, and no unit/symbol is needed, and do NOT include any currency** (no `USDT`/`USDG`/`元`/symbol); API service required, A2A optional (may be left empty); ≤6 decimals; reject `10 USDT` / `approx 10` / `5元` → re-ask. Displayed back to the user as `N USDT`. · Endpoint (API service only — §6).
-- **After EACH service (BLOCKING — incl. the first; see SKILL §Gates Service-collection)** — ask once (localized) **1. Add another service / 2. Done**; on **1** repeat Step 2 and append to the service array, then ask again; on **2** (or other) → §4 with the complete array. **A batched message that fills name + description + type + fee in one go is NOT a Done signal** — having all fields for one service does not mean the user is finished; you still MUST ask and wait for the explicit Done choice. Never auto-advance on the assumption one is enough; all services ship in one `agent create` (post-create "add a service" via update is a fallback, not a reason to skip this).
+- **Step 2 · Service — three sub-steps** (collect name + type first; the pricing model picked in Step 2b decides **how many description parts** to collect, so **description comes LAST** in Step 2c; a user who sends everything at once is fine — just proceed). Present each sub-step warmly and scannably: a short numbered list, no `Q1:` jargon. Any example text is illustrative only — use the user's own reply (§Fields-from-user).
+  - **Step 2a · name + type (ONE message — 2 fields):**
+    1. **Service name** — 5–30 noun phrase; not the same as the agent name; no price in the name.
+    2. **Type** — API service (pass `A2MCP`) or agent-to-agent (pass `A2A`).
+  - **Step 2b · pricing (+ endpoint), tailored to the 2a type (ONE message — short lines, never a run-on):**
+    - **`A2MCP`** — two fields: a per-call **Price** (one number) + a public `https://…` **Endpoint** (§6).
+    - **`A2A`** — no endpoint; one numbered pick + price: **1** per-call · **2** monthly subscription · **3** monthly subscription + free 3-day trial (monthly only). e.g. reply `2 10` = monthly 10.
+  - **Fee format (both types):** a **plain number sent as a string** (e.g. `"10"` — quoted in the JSON, never a bare number); currency is always USDT — tell the user (localized) the amount is **digits only, no unit/symbol** (no `USDT`/`USDG`/`元`/symbol); ≤6 decimals; `0` is allowed (a free service); reject `10 USDT` / `approx 10` / `5元` → re-ask. Displayed back as `N USDT`. Full rule → `identity-invariants.md` §Input contract (`fee`); applies to every subscription-tier fee too.
+  - **A2MCP pricing (unchanged):** a single required `fee`. No subscription. Pass `fee` = the number string.
+  - **A2A pricing mechanics (per-call fee XOR monthly subscription — EXACTLY ONE; trial folded into the pick, never a standalone question):** the Step-2b `1/2/3` pick maps to `--service` as below. Monthly only — state it plainly (only `interval:"month"` is supported today; no weekly/yearly/other period). Never offer a "both" option.
+    - **1 · per-call** → send `fee:"<n>"`, `subscription:[]`. (No trial — trials are subscription-only.)
+    - **2 · monthly** → send `fee:""` (empty string — the "no single price" marker), `subscription:[{"interval":"month","fee":"<n>"}]`, and **omit `freeTrial` entirely** (never `""` / `"0"`).
+    - **3 · monthly + trial** → same as **2**, plus `freeTrial:"72"` (72h = a **fixed 3 days**). `freeTrial` is valid ONLY here — never on per-call A2A or on A2MCP.
+    - **Trial length is fixed at 3 days.** If the user asks for any other length (e.g. "5-day trial") → do NOT honor it: say the trial is fixed at 3 days, so it's pick **3** (with trial) or **2** (without) — re-ask.
+    - **Follow up only to fill a gap — never re-ask what's already given.** If the reply already gave a valid pick + price, proceed straight to Step 2c. Ask a targeted follow-up ONLY for a missing/ambiguous piece: no clear **1/2/3** → re-show the three-way pick; a monthly reply that doesn't say whether they want the trial → clarify "**2** (no trial) or **3** (3-day trial)?"; a reply naming *both* per-call and monthly, or *neither* → explain it's exactly one of the three and re-ask. Do not advance until exactly one is settled.
+  - **Step 2c · description (ONE message — the Step-2b pricing model decides BOTH the part count AND which prompt set to show. Show ONLY the matching set. Put each part on its own line, prefixed `1.` / `2.` / `3.`):**
+    - **Non-subscription = ordinary service** (A2MCP, or A2A per-call — pick **1**) → collect **all three parts**, using the **ordinary-service** prompt ONLY (do NOT show trading-signal hints — the market-declaration / signal-example requirements do NOT apply here):
+      1. **core-capability summary** — what it does + who it's for.
+      2. **what the user must provide** — e.g. wallet address / amount / chain.
+      3. **delivery note** — what the user gets + whether copy-trading is supported (e.g. delivered as a file, no copy-trading).
+    - **Subscription-priced = trading-signal service** (A2A monthly — pick **2** or **3**) → collect **two parts** — the core-capability summary and the delivery note (omit "what the user must provide": a subscription auto-delivers, so there is nothing to submit per request), prefixed `1.` / `2.`:
+      1. **core-capability summary** — what it does + who it's for; name each covered market explicitly, using only **DEX / Polymarket / Hyperliquid** (list only the ones actually supported).
+      2. **delivery note** — delivered as structured signals + whether copy-trading is supported + one concrete signal example that starts with the full market name (never an abbreviation like "HL") and references only a market declared in part 1. **Always show the user this illustrative signal-example format in the prompt so they know the expected shape** (display hint only — do NOT store it verbatim; the user supplies their own): `DEX Signal: X Layer | $TOKEN (0x12…ab) | BUY | 0.042-0.045 | Slippage ≤1% | Position 5% | Valid within 24h`.
+    - **Both cases:** each part on its own line; each part ≤200 CJK / total ≤600 CJK by **East-Asian display width** (CJK = 2, ASCII = 1; enforced by `validate-listing`). **No example prompts, no GitHub/wallet links, no tech-stack/infra details, no disclaimers, and no profit/return guarantees (e.g. "guaranteed profit" / "double your money").**
+- **After EACH service (BLOCKING — incl. the first; the "batched fields ≠ Done" rule is SKILL §Gates Service-collection)** — ask once (localized) **1. Add another service / 2. Done**; on **1** repeat Step 2 and append to the service array, then ask again; on **2** (or other) → §4 with the complete array. You MUST wait for the explicit Done choice — never auto-advance because one service's fields look complete; all services ship in one `agent create`.
 - **Do NOT run `validate-listing` inside this loop.** QA is a single batch pass that happens in §4 *after* the array is complete — never validate per service, never validate while still collecting.
 
 ## 4. QA via `validate-listing` (ASP only — user/evaluator skip) — runs EXACTLY ONCE
@@ -52,7 +75,12 @@ Validate is a **single batch gate**, NOT a per-service step. Collect the **compl
    - On **1**: this choice **is** the user's confirmation for the whole batch of suggestions. Only now apply each shown `finding.fix` to its mapped field (plus your own semantic fixes), then redraw the card with the corrected values. Apply **once** — do not iterate.
    - On **2**: collect the user's replacement value(s) for the flagged field(s) and redraw the card.
    Either way, the corrected values still flow into the §7 confirmation card — **nothing is written on-chain until the user confirms there (Reply 1)**. **`validate-listing` has already run its single pass — never call it again** (`activate` does NOT re-run QA; listing QA happens only here at register and at update). Never apply a `fix` before the user picks; never silently auto-correct; never force a fix.
-4. **Semantic checks the CLI cannot do — always run, regardless of `pass:true`** (merge into step 2's findings list): Is the service name a descriptive noun-phrase — not just a letter like "Q"? Is the agent name a brand, not a personal label (Alice, Account2) or a name that **contains** a celebrity / public-figure name as a substring — block even if prefixed or suffixed (e.g. Trump, Musk, CZ, 马斯克, 马云)? Does the service description follow the **2-part structure** (core-capability summary / what the user must provide) and avoid leaking tech-stack / infra names or legal disclaimers?
+4. **Semantic checks the CLI cannot do — always run, regardless of `pass:true`** (merge into step 2's findings list). Check, by meaning:
+   - **Service name** — a descriptive noun-phrase, not just a letter like "Q".
+   - **Agent name** — a brand, not a personal label (Alice, Account2), and NOT containing a celebrity / public-figure name as a substring (block even if prefixed/suffixed — Trump, Musk, CZ, 马斯克, 马云). Per `identity-invariants.md` §Fields-from-user.
+   - **Description structure** — matches the pricing-based part rule in §3 Step 2c (non-subscription = 3 parts / subscription = 2 parts, each part on its own line) and leaks no tech-stack / infra names or legal disclaimers.
+   - **Subscription (= trading-signal) services ONLY** (non-subscription/ordinary services SKIP this entirely): the core-capability part must explicitly declare every covered market using ONLY DEX / Polymarket / Hyperliquid, and the delivery note must carry a concrete signal example that starts with the full market name (never an abbreviation like "HL") and references only a market declared in the core-capability part; no undeclared market may appear in the example.
+   - **Profit / return guarantee — any language.** The CLI's **D9** is only a deterministic backstop for common guarantee phrases in Chinese and English (hardcoded in the CLI) — surface any D9 finding as-is. Its list cannot cover every language, so you MUST **additionally** block, by meaning, any profit / return / no-loss guarantee in **ANY** language even when D9 did not flag it — including a "guaranteed profit" / "guaranteed income" / "no-loss" / "double your money" claim phrased in any language outside the D9 list (e.g. "blow up your gains") — describe the capability, not a promised outcome.
 
 ## 5. Avatar (inline — image links are rejected)
 
@@ -76,12 +104,12 @@ Require `https://`, publicly reachable, and really deployed. **Reject** `http://
 
 **Length guard** — endpoint URL must be ≤512 chars; if longer → "The endpoint URL must be at most 512 chars; this one is longer. Use a shorter URL." Re-ask.
 
-## 7. Confirmation card (§Invariants card skeleton; never redraw the markup)
+## 7. Confirmation card (identity-invariants.md §Card skeleton; never redraw the markup)
 
 user / evaluator render ONE card. **ASPs render TWO** cards in order:
 
 1. **Identity card** (closes Step 1) — Role / Name / [Description] / Profile photo rows, with the avatar CTA at its close. **ASP avatar is mandatory (§5): the Profile photo row is an uploaded CDN URL, never `default` — if none yet, re-ask before rendering this card.** This card closes with **`> Reply **1** to continue.`** (NOT the confirm-run footer). Confirming it (**1**) **advances to Step 2 and does NOT call the CLI** — no `agent create` runs at Step 1.
-2. **Service card** (closes Step 2) — render ONE block of `Service [N] Name / Description / Type / Fee / Endpoint` rows **per collected service** (`Service [1]`, `Service [2]`, … — never assume a single service); gloss service types once (wording per SKILL §Invariants Lexicon). This is the FINAL card → it carries the confirm-run footer; **1** runs the single `agent create` (carrying the identity plus ALL collected services).
+2. **Service card** (closes Step 2) — render ONE block of `Service [N] Name / Description / Type / Fee / Subscription / Free trial / Endpoint` rows **per collected service** (`Service [1]`, `Service [2]`, … — never assume a single service); gloss service types once (wording per identity-invariants.md §Lexicon). **Pricing rows:** show the single `Fee` as `N USDT` (or `—` when subscription-priced, i.e. `fee:""`); show `Subscription` as `N USDT / month` per monthly tier (or `—` when there is none). **Free trial row:** `3 days` when `freeTrial:"72"` is set, otherwise `—` (single-fee A2A and A2MCP always show `—`; duration-display rule per identity-invariants.md §Lexicon Free trial). A2MCP always shows a single Fee and `Subscription: —`. This is the FINAL card → it carries the confirm-run footer; **1** runs the single `agent create` (carrying the identity plus ALL collected services).
 
 The FINAL card ends with `> Reply **1** to confirm and run.` (localized) + the gate echo: `I won't run anything until you reply **1**.` NL field questions only; no `Q1:` labels, no bash shown.
 
@@ -96,7 +124,7 @@ Run `agent pre-check --role user` (consent + uniqueness gate, same as §2). On c
 
 Run `agent create` with the collected fields (role/name/description/picture/service — all from §3). **On any non-success** → load `identity-errors.md`; never interpret a code inline.
 
-## 10. Post-success templates (verbatim except `#<id>`; localized; `#<id>` per SKILL §Invariants #id ladder — `newAgentId` primary)
+## 10. Post-success templates (verbatim except `#<id>`; localized; `#<id>` per identity-invariants.md §#id ladder — `newAgentId` primary)
 
 - **user (ONE line)** — No txHash, no question. After emitting it, run the communication-init flow in [`chat-comm-init.md`](chat-comm-init.md) so the new agent can communicate (create has no CLI-level readiness gate).
   > User identity #`<id>` is live — say "publish a task for X" whenever you're ready and I'll take you through it.

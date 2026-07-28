@@ -180,6 +180,12 @@ const REDACT_FULL: &[&str] = &[
     "--input-data",
     "--data",
     "--message",
+    // Auto-trade signal: carries a whole JSON blob incl. tokenAddress (FR-9).
+    // Note: grant caps (--max-buy / --max-sell) and grant-check --amount are policy
+    // caps, not secrets, and are deliberately NOT redacted.
+    "--autotrade",
+    // File-deliverable decryption secret passed to `okx-a2a file download`.
+    "--secret",
     // Two-phase payment: the base64 402 payload and free-form
     // business params can carry sensitive challenge / order data — never log them.
     "--payload",
@@ -370,6 +376,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::ServiceList(_) => "service-list".into(),
         AgentCommand::FeedbackSubmit(_) => "feedback-submit".into(),
         AgentCommand::FeedbackList(_) => "feedback-list".into(),
+        AgentCommand::TaskFeedback(_) => "task-feedback".into(),
         AgentCommand::XmtpSign(_) => "xmtp-sign".into(),
         AgentCommand::ValidateListing(_) => "validate-listing".into(),
 
@@ -387,7 +394,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Complete { .. } => "complete".into(),
         AgentCommand::Reject { .. } => "reject".into(),
         AgentCommand::Close { .. } => "close".into(),
-        AgentCommand::SetPublic { .. } => "set-public".into(),
         AgentCommand::Payment { .. } => "payment".into(),
         AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
         AgentCommand::RejectApply { .. } => "reject-apply".into(),
@@ -396,18 +402,25 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::CacheRating { .. } => "cache-rating".into(),
         AgentCommand::TaskAttach { .. } => "task-attach".into(),
         AgentCommand::ListAttachments { .. } => "list-attachments".into(),
+        AgentCommand::MySubscriptions { .. } => "my-subscriptions".into(),
+        AgentCommand::SubscribeDetail { .. } => "subscribe-detail".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
         AgentCommand::AspClaimable { .. } => "asp-claimable".into(),
         AgentCommand::AspClaimRewards { .. } => "asp-claim-rewards".into(),
 
         // Task (provider)
-        AgentCommand::RecommendTask { .. } => "recommend-task".into(),
-        AgentCommand::FindJobs => "find-jobs".into(),
         AgentCommand::Apply { .. } => "apply".into(),
         AgentCommand::Deliver { .. } => "deliver".into(),
+        AgentCommand::AutotradeGrantCheck { .. } => "autotrade-grant-check".into(),
+        #[cfg(debug_assertions)]
+        AgentCommand::AutotradeGrantWrite { .. } => "autotrade-grant-write".into(),
+        AgentCommand::AutotradeConsentSet { .. } => "autotrade-consent-set".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::AspReject { .. } => "asp-reject".into(),
-        AgentCommand::ContactUser { .. } => "contact-user".into(),
+        AgentCommand::SubscribeActive { .. } => "subscribe-active".into(),
+        AgentCommand::SubscribeAgreeRefund { .. } => "subscribe-agree-refund".into(),
+        AgentCommand::SubscribeAspClaim { .. } => "subscribe-asp-claim".into(),
+        AgentCommand::SubscribeDispute { .. } => "subscribe-dispute".into(),
         // Sub-groups
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
         // Evaluator (flat — 见 agent_commerce/mod.rs)
@@ -441,9 +454,13 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::PendingDecisionsV2(_) => "pending-decisions-v2".into(),
         AgentCommand::TaskDeliverableSave { .. } => "task-deliverable-save".into(),
         AgentCommand::TaskDeliverableList { .. } => "task-deliverable-list".into(),
-        AgentCommand::TaskSearch { .. } => "task-search".into(),
         AgentCommand::SessionCleanup { .. } => "session-cleanup".into(),
         AgentCommand::TaskInProgress { .. } => "task-in-progress".into(),
+        AgentCommand::CreateSubscribe { .. } => "create-subscribe".into(),
+        AgentCommand::SubscribeCancel { .. } => "subscribe-cancel".into(),
+        AgentCommand::StartAutorenew { .. } => "start-autorenew".into(),
+        AgentCommand::SubscribeReject { .. } => "subscribe-reject".into(),
+        AgentCommand::SubscribeCost { .. } => "subscribe-cost".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),
         AgentCommand::SetAsp { .. } => "set-asp".into(),
         AgentCommand::ResetAsp { .. } => "reset-asp".into(),
@@ -910,6 +927,43 @@ mod tests {
         let out = redact_args(&args);
         assert_eq!(out[5], "--signed-tx");
         assert_eq!(out[6], "[REDACTED]");
+    }
+
+    #[test]
+    fn redact_autotrade() {
+        // The --autotrade value is a whole JSON signal blob (incl. tokenAddress);
+        // it must be fully redacted (FR-9), while --max-buy / --amount are not.
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "deliver",
+            "JOB1",
+            "--agent-id",
+            "A1",
+            "--autotrade",
+            r#"{"schemaVersion":1,"deliveryId":"d1","tokenAddress":"0xsecret"}"#,
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[6], "--autotrade");
+        assert_eq!(out[7], "[REDACTED]");
+    }
+
+    #[test]
+    fn redact_autotrade_equals_form() {
+        let args = vec_s(&["onchainos", "agent", "deliver", "--autotrade={\"a\":1}"]);
+        let out = redact_args(&args);
+        assert_eq!(out[3], "--autotrade=[REDACTED]");
+    }
+
+    #[test]
+    fn grant_caps_not_redacted() {
+        // Policy caps are not secrets — must survive verbatim for audit review.
+        let args = vec_s(&[
+            "onchainos", "agent", "autotrade-grant-check", "--job-id", "j1", "--venue", "dex",
+            "--action", "buy", "--amount", "100.5", "--format", "json",
+        ]);
+        let out = redact_args(&args);
+        assert!(out.contains(&"100.5".to_string()), "amount cap must not be redacted");
     }
 
     #[test]

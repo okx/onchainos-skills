@@ -25,6 +25,7 @@ pub async fn handle_asp_match(
     job_id: Option<&str>,
     task_desc: &str,
     provider_agent_id: Option<&str>,
+    payment_token_amount: Option<f64>,
     page: usize,
     explicit_agent_id: Option<&str>,
     format: &str,
@@ -56,6 +57,9 @@ pub async fn handle_asp_match(
     }
     if let Some(pid) = provider_agent_id {
         body["providerAgentId"] = serde_json::Value::String(pid.to_string());
+    }
+    if let Some(amt) = payment_token_amount {
+        body["paymentTokenAmount"] = serde_json::json!(amt);
     }
 
     let resp = client
@@ -113,6 +117,7 @@ pub async fn handle_asp_match(
                 let stype = svc["serviceType"].as_str().unwrap_or("");
                 let fee_amt = svc["feeAmount"].as_f64();
                 let fee_sym = svc["feeTokenSymbol"].as_str().unwrap_or("");
+                let support_trial = svc["supportTrail"].as_bool().unwrap_or(false);
 
                 print!("  Service: {sid}");
                 if !sname.is_empty() {
@@ -126,6 +131,20 @@ pub async fn handle_asp_match(
                     println!("    Fee: {amt} {fee_sym}");
                 } else {
                     println!("    Fee: (no price — negotiation required)");
+                }
+
+                if let Some(subs) = svc["subscription"].as_array() {
+                    if !subs.is_empty() {
+                        for sub in subs {
+                            let interval = sub["interval"].as_str().unwrap_or("month");
+                            let fee = sub["fee"].as_str().unwrap_or("?");
+                            print!("    Subscription: {fee} {fee_sym}/{interval}");
+                            if support_trial {
+                                print!(" (trial available)");
+                            }
+                            println!();
+                        }
+                    }
                 }
             }
         }
@@ -394,10 +413,11 @@ mod tests {
             "test", "asp-match", "--task-desc", "build a trading bot",
         ]);
         match cli.cmd {
-            super::super::TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format } => {
+            super::super::TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } => {
                 assert_eq!(task_desc, "build a trading bot");
                 assert!(job_id.is_none());
                 assert!(provider_agent_id.is_none());
+                assert!(payment_token_amount.is_none());
                 assert_eq!(page, 1);
                 assert!(agent_id.is_none());
                 assert_eq!(format, "");
@@ -419,6 +439,22 @@ mod tests {
                 assert_eq!(job_id.as_deref(), Some("job-123"));
                 assert_eq!(provider_agent_id.as_deref(), Some("agent-456"));
                 assert_eq!(page, 2);
+            }
+            _ => panic!("expected AspMatch"),
+        }
+    }
+
+    #[test]
+    fn cli_asp_match_with_payment_token_amount() {
+        let cli = TestCli::parse_from([
+            "test", "asp-match",
+            "--task-desc", "audit service",
+            "--payment-token-amount", "0.7",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::AspMatch { task_desc, payment_token_amount, .. } => {
+                assert_eq!(task_desc, "audit service");
+                assert_eq!(payment_token_amount, Some(0.7));
             }
             _ => panic!("expected AspMatch"),
         }
@@ -555,39 +591,22 @@ mod tests {
         assert!(TestCli::try_parse_from(["test", "user-reject"]).is_err());
     }
 
-    // ── create-task visibility ──────────────────────────────────────
+    // ── create-task: --visibility removed (public task type deleted) ────
 
     #[test]
-    fn cli_create_visibility_defaults_to_private() {
-        let cli = TestCli::parse_from([
+    fn cli_create_rejects_visibility_flag() {
+        // `--visibility` no longer exists on create-task; supplying it is a clap parse error (AC-3).
+        // All other required flags are provided so `--visibility` is the sole cause of the error.
+        assert!(TestCli::try_parse_from([
             "test", "create",
             "--description", "a long enough description text",
             "--budget", "10", "--max-budget", "20",
             "--currency", "USDT",
-        ]);
-        match cli.cmd {
-            super::super::TaskCommand::Create { visibility, .. } => {
-                assert_eq!(visibility, 1);
-            }
-            _ => panic!("expected Create"),
-        }
-    }
-
-    #[test]
-    fn cli_create_visibility_public() {
-        let cli = TestCli::parse_from([
-            "test", "create",
-            "--description", "a long enough description text",
-            "--budget", "10", "--max-budget", "20",
-            "--currency", "USDT",
+            "--provider", "agent-1",
+            "--service-id", "svc-1",
+            "--payment-mode", "escrow",
             "--visibility", "0",
-        ]);
-        match cli.cmd {
-            super::super::TaskCommand::Create { visibility, .. } => {
-                assert_eq!(visibility, 0);
-            }
-            _ => panic!("expected Create"),
-        }
+        ]).is_err());
     }
 
     #[test]
@@ -599,23 +618,75 @@ mod tests {
             "--currency", "USDT",
             "--provider", "agent-1",
             "--service-id", "svc-1",
+            "--payment-mode", "escrow",
             "--service-params", "参数：x=1",
             "--service-token-address", "0xAddr",
             "--service-token-amount", "5.0",
         ]);
         match cli.cmd {
             super::super::TaskCommand::Create {
-                provider, service_id, service_params,
-                service_token_address, service_token_amount, visibility, ..
+                provider, service_id, payment_mode, service_params,
+                service_token_address, service_token_amount, ..
             } => {
-                assert_eq!(provider.as_deref(), Some("agent-1"));
-                assert_eq!(service_id.as_deref(), Some("svc-1"));
+                assert_eq!(provider, "agent-1");
+                assert_eq!(service_id, "svc-1");
+                assert_eq!(payment_mode, "escrow");
                 assert_eq!(service_params.as_deref(), Some("参数：x=1"));
                 assert_eq!(service_token_address.as_deref(), Some("0xAddr"));
                 assert_eq!(service_token_amount.as_deref(), Some("5.0"));
-                assert_eq!(visibility, 1);
             }
             _ => panic!("expected Create"),
         }
+    }
+
+    #[test]
+    fn cli_create_requires_provider_service_id_payment_mode() {
+        // --provider, --service-id, --payment-mode are all required for create-task
+        // (oli-feedback). Omitting them is a clap parse error.
+        let base = [
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+        ];
+        // Missing all three required flags.
+        assert!(TestCli::try_parse_from(base).is_err());
+        // Missing --payment-mode only.
+        assert!(TestCli::try_parse_from([
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+            "--provider", "agent-1",
+            "--service-id", "svc-1",
+        ]).is_err());
+        // Missing --service-id only.
+        assert!(TestCli::try_parse_from([
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+            "--provider", "agent-1",
+            "--payment-mode", "escrow",
+        ]).is_err());
+        // Missing --provider only.
+        assert!(TestCli::try_parse_from([
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+            "--service-id", "svc-1",
+            "--payment-mode", "escrow",
+        ]).is_err());
+        // All three present -> parses OK.
+        assert!(TestCli::try_parse_from([
+            "test", "create",
+            "--description", "a long enough description text",
+            "--budget", "10", "--max-budget", "20",
+            "--currency", "USDT",
+            "--provider", "agent-1",
+            "--service-id", "svc-1",
+            "--payment-mode", "escrow",
+        ]).is_ok());
     }
 }

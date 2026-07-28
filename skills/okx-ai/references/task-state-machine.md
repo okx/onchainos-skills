@@ -4,7 +4,7 @@
 >
 > The state machine itself is payment-mode-agnostic — for payment details see [`payment-modes.md`](./payment-modes.md); for entry differences see [`entry-points.md`](./entry-points.md).
 >
-> **Important layering**: this system strictly distinguishes between **task status** (Status, 11 real enums) and **system events** (Event, 37 total). **Events are not states** — some events are transient (don't change status, e.g. `provider_applied` / `dispute_approved`), some trigger state transitions, and some are entirely decoupled from task status (e.g. staking events).
+> **Important layering**: this system strictly distinguishes between **task status** (Status, 11 real enums) and **system events** (Event, 54 total). **Events are not states** — some events are transient (don't change status, e.g. `provider_applied` / `dispute_approved`), some trigger state transitions, and some are entirely decoupled from task status (e.g. staking events).
 
 ---
 

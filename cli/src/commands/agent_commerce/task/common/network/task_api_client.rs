@@ -128,6 +128,20 @@ impl TaskApiClient {
         PATH
     }
 
+    /// `/priapi/v1/aieco/task/subscribe/{sub_id}` — subscription detail (`subId = jobId`).
+    pub fn subscribe_path(&self, sub_id: &str) -> String {
+        format!("{TASK_PREFIX}/subscribe/{sub_id}")
+    }
+
+    /// FR-3 subscription detail. `subId` reuses the `jobId` value. Auth = JWT +
+    /// `agenticId` (same as task detail). A 404 is a normal response for ordinary
+    /// (non-subscription) tasks and surfaces as `Err`; the caller treats it as a
+    /// fail-safe not-copy-trade degrade, never an error.
+    pub async fn fetch_subscription(&mut self, job_id: &str, agent_id: &str) -> Result<Value> {
+        let path = self.subscribe_path(job_id);
+        self.get_with_identity(&path, agent_id).await
+    }
+
     // ─── Request methods (take a path, not a full URL) ───────────────────
 
     /// GET + JWT + agenticId header (no sessionCert injection) -> returns data.

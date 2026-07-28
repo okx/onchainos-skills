@@ -159,6 +159,13 @@ pub enum SwapCommand {
         /// Use only after explicit user confirmation.
         #[arg(long, default_value_t = false)]
         force: bool,
+        /// Auto copy-trade context (set by autotrade execution cards, not for manual use):
+        /// when present, the CLI itself pushes the outcome notification — success tx/order
+        /// id or failure reason — to the task user via `okx-a2a user notify` after the
+        /// command finishes, so the report cannot be skipped by the calling agent.
+        /// Value = the copy-trade jobId.
+        #[arg(long)]
+        notify_job_id: Option<String>,
     },
 }
 
@@ -289,36 +296,68 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             relayer_id,
             enable_gas_station,
             force,
+            notify_job_id,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
-            crate::chains::ensure_supported_chain(&chain_index, &chain)?;
-            let raw_amount = resolve_amount_arg(
-                &mut client,
-                amount.as_deref(),
-                readable_amount.as_deref(),
-                &from,
-                &chain_index,
-            )
-            .await?;
-            cmd_execute(
-                &mut client,
-                &from,
-                &to,
-                &raw_amount,
-                &chain,
-                &wallet,
-                slippage.as_deref(),
-                &gas_level,
-                &swap_mode,
-                tips.as_deref(),
-                max_auto_slippage.as_deref(),
-                mev_protection,
-                gas_token_address.as_deref(),
-                relayer_id.as_deref(),
-                enable_gas_station,
-                force,
-            )
-            .await?;
+            let run = async {
+                crate::chains::ensure_supported_chain(&chain_index, &chain)?;
+                let raw_amount = resolve_amount_arg(
+                    &mut client,
+                    amount.as_deref(),
+                    readable_amount.as_deref(),
+                    &from,
+                    &chain_index,
+                )
+                .await?;
+                cmd_execute(
+                    &mut client,
+                    &from,
+                    &to,
+                    &raw_amount,
+                    &chain,
+                    &wallet,
+                    slippage.as_deref(),
+                    &gas_level,
+                    &swap_mode,
+                    tips.as_deref(),
+                    max_auto_slippage.as_deref(),
+                    mev_protection,
+                    gas_token_address.as_deref(),
+                    relayer_id.as_deref(),
+                    enable_gas_station,
+                    force,
+                )
+                .await
+            };
+            match notify_job_id {
+                None => {
+                    run.await?;
+                }
+                // Auto copy-trade context: the CLI reports the outcome (success AND
+                // failure) to the task user itself, so the notification can't be
+                // skipped by the calling agent — one-shot sub sessions were observed
+                // to drop the follow-up `user-notify` step when it was left to them.
+                Some(job) => {
+                    let display_amount = readable_amount
+                        .as_deref()
+                        .or(amount.as_deref())
+                        .unwrap_or("?")
+                        .to_string();
+                    match run.await {
+                        Ok(out) => {
+                            crate::commands::agent_commerce::task::common::autotrade::notify::notify_swap_outcome(
+                                &job, &chain, &display_amount, &from, &to, Ok(&out),
+                            );
+                        }
+                        Err(e) => {
+                            crate::commands::agent_commerce::task::common::autotrade::notify::notify_swap_outcome(
+                                &job, &chain, &display_amount, &from, &to, Err(&e),
+                            );
+                            return Err(e);
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -907,7 +946,7 @@ async fn cmd_execute(
     relayer_id: Option<&str>,
     enable_gas_station: bool,
     force: bool,
-) -> Result<()> {
+) -> Result<Value> {
     use crate::chains;
 
     let chain_index = chains::resolve_chain(chain);
@@ -1217,9 +1256,9 @@ async fn cmd_execute(
     if !swap_order_id.is_empty() {
         out["swapOrderId"] = json!(swap_order_id);
     }
-    output::success(out);
+    output::success(&out);
 
-    Ok(())
+    Ok(out)
 }
 
 // ── Batch unsignedInfo + broadcast ───────────────────────────────────
@@ -1261,7 +1300,7 @@ async fn cmd_execute_batch(
     max_auto_slippage: Option<&str>,
     mev_protection: bool,
     force: bool,
-) -> Result<()> {
+) -> Result<Value> {
     use crate::commands::agentic_wallet::transfer::{batch_sign_and_broadcast, BatchTxParams};
 
     // 1. Approve check (gates revoke / approve / swap construction).
@@ -1373,8 +1412,8 @@ async fn cmd_execute_batch(
             "gasUsed": router_result["estimateGasFee"],
             "nextSteps": next_steps,
         });
-        output::success(out);
-        return Ok(());
+        output::success(&out);
+        return Ok(out);
     }
 
     // Build elements: [revoke?, approve, swap].
@@ -1464,8 +1503,8 @@ async fn cmd_execute_batch(
         "gasUsed": router_result["estimateGasFee"],
         "nextSteps": next_steps,
     });
-    output::success(out);
-    Ok(())
+    output::success(&out);
+    Ok(out)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────

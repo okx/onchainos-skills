@@ -24,8 +24,8 @@ use crate::payment::subscription::eip712::{
 };
 use crate::payment::subscription::facilitator::allowance_status;
 use crate::payment::subscription::types::{
-    CancelAuth, PendingChangeCancelAuth, PermitDetailsWire, PermitSingleWire, SubscriptionPayload,
-    SubscriptionTermsWire,
+    AllowanceStatus, CancelAuth, PendingChangeCancelAuth, PermitDetailsWire, PermitSingleWire,
+    SubscriptionPayload, SubscriptionTermsWire,
 };
 
 const ZERO_BYTES32: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
@@ -200,6 +200,39 @@ fn u256(s: &str) -> Result<U256> {
     .with_context(|| format!("invalid uint256: {s}"))
 }
 
+/// Case-insensitive EVM address equality with fail-closed semantics: returns
+/// `true` iff `authority` is non-empty **and** equals `offer` ignoring ASCII
+/// case (EIP-55 checksum case is not significant). An empty `authority` ⇒
+/// `false` — a missing authoritative value must never validate.
+fn addr_eq(offer: &str, authority: &str) -> bool {
+    !authority.is_empty() && authority.eq_ignore_ascii_case(offer)
+}
+
+/// Cross-check the seller-declared contract addresses (`extra.contracts`)
+/// against the authoritative `allowance-status` values before any signature or
+/// approve guidance is produced. Validates `subscription` first, then `permit2`;
+/// on the first mismatch — or a missing authoritative value — returns an `Err`
+/// so the caller fails closed (no signing). The `subscription contract mismatch`
+/// / `permit2 contract mismatch` substrings are the stability contract
+/// (cli_command_spec.md, A-ARCH §6) — do not reword.
+fn verify_contracts_against_authority(p: &TermsParams, a: &AllowanceStatus) -> Result<()> {
+    if !addr_eq(&p.subscription_contract, &a.subscription_contract) {
+        bail!(
+            "subscription contract mismatch: offer=`{}`, authority=`{}`",
+            p.subscription_contract,
+            a.subscription_contract
+        );
+    }
+    if !addr_eq(&p.permit2_contract, &a.permit2_contract) {
+        bail!(
+            "permit2 contract mismatch: offer=`{}`, authority=`{}`",
+            p.permit2_contract,
+            a.permit2_contract
+        );
+    }
+    Ok(())
+}
+
 /// Core double-sign shared by subscribe and change. For a create,
 /// `change_from_sub_id` is `0x00..` and `change_effective_at` is `0`.
 #[allow(clippy::too_many_arguments)]
@@ -212,12 +245,21 @@ async fn sign_double(
     change_effective_at: u8,
 ) -> Result<SignedSubscription> {
     let p = extract_terms_params(accepted)?;
-    // Contract addresses come from the Seller's 402 `extra.contracts`, not
-    // allowance-status (read only for nonce / reserved / permit2Allowance).
-    let spender = p.subscription_contract.clone();
 
     // Read on-chain truth right before signing.
     let a = allowance_status(payer, &p.token, chain_index).await?;
+
+    // Fail closed: the seller-declared contract addresses MUST match the
+    // authoritative allowance-status values before any signature, amount math,
+    // or Layer-1 approve guidance is produced. On mismatch this is a plain
+    // anyhow error (never a `confirming` gate) → main.rs default arm →
+    // output::error + exit 1; there is no `--force` bypass.
+    verify_contracts_against_authority(&p, &a)?;
+
+    // Anchor the signed material to the authoritative (trusted-root) value
+    // rather than the unverified seller declaration (FR-4); this also eliminates
+    // EIP-55 checksum-case drift between offer and authority.
+    let spender = a.subscription_contract.clone();
 
     // newCommit = initialChargeAmount + (maxPeriods - initialChargePeriods) * amountPerPeriod
     let remaining_periods = (p.max_periods as u64)
@@ -247,7 +289,7 @@ async fn sign_double(
                     chain_index,
                     layer1,
                     amount,
-                    p.permit2_contract
+                    a.permit2_contract
                 );
             }
         }
@@ -298,7 +340,7 @@ async fn sign_double(
         nonce,
         &spender,
         &sig_deadline,
-        &p.permit2_contract,
+        &a.permit2_contract,
         chain_id,
     );
     let permit_hash = hex0x(permit_single_struct_hash(
@@ -560,6 +602,16 @@ mod tests {
         })
     }
 
+    /// Authoritative `allowance-status` fixture whose contract addresses match
+    /// `sample_accepted()`'s `extra.contracts` (the honest-seller case).
+    fn sample_authority() -> AllowanceStatus {
+        serde_json::from_value(json!({
+            "subscriptionContract": "0x4020000000000000000000000000000000000003",
+            "permit2Contract": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+        }))
+        .unwrap()
+    }
+
     #[test]
     fn extract_terms_params_reads_all_fields() {
         let p = extract_terms_params(&sample_accepted()).unwrap();
@@ -658,5 +710,89 @@ mod tests {
         assert!(s.starts_with("0x"));
         assert_eq!(s.len(), 66); // 0x + 64 hex
         assert_ne!(s, random_bytes32_hex());
+    }
+
+    #[test]
+    fn addr_eq_matches_case_insensitively_and_fails_closed() {
+        let sub = "0x4020000000000000000000000000000000000003";
+        // equal lowercase ⇒ true
+        assert!(addr_eq(sub, sub));
+        // differ only by EIP-55 checksum case ⇒ true
+        assert!(addr_eq(
+            "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+            "0x000000000022d473030f116ddee9f6b43ac78ba3"
+        ));
+        // different address ⇒ false
+        assert!(!addr_eq(sub, "0x4020000000000000000000000000000000000099"));
+        // empty authority ⇒ false (fail closed)
+        assert!(!addr_eq(sub, ""));
+        // empty offer vs empty authority ⇒ false
+        assert!(!addr_eq("", ""));
+    }
+
+    #[test]
+    fn verify_contracts_ok_when_both_match() {
+        let p = extract_terms_params(&sample_accepted()).unwrap();
+        assert!(verify_contracts_against_authority(&p, &sample_authority()).is_ok());
+    }
+
+    #[test]
+    fn verify_contracts_ok_on_checksum_case_only_difference() {
+        let p = extract_terms_params(&sample_accepted()).unwrap();
+        // Same addresses as the offer, differing only by EIP-55 checksum case.
+        let a: AllowanceStatus = serde_json::from_value(json!({
+            "subscriptionContract": "0x4020000000000000000000000000000000000003",
+            "permit2Contract": "0x000000000022d473030f116ddee9f6b43ac78ba3"
+        }))
+        .unwrap();
+        assert!(verify_contracts_against_authority(&p, &a).is_ok());
+    }
+
+    #[test]
+    fn verify_contracts_rejects_tampered_subscription() {
+        let p = extract_terms_params(&sample_accepted()).unwrap();
+        let a: AllowanceStatus = serde_json::from_value(json!({
+            "subscriptionContract": "0x4020000000000000000000000000000000000099",
+            "permit2Contract": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+        }))
+        .unwrap();
+        let err = verify_contracts_against_authority(&p, &a).unwrap_err();
+        assert!(err.to_string().contains("subscription contract mismatch"));
+    }
+
+    #[test]
+    fn verify_contracts_rejects_tampered_permit2() {
+        let p = extract_terms_params(&sample_accepted()).unwrap();
+        let a: AllowanceStatus = serde_json::from_value(json!({
+            "subscriptionContract": "0x4020000000000000000000000000000000000003",
+            "permit2Contract": "0x0000000000000000000000000000000000000099"
+        }))
+        .unwrap();
+        let err = verify_contracts_against_authority(&p, &a).unwrap_err();
+        assert!(err.to_string().contains("permit2 contract mismatch"));
+    }
+
+    #[test]
+    fn verify_contracts_fails_closed_on_empty_subscription_authority() {
+        let p = extract_terms_params(&sample_accepted()).unwrap();
+        // Missing authoritative subscriptionContract ⇒ reject (never validate).
+        let a: AllowanceStatus = serde_json::from_value(json!({
+            "permit2Contract": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+        }))
+        .unwrap();
+        let err = verify_contracts_against_authority(&p, &a).unwrap_err();
+        assert!(err.to_string().contains("subscription contract mismatch"));
+    }
+
+    #[test]
+    fn verify_contracts_fails_closed_on_empty_permit2_authority() {
+        let p = extract_terms_params(&sample_accepted()).unwrap();
+        // subscription matches; missing authoritative permit2Contract ⇒ reject.
+        let a: AllowanceStatus = serde_json::from_value(json!({
+            "subscriptionContract": "0x4020000000000000000000000000000000000003"
+        }))
+        .unwrap();
+        let err = verify_contracts_against_authority(&p, &a).unwrap_err();
+        assert!(err.to_string().contains("permit2 contract mismatch"));
     }
 }

@@ -17,6 +17,7 @@ use super::payment_flow::{self, extract_amount};
 use super::state::{
     self, AcceptEntry, Candidate, DecodedChallenge, ParamCarrier, ParamSpec, PaymentState,
 };
+use crate::mcp_client::{self, McpClient, McpTool, ToolCallOutcome};
 use crate::output;
 
 /// Machine tokens (leading word of `output::error`).
@@ -35,7 +36,7 @@ const PROBE_TIMEOUT_SECS: u64 = 10;
 /// `payment quote` `data` shape (stability contract — see `cli_command_spec.md`).
 #[derive(Serialize)]
 struct QuoteData {
-    #[serde(rename = "paymentId")]
+    #[serde(rename = "paymentId", skip_serializing_if = "String::is_empty")]
     payment_id: String,
     #[serde(rename = "needsConfirm")]
     needs_confirm: bool,
@@ -57,21 +58,45 @@ struct QuoteData {
     decoded_challenge: DecodedChallenge,
     #[serde(rename = "walletError", skip_serializing_if = "Option::is_none")]
     wallet_error: Option<String>,
+    /// MCP discovery catalog (`cli_command_spec.md` Output A). Populated only in
+    /// MCP discovery mode; omitted (empty) for REST and paid MCP quotes so the
+    /// REST output stays byte-identical.
+    #[serde(rename = "mcpTools", default, skip_serializing_if = "Vec::is_empty")]
+    mcp_tools: Vec<McpTool>,
+    /// Free / first-N-free MCP `tools/call` result (Output C). Populated only
+    /// when an unpaid tool returns a result; omitted otherwise.
+    #[serde(rename = "result", skip_serializing_if = "Option::is_none")]
+    mcp_result: Option<Value>,
 }
 
 /// CLI handler: run the quote and print the always-on envelope. Classified
 /// probe/parse failures propagate as `Err` so `main.rs` renders `output::error`
 /// (exit 1); `walletError` / all-zero-balance are `Ok` data (exit 0).
-pub async fn run(url: &str, param: &[String], method: &str) -> Result<()> {
-    let data = fetch_quote(url, param, method).await?;
+pub async fn run(url: &str, param: &[String], method: &str, tool: Option<&str>) -> Result<()> {
+    let data = fetch_quote(url, param, method, tool).await?;
     output::success(data);
     Ok(())
 }
 
 /// Data path shared by the CLI handler and the `payment_quote` MCP tool.
 /// Returns the `data` payload (`QuoteData` serialized to `Value`).
-pub async fn fetch_quote(url: &str, param: &[String], method: &str) -> Result<Value> {
+///
+/// Detection order (arch §3) — the MCP-transport branch is entered when **any**
+/// fires: (1) `--tool` supplied (forces MCP); (2) the URL path ends `/mcp`|`/sse`;
+/// (3) the bare probe signals MCP (`text/event-stream` or a JSON-RPC body). When
+/// none fire, the existing REST path is unchanged.
+pub async fn fetch_quote(
+    url: &str,
+    param: &[String],
+    method: &str,
+    tool: Option<&str>,
+) -> Result<Value> {
     let known_params = parse_params(param)?;
+
+    // (1) explicit --tool or (2) URL looks like MCP → force the MCP branch.
+    if tool.is_some() || mcp_client::url_looks_like_mcp(url) {
+        return fetch_quote_mcp(url, &known_params, tool).await;
+    }
 
     let outcome = probe_endpoint(url, &known_params, method).await?;
     let (challenge_header, merchant_body) = match outcome {
@@ -92,15 +117,144 @@ pub async fn fetch_quote(url: &str, param: &[String], method: &str) -> Result<Va
                 alternatives: vec![],
                 decoded_challenge: free_challenge(),
                 wallet_error: None,
+                mcp_tools: vec![],
+                mcp_result: None,
             };
             return serde_json::to_value(data).map_err(Into::into);
+        }
+        // (3) bare probe signaled MCP transport → hand off to the MCP branch.
+        ProbeOutcome::MaybeMcp => {
+            return fetch_quote_mcp(url, &known_params, tool).await;
         }
         ProbeOutcome::Challenge { header, body } => (header, body),
     };
 
+    build_quote_from_challenge(
+        url,
+        known_params,
+        method,
+        &challenge_header,
+        merchant_body,
+        None,
+    )
+    .await
+}
+
+/// MCP-transport quote (arch §3/§5). Assumes the caller already decided this is
+/// MCP mode. Handshakes via `McpClient`, then:
+/// - `tool = None` → **discovery**: `tools/list` → Output A. Returns the unified
+///   `QuoteData` envelope (needsConfirm:false + summary + nextStep) carrying the
+///   tool catalog in `mcpTools[]`, isomorphic with a REST quote.
+/// - `tool = Some(name)` → validate against the catalog, coerce `--param` from
+///   the tool's `inputSchema`, and `tools/call`: a 402 reuses the REST
+///   challenge→candidate→state path (Output B, byte-identical) with the
+///   `mcp_tool` marker + coerced arguments persisted; a non-402 result is a free
+///   tool (Output C) returned as a `QuoteData` envelope (needsConfirm:false +
+///   summary) carrying the tool result in `result`.
+async fn fetch_quote_mcp(
+    url: &str,
+    known_params: &Map<String, Value>,
+    tool: Option<&str>,
+) -> Result<Value> {
+    let mut client = McpClient::new(url)?;
+    client.initialize().await?;
+    let tools = client.list_tools().await?;
+
+    let Some(name) = tool else {
+        // Discovery (Output A): the unified QuoteData envelope carrying the tool
+        // catalog plus machine-readable next-step guidance. No paymentId
+        // (discovery is free, persists nothing) so `jq '.data.paymentId'` is
+        // null (AC-2); `mcpTools[]` carries the catalog.
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        let summary = format!(
+            "MCP server exposes {} tool(s): {}",
+            tools.len(),
+            names.join(", ")
+        );
+        let next_step = format!(
+            "onchainos payment quote {url} --tool <name> [--param k=v] — pick a tool to trigger its 402"
+        );
+        let data = QuoteData {
+            payment_id: String::new(),
+            needs_confirm: false,
+            summary,
+            next_step,
+            accepts: vec![],
+            known_params: known_params.clone(),
+            merchant_body: String::new(),
+            missing_params: vec![],
+            param_plan: vec![],
+            candidates: vec![],
+            alternatives: vec![],
+            decoded_challenge: free_challenge(),
+            wallet_error: None,
+            mcp_tools: tools,
+            mcp_result: None,
+        };
+        return serde_json::to_value(data).map_err(Into::into);
+    };
+
+    // Validate the requested tool against the discovered catalog.
+    let selected = tools.iter().find(|t| t.name == name).ok_or_else(|| {
+        let available: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        anyhow!(
+            "{TOKEN_INVALID_INPUT}: tool '{name}' not found; available tools: [{}]",
+            available.join(", ")
+        )
+    })?;
+
+    // Coerce --param values per the tool's inputSchema, then invoke tools/call.
+    let arguments = mcp_client::coerce_arguments(known_params, selected.input_schema.as_ref());
+    match client.call_tool(name, &arguments).await? {
+        ToolCallOutcome::Paid { header, body } => {
+            // 402 → reuse the REST challenge pipeline, persisting the coerced
+            // arguments as known_params and the mcp_tool marker so `pay` replays
+            // the SAME tools/call. Output B (byte-identical to a REST quote).
+            let coerced_params = arguments.as_object().cloned().unwrap_or_default();
+            build_quote_from_challenge(url, coerced_params, "POST", &header, body, Some(name)).await
+        }
+        ToolCallOutcome::Free(result) => {
+            // Non-402 result → a free / first-N-free tool (Output C). Unified
+            // QuoteData envelope (needsConfirm:false + summary explaining no
+            // payment is required) carrying the tool result in `result`.
+            let summary = format!("MCP tool '{name}' returned a result — no payment required");
+            let data = QuoteData {
+                payment_id: String::new(),
+                needs_confirm: false,
+                summary,
+                next_step: String::new(),
+                accepts: vec![],
+                known_params: known_params.clone(),
+                merchant_body: String::new(),
+                missing_params: vec![],
+                param_plan: vec![],
+                candidates: vec![],
+                alternatives: vec![],
+                decoded_challenge: free_challenge(),
+                wallet_error: None,
+                mcp_tools: vec![],
+                mcp_result: Some(result),
+            };
+            serde_json::to_value(data).map_err(Into::into)
+        }
+    }
+}
+
+/// Decode a 402 challenge (REST or MCP `tools/call`), rank candidates, run the
+/// wallet preflight, and persist `PaymentState`. Shared by the REST path and the
+/// MCP paid path — the only MCP-specific input is `mcp_tool` (the tool name to
+/// persist, flipping `pay` into the `replay_mcp` branch).
+async fn build_quote_from_challenge(
+    url: &str,
+    known_params: Map<String, Value>,
+    method: &str,
+    challenge_header: &str,
+    merchant_body: String,
+    mcp_tool: Option<&str>,
+) -> Result<Value> {
     // Decode the challenge blob (reuses the shared base64 / WWW-Authenticate
     // decoder) and pull the accepts[] array.
-    let decoded = super::dispatcher::decode_payment_blob(&challenge_header)
+    let decoded = super::dispatcher::decode_payment_blob(challenge_header)
         .map_err(|e| anyhow!("{TOKEN_UNSUPPORTED}: could not decode 402 challenge: {e}"))?;
     let accepts_val = decoded
         .get("accepts")
@@ -143,7 +297,7 @@ pub async fn fetch_quote(url: &str, param: &[String], method: &str) -> Result<Va
     // Build candidates, then run the wallet/balance preflight (best-effort;
     // login_required / balance_unavailable never abort the read-only quote).
     let mut candidates = build_candidates(&accepts_val, &accepts, &mut resolver).await?;
-    let wallet_error = preflight_balances(&mut candidates).await;
+    let wallet_error = preflight_balances(&mut candidates, &accepts).await;
 
     let (candidates, alternatives) = payment_flow::rank_candidates(candidates);
 
@@ -175,6 +329,7 @@ pub async fn fetch_quote(url: &str, param: &[String], method: &str) -> Result<Va
         resource: decoded.get("resource").cloned(),
         method: paid_method,
         param_plan: param_plan.clone(),
+        mcp_tool: mcp_tool.map(|s| s.to_string()),
     };
     st.write()?;
 
@@ -196,6 +351,8 @@ pub async fn fetch_quote(url: &str, param: &[String], method: &str) -> Result<Va
         alternatives,
         decoded_challenge,
         wallet_error,
+        mcp_tools: vec![],
+        mcp_result: None,
     };
     serde_json::to_value(data).map_err(Into::into)
 }
@@ -228,6 +385,10 @@ enum ProbeOutcome {
     NoCharge { body: String },
     /// HTTP 402 — a payment challenge header + the merchant response body.
     Challenge { header: String, body: String },
+    /// The bare probe signaled MCP transport (`Content-Type: text/event-stream`
+    /// or a JSON-RPC body). The MCP handshake re-runs from scratch, so no probe
+    /// state needs to be carried forward.
+    MaybeMcp,
 }
 
 /// Probe the merchant endpoint with a freshly-built `reqwest::Client`
@@ -266,20 +427,39 @@ async fn probe_endpoint(
         .or_else(|| resp.headers().get("WWW-Authenticate"))
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
     let body = resp.text().await.unwrap_or_default();
 
     if status.as_u16() == 402 {
         // Some servers put the challenge in the body rather than a header.
         let header = header.unwrap_or_else(|| body.clone());
         Ok(ProbeOutcome::Challenge { header, body })
+    } else if mcp_client::probe_signals_mcp(&content_type, &body) {
+        // Detection order (3): a bare probe that advertises SSE or replies with a
+        // JSON-RPC body is an MCP-transport endpoint — hand off to the MCP branch.
+        Ok(ProbeOutcome::MaybeMcp)
     } else if status.is_success() {
         Ok(ProbeOutcome::NoCharge { body })
     } else {
         let code = status.as_u16();
-        Err(anyhow!(
-            "{}: unexpected HTTP {code} (expected 402 or 200)",
-            classify_probe_error(code)
-        ))
+        let token = classify_probe_error(code);
+        if code == 405 {
+            // A POST-only REST A2MCP (or an MCP endpoint that rejects the GET
+            // probe) — advise the two ways forward rather than a dead end.
+            Err(anyhow!(
+                "{token}: endpoint returned HTTP 405 to the {method} probe — if this is an \
+                 A2MCP endpoint, retry with --tool <name> (MCP transport) or --method POST (REST)"
+            ))
+        } else {
+            Err(anyhow!(
+                "{token}: unexpected HTTP {code} (expected 402 or 200)"
+            ))
+        }
     }
 }
 
@@ -357,43 +537,66 @@ fn entry_asset_and_chain(entry: &Value) -> Option<(String, String)> {
     Some((chain_id.to_string(), asset.to_string()))
 }
 
-/// Query the okx-dex token basic-info endpoint for a token's decimals by
-/// (chainIndex, contractAddress). Best-effort — returns `None` on any transport
-/// or shape failure so the caller can fall back without aborting the quote.
-async fn fetch_decimals_from_okx_dex(
+/// Token metadata resolved from okx-dex basic-info: decimals (for amount
+/// rendering) and the real ticker symbol (for display + symbol-fallback balance
+/// matching). Each field is `None` when the lookup was attempted but yielded
+/// nothing — the whole struct doubles as the negative-cache marker.
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+struct TokenMeta {
+    decimals: Option<u32>,
+    symbol: Option<String>,
+}
+
+/// Query the okx-dex token basic-info endpoint for a token's decimals + symbol
+/// by (chainIndex, contractAddress). Best-effort — returns an empty
+/// [`TokenMeta`] on any transport or shape failure so the caller can fall back
+/// without aborting the quote.
+async fn fetch_token_meta_from_okx_dex(
     client: &mut crate::client::ApiClient,
     chain_id: &str,
     address: &str,
-) -> Option<u32> {
-    let resp = crate::commands::token::fetch_info(client, address, chain_id)
-        .await
-        .ok()?;
-    let item = resp.as_array().and_then(|a| a.first())?;
+) -> TokenMeta {
+    let Ok(resp) = crate::commands::token::fetch_info(client, address, chain_id).await else {
+        return TokenMeta::default();
+    };
+    let Some(item) = resp.as_array().and_then(|a| a.first()) else {
+        return TokenMeta::default();
+    };
     // basic-info carries decimals in the `decimal` (string) field; accept a
     // numeric `decimals` too for forward-compatibility.
-    item.get("decimal")
+    let decimals = item
+        .get("decimal")
         .and_then(|d| d.as_str())
         .and_then(|s| s.parse::<u32>().ok())
         .or_else(|| {
             item.get("decimals")
                 .and_then(|d| d.as_u64())
                 .map(|n| n as u32)
-        })
+        });
+    // The real ticker (`symbol`, e.g. "USDT") — used to display a human ticker
+    // instead of a contract address / EIP-712 domain, and to make the
+    // symbol-fallback balance match reliable.
+    let symbol = item
+        .get("symbol")
+        .or_else(|| item.get("tokenSymbol"))
+        .and_then(|s| s.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    TokenMeta { decimals, symbol }
 }
 
-/// Resolves token decimals for accepts entries, preferring the entry's declared
-/// value, then an okx-dex metadata lookup, and only then [`DEFAULT_DECIMALS`]
-/// (never silently default when metadata is reachable). Memoizes
-/// okx-dex lookups by (chainIndex, address) — including best-effort misses — so
-/// a multi-scheme challenge for one token queries okx-dex at most once, even
-/// when the lookup fails and the caller falls back to the default.
+/// Resolves token metadata (decimals + symbol) for accepts entries. Decimals
+/// prefer the entry's declared value, then an okx-dex metadata lookup, and only
+/// then [`DEFAULT_DECIMALS`] (never silently default when metadata is
+/// reachable). Memoizes okx-dex lookups by (chainIndex, address) — including
+/// best-effort misses — so a multi-scheme challenge for one token queries
+/// okx-dex at most once, even when the lookup fails and the caller falls back.
 struct DecimalResolver {
     client: Option<crate::client::ApiClient>,
-    /// (chainIndex, address) → resolved decimals, or `None` when the okx-dex
-    /// lookup was already attempted and yielded nothing. Caching the miss
-    /// (negative cache) is what prevents a second same-token candidate from
-    /// re-hitting basic-info after the first attempt failed.
-    memo: HashMap<(String, String), Option<u32>>,
+    /// (chainIndex, address) → resolved [`TokenMeta`]. A default (all-`None`)
+    /// entry is the negative cache that prevents a second same-token candidate
+    /// from re-hitting basic-info after the first attempt failed.
+    memo: HashMap<(String, String), TokenMeta>,
 }
 
 impl DecimalResolver {
@@ -404,24 +607,38 @@ impl DecimalResolver {
         }
     }
 
+    /// Fetch (once) and memoize the okx-dex metadata for an entry's token.
+    /// Returns `None` when the entry carries no asset address to look up.
+    async fn ensure_meta(&mut self, entry: &Value) -> Option<&TokenMeta> {
+        let (chain_id, address) = entry_asset_and_chain(entry)?;
+        let key = (chain_id.clone(), address.clone());
+        if !self.memo.contains_key(&key) {
+            let resolved = match self.client.as_mut() {
+                Some(client) => fetch_token_meta_from_okx_dex(client, &chain_id, &address).await,
+                None => TokenMeta::default(),
+            };
+            self.memo.insert(key.clone(), resolved);
+        }
+        self.memo.get(&key)
+    }
+
     async fn resolve(&mut self, entry: &Value) -> u32 {
         if let Some(d) = declared_decimals(entry) {
             return d;
         }
-        if let Some((chain_id, address)) = entry_asset_and_chain(entry) {
-            let key = (chain_id.clone(), address.clone());
-            if !self.memo.contains_key(&key) {
-                let resolved = match self.client.as_mut() {
-                    Some(client) => fetch_decimals_from_okx_dex(client, &chain_id, &address).await,
-                    None => None,
-                };
-                self.memo.insert(key.clone(), resolved);
-            }
-            if let Some(&Some(d)) = self.memo.get(&key) {
+        if let Some(meta) = self.ensure_meta(entry).await {
+            if let Some(d) = meta.decimals {
                 return d;
             }
         }
         DEFAULT_DECIMALS
+    }
+
+    /// Resolve the token's real ticker symbol via okx-dex basic-info. `None`
+    /// when the entry has no asset address or the lookup yielded no symbol —
+    /// the caller then falls back to the challenge's own `extra.name` / asset.
+    async fn resolve_symbol(&mut self, entry: &Value) -> Option<String> {
+        self.ensure_meta(entry).await.and_then(|m| m.symbol.clone())
     }
 }
 
@@ -483,11 +700,20 @@ async fn build_candidates(
             .to_string();
         let is_mainnet = payment_flow::is_mainnet_chain(&chain_id);
         let chain_name = crate::chains::chain_display_name(&chain_id).to_string();
-        let token_symbol = entry
-            .get("extra")
-            .and_then(|x| x.get("name"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+        // Prefer the real okx-dex ticker (e.g. "USDT") so display is meaningful
+        // and the symbol-fallback balance match stays reliable; only then the
+        // challenge's own `extra.name` (which for some tokens is an EIP-712
+        // domain name), and finally the raw contract address as a last resort.
+        let token_symbol = resolver
+            .resolve_symbol(entry)
+            .await
+            .or_else(|| {
+                entry
+                    .get("extra")
+                    .and_then(|x| x.get("name"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_else(|| a.asset.clone());
         let decimals = resolver.resolve(entry).await;
         out.push(Candidate {
@@ -524,7 +750,10 @@ async fn build_candidates(
 /// a hint that `pay`'s confirming gate + on-chain settle re-validate anyway, so
 /// the snapshot cache is treated as covered-by-architecture rather than adding a
 /// stale-prone balance cache.
-async fn preflight_balances(candidates: &mut [Candidate]) -> Option<String> {
+async fn preflight_balances(
+    candidates: &mut [Candidate],
+    accepts: &[AcceptEntry],
+) -> Option<String> {
     let wallets = match crate::wallet_store::load_wallets() {
         Ok(Some(w)) if !w.selected_account_id.is_empty() => w,
         _ => return Some("login_required".to_string()),
@@ -558,7 +787,15 @@ async fn preflight_balances(candidates: &mut [Candidate]) -> Option<String> {
         {
             Ok(bal) => {
                 for c in candidates.iter_mut().filter(|c| c.chain_id == chain_id) {
-                    c.has_balance = json_has_positive_balance(&bal, &c.token_symbol);
+                    // Match wallet balance by the candidate's token contract
+                    // address (`asset`) as the preferred key; the token symbol
+                    // is only a fallback (see `json_has_positive_balance`).
+                    let asset = accepts
+                        .iter()
+                        .find(|a| a.index == c.accepts_index)
+                        .map(|a| a.asset.as_str())
+                        .unwrap_or("");
+                    c.has_balance = json_has_positive_balance(&bal, &c.token_symbol, asset);
                 }
             }
             Err(_) => any_error = true,
@@ -571,38 +808,90 @@ async fn preflight_balances(candidates: &mut [Candidate]) -> Option<String> {
     }
 }
 
-/// Heuristic scan of an OKX `all-token-balances-by-address` response for a
-/// positive balance whose symbol matches `symbol` (case-insensitive). The safe
-/// fallback is `false` (→ the ranker asks the user rather than auto-picking).
-fn json_has_positive_balance(balances: &Value, symbol: &str) -> bool {
-    fn positive(s: &str) -> bool {
-        s.chars().any(|c| c.is_ascii_digit() && c != '0') || s.parse::<f64>().is_ok_and(|f| f > 0.0)
-    }
-    fn walk(v: &Value, symbol: &str) -> bool {
-        match v {
-            Value::Array(a) => a.iter().any(|e| walk(e, symbol)),
-            Value::Object(o) => {
-                let sym_match = o
-                    .get("symbol")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|s| s.eq_ignore_ascii_case(symbol));
-                if sym_match {
-                    let bal = o
-                        .get("balance")
-                        .or_else(|| o.get("balanceRawAmount"))
-                        .or_else(|| o.get("rawBalance"));
-                    if let Some(b) = bal.and_then(|v| v.as_str()) {
-                        if positive(b) {
-                            return true;
-                        }
-                    }
-                }
-                o.values().any(|e| walk(e, symbol))
-            }
-            _ => false,
+/// Is `s` a positive numeric balance string?
+fn balance_is_positive(s: &str) -> bool {
+    s.chars().any(|c| c.is_ascii_digit() && c != '0') || s.parse::<f64>().is_ok_and(|f| f > 0.0)
+}
+
+/// The token contract address a balance entry declares — the OKX field name
+/// (`tokenContractAddress`) plus tolerant aliases.
+fn balance_entry_addr(o: &Map<String, Value>) -> Option<&str> {
+    o.get("tokenContractAddress")
+        .or_else(|| o.get("tokenAddress"))
+        .or_else(|| o.get("contractAddress"))
+        .and_then(|v| v.as_str())
+}
+
+/// Does a balance entry object carry a positive `balance` amount?
+fn balance_entry_positive_amount(o: &Map<String, Value>) -> bool {
+    o.get("balance")
+        .or_else(|| o.get("balanceRawAmount"))
+        .or_else(|| o.get("rawBalance"))
+        .and_then(|v| v.as_str())
+        .is_some_and(balance_is_positive)
+}
+
+/// Does any object in the tree expose a token contract-address field? When the
+/// response carries addresses, address matching is authoritative; when it does
+/// not, we fall back to symbol matching.
+fn balance_has_contract_addr_field(v: &Value) -> bool {
+    match v {
+        Value::Array(a) => a.iter().any(balance_has_contract_addr_field),
+        Value::Object(o) => {
+            balance_entry_addr(o).is_some() || o.values().any(balance_has_contract_addr_field)
         }
+        _ => false,
     }
-    walk(balances, symbol)
+}
+
+/// Positive balance for an entry whose contract address == `asset`
+/// (case-insensitive). Authoritative match key.
+fn balance_addr_positive(v: &Value, asset: &str) -> bool {
+    match v {
+        Value::Array(a) => a.iter().any(|e| balance_addr_positive(e, asset)),
+        Value::Object(o) => {
+            let hit = balance_entry_addr(o).is_some_and(|a| a.eq_ignore_ascii_case(asset))
+                && balance_entry_positive_amount(o);
+            hit || o.values().any(|e| balance_addr_positive(e, asset))
+        }
+        _ => false,
+    }
+}
+
+/// Positive balance for an entry whose `symbol` == `symbol` (case-insensitive).
+/// Fallback match key used only when the response has no contract addresses.
+fn balance_symbol_positive(v: &Value, symbol: &str) -> bool {
+    match v {
+        Value::Array(a) => a.iter().any(|e| balance_symbol_positive(e, symbol)),
+        Value::Object(o) => {
+            let hit = o
+                .get("symbol")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.eq_ignore_ascii_case(symbol))
+                && balance_entry_positive_amount(o);
+            hit || o.values().any(|e| balance_symbol_positive(e, symbol))
+        }
+        _ => false,
+    }
+}
+
+/// Heuristic scan of an OKX `all-token-balances-by-address` response for a
+/// positive balance of a given token.
+///
+/// Matching is **by contract address first** (`asset`, case-insensitive): OKX
+/// balance entries carry a `tokenContractAddress`, and matching on it is the
+/// only reliable key. Symbol matching (case-insensitive) is a fallback used
+/// only when the response exposes no contract-address field at all — the base
+/// MR!144 bug matched purely by symbol, which fails whenever the accepts'
+/// derived `token_symbol` is an EIP-712 domain name / contract address that
+/// never equals the wallet balance's `symbol` (e.g. X Layer `USD₮0` vs the
+/// wallet's `USDT`). The safe fallback is `false` (→ the ranker asks the user
+/// rather than auto-picking).
+fn json_has_positive_balance(balances: &Value, symbol: &str, asset: &str) -> bool {
+    if !asset.is_empty() && balance_has_contract_addr_field(balances) {
+        return balance_addr_positive(balances, asset);
+    }
+    balance_symbol_positive(balances, symbol)
 }
 
 // ── Summary / missing params / id / amount helpers ──────────────────────
@@ -617,9 +906,17 @@ fn build_summary(
         .find(|c| c.recommended == Some(true))
         .or_else(|| candidates.first())
     {
+        // `upto` authorizes a spend cap, not a fixed charge — say "up to" so
+        // the buyer never reads the amount as a guaranteed deduction (the
+        // WWW-Authenticate path already distinguishes this with "per request").
+        let verb = if pick.scheme.eq_ignore_ascii_case("upto") {
+            "Will pay up to"
+        } else {
+            "Will pay"
+        };
         format!(
-            "Will pay {} {} ({}, {})",
-            pick.amount_human, pick.token_symbol, pick.scheme, pick.chain_name
+            "{} {} {} ({}, {})",
+            verb, pick.amount_human, pick.token_symbol, pick.scheme, pick.chain_name
         )
     } else {
         format!("Will pay {}", challenge.amount_human)
@@ -822,6 +1119,32 @@ mod tests {
     }
 
     #[test]
+    fn build_summary_marks_upto_as_a_cap() {
+        let cand = |scheme: &str| Candidate {
+            scheme: scheme.into(),
+            accepts_index: 0,
+            chain_id: "196".into(),
+            chain_name: "X Layer".into(),
+            is_mainnet: true,
+            token_symbol: "USDC".into(),
+            amount: "50000".into(),
+            amount_human: "0.05".into(),
+            has_balance: true,
+            recommended: Some(true),
+        };
+        // `upto` is a spend cap → "up to" wording so 0.05 isn't read as fixed.
+        assert_eq!(
+            build_summary(&[cand("upto")], &[], &free_challenge()),
+            "Will pay up to 0.05 USDC (upto, X Layer)"
+        );
+        // Fixed-charge schemes keep the plain wording.
+        assert_eq!(
+            build_summary(&[cand("exact")], &[], &free_challenge()),
+            "Will pay 0.05 USDC (exact, X Layer)"
+        );
+    }
+
+    #[test]
     fn human_amount_no_rounding() {
         assert_eq!(human_amount("10000", 6), "0.01");
         assert_eq!(human_amount("1000000", 6), "1");
@@ -832,15 +1155,54 @@ mod tests {
 
     #[test]
     fn balance_scan_matches_symbol() {
+        // No contract-address field in the response → symbol fallback path.
         let bal = serde_json::json!({
             "data": [{ "tokenAssets": [
                 { "symbol": "USDC", "balance": "12.5" },
                 { "symbol": "ETH", "balance": "0" }
             ]}]
         });
-        assert!(json_has_positive_balance(&bal, "usdc"));
-        assert!(!json_has_positive_balance(&bal, "eth"));
-        assert!(!json_has_positive_balance(&bal, "dai"));
+        assert!(json_has_positive_balance(&bal, "usdc", ""));
+        assert!(!json_has_positive_balance(&bal, "eth", ""));
+        assert!(!json_has_positive_balance(&bal, "dai", ""));
+    }
+
+    #[test]
+    fn balance_scan_matches_by_contract_address_when_symbol_differs() {
+        // The regression this fix targets: the accepts' derived token_symbol is
+        // an EIP-712 domain / contract address (never equal to the wallet's
+        // "USDT"), so the OLD symbol-only match returned false despite a real
+        // balance. Address matching on `asset` recovers hasBalance:true.
+        let bal = serde_json::json!({
+            "data": [{ "tokenAssets": [
+                { "symbol": "USDT", "tokenContractAddress": "0x779dEd0c9e1022225f8E0630b35a9b54bE713736", "balance": "5.0" },
+                { "symbol": "OKB", "tokenContractAddress": "0xabc", "balance": "1.0" }
+            ]}]
+        });
+        // token_symbol is the domain-y "USD₮0" — symbol match would miss — but
+        // the asset address matches (case-insensitively).
+        assert!(json_has_positive_balance(
+            &bal,
+            "USD₮0",
+            "0x779ded0c9e1022225f8e0630b35a9b54be713736"
+        ));
+        // A token the wallet does not hold (address absent) → false, and does
+        // NOT fall back to symbol (address is authoritative once present).
+        assert!(!json_has_positive_balance(&bal, "USDT", "0xdeadbeef"));
+    }
+
+    #[test]
+    fn balance_scan_address_match_is_authoritative_on_zero() {
+        // Matching address with a zero balance → false, even if some other
+        // entry shares the fallback symbol.
+        let bal = serde_json::json!({
+            "data": [{ "tokenAssets": [
+                { "symbol": "USDT", "tokenContractAddress": "0xaaa", "balance": "0" },
+                { "symbol": "USDT", "tokenContractAddress": "0xbbb", "balance": "9" }
+            ]}]
+        });
+        assert!(!json_has_positive_balance(&bal, "USDT", "0xaaa"));
+        assert!(json_has_positive_balance(&bal, "USDT", "0xbbb"));
     }
 
     #[test]
@@ -929,6 +1291,66 @@ mod tests {
         assert_eq!(id.len(), 4 + 24);
     }
 
+    /// A helper mirroring how discovery/free build the unified envelope, used to
+    /// assert the serialized MCP-output contract without a live endpoint.
+    fn envelope(mcp_tools: Vec<McpTool>, mcp_result: Option<Value>, summary: &str) -> Value {
+        let data = QuoteData {
+            payment_id: String::new(),
+            needs_confirm: false,
+            summary: summary.to_string(),
+            next_step: String::new(),
+            accepts: vec![],
+            known_params: Map::new(),
+            merchant_body: String::new(),
+            missing_params: vec![],
+            param_plan: vec![],
+            candidates: vec![],
+            alternatives: vec![],
+            decoded_challenge: free_challenge(),
+            wallet_error: None,
+            mcp_tools,
+            mcp_result,
+        };
+        serde_json::to_value(data).unwrap()
+    }
+
+    #[test]
+    fn discovery_envelope_is_isomorphic_and_omits_payment_id() {
+        // Discovery: unified QuoteData with mcpTools[], needsConfirm:false, and
+        // NO paymentId (null via skip-when-empty, preserving AC-2).
+        let tools = vec![McpTool {
+            name: "premium".into(),
+            description: None,
+            input_schema: None,
+        }];
+        let v = envelope(tools, None, "MCP server exposes 1 tool(s): premium");
+        assert!(
+            v.get("paymentId").is_none(),
+            "discovery must not carry paymentId (jq .data.paymentId == null): {v}"
+        );
+        assert_eq!(v["needsConfirm"], serde_json::json!(false));
+        assert_eq!(v["mcpTools"][0]["name"], serde_json::json!("premium"));
+        // The free-only `result` field is omitted in discovery.
+        assert!(v.get("result").is_none());
+    }
+
+    #[test]
+    fn free_tool_envelope_carries_result_without_payment_id() {
+        // Free tool: unified QuoteData with the tool result in `result`,
+        // needsConfirm:false, and no paymentId / no mcpTools.
+        let result = serde_json::json!({"content": [{"type": "text", "text": "ok"}]});
+        let v = envelope(
+            vec![],
+            Some(result.clone()),
+            "MCP tool 'free_tool' returned a result — no payment required",
+        );
+        assert!(v.get("paymentId").is_none());
+        assert_eq!(v["needsConfirm"], serde_json::json!(false));
+        assert_eq!(v["result"], result);
+        // The discovery-only `mcpTools` field is omitted (empty) for a free tool.
+        assert!(v.get("mcpTools").is_none());
+    }
+
     #[test]
     fn declared_decimals_reads_numeric_and_string_forms() {
         // extra.decimals numeric.
@@ -1001,7 +1423,7 @@ mod tests {
             resolver
                 .memo
                 .get(&("8453".to_string(), "0xNODECIMALS".to_string())),
-            Some(&None),
+            Some(&TokenMeta::default()),
             "a missed lookup must be negatively cached"
         );
         // Second resolve for the same token still returns the default and leaves

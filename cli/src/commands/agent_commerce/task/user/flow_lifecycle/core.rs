@@ -112,13 +112,192 @@ fn parse_a2a_file(path: &str) -> Option<DeliverPayload> {
     parse_deliver_content(content)
 }
 
-/// Try to recover a deliverable from `/tmp/a2a_deliver_<jobId>.json`.
+/// Extract the FR-2 `autotrade: <json>` line from a delivery `content` block.
+fn extract_autotrade_line(content: &str) -> Option<String> {
+    content.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("autotrade:")
+            .map(|rest| rest.trim().to_string())
+            .filter(|s| !s.is_empty())
+    })
+}
+
+/// Extract the auto-trade signal JSON from the inbound `--message` envelope, if any.
 ///
-/// Called by `check_status_freshness` when `job_submitted` finds no manifest.
-/// Parses the temp file, downloads (file) or writes (text), saves via
-/// `handle_save`, and returns `(saved_path, deliverable_type, text_content)`.
-/// On any failure returns `None` and falls through to the "wait" path.
-pub(crate) fn try_recover_from_temp_file(
+/// Pure local I/O (no network): reads the `a2aFile` temp file and scans its
+/// `content` for the `autotrade:` line. Returns `None` for ordinary deliveries so
+/// the caller can short-circuit before any `.await` (AC-10: zero added network).
+fn extract_autotrade_from_message(message: Option<&serde_json::Value>) -> Option<String> {
+    let a2a_file = message
+        .and_then(|m| m.get("a2aFile"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    let fp = std::path::Path::new(a2a_file);
+    if !is_safe_temp_path(fp) {
+        return None;
+    }
+    let raw = std::fs::read_to_string(fp).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let content = json.get("content").and_then(|v| v.as_str())?;
+    extract_autotrade_line(content)
+}
+
+/// Serialize a buyer delivery-handler payload into the same envelope shape as
+/// `output::success(data)` (`{"ok":true,"data":…}`). The auto-trade branch returns
+/// this string so it flows through the caller's existing `println!` path.
+fn success_envelope<T: serde::Serialize>(data: &T) -> String {
+    serde_json::to_string(&serde_json::json!({ "ok": true, "data": data }))
+        .unwrap_or_else(|_| "{\"ok\":false,\"error\":\"failed to serialize card\"}".to_string())
+}
+
+/// Milliseconds since the Unix epoch (buyer receive time).
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// The directory scanned for A2A deliver spool files. Defaults to the OS temp dir
+/// (`/tmp` on Linux when `TMPDIR` is unset — matching the playbook's
+/// `/tmp/a2a_deliver_…` write path), and is redirectable via `TMPDIR` so tests / CI
+/// / sandbox never need to touch a hardcoded `/tmp`.
+fn a2a_spool_dir() -> std::path::PathBuf {
+    std::env::temp_dir()
+}
+
+/// Persist a raw inbound A2A deliver message piped on stdin (`next-action
+/// --a2a-stdin`) to the recovery spool — exactly where the sub-session LLM used
+/// to hand-write it (one whole model turn saved). Per-delivery unique name
+/// (timestamp suffix) so two messages in one round can't overwrite each other;
+/// the recovery dual-scan picks up the `a2a_deliver_<jobId>_` prefix. Returns
+/// the written path for injection as `a2aFile`.
+pub(crate) fn persist_a2a_spool(job_id: &str, raw: &str) -> anyhow::Result<String> {
+    persist_a2a_spool_in(&a2a_spool_dir(), job_id, raw)
+}
+
+/// Dir-injected core of [`persist_a2a_spool`] — unit-testable without touching
+/// `TMPDIR` (the recover_* tests mutate that env concurrently).
+///
+/// Filename = `a2a_deliver_<jobId>_<millis>_<pid>[ _n ].json`: pid + `create_new`
+/// (+ a bounded uniquifier retry) make same-millisecond collisions impossible —
+/// the old hand-written scheme was collision-free by deliveryId, and a silent
+/// overwrite here would lose a copy-trade signal. Written 0600 on unix: the raw
+/// deliver payload can carry a file-deliverable decryption secret, and the OS
+/// temp dir is shared (same rationale as `home::write_secure` for authz records;
+/// the recovery scan runs as the same uid, so tighter perms are free).
+fn persist_a2a_spool_in(dir: &std::path::Path, job_id: &str, raw: &str) -> anyhow::Result<String> {
+    use std::io::Write;
+    // Path-traversal defense: jobId lands in a filename.
+    if job_id.is_empty()
+        || !job_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        anyhow::bail!("--a2a-stdin: invalid jobId for the spool filename");
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    for n in 0..5u32 {
+        let name = if n == 0 {
+            format!("a2a_deliver_{job_id}_{ts}_{pid}.json")
+        } else {
+            format!("a2a_deliver_{job_id}_{ts}_{pid}_{n}.json")
+        };
+        let path = dir.join(name);
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        match opts.open(&path) {
+            Ok(mut f) => {
+                f.write_all(raw.as_bytes())?;
+                return Ok(path.to_string_lossy().into_owned());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    anyhow::bail!("--a2a-stdin: could not allocate a unique spool filename");
+}
+
+/// Collect the A2A spool candidates for `job_id` and return the OLDEST by mtime.
+///
+/// Candidates (FR-10): the fixed-name file `a2a_deliver_<jobId>.json` (old / no
+/// auto-trade block) **plus** every per-delivery file matching the
+/// `a2a_deliver_<jobId>_` prefix. Subscription copy-trade delivers repeatedly under
+/// one `jobId`, so the write side uses per-delivery names to avoid same-round
+/// overwrite; recovery must therefore dual-scan. Oldest-first preserves delivery
+/// order (first-in first-out). Returns `None` when no candidate exists.
+fn oldest_spool_candidate(job_id: &str) -> Option<String> {
+    let dir = a2a_spool_dir();
+    let fixed = dir.join(format!("a2a_deliver_{job_id}.json"));
+    let prefix = format!("a2a_deliver_{job_id}_");
+
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if fixed.is_file() {
+        candidates.push(fixed);
+    }
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(&prefix) && name.ends_with(".json") {
+                candidates.push(entry.path());
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    // Oldest first (stable): sort by mtime ascending; unknown mtime sorts earliest.
+    candidates.sort_by_key(|p| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+    });
+    candidates.into_iter().next().map(|p| p.display().to_string())
+}
+
+/// Read a spool file and return its FR-2 `autotrade:` signal line, if present.
+/// Recovery-path analogue of [`extract_autotrade_from_message`] (which reads the
+/// live inbound `a2aFile`); lets a delivery recovered from the spool run the same
+/// copy-trade pipeline as the live path (FB3).
+fn extract_autotrade_from_spool_file(path: &str) -> Option<String> {
+    let fp = std::path::Path::new(path);
+    if !is_safe_temp_path(fp) {
+        return None;
+    }
+    let raw = std::fs::read_to_string(fp).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let content = json.get("content").and_then(|v| v.as_str())?;
+    extract_autotrade_line(content)
+}
+
+/// A deliverable recovered from the A2A spool. Beyond the saved artifact, it carries
+/// the FR-2 `autotrade:` signal line (when the delivery had one) so the caller can
+/// run the copy-trade pipeline — recovery parity with the live
+/// `deliverable_received_cli` path (FB3).
+pub(crate) struct RecoveredDeliverable {
+    pub saved_path: String,
+    pub deliverable_type: String,
+    pub text_content: Option<String>,
+    pub autotrade_signal: Option<String>,
+}
+
+/// Parse one A2A spool file, download (file) or write (text) its deliverable, save
+/// via `handle_save`, delete the file on success, and return a [`RecoveredDeliverable`]
+/// (including any `autotrade:` signal line, extracted before deletion). On any failure
+/// returns `None` and leaves the file in place (the caller quarantines it — FB2).
+#[allow(clippy::too_many_arguments)]
+fn process_recovered_file(
+    temp_path: &str,
     job_id: &str,
     agent_id: &str,
     short_id: &str,
@@ -126,11 +305,10 @@ pub(crate) fn try_recover_from_temp_file(
     token_symbol: &str,
     token_amount: &str,
     provider_agent_id: Option<&str>,
-) -> Option<(String, String, Option<String>)> {
+) -> Option<RecoveredDeliverable> {
     use crate::commands::agent_commerce::task::common::{deliverables, okx_a2a};
 
-    let temp_path = format!("/tmp/a2a_deliver_{job_id}.json");
-    let payload = parse_a2a_file(&temp_path)?;
+    let payload = parse_a2a_file(temp_path)?;
 
     let result = match payload {
         DeliverPayload::File { ref file_key, ref digest, ref salt, ref nonce, ref secret, ref filename } => {
@@ -172,26 +350,240 @@ pub(crate) fn try_recover_from_temp_file(
         }
     };
 
-    let _ = std::fs::remove_file(&temp_path);
-    Some(result)
+    let (saved_path, deliverable_type, text_content) = result;
+    // FB3: capture the autotrade signal BEFORE the file is deleted so the caller can
+    // run the copy-trade pipeline on the recovered delivery.
+    let autotrade_signal = extract_autotrade_from_spool_file(temp_path);
+    let _ = std::fs::remove_file(temp_path);
+    Some(RecoveredDeliverable {
+        saved_path,
+        deliverable_type,
+        text_content,
+        autotrade_signal,
+    })
+}
+
+/// Try to recover a deliverable from an A2A spool file (FR-10 dual-scan).
+///
+/// Called by `check_status_freshness` when `job_submitted` finds no manifest.
+/// Picks the OLDEST spool candidate for `job_id` (fixed name + per-delivery prefix;
+/// see [`oldest_spool_candidate`]), processes exactly that one, and deletes it —
+/// any remaining files are handled on the next `job_submitted` recovery pass so
+/// high-frequency / out-of-order subscription deliveries are not silently dropped.
+/// On any failure returns `None` and falls through to the "wait" path.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_recover_from_temp_file(
+    job_id: &str,
+    agent_id: &str,
+    short_id: &str,
+    title: &str,
+    token_symbol: &str,
+    token_amount: &str,
+    provider_agent_id: Option<&str>,
+) -> Option<RecoveredDeliverable> {
+    // FB2: skip past poison-pill spool files instead of re-selecting the same oldest
+    // one forever. `oldest_spool_candidate` re-picks the oldest-by-mtime each pass, so
+    // a file that always fails (corrupt JSON, permanently un-downloadable) would block
+    // every newer per-delivery file — a silent drop on high-frequency subscriptions.
+    // On a processing failure we move the file aside (rename → `.failed`, which no
+    // longer matches the `*.json` scan) and try the next-oldest; if it cannot even be
+    // moved, stop to avoid an infinite reselect loop. Each iteration removes one
+    // candidate (success deletes, failure quarantines), so this always terminates.
+    loop {
+        let temp_path = oldest_spool_candidate(job_id)?;
+        if let Some(recovered) = process_recovered_file(
+            &temp_path,
+            job_id,
+            agent_id,
+            short_id,
+            title,
+            token_symbol,
+            token_amount,
+            provider_agent_id,
+        ) {
+            return Some(recovered);
+        }
+        if !quarantine_failed_spool_file(&temp_path) {
+            return None;
+        }
+    }
+}
+
+/// Move a spool file that failed to process out of the scan set (FB2 poison-pill
+/// guard). Renaming to `<path>.failed` drops it from [`oldest_spool_candidate`]
+/// (which only matches `*.json`) WITHOUT deleting it, so it stays on disk for manual
+/// inspection / recovery. Returns `true` when the file was moved aside.
+fn quarantine_failed_spool_file(path: &str) -> bool {
+    std::fs::rename(path, format!("{path}.failed")).is_ok()
+}
+
+/// Run the FR-3/4/5/7 copy-trade pipeline for a deliverable recovered from the A2A
+/// spool (FB3: recovery parity with the live `deliverable_received_cli` path). The
+/// deliverable is already saved at `saved_path`; `signal_json` is the extracted
+/// `autotrade:` line. The CLI — not the model — decides execution and returns the
+/// same `{ok,data}` envelope the live path emits (execution card or notify-only).
+pub(crate) async fn run_recovered_autotrade(
+    signal_json: &str,
+    job_id: &str,
+    agent_id: &str,
+    saved_path: &str,
+) -> String {
+    use crate::audit;
+    use crate::commands::agent_commerce::task::common::autotrade::pipeline;
+    use crate::commands::agent_commerce::task::common::autotrade::ACTION_AUTOTRADE_DELIVER;
+    use std::time::Duration;
+
+    let base_tags = vec![
+        format!("jobId={job_id}"),
+        format!("agentId={agent_id}"),
+        "source=recover".to_string(),
+    ];
+    // Entry marker: an autotrade signal was recovered and the pipeline is starting.
+    audit::log(
+        "cli",
+        ACTION_AUTOTRADE_DELIVER,
+        true,
+        Duration::default(),
+        Some([base_tags.clone(), vec!["phase=detected".to_string()]].concat()),
+        None,
+    );
+    let received_at_ms = now_ms();
+    let outcome = pipeline::run(pipeline::PipelineInput {
+        signal_json,
+        job_id,
+        agent_id,
+        received_at_ms,
+        saved_path,
+        consent_override: false,
+    })
+    .await;
+    // Result audit: the money-moving decision (card vs. degrade reason) must be
+    // traceable after the fact, exactly as on the live path.
+    match &outcome {
+        pipeline::PipelineOutcome::Card(card) => audit::log(
+            "cli",
+            ACTION_AUTOTRADE_DELIVER,
+            true,
+            Duration::default(),
+            Some(
+                [
+                    base_tags.clone(),
+                    vec![
+                        "phase=result".to_string(),
+                        "outcome=card".to_string(),
+                        format!("deliveryId={}", card.delivery_id),
+                        format!("signalType={}", card.signal_type),
+                    ],
+                ]
+                .concat(),
+            ),
+            None,
+        ),
+        pipeline::PipelineOutcome::Notify(notify) => audit::log(
+            "cli",
+            ACTION_AUTOTRADE_DELIVER,
+            false,
+            Duration::default(),
+            Some(
+                [
+                    base_tags.clone(),
+                    vec![
+                        "phase=result".to_string(),
+                        "outcome=degrade".to_string(),
+                        format!("reason={}", notify.reason),
+                    ],
+                ]
+                .concat(),
+            ),
+            Some(&notify.reason),
+        ),
+        pipeline::PipelineOutcome::Decision(d) => audit::log(
+            "cli",
+            ACTION_AUTOTRADE_DELIVER,
+            true,
+            Duration::default(),
+            Some(
+                [
+                    base_tags.clone(),
+                    vec![
+                        "phase=result".to_string(),
+                        "outcome=decision".to_string(),
+                        format!("deliveryId={}", d.delivery_id),
+                    ],
+                ]
+                .concat(),
+            ),
+            None,
+        ),
+    }
+    match outcome {
+        pipeline::PipelineOutcome::Card(card) => success_envelope(&*card),
+        pipeline::PipelineOutcome::Notify(mut notify) => {
+            // Deterministic degrade notice: the CLI tells the user itself — this
+            // often runs in a headless session whose reply text never reaches
+            // them, and the follow-up user-notify step used to be skippable.
+            crate::commands::agent_commerce::task::common::autotrade::notify::push_degrade_notice(
+                &mut notify,
+                job_id,
+            );
+            success_envelope(&notify)
+        }
+        pipeline::PipelineOutcome::Decision(d) => {
+            // Stash the held signal (+ its receive time) so `autotrade-consent-set` can
+            // replay it after the user answers (the "execute this one" options).
+            let _ =
+                crate::commands::agent_commerce::task::common::autotrade::consent::stash_pending_signal(
+                    job_id,
+                    signal_json,
+                    received_at_ms,
+                );
+            decision_envelope(&d, agent_id)
+        }
+    }
+}
+
+/// Push a pipeline decision card to the user in-process and return the envelope
+/// for the consuming agent. Deterministic — the first three-way / over-cap /
+/// plugin card must not depend on a (possibly headless) session copying
+/// `d.command` (same cure as the consent-replay path in `agent_commerce/mod.rs`).
+/// On push failure, falls back to handing the agent the full payload whose
+/// `command` it can run.
+fn decision_envelope(
+    d: &crate::commands::agent_commerce::task::common::autotrade::card::DecisionRequest,
+    agent_id: &str,
+) -> String {
+    use crate::commands::agent_commerce::task::common::{autotrade::card, pending_v2};
+    match pending_v2::push_decision_direct(
+        &d.job_id,
+        "user",
+        agent_id,
+        &d.user_content,
+        &card::decision_list_label(d),
+        &d.source_event,
+    ) {
+        Ok(()) => success_envelope(&serde_json::json!({
+            "decision": true,
+            "decisionPushed": true,
+            "sourceEvent": d.source_event,
+            "requiresPlugin": d.requires_plugin,
+            "guidance": "Decision card already pushed to the user by the CLI. Do NOT run \
+                         the card command or any okx-a2a user command — just end the turn.",
+        })),
+        Err(e) => {
+            eprintln!(
+                "[autotrade] decision direct-push failed, falling back to command hand-off: {e}"
+            );
+            success_envelope(d)
+        }
+    }
 }
 
 // --- Execution stage ----------------------------------------------------
 
-pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bool, visibility: i64) -> String {
+pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bool) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-
-    // visibility: 0 = public, 1 = private. The "make public" option only makes sense
-    // when the task is currently private; otherwise drop the option and renumber close.
-    let is_private = visibility == 1;
-    let close_label = if is_private { "D" } else { "C" };
-    let option_public_line = if is_private {
-        "C. Make the task public so any qualified ASP can apply\n         "
-    } else {
-        ""
-    };
 
     let mut client = TaskApiClient::new();
 
@@ -204,27 +596,13 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
             );
         }
 
-        // R5: public task → mark-failed + auto-advance (no decision card)
-        if visibility == 0 {
-            if let Some(p) = ctx.prefetched {
-                if let Some(pa) = p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
-                    let _ = super::super::negotiate::mark_failed(job_id, pa);
-                }
-            }
-            let _ = super::super::negotiate::clear_designated_provider(job_id);
-            let auto = super::super::flow_negotiate::provider_conversation_auto_consume(ctx).await;
-            return format!(
-                "[provider_applied/over_budget] ✅ Rejected (over budget).\n\n{auto}"
-            );
-        }
-
         let short_id = ctx.short_id;
         let user_content = format!(
             "[Job {short_id} — you are the User Agent] The ASP's quote exceeded the maximum budget for this task. The apply has been rejected automatically.\n\n\
              What would you like to do next?\n\
              A. Browse the ASP list\n\
              B. Designate a specific ASP by agentId\n\
-             {option_public_line}{close_label}. Close the task"
+             C. Close the task"
         );
         let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
             job_id, "user", agent_id, None,
@@ -251,25 +629,6 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
             "**End this turn** and wait for the `job_accepted` system notification.".to_string()
         }
         Err(e) => {
-            // R18: distinguish balance error vs other errors
-            let err_lower = e.to_string().to_lowercase();
-            let is_balance_err = err_lower.contains("insufficient") || err_lower.contains("balance");
-
-            if visibility == 0 && !is_balance_err {
-                // Public + non-balance error: mark-failed + auto-advance
-                if let Some(p) = ctx.prefetched {
-                    if let Some(pa) = p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
-                        let _ = super::super::negotiate::mark_failed(job_id, pa);
-                    }
-                }
-                let _ = super::super::negotiate::clear_designated_provider(job_id);
-                let auto = super::super::flow_negotiate::provider_conversation_auto_consume(ctx).await;
-                return format!(
-                    "[provider_applied/confirm_accept] failed: {e}\n\n{auto}"
-                );
-            }
-
-            // Balance error or private: existing cli_failed behavior
             format!(
                 "[provider_applied/confirm_accept] confirm-accept failed in-process: {e}\n\n\
                  See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
@@ -428,7 +787,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
 ///
 /// Legacy `--message` fields (deliverableType/fileKey/text/filePath) are
 /// still accepted as fallback for backward compatibility.
-pub(crate) fn deliverable_received_cli(
+pub(crate) async fn deliverable_received_cli(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,
 ) -> String {
@@ -439,6 +798,11 @@ pub(crate) fn deliverable_received_cli(
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
+
+    // FR-3/4/5/7: detect an auto-trade signal up front (pure local I/O). When
+    // absent, the rest of this function runs exactly as before with no `.await`
+    // (AC-10: ordinary delivery unchanged, zero added network calls).
+    let autotrade_signal = extract_autotrade_from_message(message);
 
     let base_tags = vec![format!("jobId={job_id}"), format!("agentId={agent_id}")];
 
@@ -646,6 +1010,122 @@ pub(crate) fn deliverable_received_cli(
         }
     };
 
+    // ── FR-3/4/5/7 auto-trade execution branch ──────────────────────────
+    // The deliverable is now saved locally (`saved_path`). If it carried an
+    // `autotrade:` signal line, the CLI — not the model — decides whether to
+    // execute: run the fixed-order pipeline and emit either an execution card
+    // (all checks pass) or a notify-only payload (any degrade). This is the ONLY
+    // path that awaits; ordinary deliveries never reach it (AC-10).
+    if let Some(signal_json) = autotrade_signal.as_deref() {
+        use crate::commands::agent_commerce::task::common::autotrade::pipeline;
+        use crate::commands::agent_commerce::task::common::autotrade::ACTION_AUTOTRADE_DELIVER;
+        // Entry marker: an autotrade signal was detected and the pipeline is starting.
+        // `phase=detected` disambiguates this from the result audit below — the old
+        // single `success=true` here was misleading (it fired before any decision).
+        audit::log(
+            "cli",
+            ACTION_AUTOTRADE_DELIVER,
+            true,
+            Duration::default(),
+            Some([base_tags.clone(), vec!["phase=detected".to_string()]].concat()),
+            None,
+        );
+        let received_at_ms = now_ms();
+        let outcome = pipeline::run(pipeline::PipelineInput {
+            signal_json,
+            job_id,
+            agent_id,
+            received_at_ms,
+            saved_path: &saved_path,
+            consent_override: false,
+        })
+        .await;
+        // Result audit: record whether the pipeline emitted an execution card or
+        // degraded, and — for a degrade — the machine-readable reason. This is the
+        // money-moving path, so the final decision (executed a card vs. why it
+        // degraded) must be traceable after the fact, not just the entry marker.
+        match &outcome {
+            pipeline::PipelineOutcome::Card(card) => audit::log(
+                "cli",
+                ACTION_AUTOTRADE_DELIVER,
+                true,
+                Duration::default(),
+                Some(
+                    [
+                        base_tags.clone(),
+                        vec![
+                            "phase=result".to_string(),
+                            "outcome=card".to_string(),
+                            format!("deliveryId={}", card.delivery_id),
+                            format!("signalType={}", card.signal_type),
+                        ],
+                    ]
+                    .concat(),
+                ),
+                None,
+            ),
+            pipeline::PipelineOutcome::Notify(notify) => audit::log(
+                "cli",
+                ACTION_AUTOTRADE_DELIVER,
+                false,
+                Duration::default(),
+                Some(
+                    [
+                        base_tags.clone(),
+                        vec![
+                            "phase=result".to_string(),
+                            "outcome=degrade".to_string(),
+                            format!("reason={}", notify.reason),
+                        ],
+                    ]
+                    .concat(),
+                ),
+                Some(&notify.reason),
+            ),
+            pipeline::PipelineOutcome::Decision(d) => audit::log(
+                "cli",
+                ACTION_AUTOTRADE_DELIVER,
+                true,
+                Duration::default(),
+                Some(
+                    [
+                        base_tags.clone(),
+                        vec![
+                            "phase=result".to_string(),
+                            "outcome=decision".to_string(),
+                            format!("deliveryId={}", d.delivery_id),
+                        ],
+                    ]
+                    .concat(),
+                ),
+                None,
+            ),
+        }
+        return match outcome {
+            pipeline::PipelineOutcome::Card(card) => success_envelope(&*card),
+            pipeline::PipelineOutcome::Notify(mut notify) => {
+                // Deterministic degrade notice — recovery runs headless; see the
+                // live-path consumer above.
+                crate::commands::agent_commerce::task::common::autotrade::notify::push_degrade_notice(
+                    &mut notify,
+                    job_id,
+                );
+                success_envelope(&notify)
+            }
+            pipeline::PipelineOutcome::Decision(d) => {
+                // Stash the held signal (+ receive time) so `autotrade-consent-set` can
+                // replay it after the user answers (the "execute this one" options).
+                let _ =
+                    crate::commands::agent_commerce::task::common::autotrade::consent::stash_pending_signal(
+                        job_id,
+                        signal_json,
+                        received_at_ms,
+                    );
+                decision_envelope(&d, agent_id)
+            }
+        };
+    }
+
     // Pre-decide the ASP rating + pre-translate the rating_submitted notify
     // + pre-translate the JobCompleted notify on the backup session (escrow
     // only). The future `job_completed` event then dispatches
@@ -733,7 +1213,6 @@ pub(crate) fn deliverable_received_cli(
                 max_budget: None,
                 provider_agent_id: if provider_id.is_empty() { None } else { Some(provider_id.to_string()) },
                 user_agent_id: None,
-                visibility: None,
                 status: Some(2),
                 deliverable: None,
                 service_id: None,
@@ -743,6 +1222,7 @@ pub(crate) fn deliverable_received_cli(
                 user_agent_address: None,
                 token_address: None,
                 expire_time: None,
+                test_flag: false,
             }
         });
         patched.deliverable = Some(crate::commands::agent_commerce::task::common::PreFetchedDeliverable {
@@ -871,17 +1351,22 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
                 return job_submitted_escrow(&patched_ctx);
             }
         }
-        if let Some((saved_path, dtype, text_content)) = try_recover_from_temp_file(
+        if let Some(recovered) = try_recover_from_temp_file(
             job_id, agent_id, short_id, &p.title,
             &p.token_symbol, &p.token_amount,
             p.provider_agent_id.as_deref(),
         ) {
+            // NOTE: this sync fallback only archives the deliverable into the review
+            // flow. Autotrade execution on a recovered delivery runs in the async
+            // `check_status_freshness` recovery path (FB3), which consumes the spool
+            // file first — so by the time this fallback runs the file is already gone
+            // and `recovered.autotrade_signal` is not actionable here (sync context).
             let mut patched = p.clone();
             patched.deliverable = Some(crate::commands::agent_commerce::task::common::PreFetchedDeliverable {
-                path: saved_path,
-                deliverable_type: dtype,
+                path: recovered.saved_path,
+                deliverable_type: recovered.deliverable_type,
                 original_name: String::new(),
-                text_content,
+                text_content: recovered.text_content,
             });
             let patched_ctx = super::super::flow::FlowContext {
                 job_id: ctx.job_id,
@@ -898,10 +1383,21 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
             return job_submitted_escrow(&patched_ctx);
         }
         let _ = deliverables::write_review_marker(job_id);
+        // FB1: point the LLM at the SAME directory recovery actually scans
+        // (`a2a_spool_dir()` == `env::temp_dir()`). Hardcoding `/tmp` broke macOS:
+        // launchd sets `TMPDIR` to `/var/folders/…`, so `temp_dir() != /tmp` — the
+        // file was written to `/tmp` while recovery scanned `/var/folders`, so
+        // `oldest_spool_candidate` always came up empty (Linux CI never reproduced it
+        // because unset `TMPDIR` makes `temp_dir()` == `/tmp`). Emitting the resolved
+        // spool dir keeps write-dir == scan-dir on every platform.
+        let spool_dir = a2a_spool_dir();
+        let spool_dir = spool_dir.display();
         return format!(
             "[System] job_submitted received but deliverable has not arrived yet (XMTP [intent:deliver] pending).\n\
-             If your conversation context contains an `[intent:deliver]` message, Write its raw JSON to `/tmp/a2a_deliver_{job_id}.json` and re-trigger:\n\
-             `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`\n\
+             If your conversation context contains an `[intent:deliver]` message, process it FIRST with the one-command stdin intake — pipe its full raw JSON via a quoted heredoc whose delimiter you invent fresh (A2A_EOF_ + 6 random characters):\n\
+             `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"deliverable_received\",\"jobId\":\"{job_id}\"}}' --a2a-stdin <<'A2A_EOF_<random>'`\n\
+             (Runtimes without heredoc support may instead write the raw JSON to `{spool_dir}/a2a_deliver_{job_id}_<deliveryId>.json` and pass it as \"a2aFile\" in --message.)\n\
+             Then re-trigger: `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`\n\
              Otherwise, end this turn and wait.\n"
         );
     }
@@ -1272,6 +1768,48 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json:
 mod tests {
     use super::*;
 
+    // ── persist_a2a_spool (next-action --a2a-stdin) ──────────────────
+
+    #[test]
+    fn persist_a2a_spool_writes_prefix_named_file_and_rejects_bad_job_ids() {
+        // Dir-injected variant: no TMPDIR mutation, so this never races the
+        // recover_* tests that toggle that env concurrently.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("a2a_spool");
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let raw = r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","content":"x"}"#;
+        let path = persist_a2a_spool_in(&dir, "0xabc123", raw).unwrap();
+        assert!(
+            std::path::Path::new(&path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .is_some_and(|f| f.starts_with("a2a_deliver_0xabc123_") && f.ends_with(".json")),
+            "got: {path}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+        // 0600: the payload can carry a file-deliverable decryption secret.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        // A second write in the same millisecond must NOT overwrite the first.
+        let path2 = persist_a2a_spool_in(&dir, "0xabc123", "second").unwrap();
+        assert_ne!(path, path2);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+
+        // Path-traversal defense.
+        assert!(persist_a2a_spool_in(&dir, "../evil", raw).is_err());
+        assert!(persist_a2a_spool_in(&dir, "", raw).is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     // ── parse_deliver_content ────────────────────────────────────────
 
     #[test]
@@ -1402,6 +1940,172 @@ Part B continues
         }
     }
 
+    // ── FR-10: recover dual-scans the spool and processes oldest → newest ──
+    #[test]
+    fn recover_processes_oldest_spool_file_first() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        // Redirect BOTH the spool dir (via TMPDIR → a2a_spool_dir) and ONCHAINOS_HOME
+        // to isolated temp dirs so the test is hermetic and never touches a hardcoded
+        // /tmp. The tempdirs are created BEFORE TMPDIR is set, so they land in the real
+        // OS temp; the recover code then reads the redirected TMPDIR.
+        let spool = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("TMPDIR", spool.path());
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xJOB";
+        let a2a = |body: &str| {
+            format!(
+                r#"{{"content":"deliverableType: text\n- - -\n{body}\n- - -\n[intent:deliver]"}}"#
+            )
+        };
+        let older = spool.path().join(format!("a2a_deliver_{job_id}_d1.json"));
+        let newer = spool.path().join(format!("a2a_deliver_{job_id}_d2.json"));
+        std::fs::write(&older, a2a("OLDEST")).unwrap();
+        std::fs::write(&newer, a2a("NEWEST")).unwrap();
+        // Force deterministic mtimes: older < newer (no sleep — avoids flakiness).
+        std::fs::File::options()
+            .write(true)
+            .open(&older)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&newer)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000))
+            .unwrap();
+
+        let recovered = try_recover_from_temp_file(
+            job_id, "1891", "short", "Title", "USDT", "10", Some("558"),
+        )
+        .expect("should recover from the oldest spool file");
+
+        assert_eq!(recovered.deliverable_type, "text");
+        assert_eq!(
+            recovered.text_content.as_deref(),
+            Some("OLDEST"),
+            "must process the OLDEST delivery first (order-preserving)"
+        );
+        assert!(!older.exists(), "processed spool file must be deleted");
+        assert!(
+            newer.exists(),
+            "the newer file must remain for the next recovery pass"
+        );
+
+        std::env::remove_var("TMPDIR");
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    // ── FB2: a poison-pill oldest spool file is quarantined, not re-selected ──
+    #[test]
+    fn recover_skips_poison_pill_and_processes_next() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let spool = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("TMPDIR", spool.path());
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xPOISON";
+        let poison = spool.path().join(format!("a2a_deliver_{job_id}_d1.json"));
+        let good = spool.path().join(format!("a2a_deliver_{job_id}_d2.json"));
+        // Poison: not valid JSON → parse_a2a_file returns None → processing fails.
+        std::fs::write(&poison, "not json at all").unwrap();
+        std::fs::write(
+            &good,
+            r#"{"content":"deliverableType: text\n- - -\nGOOD\n- - -\n[intent:deliver]"}"#,
+        )
+        .unwrap();
+        // Deterministic mtimes: poison (oldest) < good.
+        std::fs::File::options()
+            .write(true)
+            .open(&poison)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&good)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000))
+            .unwrap();
+
+        let recovered = try_recover_from_temp_file(
+            job_id, "1891", "short", "Title", "USDT", "10", Some("558"),
+        )
+        .expect("should skip the poison pill and recover the good file");
+
+        assert_eq!(recovered.text_content.as_deref(), Some("GOOD"));
+        assert!(!poison.exists(), "poison file must be moved aside");
+        assert!(
+            spool
+                .path()
+                .join(format!("a2a_deliver_{job_id}_d1.json.failed"))
+                .exists(),
+            "poison file must be quarantined as .failed, not deleted"
+        );
+        assert!(!good.exists(), "processed good file must be deleted");
+
+        std::env::remove_var("TMPDIR");
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    // ── FB3: recovery surfaces the autotrade signal for live-path pipeline parity ──
+    #[test]
+    fn recover_surfaces_autotrade_signal_from_spool() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let spool = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("TMPDIR", spool.path());
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xFB3";
+        // A text delivery whose content also carries an `autotrade:` block.
+        let body = r#"{"content":"deliverableType: text\nautotrade: {\"schemaVersion\":1,\"deliveryId\":\"d1\",\"signalType\":\"dexTrade\",\"signalTime\":1,\"ttlSec\":60,\"params\":{}}\n- - -\nSIGNAL BODY\n- - -\n[intent:deliver]"}"#;
+        let f = spool.path().join(format!("a2a_deliver_{job_id}_d1.json"));
+        std::fs::write(&f, body).unwrap();
+
+        let recovered = try_recover_from_temp_file(
+            job_id, "1891", "short", "Title", "USDT", "10", Some("558"),
+        )
+        .expect("should recover the delivery");
+
+        assert_eq!(recovered.deliverable_type, "text");
+        assert!(
+            recovered.autotrade_signal.is_some(),
+            "recovery must surface the autotrade signal line so the caller can run the pipeline"
+        );
+        assert!(
+            recovered
+                .autotrade_signal
+                .as_deref()
+                .unwrap()
+                .contains("dexTrade"),
+            "the surfaced signal must be the raw autotrade JSON line"
+        );
+
+        // A plain delivery (no autotrade block) surfaces None — live path unchanged.
+        let plain_job = "0xPLAIN";
+        let plain = spool.path().join(format!("a2a_deliver_{plain_job}_d1.json"));
+        std::fs::write(
+            &plain,
+            r#"{"content":"deliverableType: text\n- - -\nPLAIN\n- - -\n[intent:deliver]"}"#,
+        )
+        .unwrap();
+        let plain_recovered = try_recover_from_temp_file(
+            plain_job, "1891", "short", "Title", "USDT", "10", Some("558"),
+        )
+        .expect("should recover the plain delivery");
+        assert!(
+            plain_recovered.autotrade_signal.is_none(),
+            "a delivery without an autotrade block must not surface a signal"
+        );
+
+        std::env::remove_var("TMPDIR");
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
     // ── job_submitted_escrow review-deadline reminder (FR-2) ─────────────
 
     fn escrow_ctx_with_expire(
@@ -1419,7 +2123,6 @@ Part B continues
             max_budget: None,
             provider_agent_id: Some("558".to_string()),
             user_agent_id: None,
-            visibility: None,
             status: Some(2),
             deliverable: Some(PreFetchedDeliverable {
                 path: "/tmp/deliverable.txt".to_string(),
@@ -1434,6 +2137,7 @@ Part B continues
             user_agent_address: None,
             token_address: None,
             expire_time,
+            test_flag: false,
         }
     }
 

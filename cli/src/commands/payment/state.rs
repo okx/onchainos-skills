@@ -158,6 +158,11 @@ pub struct PaymentState {
     /// then falls back to method-based defaults (query for GET, body otherwise).
     #[serde(default)]
     pub param_plan: Vec<ParamSpec>,
+    /// Set to the tool name when this quote landed via an MCP `tools/call` 402.
+    /// Its presence flips `payment pay` into the `replay_mcp` branch. Old state
+    /// files (no field) deserialize to `None` → REST replay (AC-9 back-compat).
+    #[serde(rename = "mcpTool", default, skip_serializing_if = "Option::is_none")]
+    pub mcp_tool: Option<String>,
 }
 
 /// `min(challenge_expires, created_at + MAX_QUOTE_TTL_SECS)`.
@@ -278,6 +283,7 @@ mod tests {
             resource: None,
             method: default_http_method(),
             param_plan: vec![],
+            mcp_tool: None,
         }
     }
 
@@ -348,5 +354,43 @@ mod tests {
             let err = read("does-not-exist", "acc-1", 2_000).unwrap_err();
             assert!(err.to_string().starts_with(TOKEN_QUOTE_EXPIRED_OR_MISSING));
         });
+    }
+
+    #[test]
+    fn state_without_mcp_tool_deserializes_to_none() {
+        // AC-9 back-compat: a legacy state JSON written before the MCP-transport
+        // feature (no `mcpTool` key) must deserialize with `mcp_tool == None`, so
+        // `payment pay` takes the existing REST `replay_merchant` branch.
+        let legacy = r#"{
+            "payment_id": "pay_legacy",
+            "owner_wallet": "acc-1",
+            "created_at": 1000,
+            "expires_at": 9999999999,
+            "accepts": [],
+            "decoded_challenge": {
+                "amount": "0", "amountHuman": "0", "decimals": 6,
+                "recipient": "0xabc", "expires": 0, "supported": true,
+                "unsupported_reason": null
+            },
+            "candidates": [],
+            "known_params": {},
+            "merchant_body": "",
+            "endpoint_url": "https://merchant.example/x"
+        }"#;
+        let st: PaymentState = serde_json::from_str(legacy).unwrap();
+        assert_eq!(st.mcp_tool, None);
+        // A round-trip serialize omits `mcpTool` entirely (skip_serializing_if).
+        let json = serde_json::to_string(&st).unwrap();
+        assert!(!json.contains("mcpTool"));
+    }
+
+    #[test]
+    fn state_with_mcp_tool_round_trips() {
+        let mut st = sample_state("pid-mcp", "acc-1", 9_999_999_999);
+        st.mcp_tool = Some("get_weather".to_string());
+        let json = serde_json::to_string(&st).unwrap();
+        assert!(json.contains("\"mcpTool\":\"get_weather\""));
+        let back: PaymentState = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.mcp_tool.as_deref(), Some("get_weather"));
     }
 }

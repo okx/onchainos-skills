@@ -14,7 +14,7 @@ use crate::output;
 
 use super::args::{
     FeedbackListArgs, GetAgentsArgs, GetArgs, GetByAddressArgs, GetMyAgentsArgs, SearchArgs,
-    ServiceListArgs,
+    ServiceListArgs, TaskFeedbackArgs,
 };
 use super::models::XLAYER_CHAIN_INDEX;
 use super::utils::{
@@ -54,6 +54,11 @@ pub async fn service_list(args: ServiceListArgs, ctx: &Context) -> Result<()> {
 
 pub async fn feedback_list(args: FeedbackListArgs, ctx: &Context) -> Result<()> {
     output::success(feedback_list_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn task_feedback(args: TaskFeedbackArgs, ctx: &Context) -> Result<()> {
+    output::success(task_feedback_impl(&args, ctx).await?);
     Ok(())
 }
 
@@ -438,6 +443,60 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
     // columns). Runs AFTER score conversion so `score` is a 0.00–5.00 float.
     add_feedback_list_cells(&mut out);
     Ok(out)
+}
+
+// ─── `agent task-feedback` ────────────────────────────────────────────
+
+async fn task_feedback_impl(args: &TaskFeedbackArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+
+    // agentId (the rater) and taskId are required; chainIndex is fixed to XLayer
+    // (agent identities live on XLayer only) — not a user-facing flag.
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let task_id = require_non_empty(args.task_id.as_deref(), "--task-id")?;
+
+    let query = [
+        ("agentId".to_string(), agent_id.to_string()),
+        ("taskId".to_string(), task_id.to_string()),
+        ("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string()),
+    ];
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    debug_log!(
+        "[agent-identity] task-feedback request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/task-feedback", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/task-feedback",
+            &access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => debug_log!(
+            "[agent-identity] task-feedback response: {}",
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
+        ),
+        Err(e) => debug_log!("[agent-identity] task-feedback response err: {:#}", e),
+    }
+
+    // Backend returns `data` as an array: one review row when the rater already
+    // reviewed this task (`agentId` / `taskId` / `chainIndex` echoed back plus
+    // `feedbackId` + `comment`), or `[]` when not. Return it verbatim.
+    result
 }
 
 // ─── `agent get-by-address` ───────────────────────────────────────────────

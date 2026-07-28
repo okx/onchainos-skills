@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::json;
-use super::super::models::{AgentCard, AgentService, ServiceOperation};
+use super::super::models::{AgentCard, AgentService, ServiceOperation, SubscriptionTier};
 use crate::client::DEFAULT_BASE_URL;
 use crate::commands::Context;
 use crate::config::AppConfig;
@@ -365,7 +365,7 @@ fn build_agent_card_asp_full_ordered_with_services_and_rating() {
                 "Service 1",
                 "TVL Query — API service, 10 USDT, https://api.example.com/mcp"
             ),
-            ("Service 2", "Yield Check — agent-to-agent, negotiable"),
+            ("Service 2", "Yield Check — agent-to-agent, free"),
             ("Service 3", "Whale Alert — agent-to-agent, 5 USDT"),
             ("Rating", "★ 4.6 (18 reviews)"),
         ]
@@ -661,12 +661,12 @@ fn build_search_cells_feedbackrate_zero_is_no_rating_yet() {
         pairs[2],
         ("Rating".to_string(), "No rating yet".to_string())
     );
-    // A2A with no fee → "free"; no token appended.
+    // A2A with no fee and no subscription → "free"; no token appended.
     assert_eq!(
         pairs[4],
         (
             "Top service".to_string(),
-            "Free Tier (agent-to-agent, negotiable)".to_string()
+            "Free Tier (agent-to-agent, free)".to_string()
         )
     );
 }
@@ -701,6 +701,8 @@ fn build_service_cells_a2mcp_pascalcase() {
             ("Name".to_string(), "TVL Query".to_string()),
             ("Type".to_string(), "API service".to_string()),
             ("Fee".to_string(), "10 USDT".to_string()),
+            ("Subscription".to_string(), "—".to_string()),
+            ("Free trial".to_string(), "—".to_string()),
             (
                 "Endpoint".to_string(),
                 "https://api.example.com/mcp".to_string()
@@ -714,26 +716,164 @@ fn build_service_cells_a2mcp_pascalcase() {
 }
 
 #[test]
-fn build_service_cells_a2a_no_fee_no_endpoint() {
-    let svc = json!({ "ServiceName": "Yield Check", "ServiceType": "A2A" });
-    let cells = build_service_cells(2, &svc).expect("cells");
+fn build_service_cells_a2mcp_no_fee_renders_dash() {
+    // An A2MCP with no fee is missing REQUIRED data (create/update forbid an
+    // empty A2MCP fee); the read path degrades to `—`, NOT `free`.
+    let svc = json!({
+        "ServiceName": "TVL Query",
+        "ServiceType": "A2MCP",
+        "fee": "",
+        "Endpoint": "https://api.example.com/mcp",
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
     let pairs = cell_pairs(&Value::Array(cells));
-    assert_eq!(pairs[2], ("Type".to_string(), "agent-to-agent".to_string()));
-    // A2A no fee → negotiable.
-    assert_eq!(pairs[3], ("Fee".to_string(), "negotiable".to_string()));
-    // A2A endpoint always `—`.
-    assert_eq!(pairs[4], ("Endpoint".to_string(), "—".to_string()));
-    // missing description → `—`.
-    assert_eq!(pairs[5], ("Description".to_string(), "—".to_string()));
+    assert_eq!(pairs[3], ("Fee".to_string(), "—".to_string()));
 }
 
 #[test]
-fn build_service_cells_a2a_with_fee() {
+fn build_service_cells_a2a_single_fee() {
     let svc = json!({ "ServiceName": "Whale Alert", "ServiceType": "A2A", "Fee": "5" });
     let cells = build_service_cells(3, &svc).expect("cells");
     let pairs = cell_pairs(&Value::Array(cells));
+    // Single-priced A2A: Fee shows the number, Subscription is `—`.
     assert_eq!(pairs[3], ("Fee".to_string(), "5 USDT".to_string()));
-    assert_eq!(pairs[4], ("Endpoint".to_string(), "—".to_string()));
+    assert_eq!(pairs[4], ("Subscription".to_string(), "—".to_string()));
+    // A single-fee A2A never has a free trial.
+    assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
+    // A2A endpoint always `—`.
+    assert_eq!(pairs[6], ("Endpoint".to_string(), "—".to_string()));
+}
+
+#[test]
+fn build_service_cells_a2a_subscription() {
+    // Subscription-priced A2A: empty single fee + a monthly tier. Fee → `—`,
+    // Subscription → `<n> USDT / month`. Never "negotiable".
+    let svc = json!({
+        "ServiceName": "Loop Helper",
+        "ServiceType": "A2A",
+        "fee": "",
+        "subscription": [{ "interval": "month", "fee": "10" }],
+    });
+    let cells = build_service_cells(2, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(pairs[3], ("Fee".to_string(), "—".to_string()));
+    assert_eq!(
+        pairs[4],
+        ("Subscription".to_string(), "10 USDT / month".to_string())
+    );
+    // No freeTrial in this fixture → `—`.
+    assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
+    assert_eq!(pairs[6], ("Endpoint".to_string(), "—".to_string()));
+}
+
+#[test]
+fn build_service_cells_a2a_subscription_with_free_trial() {
+    // Subscription-priced A2A carrying a 3-day (72h) free trial → the Free trial
+    // column renders "3 days".
+    let svc = json!({
+        "ServiceName": "Loop Helper",
+        "ServiceType": "A2A",
+        "fee": "",
+        "subscription": [{ "interval": "month", "fee": "10" }],
+        "freeTrial": "72",
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(
+        pairs[4],
+        ("Subscription".to_string(), "10 USDT / month".to_string())
+    );
+    assert_eq!(pairs[5], ("Free trial".to_string(), "3 days".to_string()));
+}
+
+#[test]
+fn format_free_trial_hours_to_label() {
+    // A subscription must be present for a trial to render at all (see the
+    // subscription-only gate); with one, the hours→label conversion applies.
+    let ft = |h: &str| {
+        let m = json!({
+            "subscription": [{ "interval": "month", "fee": "10" }],
+            "freeTrial": h,
+        });
+        format_free_trial(m.as_object().unwrap())
+    };
+    assert_eq!(ft("72"), Some("3 days".to_string())); // whole days
+    assert_eq!(ft("24"), Some("1 day".to_string())); // singular day
+    assert_eq!(ft("5"), Some("5 hours".to_string())); // sub-day → hours
+    assert_eq!(ft("1"), Some("1 hour".to_string())); // singular hour
+    assert_eq!(ft("0"), None); // not a trial
+    assert_eq!(ft(""), None); // blank
+    assert_eq!(ft("24.5"), None); // non-integer
+}
+
+#[test]
+fn format_free_trial_without_subscription_is_none() {
+    // A free trial is a subscription-only concept: a stray `freeTrial` on a
+    // service that is NOT subscription-priced must not render a trial, mirroring
+    // the write-side contract (normalize_service / validate P7).
+    let no_sub = json!({ "freeTrial": "72" });
+    assert_eq!(format_free_trial(no_sub.as_object().unwrap()), None);
+    // An empty subscription array is equivalent to no subscription.
+    let empty_sub = json!({ "freeTrial": "72", "subscription": [] });
+    assert_eq!(format_free_trial(empty_sub.as_object().unwrap()), None);
+}
+
+#[test]
+fn build_service_cells_orphan_free_trial_without_subscription_renders_dash() {
+    // Single-fee A2A carrying a stray `freeTrial` (contract-violating write-side).
+    // On read the Free trial column must stay `—` — no orphan trial.
+    let svc = json!({
+        "ServiceName": "Whale Alert",
+        "ServiceType": "A2A",
+        "Fee": "5",
+        "freeTrial": "72",
+    });
+    let cells = build_service_cells(3, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(pairs[3], ("Fee".to_string(), "5 USDT".to_string()));
+    assert_eq!(pairs[4], ("Subscription".to_string(), "—".to_string()));
+    assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
+}
+
+#[test]
+fn format_service_value_orphan_free_trial_without_subscription_omitted() {
+    // Detail-card value: a single-fee A2A with a stray `freeTrial` shows the fee
+    // alone — the trial segment is not appended.
+    let svc = json!({
+        "serviceName": "Whale Alert",
+        "serviceType": "A2A",
+        "fee": "5",
+        "freeTrial": "72",
+    });
+    let value = format_service_value(&svc).unwrap();
+    assert_eq!(value, "Whale Alert — agent-to-agent, 5 USDT");
+}
+
+#[test]
+fn format_service_value_a2a_subscription_with_free_trial() {
+    // Detail-card value string appends the trial after the subscription price.
+    let svc = json!({
+        "serviceName": "Loop Helper",
+        "serviceType": "A2A",
+        "fee": "",
+        "subscription": [{ "interval": "month", "fee": "10" }],
+        "freeTrial": "72",
+    });
+    let value = format_service_value(&svc).unwrap();
+    assert_eq!(value, "Loop Helper — agent-to-agent, 10 USDT / month, 3 days free trial");
+}
+
+#[test]
+fn format_service_value_a2mcp_no_fee_renders_dash() {
+    // Detail card: an A2MCP with no fee degrades to `—`, NOT `free`.
+    let svc = json!({
+        "serviceName": "TVL Query",
+        "serviceType": "A2MCP",
+        "fee": "",
+        "endpoint": "https://api.example.com/mcp",
+    });
+    let value = format_service_value(&svc).unwrap();
+    assert_eq!(value, "TVL Query — API service, —, https://api.example.com/mcp");
 }
 
 #[test]
@@ -1411,6 +1551,8 @@ fn make_a2a_service() -> AgentService {
         service_description: "d".to_string(),
         fee: "1".to_string(),
         service_type: "A2A".to_string(),
+        subscription: Vec::new(),
+        free_trial: None,
         operation: None,
         endpoint: None,
     }
@@ -1654,16 +1796,39 @@ fn format_top_service_a2mcp_with_fee_and_token() {
 }
 
 #[test]
-fn format_top_service_a2a_no_fee_renders_negotiable() {
+fn format_top_service_a2a_no_fee_no_sub_renders_free() {
+    // A2A with no single fee and no subscription → "free" (never "negotiable").
     let svc = json!({ "serviceName": "Yield Check", "serviceType": "A2A" });
     let result = format_top_service(&svc).unwrap();
-    assert_eq!(result, "Yield Check (agent-to-agent, negotiable)");
+    assert_eq!(result, "Yield Check (agent-to-agent, free)");
+}
+
+#[test]
+fn format_top_service_a2mcp_no_fee_renders_dash() {
+    // An A2MCP with no fee is missing REQUIRED data → `—`, NOT `free` (unlike an
+    // unpriced A2A, which stays `free`).
+    let svc = json!({ "serviceName": "TVL Query", "serviceType": "A2MCP" });
+    let result = format_top_service(&svc).unwrap();
+    assert_eq!(result, "TVL Query (API service, —)");
+}
+
+#[test]
+fn format_top_service_a2a_subscription_renders_monthly() {
+    // Subscription-priced A2A → the monthly tier fills the fee slot. (Short
+    // name so the formatted string stays under the 40-char truncation limit.)
+    let svc = json!({
+        "serviceName": "Sub",
+        "serviceType": "A2A",
+        "feeAmount": "",
+        "subscription": [{ "interval": "month", "fee": "10" }],
+    });
+    let result = format_top_service(&svc).unwrap();
+    assert_eq!(result, "Sub (agent-to-agent, 10 USDT / month)");
 }
 
 #[test]
 fn format_top_service_a2a_zero_fee_renders_zero_usdt() {
-    // An explicit 0 is a real price (a free service) — shown as "0 USDT", NOT "negotiable".
-    // "negotiable" is reserved for A2A with no fee set at all.
+    // An explicit 0 is a real price (a free service) — shown as "0 USDT".
     for fee in &["0", "0.0", "0.00"] {
         let svc = json!({ "serviceName": "S", "serviceType": "A2A", "feeAmount": fee, "feeToken": "USDT" });
         let result = format_top_service(&svc).unwrap();
@@ -1786,6 +1951,8 @@ fn normalize_service_a2mcp_empty_fee_is_err() {
         service_description: "desc".to_string(),
         fee: "".to_string(),
         service_type: "A2MCP".to_string(),
+        subscription: Vec::new(),
+        free_trial: None,
         operation: None,
         endpoint: Some("https://example.com/mcp".to_string()),
     };
@@ -1803,6 +1970,8 @@ fn normalize_service_a2mcp_whitespace_only_fee_is_err() {
         service_description: "desc".to_string(),
         fee: "   ".to_string(),
         service_type: "A2MCP".to_string(),
+        subscription: Vec::new(),
+        free_trial: None,
         operation: None,
         endpoint: Some("https://example.com/mcp".to_string()),
     };
@@ -1810,6 +1979,228 @@ fn normalize_service_a2mcp_whitespace_only_fee_is_err() {
     assert!(result.is_err(), "A2MCP with whitespace-only fee must be an error after trim");
     let msg = result.unwrap_err().to_string();
     assert!(msg.contains("fee"), "error message should mention 'fee'; got: {msg}");
+}
+
+// ─── subscription pricing (A2A) ──────────────────────────────────────
+
+fn a2a_with(fee: &str, subs: Vec<(&str, &str)>) -> AgentService {
+    AgentService {
+        id: None,
+        service_name: "Aave loop assistant".to_string(),
+        service_description: "desc".to_string(),
+        fee: fee.to_string(),
+        service_type: "A2A".to_string(),
+        subscription: subs
+            .into_iter()
+            .map(|(i, f)| SubscriptionTier {
+                interval: i.to_string(),
+                fee: f.to_string(),
+            })
+            .collect(),
+        free_trial: None,
+        operation: None,
+        endpoint: None,
+    }
+}
+
+#[test]
+fn normalize_a2a_empty_fee_passes_through_untouched() {
+    // Subscription-priced A2A carries an empty single `fee` (`""`); it is
+    // accepted alongside a subscription and forwarded verbatim as `""`.
+    let svc = normalize_service(a2a_with("", vec![("month", "10")])).unwrap();
+    assert_eq!(svc.fee, "", "empty fee is the subscription marker; forwarded as-is");
+    assert_eq!(svc.subscription.len(), 1);
+    assert_eq!(svc.subscription[0].interval, "month");
+    assert_eq!(svc.subscription[0].fee, "10");
+}
+
+
+#[test]
+fn normalize_a2a_no_pricing_is_err() {
+    let err = normalize_service(a2a_with("", vec![])).unwrap_err().to_string();
+    assert!(err.contains("A2A"), "expected an A2A pricing error; got: {err}");
+}
+
+#[test]
+fn normalize_a2a_both_is_err() {
+    // A single-purchase fee AND a subscription are mutually exclusive on A2A —
+    // supplying both must be rejected (exactly-one billing model).
+    let err = normalize_service(a2a_with("0.11", vec![("month", "10")]))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("not both"), "expected both-models rejection; got: {err}");
+}
+
+#[test]
+fn normalize_a2a_subscription_only_lowercases_interval() {
+    // Subscription-priced A2A (empty single fee): interval is canonicalized
+    // to lowercase.
+    let svc = normalize_service(a2a_with("", vec![("Month", "10")])).unwrap();
+    assert_eq!(svc.fee, "");
+    assert_eq!(svc.subscription[0].interval, "month");
+}
+
+#[test]
+fn normalize_a2a_bad_interval_is_err() {
+    let err = normalize_service(a2a_with("", vec![("week", "10")]))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("month"), "expected month-only error; got: {err}");
+}
+
+#[test]
+fn normalize_a2a_bad_subscription_fee_is_err() {
+    let err = normalize_service(a2a_with("", vec![("month", "10 USDT")]))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("subscription fee"), "expected sub-fee error; got: {err}");
+}
+
+#[test]
+fn normalize_a2mcp_with_subscription_is_err() {
+    let svc = AgentService {
+        id: None,
+        service_name: "Price feed svc".to_string(),
+        service_description: "desc".to_string(),
+        fee: "0.5".to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: vec![SubscriptionTier {
+            interval: "month".to_string(),
+            fee: "10".to_string(),
+        }],
+        free_trial: None,
+        operation: None,
+        endpoint: Some("https://api.example.com/mcp".to_string()),
+    };
+    let err = normalize_service(svc).unwrap_err().to_string();
+    assert!(err.contains("A2MCP"), "expected A2MCP subscription rejection; got: {err}");
+}
+
+#[test]
+fn a2a_blank_subscription_tier_dropped() {
+    // A stray blank tier must not count as pricing → falls back to fee.
+    let svc = normalize_service(a2a_with("0.11", vec![("", "")])).unwrap();
+    assert!(svc.subscription.is_empty(), "blank tier should be dropped");
+    assert_eq!(svc.fee, "0.11");
+}
+
+#[test]
+fn update_delete_subscription_serializes_empty_array() {
+    // User drops the subscription (keeps per-call): backend must receive
+    // subscription:[] explicitly so it clears the existing subscription.
+    let mut svc = a2a_with("0.11", vec![]);
+    svc.id = Some("7".to_string());
+    svc.operation = Some(ServiceOperation::Update);
+    let svc = normalize_service(svc).unwrap();
+    let v = serde_json::to_value(&svc).unwrap();
+    assert_eq!(v["fee"], "0.11");
+    assert_eq!(v["subscription"], serde_json::json!([]));
+}
+
+#[test]
+fn update_subscription_service_serializes_empty_fee() {
+    // A subscription-priced service (keeps subscription): backend must receive
+    // fee:"" so it carries "no single-purchase price".
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.id = Some("7".to_string());
+    svc.operation = Some(ServiceOperation::Update);
+    let svc = normalize_service(svc).unwrap();
+    let v = serde_json::to_value(&svc).unwrap();
+    assert_eq!(v["fee"], "");
+    assert_eq!(v["subscription"][0]["interval"], "month");
+    assert_eq!(v["subscription"][0]["fee"], "10");
+}
+
+#[test]
+fn serialized_service_always_carries_subscription_array() {
+    // single-only A2A → subscription serializes as [] (sentinel), fee is the number.
+    let svc = normalize_service(a2a_with("0.11", vec![])).unwrap();
+    let v = serde_json::to_value(&svc).unwrap();
+    assert_eq!(v["fee"], "0.11");
+    assert_eq!(v["subscription"], serde_json::json!([]));
+
+    // subscription-priced A2A → fee serializes as the empty marker "".
+    let svc2 = normalize_service(a2a_with("", vec![("month", "10")])).unwrap();
+    let v2 = serde_json::to_value(&svc2).unwrap();
+    assert_eq!(v2["fee"], "");
+    assert_eq!(v2["subscription"][0]["interval"], "month");
+    assert_eq!(v2["subscription"][0]["fee"], "10");
+}
+
+// ─── freeTrial (A2A subscription only) ────────────────────────────────
+
+#[test]
+fn normalize_a2a_subscription_with_free_trial_ok() {
+    // A positive-integer freeTrial (hours) alongside a subscription is accepted
+    // and serialized as "freeTrial".
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.free_trial = Some("72".to_string());
+    let svc = normalize_service(svc).unwrap();
+    assert_eq!(svc.free_trial.as_deref(), Some("72"));
+    let v = serde_json::to_value(&svc).unwrap();
+    assert_eq!(v["freeTrial"], "72");
+}
+
+#[test]
+fn normalize_free_trial_omitted_when_absent() {
+    // No freeTrial → the key is absent from the serialized payload (not "" / null).
+    let svc = normalize_service(a2a_with("", vec![("month", "10")])).unwrap();
+    assert!(svc.free_trial.is_none());
+    let v = serde_json::to_value(&svc).unwrap();
+    assert!(v.get("freeTrial").is_none(), "freeTrial must be omitted when unset");
+}
+
+#[test]
+fn normalize_free_trial_blank_dropped_to_none() {
+    // A whitespace-only freeTrial is treated as "no trial" → dropped to None.
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.free_trial = Some("   ".to_string());
+    let svc = normalize_service(svc).unwrap();
+    assert!(svc.free_trial.is_none());
+}
+
+#[test]
+fn normalize_free_trial_without_subscription_is_err() {
+    // freeTrial on a single-purchase A2A (no subscription) is rejected.
+    let mut svc = a2a_with("0.11", vec![]);
+    svc.free_trial = Some("72".to_string());
+    let err = normalize_service(svc).unwrap_err().to_string();
+    assert!(err.contains("freeTrial"), "expected freeTrial rejection; got: {err}");
+}
+
+#[test]
+fn normalize_free_trial_non_integer_is_err() {
+    // freeTrial must be a positive integer number of hours.
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.free_trial = Some("24.5".to_string());
+    let err = normalize_service(svc).unwrap_err().to_string();
+    assert!(err.contains("freeTrial"), "expected freeTrial format error; got: {err}");
+}
+
+#[test]
+fn normalize_free_trial_zero_is_err() {
+    // A zero-hour trial is meaningless → rejected (omit the field instead).
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.free_trial = Some("0".to_string());
+    let err = normalize_service(svc).unwrap_err().to_string();
+    assert!(err.contains("freeTrial"), "expected freeTrial format error; got: {err}");
+}
+
+#[test]
+fn normalize_a2mcp_with_free_trial_is_err() {
+    let svc = AgentService {
+        id: None,
+        service_name: "Price feed svc".to_string(),
+        service_description: "desc".to_string(),
+        fee: "0.5".to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: Vec::new(),
+        free_trial: Some("72".to_string()),
+        operation: None,
+        endpoint: Some("https://api.example.com/mcp".to_string()),
+    };
+    let err = normalize_service(svc).unwrap_err().to_string();
+    assert!(err.contains("freeTrial"), "expected A2MCP freeTrial rejection; got: {err}");
 }
 
 // ─── detect_image_kind / validate_avatar_image ───────────────────────
