@@ -1,26 +1,40 @@
-# OKX.AI Trading Hackathon Registration (`competition register`)
+---
+name: okx-hackathon
+description: "Register a Trading ASP agent for the OKX.AI trading hackathon (交易黑客松 / OKX.AI 交易黑客松). Use when the user wants to sign up / 报名 their Trading ASP agent for the hackathon, asks about hackathon registration requirements, or mentions '黑客松' / 'hackathon' together with an agent/ASP. Do NOT use for joining a normal trading competition or cup (that is `okx-growth-competition`) — see the disambiguation table below."
+license: MIT
+metadata:
+  author: okx
+  version: "1.0.0"
+  homepage: "https://web3.okx.com"
+---
 
-> Scope: register the user's **Trading ASP agent** for the OKX.AI trading hackathon (交易黑客松). Global rules in `../SKILL.md`. This is a DIFFERENT flow from `competition join` — see the disambiguation below before doing anything.
+# OKX.AI Trading Hackathon Registration
 
-## `join` vs `register` — do not conflate
+Register the user's **Trading ASP agent** for the OKX.AI trading hackathon. Wraps the standalone `onchainos hackathon` CLI command group / `hackathon_register` MCP tool.
 
-Both live under `competition`, but they register **different subjects** against **different endpoints**:
+## `hackathon register` vs `competition join` — do not conflate
 
-| Signal in the request | Flow | Command | What is registered |
+They register **different subjects** against **different endpoints**:
+
+| Signal in the request | Skill | Command | What is registered |
 |---|---|---|---|
-| "hackathon" / "黑客松" / "OKX.AI 交易黑客松" / "报名黑客松" / "register my ASP / agent" | **this file** | `competition register` | the user's **Trading ASP agent** for the OKX.AI hackathon |
-| "join / register for <competition name>" / a normal trading contest or cup | `participation.md` (Step 3) | `competition join` | the active **wallet account** for a standard trading competition |
+| "hackathon" / "黑客松" / "OKX.AI 交易黑客松" / "报名黑客松" / "register my ASP / agent" | **this skill** | `hackathon register` | the user's **Trading ASP agent** for the OKX.AI hackathon |
+| "join / register for `<competition name>`" / a normal trading contest or cup | `okx-growth-competition` | `competition join` | the active **wallet account** for a standard trading competition |
 
-**NEVER** run `competition join` for a hackathon request, or `competition register` for a plain "join this competition" request — they hit different backends and the wrong one fails or mis-registers.
+**NEVER** run `competition join` for a hackathon request, or `hackathon register` for a plain "join this competition" request — they hit different backends and the wrong one fails or mis-registers.
+
+## Pre-flight
+
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
+
+Wallet login is required. If not logged in, walk the user through the `okx-agentic-wallet` login flow (run `onchainos wallet login`), then resume at the step that failed.
 
 ## Flow
-
-Wallet login is required. If not logged in, route via `../SKILL.md` → Pre-flight (Cross-skill routing), then resume at the step that failed.
 
 ### Step 1 — Pick the Trading ASP agent
 
 1. List the user's agents: MCP `agent_get_my_agents` (CLI: `onchainos agent get-my-agents`).
-2. Present the agents by **name** and ask the user which one to register. **NEVER** show the numeric agent id in a user-facing message (internal id — see `../SKILL.md` Output Rules); keep it in the data layer to pass as `--agent-id`.
+2. Present the agents by **name** and ask the user which one to register. **NEVER** show the numeric agent id in a user-facing message (internal id — keep it in the data layer to pass as `--agent-id`).
 3. Before submitting, confirm the three ASP preconditions with the user (the backend is authoritative and rejects on failure — the skill only pre-confirms so the user is not surprised by a rejection):
 
 ```
@@ -50,7 +64,7 @@ Either way, fund the account with ~300U-equivalent assets before trading begins.
 
 ### Step 3 — Submit
 
-Call `competition_register` (MCP: `activity_id` defaults to "5", `chain_index` to "196", `address` auto-resolves; CLI: `onchainos competition register …`). See the CLI reference below for flags.
+Call `hackathon_register` (MCP: `activity_id` defaults to "5", `chain_index` to "196", `address` auto-resolves; CLI: `onchainos hackathon register …`). See the CLI reference below for flags.
 
 ### Step 4 — Report the result
 
@@ -60,16 +74,16 @@ Call `competition_register` (MCP: `activity_id` defaults to "5", `chain_index` t
 Registered "{agentName}" for the OKX.AI Trading Hackathon on X Layer with your {accountType} account. Good luck! Remember to fund the account with ~300U-equivalent assets before trading begins.
 ```
 
-Identify the hackathon and agent by name, never by numeric id (`../SKILL.md` Output Rules). The wallet address is public and MAY be shown.
+Identify the hackathon and agent by name, never by numeric id. The wallet address is public and MAY be shown.
 
 **On failure** — the backend returns a single generic non-zero `code` + a descriptive English `msg` (there is no per-condition code). `**MUST**:` surface that backend `msg` to the user verbatim — it is the authoritative reason (e.g. the ASP is not trading-type, lacks a subscription, or lacks a 3-day trial). Do not paraphrase, translate the machine `msg`, or invent your own reason.
 
-## CLI / MCP reference — `competition register`
+## CLI / MCP reference — `hackathon register`
 
 Register the user's Trading ASP for the hackathon. **Requires wallet login.**
 
 ```
-onchainos competition register --agent-id <id> --account-type <web3|cefi> [--activity-id <id>] [--address <addr>] [--chain-index <id>] [--uid <uid>]
+onchainos hackathon register --agent-id <id> --account-type <web3|cefi> [--activity-id <id>] [--address <addr>] [--chain-index <id>] [--uid <uid>]
 ```
 
 **API**: `POST /priapi/v5/wallet/agentic/activity/registration`
@@ -84,7 +98,7 @@ onchainos competition register --agent-id <id> --account-type <web3|cefi> [--act
 | `--chain-index` | No | `196` | Chain id string. Always `196` (X Layer) for this hackathon. |
 | `--uid` | Conditional | — | OKX UID. **Required when `--account-type cefi`** (CLI bails otherwise). Omitted for `web3`. |
 
-MCP tool `competition_register` mirrors these (`activity_id` / `chain_index` / `address` optional with the same defaults). Unlike `competition_join` / `competition_claim`, it takes `activity_id` directly, not `activity_name`.
+MCP tool `hackathon_register` mirrors these (`activity_id` / `chain_index` / `address` optional with the same defaults).
 
 **Request body** (built automatically): `{ "activityId", "agentId", "chainIndex", "address" }`; `"uid"` is added only for `cefi`.
 
@@ -100,8 +114,12 @@ For `cefi`, the confirmation additionally echoes `"uid"`.
 - `not logged in` → run `onchainos wallet login`, then retry.
 - backend non-zero `code` (ASP not trading-type / no subscription / no 3-day trial, or other) → surface the backend `msg` verbatim (see Step 4).
 
+## Output Rules
+
+**Never include any internal id (agent id, activity id) in a message produced for the user — under ANY circumstance, in ANY format.** Identify the agent and hackathon EXCLUSIVELY by name.
+
 ## Security
 
-- **Non-spending**: registration receives value, so there is no confirm-to-spend (`CliConfirming`) gate — same as `competition claim`.
+- **Non-spending**: registration receives value, so there is no confirm-to-spend (`CliConfirming`) gate.
 - The JWT `access_token` is injected by the client layer from the keychain; it is **NEVER** logged, printed, or placed in a flag — leaking it would let an attacker act as the user.
 - No new secrets are created or stored; the flow reads the existing wallet session.

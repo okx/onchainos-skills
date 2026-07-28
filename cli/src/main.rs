@@ -126,6 +126,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::competition::CompetitionCommand,
     },
+    /// Register a Trading ASP agent for the OKX.AI trading hackathon
+    Hackathon {
+        #[command(subcommand)]
+        command: commands::hackathon::HackathonCommand,
+    },
     /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
@@ -234,6 +239,7 @@ async fn run() {
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::payment::execute(command).await,
         Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
+        Commands::Hackathon { command } => commands::hackathon::execute(&ctx, command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Strategy { command } => {
             commands::agentic_wallet::strategy::execute(&ctx, *command).await
