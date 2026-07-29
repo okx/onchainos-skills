@@ -990,17 +990,6 @@ fn resolve_competition_addresses(
     ))
 }
 
-/// CeFi hackathon registration requires a `uid`; web3 does not. Mirrors the
-/// CLI-side `hackathon::require_uid_for_cefi` (private to that module) so the
-/// MCP tool runs the identical pre-request validation before delegating to
-/// `hackathon::register`. Pure so it is unit-testable.
-fn require_uid_for_cefi(account_type: &str, uid: Option<&str>) -> anyhow::Result<()> {
-    if account_type == "cefi" && uid.is_none() {
-        anyhow::bail!("--uid is required for CeFi account registration");
-    }
-    Ok(())
-}
-
 /// For competition_detail / competition_rank: the AI may pass either the
 /// numeric activity id (from a prior `competition_list` response) or the
 /// activity name / shortName, since other competition tools (join / claim /
@@ -2945,7 +2934,7 @@ Returns `registered: true` plus the echoed registration details."
     ) -> Result<String, String> {
         // CeFi registration requires a uid; validate before any wallet/network
         // access (mirrors the CLI `execute()` arm ordering).
-        if let Err(e) = require_uid_for_cefi(&p.account_type, p.uid.as_deref()) {
+        if let Err(e) = hackathon::require_uid_for_cefi(&p.account_type, p.uid.as_deref()) {
             return err(e);
         }
         // Auto-resolve the current account's X Layer (EVM) address when omitted
@@ -3296,17 +3285,12 @@ mod tests {
         // Pure validation (no live backend): run the shared cefi-uid check the
         // handler runs, then route it through the MCP `err()` envelope exactly as
         // the handler does, and assert the `--uid` message survives.
-        let e = require_uid_for_cefi("cefi", None).expect_err("cefi without uid must error");
+        let e =
+            hackathon::require_uid_for_cefi("cefi", None).expect_err("cefi without uid must error");
         let envelope = err(e).expect_err("err() returns the Err variant");
         assert!(
             envelope.contains("--uid is required"),
             "envelope should carry the --uid message, got: {envelope}"
         );
-    }
-
-    #[test]
-    fn require_uid_for_cefi_allows_web3_and_cefi_with_uid() {
-        assert!(require_uid_for_cefi("web3", None).is_ok());
-        assert!(require_uid_for_cefi("cefi", Some("12345")).is_ok());
     }
 }

@@ -129,7 +129,7 @@ fn build_registration_confirmation(
     confirmation
 }
 
-fn require_uid_for_cefi(account_type: &str, uid: Option<&str>) -> Result<()> {
+pub(crate) fn require_uid_for_cefi(account_type: &str, uid: Option<&str>) -> Result<()> {
     if account_type == "cefi" && uid.is_none() {
         anyhow::bail!("--uid is required for CeFi account registration");
     }
