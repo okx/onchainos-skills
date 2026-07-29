@@ -14,13 +14,15 @@ use serde_json::Value;
 
 const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
 
+/// Fixed activity ID for the current OKX.AI trading hackathon — not user-configurable.
+const ACTIVITY_ID: &str = "5";
+/// Fixed chain index (X Layer) this hackathon registers on — not user-configurable.
+const CHAIN_INDEX: &str = "196";
+
 #[derive(Subcommand)]
 pub enum HackathonCommand {
     /// Register the user's Trading ASP for the OKX.AI trading hackathon (requires wallet login).
     Register {
-        /// [UNIT: integer] Activity ID; default "5" (this hackathon; B1), overridable.
-        #[arg(long, default_value = "5")]
-        activity_id: String,
         /// Agent ID of the user's Trading ASP to register. [UNIT: id]
         #[arg(long)]
         agent_id: String,
@@ -30,9 +32,6 @@ pub enum HackathonCommand {
         /// [UNIT: address-evm] Wallet address; auto-resolved from wallet X Layer addr when omitted (both web3 & cefi; B2).
         #[arg(long)]
         address: Option<String>,
-        /// [UNIT: chain-index] Chain index; always "196" (X Layer) for this hackathon.
-        #[arg(long, default_value = "196")]
-        chain_index: String,
         /// CeFi user ID (required when --account-type=cefi). [UNIT: id]
         #[arg(long)]
         uid: Option<String>,
@@ -42,11 +41,9 @@ pub enum HackathonCommand {
 pub async fn execute(_ctx: &Context, command: HackathonCommand) -> Result<()> {
     let result: Value = match command {
         HackathonCommand::Register {
-            activity_id,
             agent_id,
             account_type,
             address,
-            chain_index,
             uid,
         } => {
             // Pre-request validation (spec §1), mirroring how `join` resolves
@@ -60,16 +57,8 @@ pub async fn execute(_ctx: &Context, command: HackathonCommand) -> Result<()> {
                 None => resolve_registration_evm_address()?,
             };
             // ③ Validate the (resolved) address for the target chain.
-            token_alias::validate_address_for_chain(&chain_index, &address, "address")?;
-            register(
-                &activity_id,
-                &agent_id,
-                &account_type,
-                &address,
-                &chain_index,
-                uid.as_deref(),
-            )
-            .await?
+            token_alias::validate_address_for_chain(CHAIN_INDEX, &address, "address")?;
+            register(&agent_id, &account_type, &address, uid.as_deref()).await?
         }
     };
     output::success(result);
@@ -77,21 +66,12 @@ pub async fn execute(_ctx: &Context, command: HackathonCommand) -> Result<()> {
 }
 
 pub async fn register(
-    activity_id: &str,
     agent_id: &str,
     account_type: &str,
     address: &str,
-    chain_index: &str,
     uid: Option<&str>,
 ) -> Result<Value> {
-    let body = build_registration_body(
-        activity_id,
-        agent_id,
-        account_type,
-        address,
-        chain_index,
-        uid,
-    );
+    let body = build_registration_body(agent_id, account_type, address, uid);
     let path = "/priapi/v5/wallet/agentic/activity/registration";
     let headers = [("OK-ACCESS-PROJECT", PROJECT_HEADER)];
     let (_, mut auth_client) = ensure_logged_in_client().await?;
@@ -99,27 +79,23 @@ pub async fn register(
         .post_with_headers(path, &body, Some(&headers))
         .await?;
     Ok(build_registration_confirmation(
-        activity_id,
         agent_id,
         account_type,
         address,
-        chain_index,
         uid,
     ))
 }
 
 fn build_registration_body(
-    activity_id: &str,
     agent_id: &str,
     account_type: &str,
     address: &str,
-    chain_index: &str,
     uid: Option<&str>,
 ) -> Value {
     let mut body = serde_json::json!({
-        "activityId": activity_id,
+        "activityId": ACTIVITY_ID,
         "agentId": agent_id,
-        "chainIndex": chain_index,
+        "chainIndex": CHAIN_INDEX,
         "address": address,
     });
     if account_type == "cefi" {
@@ -131,19 +107,17 @@ fn build_registration_body(
 }
 
 fn build_registration_confirmation(
-    activity_id: &str,
     agent_id: &str,
     account_type: &str,
     address: &str,
-    chain_index: &str,
     uid: Option<&str>,
 ) -> Value {
     let mut confirmation = serde_json::json!({
         "registered": true,
-        "activityId": activity_id,
+        "activityId": ACTIVITY_ID,
         "agentId": agent_id,
         "accountType": account_type,
-        "chainIndex": chain_index,
+        "chainIndex": CHAIN_INDEX,
         "address": address,
     });
     if account_type == "cefi" {
@@ -209,7 +183,7 @@ mod tests {
 
     #[test]
     fn register_body_web3_omits_uid() {
-        let body = build_registration_body("5", "agent-1", "web3", EVM_ADDR, "196", None);
+        let body = build_registration_body("agent-1", "web3", EVM_ADDR, None);
         assert_eq!(body["activityId"], "5");
         assert_eq!(body["agentId"], "agent-1");
         assert_eq!(body["chainIndex"], "196");
@@ -219,14 +193,13 @@ mod tests {
 
     #[test]
     fn register_body_cefi_includes_uid() {
-        let body = build_registration_body("5", "agent-1", "cefi", EVM_ADDR, "196", Some("uid-1"));
+        let body = build_registration_body("agent-1", "cefi", EVM_ADDR, Some("uid-1"));
         assert_eq!(body["uid"], "uid-1");
     }
 
     #[test]
     fn register_confirmation_web3_shape() {
-        let confirmation =
-            build_registration_confirmation("5", "agent-1", "web3", EVM_ADDR, "196", None);
+        let confirmation = build_registration_confirmation("agent-1", "web3", EVM_ADDR, None);
         assert_eq!(confirmation["registered"], true);
         assert_eq!(confirmation["activityId"], "5");
         assert_eq!(confirmation["agentId"], "agent-1");
@@ -239,7 +212,7 @@ mod tests {
     #[test]
     fn register_confirmation_cefi_carries_uid() {
         let confirmation =
-            build_registration_confirmation("5", "agent-1", "cefi", EVM_ADDR, "196", Some("uid-1"));
+            build_registration_confirmation("agent-1", "cefi", EVM_ADDR, Some("uid-1"));
         assert_eq!(confirmation["uid"], "uid-1");
     }
 

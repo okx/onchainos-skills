@@ -1026,11 +1026,9 @@ mod tests {
     #[test]
     fn hackathon_sub_register_maps_to_register() {
         let cmd = HackathonCommand::Register {
-            activity_id: "5".to_string(),
             agent_id: "agent-42".to_string(),
             account_type: "web3".to_string(),
             address: Some("0x1111111111111111111111111111111111111111".to_string()),
-            chain_index: "196".to_string(),
             uid: None,
         };
         assert_eq!(hackathon_sub(&cmd), "register");

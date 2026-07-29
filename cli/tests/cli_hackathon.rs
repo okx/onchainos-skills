@@ -15,7 +15,8 @@
 //!     when unset — the sanctioned pattern for environment-dependent rows.
 //!   • Mock (IT-003/008): env-driven backend, NOT wrapped in `run_with_retry`.
 //!     - IT-003 needs a mock backend (OKX_BASE_URL) returning code 0 + a session,
-//!       both operator-supplied; skipped when the mock env is absent.
+//!       both operator-supplied; skipped when the mock env is absent. Verifies
+//!       the fixed activityId/chainIndex flow through unchanged.
 //!     - IT-008 points OKX_BASE_URL at a closed localhost port (a test fixture,
 //!       not an environment URL, so it is a literal) to force a connection error.
 //!
@@ -211,7 +212,7 @@ fn hackathon_register_invalid_account_type_is_usage_error() {
 // ── Live / flaky rows (env-gated; run through run_with_retry) ─────────────
 
 /// IT-001 — golden Web3 happy path: a logged-in user registers a qualifying
-/// Trading ASP; `--activity-id` defaults to "5" and `--address` auto-resolves
+/// Trading ASP; `activityId` is the fixed "5" and `--address` auto-resolves
 /// to the wallet's X Layer address. Requires a logged-in session + a qualifying
 /// agent id (env-supplied); skipped when the env is absent.
 #[test]
@@ -309,12 +310,13 @@ fn hackathon_register_non_qualifying_agent_is_rejected() {
 
 // ── Mock rows (env/fixture-driven backend; NOT wrapped in run_with_retry) ──
 
-/// IT-003 — edge: `--activity-id 6` override + explicit `--address` flow into
-/// the confirmation. Runs against a mock backend (OKX_BASE_URL override
-/// returning code 0) plus a logged-in session, both operator-supplied via env;
-/// skipped when the mock env is absent (base URL is never hardcoded).
+/// IT-003 — edge: explicit `--address` flows into the confirmation, and the
+/// fixed `activityId`/`chainIndex` (not user-overridable) come through
+/// unchanged. Runs against a mock backend (OKX_BASE_URL override returning
+/// code 0) plus a logged-in session, both operator-supplied via env; skipped
+/// when the mock env is absent (base URL is never hardcoded).
 #[test]
-fn hackathon_register_web3_activity_override_against_mock() {
+fn hackathon_register_web3_explicit_address_against_mock() {
     let Some(mock_base_url) = std::env::var("HACKATHON_MOCK_BASE_URL")
         .ok()
         .filter(|s| !s.is_empty())
@@ -333,8 +335,6 @@ fn hackathon_register_web3_activity_override_against_mock() {
             "agent-any",
             "--account-type",
             "web3",
-            "--activity-id",
-            "6",
             "--address",
             "0x1111111111111111111111111111111111111111",
         ])
@@ -342,8 +342,12 @@ fn hackathon_register_web3_activity_override_against_mock() {
         .expect("failed to execute");
     let data = assert_ok_and_extract_data(&output);
     assert_eq!(
-        data["activityId"], "6",
-        "expected the overridden activityId: {data}"
+        data["activityId"], "5",
+        "expected the fixed hackathon activityId: {data}"
+    );
+    assert_eq!(
+        data["chainIndex"], "196",
+        "expected the fixed X Layer chainIndex: {data}"
     );
 }
 

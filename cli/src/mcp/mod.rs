@@ -696,16 +696,12 @@ struct CompetitionSubmitContactParams {
 // ── Hackathon ───────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct HackathonRegisterParams {
-    /// Activity ID for the hackathon. Defaults to "5" (the current OKX.AI trading hackathon) when omitted.
-    activity_id: Option<String>,
     /// The user's Trading ASP agent id to register (from a prior `agent get-my-agents` result).
     agent_id: String,
     /// Account type: "web3" (current wallet's X Layer address) or "cefi" (an OKX UID).
     account_type: String,
     /// Optional wallet address. If omitted, auto-resolves the current account's X Layer (EVM) address.
     address: Option<String>,
-    /// Chain ID to register on. Defaults to "196" (X Layer) when omitted.
-    chain_index: Option<String>,
     /// OKX UID for the account. Required when `account_type` is "cefi".
     uid: Option<String>,
 }
@@ -992,15 +988,6 @@ fn resolve_competition_addresses(
         evm.clone().unwrap_or(default_evm),
         sol.clone().unwrap_or(default_sol),
     ))
-}
-
-/// Apply the CLI's clap defaults for `hackathon_register`: `activity_id` → "5"
-/// (the current hackathon) and `chain_index` → "196" (X Layer). Pure so the
-/// param-mapping layer is unit-testable without a live backend.
-fn hackathon_register_defaults(p: &HackathonRegisterParams) -> (String, String) {
-    let activity_id = p.activity_id.clone().unwrap_or_else(|| "5".to_string());
-    let chain_index = p.chain_index.clone().unwrap_or_else(|| "196".to_string());
-    (activity_id, chain_index)
 }
 
 /// CeFi hackathon registration requires a `uid`; web3 does not. Mirrors the
@@ -2949,7 +2936,6 @@ Returns `joined: true` plus `activityId` (internal — never show to the user) a
         name = "hackathon_register",
         description = "Register the user's Trading ASP for the OKX.AI trading hackathon. Requires wallet login. \
 Pass `agent_id` (the user's Trading ASP, from a prior `agent get-my-agents` result) and `account_type` — \"web3\" for the current wallet's X Layer address, or \"cefi\" for an OKX UID (in which case `uid` is REQUIRED). \
-`activity_id` defaults to \"5\" (the current hackathon) and `chain_index` to \"196\" (X Layer). \
 When `address` is omitted it auto-resolves the current account's X Layer (EVM) address. \
 Returns `registered: true` plus the echoed registration details."
     )]
@@ -2957,7 +2943,6 @@ Returns `registered: true` plus the echoed registration details."
         &self,
         Parameters(p): Parameters<HackathonRegisterParams>,
     ) -> Result<String, String> {
-        let (activity_id, chain_index) = hackathon_register_defaults(&p);
         // CeFi registration requires a uid; validate before any wallet/network
         // access (mirrors the CLI `execute()` arm ordering).
         if let Err(e) = require_uid_for_cefi(&p.account_type, p.uid.as_deref()) {
@@ -2972,15 +2957,7 @@ Returns `registered: true` plus the echoed registration details."
                 Err(e) => return err(e),
             },
         };
-        match hackathon::register(
-            &activity_id,
-            &p.agent_id,
-            &p.account_type,
-            &address,
-            &chain_index,
-            p.uid.as_deref(),
-        )
-        .await
+        match hackathon::register(&p.agent_id, &p.account_type, &address, p.uid.as_deref()).await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -3300,9 +3277,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hackathon_register_applies_defaults() {
+    fn hackathon_register_params_minimal_deserializes() {
         // Minimal JSON carries only the two required fields; the optionals stay
-        // absent so the handler's defaults apply.
+        // absent.
         let p: HackathonRegisterParams = serde_json::from_value(serde_json::json!({
             "agent_id": "agent-123",
             "account_type": "web3",
@@ -3310,26 +3287,8 @@ mod tests {
         .expect("minimal params must deserialize");
         assert_eq!(p.agent_id, "agent-123");
         assert_eq!(p.account_type, "web3");
-        assert!(p.activity_id.is_none());
-        assert!(p.chain_index.is_none());
-
-        let (activity_id, chain_index) = hackathon_register_defaults(&p);
-        assert_eq!(activity_id, "5");
-        assert_eq!(chain_index, "196");
-    }
-
-    #[test]
-    fn hackathon_register_defaults_respect_explicit_values() {
-        let p: HackathonRegisterParams = serde_json::from_value(serde_json::json!({
-            "activity_id": "9",
-            "agent_id": "agent-123",
-            "account_type": "web3",
-            "chain_index": "1",
-        }))
-        .expect("params must deserialize");
-        let (activity_id, chain_index) = hackathon_register_defaults(&p);
-        assert_eq!(activity_id, "9");
-        assert_eq!(chain_index, "1");
+        assert!(p.address.is_none());
+        assert!(p.uid.is_none());
     }
 
     #[test]

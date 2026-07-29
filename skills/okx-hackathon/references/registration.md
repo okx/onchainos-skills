@@ -39,7 +39,7 @@ Either way, fund the account with ~300U-equivalent assets before trading begins.
 
 ### Step 3 — Submit
 
-Call `hackathon_register` (MCP: `activity_id` defaults to "5", `chain_index` to "196", `address` auto-resolves; CLI: `onchainos hackathon register …`). See the CLI reference below for flags.
+Call `hackathon_register` (MCP: `address` auto-resolves when omitted; `activity_id`/`chain_index` are fixed internally, not caller-supplied; CLI: `onchainos hackathon register …`). See the CLI reference below for flags.
 
 ### Step 4 — Report the result
 
@@ -58,7 +58,7 @@ Identify the hackathon and agent by name, never by numeric id (`../SKILL.md` Out
 Register the user's Trading ASP for the hackathon. **Requires wallet login.**
 
 ```
-onchainos hackathon register --agent-id <id> --account-type <web3|cefi> [--activity-id <id>] [--address <addr>] [--chain-index <id>] [--uid <uid>]
+onchainos hackathon register --agent-id <id> --account-type <web3|cefi> [--address <addr>] [--uid <uid>]
 ```
 
 **API**: `POST /priapi/v5/wallet/agentic/activity/registration`
@@ -68,12 +68,12 @@ onchainos hackathon register --agent-id <id> --account-type <web3|cefi> [--activ
 |------|----------|---------|-------------|
 | `--agent-id` | Yes | — | Trading ASP agent id (from `agent get-my-agents`). |
 | `--account-type` | Yes | — | `web3` or `cefi` (clap-validated; other values rejected). |
-| `--activity-id` | No | `5` | Hackathon activity id. Default `5` is the current OKX.AI hackathon; override only for a future activity. |
 | `--address` | No | wallet X Layer addr | EVM wallet address. Auto-resolved from the current wallet's X Layer address when omitted (both `web3` and `cefi`). |
-| `--chain-index` | No | `196` | Chain id string. Always `196` (X Layer) for this hackathon. |
 | `--uid` | Conditional | — | OKX UID. **Required when `--account-type cefi`** (CLI bails otherwise). Omitted for `web3`. |
 
-MCP tool `hackathon_register` mirrors these (`activity_id` / `chain_index` / `address` optional with the same defaults).
+The activity id (`5`) and chain index (`196`, X Layer) are **fixed internally** — there is no flag/param to set or override either; they are not exposed to the CLI user or the MCP-calling AI.
+
+MCP tool `hackathon_register` mirrors these (`address` optional, same auto-resolve behavior; no `activity_id`/`chain_index` params).
 
 **Request body** (built automatically): `{ "activityId", "agentId", "chainIndex", "address" }`; `"uid"` is added only for `cefi`.
 

@@ -6,7 +6,7 @@
 A: Three preconditions, all enforced by the backend: (1) it must be a trading-type ASP, (2) it must offer a subscription service, and (3) it must offer a 3-day free trial. The skill asks the user to confirm these before submitting, but the backend is the authoritative check and rejects registration if any is not met.
 
 **Q: Which chain and activity does this register against?**
-A: `--chain-index` defaults to `196` (X Layer) and `--activity-id` defaults to `5` (the current OKX.AI hackathon). Both are overridable flags, but for this hackathon they should stay at the defaults.
+A: X Layer (chain index `196`) and the current OKX.AI hackathon (activity id `5`). Both are fixed internally by the CLI/MCP tool — there is no flag or param to set or see them; they are not part of the CLI/MCP interface at all.
 
 **Q: Do I need to fund my account before I register?**
 A: No — the ~300U-equivalent funding reminder is for before trading begins. `hackathon register` itself does not check or gate on balance.
