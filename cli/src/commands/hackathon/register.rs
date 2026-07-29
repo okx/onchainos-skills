@@ -3,7 +3,7 @@
 //! Public API surface: `POST /priapi/v5/wallet/agentic/activity/registration`
 //! (authenticated; requires wallet login).
 
-use super::Context;
+use crate::commands::Context;
 use crate::client::ApiClient;
 use crate::output;
 use crate::token_alias;
