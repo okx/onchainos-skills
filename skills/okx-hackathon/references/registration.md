@@ -8,10 +8,12 @@ Wallet login is required. If not logged in, route via `../SKILL.md` → Pre-flig
 
 ### Step 1 — Pick the Trading ASP agent
 
-1. List the user's agents: MCP `agent_get_my_agents` (CLI: `onchainos agent get-my-agents --role asp --page-size 20`). `--role asp` filters to Trading ASP agents only; `--page-size 20` avoids the backend's default page size of 5 silently truncating the list (paginate further with `--page` if the user has more than 20 ASPs — do not stop at page 1 and guess).
-2. Present the choices as a numbered list, `0` first for creating a new ASP, then one line per existing ASP showing its **name and agent id** (the id is shown here only, to disambiguate ASPs that share a name — see `../SKILL.md` Output Rules):
+1. List the user's agents: MCP `agent_get_my_agents` (CLI: `onchainos agent get-my-agents --page-size 20`, **no** `--role` filter). `--page-size 20` avoids the backend's default page size of 5 silently truncating the list (paginate further with `--page` if the user has more than 20 agents total — do not stop at page 1 and guess). Fetching unfiltered rather than `--role asp` is deliberate: the response's per-row `roleLabel` lets you compute the total-vs-ASP-eligible split from this one call, which a role-filtered call can't give you.
+2. Split the rows client-side by role — **ASP** (eligible for the hackathon) vs **Evaluator / User** (not eligible; hackathon registration is ASP-only) — then present the summary line followed by the ASP-only numbered list, `0` first for creating a new ASP, then one line per existing ASP showing its **name and agent id** (the id is shown here only, to disambiguate ASPs that share a name — see `../SKILL.md` Output Rules):
 
 ```
+You have <N> agents in total, <M> of which are Trading ASPs (the other <N-M> are Evaluator / User identities and cannot register).
+
 Which Trading ASP would you like to register for the OKX.AI Trading Hackathon?
 
 0. Create a new ASP
@@ -21,6 +23,8 @@ Which Trading ASP would you like to register for the OKX.AI Trading Hackathon?
 
 Reply with a number.
 ```
+
+Translate to the user's language; keep the numbered structure. Do not add a guessed-eligibility hint next to any name (e.g. "this one looks like it qualifies") — the three preconditions in Step 5 are backend-checked and not inferable from a name, and guessing here would contradict this skill's rule against inventing business reasons (Step 4).
 
 3. If the user picks `0`, hand off to ASP creation/registration (`okx-ai` skill) instead of continuing this flow.
 4. Otherwise resolve the reply to the selected `agent_id` and drop the id from every later message — from here on identify the ASP **by name only** (`../SKILL.md` Output Rules).
