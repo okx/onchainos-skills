@@ -9,7 +9,7 @@ A: Three preconditions, all enforced by the backend: (1) it must be a trading-ty
 A: X Layer (chain index `196`) and the current OKX.AI hackathon (activity id `5`). Both are fixed internally by the CLI/MCP tool — there is no flag or param to set or see them; they are not part of the CLI/MCP interface at all.
 
 **Q: Do I need to fund my account before I register?**
-A: No — the ~300U-equivalent funding reminder is for before trading begins. `hackathon register` itself does not check or gate on balance.
+A: No — the >300U-equivalent funding reminder is for before trading begins. `hackathon register` itself does not check or gate on balance.
 
 **Q: What's the difference between `web3` and `cefi` account types?**
 A: `web3` registers using your current wallet's X Layer address (auto-resolved, no UID needed). `cefi` additionally requires your OKX UID via `--uid`; the wallet's X Layer address is still auto-resolved and submitted alongside it. `--account-type` only accepts these two values.

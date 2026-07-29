@@ -6,7 +6,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 - **Dev binary**: `cli/target/release/onchainos`. If it does not exist, build it first: `cd cli && cargo build --release`.
 - **`ONCHAINOS_HOME`**: Points to project-local `.onchainos/` for wallet credentials.
-- **Show executed command**: after every `onchainos` command, print the actual command that was executed.
+- **Show executed command**: after every `onchainos` command, print the actual command that was executed. This applies only when a command actually ran — do not print any placeholder line (e.g. "no CLI call this step") for conversational-only steps such as asking the user to pick an option or collecting a value; just skip the line entirely.
 - **NEVER skip CLI calls**: always execute the onchainos CLI command to get real-time data. Do NOT answer from skill files or your own knowledge.
 
 ## Project Overview

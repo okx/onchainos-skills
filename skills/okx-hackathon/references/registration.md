@@ -8,8 +8,8 @@ Wallet login is required. If not logged in, route via `../SKILL.md` → Pre-flig
 
 ### Step 1 — Pick the Trading ASP agent
 
-1. List the user's agents: MCP `agent_get_my_agents` (CLI: `onchainos agent get-my-agents --page-size 20`, **no** `--role` filter). `--page-size 20` avoids the backend's default page size of 5 silently truncating the list (paginate further with `--page` if the user has more than 20 agents total — do not stop at page 1 and guess). Fetching unfiltered rather than `--role asp` is deliberate: the response's per-row `roleLabel` lets you compute the total-vs-ASP-eligible split from this one call, which a role-filtered call can't give you.
-2. Split the rows client-side by role — **ASP** (eligible for the hackathon) vs **Evaluator / User** (not eligible; hackathon registration is ASP-only) — then present the summary line followed by the ASP-only numbered list, `0` first for creating a new ASP, then one line per existing ASP showing its **name and agent id** (the id is shown here only, to disambiguate ASPs that share a name — see `../SKILL.md` Output Rules):
+1. List the user's agents: `onchainos agent get-my-agents --page-size 20` (**no** `--role` filter; there is no MCP tool for this call — always use the CLI text command). `--page-size 20` avoids the backend's default page size of 5 silently truncating the list (paginate further with `--page` if the user has more than 20 agents total — do not stop at page 1 and guess). Fetching unfiltered rather than `--role asp` is deliberate: the response's per-row `roleLabel` lets you compute the total-vs-ASP-eligible split from this one call, which a role-filtered call can't give you.
+2. Split the rows client-side by role — **strict match on `roleLabel`**: a row is ASP-eligible **only if `roleLabel` is exactly `"ASP"`**. Treat every other case — `"User"`, `"Evaluator"`, any other value, or a row where `roleLabel` is missing/absent entirely — as **not** eligible. Never default a row into the ASP bucket because it "isn't clearly User/Evaluator"; an absent `roleLabel` means exclude it, not include it. Then present the summary line followed by the ASP-only numbered list, `0` first for creating a new ASP, then one line per existing ASP showing its **name and agent id** (the id is shown here only, to disambiguate ASPs that share a name — see `../SKILL.md` Output Rules):
 
 ```
 You have <N> agents in total, <M> of which are Trading ASPs (the other <N-M> are Evaluator / User identities and cannot register).
@@ -55,14 +55,14 @@ Which account should compete?
 1. web3 — your current wallet's X Layer address
 2. cefi — an OKX UID (you will provide the UID)
 
-Either way, fund the account with ~300U-equivalent assets before trading begins.
+Either way, fund the account with >300U-equivalent assets before trading begins.
 
 Reply with a number.
 ```
 
 - Reply `1` (web3) → `--account-type web3`. `--address` auto-resolves to the current wallet's X Layer address; do not ask for it.
 - Reply `2` (cefi) → `--account-type cefi --uid <uid>`. Ask the user for their OKX UID. The wallet's X Layer `--address` is still submitted (auto-resolved), plus the `uid`.
-- The ~300U funding requirement is a **reminder only** — the flow does NOT check the balance and does NOT gate on it.
+- The >300U funding requirement is a **reminder only** — the flow does NOT check the balance and does NOT gate on it.
 
 ### Step 3 — Submit
 
@@ -73,7 +73,7 @@ Call `hackathon_register` (MCP: `address` auto-resolves when omitted; `activity_
 **On success** — output the fixed template (translate to the user's language; keep the chain name verbatim):
 
 ```
-Registered "{agentName}" for the OKX.AI Trading Hackathon on X Layer with your {accountType} account. Good luck! Remember to fund the account with ~300U-equivalent assets before trading begins.
+Registered "{agentName}" for the OKX.AI Trading Hackathon on X Layer with your {accountType} account. Good luck! Remember to fund the account with >300U-equivalent assets before trading begins.
 ```
 
 Identify the hackathon and agent by name, never by numeric id (`../SKILL.md` Output Rules). The wallet address is public and MAY be shown.
