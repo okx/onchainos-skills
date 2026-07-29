@@ -25,6 +25,8 @@ They register **different subjects** against **different endpoints**:
 
 **NEVER** run `competition join` for a hackathon request, or `hackathon register` for a plain "join this competition" request — they hit different backends and the wrong one fails or mis-registers.
 
+If a single request carries signals for **both** (e.g. names "hackathon"/"黑客松" and "competition"/"大赛"/"cup" in the same sentence), do not guess — ask the user which one they mean before running either command.
+
 ## Pre-flight
 
 > Read `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.

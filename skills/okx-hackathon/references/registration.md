@@ -8,7 +8,7 @@ Wallet login is required. If not logged in, route via `../SKILL.md` → Pre-flig
 
 ### Step 1 — Pick the Trading ASP agent
 
-1. List the user's agents: MCP `agent_get_my_agents` (CLI: `onchainos agent get-my-agents --role asp`).
+1. List the user's agents: MCP `agent_get_my_agents` (CLI: `onchainos agent get-my-agents --role asp --page-size 20`). `--role asp` filters to Trading ASP agents only; `--page-size 20` avoids the backend's default page size of 5 silently truncating the list (paginate further with `--page` if the user has more than 20 ASPs — do not stop at page 1 and guess).
 2. Present the choices as a numbered list, `0` first for creating a new ASP, then one line per existing ASP showing its **name and agent id** (the id is shown here only, to disambiguate ASPs that share a name — see `../SKILL.md` Output Rules):
 
 ```
@@ -24,6 +24,7 @@ Reply with a number.
 
 3. If the user picks `0`, hand off to ASP creation/registration (`okx-ai` skill) instead of continuing this flow.
 4. Otherwise resolve the reply to the selected `agent_id` and drop the id from every later message — from here on identify the ASP **by name only** (`../SKILL.md` Output Rules).
+   - If the user's original request already named an ASP (or gave an account type / UID) upfront, still run this list and match it against the name to get a real `agent_id` — never fabricate or guess an id. If the name matches more than one ASP, ask which one (now easy: show the disambiguating options). Do not skip straight to Step 5's confirmation on a one-shot request; still show it explicitly.
 5. Before submitting, confirm the three ASP preconditions with the user (the backend is authoritative and rejects on failure — the skill only pre-confirms so the user is not surprised by a rejection). Keep the ASP's name in the surrounding sentence, not inside the checklist:
 
 ```
@@ -67,7 +68,9 @@ Registered "{agentName}" for the OKX.AI Trading Hackathon on X Layer with your {
 
 Identify the hackathon and agent by name, never by numeric id (`../SKILL.md` Output Rules). The wallet address is public and MAY be shown.
 
-**On failure** — the backend returns a single generic non-zero `code` + a descriptive English `msg` (there is no per-condition code). `**MUST**:` surface that backend `msg` to the user verbatim — it is the authoritative reason (e.g. the ASP is not trading-type, lacks a subscription, or lacks a 3-day trial). Do not paraphrase, translate the machine `msg`, or invent your own reason.
+**On failure** — two different shapes, do not conflate them:
+- **Backend business rejection**: `{ok:false, error:<msg>}` with a descriptive English `msg` from the registration endpoint itself (no per-condition code, single generic non-zero `code`). `**MUST**:` surface that `msg` to the user verbatim — it is the authoritative reason (e.g. the ASP is not trading-type, lacks a subscription, or lacks a 3-day trial). Do not paraphrase, translate the machine `msg`, or invent your own reason.
+- **Transport/HTTP-layer failure**: connection error, timeout, or an HTTP status (404/5xx) instead of a normal API response body. This is NOT a precondition rejection — do not tell the user their ASP failed the trading-type/subscription/trial checks. Tell the user the hackathon registration service is currently unavailable and suggest retrying shortly; do not guess a business reason.
 
 ## CLI / MCP reference — `hackathon register`
 
@@ -104,3 +107,4 @@ For `cefi`, the confirmation additionally echoes `"uid"`.
 - invalid `--address` for the chain → address failed `validate_address_for_chain`; fix and retry.
 - `not logged in` → run `onchainos wallet login`, then retry.
 - backend non-zero `code` (ASP not trading-type / no subscription / no 3-day trial, or other) → surface the backend `msg` verbatim (see Step 4).
+- connection error / non-2xx HTTP status (e.g. `API error (code=404): Not Found`, 5xx, timeout) → transport-layer failure, NOT a precondition rejection; see Step 4's "Transport/HTTP-layer failure" handling — tell the user the service is unavailable, don't blame the ASP's configuration.
