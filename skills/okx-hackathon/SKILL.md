@@ -44,7 +44,9 @@ If the user's intent does not clearly map to either file, ask which they meant b
 
 ## Output Rules
 
-**Never include any internal id (agent id, activity id) in a message produced for the user — under ANY circumstance, in ANY format.** Identify the agent and hackathon EXCLUSIVELY by name.
+**Never include the internal activity id in a message produced for the user — under ANY circumstance, in ANY format.** Identify the hackathon EXCLUSIVELY by name ("OKX.AI Trading Hackathon").
+
+The agent id MAY appear exactly once: in the numbered ASP-selection list (`references/registration.md` Step 1), so the user can tell apart agents that share a name. Do not repeat it in any later message — the confirmation, success, and failure templates identify the chosen agent EXCLUSIVELY by name.
 
 ## Security
 

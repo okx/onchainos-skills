@@ -8,15 +8,31 @@ Wallet login is required. If not logged in, route via `../SKILL.md` → Pre-flig
 
 ### Step 1 — Pick the Trading ASP agent
 
-1. List the user's agents: MCP `agent_get_my_agents` (CLI: `onchainos agent get-my-agents`).
-2. Present the agents by **name** and ask the user which one to register. **NEVER** show the numeric agent id in a user-facing message (internal id — see `../SKILL.md` Output Rules); keep it in the data layer to pass as `--agent-id`.
-3. Before submitting, confirm the three ASP preconditions with the user (the backend is authoritative and rejects on failure — the skill only pre-confirms so the user is not surprised by a rejection):
+1. List the user's agents: MCP `agent_get_my_agents` (CLI: `onchainos agent get-my-agents --role asp`).
+2. Present the choices as a numbered list, `0` first for creating a new ASP, then one line per existing ASP showing its **name and agent id** (the id is shown here only, to disambiguate ASPs that share a name — see `../SKILL.md` Output Rules):
 
 ```
-To register "{agentName}" for the OKX.AI Trading Hackathon, please confirm it is:
-1. a trading-type ASP,
-2. offering a subscription service, and
-3. offering a 3-day free trial.
+Which Trading ASP would you like to register for the OKX.AI Trading Hackathon?
+
+0. Create a new ASP
+1. <name> (ID: <agent_id>)
+2. <name> (ID: <agent_id>)
+...
+
+Reply with a number.
+```
+
+3. If the user picks `0`, hand off to ASP creation/registration (`okx-ai` skill) instead of continuing this flow.
+4. Otherwise resolve the reply to the selected `agent_id` and drop the id from every later message — from here on identify the ASP **by name only** (`../SKILL.md` Output Rules).
+5. Before submitting, confirm the three ASP preconditions with the user (the backend is authoritative and rejects on failure — the skill only pre-confirms so the user is not surprised by a rejection). Keep the ASP's name in the surrounding sentence, not inside the checklist:
+
+```
+Before I submit "<name>", please confirm it:
+
+  ✓ is a trading-type ASP
+  ✓ offers a subscription service
+  ✓ offers a 3-day free trial
+
 Reply "confirm" to proceed.
 ```
 
