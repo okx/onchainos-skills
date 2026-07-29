@@ -767,7 +767,7 @@ fn finalize_rank_all(activity_id: &str, boards: Vec<Value>) -> Result<Value> {
     Ok(json!({ "activityId": activity_id, "boards": boards }))
 }
 
-pub(crate) const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
+const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
 
 /// POST /priapi/v5/wallet/agentic/competition/join — requires wallet login
 pub async fn join(
@@ -1321,7 +1321,15 @@ pub fn load_selected_account_id() -> Result<String> {
 /// logged in, or if either an EVM or SOL address is missing from the
 /// selected account (both are required by the competition backend).
 pub fn resolve_default_addresses() -> Result<(String, String)> {
-    let account = selected_account_entry()?;
+    let wallets = wallet_store::load_wallets()?
+        .ok_or_else(|| anyhow::anyhow!("not logged in — please run: onchainos wallet login"))?;
+    if wallets.selected_account_id.is_empty() {
+        bail!("not logged in — please run: onchainos wallet login");
+    }
+    let account = wallets
+        .accounts_map
+        .get(&wallets.selected_account_id)
+        .ok_or_else(|| anyhow::anyhow!("selected account has no address list — please re-login"))?;
 
     let mut evm: Option<String> = None;
     let mut sol: Option<String> = None;
@@ -1345,21 +1353,6 @@ pub fn resolve_default_addresses() -> Result<(String, String)> {
     Ok((evm, sol))
 }
 
-/// Shared login-check + selected-account lookup for the address resolvers.
-/// Returns the selected account's map entry, or a login/re-login error.
-pub(crate) fn selected_account_entry() -> Result<wallet_store::AccountMapEntry> {
-    let wallets = wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!("not logged in — please run: onchainos wallet login"))?;
-    if wallets.selected_account_id.is_empty() {
-        bail!("not logged in — please run: onchainos wallet login");
-    }
-    wallets
-        .accounts_map
-        .get(&wallets.selected_account_id)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("selected account has no address list — please re-login"))
-}
-
 /// Pre-flight login check for authenticated competition endpoints.
 ///
 /// Long-lived MCP server clients are constructed once via `ApiClient::new()`
@@ -1367,7 +1360,7 @@ pub(crate) fn selected_account_entry() -> Result<wallet_store::AccountMapEntry> 
 /// by the time `join` / `claim` runs. To avoid sharing a stale token, we
 /// always build a fresh `ApiClient::new_async()` here: it has the full JWT
 /// lifecycle (expiry check + refresh + AK fallback) baked in.
-pub(crate) async fn ensure_logged_in_client() -> Result<(String, ApiClient)> {
+async fn ensure_logged_in_client() -> Result<(String, ApiClient)> {
     let account_id = match wallet_store::load_wallets() {
         Ok(Some(w)) if !w.selected_account_id.is_empty() => w.selected_account_id.clone(),
         _ => bail!("not logged in — please run: onchainos wallet login"),
@@ -1594,6 +1587,9 @@ mod tests {
         let b = error_board(3, &anyhow::anyhow!("kaboom"));
         assert_eq!(b["sortType"], 3);
         assert_eq!(b["error"]["code"], "upstream_error");
-        assert!(b["error"]["message"].as_str().unwrap().contains("board 3"));
+        assert!(b["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("board 3"));
     }
 }
