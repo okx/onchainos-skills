@@ -198,7 +198,7 @@ const REDACT_ADDR: &[&str] = &[
     "--wallet",
     "--email",
     "--address",
-    // CeFi user identifier passed to `hackathon register` / `competition register` — mask prefix+suffix.
+    // CeFi user identifier passed to `hackathon register` — mask prefix+suffix.
     "--uid",
     "--sub-id",
     "--new-sub-id",
@@ -739,7 +739,6 @@ fn competition_sub(c: &CompetitionCommand) -> &'static str {
         CompetitionCommand::Join { .. } => "join",
         CompetitionCommand::Claim { .. } => "claim",
         CompetitionCommand::SubmitContact { .. } => "submit-contact",
-        CompetitionCommand::Register { .. } => "register",
     }
 }
 
