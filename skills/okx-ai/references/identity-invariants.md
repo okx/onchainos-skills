@@ -42,7 +42,7 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
 
 ## Fields-from-user (output-safety invariant)
 
-`name` / `description` / `picture` / `service.*` come from the user's **literal reply this turn** — never pre-filled from userEmail, wallet name, or session metadata. Carve-out: you MAY reformat the user's OWN words into the **numbered service description** on separate lines — non-subscription: `1.` core-capability summary · `2.` what the user must provide · `3.` delivery note; subscription-priced: `1.` core-capability summary · `2.` delivery note ("what the user must provide" is omitted) (illustrate, never invent a capability or metric).
+`name` / `description` / `picture` / `service.*` come from the user's **literal reply this turn** — never pre-filled from userEmail, wallet name, or session metadata. Carve-out: you MAY reformat the user's OWN words into the **numbered service description** on separate lines — A2MCP: the request-description three parts (`1.` service description · `2.` request method · `3.` parameter spec — see §A2MCP `serviceDescription` structure); A2A non-subscription: `1.` core-capability summary · `2.` what the user must provide · `3.` delivery note; A2A subscription-priced: `1.` core-capability summary · `2.` delivery note ("what the user must provide" is omitted) (illustrate, never invent a capability or metric).
 
 **Name must be a brand, not a person (semantic QA — register §4):** block any agent name that **contains** a celebrity / public-figure name as a substring, even when prefixed or suffixed (e.g. Trump, Musk, CZ, 马斯克, 马云). This is a semantic check, not a CLI mechanical rule.
 
@@ -68,7 +68,7 @@ Array fields: create/update/get-agents/get-my-agents/search → `list`; feedback
 | key | required | rule |
 |---|---|---|
 | `serviceName` | yes | service name (5–30) |
-| `serviceDescription` | yes | numbered parts on separate lines, each prefixed `1.` / `2.` / `3.`. Part count follows the pricing model: **non-subscription (A2MCP or per-call A2A) → 3 parts** (`1.` core-capability summary · `2.` what the user must provide · `3.` delivery note); **subscription-priced → 2 parts** (`1.` core-capability summary · `2.` delivery note — "what the user must provide" omitted, since a subscription auto-delivers). Recommended: each part ≤200 CJK chars, total ≤600 CJK chars; avoid example prompts / links / tech-stack / disclaimers / profit guarantees. Subscription-priced services (= the trading-signal service, per this skill's convention; non-subscription services are ordinary and skip this): the core-capability part should declare covered markets (only DEX / Polymarket / Hyperliquid) and the delivery note should carry a full-market-name signal example (register §4). **Content quality = advisory (warn, not block); see register §4.** Length is counted in **East-Asian display width** (CJK = 2, ASCII = 1) |
+| `serviceDescription` | yes | numbered parts on separate lines, each prefixed `1.` / `2.` / `3.`. Part count & meaning follow serviceType + pricing model: **A2MCP → 3 parts (request description — see §A2MCP `serviceDescription` structure)**; **A2A non-subscription (per-call) → 3 parts** (`1.` core-capability summary · `2.` what the user must provide · `3.` delivery note); **A2A subscription-priced → 2 parts** (`1.` core-capability summary · `2.` delivery note — "what the user must provide" omitted, since a subscription auto-delivers). Recommended: each part ≤200 CJK chars, total ≤600 CJK chars; avoid example prompts / links / tech-stack / disclaimers / profit guarantees. Subscription-priced services (= the trading-signal service, per this skill's convention; non-subscription services are ordinary and skip this): the core-capability part should declare covered markets (only DEX / Polymarket / Hyperliquid) and the delivery note should carry a full-market-name signal example (register §4). **A2A content quality is advisory (warn, not block; register §4); A2MCP uses the blocking request-description check (§A2MCP `serviceDescription` structure).** Length is counted in **East-Asian display width** (CJK = 2, ASCII = 1) |
 | `serviceType` | yes | raw enum `A2MCP` (API service) or `A2A` (agent to agent) — never the localized label |
 | `fee` | A2MCP yes / A2A: exactly one real price across `fee` & `subscription` | a **plain number as a JSON string**, e.g. `"10"` (quoted — never a bare number `10`). USDT is the implicit, only currency; **no currency suffix/symbol**, ≤6 dp. `"10 USDT"` / `"5元"` → rejected (P1). Both keys are always transmitted; **exactly one** carries a real price — A2A subscription-priced → send an empty `fee` (`""`) alongside the `subscription` (P2 if neither has a price, P6 if both do) |
 | `subscription` | **A2A only** | array of monthly tiers `[{"interval":"month","fee":"10"}]`. `interval` currently limited to `"month"` (P4 otherwise); each tier `fee` follows the same plain-number rule (P5 otherwise). Empty `[]` = no subscription. **Forbidden on A2MCP** (P3). An A2A service carries **exactly one** of `fee` XOR a non-empty `subscription` — never neither (P2), never both (P6). |
@@ -82,6 +82,35 @@ Example (`update` delta — modify one service): `--service '[{"operation":"upda
 Example (A2A, per-call only): `--service '[{"serviceName":"…","serviceDescription":"…","serviceType":"A2A","fee":"0.11"}]'`
 Example (A2A, subscription-priced — empty `fee` for the single price): `--service '[{"serviceName":"…","serviceDescription":"…","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]'`
 Example (A2A, subscription + 3-day free trial): `--service '[{"serviceName":"…","serviceDescription":"…","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}],"freeTrial":"72"}]'`
+
+### A2MCP `serviceDescription` structure (request description) — type-split
+
+When `serviceType == "A2MCP"`, the three numbered storage lines carry a **request description** so buyers and the sandbox know how to call the service. A2A semantics are unchanged (see the `serviceDescription` row above).
+
+| Line | A2MCP meaning | A2A meaning (unchanged) |
+|---|---|---|
+| `1.` | Service description — what the service does | Core-capability summary |
+| `2.` | Request method — `POST` / `GET` or the MCP tool name | What the user must provide (non-sub) / delivery note (sub) |
+| `3.` | Parameter specification — key params: name + meaning + required/optional | Delivery note (non-sub only) |
+
+- **Blocking, not advisory.** All three A2MCP items must be present by meaning (not literal keywords). Any missing → the Skill **blocks** the flow at register §4 / update §4 (wherever `validate-listing` runs; `activate` does not re-run QA). This differs from A2A content quality, which stays advisory (`severity:"warn"`, never blocks `pass`).
+- **Reformat rule.** The `[]`-bracket template below is **display-only fill guidance — never stored verbatim**. When the user supplies content following it, reformat into the `1./2./3.` numbered-line storage structure. Storage format is unchanged.
+- **Overflow tie-break.** When a full per-parameter enumeration cannot fit the per-segment ≤200 CJK cap, concisely listing the key parameters (name + meaning + required/optional) satisfies line `3.`; never block solely because not every parameter is enumerated (length limits are unchanged).
+
+Canonical block copy — register §4 and update §4 both display THIS (single source; render prose in the user's current language, keep machine values like `POST` verbatim):
+
+- **Rejection reason:** "The request description is incomplete — it is missing one or more of: what the service does, the request method, or the parameter specification. Buyers and the sandbox cannot determine how to call this service."
+- **User suggestion:** "In the request description, include all three: (1) what the service does, (2) the request method (POST/GET or tool name), (3) each key parameter's name, meaning, and whether it is required."
+- **Copyable fill template:**
+
+```
+[Service Description] One sentence explaining what this service does
+  Example: Translate input text into a target language
+[Request Method] POST (or GET, or tool name)
+[Parameter Spec] List each parameter: name (type, required/optional): meaning
+  - text (string, required): source text to translate
+  - target_lang (string, required): target language code, e.g. en / zh / ja
+```
 
 **Agent-level vs service-level description (most common mix-up):** the *agent* description is the top-level `--description` flag; each *service* description is the `serviceDescription` key **inside** the `--service` JSON. Different field, different place.
 
