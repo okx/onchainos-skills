@@ -38,10 +38,12 @@ Before I submit "<name>", please confirm it:
   ✓ offers a subscription service
   ✓ offers a 3-day free trial
 
-Reply "confirm" to proceed.
+1. Confirm and submit
+
+Reply 1 to proceed.
 ```
 
-`**SHOULD**:` proceed only after the user confirms (a mis-configured ASP is rejected server-side).
+`**SHOULD**:` proceed only after the user replies `1` (a mis-configured ASP is rejected server-side).
 
 ### Step 2 — Choose the competition account
 
@@ -49,13 +51,17 @@ Ask which account type to register, and include the funding reminder:
 
 ```
 Which account should compete?
-- web3 — your current wallet's X Layer address
-- cefi — an OKX UID (you will provide the UID)
+
+1. web3 — your current wallet's X Layer address
+2. cefi — an OKX UID (you will provide the UID)
+
 Either way, fund the account with ~300U-equivalent assets before trading begins.
+
+Reply with a number.
 ```
 
-- `web3` → `--account-type web3`. `--address` auto-resolves to the current wallet's X Layer address; do not ask for it.
-- `cefi` → `--account-type cefi --uid <uid>`. Ask the user for their OKX UID. The wallet's X Layer `--address` is still submitted (auto-resolved), plus the `uid`.
+- Reply `1` (web3) → `--account-type web3`. `--address` auto-resolves to the current wallet's X Layer address; do not ask for it.
+- Reply `2` (cefi) → `--account-type cefi --uid <uid>`. Ask the user for their OKX UID. The wallet's X Layer `--address` is still submitted (auto-resolved), plus the `uid`.
 - The ~300U funding requirement is a **reminder only** — the flow does NOT check the balance and does NOT gate on it.
 
 ### Step 3 — Submit
