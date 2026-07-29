@@ -815,8 +815,8 @@ fn handle_resolve_with_sessionkey(
             agent_id, relay_event, user_reply, job_id, role,
         ));
     okx_a2a::session_send(&job_id, to_agent_id.as_deref(), &relay_content)?;
-    println!(
-        "▶️ **Resume watching** — re-enter the watch loop per `skills/okx-ai/references/watch-core.md` (preserve the session's sticky `--job-id` if it was started post-publish)."
+    print!(
+        "▶️ **Resume watching** — re-enter the watch loop per `skills/okx-ai/references/watch-core.md` (preserve the session's sticky `--job-id` if it was started post-publish).\n"
     );
     Ok(())
 }
@@ -892,8 +892,8 @@ fn handle_resolve_prompt(
     }
 
     okx_a2a::session_send(&job_id, to_ref, &relay_content)?;
-    println!(
-        "🛑 User reply relayed and consumed — do NOT reuse it (no `resolve-prompt` retry, no future-card reference); wait for a fresh user message, then end the turn."
+    print!(
+        "🛑 User reply relayed and consumed — do NOT reuse it (no `resolve-prompt` retry, no future-card reference); wait for a fresh user message, then end the turn.\n"
     );
     Ok(())
 }
@@ -993,8 +993,8 @@ fn handle_resolve(user_reply: String) -> Result<()> {
         // Nothing left to advance to — just relay and end the turn.
         okx_a2a::session_send(&active.job_id, active.to_agent_id.as_deref(), &relay_content)?;
         write_queue_atomic(&q)?;
-        println!(
-            "🛑 User reply relayed and consumed — do NOT reuse it for future cards; wait for a fresh user message, then end the turn."
+        print!(
+            "🛑 User reply relayed and consumed — do NOT reuse it for future cards; wait for a fresh user message, then end the turn.\n"
         );
     } else {
         // Auto-advance: promote the newest queued entry (LIFO — sort already placed it at

@@ -111,12 +111,12 @@ pub async fn handle_create_subscribe(
         eprintln!("[create-subscribe] providerConfirmStatus response: {confirm_resp}");
     }
 
-    if confirm_resp.is_null() || confirm_resp.as_object().is_none_or(|o| o.is_empty()) {
+    if confirm_resp.is_null() || confirm_resp.as_object().map_or(true, |o| o.is_empty()) {
         bail!("providerConfirmStatus returned empty terms; the service may not support subscription");
     }
 
     let typed_data = &confirm_resp["typedData"];
-    if typed_data.is_null() || typed_data.as_object().is_none_or(|o| o.is_empty()) {
+    if typed_data.is_null() || typed_data.as_object().map_or(true, |o| o.is_empty()) {
         bail!("providerConfirmStatus response missing typedData");
     }
 

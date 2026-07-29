@@ -785,7 +785,11 @@ pub async fn generate_next_action(
             } else if offer_amount.is_empty() {
                 let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenAmount");
                 render_bailout("designation envelope missing `tokenAmount`", &user_notify)
-            } else if let Some(user_token_symbol) = user_token_symbol_opt {
+            } else if user_token_symbol_opt.is_none() {
+                let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenSymbol");
+                render_bailout("designation envelope missing `tokenSymbol`", &user_notify)
+            } else {
+                let user_token_symbol = user_token_symbol_opt.unwrap();
                 // CODE: fetch service catalog and find the designated entry.
                 let matched = crate::commands::agent_commerce::task::common::find_service(agent_id, service_id).await.ok().flatten();
 
@@ -943,9 +947,6 @@ pub async fn generate_next_action(
                         )
                     }
                 }
-            } else {
-                let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenSymbol");
-                render_bailout("designation envelope missing `tokenSymbol`", &user_notify)
             }
         },
 
