@@ -17,6 +17,7 @@ use serde_json::{json, Map, Value};
 use super::Context;
 use crate::client::ApiClient;
 use crate::output;
+use crate::token_alias;
 use crate::wallet_store;
 
 // ── Time formatting helpers ──────────────────────────────────────────
@@ -212,6 +213,27 @@ pub enum CompetitionCommand {
         #[arg(long)]
         contact_value: String,
     },
+    /// Register the user's Trading ASP for a competition (requires wallet login).
+    Register {
+        /// [UNIT: integer] Activity ID; default "5" (this hackathon; B1), overridable.
+        #[arg(long, default_value = "5")]
+        activity_id: String,
+        /// Agent ID of the user's Trading ASP to register. [UNIT: id]
+        #[arg(long)]
+        agent_id: String,
+        /// Account type: "web3" or "cefi"  [UNIT: enum]
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["web3", "cefi"]))]
+        account_type: String,
+        /// [UNIT: address-evm] Wallet address; auto-resolved from wallet X Layer addr when omitted (both web3 & cefi; B2).
+        #[arg(long)]
+        address: Option<String>,
+        /// [UNIT: chain-index] Chain index; always "196" (X Layer) for this hackathon.
+        #[arg(long, default_value = "196")]
+        chain_index: String,
+        /// CeFi user ID (required when --account-type=cefi). [UNIT: id]
+        #[arg(long)]
+        uid: Option<String>,
+    },
 }
 
 pub async fn execute(ctx: &Context, command: CompetitionCommand) -> Result<()> {
@@ -283,6 +305,36 @@ pub async fn execute(ctx: &Context, command: CompetitionCommand) -> Result<()> {
             contact_type,
             contact_value,
         } => submit_contact(&mut client, &activity_id, &contact_type, &contact_value).await?,
+        CompetitionCommand::Register {
+            activity_id,
+            agent_id,
+            account_type,
+            address,
+            chain_index,
+            uid,
+        } => {
+            // Pre-request validation (spec §1), mirroring how `join` resolves
+            // addresses at the caller layer so CLI + MCP can share `register()`.
+            // ② CeFi registration requires a --uid.
+            require_uid_for_cefi(&account_type, uid.as_deref())?;
+            // ① Auto-resolve the wallet's X Layer (EVM) address when omitted
+            //    (both web3 & cefi register on X Layer).
+            let address = match address {
+                Some(a) => a,
+                None => resolve_registration_evm_address()?,
+            };
+            // ③ Validate the (resolved) address for the target chain.
+            token_alias::validate_address_for_chain(&chain_index, &address, "address")?;
+            register(
+                &activity_id,
+                &agent_id,
+                &account_type,
+                &address,
+                &chain_index,
+                uid.as_deref(),
+            )
+            .await?
+        }
     };
     output::success(data);
     Ok(())
@@ -767,7 +819,7 @@ fn finalize_rank_all(activity_id: &str, boards: Vec<Value>) -> Result<Value> {
     Ok(json!({ "activityId": activity_id, "boards": boards }))
 }
 
-pub(crate) const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
+const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
 
 /// POST /priapi/v5/wallet/agentic/competition/join — requires wallet login
 pub async fn join(
@@ -809,6 +861,106 @@ pub async fn join(
         "solAddress": sol_wallet,
         "chainIndex": chain_index,
     }))
+}
+
+/// POST /priapi/v5/wallet/agentic/activity/registration — requires wallet login.
+///
+/// `address` is already resolved by the caller (the `execute()` arm / MCP tool)
+/// and `uid` is already validated for cefi — keeping resolution + validation out
+/// of `register()` lets both callers share it (mirrors how `join` resolves
+/// addresses at the caller layer).
+pub async fn register(
+    activity_id: &str,
+    agent_id: &str,
+    account_type: &str,
+    address: &str,
+    chain_index: &str,
+    uid: Option<&str>,
+) -> Result<Value> {
+    let body = build_registration_body(
+        activity_id,
+        agent_id,
+        account_type,
+        address,
+        chain_index,
+        uid,
+    );
+
+    // Authenticated endpoint. Server-side token revocation (10008) is handled
+    // transparently by `ApiClient::post_with_headers` (force-refresh + retry once).
+    let path = "/priapi/v5/wallet/agentic/activity/registration";
+    let headers = [("OK-ACCESS-PROJECT", PROJECT_HEADER)];
+
+    let (_, mut auth_client) = ensure_logged_in_client().await?;
+    auth_client
+        .post_with_headers(path, &body, Some(&headers))
+        .await?;
+
+    // Backend returns `{code:"0", msg:"success", data:[]}` — construct a useful
+    // confirmation object (like `join`'s `{joined:true,…}`).
+    Ok(build_registration_confirmation(
+        activity_id,
+        agent_id,
+        account_type,
+        address,
+        chain_index,
+        uid,
+    ))
+}
+
+/// Build the registration POST body. `uid` is appended ONLY for cefi accounts
+/// (field-name `activityId` per spec M6). Pure so it is unit-testable.
+fn build_registration_body(
+    activity_id: &str,
+    agent_id: &str,
+    account_type: &str,
+    address: &str,
+    chain_index: &str,
+    uid: Option<&str>,
+) -> Value {
+    let mut body = json!({
+        "activityId": activity_id,
+        "agentId": agent_id,
+        "chainIndex": chain_index,
+        "address": address,
+    });
+    if account_type == "cefi" {
+        body["uid"] = json!(uid);
+    }
+    body
+}
+
+/// Build the success confirmation `Value` returned to `output::success`. cefi
+/// additionally echoes `uid`. Pure so it is unit-testable.
+fn build_registration_confirmation(
+    activity_id: &str,
+    agent_id: &str,
+    account_type: &str,
+    address: &str,
+    chain_index: &str,
+    uid: Option<&str>,
+) -> Value {
+    let mut confirmation = json!({
+        "registered": true,
+        "activityId": activity_id,
+        "agentId": agent_id,
+        "accountType": account_type,
+        "chainIndex": chain_index,
+        "address": address,
+    });
+    if account_type == "cefi" {
+        confirmation["uid"] = json!(uid);
+    }
+    confirmation
+}
+
+/// CeFi registration requires a `--uid`; web3 does not. Pure validation helper
+/// run in the `execute()` arm before any network call.
+fn require_uid_for_cefi(account_type: &str, uid: Option<&str>) -> Result<()> {
+    if account_type == "cefi" && uid.is_none() {
+        bail!("--uid is required for CeFi account registration");
+    }
+    Ok(())
 }
 
 /// POST /priapi/v5/wallet/agentic/competition/claim — requires wallet login.
@@ -1345,9 +1497,24 @@ pub fn resolve_default_addresses() -> Result<(String, String)> {
     Ok((evm, sol))
 }
 
+/// Resolve the selected account's EVM (X Layer) address for competition
+/// registration. Registration is X Layer (EVM) only, so — unlike
+/// `resolve_default_addresses`, which requires BOTH an EVM and a Solana address
+/// — this only needs the EVM one. Mirrors that helper's EVM-resolution rule
+/// (chainIndex != "501" and a `0x`-prefixed address).
+pub fn resolve_registration_evm_address() -> Result<String> {
+    let account = selected_account_entry()?;
+    account
+        .address_list
+        .iter()
+        .find(|a| a.chain_index != "501" && a.address.starts_with("0x"))
+        .map(|a| a.address.clone())
+        .ok_or_else(|| anyhow::anyhow!("could not find an EVM address in the selected account"))
+}
+
 /// Shared login-check + selected-account lookup for the address resolvers.
 /// Returns the selected account's map entry, or a login/re-login error.
-pub(crate) fn selected_account_entry() -> Result<wallet_store::AccountMapEntry> {
+fn selected_account_entry() -> Result<wallet_store::AccountMapEntry> {
     let wallets = wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!("not logged in — please run: onchainos wallet login"))?;
     if wallets.selected_account_id.is_empty() {
@@ -1367,7 +1534,7 @@ pub(crate) fn selected_account_entry() -> Result<wallet_store::AccountMapEntry> 
 /// by the time `join` / `claim` runs. To avoid sharing a stale token, we
 /// always build a fresh `ApiClient::new_async()` here: it has the full JWT
 /// lifecycle (expiry check + refresh + AK fallback) baked in.
-pub(crate) async fn ensure_logged_in_client() -> Result<(String, ApiClient)> {
+async fn ensure_logged_in_client() -> Result<(String, ApiClient)> {
     let account_id = match wallet_store::load_wallets() {
         Ok(Some(w)) if !w.selected_account_id.is_empty() => w.selected_account_id.clone(),
         _ => bail!("not logged in — please run: onchainos wallet login"),
@@ -1594,6 +1761,77 @@ mod tests {
         let b = error_board(3, &anyhow::anyhow!("kaboom"));
         assert_eq!(b["sortType"], 3);
         assert_eq!(b["error"]["code"], "upstream_error");
-        assert!(b["error"]["message"].as_str().unwrap().contains("board 3"));
+        assert!(b["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("board 3"));
+    }
+
+    // ── T1: competition register ─────────────────────────────────────
+
+    const EVM_ADDR: &str = "0x1111111111111111111111111111111111111111";
+
+    #[test]
+    fn register_body_web3_omits_uid() {
+        let body = build_registration_body("5", "agent-42", "web3", EVM_ADDR, "196", None);
+        assert_eq!(body["activityId"], "5");
+        assert_eq!(body["agentId"], "agent-42");
+        assert_eq!(body["chainIndex"], "196");
+        assert_eq!(body["address"], EVM_ADDR);
+        // web3 registration never carries a CeFi uid.
+        assert!(body.get("uid").is_none());
+    }
+
+    #[test]
+    fn register_body_cefi_includes_uid() {
+        let body = build_registration_body("5", "agent-42", "cefi", EVM_ADDR, "196", Some("12345"));
+        assert_eq!(body["activityId"], "5");
+        assert_eq!(body["chainIndex"], "196");
+        assert_eq!(body["address"], EVM_ADDR);
+        // uid is added ONLY for cefi.
+        assert_eq!(body["uid"], "12345");
+    }
+
+    #[test]
+    fn register_confirmation_web3_shape() {
+        let c = build_registration_confirmation("5", "agent-42", "web3", EVM_ADDR, "196", None);
+        assert_eq!(c["registered"], true);
+        assert_eq!(c["activityId"], "5");
+        assert_eq!(c["agentId"], "agent-42");
+        assert_eq!(c["accountType"], "web3");
+        assert_eq!(c["chainIndex"], "196");
+        assert_eq!(c["address"], EVM_ADDR);
+        assert!(c.get("uid").is_none());
+    }
+
+    #[test]
+    fn register_confirmation_cefi_carries_uid() {
+        let c = build_registration_confirmation(
+            "5",
+            "agent-42",
+            "cefi",
+            EVM_ADDR,
+            "196",
+            Some("12345"),
+        );
+        assert_eq!(c["registered"], true);
+        assert_eq!(c["accountType"], "cefi");
+        assert_eq!(c["uid"], "12345");
+    }
+
+    #[test]
+    fn require_uid_for_cefi_missing_uid_errors() {
+        let err = require_uid_for_cefi("cefi", None).expect_err("cefi without uid must error");
+        assert!(err.to_string().contains("--uid is required"));
+    }
+
+    #[test]
+    fn require_uid_for_cefi_web3_ok_without_uid() {
+        assert!(require_uid_for_cefi("web3", None).is_ok());
+    }
+
+    #[test]
+    fn require_uid_for_cefi_cefi_ok_with_uid() {
+        assert!(require_uid_for_cefi("cefi", Some("12345")).is_ok());
     }
 }

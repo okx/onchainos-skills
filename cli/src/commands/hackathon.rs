@@ -3,13 +3,16 @@
 //! Public API surface: `POST /priapi/v5/wallet/agentic/activity/registration`
 //! (authenticated; requires wallet login).
 
-use super::competition::{ensure_logged_in_client, selected_account_entry, PROJECT_HEADER};
 use super::Context;
+use crate::client::ApiClient;
 use crate::output;
 use crate::token_alias;
-use anyhow::Result;
+use crate::wallet_store;
+use anyhow::{bail, Result};
 use clap::Subcommand;
 use serde_json::Value;
+
+const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
 
 #[derive(Subcommand)]
 pub enum HackathonCommand {
@@ -166,6 +169,36 @@ pub fn resolve_registration_evm_address() -> Result<String> {
         .find(|a| a.chain_index != "501" && a.address.starts_with("0x"))
         .map(|a| a.address.clone())
         .ok_or_else(|| anyhow::anyhow!("could not find an EVM address in the selected account"))
+}
+
+/// Shared login-check + selected-account lookup for the address resolver.
+fn selected_account_entry() -> Result<wallet_store::AccountMapEntry> {
+    let wallets = wallet_store::load_wallets()?
+        .ok_or_else(|| anyhow::anyhow!("not logged in — please run: onchainos wallet login"))?;
+    if wallets.selected_account_id.is_empty() {
+        bail!("not logged in — please run: onchainos wallet login");
+    }
+    wallets
+        .accounts_map
+        .get(&wallets.selected_account_id)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("selected account has no address list — please re-login"))
+}
+
+/// Pre-flight login check for the authenticated registration endpoint.
+///
+/// Long-lived MCP server clients are constructed once via `ApiClient::new()`
+/// (sync) and cache the JWT they had at startup — that token may have expired
+/// by the time `register` runs. To avoid sharing a stale token, we always
+/// build a fresh `ApiClient::new_async()` here: it has the full JWT lifecycle
+/// (expiry check + refresh + AK fallback) baked in.
+async fn ensure_logged_in_client() -> Result<(String, ApiClient)> {
+    let account_id = match wallet_store::load_wallets() {
+        Ok(Some(w)) if !w.selected_account_id.is_empty() => w.selected_account_id.clone(),
+        _ => bail!("not logged in — please run: onchainos wallet login"),
+    };
+    let auth_client = ApiClient::new_async(None).await?;
+    Ok((account_id, auth_client))
 }
 
 #[cfg(test)]
