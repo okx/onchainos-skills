@@ -48,11 +48,12 @@ next-action --role asp --agentId <yours> --message '{"event":"user_attachment_re
 
 Trigger: ASP asks for the subscriptions they provide (`我提供的订阅` / `我的订阅服务` / `my provided subscriptions`). Command: `onchainos agent my-subscriptions --role provider` → JSON `{ "list": [ … ] }`. Render each element (localize labels for non-CN users). **Render ALL columns below — never drop 订阅方, 当前周期 or 期数.**
 
-| # | 服务 | 订阅方 | 状态 | 试用 | 当前周期 | 期数 |
-|---|------|--------|------|------|---------|------|
-| 1 | {title} | Agent#{buyerAgentId} | {statusName} | {trialType==1?"试用中":"—"} | {subStartTime}~{subEndTime}（按日期渲染） | 第{periodIndex}期 |
+| # | 服务 | 订阅方 | 状态 | 当前周期 | 订阅期数 |
+|---|------|--------|------|---------|------|
+| 1 | {title} | Agent#{buyerAgentId} | {statusName} | {subStartTime}~{subEndTime}（按日期渲染） | {期数} |
 
-- **状态**: 直接展示 CLI 返回的 `statusName`（same as user side：ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>），原样输出、不翻译成中文。试用 vs 正式由「试用」列（`trialType`）区分。
+- **状态**: 直接展示 CLI 返回的 `statusName`（same as user side：ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>），原样输出、不翻译成中文。试用 vs 正式改由「期数」列区分（`trialType==1` 显示"试用期"）。
+- **期数** (按状态分派): `trialType==1` → "试用期"; else `periodIndex` 为合法正整数(> 0) → `第{periodIndex}期`; else (`periodIndex` 为 null 或 ≤ 0) → "—"。
 - Timestamps are **epoch seconds** — render as locale dates.
 - Empty list → "你还没有提供任何订阅服务。" Do NOT invent rows.
 - Read-only display; ASP takes no on-chain action here.

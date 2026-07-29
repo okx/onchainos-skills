@@ -460,9 +460,15 @@ mod tests {
             .is_ok());
     }
 
+    // Reconciled with master's `validate_budget` after MR !187 review note-9880442
+    // asked to revert the budget change out of this doc-removal MR as out-of-scope.
+    // Master's guard is `budget <= 0.0`, so zero is rejected here. NOTE: MR !150
+    // (discussion d2c53d84) had settled zero-budget as legal (`< 0.0`); re-landing
+    // that zero-budget-allowed behavior belongs in its own dedicated MR, not here.
     #[test]
-    fn validate_budget_zero_ok_negative_err() {
-        assert!(validate_budget(0.0).is_ok());
+    fn validate_budget_rejects_nonpositive_accepts_positive() {
+        assert!(validate_budget(0.0).is_err());
         assert!(validate_budget(-1.0).is_err());
+        assert!(validate_budget(1.0).is_ok());
     }
 }
