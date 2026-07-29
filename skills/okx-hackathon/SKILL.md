@@ -4,7 +4,7 @@ description: "Register a Trading ASP agent for the OKX.AI trading hackathon (交
 license: MIT
 metadata:
   author: okx
-  version: "1.1.0"
+  version: "4.4.1"
   homepage: "https://web3.okx.com"
 ---
 
