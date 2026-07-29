@@ -22,17 +22,18 @@ const CHAIN_INDEX: &str = "196";
 #[derive(Subcommand)]
 pub enum HackathonCommand {
     /// Register the user's Trading ASP for the OKX.AI trading hackathon (requires wallet login).
+    /// Always registers on X Layer — the top-level --chain flag is ignored.
     Register {
-        /// Agent ID of the user's Trading ASP to register. [UNIT: id]
+        /// Agent ID of the user's Trading ASP to register.
         #[arg(long)]
         agent_id: String,
-        /// Account type: "web3" or "cefi"  [UNIT: enum]
+        /// Account type: "web3" or "cefi".
         #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["web3", "cefi"]))]
         account_type: String,
-        /// [UNIT: address-evm] Wallet address; auto-resolved from wallet X Layer addr when omitted (both web3 & cefi; B2).
+        /// Wallet address; auto-resolved from the wallet's X Layer address when omitted (both web3 & cefi).
         #[arg(long)]
         address: Option<String>,
-        /// CeFi user ID (required when --account-type=cefi). [UNIT: id]
+        /// CeFi user ID (required when --account-type=cefi).
         #[arg(long)]
         uid: Option<String>,
     },
