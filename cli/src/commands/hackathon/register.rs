@@ -19,6 +19,9 @@ const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
 const ACTIVITY_ID: &str = "okx-marathon-0730";
 /// Fixed chain index (X Layer) this hackathon registers on — not user-configurable.
 const CHAIN_INDEX: &str = "196";
+/// Solana's chain index. Its addresses are not EVM, so they can never stand in
+/// for the X Layer address the registration submits.
+const SOLANA_CHAIN_INDEX: &str = "501";
 
 /// Accepted `--account-type` values, in the exact spelling both surfaces take.
 const ACCOUNT_TYPES: [&str; 2] = ["web3", "cefi"];
@@ -337,12 +340,29 @@ fn uid_for(request: &RegistrationRequest) -> Option<&str> {
 
 pub fn resolve_registration_evm_address() -> Result<String> {
     let account = selected_account_entry()?;
-    account
-        .address_list
-        .iter()
-        .find(|a| a.chain_index != "501" && a.address.starts_with("0x"))
-        .map(|a| a.address.clone())
+    pick_registration_address(&account.address_list)
         .ok_or_else(|| anyhow::anyhow!("could not find an EVM address in the selected account"))
+}
+
+/// Pick the address to register with: the account's X Layer (`CHAIN_INDEX`)
+/// entry when it has one, otherwise any other EVM address it carries.
+///
+/// An EVM address is shared across EVM chains, so the fallback resolves to the
+/// same string in practice — it only covers an account whose address list does
+/// not enumerate X Layer. Preferring the X Layer entry keeps the submitted value
+/// matching what the skill tells the user it submitted (the current wallet's
+/// X Layer address), instead of "whichever EVM row happens to come first".
+fn pick_registration_address(addresses: &[wallet_store::AddressInfo]) -> Option<String> {
+    let is_evm = |a: &&wallet_store::AddressInfo| a.address.starts_with("0x");
+    addresses
+        .iter()
+        .find(|a| a.chain_index == CHAIN_INDEX && is_evm(a))
+        .or_else(|| {
+            addresses
+                .iter()
+                .find(|a| a.chain_index != SOLANA_CHAIN_INDEX && is_evm(a))
+        })
+        .map(|a| a.address.clone())
 }
 
 /// Shared login-check + selected-account lookup for the address resolver.
@@ -379,6 +399,7 @@ mod tests {
     use super::*;
 
     const EVM_ADDR: &str = "0x1111111111111111111111111111111111111111";
+    const SOL_ADDR: &str = "So11111111111111111111111111111111111111112";
 
     /// Build a request the way both surfaces do, with an explicit address so the
     /// helper never touches the wallet store.
@@ -529,8 +550,9 @@ mod tests {
             .downcast_ref::<CodedError>()
             .expect("classified as a CodedError");
         assert_eq!(coded.code, CODE_REJECTED);
-        // The backend's own wording survives verbatim — it is the authoritative
-        // reason the skill surfaces to the user.
+        // The backend's own wording reaches the caller unaltered — the CLI only
+        // strips its `API error (code=…): ` envelope. The skill translates this
+        // message for the user, so it must arrive complete and unparaphrased.
         assert_eq!(coded.message, "ASP is not a trading-type service");
     }
 
@@ -597,6 +619,48 @@ mod tests {
                 "unexpected error for {raw:?}: {err}"
             );
         }
+    }
+
+    /// Minimal address row — only the two fields the picker reads are set.
+    fn addr_row(chain_index: &str, address: &str) -> wallet_store::AddressInfo {
+        wallet_store::AddressInfo {
+            account_id: String::new(),
+            address: address.to_string(),
+            chain_index: chain_index.to_string(),
+            chain_name: String::new(),
+            address_type: String::new(),
+            chain_path: String::new(),
+        }
+    }
+
+    #[test]
+    fn address_picker_prefers_the_x_layer_row() {
+        // The skill tells the user it submitted their X Layer address, so the
+        // X Layer row wins even when another EVM row is listed first.
+        let rows = [
+            addr_row(SOLANA_CHAIN_INDEX, SOL_ADDR),
+            addr_row("1", "0x2222222222222222222222222222222222222222"),
+            addr_row(CHAIN_INDEX, EVM_ADDR),
+        ];
+        assert_eq!(pick_registration_address(&rows).as_deref(), Some(EVM_ADDR));
+    }
+
+    #[test]
+    fn address_picker_falls_back_to_another_evm_row() {
+        // An account whose list does not enumerate X Layer still registers: EVM
+        // addresses are shared across EVM chains.
+        let rows = [
+            addr_row(SOLANA_CHAIN_INDEX, SOL_ADDR),
+            addr_row("1", EVM_ADDR),
+        ];
+        assert_eq!(pick_registration_address(&rows).as_deref(), Some(EVM_ADDR));
+    }
+
+    #[test]
+    fn address_picker_never_returns_a_non_evm_address() {
+        let solana_only = [addr_row(SOLANA_CHAIN_INDEX, SOL_ADDR)];
+        assert!(pick_registration_address(&solana_only).is_none());
+        assert!(pick_registration_address(&[]).is_none());
     }
 
     #[test]

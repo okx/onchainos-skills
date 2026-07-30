@@ -1,6 +1,6 @@
 ---
 name: okx-hackathon
-description: "Register for the OKX.AI Trading Hackathon (交易黑客松 / OKX.AI 交易黑客松 / 报名黑客松). Use when the user wants to register for / sign up for / enter / 报名 the OKX.AI trading hackathon — e.g. 'Register me for the OKX.AI Trading Hackathon', '帮我报名 OKX.AI 的交易黑客松' — or asks about its entry requirements. The object is always the hackathon itself; this skill never registers or creates an agent identity. Do NOT use for joining a normal trading competition or cup (that is `okx-growth-competition`)."
+description: "Register for the OKX.AI Trading Hackathon (交易黑客松 / OKX.AI 交易黑客松 / 报名黑客松). Use when the user wants to register for / sign up for / enter / 报名 the OKX.AI trading hackathon — e.g. 'Register me for the OKX.AI Trading Hackathon', '帮我报名 OKX.AI 的交易黑客松' — or asks about its entry requirements. The object is always the hackathon itself; this skill never registers or creates an agent identity."
 license: MIT
 metadata:
   author: okx
@@ -24,6 +24,8 @@ This skill never creates an agent identity — it only signs up an ASP that alre
 | Standalone question about eligibility, funding, account types, errors, or "can I do X" — not mid-registration | [faq.md](references/faq.md) |
 
 If the intent maps to neither, ask which they meant — do **not** invent a freeform format.
+
+This skill drives the `onchainos hackathon` subcommand group. **Learn exact syntax from the CLI, not from memory:** run `onchainos hackathon --help` for the subcommand list and `onchainos hackathon register --help` for its flags. The flag table, return fields, and the CLI-side error list live in [registration.md](references/registration.md).
 
 ## Wrong-skill guard
 

@@ -2930,7 +2930,7 @@ Pass `agent_id` (the user's Trading ASP, from a prior `agent get-my-agents` resu
 Both values are lowercase-only; a differently cased or unknown value is rejected, and `uid` is rejected on a \"web3\" registration. \
 When `address` is omitted it auto-resolves the current account's X Layer (EVM) address. \
 Returns `registered: true` plus the echoed registration details (never the OKX UID). \
-On failure, branch on `errorCode`: `hackathon_registration_rejected` is the backend's own eligibility verdict (surface `error` verbatim); `hackathon_service_unavailable` means the request never reached it — retry, and do NOT tell the user their ASP was rejected."
+On failure, branch on `errorCode`: `hackathon_registration_rejected` is the backend's own eligibility verdict (translate `error` into the user's language and show it as the reason, keeping the same condition and required action); `hackathon_service_unavailable` means the request never reached it — retry, and do NOT tell the user their ASP was rejected."
     )]
     async fn hackathon_register(
         &self,

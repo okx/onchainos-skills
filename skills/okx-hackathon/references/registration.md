@@ -51,7 +51,7 @@ Before I submit "<name>", please confirm it:
 Reply 1 to proceed.
 ```
 
-`**SHOULD**:` proceed only after the user replies `1`.
+**SHOULD**: proceed only after the user replies `1` — the confirmation exists so a backend rejection does not come as a surprise.
 
 ### Step 2 — Choose the competition account
 
@@ -86,11 +86,11 @@ Registered "{agentName}" for the OKX.AI Trading Hackathon on X Layer with your {
 
 Identify the hackathon and agent by name, never by an internal id (`../SKILL.md` Output Rules). The wallet address is public and MAY be shown.
 
-**On failure** — two different outcomes. `**MUST**:` branch on the `errorCode` field, never on the wording of `error`:
+**On failure** — two different outcomes. **MUST**: branch on the `errorCode` field, never on the wording of `error` — the wording comes from the backend and changes without notice, while the code is the contract:
 
 | `errorCode` | Meaning | What to say |
 |---|---|---|
-| `hackathon_registration_rejected` | The backend evaluated the ASP and refused it. `error` carries its verbatim reason (e.g. not trading-type, no subscription, no 3-day trial). | Surface `error` **verbatim** — it is the authoritative reason. Do not paraphrase it, translate the machine message, or invent your own reason. |
+| `hackathon_registration_rejected` | The backend evaluated the ASP and refused it. `error` carries the reason (e.g. not trading-type, no subscription, no 3-day trial). | **Translate `error` into the user's language** and show it as the reason — it is authoritative. Translate faithfully: keep the same condition and the same required action, and do **not** soften it, generalise it, add a cause the backend did not give, or swap in one of the checklist items. If a term has no clean translation, keep it in the original alongside the translation. |
 | `hackathon_service_unavailable` | The request never reached the registration logic — connection error, timeout, 5xx, or an HTML error page. | Say the hackathon registration service is currently unavailable and suggest retrying shortly. **Never** tell the user their ASP failed the trading-type / subscription / trial checks — nothing was evaluated. |
 
 Anything else (`invalid_input`, or a plain `{ok:false, error}` with no `errorCode`) is a CLI-side validation failure — see the error list at the end of this file.
