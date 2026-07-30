@@ -34,6 +34,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred`), MPP (`charge` / `session`), and a2a-pay (paymentId). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session/charge, or a paymentId / `a2a_...` link / payment status |
 | okx-dapp-discovery | Third-party DApp discovery + direct plugin routing | User names a specific third-party DApp/protocol (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, …) or asks "what dapps are available" — installs the matching plugin on demand and forwards the prompt to its quickstart |
 | okx-growth-competition | Agentic Wallet exclusive trading competitions: list, join, rank, claim rewards | User asks about trading competitions, wants to join/register for a competition, check leaderboard ranking, or claim competition rewards |
+| okx-hackathon | Register for the OKX.AI Trading Hackathon (交易黑客松) — enters an ASP the user already has; never creates one | User wants to register for / sign up for / enter / 报名 the OKX.AI trading hackathon ("Register me for the OKX.AI Trading Hackathon", "帮我报名 OKX.AI 的交易黑客松"), or mentions "黑客松" / "hackathon" |
 
 ## DApp routing — `okx-dapp-discovery`
 

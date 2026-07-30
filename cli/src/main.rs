@@ -126,7 +126,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::competition::CompetitionCommand,
     },
-    /// Register a Trading ASP agent for the OKX.AI trading hackathon
+    /// Register for the OKX.AI Trading Hackathon with an existing Trading ASP
     Hackathon {
         #[command(subcommand)]
         command: commands::hackathon::HackathonCommand,

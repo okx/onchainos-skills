@@ -696,13 +696,15 @@ struct CompetitionSubmitContactParams {
 // ── Hackathon ───────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct HackathonRegisterParams {
-    /// The user's Trading ASP agent id to register (from a prior `agent get-my-agents` result).
+    /// Agent id of the existing Trading ASP to enter (from a prior `agent get-my-agents` result).
     agent_id: String,
-    /// Account type: "web3" (current wallet's X Layer address) or "cefi" (an OKX UID).
+    /// Account type — exactly "web3" (current wallet's X Layer address) or
+    /// "cefi" (an OKX UID). Lowercase only; any other value is rejected.
     account_type: String,
     /// Optional wallet address. If omitted, auto-resolves the current account's X Layer (EVM) address.
     address: Option<String>,
-    /// OKX UID for the account. Required when `account_type` is "cefi".
+    /// OKX UID for the account. Required when `account_type` is "cefi", and
+    /// rejected when it is "web3".
     uid: Option<String>,
 }
 
@@ -2923,31 +2925,21 @@ Returns `joined: true` plus `activityId` (internal — never show to the user) a
 
     #[tool(
         name = "hackathon_register",
-        description = "Register the user's Trading ASP for the OKX.AI trading hackathon. Requires wallet login. \
-Pass `agent_id` (the user's Trading ASP, from a prior `agent get-my-agents` result) and `account_type` — \"web3\" for the current wallet's X Layer address, or \"cefi\" for an OKX UID (in which case `uid` is REQUIRED). \
+        description = "Enter one of the user's existing Trading ASPs in the OKX.AI trading hackathon. Does NOT create an agent identity. Requires wallet login. \
+Pass `agent_id` (the user's Trading ASP, from a prior `agent get-my-agents` result) and `account_type` — exactly \"web3\" for the current wallet's X Layer address, or exactly \"cefi\" for an OKX UID (in which case `uid` is REQUIRED). \
+Both values are lowercase-only; a differently cased or unknown value is rejected, and `uid` is rejected on a \"web3\" registration. \
 When `address` is omitted it auto-resolves the current account's X Layer (EVM) address. \
-Returns `registered: true` plus the echoed registration details."
+Returns `registered: true` plus the echoed registration details (never the OKX UID). \
+On failure, branch on `errorCode`: `hackathon_registration_rejected` is the backend's own eligibility verdict (surface `error` verbatim); `hackathon_service_unavailable` means the request never reached it — retry, and do NOT tell the user their ASP was rejected."
     )]
     async fn hackathon_register(
         &self,
         Parameters(p): Parameters<HackathonRegisterParams>,
     ) -> Result<String, String> {
-        // CeFi registration requires a uid; validate before any wallet/network
-        // access (mirrors the CLI `execute()` arm ordering).
-        if let Err(e) = hackathon::require_uid_for_cefi(&p.account_type, p.uid.as_deref()) {
-            return err(e);
-        }
-        // Auto-resolve the current account's X Layer (EVM) address when omitted
-        // (both web3 & cefi register on X Layer).
-        let address = match &p.address {
-            Some(a) => a.clone(),
-            None => match hackathon::resolve_registration_evm_address() {
-                Ok(a) => a,
-                Err(e) => return err(e),
-            },
-        };
-        match hackathon::register(&p.agent_id, &p.account_type, &address, p.uid.as_deref()).await
-        {
+        // Validates + resolves through the same helper the CLI arm uses (so this
+        // tool cannot accept anything `onchainos hackathon register` rejects),
+        // and writes the audit entry this path would otherwise skip.
+        match hackathon::register_via_mcp(p.agent_id, &p.account_type, p.address, p.uid).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -3280,17 +3272,56 @@ mod tests {
         assert!(p.uid.is_none());
     }
 
+    const MCP_TEST_ADDR: &str = "0x1111111111111111111111111111111111111111";
+
+    /// Run the handler's validation step and return the `err()` envelope string.
+    fn prepare_err(account_type: &str, uid: Option<&str>) -> String {
+        let e = hackathon::prepare_registration(
+            "agent-123".to_string(),
+            account_type,
+            Some(MCP_TEST_ADDR.to_string()),
+            uid.map(str::to_string),
+        )
+        .expect_err("expected the validation step to reject these params");
+        err(e).expect_err("err() returns the Err variant")
+    }
+
     #[test]
     fn hackathon_register_cefi_without_uid_errors() {
-        // Pure validation (no live backend): run the shared cefi-uid check the
-        // handler runs, then route it through the MCP `err()` envelope exactly as
-        // the handler does, and assert the `--uid` message survives.
-        let e =
-            hackathon::require_uid_for_cefi("cefi", None).expect_err("cefi without uid must error");
-        let envelope = err(e).expect_err("err() returns the Err variant");
+        // Pure validation (no live backend): run the shared check the handler
+        // runs, then route it through the MCP `err()` envelope exactly as the
+        // handler does, and assert the `--uid` message survives.
+        let envelope = prepare_err("cefi", None);
         assert!(
             envelope.contains("--uid is required"),
             "envelope should carry the --uid message, got: {envelope}"
+        );
+    }
+
+    #[test]
+    fn hackathon_register_miscased_cefi_is_rejected_not_downgraded() {
+        // Regression: this tool takes `account_type` as a free-form string (no
+        // clap value_parser in front of it). A wrongly cased "CeFi" used to slip
+        // past the cefi check, drop the uid from the request body, and register a
+        // web3 account instead — the user got a success message for an account
+        // that was never entered.
+        for raw in ["CeFi", "CEFI", "Cefi"] {
+            let envelope = prepare_err(raw, Some("1234567890"));
+            assert!(
+                envelope.contains("invalid account type"),
+                "{raw:?} must be rejected outright, got: {envelope}"
+            );
+        }
+    }
+
+    #[test]
+    fn hackathon_register_web3_with_uid_is_rejected() {
+        // Same failure class in the other direction: a uid on a web3
+        // registration would be silently dropped.
+        let envelope = prepare_err("web3", Some("1234567890"));
+        assert!(
+            envelope.contains("only valid with --account-type cefi"),
+            "envelope should explain the uid/account-type mismatch, got: {envelope}"
         );
     }
 }

@@ -158,6 +158,31 @@ fn hackathon_register_cefi_missing_uid_errors() {
     assert_eq!(output.status.code(), Some(1), "expected exit 1");
 }
 
+/// IT-005b — `--uid` on a `web3` registration is rejected instead of being
+/// silently dropped from the request body (the body carries no account-type
+/// field, so a dropped uid would register the wrong account). Bails in the same
+/// pre-request validation as IT-005, so it stays offline/deterministic.
+#[test]
+fn hackathon_register_web3_with_uid_errors() {
+    let output = onchainos()
+        .args([
+            "hackathon",
+            "register",
+            "--agent-id",
+            "agent-any",
+            "--account-type",
+            "web3",
+            "--uid",
+            "1234567890",
+            "--address",
+            "0x1111111111111111111111111111111111111111",
+        ])
+        .output()
+        .expect("failed to execute");
+    assert_error_contains(&output, &["only valid with --account-type cefi"]);
+    assert_eq!(output.status.code(), Some(1), "expected exit 1");
+}
+
 /// IT-006 — an explicit malformed `--address` fails `validate_address_for_chain`
 /// (chainIndex 196 = EVM) before any network call (exit 1). offline.
 #[test]
