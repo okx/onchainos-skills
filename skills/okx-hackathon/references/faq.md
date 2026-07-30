@@ -29,6 +29,9 @@ A: Read the `errorCode`, not the wording of the message:
 **Q: The registration keeps getting rejected and the message mentions the activity, not my ASP.**
 A: This CLI build is pinned to one specific hackathon. If the backend says the activity is missing, closed, or ended, that hackathon is over — upgrading `onchainos` picks up whatever the current activity is. It is not a problem with the ASP, and there is no flag to point the command at a different activity.
 
+**Q: I have no ASP — can I still register?**
+A: No. Registration needs an ASP that already exists; this skill never creates one. `registration.md` Step 1 has the fixed no-ASP message — use it verbatim (translated) rather than improvising alternatives.
+
 **Q: Can I register more than one agent, or list/update a registration afterward?**
 A: `hackathon register` submits exactly one `--agent-id` per call, and there is no list/update/status subcommand in the current CLI or MCP surface. If asked, say it isn't supported today rather than guessing at a flow that doesn't exist.
 

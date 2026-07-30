@@ -34,6 +34,14 @@ Reply with a number.
 
 Translate to the user's language; keep the numbered structure. Do **not** add a guessed-eligibility hint next to any name (e.g. "this one looks like it qualifies") — the three preconditions are backend-checked and not inferable from a name.
 
+**If `M` is 0** (no ASP, regardless of `N`): skip the list above — output this fixed template alone, then stop.
+
+```
+You don’t have an ASP yet. This hackathon requires a trading ASP. See the [tutorial](https://okg-block.sg.larksuite.com/docx/O9xDdhsCYovTgnxEHMWlK6Dogph) to get started.
+```
+
+Translate the sentence and the link label, but keep the URL byte-for-byte and keep it a link — do not bare-print it, shorten it, or swap in another doc. Add nothing else — no account-switching suggestion, no precondition list, no menu.
+
 3. If the user picks `0`, hand off to ASP creation/registration (`okx-ai` skill) instead of continuing this flow.
 4. Otherwise resolve the reply to the selected `agent_id`, and from here on identify the ASP **by name only** (`../SKILL.md` Output Rules).
    - If the user's original request already named an ASP (or gave an account type / UID) upfront, still run this list and match it against the name to get a real `agent_id` — never fabricate or guess an id. If the name matches more than one ASP, ask which one. Do not skip straight to the confirmation on a one-shot request; still show the list explicitly.
@@ -90,7 +98,7 @@ Identify the hackathon and agent by name, never by an internal id (`../SKILL.md`
 
 | `errorCode` | Meaning | What to say |
 |---|---|---|
-| `hackathon_registration_rejected` | The backend evaluated the ASP and refused it. `error` carries the reason (e.g. not trading-type, no subscription, no 3-day trial). | **Translate `error` into the user's language** and show it as the reason — it is authoritative. Translate faithfully: keep the same condition and the same required action, and do **not** soften it, generalise it, add a cause the backend did not give, or swap in one of the checklist items. If a term has no clean translation, keep it in the original alongside the translation. |
+| `hackathon_registration_rejected` | The backend evaluated the ASP and refused it. `error` carries the reason (e.g. not trading-type, no subscription, no 3-day trial). | **Translate `error` into the user's language** and show it as the reason — it is authoritative. Keep its condition and required action intact; do not soften, generalise, or swap in a different cause. |
 | `hackathon_service_unavailable` | The request never reached the registration logic — connection error, timeout, 5xx, or an HTML error page. | Say the hackathon registration service is currently unavailable and suggest retrying shortly. **Never** tell the user their ASP failed the trading-type / subscription / trial checks — nothing was evaluated. |
 
 Anything else (`invalid_input`, or a plain `{ok:false, error}` with no `errorCode`) is a CLI-side validation failure — see the error list at the end of this file.
@@ -114,7 +122,7 @@ onchainos hackathon register --agent-id <id> --account-type <web3|cefi> [--addre
 
 The activity id and chain index (X Layer, `196`) are **fixed internally** — no flag or param sets, overrides, or returns either. MCP tool `hackathon_register` mirrors the flags above (same `address` auto-resolve; no `activity_id` / `chain_index` params) and runs the **same validation**: both surfaces share one validator, so neither accepts anything the other rejects.
 
-Success returns `{ "registered": true, "agentId", "accountType", "chainIndex", "address" }`. The OKX UID is **never** echoed back — it is submitted, redacted in the audit log, and not returned. When you print the executed command, mask it (`--uid <hidden>`); never paste the raw UID into the conversation.
+Success returns `{ "registered": true, "agentId", "accountType", "chainIndex", "address" }` — no `uid`; it is submitted and redacted in the audit log, never returned (masking rule: `../SKILL.md` Output Rules).
 
 **CLI-side errors** (backend rejections and transport failures are handled in Step 4):
 - `--uid is required for CeFi account registration` → collect the UID and retry.
@@ -124,4 +132,4 @@ Success returns `{ "registered": true, "agentId", "accountType", "chainIndex", "
 - `--agent-id is required` / `contains control characters` / `is too long` → the id was blank or mangled; re-run Step 1 and take the id from the list rather than retyping it.
 - `not logged in` → run `onchainos wallet login`, then retry.
 
-A blank or whitespace-only `--uid` counts as **not supplied** — it does not satisfy `cefi`, and it does not trip the `web3` rule. If the user sends an empty reply when asked for their UID, ask again; do not submit.
+A blank or whitespace-only `--uid` counts as **not supplied** — if the user replies empty when asked for their UID, ask again rather than submitting.
