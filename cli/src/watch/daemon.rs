@@ -1,9 +1,10 @@
+use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use hmac::{Hmac, Mac};
@@ -12,7 +13,7 @@ use sha2::Sha256;
 use tokio::time::{interval, sleep, timeout};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use super::store::{append_events, read_config, write_pid, write_status};
+use super::store::{append_events, write_pid, write_status};
 use super::types::{channel_pattern, ChannelPattern, WatchConfig, WatchEnv};
 
 const WS_URL_PROD: &str = "wss://wsdex.okx.com/ws/v6/dex";
@@ -86,23 +87,39 @@ impl Credentials {
     }
 }
 
+/// Load the persisted `WatchConfig` from `dir/config.json`.
+///
+/// On a read or parse failure the config is treated as corrupt: a
+/// `config_corrupt` status is written via [`write_status`] so `ws poll`/`ws
+/// list` surface the fault, and an `Err` is returned. The daemon must NOT
+/// silently substitute a default config — doing so would resubscribe to the
+/// wrong channels and mask on-disk corruption (spec §3 / §8.5 #11).
+fn load_daemon_config(dir: &Path) -> Result<WatchConfig> {
+    let path = dir.join("config.json");
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read watch config: {}", path.display()))?;
+    match serde_json::from_str::<WatchConfig>(&raw) {
+        Ok(config) => Ok(config),
+        Err(e) => {
+            let _ = write_status(dir, "config_corrupt", Some("config_corrupt"));
+            Err(anyhow::anyhow!(
+                "watch config is corrupt ({}): {}",
+                path.display(),
+                e
+            ))
+        }
+    }
+}
+
 /// Entry point for the daemon process. Runs until stopped.
-pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
+///
+/// `_id` is retained for call-site symmetry with the session identifier; the
+/// on-disk layout is fully addressed by `dir` (== `watch_dir(id)`).
+pub async fn run_daemon(_id: &str, dir: &Path) -> Result<()> {
     write_pid(dir, std::process::id())?;
     write_status(dir, "running", None)?;
 
-    let config = read_config(id).unwrap_or_else(|_| WatchConfig {
-        channels: super::types::DEFAULT_CHANNELS
-            .iter()
-            .map(|c| c.to_string())
-            .collect(),
-        wallet_addresses: vec![],
-        token_pairs: vec![],
-        chain_indexes: vec![],
-        env: WatchEnv::Prod,
-        created_at: 0,
-        idle_timeout_ms: 30 * 60 * 1000,
-    });
+    let config = load_daemon_config(dir)?;
 
     // Heartbeat writer: every 10s overwrite status so poll can detect crashes.
     // Also checks idle timeout — signals main loop to exit gracefully.
@@ -382,4 +399,74 @@ struct WsPush {
 #[derive(Deserialize)]
 struct WsPushArg {
     channel: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Create a unique empty temp directory under `target/test_tmp/watch_daemon/`.
+    fn test_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("watch_daemon")
+            .join(name);
+        if dir.exists() {
+            fs::remove_dir_all(&dir).ok();
+        }
+        fs::create_dir_all(&dir).ok();
+        dir
+    }
+
+    fn valid_config_json() -> String {
+        serde_json::json!({
+            "channels": ["kol_smartmoney-tracker-activity"],
+            "wallet_addresses": [],
+            "token_pairs": [],
+            "chain_indexes": [],
+            "env": "prod",
+            "created_at": 0,
+            "idle_timeout_ms": 60000
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn corrupt_config_writes_config_corrupt_status_and_returns_err() {
+        let dir = test_dir("corrupt_config");
+        // Non-JSON garbage → serde_json parse failure.
+        fs::write(dir.join("config.json"), "{ this is not valid json ]").unwrap();
+
+        let result = load_daemon_config(&dir);
+        assert!(result.is_err(), "corrupt config must return Err");
+
+        // The `config_corrupt` status must have been written so poll/list surface it.
+        let status = fs::read_to_string(dir.join("status")).expect("status file must exist");
+        assert!(
+            status.starts_with("config_corrupt|"),
+            "status must be config_corrupt, got: {status}"
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn valid_config_parses_ok_without_status_write() {
+        let dir = test_dir("valid_config");
+        fs::write(dir.join("config.json"), valid_config_json()).unwrap();
+
+        let config = load_daemon_config(&dir).expect("valid config must parse");
+        assert_eq!(config.channels, vec!["kol_smartmoney-tracker-activity"]);
+        assert_eq!(config.env, WatchEnv::Prod);
+        assert_eq!(config.idle_timeout_ms, 60000);
+
+        // Valid path must not write a corruption status.
+        assert!(
+            !dir.join("status").exists(),
+            "valid config must not write a config_corrupt status"
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
 }

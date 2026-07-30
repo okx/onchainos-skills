@@ -367,7 +367,7 @@ async fn ws_start(
     cmd.args(["ws", "run-daemon", "--id", &id]);
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::null());
-    let log_file = std::fs::File::create(dir.join("daemon.log"))?;
+    let log_file = create_daemon_log(&dir.join("daemon.log"))?;
     cmd.stderr(std::process::Stdio::from(log_file));
 
     #[cfg(windows)]
@@ -390,6 +390,23 @@ async fn ws_start(
         "dir": dir.to_string_lossy()
     }));
     Ok(())
+}
+
+/// Create (or open in append mode) the daemon log file.
+///
+/// `daemon.log` is a plain-text log that may contain address fragments, so it is
+/// treated as sensitive and created with mode `0o600` on Unix. Append mode is used
+/// (not truncate/overwrite) because a restarted daemon should keep appending to the
+/// same log; this rules out an atomic write-and-rename.
+fn create_daemon_log(path: &std::path::Path) -> Result<std::fs::File> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    Ok(opts.open(path)?)
 }
 
 // ── poll ─────────────────────────────────────────────────────────────────────
@@ -711,4 +728,24 @@ async fn run_daemon_entry(id: &str) -> Result<()> {
         bail!("session dir for '{}' does not exist", id);
     }
     crate::watch::daemon::run_daemon(id, &dir).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn create_daemon_log_is_0600_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("daemon.log");
+
+        let file = create_daemon_log(&path).unwrap();
+        drop(file);
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "daemon.log must be created with mode 0o600");
+    }
 }
