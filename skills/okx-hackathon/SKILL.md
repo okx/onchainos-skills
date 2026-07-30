@@ -1,6 +1,6 @@
 ---
 name: okx-hackathon
-description: "Register for the OKX.AI Trading Hackathon (交易黑客松 / OKX.AI 交易黑客松 / 报名黑客松). Use when the user wants to register for / sign up for / enter / 报名 the OKX.AI trading hackathon — e.g. 'Register me for the OKX.AI Trading Hackathon', '帮我报名 OKX.AI 的交易黑客松' — or asks about its entry requirements. The object is always the hackathon itself; this skill never registers or creates an agent identity."
+description: "Register for the OKX.AI Trading Hackathon (交易黑客松 / OKX.AI 交易黑客松 / 报名黑客松). Use when the user wants to register for / sign up for / enter / 报名 the OKX.AI trading hackathon — e.g. 'Register me for the OKX.AI Trading Hackathon', '帮我报名 OKX.AI 的交易黑客松' — or asks about its entry requirements. The object is always the hackathon itself — it enters a Trading ASP the user already has."
 license: MIT
 metadata:
   author: okx
