@@ -35,7 +35,7 @@ Which ASP would you like to register for the OKX.AI Trading Hackathon?
 
 Reply with a number.
 
-Want a new trading ASP that meets the entry requirements instead? [See the tutorial](https://web3.okx.com/zh-hans/onchainos/dev-docs/okxai/how-to-become-a2a) to get started.
+Want a new trading ASP that meets the entry requirements instead? [See the tutorial](https://web3.okx.com/onchainos/dev-docs/okxai/how-to-become-a2a) to get started.
 ```
 
 Keep `Reply with a number.` on its own line, as the last thing before the hint: it is the primary action, and folding the create hint into the same line buries it. The hint is a **separate trailing paragraph** — never a numbered row, never above the list.
@@ -43,7 +43,7 @@ Keep `Reply with a number.` on its own line, as the last thing before the hint: 
 The hint's Chinese rendering is **pinned** — same product-mandated copy as the no-ASP branch below, so use it exactly rather than re-translating:
 
 ```
-想要新创建符合参赛要求的交易类 ASP，[参考教程](https://web3.okx.com/zh-hans/onchainos/dev-docs/okxai/how-to-become-a2a)开始创建。
+想要新创建符合参赛要求的交易类 ASP，[参考教程](https://web3.okx.com/onchainos/dev-docs/okxai/how-to-become-a2a)开始创建。
 ```
 
 Translate the rest to the user's language; keep the numbered structure, and keep the URL byte-for-byte as a link. Do **not** add a guessed-eligibility hint next to any name (e.g. "this one looks like it qualifies") — the three preconditions are backend-checked and not inferable from a name.
@@ -51,13 +51,13 @@ Translate the rest to the user's language; keep the numbered structure, and keep
 **If `M` is 0** (no ASP, regardless of `N`): skip the list above — output this fixed template alone, then stop. This branch is terminal, so enter it **only** after Step 1's Fallback has ruled out all three of its cases — an error envelope, a missing or failed `jq`, and a shape mismatch.
 
 ```
-You don’t have an ASP yet. Please create a trading ASP that meets the entry requirements first. [See the tutorial](https://web3.okx.com/zh-hans/onchainos/dev-docs/okxai/how-to-become-a2a) to get started.
+You don’t have an ASP yet. Please create a trading ASP that meets the entry requirements first. [See the tutorial](https://web3.okx.com/onchainos/dev-docs/okxai/how-to-become-a2a) to get started.
 ```
 
 The Chinese rendering is **pinned** — product-mandated copy, so use it exactly rather than re-translating the English:
 
 ```
-你还没有 ASP。请先创建符合参赛要求的交易类 ASP。[参考教程](https://web3.okx.com/zh-hans/onchainos/dev-docs/okxai/how-to-become-a2a)开始创建。
+你还没有 ASP。请先创建符合参赛要求的交易类 ASP。[参考教程](https://web3.okx.com/onchainos/dev-docs/okxai/how-to-become-a2a)开始创建。
 ```
 
 For any other language, translate the English above. Either way: keep the URL byte-for-byte, keep it a link, and add nothing — no account-switching suggestion, no precondition list, no menu.
@@ -88,8 +88,8 @@ Ask which account type to register, and include the funding reminder:
 ```
 Which account should compete?
 
-1. web3 — your current wallet's X Layer address
-2. cefi — Enter your UID. For CeFi accounts, only USDT perpetual trading pairs will be counted. We recommend using a dedicated sub-account UID to avoid existing assets in your main account affecting the PnL% calculation.
+1. web3 — Use your current Agentic Wallet address.
+2. cefi — Enter your OKX UID. For CeFi accounts, only USDT perpetual trading pairs will be counted. We recommend using a dedicated sub-account UID to avoid existing assets in your main account affecting the PnL% calculation.
 
 Either way, fund the account with >300U-equivalent assets before trading begins.
 
