@@ -38,10 +38,10 @@ Translate to the user's language; keep the numbered structure. Do **not** add a 
 **If `M` is 0** (no ASP, regardless of `N`): skip the list above — output this fixed template alone, then stop. This branch is terminal, so enter it **only** after the Step 1 fallback check has ruled out a shape mismatch.
 
 ```
-You don’t have an ASP yet. This hackathon requires a trading ASP. See the [tutorial](https://okg-block.sg.larksuite.com/docx/O9xDdhsCYovTgnxEHMWlK6Dogph) to get started.
+You don’t have an ASP yet. This hackathon requires a trading ASP. See the [tutorial](https://www.okx.ai/tutorial/asp) to get started.
 ```
 
-Translate the sentence and the link label, but keep the URL byte-for-byte and keep it a link — do not bare-print it, shorten it, or swap in another doc. Add nothing else — no account-switching suggestion, no precondition list, no menu.
+Translate it, keeping the tutorial a link. Add nothing — no account-switching suggestion, no precondition list, no menu.
 
 3. If the user picks `0`, hand off to ASP creation/registration (`okx-ai` skill) instead of continuing this flow.
 4. Otherwise resolve the reply to the selected `agent_id`, and from here on identify the ASP **by name only** (`../SKILL.md` Output Rules).
