@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Result};
@@ -6,6 +6,30 @@ use anyhow::{bail, Result};
 use crate::home::onchainos_home;
 
 use super::types::{DohBinaryResponse, DohChecksum, DohNode};
+
+/// Lexically resolve `.`/`..` components without touching the filesystem (the
+/// target may not exist yet, e.g. before a fresh download, so `Path::canonicalize`
+/// isn't usable here). Without this, `Path::starts_with` performs a purely
+/// component-prefix comparison and does NOT resolve `..`, so
+/// `<home>/../../etc/evil` lexically starts with `<home>` despite resolving
+/// outside it — defeating the `onchainos_home()` boundary check below.
+fn normalize_lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir) | None => {}
+                _ => out.push(component),
+            },
+            Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
 
 const BINARY_NAME: &str = "okx-pilot";
 
@@ -37,14 +61,27 @@ fn binary_filename() -> &'static str {
 }
 
 /// Returns the path to `~/.onchainos/bin/okx-pilot` (or `okx-pilot.exe` on Windows).
-/// Overridable via `OKX_DOH_BINARY_PATH` env var.
-pub fn binary_path() -> Option<PathBuf> {
+/// Overridable via `OKX_DOH_BINARY_PATH` env var, but the override **must resolve to a
+/// path under `onchainos_home()`** — an outside-home value is rejected (spec §3 env table,
+/// §5.4 #6, §8.7; strict `starts_with` prefix check, no allowlist).
+///
+/// Returns `Ok(None)` when the home directory cannot be determined and no override is set;
+/// returns `Err` when the override resolves outside `onchainos_home()`.
+pub fn binary_path() -> Result<Option<PathBuf>> {
     if let Ok(p) = std::env::var("OKX_DOH_BINARY_PATH") {
-        return Some(PathBuf::from(p));
+        let resolved = PathBuf::from(p);
+        let home = onchainos_home()?;
+        if !normalize_lexical(&resolved).starts_with(normalize_lexical(&home)) {
+            bail!(
+                "OKX_DOH_BINARY_PATH must resolve to a path under {}",
+                home.display()
+            );
+        }
+        return Ok(Some(resolved));
     }
-    onchainos_home()
+    Ok(onchainos_home()
         .ok()
-        .map(|h| h.join("bin").join(binary_filename()))
+        .map(|h| h.join("bin").join(binary_filename())))
 }
 
 /// Maps Rust compile target to CDN platform string.
@@ -80,7 +117,7 @@ pub async fn download_binary() -> Result<()> {
     let platform =
         cdn_platform().ok_or_else(|| anyhow::anyhow!("unsupported platform for doh binary"))?;
 
-    let dest = binary_path().ok_or_else(|| anyhow::anyhow!("cannot determine binary path"))?;
+    let dest = binary_path()?.ok_or_else(|| anyhow::anyhow!("cannot determine binary path"))?;
 
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
@@ -178,7 +215,7 @@ pub async fn exec_doh_binary(
     exclude: &[String],
     user_agent: Option<&str>,
 ) -> Option<DohNode> {
-    let bin = binary_path()?;
+    let bin = binary_path().ok().flatten()?;
     if !bin.exists() {
         return None;
     }
@@ -232,12 +269,22 @@ mod tests {
     use crate::home::TEST_ENV_MUTEX;
 
     #[test]
-    fn binary_path_respects_env_override() {
+    fn binary_path_respects_env_override_under_home() {
         let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        std::env::set_var("OKX_DOH_BINARY_PATH", "/tmp/custom-doh");
-        let path = binary_path().expect("should return Some");
-        assert_eq!(path, PathBuf::from("/tmp/custom-doh"));
+        std::env::set_var("ONCHAINOS_HOME", "/tmp/test_onchainos_doh_env");
+        std::env::set_var(
+            "OKX_DOH_BINARY_PATH",
+            "/tmp/test_onchainos_doh_env/custom-doh",
+        );
+        let path = binary_path()
+            .expect("under-home override should be Ok")
+            .expect("should return Some");
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/test_onchainos_doh_env/custom-doh")
+        );
         std::env::remove_var("OKX_DOH_BINARY_PATH");
+        std::env::remove_var("ONCHAINOS_HOME");
     }
 
     #[test]
@@ -245,11 +292,47 @@ mod tests {
         let _lock = TEST_ENV_MUTEX.lock().unwrap();
         std::env::remove_var("OKX_DOH_BINARY_PATH");
         std::env::set_var("ONCHAINOS_HOME", "/tmp/test_onchainos_doh");
-        let path = binary_path().expect("should return Some");
+        let path = binary_path()
+            .expect("default resolution should be Ok")
+            .expect("should return Some");
         assert_eq!(
             path,
             PathBuf::from(format!("/tmp/test_onchainos_doh/bin/{}", binary_filename()))
         );
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn binary_path_rejects_env_override_outside_home() {
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        std::env::set_var("ONCHAINOS_HOME", "/tmp/test_onchainos_doh_boundary");
+        std::env::set_var("OKX_DOH_BINARY_PATH", "/tmp/evil");
+        let err = binary_path().expect_err("outside-home override must be rejected");
+        assert!(
+            err.to_string().contains("must resolve to a path under"),
+            "unexpected error message: {err}"
+        );
+        std::env::remove_var("OKX_DOH_BINARY_PATH");
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn binary_path_rejects_dotdot_traversal_outside_home() {
+        // Regression: `<home>/../../etc/evil` lexically starts with `<home>`
+        // under a naive `Path::starts_with` check even though it resolves
+        // outside it. `normalize_lexical` must catch this.
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        std::env::set_var("ONCHAINOS_HOME", "/tmp/test_onchainos_doh_traversal");
+        std::env::set_var(
+            "OKX_DOH_BINARY_PATH",
+            "/tmp/test_onchainos_doh_traversal/../../etc/evil",
+        );
+        let err = binary_path().expect_err("dot-dot traversal outside home must be rejected");
+        assert!(
+            err.to_string().contains("must resolve to a path under"),
+            "unexpected error message: {err}"
+        );
+        std::env::remove_var("OKX_DOH_BINARY_PATH");
         std::env::remove_var("ONCHAINOS_HOME");
     }
 

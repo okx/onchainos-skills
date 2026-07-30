@@ -1,5 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 
+use anyhow::Result;
+
 use super::types::{DohCacheEntry, DohMode, DohNode, FailedNode};
 use super::{binary, cache};
 
@@ -51,11 +53,21 @@ impl DohManager {
         }
     }
 
-    /// Called before first request: reads cache if available.
-    pub fn prepare(&mut self) {
+    /// Called before first request: validates env-var overrides and reads cache.
+    ///
+    /// Returns `Err` when `OKX_DOH_BINARY_PATH` resolves outside
+    /// `onchainos_home()` (spec §8.7 — external-path rejection must fire
+    /// *before* any network call, not lazily inside `handle_failure`).
+    pub fn prepare(&mut self) -> Result<()> {
         if self.custom_base_url || self.resolved {
-            return;
+            return Ok(());
         }
+
+        // Eagerly validate OKX_DOH_BINARY_PATH boundary before the first
+        // network call so an outside-home value is rejected with exit 1
+        // rather than silently swallowed during a later failover attempt.
+        binary::binary_path()?;
+
         self.resolved = true;
 
         if let Some(entry) = cache::read_cache(&self.domain) {
@@ -65,6 +77,7 @@ impl DohManager {
             }
             self.node = entry.node.clone();
         }
+        Ok(())
     }
 
     /// Called on network failure. Returns true if a new proxy node was found and state updated.
@@ -102,7 +115,11 @@ impl DohManager {
         }
 
         // Ensure binary exists (download if needed)
-        let bin_exists = binary::binary_path().map(|p| p.exists()).unwrap_or(false);
+        let bin_exists = binary::binary_path()
+            .ok()
+            .flatten()
+            .map(|p| p.exists())
+            .unwrap_or(false);
         if !bin_exists && binary::download_binary().await.is_err() {
             self.retried = true;
             return false;
@@ -286,9 +303,10 @@ mod tests {
         let _lock = TEST_ENV_MUTEX.lock().unwrap();
         let dir = test_dir("prepare_no_cache");
         std::env::set_var("ONCHAINOS_HOME", &dir);
+        std::env::remove_var("OKX_DOH_BINARY_PATH");
 
         let mut mgr = DohManager::new("web3.okx.com", "https://web3.okx.com", false);
-        mgr.prepare();
+        mgr.prepare().unwrap();
 
         assert!(mgr.mode.is_none());
         assert!(mgr.resolved);
@@ -302,6 +320,7 @@ mod tests {
         let _lock = TEST_ENV_MUTEX.lock().unwrap();
         let dir = test_dir("prepare_cached_proxy");
         std::env::set_var("ONCHAINOS_HOME", &dir);
+        std::env::remove_var("OKX_DOH_BINARY_PATH");
 
         let entry = DohCacheEntry {
             mode: DohMode::Proxy,
@@ -316,7 +335,7 @@ mod tests {
         cache::write_cache("web3.okx.com", &entry);
 
         let mut mgr = DohManager::new("web3.okx.com", "https://web3.okx.com", false);
-        mgr.prepare();
+        mgr.prepare().unwrap();
 
         assert_eq!(mgr.mode, Some(DohMode::Proxy));
         assert_eq!(mgr.node.as_ref().unwrap().ip, "1.2.3.4");
@@ -331,6 +350,7 @@ mod tests {
         let _lock = TEST_ENV_MUTEX.lock().unwrap();
         let dir = test_dir("prepare_cached_direct");
         std::env::set_var("ONCHAINOS_HOME", &dir);
+        std::env::remove_var("OKX_DOH_BINARY_PATH");
 
         let entry = DohCacheEntry {
             mode: DohMode::Direct,
@@ -341,7 +361,7 @@ mod tests {
         cache::write_cache("web3.okx.com", &entry);
 
         let mut mgr = DohManager::new("web3.okx.com", "https://web3.okx.com", false);
-        mgr.prepare();
+        mgr.prepare().unwrap();
 
         assert_eq!(mgr.mode, Some(DohMode::Direct));
         assert!(mgr.node.is_none());
@@ -355,7 +375,7 @@ mod tests {
         let mgr_custom = DohManager::new("web3.okx.com", "https://custom.example.com", true);
         // prepare does nothing when custom_base_url is true
         let mut mgr = mgr_custom;
-        mgr.prepare();
+        mgr.prepare().unwrap();
         assert!(!mgr.resolved);
         assert!(mgr.mode.is_none());
     }
