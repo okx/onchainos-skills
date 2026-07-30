@@ -45,9 +45,9 @@ Trading presets (slippage / gas):
 | Stablecoin | USDC/USDT/DAI | autoSlippage (ref 0.1%–0.3%) | `average` |
 | Large Trade | priceImpact ≥10% AND value ≥$1,000 AND pair liquidity ≥$10,000 | autoSlippage | `average` |
 
-**Step 3 — Quote.** `onchainos swap quote --from <addr> --to <addr> --readable-amount <amt> --chain <chain>`. Display expected output, gas, price impact, routing path. Check `isHoneyPot` and `taxRate` and surface them. Run the MEV assessment below.
+**Step 3 — Quote.** `onchainos swap quote --from <addr> --to <addr> --readable-amount <amt> --chain <chain>`. Display expected output, gas, price impact, routing path. The CLI appends `action` (`ok` / `warn` / `block`) and `reason` to each route (SW2, always-on) — read those and surface them; do not re-derive risk from raw `isHoneyPot` / `taxRate`. Run the MEV assessment below.
 
-**Step 4 — User confirmation.** Price impact >5% → warn prominently. Honeypot on buy → BLOCK. If >10s pass before the user confirms, re-fetch the quote; if price diff ≥ slippage → warn and re-confirm.
+**Step 4 — User confirmation.** Price impact >5% → warn prominently. Any route with `action: block` → halt and show its `reason`, do NOT broadcast; `action: warn` → surface the `reason` and ask. If >10s pass before the user confirms, re-fetch the quote; if price diff ≥ slippage → warn and re-confirm.
 
 **Step 5 — Execute.** `onchainos swap execute --from <addr> --to <addr> --readable-amount <amt> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection] [--force]`. CLI handles approve + sign + broadcast. Returns `approveTxHash?`, `swapTxHash`, `fromAmount`, `toAmount`, `priceImpact`, `gasUsed`, `nextSteps`. On error, see [swap-troubleshooting.md](swap-troubleshooting.md) (error-retry table, incl. risk-warning 81362 `--force` gate).
 
@@ -68,10 +68,14 @@ Use `nextSteps.checkSwapStatus` verbatim. After Reply 1, if `txStatus` is not `S
 
 ## Risk Controls
 
+**CLI-classified (SW2, always-on).** `swap quote` / `swap swap` append `action` (`ok` / `warn` / `block`) and `reason` to every route by combining the trade direction (buy vs sell) with honeypot and high-tax (`taxRate > 10%`) signals — read `action` only, never re-derive the verdict from raw `isHoneyPot` / `taxRate` (exit code stays 0 — classification, not rejection).
+
+Respond: `block` → halt, require an explicit override; `warn` → surface the `reason` and ask; `ok` → proceed. You may still show the exact `taxRate` from the route for display; the verdict itself comes from `action`.
+
+**Agent-side signals (not classified by the CLI).** Judge these yourself from quote data / security scans:
+
 | Risk Item | Buy | Sell | Notes |
 |---|---|---|---|
-| Honeypot (`isHoneyPot=true`) | BLOCK | WARN (allow exit) | Selling allowed for stop-loss |
-| High tax rate (>10%) | WARN | WARN | Display exact tax rate |
 | No quote available | CANNOT | CANNOT | Unlisted / zero liquidity |
 | Black/flagged address | BLOCK | BLOCK | Flagged by security services |
 | New token (<24h) | WARN | PROCEED | Extra caution on buy — require explicit confirmation |

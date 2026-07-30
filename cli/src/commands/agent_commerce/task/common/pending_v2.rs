@@ -594,6 +594,72 @@ fn handle_request_prompt(
     llm_content: Option<String>,
     source_event: Option<String>,
 ) -> Result<()> {
+    request_prompt_inner(
+        job_id, role, agent_id, to_agent_id, user_content, list_label, llm_content,
+        source_event, true,
+    )
+}
+
+/// In-process direct push for CLI code that must guarantee a decision card
+/// reaches the user **without an LLM copy-running `decision_command`** — the
+/// autotrade consent-replay guidance historically didn't cover the decision
+/// outcome, so a replayed signal's follow-up card (plugin-install / over-cap)
+/// was silently dropped. Same enqueue+push semantics as
+/// `pending-decisions-v2 request`, minus the `OK` stdout line (callers print
+/// their own JSON envelope).
+pub(crate) fn push_decision_direct(
+    job_id: &str,
+    role: &str,
+    agent_id: &str,
+    user_content: &str,
+    list_label: &str,
+    source_event: &str,
+) -> Result<()> {
+    request_prompt_inner(
+        job_id.to_string(),
+        role.to_string(),
+        agent_id.to_string(),
+        None,
+        user_content.to_string(),
+        list_label.to_string(),
+        None,
+        Some(source_event.to_string()),
+        false,
+    )
+}
+
+/// A decision's relay target can never be the issuer themself. LLMs following
+/// the re-ask guidance ("with the same --to-agent-id") were observed filling
+/// their OWN agentId when the original card had none — the relay then looks up
+/// session `my:X:to:X`, which never exists ("No sessions found"), dead-ending
+/// the decision. Self-addressed targets are normalized to None (= the job's
+/// backup session), which is also what the original card used.
+fn sanitize_to_agent(to_agent_id: Option<String>, agent_id: &str) -> Option<String> {
+    match to_agent_id {
+        Some(t) if t == agent_id => {
+            eprintln!(
+                "[pending-v2] --to-agent-id {t} equals --agent-id (self-addressed) — ignored; \
+                 routing to the job's backup session instead"
+            );
+            None
+        }
+        other => other,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn request_prompt_inner(
+    job_id: String,
+    role: String,
+    agent_id: String,
+    to_agent_id: Option<String>,
+    user_content: String,
+    list_label: String,
+    llm_content: Option<String>,
+    source_event: Option<String>,
+    print_ok: bool,
+) -> Result<()> {
+    let to_agent_id = sanitize_to_agent(to_agent_id, &agent_id);
     let user_content = user_content.replace("\\n", "\n");
     let cli_mode = is_cli_mode();
     trace_log(&format!(
@@ -620,7 +686,9 @@ fn handle_request_prompt(
         let llm_content = resolve_llm_content_cli(&entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
-        println!("OK");
+        if print_ok {
+            println!("OK");
+        }
         return Ok(());
     }
 
@@ -662,7 +730,9 @@ fn handle_request_prompt(
         let llm_content = resolve_llm_content_prompt_user(entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
-        println!("OK");
+        if print_ok {
+            println!("OK");
+        }
         Ok(())
     }
 }
@@ -709,6 +779,13 @@ fn handle_resolve_with_sessionkey(
         "handle_resolve_with_sessionkey: job_id={} role={} agent_id={} to_agent_id={:?} source_event={} user_reply={:?}",
         job_id, role, agent_id, to_agent_id, source_event, user_reply,
     ));
+    // Rescue path for cards already issued with a poisoned self-addressed target:
+    // normalizing here means answering such a card again still relays correctly.
+    let to_agent_id = sanitize_to_agent(to_agent_id, &agent_id);
+    // Deterministic language capture: the verbatim reply is the one place the
+    // CLI reliably sees the user's own words — CLI-rendered copy downstream
+    // (direct-pushed decision cards, swap self-notify) renders in this language.
+    super::user_lang::record_from_user_text(&job_id, &user_reply);
     let relay_event = format!("user_decision_{}", source_event);
     let description = format!(
         "User-decision relay envelope (CLI mode). Call `onchainos agent next-action \
@@ -762,6 +839,10 @@ fn handle_resolve_prompt(
         "handle_resolve_prompt: job_id={} role={} agent_id={} to_agent_id={:?} source_event={} user_reply={:?}",
         job_id, role, agent_id, to_agent_id, source_event, user_reply,
     ));
+    // Same self-addressed-target rescue as `handle_resolve_with_sessionkey`.
+    let to_agent_id = sanitize_to_agent(to_agent_id, &agent_id);
+    // Same deterministic language capture as `handle_resolve_with_sessionkey`.
+    super::user_lang::record_from_user_text(&job_id, &user_reply);
     let relay_event = format!("user_decision_{}", source_event);
     let description = format!(
         "User-decision relay envelope (queue-backed prompt mode). Call `onchainos agent next-action \
@@ -850,6 +931,8 @@ fn handle_resolve(user_reply: String) -> Result<()> {
     };
 
     let active = q.entries.remove(active_idx);
+    // Same deterministic language capture as the sessionkey/prompt resolve variants.
+    super::user_lang::record_from_user_text(&active.job_id, &user_reply);
     // Relay content is a system-shaped envelope: same JSON skeleton the chain
     // uses for events (`source: "system"`, `event`, `jobId`, ...), so the
     // receiving sub session can dispatch it via its existing `next-action`
@@ -1627,4 +1710,18 @@ fn indent(s: &str, prefix: &str) -> String {
         .map(|l| format!("{}{}", prefix, l))
         .collect::<Vec<_>>()
         .join("\n")
+}
+#[cfg(test)]
+mod sanitize_tests {
+    use super::sanitize_to_agent;
+
+    #[test]
+    fn self_addressed_target_normalizes_to_backup() {
+        // The 8315→8315 "No sessions found" bug: an LLM re-ask filled its own
+        // agentId as the counterparty. Self must normalize to None (backup).
+        assert_eq!(sanitize_to_agent(Some("8315".into()), "8315"), None);
+        // Real counterparty passes through; None stays None.
+        assert_eq!(sanitize_to_agent(Some("4941".into()), "8315"), Some("4941".into()));
+        assert_eq!(sanitize_to_agent(None, "8315"), None);
+    }
 }

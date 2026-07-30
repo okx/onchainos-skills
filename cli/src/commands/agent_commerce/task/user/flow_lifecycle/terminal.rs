@@ -112,31 +112,6 @@ pub(crate) async fn close_task(ctx: &FlowContext<'_>) -> String {
     }
 }
 
-pub(crate) async fn set_public(ctx: &FlowContext<'_>) -> String {
-    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-
-    let set_public_notify = super::super::content::set_public_user_notify(job_id);
-
-    let mut client = TaskApiClient::new();
-    match super::super::changepublic::handle_set_public(&mut client, job_id, Some(agent_id)).await {
-        Ok(()) => format!(
-            "**You MUST notify the user; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
-             **Notify the user the task is now public via `onchainos agent user-notify`:**\n\
-             **Localize first** — translate the canonical English content below.\n\
-             ```bash\n\
-             onchainos agent user-notify --content '<your translated content>'\n\
-             ```\n\
-             Canonical English content: \"{set_public_notify}\"\n"
-        ),
-        Err(e) => format!(
-            "[set_public] `onchainos agent set-public {job_id}` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
-        ),
-    }
-}
-
 // --- Other events ------------------------------------------------------
 
 pub(crate) fn reward_claimed(ctx: &FlowContext<'_>) -> String {

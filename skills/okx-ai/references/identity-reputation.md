@@ -2,7 +2,7 @@
 Loaded when: the intent is "view reviews / reputation #N". (Rating/scoring an agent is not offered by this skill.)
 
 The CLI converts wire scores back to 0.00–5.00 stars on read. You render the CLI's review list
-verbatim; never do score arithmetic skill-side (SKILL §Gates).
+verbatim; never do score arithmetic skill-side (identity-invariants.md §Verbatim-render contract).
 
 ---
 
@@ -20,8 +20,8 @@ Agent #42 — DeFi Analyzer (ASP) · ★ 4.45 (18 reviews)
 
 Per item: `#<i> · <date> · reviewer #<id> (<role label> <name>) · ★ <stars>`
 - Stars DIRECT — no `score/20`, never the raw 0–100.
-- Reviewer slot literal is **"reviewer"** — NEVER "creator" (§Invariants).
-- Role label per §Invariants Lexicon (never the raw enum).
+- Reviewer slot literal is **"reviewer"** — NEVER "creator" (identity-invariants.md §Lexicon).
+- Role label per identity-invariants.md §Lexicon (never the raw enum).
 - Description in quotes when present; empty / missing → `(no comment)`.
 
 ```

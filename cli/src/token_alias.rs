@@ -164,6 +164,18 @@ static TOKEN_MAP: LazyLock<HashMap<&str, HashMap<&str, &str>>> = LazyLock::new(|
     ])
 });
 
+/// Whether `alias` has a mapping on `chain_index` (case-insensitive). Lets
+/// callers pick a fallback BEFORE baking an alias into a command — e.g. the
+/// auto copy-trade quote preference falls back to `usdc` on chains whose
+/// table carries no `usdt` entry (Base, Polygon), instead of emitting an
+/// alias that `resolve_token_address` would pass through unresolved.
+pub fn has_alias(chain_index: &str, alias: &str) -> bool {
+    let key = alias.to_ascii_lowercase();
+    TOKEN_MAP
+        .get(chain_index)
+        .is_some_and(|m| m.contains_key(key.as_str()))
+}
+
 /// Resolve a token address using the chain-specific mapping table.
 /// Matching is case-insensitive. If no match is found, returns the original
 /// value unchanged.

@@ -36,15 +36,14 @@ pub struct CreateTaskParams {
     pub max_budget: f64,
     pub currency: String,
     pub title: Option<String>,
-    pub provider: Option<String>,
+    pub provider: String,
     pub attachments: Option<Vec<String>>,
     pub endpoint: Option<String>,
-    pub payment_mode: Option<String>,
-    pub service_id: Option<String>,
+    pub payment_mode: String,
+    pub service_id: String,
     pub service_params: Option<String>,
     pub service_token_address: Option<String>,
     pub service_token_amount: Option<String>,
-    pub visibility: i32,
 }
 
 struct ValidatedParams {
@@ -87,11 +86,11 @@ impl CreateTaskParams {
             None => self.description.chars().take(MAX_SUMMARY_CHARS).collect(),
         };
 
-        if self.visibility != 0 && self.visibility != 1 {
-            bail!("--visibility must be 0 (public) or 1 (private), got {}", self.visibility);
+        if self.provider.trim().is_empty() {
+            bail!("A designated provider is required. Use asp-match to find a provider first.");
         }
-        if self.visibility == 1 && self.provider.is_none() {
-            bail!("visibility=1 (private) requires --provider; either set a provider or use --visibility 0 (public)");
+        if self.service_id.trim().is_empty() {
+            bail!("A service id is required. Use asp-match to find a service first.");
         }
 
         if let Some(ref files) = self.attachments {
@@ -121,8 +120,8 @@ pub fn normalize_currency(currency: &str) -> Result<String> {
 }
 
 pub fn validate_budget(budget: f64) -> Result<()> {
-    if budget < 0.0 {
-        bail!("budget must not be negative");
+    if budget <= 0.0 {
+        bail!("budget must be a positive amount (greater than 0)");
     }
     if budget > MAX_BUDGET {
         bail!("per-task budget may not exceed {} USDT/USDG", MAX_BUDGET as u64);
@@ -196,15 +195,14 @@ pub async fn handle_create(
         "paymentTokenAmount": params.budget.to_string(),
         "paymentMostTokenAmount": params.max_budget.to_string(),
         "chainId":            XLAYER_CHAIN_ID,
-        "paymentMode":        PaymentMode::parse_flag(params.payment_mode.as_deref())?,
-        "visibility":         params.visibility
+        "paymentMode":        PaymentMode::parse_flag(Some(&params.payment_mode))?,
+        // Public task type removed: always private. The backend still owns the
+        // visibility field (Phase 2 migration is backend-side), so keep sending
+        // the constant private value rather than dropping it from the body.
+        "visibility":         1
     });
-    if let Some(ref provider_id) = params.provider {
-        body["providerAgentId"] = serde_json::json!(provider_id);
-    }
-    if let Some(ref sid) = params.service_id {
-        body["serviceId"] = serde_json::json!(sid);
-    }
+    body["providerAgentId"] = serde_json::json!(params.provider);
+    body["serviceId"] = serde_json::json!(params.service_id);
     if let Some(ref sp) = params.service_params {
         body["serviceParams"] = serde_json::json!(sp);
     }
@@ -229,9 +227,11 @@ pub async fn handle_create(
     // Save designated-provider BEFORE broadcast: job_created event fires
     // on-chain during broadcast and may be processed by the agent before
     // sign_uop_and_broadcast returns — the file must already exist.
-    if let Some(ref provider_id) = params.provider {
-        super::negotiate::save_designated_provider_with_endpoint(&job_id, provider_id, params.endpoint.as_deref())?;
-    }
+    super::negotiate::save_designated_provider_with_endpoint(
+        &job_id,
+        &params.provider,
+        params.endpoint.as_deref(),
+    )?;
     let provider_prebind = common::a2a_binding::bind_job_provider_to_current_runtime(&job_id).await;
 
     let tx_hash = match signing::sign_uop_and_broadcast(
@@ -259,8 +259,8 @@ pub async fn handle_create(
             format!("currency={}", validated.currency),
             format!("budget={}", params.budget),
             format!("maxBudget={}", params.max_budget),
-            format!("designatedProvider={}", params.provider.as_deref().unwrap_or("")),
-            format!("paymentMode={}", params.payment_mode.as_deref().unwrap_or("unset")),
+            format!("designatedProvider={}", params.provider),
+            format!("paymentMode={}", params.payment_mode),
             format!("txHash={tx_hash}"),
         ]),
         None,
@@ -269,7 +269,8 @@ pub async fn handle_create(
     println!("✓ Task publish in progress (transaction broadcast, awaiting on-chain confirmation)");
     println!("  jobId:  {job_id}");
     println!("  txHash: {tx_hash}");
-    if let Some(ref provider_id) = params.provider {
+    if !params.provider.is_empty() {
+        let provider_id = &params.provider;
         println!("  Designated provider: {provider_id}");
     }
     println!();
@@ -284,11 +285,7 @@ pub async fn handle_create(
     // following [Watch] block. Native push clients (Hermes / OpenClaw) still get
     // the hint since a human reads it directly.
     if !super::content::is_cli_mode() {
-        if params.provider.is_some() {
-            println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
-        } else {
-            println!("Next: wait for the on-chain confirmation; the task is public — ASPs will discover it and apply.");
-        }
+        println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
     }
     if super::content::is_cli_mode() {
         println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
@@ -422,16 +419,56 @@ pub(crate) fn validate_draft_fields(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_budget;
+    use super::*;
 
-    // Regression test migrated from the (now-deleted) draft.rs test module
-    // when the draft feature was removed on master (WBW-13520). draft.rs held
-    // the only coverage of validate_budget in the repo. Guards the semantics
-    // settled in MR !150 discussion d2c53d84: a zero budget is legal; only a
-    // negative budget is rejected.
+    fn params_with_provider(provider: String) -> CreateTaskParams {
+        CreateTaskParams {
+            description: "a long enough description text for the task".to_string(),
+            description_summary: None,
+            budget: 10.0,
+            max_budget: 20.0,
+            currency: "USDT".to_string(),
+            title: Some("t".to_string()),
+            provider,
+            attachments: None,
+            endpoint: None,
+            payment_mode: "escrow".to_string(),
+            service_id: "svc-1".to_string(),
+            service_params: None,
+            service_token_address: None,
+            service_token_amount: None,
+        }
+    }
+
     #[test]
-    fn validate_budget_zero_ok_negative_err() {
-        assert!(validate_budget(0.0).is_ok());
+    fn validate_requires_designated_provider() {
+        let err = params_with_provider(String::new())
+            .validate()
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            err.contains("A designated provider is required"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_with_provider() {
+        assert!(params_with_provider("agent-1".to_string())
+            .validate()
+            .is_ok());
+    }
+
+    // Reconciled with master's `validate_budget` after MR !187 review note-9880442
+    // asked to revert the budget change out of this doc-removal MR as out-of-scope.
+    // Master's guard is `budget <= 0.0`, so zero is rejected here. NOTE: MR !150
+    // (discussion d2c53d84) had settled zero-budget as legal (`< 0.0`); re-landing
+    // that zero-budget-allowed behavior belongs in its own dedicated MR, not here.
+    #[test]
+    fn validate_budget_rejects_nonpositive_accepts_positive() {
+        assert!(validate_budget(0.0).is_err());
         assert!(validate_budget(-1.0).is_err());
+        assert!(validate_budget(1.0).is_ok());
     }
 }

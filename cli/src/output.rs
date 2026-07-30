@@ -50,6 +50,25 @@ pub fn success<T: Serialize>(data: T) {
     println!("{}", to_agent_json(&out).unwrap());
 }
 
+// ── Bespoke top-level `{ok,reason?}` (autotrade-grant-check) ──────────────
+//
+// A deliberately-frozen process contract (cli_command_spec.md / architecture.md
+// §6): the polymarket plugin reads ONLY the top-level `ok`, so this must NOT be
+// wrapped in the standard `data` envelope. The prints live here (not in the
+// handler) so exit-code centralization stays in main.rs and the println-JSON
+// lint — which whitelists output.rs — is satisfied.
+
+/// Bespoke allow: `{"ok":true}` (no `data` wrapper, no notifications).
+pub fn bespoke_ok() {
+    println!("{}", serde_json::json!({ "ok": true }));
+}
+
+/// Bespoke deny: `{"ok":false,"reason":"<process-level reason>"}`.
+/// NFR-3: `reason` must be a process-level description only — never file content.
+pub fn bespoke_deny(reason: &str) {
+    println!("{}", serde_json::json!({ "ok": false, "reason": reason }));
+}
+
 /// Print an error response: `{ "ok": false, "error": "<msg>" }`
 pub fn error(msg: &str) {
     let out: JsonOutput<()> = JsonOutput {

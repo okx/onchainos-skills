@@ -114,6 +114,8 @@ The session ends when §Stop condition fires, or when the user starts a **new** 
 
   **Recovery if a watch already ended up in the background** (accidental `run_in_background: true`, or a foreground-timeout re-route): the output is delivered as a background-task notification you must still relay to the user. Full recovery flow (locate output-file → dispatch items → `TaskStop` → restart in foreground): see [`watch-background-recovery.md`](watch-background-recovery.md).
 
+- 🛑 **If your harness cannot keep the call blocking** (it auto-backgrounds long commands or hands back a session/task handle instead of the output — some runtimes, e.g. Codex, do this after ~30s), **you must keep waiting on that handle in the SAME turn** and read its result the moment it completes: render the returned items immediately, then re-enter watch. Never park a returned-but-unread watch result until the user's next message — watch is a destructive read, and every item it returned is invisible to the user until you render it; leaving it unread turns a real-time monitor into "shows up whenever the user happens to type" (observed adding ~48s of pure display latency). If the harness offers no way to await the handle, poll/read that handle's output as your immediate next action — do not start unrelated work in between.
+
 ## Dispatch by `kind`
 
 A returned item is always one of two `kind`s, handled completely differently.
@@ -202,5 +204,5 @@ After processing all returned items, **always** call `okx-a2a user watch --json`
 - Watch returned 0 items (empty result / long-poll elapsed with no new events) — re-enter watch and keep waiting.
 - **Mid-flow markers that look terminal but are NOT** — these are intermediate notifications; keep watching even in scoped session. Common offenders:
   - `[Deliverable Received]` / `[x402 Deliverable Received]` / `[x402 交付物已接收]` — payment settled + deliverable in hand, but the real terminal marker is `[x402 Job Completed]`.
-  - `[Job Accepted]` / `[Payment Mode Set]` / `[Connecting ASP]` / `[Job Created]` / `[Visibility Changed]` / `[x402 Replay Failed]` / `[Rejection Confirmed]` / `[📝 Rating Submitted]` — all mid-flow status updates, never terminal on their own.
+  - `[Job Accepted]` / `[Payment Mode Set]` / `[Connecting ASP]` / `[Job Created]` / `[x402 Replay Failed]` / `[Rejection Confirmed]` / `[📝 Rating Submitted]` — all mid-flow status updates, never terminal on their own.
   - **Rule of thumb**: if the marker is not in the literal list under §Stop condition, it is NOT a stop signal — re-enter watch unconditionally.

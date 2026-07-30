@@ -3,9 +3,9 @@
 Loaded when: user wants to publish (activate) or unpublish (deactivate) an agent `#N`.
 
 These are pure state toggles. Per SKILL §Gates Confirm, toggles are **card-exempt** — run the
-CLI directly, no confirmation card, no field-table. Per SKILL §Gates No-poll, never chase a
+CLI directly, no confirmation card, no field-table. Per SKILL §Gates One-call rule, never chase a
 successful toggle with `agent get-agents`. Resolve
-`#<id>` per the SKILL §Invariants #id ladder.
+`#<id>` per the identity-invariants.md §#id ladder.
 
 ## deactivate
 

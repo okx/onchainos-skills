@@ -1,10 +1,10 @@
 # Discover — search · list my agents · detail · service-list
 Loaded when: search/find agents · list my agents · detail #N · "what services does #N offer".
 
-Render per SKILL §Invariants (Lexicon, Card skeleton, Verbatim-render contract). The CLI computes the
+Render per identity-invariants.md (§Lexicon, §Card skeleton, §Verbatim-render contract). The CLI computes the
 labels/stars; you render its output and never re-divide a score or hand-map an enum. One intent = one
-CLI call (SKILL §Gates No-poll); never grep/jq/parse the JSON or read your own tool-result files —
-re-issue the CLI instead (SKILL §Gates No-shell-stitching).
+CLI call (SKILL §Gates One-call rule); never grep/jq/parse the JSON or read your own tool-result files —
+re-issue the CLI instead (SKILL §Gates One-call rule).
 
 ## Routing nuances (decide before calling)
 - "my <descriptor> agents" / any ownership word → **list** = `agent get-my-agents` + client-side group/filter,
@@ -25,7 +25,7 @@ re-sort, no second call to "improve" results.
 
 Each row carries a ready `cells[]` (`Agent ID | Name | Rating | Min price | Top service`) — rating
 (`feedbackRate` direct, `null`→`—` / `0`→`No rating yet`), min-price, and top-service are already
-resolved. **Render `cells` verbatim** (SKILL §Invariants Verbatim-render contract).
+resolved. **Render `cells` verbatim** (identity-invariants.md §Verbatim-render contract).
 
 ```
 > Search: `"<user's original utterance, verbatim>"`
@@ -35,7 +35,7 @@ resolved. **Render `cells` verbatim** (SKILL §Invariants Verbatim-render contra
 |---|---|---|---|---|
 | <cells, in order, verbatim — one row per list[*]> |
 
-> Service types: API service = pay-per-call, fixed price; agent to agent = negotiated / off-chain pricing.
+> Service types: API service = pay-per-call, fixed price; agent to agent = per-call or monthly-subscription pricing (one or the other).
 > N results total. Say "detail #42" for details; "what services does #42 offer" for services; "reviews #42" for its reputation.
 ```
 
@@ -59,7 +59,7 @@ resolved. **Render `cells` verbatim** (SKILL §Invariants Verbatim-render contra
 
 Rows arrive at `list[*]`; each row carries `accountName`, `ownerAddress`, and a ready `cells[]` (with
 `roleLabel`/`statusLabel`/`ratingStars` already resolved). **Group by `accountName`** — one header + table
-per group; render `cells` **verbatim** per SKILL §Invariants Verbatim-render contract (no hand-mapped
+per group; render `cells` **verbatim** per identity-invariants.md §Verbatim-render contract (no hand-mapped
 role/status integers, no raw 0–100 score).
 
 ```
@@ -84,7 +84,7 @@ role/status integers, no raw 0–100 score).
 ## detail — `agent get-agents --agent-ids N`
 
 The response is a flat array of agents (one per id), each carrying a ready `card[]` of `{label,value}` with `roleLabel`/`statusLabel`/`approvalLabel`
-resolved — **identity rows only**. Render the `card` rows **verbatim** (SKILL §Invariants Verbatim-render
+resolved — **identity rows only**. Render the `card` rows **verbatim** (identity-invariants.md §Verbatim-render
 contract). The agent-list card does **not** inline services or rating. **ASP → chain exactly ONE
 `agent service-list --agent-id N`** and render the §service-list table beneath the card; user / evaluator
 → no chain. Reviews come via the prompt below — never auto-chain `feedback-list`, never invent a Rating row.
@@ -112,21 +112,24 @@ contract). The agent-list card does **not** inline services or rating. **ASP →
 
 ## service-list — `agent service-list --agent-id N`
 
-Single 6-column table; values verbatim. Service-type gloss once per table (wording per §Invariants Lexicon).
+Single 8-column table; values verbatim. Service-type gloss once per table (wording per identity-invariants.md §Lexicon).
 
 ```
 > Agent #<id> — <name> (<role label>) services:
 
-| # | Name | Type | Fee | Endpoint | Description |
-|---|---|---|---|---|---|
-| 1 | <name> | <localized type> | <fee> | <endpoint> | <description> |
+| # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description |
+|---|---|---|---|---|---|---|---|
+| 1 | <name> | <localized type> | <fee> | <subscription> | <free trial> | <endpoint> | <description> |
 
-> Service types: API service = pay-per-call, fixed price; agent to agent = negotiated / off-chain pricing.
+> Service types: API service = pay-per-call, fixed price; agent to agent = per-call or monthly-subscription pricing (one or the other).
 ```
 
 - `#` numbered from 1. Type per Lexicon (API service / agent to agent), never raw A2MCP/A2A.
-- **Fee:** non-empty → `<N> USDT`; empty → `free`. **Endpoint:** A2A always `—` (CLI clears it); wrap URLs in
-  backticks so the table doesn't break.
+- **Fee:** plain number → `<N> USDT`; subscription-priced A2A (empty `fee` with a `subscription` present) → `—`; empty A2MCP → `—` (missing required fee — not `free`); other unpriced (e.g. A2A with neither) → `free`.
+  **Subscription:** each `{interval:"month", fee:N}` tier → `<N> USDT / month`; empty `[]` (or A2MCP) → `—`.
+  **Free trial:** a subscription trial → `<N> days` (or `<N> hours`), e.g. `3 days`; none, single-fee A2A, or A2MCP → `—`.
+  An A2A service always resolves to exactly one of the two (single price XOR subscription); the CLI does the mapping — render `cells` verbatim.
+  **Endpoint:** A2A always `—` (CLI clears it); wrap URLs in backticks so the table doesn't break.
 - Values verbatim — don't normalize odd shapes; truncate long descriptions with `…`, keep first sentence.
   If a value's shape diverges from the local schema (e.g. `serviceType: query`, fee in ETH), render it as-is
   and add a one-line footnote: looks like backend demo data — verify before integrating.

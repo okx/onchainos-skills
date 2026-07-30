@@ -64,6 +64,9 @@ pub enum PaymentCommand {
         /// then ride in the JSON body instead of the query string.
         #[arg(long, default_value = "GET")]
         method: String,
+        /// MCP tool to invoke via tools/call. Forces the MCP branch; omit for tool discovery.
+        #[arg(long)]
+        tool: Option<String>,
     },
     /// Decode an x402 PAYMENT-RESPONSE header or a charge receipt into
     /// {status, transaction, amount, payer, chainId}. Read-only.
@@ -303,7 +306,12 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
                 cmd_pay(&payload, selected_index).await
             }
         }
-        PaymentCommand::Quote { url, param, method } => quote::run(&url, &param, &method).await,
+        PaymentCommand::Quote {
+            url,
+            param,
+            method,
+            tool,
+        } => quote::run(&url, &param, &method, tool.as_deref()).await,
         PaymentCommand::DecodeReceipt { header, receipt } => {
             cmd_decode_receipt(header.as_deref(), receipt.as_deref())
         }
@@ -2406,10 +2414,41 @@ mod tests {
         ])
         .command
         {
-            PaymentCommand::Quote { url, param, method } => {
+            PaymentCommand::Quote {
+                url,
+                param,
+                method,
+                tool,
+            } => {
                 assert_eq!(url, "https://m.example/x");
                 assert_eq!(param, vec!["a=1".to_string(), "b=2".to_string()]);
                 assert_eq!(method, "GET"); // default when --method is omitted
+                assert_eq!(tool, None); // --tool is absent by default
+            }
+            _ => panic!("expected Quote"),
+        }
+    }
+
+    #[test]
+    fn cli_quote_parses_tool_flag() {
+        // --tool forces the MCP branch; it parses into Some(name).
+        match TestCli::parse_from([
+            "test",
+            "quote",
+            "https://m.example/mcp",
+            "--tool",
+            "get_weather",
+            "--param",
+            "zip=01234",
+        ])
+        .command
+        {
+            PaymentCommand::Quote {
+                url, tool, param, ..
+            } => {
+                assert_eq!(url, "https://m.example/mcp");
+                assert_eq!(tool.as_deref(), Some("get_weather"));
+                assert_eq!(param, vec!["zip=01234".to_string()]);
             }
             _ => panic!("expected Quote"),
         }

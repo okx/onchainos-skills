@@ -135,6 +135,85 @@ fn fee_with_currency_token_fails_p1() {
 }
 
 #[test]
+fn a2a_with_both_fee_and_subscription_fails_p6() {
+    // A2A billing models are mutually exclusive: a real single-purchase fee
+    // AND a subscription together must be flagged P6 (choose exactly one).
+    let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
+    let service = format!(
+        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceType\":\"A2A\",\"fee\":\"0.11\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}]}}]"
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"P6".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
+fn a2a_subscription_only_passes() {
+    // Subscription-priced A2A (empty single fee) is a valid single model → no
+    // pricing findings, no P2/P6.
+    let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
+    let service = format!(
+        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}]}}]"
+    );
+    let r = run_validation("asp", Some("Agent Name"), Some("A helpful agent."), Some(&service));
+    let c = codes(&r);
+    assert!(!c.contains(&"P2".to_string()), "unexpected P2; got {:?}", c);
+    assert!(!c.contains(&"P6".to_string()), "unexpected P6; got {:?}", c);
+}
+
+#[test]
+fn a2a_subscription_with_valid_free_trial_passes() {
+    // A subscription-priced A2A with a positive integer freeTrial (hours) is
+    // valid → no P7/P8.
+    let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
+    let service = format!(
+        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}],\"freeTrial\":\"72\"}}]"
+    );
+    let r = run_validation("asp", Some("Agent Name"), Some("A helpful agent."), Some(&service));
+    let c = codes(&r);
+    assert!(!c.contains(&"P7".to_string()), "unexpected P7; got {:?}", c);
+    assert!(!c.contains(&"P8".to_string()), "unexpected P8; got {:?}", c);
+}
+
+#[test]
+fn a2a_free_trial_without_subscription_fails_p7() {
+    // freeTrial is subscription-only: on a single-purchase A2A it must be flagged
+    // P7.
+    let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
+    let service = format!(
+        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceType\":\"A2A\",\"fee\":\"0.11\",\"freeTrial\":\"72\"}}]"
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"P7".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
+fn a2a_free_trial_non_integer_fails_p8() {
+    // freeTrial must be a positive integer number of hours: a decimal / zero is
+    // flagged P8.
+    let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
+    let service = format!(
+        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}],\"freeTrial\":\"24.5\"}}]"
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"P8".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
+fn a2mcp_free_trial_fails_p7() {
+    // A2MCP does not support a free trial → P7.
+    let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
+    let service = format!(
+        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceType\":\"A2MCP\",\"fee\":\"0.5\",\"endpoint\":\"https://api.example.com/mcp\",\"freeTrial\":\"72\"}}]"
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"P7".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
 fn too_short_service_name_fails_s1() {
     let service = svc(
         "Q",
@@ -384,7 +463,7 @@ fn standalone_hyphen_fails_n8() {
 
 #[test]
 fn name_with_negative_capability_fails_u3() {
-    let r = run_validation("asp", Some("Does not support"), None, None);
+    let r = run_validation("asp", Some("Currently not supported"), None, None);
     assert!(codes(&r).contains(&"U3".to_string()), "got {:?}", codes(&r));
 }
 
@@ -402,7 +481,18 @@ fn description_with_negative_capability_fails_u3() {
 #[test]
 fn cjk_negative_capability_fails_u3() {
     assert!(contains_negative_capability("暂不支持"));
-    assert!(contains_negative_capability("不支持"));
+    assert!(contains_negative_capability("目前不支持"));
+}
+
+#[test]
+fn copytrading_delivery_note_is_not_negative_capability_u3() {
+    // The field-5 part-3 delivery descriptor "(不)支持跟单" is a delivery
+    // attribute, NOT a capability gap — it must never trip U3. This is the
+    // spec's own correct normal-service example wording.
+    assert!(!contains_negative_capability("交付物形式为文件，不支持跟单。"));
+    assert!(!contains_negative_capability("交付物形式为结构化信号，支持跟单。"));
+    // A bare "不支持" without the "目前/暂" gap framing no longer fires either.
+    assert!(!contains_negative_capability("不支持"));
 }
 
 #[test]
@@ -630,11 +720,11 @@ fn user_ignores_invalid_service_json() {
     assert!(r.pass, "got {:?}", codes(&r));
 }
 
-// ─── D1–D7: service description structure (two-part, display-width) ────────
+// ─── D1–D9: service description structure (three-part, display-width) ──────
 
 #[test]
 fn description_single_line_fails_d1() {
-    // Only one non-empty line → no part 2 → D1.
+    // Only one non-empty line → part 2 absent → D1.
     let service = svc(
         "Doc Summarizer",
         "Does one thing only",
@@ -655,7 +745,7 @@ fn description_empty_fails_d1() {
 
 #[test]
 fn description_two_parts_passes_d1() {
-    // First line = summary, second line = what to provide → valid two-part.
+    // Line 1 = summary, line 2 = what to provide → valid (part 3 optional).
     let service = svc(
         "Doc Summarizer",
         "Summary line.\nProvide: a document and a target language.",
@@ -668,21 +758,155 @@ fn description_two_parts_passes_d1() {
 }
 
 #[test]
-fn description_over_800_width_fails_d2() {
-    // 801 half-width chars across two lines → total display width 801 > 800.
-    let part1 = "x".repeat(400);
-    let part2 = "y".repeat(401);
+fn description_three_parts_passes() {
+    // Line 1 = summary, line 2 = what to provide, line 3 = delivery note → clean.
+    let service = svc(
+        "Doc Summarizer",
+        "Summarizes docs for busy analysts.\nProvide: 1. a document 2. a target language.\nDelivery: a markdown file; no copy-trading.",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(r.pass, "got {:?}", codes(&r));
+}
+
+#[test]
+fn spec_normal_service_correct_example_passes() {
+    // The spec's own "正确示范（普通服务）" — a 3-part description whose part 3 is
+    // "交付物形式为文件，不支持跟单". This MUST pass QA (regression: the bare-"不支持"
+    // U3 rule used to block the spec's own example).
+    let service = svc(
+        "Meme Token 一键发币",
+        "提供 Meme token 一键发行能力，只需要图片和名称，就可以帮你发布 memetoken。\n需要提供：Meme token 的图片，和名称。\n提供的交付物形式为文件，不支持跟单。",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("MemeGo"), None, Some(&service));
+    assert!(r.pass, "spec normal-service example must pass, got {:?}", codes(&r));
+}
+
+#[test]
+fn spec_trading_signal_correct_example_passes() {
+    // The spec's own "正确示范（交易信号类）" — a 3-part description whose part 3
+    // carries the canonical structured signal example. This MUST pass QA. It is a
+    // regression for several description edge cases that co-occur in a real
+    // signal example and are easy to break by tightening a rule:
+    //   • truncated token address "0x12…ab" — < 6 trailing hex digits, so it must
+    //     NOT trip D7 (a full 0x address would); the spec writes addresses this way.
+    //   • pipe / "$TOKEN" / "≤" / "%" symbols in the delivery note — description
+    //     has no decorative-symbol rule (that is name-only N8), so they must pass.
+    //   • "支持跟单" delivery attribute — must NOT trip U3 (bare-"不支持" narrowing).
+    let service = svc(
+        "跟单信号订阅服务",
+        "面向链上交易者的跟单信号服务，覆盖 DEX、Polymarket 预测市场、Hyperliquid 合约三个市场，每日推送 3-5 条可执行信号，统一含方向、入场、止盈止损、建议仓位与有效期。\n无需提供额外材料，订阅后自动接收所支持市场的全部信号。\n交付物形式为结构化信号，支持跟单。信号示例：DEX 信号：X Layer | $TOKEN (0x12…ab) | BUY | 0.042-0.045 | 滑点 ≤1% | 仓位 5% | 24h 内有效。",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("SignalRaven"), None, Some(&service));
+    assert!(
+        r.pass,
+        "spec trading-signal example must pass (truncated 0x12…ab must not trip D7), got {:?}",
+        codes(&r)
+    );
+}
+
+#[test]
+fn description_part3_over_400_width_fails_d5() {
+    // Part 3 = the 3rd line; 401 half-width chars > 400 width → D5 (not D3/D4).
+    let p3 = "C".repeat(401);
+    let desc = format!("Short summary.\nProvide a document.\n{p3}");
+    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D5".to_string()), "got {:?}", codes(&r));
+    // Parts 1 and 2 are within limits → no D3/D4.
+    assert!(!codes(&r).contains(&"D3".to_string()), "got {:?}", codes(&r));
+    assert!(!codes(&r).contains(&"D4".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn description_middle_line_length_gated_as_part2() {
+    // With 3 lines, part 2 is the MIDDLE line (not the last) — a too-long middle
+    // line must surface as D4, proving parts are positional not first/last.
+    let p2 = "B".repeat(401);
+    let desc = format!("Short summary.\n{p2}\nDelivery: a file.");
+    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D4".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn description_profit_guarantee_cjk_fails_d9() {
+    let service = svc(
+        "Signal Service",
+        "每日推送交易信号，稳赚不赔。\n无需提供额外材料。",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn description_profit_guarantee_en_fails_d9() {
+    let service = svc(
+        "Signal Service",
+        "Daily trade signals with guaranteed returns.\nNothing to provide.",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn description_test_marker_fails_u1() {
+    // Spec: "所有字段不允许包含 (pre)、(test)" — the service description too.
+    let service = svc(
+        "Doc Summarizer",
+        "Summarizes docs (test).\nProvide a document.\nDelivery: a file.",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"U1".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn clean_description_has_no_profit_guarantee_d9() {
+    // A legitimate description must not trip D9.
+    let service = svc(
+        "Signal Service",
+        "面向链上交易者的跟单信号服务，覆盖 DEX 现货。\n无需提供额外材料。\n交付物形式为结构化信号，支持跟单。",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(!codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn description_over_1200_width_fails_d2() {
+    // 1201 half-width chars across two lines → total display width 1201 > 1200.
+    let part1 = "x".repeat(600);
+    let part2 = "y".repeat(601);
     let desc = format!("{part1}\n{part2}");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
-    // 400-CJK-char part 2 is too long too (800 width) → also D4.
+    // Each part is also >400 width → D3/D4 fire too; this test only pins D2.
 }
 
 #[test]
 fn description_cjk_width_counts_double_d2() {
-    // 401 CJK chars on one line + a short second line. Width = 401*2 = 802 > 800.
-    let part1 = "测".repeat(401);
+    // 601 CJK chars on one line + a short second line. Width = 601*2 = 1202 > 1200.
+    let part1 = "测".repeat(601);
     let desc = format!("{part1}\n需要提供钱包地址");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
@@ -862,7 +1086,7 @@ fn asp_description_with_negative_capability_fails_u3() {
     let r = run_validation(
         "asp",
         Some("GoodBot"),
-        Some("Does not support trading"),
+        Some("Trading is currently not supported"),
         None,
     );
     assert!(codes(&r).contains(&"U3".to_string()), "got {:?}", codes(&r));
@@ -938,9 +1162,9 @@ fn hex_address_non_hex_char_terminates_run() {
 
 // D1 + D2 both fire on a single over-long line
 #[test]
-fn description_over_800_single_line_fails_d1_and_d2() {
-    // A single line of 801 chars → D2 (total width > 800) and D1 (only 1 part).
-    let long = "x".repeat(801);
+fn description_over_1200_single_line_fails_d1_and_d2() {
+    // A single line of 1201 chars → D2 (total width > 1200) and D1 (only 1 part).
+    let long = "x".repeat(1201);
     let service = svc("Doc Summarizer", &long, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);

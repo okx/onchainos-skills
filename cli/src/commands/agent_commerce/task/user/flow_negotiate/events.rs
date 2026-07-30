@@ -1,41 +1,6 @@
-//! Event handlers for visibility changes, payment mode changes, and negotiation relays.
+//! Event handlers for payment mode changes and negotiation relays.
 
 use super::super::flow::FlowContext;
-
-pub(crate) fn job_visibility_changed(ctx: &FlowContext<'_>, visibility: i64) -> String {
-    let job_id = ctx.job_id;
-    let title_display = ctx.title_display;
-    let title_query_hint = ctx.title_query_hint;
-
-    // visibility: 0 = public, 1 = private. Resolved in Rust so the playbook
-    // only renders the branch that actually applies; the LLM no longer has
-    // to read the envelope and branch itself.
-    let is_public = visibility == 0;
-    let notify_content = if is_public {
-        super::super::content::visibility_public_user_notify(job_id, title_display)
-    } else {
-        super::super::content::visibility_private_user_notify(job_id, title_display)
-    };
-    let public_only_warning = if is_public {
-        "⚠️ After switching to public, do **NOT** request the recommended ASP list (recommend); the user just waits for ASPs to reach out.\n     "
-    } else {
-        ""
-    };
-    format!(
-    "[Current state] job_visibility_changed (public/private toggle is on-chain)\n\
-     [Role] User Agent\n\n\
-     🛑 **This is not an auxiliary event; you MUST notify the user.**\n\n\
-     [Your next action — call ONE command only, then END TURN]\n\n\
-     {title_query_hint}\
-     **Localize first** — translate the content below into the user's language before sending.\n\
-     ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
-     ```\n\
-     Content:\n\
-     \x20\x20{notify_content}\n\n\
-     {public_only_warning}-> **end this turn**.\n"
-    )
-}
 
 pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
@@ -140,15 +105,6 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     let provider_agent_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => {
-            // R16: auto-consume uses visibility==0 only
-            let is_auto_consume = p.visibility == Some(0);
-            if is_auto_consume {
-                return super::match_provider::provider_conversation_auto_consume(ctx).await;
-            }
-            let is_public = p.visibility == Some(0) || p.service_id.is_none();
-            if is_public {
-                return super::match_provider::provider_conversation(ctx);
-            }
             return format!(
                 "[negotiate_reply] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot send a reply.\n\n\
                  Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
@@ -161,66 +117,25 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
     } else {
         p.description.clone()
     };
-    let is_price_negotiable = p.visibility == Some(0) || p.service_id.is_none();
-    let is_auto_consume = p.visibility == Some(0);
 
-    let max_budget_val = p.max_budget.as_deref().unwrap_or("0");
-    let (price_rule, price_fields, reply_hint) = if is_price_negotiable {
-        (
-            format!(
-                "**Public task — price is negotiable**: you MAY discuss tokenAmount with the ASP. \
-                 Internally enforce: proposed price must NOT exceed {max_budget_val} {symbol}. \
-                 If the ASP proposes above this cap, say the price is too high and ask them to \
-                 lower it — but **NEVER reveal the exact max budget number**.\n\n",
-                symbol = p.token_symbol,
-            ),
-            format!(
-                "\x20\x20• Budget: {budget} {symbol}\n\
-                 \x20\x20• Currency: {symbol}\n\n\
-                 🛑 **max budget is confidential** — NEVER mention the max budget value to the ASP.\n\n",
-                budget = p.token_amount,
-                symbol = p.token_symbol,
-            ),
-            "task details + price negotiation (never reveal max budget)",
-        )
-    } else {
-        (
-            "🛑 **Private task — price is locked**: do NOT discuss tokenAmount / tokenSymbol / \
-             paymentMode / budget with the ASP. Price was determined by the service listing at \
-             creation time and is locked at accept.\n\n".to_string(),
-            String::new(),
-            "task details only — no price talk",
-        )
-    };
+    // Price is always locked to the service listing (public tasks / price
+    // negotiation were removed). The agent must not discuss price with the ASP.
+    let price_rule = "🛑 **Price is locked**: do NOT discuss tokenAmount / tokenSymbol / \
+         paymentMode / budget with the ASP. Price was determined by the service listing at \
+         creation time and is locked at accept.\n\n";
+    let reply_hint = "task details only — no price talk";
 
     let task_block = format!(
         "**Task fields (already fetched — do NOT call `common context`):**\n\
          \x20\x20• Title: {title}\n\
          \x20\x20• Description: {desc}\n\
-         {price_fields}\n\
          {price_rule}",
         title = p.title,
     );
 
     let cmd_no_asp = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[No ASP] negotiate timeout — next-step decision\" --source-event no_asp_found");
 
-    let over_limit_section = if is_auto_consume {
-        format!(
-            "━━━━━━━━━ [Over-limit] 2-round limit exceeded or timeout ━━━━━━━━━\n\n\
-             **Step 1** — mark this ASP as failed:\n\
-             ```bash\n\
-             onchainos agent mark-failed {job_id} --provider {provider_agent_id}\n\
-             ```\n\n\
-             **Step 2** — auto-advance to next ASP (public task auto-consume):\n\
-             ```bash\n\
-             onchainos agent next-action --role user --agentId {agent_id} \
-             --message '{{\"event\":\"auto_advance_next\",\"jobId\":\"{job_id}\",\
-             \"failedProvider\":\"{provider_agent_id}\",\"reason\":\"negotiate_over_limit\"}}'\n\
-             ```\n\
-             → **End this turn.**\n"
-        )
-    } else {
-        format!(
+    let over_limit_section = format!(
             "━━━━━━━━━ [Over-limit] 2-round limit exceeded or timeout ━━━━━━━━━\n\n\
              **Step 1** — mark this ASP as failed:\n\
              ```bash\n\
@@ -238,8 +153,7 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
              B. Designate a specific ASP by agentId\n\
              C. Close the task\n\n\
              → **End this turn.**\n"
-        )
-    };
+    );
 
     format!(
         "{task_block}\
@@ -248,7 +162,7 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
          **2-round limit**: count how many user replies (your `okx-a2a xmtp-send` calls) have already been sent in this sub session's conversation history.\n\
          - Rounds sent < 2 → reply normally (see below).\n\
          - Rounds sent ≥ 2 → negotiation exceeded the 2-round limit. **Do NOT reply.** Jump to **[Over-limit]** below.\n\n\
-         **Reply about**: scope, requirements, deliverable format, timeline, clarifying questions{public_price_note}.\n\n\
+         **Reply about**: scope, requirements, deliverable format, timeline, clarifying questions.\n\n\
          🚫 **Forbidden in this event:**\n\
          \x20\x20❌ `onchainos agent user-notify` / `pending-decisions-v2 request` to ask the user about the ASP's message — negotiation is autonomous in this sub session.\n\
          \x20\x20❌ `set-payment-mode` / `confirm-accept` / `reject-apply` / `apply` — no on-chain action belongs in this event.\n\n\
@@ -262,7 +176,6 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
          ```\n\n\
          ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, treat as over-limit (see below).\n\n\
          {over_limit_section}",
-        public_price_note = if is_price_negotiable { ", and **price** (within max budget)" } else { "" },
     )
 }
 
@@ -272,23 +185,13 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
 ///                        ASP binding on the task record (no request body).
 ///   Step 1 (LLM playbook): the agent must localize the `--user-content` payload into the
 ///                          user's language, then run `pending-decisions-v2 request` to
-///                          deliver the 4-option card. The `--llm-content` routing block
+///                          deliver the A/B/C card. The `--llm-content` routing block
 ///                          stays English (consumed only by the user-session agent).
-pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> String {
+pub(crate) async fn provider_reject(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
-
-    // visibility: 0 = public, 1 = private. The "make public" option only makes sense
-    // when the task is currently private; otherwise drop the option and renumber close.
-    let is_private = visibility == 1;
-    let close_label = if is_private { "D" } else { "C" };
-    let option_public_line = if is_private {
-        "C. Make the task public so any qualified ASP can apply\n         "
-    } else {
-        ""
-    };
 
     // Step 0 — reset the rejected ASP binding on the task record (empty body).
     let mut client = TaskApiClient::new();
@@ -305,26 +208,11 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
         );
     }
 
-    // Public task (visibility=0): mark failed + auto-advance, no decision card
-    if visibility == 0 {
-        if let Some(p) = ctx.prefetched {
-            if let Some(pa) = p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
-                let _ = super::super::negotiate::mark_failed(job_id, pa);
-            }
-        }
-        let _ = super::super::negotiate::clear_designated_provider(job_id);
-        let auto = super::match_provider::provider_conversation_auto_consume(ctx).await;
-        return format!(
-            "[job_provider_reject] ✅ ASP binding reset (reset/asp) completed in-process.\n\n\
-             {auto}"
-        );
-    }
-
     let user_content = format!(
         "[Job {short_id} — you are the User Agent] ASP declined to take this task. What would you like to do next?\n\n\
          A. Browse the ASP list\n\
          B. Designate a specific ASP by agentId\n\
-         {option_public_line}{close_label}. Close the task"
+         C. Close the task"
     );
     let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
         job_id, "user", agent_id, None,
@@ -336,7 +224,7 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>, visibility: i64) -> S
     format!(
     "[job_provider_reject] ✅ ASP binding reset (reset/asp) completed in-process.\n\n\
      **Localize first** — translate the `--user-content` value below into the user's language before executing. \
-     Keep `[Job {short_id}]` prefix and `A.` / `B.` / `C.` / `D.` option letters unchanged.\n\n\
+     Keep `[Job {short_id}]` prefix and `A.` / `B.` / `C.` option letters unchanged.\n\n\
      🛑 Push the next-step decision card via `pending-decisions-v2 request`, then end turn.\n\n\
      {request_block}\n"
     )

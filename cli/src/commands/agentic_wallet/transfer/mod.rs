@@ -56,6 +56,22 @@ pub(crate) fn resolve_address(
     }
 }
 
+// ── apply_broadcast_core ──────────────────────────────────────────────
+
+/// Apply the 5 broadcast-core keys shared by all extraData assembly points.
+/// `checkBalance = !freeGas`: skip balance check for gas-sponsored transactions.
+pub(crate) fn apply_broadcast_core(
+    ed: &mut Value,
+    unsigned: &UnsignedInfoResponse,
+    msg_for_sign: Value,
+) {
+    ed["checkBalance"] = json!(!unsigned.free_gas());
+    ed["uopHash"] = json!(unsigned.uop_hash);
+    ed["encoding"] = json!(unsigned.encoding);
+    ed["signType"] = json!(unsigned.sign_type);
+    ed["msgForSign"] = msg_for_sign;
+}
+
 // ── sign_and_build_extra_data ─────────────────────────────────────────
 
 /// Sign the unsigned info and build the serialized `extraData` JSON string
@@ -117,11 +133,7 @@ fn sign_and_build_extra_data(
     } else {
         json!({})
     };
-    extra_data_obj["checkBalance"] = json!(true);
-    extra_data_obj["uopHash"] = json!(unsigned.uop_hash);
-    extra_data_obj["encoding"] = json!(unsigned.encoding);
-    extra_data_obj["signType"] = json!(unsigned.sign_type);
-    extra_data_obj["msgForSign"] = json!(msg_for_sign);
+    apply_broadcast_core(&mut extra_data_obj, unsigned, msg_for_sign);
     if !is_contract_call {
         extra_data_obj["txType"] = json!(2);
     }
@@ -556,11 +568,7 @@ pub(super) async fn sign_and_broadcast(
     } else {
         json!({})
     };
-    extra_data_obj["checkBalance"] = json!(true);
-    extra_data_obj["uopHash"] = json!(unsigned.uop_hash);
-    extra_data_obj["encoding"] = json!(unsigned.encoding);
-    extra_data_obj["signType"] = json!(unsigned.sign_type);
-    extra_data_obj["msgForSign"] = json!(msg_for_sign);
+    apply_broadcast_core(&mut extra_data_obj, &unsigned, msg_for_sign);
     if !is_contract_call {
         extra_data_obj["txType"] = json!(2);
     }
@@ -925,11 +933,7 @@ pub async fn batch_sign_and_broadcast(
         } else {
             json!({})
         };
-        extra_data_obj["checkBalance"] = json!(true);
-        extra_data_obj["uopHash"] = json!(unsigned.uop_hash);
-        extra_data_obj["encoding"] = json!(unsigned.encoding);
-        extra_data_obj["signType"] = json!(unsigned.sign_type);
-        extra_data_obj["msgForSign"] = json!(msg_for_sign);
+        apply_broadcast_core(&mut extra_data_obj, unsigned, msg_for_sign);
         if !is_contract_call {
             extra_data_obj["txType"] = json!(2);
         }
@@ -1864,6 +1868,99 @@ mod tests {
         assert!(
             obj.get("sessionCert").is_none(),
             "sessionCert must be absent when session_cert is empty, got: {msg}"
+        );
+    }
+
+    // ── apply_broadcast_core ──────────────────────────────────────────
+
+    #[test]
+    fn apply_broadcast_core_sets_check_balance_false_when_free_gas() {
+        let unsigned = unsigned_info_from_json(serde_json::json!({
+            "extraData": {"freeGas": true},
+        }));
+        let mut ed = json!({});
+        apply_broadcast_core(&mut ed, &unsigned, json!({}));
+        assert_eq!(ed["checkBalance"], json!(false));
+    }
+
+    #[test]
+    fn apply_broadcast_core_sets_check_balance_true_when_not_free_gas() {
+        let unsigned = unsigned_info_from_json(serde_json::json!({
+            "extraData": {"freeGas": false},
+        }));
+        let mut ed = json!({});
+        apply_broadcast_core(&mut ed, &unsigned, json!({}));
+        assert_eq!(ed["checkBalance"], json!(true));
+    }
+
+    #[test]
+    fn apply_broadcast_core_sets_check_balance_true_when_free_gas_absent() {
+        let unsigned = unsigned_info_from_json(serde_json::json!({
+            "extraData": {},
+        }));
+        let mut ed = json!({});
+        apply_broadcast_core(&mut ed, &unsigned, json!({}));
+        assert_eq!(ed["checkBalance"], json!(true));
+    }
+
+    #[test]
+    fn apply_broadcast_core_preserves_existing_extra_data_keys() {
+        let unsigned = unsigned_info_from_json(serde_json::json!({
+            "uopHash": "0xuop",
+            "encoding": "hex",
+            "signType": "eip191",
+            "extraData": {
+                "freeGas": true,
+                "aaFreeGas": true,
+                "customKey": "keep-me",
+            },
+        }));
+        // Seed `ed` with the backend passthrough keys, as the call sites do.
+        let mut ed = unsigned.extra_data.clone();
+        let msg_for_sign = json!({"signature": "0xsig"});
+        apply_broadcast_core(&mut ed, &unsigned, msg_for_sign.clone());
+
+        // Pre-existing backend keys survive.
+        assert_eq!(ed["freeGas"], json!(true));
+        assert_eq!(ed["aaFreeGas"], json!(true));
+        assert_eq!(ed["customKey"], json!("keep-me"));
+
+        // The 5 core keys are set.
+        assert_eq!(ed["checkBalance"], json!(false));
+        assert_eq!(ed["uopHash"], json!("0xuop"));
+        assert_eq!(ed["encoding"], json!("hex"));
+        assert_eq!(ed["signType"], json!("eip191"));
+        assert_eq!(ed["msgForSign"], msg_for_sign);
+    }
+
+    #[test]
+    fn apply_broadcast_core_freegas_false_snapshot_matches() {
+        // Regression golden snapshot: for freeGas:false, assembling `ed` the OLD
+        // way (hardcoded checkBalance=true + 4 keys) and the NEW way (helper)
+        // from the same fixture must be byte-for-byte identical.
+        let unsigned = unsigned_info_from_json(serde_json::json!({
+            "uopHash": "0xuop",
+            "encoding": "hex",
+            "signType": "eip191",
+            "extraData": {"freeGas": false},
+        }));
+        let msg_for_sign = json!({"signature": "0xsig"});
+
+        // OLD way (pre-refactor inline block).
+        let mut old_ed = unsigned.extra_data.clone();
+        old_ed["checkBalance"] = json!(true);
+        old_ed["uopHash"] = json!(unsigned.uop_hash);
+        old_ed["encoding"] = json!(unsigned.encoding);
+        old_ed["signType"] = json!(unsigned.sign_type);
+        old_ed["msgForSign"] = json!(msg_for_sign);
+
+        // NEW way (helper).
+        let mut new_ed = unsigned.extra_data.clone();
+        apply_broadcast_core(&mut new_ed, &unsigned, msg_for_sign);
+
+        assert_eq!(
+            serde_json::to_string(&old_ed).unwrap(),
+            serde_json::to_string(&new_ed).unwrap(),
         );
     }
 }

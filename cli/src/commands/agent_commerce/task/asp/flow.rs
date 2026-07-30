@@ -128,6 +128,51 @@ fn reject_expire_time(message: Option<&serde_json::Value>) -> Option<i64> {
         .filter(|&t| t > 0)
 }
 
+/// Pure ASP price-gate decision: pick the `(status, summary, action)` tuple for
+/// the designated-service accept flow. Extracted from `generate_next_action` so
+/// the branch is unit-testable (the enclosing async fn does network I/O).
+///
+/// FR-3: when `test_flag` is set (backend-derived sandbox-review allowlist), the
+/// numeric quote-vs-fee gate is skipped and the decision is the exact same accept
+/// tuple as a normal `offer >= fee` accept — so the emitted playbook text is
+/// byte-identical to a normal accept and carries no bypass marker.
+fn price_gate_decision(
+    offer_num: Option<f64>,
+    fee_num: Option<f64>,
+    offer_amount: &str,
+    svc_fee: &str,
+    user_token_symbol: &str,
+    test_flag: bool,
+) -> (&'static str, String, &'static str) {
+    // Bind the accept tuple once so the test-accept path is byte-identical to it.
+    let accept = || {
+        (
+            "OK",
+            format!("User Agent offer {offer_amount} ≥ registered fee {svc_fee} ✅"),
+            "Apply at offer amount.",
+        )
+    };
+    match (offer_num, fee_num) {
+        _ if test_flag => accept(),
+        (Some(o), Some(f)) if o >= f => accept(),
+        (Some(_), Some(_)) => (
+            "TOO_LOW",
+            format!("User Agent offer {offer_amount} < registered fee {svc_fee} ❌"),
+            "Reject — price below registered floor.",
+        ),
+        (_, None) => (
+            "ESTIMATE",
+            format!("registered fee not set; User Agent offer {offer_amount} {user_token_symbol} — judge by task complexity"),
+            "If offer is fair for the workload → apply at offer; else counter-apply at your fair price (do NOT reject for price alone).",
+        ),
+        _ => (
+            "PARSE_FAIL",
+            format!("could not parse offer=`{offer_amount}` fee=`{svc_fee}`"),
+            "Treat as ESTIMATE; LLM judges based on complexity.",
+        ),
+    }
+}
+
 /// Generate the structured next-action prompt for the ASP based on event.
 ///
 /// `event_str` accepts either an event name (provider_applied / job_accepted / ...)
@@ -163,7 +208,7 @@ pub async fn generate_next_action(
     // Per-scene helper — render the pre-fetched task fields inline, or fall back to
     // the "call common context" CLI instruction when prefetched is None / a field is
     // missing. `fields` is the ordered subset of: title / tokenAmount / tokenSymbol /
-    // buyerAgentId / description / paymentMode / visibility / providerAgentId / status /
+    // buyerAgentId / description / paymentMode / providerAgentId / status /
     // serviceId / serviceTokenAddress / serviceTokenAmount / serviceParams.
     // Output goes directly into the playbook where Step 1 used to instruct the LLM
     // to run `onchainos agent common context …`.
@@ -181,7 +226,6 @@ pub async fn generate_next_action(
                     "buyerAgentId" => p.user_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- buyerAgentId: {v}\n")),
                     "providerAgentId" => p.provider_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- providerAgentId: {v}\n")),
                     "paymentMode" => p.payment_mode.map(|v| format!("\x20\x20- paymentMode: {v} ({})\n", match v { 1 => "escrow", 3 => "x402", _ => "unknown" })),
-                    "visibility" => p.visibility.map(|v| format!("\x20\x20- visibility: {v} ({})\n", match v { 0 => "public", 1 => "private", _ => "unknown" })),
                     "serviceId" => p.service_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceId: {v}\n")),
                     "serviceTokenAddress" => p.service_token_address.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAddress: {v}\n")),
                     "serviceTokenAmount" => p.service_token_amount.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAmount: {v}\n")),
@@ -416,6 +460,77 @@ pub async fn generate_next_action(
              ⚠️ Do NOT push to the user with `onchainos agent user-notify`.\n"
         ),
 
+        // ─── Subscription Scene: buyer rejected the current period → ASP decides refund/dispute ──
+        // `sub_user_reject` is a first-class Event (state_machine → SubStatus::Rejected). The ASP
+        // owns this scene per the design doc: push a refund/dispute decision to the user, mirroring
+        // job_rejected but routing to the SUBSCRIPTION endpoints. ~1-day window before the backend
+        // auto-refunds this period. (Removed from the "not handled in this slice" notify group.)
+        Event::SubUserReject => {
+            let to_flag = prefetched
+                .and_then(|p| p.user_agent_id.as_deref())
+                .filter(|s| !s.is_empty())
+                .map(|b| format!(" --to-agent-id {b}"))
+                .unwrap_or_default();
+            let msg_str = |k: &str| -> Option<&str> {
+                message.and_then(|m| m.get(k)).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+            };
+            let msg_i64 = |k: &str| message.and_then(|m| m.get(k)).and_then(|v| v.as_i64());
+            let svc = msg_str("jobTitle").or_else(|| msg_str("title")).unwrap_or(title_display);
+            let decision_copy = super::content::sub_user_reject_asp_decision_copy(
+                svc,
+                msg_i64("subStartTime"),
+                msg_i64("subEndTime"),
+                msg_i64("rejectWindowEndsAt"),
+                msg_str("tokenAmount"),
+                msg_str("tokenSymbol"),
+            );
+            format!(
+            "[Current state] sub_user_reject (the buyer rejected the current subscription period)\n\
+             [Role] ASP (subscription)\n\n\
+             🛑 **Push the refund/dispute decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay); a plain reply doesn't reach the user-session, so either path lets the ~1-day window lapse into an auto-refund.\n\
+             ⚠️ Limited reaction window (about 1 day). Let the USER choose — do NOT decide autonomously; do NOT `okx-a2a xmtp-send` the buyer (they just rejected — they know).\n\n\
+             **Step 1 — push the decision to the user**:\n\n\
+             🌐 **Localize first** — translate the content between the markers to the user's language; keep the `A.` / `B.` letters and the `[Decision {short_id}]` label.\n\
+             ```bash\n\
+             onchainos agent pending-decisions-v2 request-prompt \\\n\
+             \x20\x20--job-id {job_id} --role asp --agent-id {agent_id}{to_flag} \\\n\
+             \x20\x20--user-content \"<localized content shown below>\" \\\n\
+             \x20\x20--list-label \"[Decision {short_id}] {title_display} — refund or dispute\" \\\n\
+             \x20\x20--source-event sub_user_reject\n\
+             ```\n\
+             content (only the lines between the markers — translate before passing; do NOT include the markers).\n\
+             Canonical copy — ASP-3 subscription rejection decision (localize to the user's language at push time):\n\
+             === BEGIN ===\n\
+             {decision_copy}\n\
+             === END ===\n",
+            )
+        }
+
+        // ─── Subscription: user chose to raise a dispute (pseudo-event) ──
+        Event::Other(ref s) if s == "sub_dispute" => format!(
+            "[Current action] Subscription dispute — raise arbitration (§2.10 single combined call)\n\
+             [Role] ASP (subscription)\n\n\
+             **Step 1 — Call the CLI (on-chain):**\n\
+             ```bash\n\
+             onchainos agent subscribe-dispute {job_id} --reason \"<user-provided reason, or default: delivered per acceptance criteria>\" --agent-id {agent_id}\n\
+             ```\n\
+             🌐 Localize the `--reason` text to the user's language; keep it ≤2000 chars. It is persisted on-chain in the arbitration record (broadcast bizContext) — pass the ASP's actual argument, not an empty string.\n\
+             CLI internals: POST /task/{{jobId}}/dispute/approveAndCreateDispute (approve + create in ONE call — not the two-phase task dispute raise/confirm) → uopData → sign → broadcast (reason on bizContext); subStatus → Disputed.\n\n\
+             After Step 1 → **end this turn**. Do NOT `okx-a2a xmtp-send` the buyer.\n"
+        ),
+
+        // ─── Subscription: user chose to agree to refund (pseudo-event) ──
+        Event::Other(ref s) if s == "sub_agree_refund" => format!(
+            "[Current action] Subscription — agree to refund this period\n\
+             [Role] ASP (subscription)\n\n\
+             **Step 1 — Call the CLI (on-chain):**\n\
+             ```bash\n\
+             onchainos agent subscribe-agree-refund {job_id} --agent-id {agent_id}\n\
+             ```\n\
+             CLI internals: POST /subscribe/{{subId}}/agreeRefund (subId == jobId) → uopData → sign → broadcast; subStatus → Failed (this period refunded).\n\n\
+             After Step 1 → **end this turn**. Do NOT `okx-a2a xmtp-send` the buyer.\n"
+        ),
+
         // ─── Scene 7: Task completed (review passed / arbitration won) ────────────────
         Event::JobCompleted => {
             let user_notify = super::content::job_completed_user_notify(job_id);
@@ -606,12 +721,12 @@ pub async fn generate_next_action(
         }
 
         // ─── Scene 1: task is on-chain (job_created) — ASP takes no proactive
-        // action on this raw event. The active discovery paths are `recommend-task` /
-        // `contact-user` (user-driven) and `JobAspSelected` (User Agent-designated). ────
+        // action on this raw event. Designated tasks arrive as a `JobAspSelected`
+        // event (User Agent-designated). ────
         Event::JobCreated => "[System notification] job_created (task is on-chain; no ASP-side action)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n\
-             To accept tasks, use `recommend-task` / `contact-user`; if the User Agent designates this ASP a `job_asp_selected` event will arrive separately.\n".to_string(),
+             Designated tasks arrive via a `job_asp_selected` event when the User Agent designates this ASP.\n".to_string(),
 
         // ─── Scene 1.5: User Agent designated this ASP for a private task ──────────
         Event::JobAspSelected => {
@@ -734,28 +849,16 @@ pub async fn generate_next_action(
                         // `fee_num=None` means "service has no registered fee" → LLM estimates by complexity.
                         let offer_num = offer_amount.parse::<f64>().ok();
                         let fee_num = if svc_fee.is_empty() { None } else { svc_fee.parse::<f64>().ok() };
-                        let (price_status, price_summary, price_action) = match (offer_num, fee_num) {
-                            (Some(o), Some(f)) if o >= f => (
-                                "OK",
-                                format!("User Agent offer {offer_amount} ≥ registered fee {svc_fee} ✅"),
-                                "Apply at offer amount."
-                            ),
-                            (Some(_), Some(_)) => (
-                                "TOO_LOW",
-                                format!("User Agent offer {offer_amount} < registered fee {svc_fee} ❌"),
-                                "Reject — price below registered floor."
-                            ),
-                            (_, None) => (
-                                "ESTIMATE",
-                                format!("registered fee not set; User Agent offer {offer_amount} {user_token_symbol} — judge by task complexity"),
-                                "If offer is fair for the workload → apply at offer; else counter-apply at your fair price (do NOT reject for price alone)."
-                            ),
-                            _ => (
-                                "PARSE_FAIL",
-                                format!("could not parse offer=`{offer_amount}` fee=`{svc_fee}`"),
-                                "Treat as ESTIMATE; LLM judges based on complexity."
-                            ),
-                        };
+                        // FR-3: allowlisted sandbox tasks skip the price gate (backend-derived).
+                        let test_flag = prefetched.map(|pf| pf.test_flag).unwrap_or(false);
+                        let (price_status, price_summary, price_action) = price_gate_decision(
+                            offer_num,
+                            fee_num,
+                            offer_amount,
+                            svc_fee,
+                            user_token_symbol,
+                            test_flag,
+                        );
 
                         // Deterministic apply command — uses User Agent's token symbol (per spec).
                         // After apply, push a user-facing notification via `onchainos agent user-notify`.
@@ -849,7 +952,6 @@ pub async fn generate_next_action(
 
         // ─── User Agent-driven tx receipt notifications; no ASP action needed ─────
         Event::JobClosed
-        | Event::JobVisibilityChanged
         | Event::JobPaymentModeChanged => format!(
             "[System notification] {event} (User Agent-side tx receipt; not the ASP's concern)\n\
              [Role] ASP (Agent Service ASP)\n\n\
@@ -1014,7 +1116,19 @@ pub async fn generate_next_action(
                      ```bash\n\
                      onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<dispute_raise|agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
                      ```\n\
-                     If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=file dispute  B=accept refund\".\n"
+                     If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT it for `[to: backup]` / backup subs — NEVER your own agentId) and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=file dispute  B=accept refund\".\n"
+                ),
+                "sub_user_reject" => format!(
+                    "[User decision relay] source_event=`sub_user_reject`, user's verbatim reply: `{reply}`\n\n\
+                     **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
+                     Two options:\n\
+                     \x20\x20• **`sub_dispute`** — user wants to challenge the rejection and go to arbitration (typical intents: A / 发起仲裁 / dispute / 申诉 / 我要争 / contest).\n\
+                     \x20\x20• **`sub_agree_refund`** — user accepts refunding this period (typical intents: B / 同意退款 / agree refund / 退款 / 算了 / let it go).\n\n\
+                     If the reply clearly maps to one → call:\n\
+                     ```bash\n\
+                     onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<sub_dispute|sub_agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
+                     ```\n\
+                     If **truly ambiguous** (non-committal `OK` / `sure` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT it for `[to: backup]` / backup subs — NEVER your own agentId) and `--source-event sub_user_reject`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=raise dispute  B=agree refund\".\n"
                 ),
                 "submit_deadline_warn" => format!(
                     "[User decision relay] source_event=`submit_deadline_warn`, user's verbatim reply: `{reply}`\n\n\
@@ -1030,7 +1144,7 @@ pub async fn generate_next_action(
                      \x20\x20• **Dismiss** — user takes manual control of this step (typical intents: B / 选B / dismiss / 不再提示 / skip prompts / 我自己处理 / let me handle it). Action: end the turn. Do not re-prompt; the user owns this step now.\n\
                      \x20\x20• **New instruction** — user gives a corrective instruction in natural language (e.g. `把 token-symbol 改成 USDT 再试` / `change --token-symbol to USDT and retry` / `用 endpoint https://... 重试`). Action: parse the modification, rebuild the CLI invocation with the user's adjustment, and execute once. Treat the result as a fresh attempt (success → continue the original scene; failure → enqueue another `cli_failed` decision).\n\n\
                      ⚠️ Do NOT execute any on-chain action that wasn't part of the original failed command — the user reply only authorizes retry/edit of the failed step, not unrelated new actions.\n\
-                     ⚠️ If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` and `--source-event cli_failed`. **`--user-content` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
+                     ⚠️ If the reply is truly ambiguous (e.g. unrelated chitchat / a non-committal `hmm` / `got it`), re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT it for `[to: backup]` / backup subs — NEVER your own agentId) and `--source-event cli_failed`. **`--user-content` must be localized to the user's language** (detect from the user's verbatim reply / prior turn) before sending. Reference (English): \"I didn't catch your reply, please clarify: A=retry  B=stop prompting  C=tell me what to change\".\n"
                 ),
                 _ => format!(
                     "[User decision relay] source_event=`{source}` (no specific routing rule defined for this scene), user's verbatim reply: `{reply}`\n"
@@ -1060,11 +1174,187 @@ pub async fn generate_next_action(
                  {terminal_session_hint}\n"
             )
         }
+        // ─── Subscription notifications (display-class) ──────────────────────
+        Event::SubAspSelected => {
+            let msg_str = |k: &str| -> Option<&str> {
+                message.and_then(|m| m.get(k)).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+            };
+            let msg_i64 = |k: &str| -> Option<i64> {
+                message.and_then(|m| m.get(k)).and_then(|v| v.as_i64())
+            };
+            // Envelope title first, then the prefetched task title. When both miss, the
+            // content layer omits the service-name subclause — a literal `<title>`
+            // placeholder must never reach the notification body.
+            let title = msg_str("jobTitle")
+                .or_else(|| msg_str("title"))
+                .or_else(|| {
+                    prefetched.map(|p| p.title.as_str()).filter(|s| !s.is_empty())
+                });
+            let buyer_agent_id = msg_str("buyerAgentId")
+                .or_else(|| prefetched.and_then(|p| p.user_agent_id.as_deref()))
+                .filter(|s| !s.is_empty());
+            // Trial subscribers charge nothing on selection — the ASP must not be told a
+            // payment was received (mirrors the buyer-side sub_created trialType branch).
+            // trail* is the pre-rename field spelling kept as a read fallback (AC-17).
+            let content = if msg_i64("trialType") == Some(1) {
+                super::content::sub_asp_selected_trial_asp_notify(
+                    title,
+                    buyer_agent_id,
+                    job_id,
+                    msg_str("tokenAmount"),
+                    msg_str("tokenSymbol"),
+                    msg_i64("trialStartTime").or_else(|| msg_i64("trailStartTime")),
+                    msg_i64("trialEndTime").or_else(|| msg_i64("trailEndTime")),
+                )
+            } else {
+                super::content::sub_asp_selected_asp_notify(
+                    title,
+                    buyer_agent_id,
+                    job_id,
+                    msg_str("tokenAmount"),
+                    msg_str("tokenSymbol"),
+                    msg_i64("subStartTime"),
+                    msg_i64("subEndTime"),
+                )
+            };
+            sub_asp_notify("sub_asp_selected (you were selected for a subscription)", &content, None)
+        }
+        Event::SubCompleteNotify => {
+            let title = message
+                .and_then(|m| m.get("jobTitle").or_else(|| m.get("title")))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            let period_end = message.and_then(|m| m.get("subEndTime")).and_then(|v| v.as_i64());
+            sub_asp_notify(
+                "sub_complete_notify (subscription completed)",
+                &super::content::sub_complete_notify_asp_notify(title, job_id, period_end),
+                Some(terminal_session_hint.as_str()),
+            )
+        }
+        Event::SubCloseNotify => {
+            let title = message
+                .and_then(|m| m.get("jobTitle").or_else(|| m.get("title")))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            sub_asp_notify(
+                "sub_close_notify (subscription closed)",
+                &super::content::sub_close_notify_asp_notify(title, job_id),
+                Some(terminal_session_hint.as_str()),
+            )
+        }
+        Event::SubFailedNotify => {
+            let title = message
+                .and_then(|m| m.get("jobTitle").or_else(|| m.get("title")))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            let reason = message
+                .and_then(|m| m.get("failReason").or_else(|| m.get("reason")))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            sub_asp_notify(
+                "sub_failed_notify (subscription failed)",
+                &super::content::sub_failed_notify_asp_notify(title, job_id, reason),
+                Some(terminal_session_hint.as_str()),
+            )
+        }
+        // ─── Subscription arbitration: ASP auto-submits evidence ───────────────────
+        Event::SubAspDispute => {
+            let task_fields = inline_task_fields(&["buyerAgentId"]);
+            format!(
+            "[Current state] sub_asp_dispute (subscription arbitration on-chain; CLI auto-submits evidence on this event)\n\
+             [Role] ASP (Agent Service ASP)\n\n\
+             🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
+             The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
+             session, calls `dispute upload` (which also auto-attaches the most recent 20 deliverables saved under\n\
+             `~/.onchainos/deliverables/asp/{job_id}/`), and then notifies the user via\n\
+             `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
+             **Do NOT** `okx-a2a xmtp-send` anything to the User Agent — both sides see the arbitration via on-chain events.\n\n\
+             {task_fields}\n\
+             **Step 1 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
+             ```bash\n\
+             okx-a2a session history --job-id {job_id} --to-agent-id <buyerAgentId> --json\n\
+             ```\n\n\
+             **Step 2 — Format the chat history as the `--text` body**:\n\n\
+             ```\n\
+             ==== Negotiation / delivery chat history (from okx-a2a session history) ====\n\
+             [time] User Agent(<agentId>): ...\n\
+             [time] ASP(<agentId>): ...\n\
+             ... (chronological; key checkpoints: subscription scope / deliverable messages / each side's key contention points)\n\
+             ```\n\n\
+             ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
+             If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
+             **Step 3 — Upload (off-chain multipart):**\n\
+             ```bash\n\
+             onchainos agent dispute upload {job_id} --role asp --agent-id {agent_id} --max-files 20 --text \"<chat history block>\"\n\
+             ```\n\
+             The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copies saved at delivery time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
+             **Step 4 — Notify the user (after upload returns):**\n\n\
+             content:\n\
+             \x20\x20\x20\x20[Arbitration opened] Subscription arbitration for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverables). Awaiting the arbiter's verdict.\n\n\
+             **Step 5 — End this turn.** Do NOT `okx-a2a xmtp-send` anything to the User Agent.\n\n\
+             [Follow-up events]\n\
+             - job_completed → won, funds released to the ASP\n\
+             - dispute_resolved → lost, funds refunded to the User Agent\n"
+            )
+        }
+
+        // sub_renew: the subscription renewed — the PREVIOUS period's income became
+        // claimable (Subscribe API §2.9 aspClaim, bizType 107 SUB_ASP_CLAIM; the
+        // backend's stated trigger is exactly this renewal notification). Claiming
+        // moves the ASP's OWN funds — no counterparty decision — so route straight
+        // to the deterministic claim command instead of silently dropping the event
+        // (which left accrued income sitting unclaimed in the contract).
+        Event::SubRenew => format!(
+            "[System notification] sub_renew — the subscription renewed; the previous period's income is now claimable.\n\
+             [Role] ASP (Agent Service ASP)\n\n\
+             **Step 1 — Claim the accrued income (your own funds; run as-is):**\n\
+             ```bash\n\
+             onchainos agent subscribe-asp-claim {job_id} --agent-id {agent_id}\n\
+             ```\n\
+             CLI internals: POST /subscribe/{{subId}}/aspClaim (subId == jobId) → uopData → sign → broadcast. It claims everything outstanding for this subscription in one shot.\n\
+             **Step 2 — Report:** on success push a short localized note via `onchainos agent user-notify --content \"<claim submitted, tx …>\"` — a background session's reply text never reaches the operator. If the CLI reports nothing claimable / already claimed, end the turn silently.\n\
+             Do NOT `okx-a2a xmtp-send` anything to the User Agent — this involves no buyer action.\n"
+        ),
+
+        // sub_asp_agree is the ASP's OWN action (agree refund); the existing action-command
+        // flow (subscribe-agree-refund) owns that lifecycle, not this notification path.
+        Event::SubCreated
+        | Event::SubCancel
+        | Event::SubTrialIntoActive
+        | Event::SubExpireWarn
+        | Event::SubRejectRefundNotify
+        | Event::SubAspAgree => format!(
+            "[System notification] {event} (not handled on the ASP side in this slice)\n\
+             [Role] ASP (Agent Service ASP)\n\n\
+             Silently ignore; end this turn.\n",
+            event = event.as_str()
+        ),
+
         Event::Other(ref other) => format!("[Unknown state] {other}\n"),
     }
 }
 
 // ── user_attachment_received helpers ────────────────────────────────
+
+/// Render an ASP-side display notification: the localize-then-user-notify scaffold wrapping the
+/// canonical English `content`, optionally followed by the terminal session-cleanup hint. Used by
+/// the subscription arms, which are notify-only (no state transition, no on-chain action).
+fn sub_asp_notify(header: &str, content: &str, terminal_hint: Option<&str>) -> String {
+    let tail = match terminal_hint {
+        Some(h) => format!("\n{h}\n"),
+        None => String::new(),
+    };
+    format!(
+        "[System notification] {header}\n\
+         [Role] ASP (Agent Service ASP)\n\n\
+         **Notify the user, then end the turn** (🌐 **Localize first** — rewrite the content below in the user's language before sending; do NOT pass the English template verbatim to a non-English user. If the content still contains `<...>` placeholders such as `<title>`, fill them from the task context — `onchainos agent common context` — before sending; never send a literal placeholder):\n\
+         ```bash\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
+         ```\n\
+         content:\n\
+         {content}\n{tail}"
+    )
+}
 
 fn user_attachment_received_cli(
     job_id: &str,
@@ -1194,5 +1484,297 @@ mod tests {
         assert_eq!(reject_expire_time(Some(&msg)), None);
         let msg = json!({ "expireTime": -1 });
         assert_eq!(reject_expire_time(Some(&msg)), None);
+    }
+
+    const ASP_JOB_ID: &str = "0xsub01";
+    const ASP_AGENT_ID: &str = "864";
+
+    async fn run_asp(event: &str, msg: serde_json::Value) -> String {
+        generate_next_action(
+            ASP_JOB_ID,
+            event,
+            ASP_AGENT_ID,
+            Some("My Sub"),
+            None,
+            None,
+            Some(&msg),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn asp_handled_subscription_events_render_notify() {
+        for evt in [
+            "sub_asp_selected",
+            "sub_complete_notify",
+            "sub_close_notify",
+            "sub_failed_notify",
+        ] {
+            let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
+            assert!(
+                out.contains("onchainos agent user-notify"),
+                "{evt}: ASP must render a notify body"
+            );
+            assert!(
+                !out.contains("pending-decisions"),
+                "{evt}: display-only — no pending-decisions"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn asp_terminal_subscription_events_carry_cleanup_hint() {
+        for evt in [
+            "sub_complete_notify",
+            "sub_close_notify",
+            "sub_failed_notify",
+        ] {
+            let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
+            assert!(
+                out.contains("session-cleanup"),
+                "{evt}: terminal ASP event must append the cleanup hint"
+            );
+        }
+        // sub_asp_selected is display-only and non-terminal → no cleanup hint.
+        for evt in ["sub_asp_selected"] {
+            let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
+            assert!(
+                !out.contains("session-cleanup"),
+                "{evt}: non-terminal ASP event must NOT append the cleanup hint"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn asp_selected_renders_terms_verbatim() {
+        let out = run_asp(
+            "sub_asp_selected",
+            json!({ "event": "sub_asp_selected", "jobId": ASP_JOB_ID, "tokenSymbol": "USDT", "tokenAmount": "5.5" }),
+        )
+        .await;
+        assert!(out.contains("5.5 USDT"), "ASP terms echoed verbatim: {out}");
+    }
+
+    #[tokio::test]
+    async fn asp_terminal_events_render_product_copy_verbatim() {
+        let out = run_asp(
+            "sub_complete_notify",
+            json!({ "event": "sub_complete_notify", "jobId": ASP_JOB_ID, "jobTitle": "AlphaBot", "subEndTime": 1786547115 }),
+        )
+        .await;
+        assert!(
+            out.contains("[Subscription Complete]"),
+            "ASP-9 label: {out}"
+        );
+        assert!(
+            out.contains("\"AlphaBot\""),
+            "ASP-9 service name quoted: {out}"
+        );
+        assert!(
+            out.contains("no further delivery is required"),
+            "ASP-9 tail: {out}"
+        );
+
+        let out = run_asp(
+            "sub_close_notify",
+            json!({ "event": "sub_close_notify", "jobId": ASP_JOB_ID, "jobTitle": "AlphaBot" }),
+        )
+        .await;
+        assert!(out.contains("[Subscription Ended]"), "ASP-10 label: {out}");
+        assert!(
+            out.contains("please stop delivering the service"),
+            "ASP-10 tail: {out}"
+        );
+
+        let out = run_asp(
+            "sub_failed_notify",
+            json!({ "event": "sub_failed_notify", "jobId": ASP_JOB_ID, "jobTitle": "AlphaBot", "failReason": "insufficient balance" }),
+        )
+        .await;
+        assert!(out.contains("[Trial Not Converted]"), "ASP-11 label: {out}");
+        assert!(
+            out.contains("(reason: insufficient balance)"),
+            "ASP-11 reason clause: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn asp_buyer_only_subscription_events_are_ignored() {
+        // NOTE: `sub_user_reject` is intentionally NOT in this list — per the design doc it is an
+        // ASP-handled decision scene (refund/dispute), covered by
+        // `asp_sub_user_reject_renders_refund_dispute_decision` below.
+        // `sub_renew` is NOT in this list either — it routes to the subscribe-asp-claim
+        // guidance (see `asp_sub_renew_renders_claim_guidance`).
+        // `sub_asp_dispute` is NOT in this list — it renders the arbitration/evidence
+        // auto-upload playbook (Event::SubAspDispute arm).
+        // `sub_asp_agree` IS ignored here: it is the ASP's own action, so per product
+        // copy SSOT it gets no ASP-side push (owned by the action-command flow).
+        for evt in [
+            "sub_created",
+            "sub_cancel",
+            "sub_trial_into_active",
+            "sub_asp_agree",
+        ] {
+            let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
+            assert!(
+                out.contains("Silently ignore"),
+                "{evt}: buyer-only event must hit the silent-ignore group"
+            );
+            assert!(
+                !out.contains("onchainos agent user-notify"),
+                "{evt}: buyer-only event must not render a notify"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn asp_sub_renew_renders_claim_guidance() {
+        // Renewal = the previous period's income became claimable (§2.9 aspClaim).
+        // The ASP arm must route to the deterministic claim command, NOT silently
+        // ignore it (which left accrued income unclaimed in the contract).
+        let out = run_asp("sub_renew", json!({ "event": "sub_renew", "jobId": ASP_JOB_ID })).await;
+        assert!(
+            out.contains("subscribe-asp-claim"),
+            "sub_renew must guide the ASP to claim: {out}"
+        );
+        assert!(out.contains(ASP_JOB_ID) && out.contains(ASP_AGENT_ID), "got: {out}");
+        assert!(!out.contains("Silently ignore"), "got: {out}");
+        // No buyer involvement: never instruct an XMTP send toward the User Agent.
+        assert!(out.contains("Do NOT `okx-a2a xmtp-send`"), "got: {out}");
+    }
+
+    #[tokio::test]
+    async fn asp_sub_user_reject_renders_refund_dispute_decision() {
+        // `sub_user_reject` now parses to the first-class `Event::SubUserReject` (state_machine);
+        // the ASP arm must push the refund/dispute decision, NOT silently ignore it.
+        let out = run_asp(
+            "sub_user_reject",
+            json!({
+                "event": "sub_user_reject", "jobId": ASP_JOB_ID, "jobTitle": "My Sub",
+                "subStartTime": 1_700_000_000, "subEndTime": 1_700_500_000,
+                "rejectWindowEndsAt": 1_700_600_000,
+                "tokenAmount": "0.0005", "tokenSymbol": "USDT"
+            }),
+        )
+        .await;
+        assert!(
+            out.contains("pending-decisions-v2 request-prompt"),
+            "sub_user_reject must push a decision to the user: {out}"
+        );
+        assert!(
+            !out.contains("Silently ignore"),
+            "sub_user_reject must NOT hit the silent-ignore group: {out}"
+        );
+        // AC-F2: ASP-3 canonical copy with period / precise deadline / amount slots + A/B.
+        assert!(
+            out.contains("[Action Needed: User Rejection] The user has rejected \"My Sub\"'s current period ("),
+            "ASP-3 copy + period slot: {out}"
+        );
+        assert!(
+            out.contains("file a dispute by ") && out.contains("full refund of 0.0005 USDT"),
+            "precise deadline + amount slots: {out}"
+        );
+        assert!(
+            out.contains("A. File a dispute for arbitration.")
+                && out.contains("B. Confirm the refund for this period."),
+            "A/B decision preserved: {out}"
+        );
+        // Degrade: missing rejectWindowEndsAt falls back to the approximate window, no empty slot.
+        let degraded = run_asp(
+            "sub_user_reject",
+            json!({ "event": "sub_user_reject", "jobId": ASP_JOB_ID, "jobTitle": "My Sub" }),
+        )
+        .await;
+        assert!(
+            degraded.contains("within about 1 day"),
+            "deadline fallback: {degraded}"
+        );
+        assert!(!degraded.contains(" by .") && !degraded.contains("of  "), "no empty slot: {degraded}");
+    }
+
+    #[tokio::test]
+    async fn asp_sub_dispute_guidance_passes_reason() {
+        // The dispute outcome must thread a `--reason` so it reaches the on-chain
+        // arbitration record (broadcast bizContext); a bare `subscribe-dispute` drops it.
+        let out = run_asp(
+            "sub_dispute",
+            json!({ "event": "sub_dispute", "jobId": ASP_JOB_ID }),
+        )
+        .await;
+        assert!(out.contains("subscribe-dispute"), "must call subscribe-dispute: {out}");
+        assert!(
+            out.contains("--reason"),
+            "sub_dispute guidance must pass --reason (on-chain bizContext): {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn asp_notify_scaffold_instructs_placeholder_fill() {
+        // The notify scaffold must tell the sub session to fill `<...>` placeholders
+        // from task context so a missing envelope title never leaks a literal "<title>".
+        let out = run_asp("sub_asp_selected", json!({ "event": "sub_asp_selected" })).await;
+        assert!(
+            out.contains("never send a literal placeholder"),
+            "scaffold carries the placeholder-fill instruction: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn asp_epoch_tolerates_millisecond_timestamps() {
+        // A millisecond-scale subEndTime must render a sane date, not a five-digit year.
+        let out = run_asp(
+            "sub_complete_notify",
+            json!({ "event": "sub_complete_notify", "subEndTime": 1_790_000_000_000i64 }),
+        )
+        .await;
+        assert!(out.contains("2026-"), "ms timestamp rendered as seconds date: {out}");
+        assert!(!out.contains("+58692"), "no five-digit year: {out}");
+    }
+
+    // ── FR-3: price gate test_flag short-circuit (sandbox ASP review) ────
+
+    // test_flag forces OK even when the offer is below the registered fee.
+    #[test]
+    fn price_gate_test_flag_forces_ok_when_below_fee() {
+        let (status, _summary, action) =
+            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", true);
+        assert_eq!(status, "OK");
+        assert_eq!(action, "Apply at offer amount.");
+    }
+
+    // Normal path (test_flag=false): offer below fee ⇒ TOO_LOW (regression).
+    #[test]
+    fn price_gate_normal_below_fee_is_too_low() {
+        let (status, _summary, action) =
+            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", false);
+        assert_eq!(status, "TOO_LOW");
+        assert_eq!(action, "Reject — price below registered floor.");
+    }
+
+    // Normal path (test_flag=false): offer at/above fee ⇒ OK.
+    #[test]
+    fn price_gate_normal_at_or_above_fee_is_ok() {
+        let (status, _summary, action) =
+            price_gate_decision(Some(2.0), Some(1.0), "2", "1", "USDT", false);
+        assert_eq!(status, "OK");
+        assert_eq!(action, "Apply at offer amount.");
+    }
+
+    // §6 / A-CLISPEC invariant 2: a test_flag accept is byte-identical to a
+    // normal accept — same tuple, so no downstream consumer can distinguish them.
+    #[test]
+    fn price_gate_test_flag_ok_string_matches_normal_ok() {
+        // Test-accept: below fee but test_flag=true.
+        let test_accept =
+            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", true);
+        // Normal-accept: same amounts, offer >= fee, test_flag=false.
+        let normal_accept =
+            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", false);
+        // Prove the normal-accept path with identical inputs (offer >= fee).
+        let normal_ok = price_gate_decision(Some(1.0), Some(1.0), "0.00001", "1", "USDT", false);
+        // The normal below-fee case rejects; the test path accepts with the OK tuple.
+        assert_eq!(normal_accept.0, "TOO_LOW");
+        // The test-accept tuple is byte-identical to a genuine OK accept.
+        assert_eq!(test_accept, normal_ok);
     }
 }

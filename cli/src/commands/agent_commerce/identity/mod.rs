@@ -38,9 +38,9 @@ mod validate;
 
 // CLI `Args` structs — kept at the module root for `identity::CreateArgs`.
 pub use args::{
-    ActivateArgs, AgentStatusArgs, CreateArgs, FeedbackListArgs, FeedbackSubmitArgs, GetAgentsArgs,
-    GetArgs, GetByAddressArgs, GetMyAgentsArgs, PrecheckArgs, SearchArgs, ServiceListArgs,
-    UpdateArgs, UploadArgs, ValidateListingArgs, XmtpSignArgs,
+    ActivateArgs, AgentStatusArgs, CreateArgs, FeedbackListArgs, FeedbackSubmitArgs,
+    GetAgentsArgs, GetArgs, GetByAddressArgs, GetMyAgentsArgs, PrecheckArgs, SearchArgs,
+    ServiceListArgs, TaskFeedbackArgs, UpdateArgs, UploadArgs, ValidateListingArgs, XmtpSignArgs,
 };
 
 // Pure-local validator — hidden CLI entry point used by the skill during QA.
@@ -49,6 +49,7 @@ pub use validate::validate_listing;
 // Read-side commands.
 pub use queries::{
     feedback_list, get, get_agents, get_by_address, get_my_agents, search, service_list,
+    task_feedback,
 };
 
 // Write-side commands.

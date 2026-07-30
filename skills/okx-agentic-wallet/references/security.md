@@ -19,20 +19,20 @@ Token risk / honeypot detection, DApp/URL phishing detection, transaction pre-ex
 
 The risk result is valid even if simulation fails (`simulator.revertReason` may hold the reason). A populated `warnings` field means the scan completed but data may be incomplete — still present available risk info. Empty `action` means "no risk" only on a **successful** response; on a failed call, apply the fail-safe principle.
 
-**token-scan**: the API returns an authoritative `riskLevel` (`CRITICAL` / `HIGH` / `MEDIUM` / `LOW`) computed server-side — read it directly, no client-side computation. Buy is stricter than sell:
+**token-scan**: pass `--trade-direction buy|sell` when the scan is part of a trade — the CLI then classifies each token server-side and returns the verdict as fields, so **MUST**: read them directly and **NEVER**: recompute the verdict from raw `riskLevel` client-side (the riskLevel×direction matrix lives in the CLI now; a hand-derived copy drifts from it). Each token carries `normalizedRiskLevel` (`CRITICAL` / `HIGH` / `MEDIUM` / `LOW`), `action`, and `isNative`; the top level carries `combinedAction` (strictest `action` across all non-native tokens) and `tradeDirection`. Respond to the `action` enum (severity `block` > `pause` > `warn` > `safe`):
 
-| `riskLevel` | Buy | Sell |
-|---|---|---|
-| CRITICAL | `block` — refuse to buy | `warn` — display risk, allow sell |
-| HIGH | `warn` + **pause** — require explicit yes/no | `warn` — display risk, allow sell |
-| MEDIUM | `warn` — info notice, continue | `warn` — info notice, continue |
-| LOW | safe | safe |
+| `action` | Respond |
+|---|---|
+| `block` | Refuse the buy; show the risk. |
+| `pause` | Require an explicit yes/no before continuing. |
+| `warn` | Show the risk as an info notice; continue (buy) or allow (sell). |
+| `safe` | Proceed. |
 
-Show only the overall `riskLevel` (never individual label levels), listing triggered labels without level prefixes. `isChainSupported: false` → skip with a warning, do not block. In swap context, a token-scan API failure auto-continues with a warning (overrides the general fail-safe to avoid blocking time-sensitive trades); standalone, follow the general fail-safe. Missing/`null`/unrecognized `riskLevel` → treat as HIGH.
+Buy is stricter than sell, but that mapping is the CLI's — do not re-derive it. Omit `--trade-direction` for a standalone scan (no trade context): the CLI returns the raw backend array with no `action` field and you present all triggered labels without buy/sell logic. Show only the overall `normalizedRiskLevel` (never individual label levels), listing triggered labels without level prefixes. `isChainSupported: false` → skip with a warning, do not block. In swap context, a token-scan API failure auto-continues with a warning (overrides the general fail-safe to avoid blocking time-sensitive trades); standalone, follow the general fail-safe. Missing / `null` / unrecognized `riskLevel` normalizes to HIGH (the CLI does this).
 
 ## token-scan Flow
 
-Determine buy vs sell: **buy** = the token being received (`--to` in swap) is scanned; **sell** = the token being spent (`--from`); **standalone** (no swap context) = present all triggered labels, no buy/sell action logic. When scanning a swap pair, enforce the most restrictive action across both tokens (BLOCK > PAUSE > WARN > safe); omit any native token (no contract address).
+Set `--trade-direction` from the intent: **buy** = the token being received (`--to` in a swap), **sell** = the token being spent (`--from`), **standalone** (no swap context) = omit the flag and present all triggered labels with no buy/sell logic. When scanning a swap pair, pass every token in one `--tokens` call and read the CLI's `combinedAction` for the pair verdict — it already takes the strictest `action` across non-native tokens and skips native ones, so do not reduce it yourself.
 
 Recommended: fetch holdings first (display to the user), then scan with `--tokens`:
 - **Logged-in wallet (own address)**: `wallet balance [--chain <chain>]` → extract non-native ERC-20/SPL tokens → `security token-scan --tokens "<chainIndex>:<addr>,..."`.

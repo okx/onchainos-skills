@@ -27,11 +27,11 @@
 /// `Event::JobAspSelected` no-serviceId fallback — user-facing notification
 /// pushed via `onchainos agent user-notify --content <text>`. The playbook does NOT
 /// auto-start negotiation; it ends the turn and waits for the User Agent to re-route
-/// (designate a specific service / list the task publicly). Localize before sending.
+/// (designate a specific service). Localize before sending.
 pub fn job_asp_selected_no_service_notify(job_id: &str) -> String {
     format!(
         "[Designated Task — Skipped] Job {job_id} — the User Agent designated you as the ASP without pinning a specific service.\n\
-         \x20\x20No action taken; waiting for the User Agent to re-route with a specific service or list the task publicly."
+         \x20\x20No action taken; waiting for the User Agent to re-route with a specific service."
     )
 }
 
@@ -91,7 +91,7 @@ pub fn job_asp_selected_rejected_notify(job_id: &str, reason: &str) -> String {
     format!(
         "[Designated Task Declined] Job {job_id} — the designated assignment was declined.\n\
          \x20\x20- Reason: {reason}\n\
-         \x20\x20The User Agent can now re-route to another ASP or list the task publicly."
+         \x20\x20The User Agent can now re-route to another ASP."
     )
 }
 
@@ -363,6 +363,185 @@ pub fn user_attachment_received_user_notify(job_id: &str) -> String {
     format!("[Job `{job_id}`] The User Agent sent an attachment (reference material for this task). File downloaded and saved locally.")
 }
 
+/// Append the FR-2 `autotrade: <canonical json>` line to a delivery message.
+///
+/// Empty `autotrade_line` ⇒ the message is returned byte-for-byte unchanged
+/// (ordinary delivery). The buyer sub parses this trailing line to run the
+/// auto-trade pipeline.
+pub fn with_autotrade_line(message: String, autotrade_line: &str) -> String {
+    if autotrade_line.is_empty() {
+        message
+    } else {
+        format!("{message}\nautotrade: {autotrade_line}")
+    }
+}
+
+// ── Subscription notifications (display-class) ─────────────────────
+
+fn fmt_epoch(ts: Option<i64>) -> Option<String> {
+    let ts = ts.filter(|t| *t > 0)?;
+    // Backend timestamps are contract-seconds; tolerate a millisecond-scale value
+    // (>= 1e12 could only be year 33658+ as seconds) so a unit drift upstream
+    // renders a sane date instead of a five-digit year.
+    let ts = if ts >= 1_000_000_000_000 { ts / 1000 } else { ts };
+    chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+}
+
+// The service name can be unresolvable (envelope omitted jobTitle AND the task prefetch
+// failed or returned an empty title). Degrade by omitting the quoted-name subclause —
+// a literal `<title>` placeholder must never reach the user-visible notification body.
+fn service_name_clause(preposition: &str, service_name: Option<&str>) -> String {
+    match service_name {
+        Some(s) if !s.is_empty() => format!("{preposition} \"{s}\""),
+        _ => String::new(),
+    }
+}
+
+pub fn sub_asp_selected_asp_notify(
+    service_name: Option<&str>,
+    buyer_agent_id: Option<&str>,
+    job_id: &str,
+    token_amount: Option<&str>,
+    token_symbol: Option<&str>,
+    period_start: Option<i64>,
+    period_end: Option<i64>,
+) -> String {
+    let svc = service_name_clause(" for", service_name);
+    let mut out = format!("[New Subscription] You have a new subscriber{svc}.");
+    if let Some(buyer) = buyer_agent_id {
+        out.push_str(&format!(" Buyer: {buyer}."));
+    }
+    out.push_str(&format!(" Job {job_id}"));
+    if let (Some(s), Some(e)) = (fmt_epoch(period_start), fmt_epoch(period_end)) {
+        out.push_str(&format!(", current period {s}–{e}"));
+    }
+    match (token_amount, token_symbol) {
+        (Some(amt), Some(sym)) => out.push_str(&format!(", payment received: {amt} {sym}")),
+        (Some(amt), None) => out.push_str(&format!(", payment received: {amt}")),
+        _ => {}
+    }
+    out.push('.');
+    out.push_str(" Please begin delivering the service.");
+    out
+}
+
+/// `sub_asp_selected` with `trialType=1` — the subscriber is on a free trial, so nothing
+/// has been charged yet; the ASP must NOT be told a payment was received (the real payment
+/// is announced on conversion via `sub_trial_into_active`). Mirrors the buyer-side
+/// `sub_created_trial_user_notify` trial variant.
+pub fn sub_asp_selected_trial_asp_notify(
+    service_name: Option<&str>,
+    buyer_agent_id: Option<&str>,
+    job_id: &str,
+    token_amount: Option<&str>,
+    token_symbol: Option<&str>,
+    trial_start: Option<i64>,
+    trial_end: Option<i64>,
+) -> String {
+    let svc = service_name_clause(" for", service_name);
+    let mut out = format!("[New Trial Subscriber] You have a new subscriber{svc} on a free trial");
+    if let (Some(s), Some(e)) = (fmt_epoch(trial_start), fmt_epoch(trial_end)) {
+        out.push_str(&format!(" ({s}\u{2013}{e})"));
+    }
+    out.push('.');
+    if let Some(buyer) = buyer_agent_id {
+        out.push_str(&format!(" Buyer: {buyer}."));
+    }
+    out.push_str(&format!(" Job {job_id}. No payment during the trial"));
+    if let Some(amt) = token_amount {
+        match token_symbol {
+            Some(sym) => out.push_str(&format!("; {amt} {sym} will be charged on conversion")),
+            None => out.push_str(&format!("; {amt} will be charged on conversion")),
+        }
+        if let Some(e) = fmt_epoch(trial_end) {
+            out.push_str(&format!(" at {e}"));
+        }
+    }
+    out.push('.');
+    out.push_str(" Please begin delivering the service.");
+    out
+}
+
+/// ASP terminal notice: subscription completed all scheduled renewals (status Completed).
+/// `period_end` clause is omitted when the field is absent (graceful degradation).
+pub fn sub_complete_notify_asp_notify(
+    service_name: Option<&str>,
+    job_id: &str,
+    period_end: Option<i64>,
+) -> String {
+    let svc = service_name_clause(" to", service_name);
+    let mut out = format!(
+        "[Subscription Complete] The user's subscription{svc} has completed all scheduled renewals. Job {job_id} status: Completed; service ends normally"
+    );
+    if let Some(e) = fmt_epoch(period_end) {
+        out.push_str(&format!(" at {e}"));
+    }
+    out.push_str(" — no further delivery is required.");
+    out
+}
+
+/// ASP terminal notice: subscription ended because the renewal charge failed during grace (Closed).
+pub fn sub_close_notify_asp_notify(service_name: Option<&str>, job_id: &str) -> String {
+    let svc = service_name_clause(" to", service_name);
+    format!(
+        "[Subscription Ended] The user's subscription{svc} has ended because the renewal charge failed during the grace period. Job {job_id} status: Closed — please stop delivering the service."
+    )
+}
+
+/// ASP terminal notice: free trial failed to convert to a paid subscription (Closed).
+/// `reason` clause is omitted when the field is absent (graceful degradation).
+pub fn sub_failed_notify_asp_notify(
+    service_name: Option<&str>,
+    job_id: &str,
+    reason: Option<&str>,
+) -> String {
+    let svc = service_name_clause(" for", service_name);
+    let reason_clause = match reason {
+        Some(r) if !r.is_empty() => format!(" (reason: {r})"),
+        _ => String::new(),
+    };
+    format!(
+        "[Trial Not Converted] The user's free trial{svc} failed to convert to a paid subscription{reason_clause}. Job {job_id} status: Closed — no further delivery is required."
+    )
+}
+
+/// `sub_user_reject` ASP-side decision copy: the buyer rejected the current period; the ASP
+/// must confirm the refund or file a dispute before the response deadline, else a full refund
+/// is issued automatically. Rendered as the canonical body pushed through the pending-decisions
+/// relay (A/B decision included). Slots degrade per sibling pattern; a missing deadline falls
+/// back to the approximate "within about 1 day" window rather than an empty slot.
+pub fn sub_user_reject_asp_decision_copy(
+    service_name: &str,
+    period_start: Option<i64>,
+    period_end: Option<i64>,
+    reject_window_ends_at: Option<i64>,
+    amount: Option<&str>,
+    token_symbol: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "[Action Needed: User Rejection] The user has rejected \"{service_name}\"'s current period"
+    );
+    if let (Some(s), Some(e)) = (fmt_epoch(period_start), fmt_epoch(period_end)) {
+        out.push_str(&format!(" ({s}\u{2013}{e})"));
+    }
+    out.push('.');
+    match fmt_epoch(reject_window_ends_at) {
+        Some(d) => out.push_str(&format!(" Please confirm the refund or file a dispute by {d}")),
+        None => out.push_str(" Please confirm the refund or file a dispute within about 1 day"),
+    }
+    out.push_str(" — otherwise a full refund");
+    match (amount, token_symbol) {
+        (Some(a), Some(sym)) => out.push_str(&format!(" of {a} {sym}")),
+        (Some(a), None) => out.push_str(&format!(" of {a}")),
+        _ => {}
+    }
+    out.push_str(" will be issued to the user automatically.\n");
+    out.push_str("  A. File a dispute for arbitration.\n");
+    out.push_str("  B. Confirm the refund for this period.");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +569,83 @@ mod tests {
             out.ends_with("agree to refund'"),
             "card unchanged when None; got:\n{out}"
         );
+    }
+
+    // ── sub_asp_selected canonical copy ──
+
+    #[test]
+    fn sub_asp_selected_renders_buyer_period_and_payment_verbatim() {
+        let out = sub_asp_selected_asp_notify(
+            Some("My Sub"),
+            Some("agent-buyer-1"),
+            "job-1",
+            Some("3.00"),
+            Some("USDT"),
+            Some(1_700_000_000),
+            Some(1_700_500_000),
+        );
+        assert!(out.starts_with("[New Subscription]"), "canonical prefix: {out}");
+        assert!(out.contains("new subscriber for \"My Sub\""));
+        assert!(out.contains("Buyer: agent-buyer-1."));
+        assert!(out.contains("Job job-1"));
+        assert!(out.contains("current period"));
+        assert!(
+            out.contains("payment received: 3.00 USDT"),
+            "amount rendered verbatim: {out}"
+        );
+        assert!(out.contains("Please begin delivering the service."));
+    }
+
+    #[test]
+    fn sub_asp_selected_degrades_when_optional_fields_absent() {
+        // No buyer / period / amount → still renders the core notice grammatically.
+        let out =
+            sub_asp_selected_asp_notify(Some("My Sub"), None, "job-1", None, None, None, None);
+        assert!(out.contains("new subscriber for \"My Sub\""));
+        assert!(!out.contains("Buyer:"));
+        assert!(!out.contains("current period"));
+        assert!(!out.contains("payment received"));
+        assert!(out.contains("Job job-1. Please begin delivering the service."));
+    }
+
+    #[test]
+    fn sub_asp_notices_omit_service_clause_when_title_unresolvable() {
+        // Envelope title AND prefetch both missing → the quoted-name subclause degrades
+        // away; a literal `<title>` placeholder must never appear in the body.
+        let selected = sub_asp_selected_asp_notify(None, None, "job-1", None, None, None, None);
+        let complete = sub_complete_notify_asp_notify(None, "job-1", None);
+        let closed = sub_close_notify_asp_notify(None, "job-1");
+        let failed = sub_failed_notify_asp_notify(None, "job-1", None);
+        for out in [&selected, &complete, &closed, &failed] {
+            assert!(!out.contains("<title>"), "no literal placeholder: {out}");
+            assert!(!out.contains("\"\""), "no empty quoted name: {out}");
+        }
+        assert!(selected.contains("You have a new subscriber."));
+        assert!(complete.contains("The user's subscription has completed all scheduled renewals"));
+        assert!(closed.contains("The user's subscription has ended because the renewal charge failed"));
+        assert!(failed.contains("The user's free trial failed to convert to a paid subscription"));
+    }
+
+    #[test]
+    fn sub_asp_selected_trial_branch_omits_payment_received() {
+        // trialType=1: nothing is charged on selection, so the ASP must NOT be told a
+        // payment was received; the amount is framed as a future conversion charge.
+        let out = sub_asp_selected_trial_asp_notify(
+            Some("My Sub"),
+            Some("agent-buyer-1"),
+            "job-1",
+            Some("0.0005"),
+            Some("USDT"),
+            Some(1_700_000_000),
+            Some(1_700_500_000),
+        );
+        assert!(out.starts_with("[New Trial Subscriber]"), "trial prefix: {out}");
+        assert!(!out.contains("payment received"), "no false payment claim: {out}");
+        assert!(out.contains("No payment during the trial"), "states no charge: {out}");
+        assert!(
+            out.contains("0.0005 USDT will be charged on conversion"),
+            "future charge framed: {out}"
+        );
+        assert!(out.contains("Please begin delivering the service."));
     }
 }

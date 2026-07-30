@@ -48,6 +48,7 @@ pub async fn handle_upload_evidence(
     role: &str,
     text: Option<&str>,
     explicit_file_paths: &[String],
+    max_files: Option<usize>,
 ) -> Result<()> {
     if role != "user" && role != "asp" {
         bail!("--role must be 'user' or 'asp', got '{role}'");
@@ -97,7 +98,20 @@ pub async fn handle_upload_evidence(
     let mut manifest_filenames: Vec<String> = Vec::new();
     if let Some(m) = manifest.as_ref() {
         let dir = deliverables::deliverables_dir(role, job_id)?;
-        for entry in &m.entries {
+        let entries: &[deliverables::DeliverableEntry] = if let Some(max) = max_files {
+            let total = m.entries.len();
+            if total > max {
+                eprintln!(
+                    "[dispute_upload] manifest has {total} entries; capping to most recent {max} (--max-files)"
+                );
+                &m.entries[total - max..]
+            } else {
+                &m.entries
+            }
+        } else {
+            &m.entries
+        };
+        for entry in entries {
             file_paths.push((dir.join(&entry.filename), false));
             manifest_filenames.push(entry.filename.clone());
         }

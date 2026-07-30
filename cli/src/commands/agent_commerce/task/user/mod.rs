@@ -8,7 +8,6 @@
 //! - `complete.rs`     — confirm completion (scene 5)
 //! - `reject.rs`       — reject deliverable (scene 6)
 //! - `close.rs`        — close task (scene 7) + claim arbitration reward
-//! - `changepublic.rs` — set to Public (scene 8)
 //!
 //! Shared:
 //! - `query.rs`        — read-only queries (status, list, pay)
@@ -16,21 +15,22 @@
 mod accept;
 mod asp_ops;
 pub(crate) mod attachments;
-mod changepublic;
 mod claim_auto_refund;
 mod close;
 mod complete;
 mod content;
 mod create;
+mod create_subscribe;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
-pub(crate) use flow_lifecycle::try_recover_from_temp_file;
+pub(crate) use flow_lifecycle::{persist_a2a_spool, try_recover_from_temp_file, run_recovered_autotrade};
 mod flow_negotiate;
 pub(crate) mod negotiate;
 mod query;
 mod reject;
 mod reject_apply;
+pub(crate) mod subscription_ops;
 mod x402_flow;
 
 use anyhow::Result;
@@ -57,21 +57,21 @@ pub enum TaskCommand {
         currency: String,
         #[arg(long)]
         title: Option<String>,
-        /// Designated provider agentId (skip asp-match; negotiate or x402-accept with this provider directly).
+        /// Designated provider agentId (required; skip asp-match; negotiate or x402-accept with this provider directly).
         #[arg(long)]
-        provider: Option<String>,
+        provider: String,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
         /// Designated service endpoint (persisted for multi-service providers)
         #[arg(long)]
         endpoint: Option<String>,
-        /// Payment mode to set at creation time (escrow / x402). When omitted the task is created with paymentMode=0 (unset).
+        /// Payment mode to set at creation time (required; escrow / x402).
         #[arg(long = "payment-mode")]
-        payment_mode: Option<String>,
-        /// Service ID from asp/match response
+        payment_mode: String,
+        /// Service ID from asp/match response (required)
         #[arg(long = "service-id")]
-        service_id: Option<String>,
+        service_id: String,
         /// Service input parameters (natural language string)
         #[arg(long = "service-params")]
         service_params: Option<String>,
@@ -81,9 +81,47 @@ pub enum TaskCommand {
         /// Service price (from asp/match feeAmount)
         #[arg(long = "service-token-amount")]
         service_token_amount: Option<String>,
-        /// Task visibility: 1 = private (requires --provider), 0 = public
-        #[arg(long, default_value = "1")]
-        visibility: i32,
+    },
+    /// Create a subscription task (providerConfirmStatus → EIP-712 sign → create → broadcast)
+    CreateSubscribe {
+        #[arg(long = "service-id")]
+        service_id: String,
+        /// Use trial period (if available)
+        #[arg(long = "use-trial", default_value = "false")]
+        use_trial: bool,
+        /// Service input parameters (JSON string)
+        #[arg(long = "service-params", default_value = "")]
+        service_params: String,
+        /// Service price (must match listing price)
+        #[arg(long = "service-token-amount")]
+        service_token_amount: String,
+        /// Token contract address
+        #[arg(long = "service-token-address")]
+        service_token_address: String,
+        /// Auto-renew: 0/false=off, 1/true=on
+        #[arg(long = "auto-renew")]
+        auto_renew: String,
+        /// Copy trade: 0/false=off, 1/true=on
+        #[arg(long = "copy-trade")]
+        copy_trade: String,
+        /// Subscription title (max 64 chars)
+        #[arg(long)]
+        title: String,
+        /// Subscription description (max 4096 chars)
+        #[arg(long)]
+        description: String,
+        /// Description summary (max 512 chars)
+        #[arg(long = "description-summary")]
+        description_summary: String,
+        /// Designated provider agent ID
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: Option<String>,
+        /// Service billing interval (from asp-match subscription.interval, e.g. "month")
+        #[arg(long = "service-interval", default_value = "month")]
+        service_interval: String,
+        /// Output format: "json" for raw JSON
+        #[arg(long, default_value = "")]
+        format: String,
     },
     /// Search matching ASPs (pre-publish or post-publish)
     AspMatch {
@@ -96,6 +134,9 @@ pub enum TaskCommand {
         /// Narrow to this ASP's services
         #[arg(long = "provider-agent-id")]
         provider_agent_id: Option<String>,
+        /// Budget amount for backend filtering
+        #[arg(long = "payment-token-amount")]
+        payment_token_amount: Option<f64>,
         /// Page number
         #[arg(long, default_value = "1")]
         page: usize,
@@ -184,12 +225,6 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Client converts private task to public listing
-    SetPublic {
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
     /// ASP generates payment invoice after provider_applied
     Payment {
         job_id: String,
@@ -262,23 +297,71 @@ pub enum TaskCommand {
     ListAttachments {
         job_id: String,
     },
+    /// Cancel a subscription (unified: trial cancel + close auto-renew)
+    #[command(name = "subscribe-cancel")]
+    SubscribeCancel {
+        sub_id: String,
+    },
+    /// Enable auto-renew on a subscription (needs EIP-712 terms signing)
+    #[command(name = "start-autorenew")]
+    StartAutorenew {
+        sub_id: String,
+    },
+    /// Reject a subscription delivery
+    #[command(name = "subscribe-reject")]
+    SubscribeReject {
+        sub_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Show subscription detail
+    #[command(name = "subscribe-detail")]
+    SubscribeDetail {
+        sub_id: String,
+        #[arg(long, default_value = "")]
+        format: String,
+    },
+    /// List the logged-in agent's subscriptions.
+    MySubscriptions {
+        role: subscription_ops::SubscriptionRole,
+        status: Option<i32>,
+    },
+    /// Show total monthly cost of active subscriptions.
+    #[command(name = "subscribe-cost")]
+    SubscribeCost {},
 }
 
 // ─── Routing dispatch ──────────────────────────────────────────────────────
+
+fn parse_bool_or_int(s: &str, flag: &str) -> Result<i32> {
+    match s {
+        "0" | "false" => Ok(0),
+        "1" | "true" => Ok(1),
+        _ => anyhow::bail!("--{flag} must be 0, 1, true, or false; got \"{s}\""),
+    }
+}
 
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     let mut client = TaskApiClient::new();
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount, visibility } =>
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
                 title, provider, attachments, endpoint, payment_mode,
-                service_id, service_params, service_token_address, service_token_amount, visibility,
+                service_id, service_params, service_token_address, service_token_amount,
             }).await,
-        TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, page, agent_id, format } =>
-            asp_ops::handle_asp_match(&mut client, job_id.as_deref(), &task_desc, provider_agent_id.as_deref(), page, agent_id.as_deref(), &format).await,
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format } => {
+            let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
+            let copy_trade = parse_bool_or_int(&copy_trade, "copy-trade")?;
+            create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
+                service_id, use_trial, service_params, service_token_amount, service_token_address,
+                auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format,
+            }).await
+        }
+        TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
+            asp_ops::handle_asp_match(&mut client, job_id.as_deref(), &task_desc, provider_agent_id.as_deref(), payment_token_amount, page, agent_id.as_deref(), &format).await,
         TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
             asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), payment_token_amount.as_deref(), payment_most_token_amount.as_deref(), agent_id.as_deref()).await,
         TaskCommand::ResetAsp { job_id, agent_id } =>
@@ -304,8 +387,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             reject::handle_reject(&mut client, &job_id, &reason).await,
         TaskCommand::Close { job_id, agent_id } =>
             close::handle_close(&mut client, &job_id, agent_id.as_deref()).await,
-        TaskCommand::SetPublic { job_id, agent_id } =>
-            changepublic::handle_set_public(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
         TaskCommand::RejectApply { job_id, agent_id } =>
@@ -323,9 +404,24 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             attachments::handle_task_attachments(&job_id)
         }
 
+        // ── Subscription management ─────────────────────────────
+        TaskCommand::SubscribeCancel { sub_id } =>
+            subscription_ops::handle_subscribe_cancel(&mut client, &sub_id).await,
+        TaskCommand::StartAutorenew { sub_id } =>
+            subscription_ops::handle_start_autorenew(&mut client, &sub_id).await,
+        TaskCommand::SubscribeReject { sub_id, reason } =>
+            reject::handle_reject(&mut client, &sub_id, &reason).await,
+        TaskCommand::SubscribeDetail { sub_id, format } =>
+            subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await,
+
         // ── Read-only queries ────────────────────────────────────
         TaskCommand::Payment { job_id, agent_id } =>
             query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
+        TaskCommand::MySubscriptions { role, status } => {
+            subscription_ops::handle_my_subscriptions(&mut client, role, status).await
+        }
+        TaskCommand::SubscribeCost {} =>
+            subscription_ops::handle_subscribe_cost(&mut client).await,
 
     }
 }

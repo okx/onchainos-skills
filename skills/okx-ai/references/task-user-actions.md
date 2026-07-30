@@ -10,7 +10,7 @@
 | Section | When to read |
 |---|---|
 | §2 Mid-task attachment | User wants to add files to an active task |
-| §3 Terms changes | Switch provider (set-asp) / set public / stop task |
+| §3 Terms changes | Switch provider (set-asp) / stop task |
 | §4 View deliverables | User wants to see submitted deliverables |
 
 ---
@@ -72,23 +72,14 @@
 
 > ❌ **Forbidden** to call `mark-failed` — it only terminates negotiation; it does NOT exclude that provider.
 
-### 3.2 Set public (convert private → public)
+### 3.2 Stop task
 
-> **Pre-condition**: task is in **Created** state and currently private (has a designated provider).
-
-**Trigger**: "set public" / "make it public" / "convert to public task" / "remove provider"
-
-1. Confirm which task (ask for jobId if ambiguous).
-2. Confirm: "Convert task <jobId> to public? This will remove the current designated provider and open the task to all ASPs."
-3. User confirms → `onchainos agent set-public <jobId>`
-4. CLI internally resets ASP fields + sets visibility=0 (off-chain, no gas).
-
-### 3.3 Stop task
+**Trigger**: "stop task" / "close task" / "关闭任务" / "remove provider" (there is no separate un-designate action — dropping the provider means closing the task)
 
 1. Confirm: "Confirm closing task <jobId>? Funds will be refunded after closing; the operation is irreversible."
 2. User confirms → `onchainos agent close <jobId>`
 
-### 3.4 Other non-terms input
+### 3.3 Other non-terms input
 
 User messages unrelated to terms → sync to the user session as context; do NOT trigger any API.
 

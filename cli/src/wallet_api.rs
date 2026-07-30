@@ -586,6 +586,15 @@ impl UnsignedInfoResponse {
             self.match_default_sufficient_token()
         }
     }
+
+    /// Whether this transaction is gas-free (backend-sponsored).
+    /// Reads `extraData.freeGas`; defaults to `false` when absent or non-boolean.
+    pub fn free_gas(&self) -> bool {
+        self.extra_data
+            .get("freeGas")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
@@ -2333,6 +2342,29 @@ mod tests {
             GasStationStatus::NotSupportIntention
         );
         assert!(not_support_with_payload.has_sign_material());
+    }
+
+    #[test]
+    fn free_gas_accessor_returns_correct_values() {
+        // Deserialize minimal objects (relying on #[serde(default)]) rather than
+        // constructing the ~35-field struct literal.
+        let sponsored: UnsignedInfoResponse =
+            serde_json::from_value(json!({"extraData": {"freeGas": true}})).unwrap();
+        assert!(sponsored.free_gas());
+
+        let not_sponsored: UnsignedInfoResponse =
+            serde_json::from_value(json!({"extraData": {"freeGas": false}})).unwrap();
+        assert!(!not_sponsored.free_gas());
+
+        // Absent `freeGas` → false (preserves checkBalance = true).
+        let absent: UnsignedInfoResponse =
+            serde_json::from_value(json!({"extraData": {}})).unwrap();
+        assert!(!absent.free_gas());
+
+        // Non-boolean `freeGas` → false.
+        let non_bool: UnsignedInfoResponse =
+            serde_json::from_value(json!({"extraData": {"freeGas": "yes"}})).unwrap();
+        assert!(!non_bool.free_gas());
     }
 
     // ── Gas Station routing: match_default_sufficient_token ────────

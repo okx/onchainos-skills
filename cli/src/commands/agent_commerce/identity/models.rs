@@ -24,6 +24,20 @@ pub(super) enum ServiceOperation {
     Delete,
 }
 
+/// One subscription pricing tier carried in a service's `subscription[]`.
+/// Only A2A services may have them; A2MCP never does. `interval` is currently
+/// restricted to `"month"` (the only billing period the product supports today)
+/// and `fee` is a plain number string (USDT implied, ≤6 decimals) — same fee
+/// contract as the single-purchase `fee`. Field names mirror the Agent Card
+/// JSON 1:1 so a fetched service deserializes directly.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct SubscriptionTier {
+    #[serde(rename = "interval")]
+    pub(super) interval: String,
+    #[serde(rename = "fee")]
+    pub(super) fee: String,
+}
+
 /// A single agent service. Field names mirror the `agentic/agent/services`
 /// response 1:1 so a fetched service deserializes directly (no manual mapping),
 /// and the `--service` CLI input uses the SAME camelCase keys (`serviceName` /
@@ -36,10 +50,32 @@ pub(super) struct AgentService {
     pub(super) service_name: String,
     #[serde(rename = "serviceDescription")]
     pub(super) service_description: String,
+    /// Single-purchase price. Always serialized. A plain number string when a
+    /// one-off price applies; an EMPTY string (`""`) when the service is
+    /// subscription-priced (no single-purchase price). A2MCP always carries a
+    /// real number here. For A2A this and `subscription` are mutually
+    /// exclusive — exactly one carries a real price.
     #[serde(rename = "fee", default)]
     pub(super) fee: String,
     #[serde(rename = "serviceType")]
     pub(super) service_type: String,
+    /// Subscription pricing tiers (A2A only). Always serialized: an empty `[]`
+    /// means "no subscription" (and, on an update, clears any existing
+    /// subscription). For A2A a service must carry EXACTLY ONE billing model —
+    /// a single-purchase `fee` XOR a non-empty `subscription`, never both.
+    /// Defaults to empty so a fetched service that predates this field
+    /// deserializes cleanly.
+    #[serde(rename = "subscription", default)]
+    pub(super) subscription: Vec<SubscriptionTier>,
+    /// `freeTrial` — duration in HOURS (A2A subscription services only). Optional —
+    /// only meaningful alongside a NON-EMPTY `subscription`. A positive integer
+    /// number of hours as a string (e.g. `"72"` = 3 days) sets a trial. An ABSENT
+    /// key and an EMPTY string `""` are EQUIVALENT — both mean "no trial"; the
+    /// field is then omitted from the payload (a missing `freeTrial` is read as
+    /// no trial). Setting or clearing the trial does not affect `subscription`.
+    /// Forbidden (must be absent/empty) on single-purchase A2A and on A2MCP.
+    #[serde(rename = "freeTrial", default, skip_serializing_if = "Option::is_none")]
+    pub(super) free_trial: Option<String>,
     #[serde(rename = "operation", default, skip_serializing_if = "Option::is_none")]
     pub(super) operation: Option<ServiceOperation>,
     #[serde(rename = "endpoint", default, skip_serializing_if = "Option::is_none")]

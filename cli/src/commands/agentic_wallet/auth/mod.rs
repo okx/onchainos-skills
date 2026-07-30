@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::keyring_store;
 use crate::output;
 use crate::wallet_api::{ApiCodeError, WalletApiClient};
-use crate::wallet_store::{self, AccountMapEntry, AddressInfo, SessionJson, WalletsJson};
+use crate::wallet_store::{self, AccountMapEntry, AddressInfo, WalletsJson};
 
 // ── Token / session helpers ──────────────────────────────────────────
 
@@ -666,12 +666,20 @@ async fn save_verify_result(
     // so `balance --all` won't keep summing previous identities' accounts.
     wallet_store::delete_balance_cache()?;
 
-    wallet_store::save_session(&SessionJson {
-        sa_tee_id: resp.sa_tee_id.clone(),
-        session_cert: resp.session_cert.clone(),
-        encrypted_session_sk: resp.encrypted_session_sk.clone(),
-        session_key_expire_at: resp.session_key_expire_at.clone(),
-    })?;
+    // Preserve the non-sensitive device-id across this session rewrite: it is
+    // deterministically re-derived, but keeping it avoids a redundant rewrite
+    // and keeps the UUIDv4-fallback value stable across logins. A corrupt or
+    // unreadable session.json degrades to a default (device-id re-derives next
+    // request) and never fails login.
+    let mut session = wallet_store::load_session()
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    session.sa_tee_id = resp.sa_tee_id.clone();
+    session.session_cert = resp.session_cert.clone();
+    session.encrypted_session_sk = resp.encrypted_session_sk.clone();
+    session.session_key_expire_at = resp.session_key_expire_at.clone();
+    wallet_store::save_session(&session)?;
 
     keyring_store::store(&[
         ("refresh_token", &resp.refresh_token),

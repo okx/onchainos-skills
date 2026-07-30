@@ -1,9 +1,11 @@
 //! 4 P0 subcommand handlers: create-limit / cancel / list / resume.
 
+use std::time::Duration;
+
 use anyhow::{anyhow, bail, Context as _, Result};
 use chrono::{SecondsFormat, Utc};
 use clap::{Args, ValueEnum};
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::client::ApiClient;
 use crate::commands::token;
@@ -13,7 +15,9 @@ use crate::token_alias;
 
 use super::api;
 use super::session;
-use super::status::{execution_event_for, is_upgrade_required, status_label, OrderStatus};
+use super::status::{
+    execution_event_for, is_order_amount_too_small, is_upgrade_required, status_label, OrderStatus,
+};
 use super::supported_chains;
 use super::trader_mode::{self, ActivateCtx, BuildIntentArgs};
 use super::types::{
@@ -34,6 +38,15 @@ const DEFAULT_LIMIT_ORDER_FEE_LEVEL: i64 = 2;
 const ACTIVATE_DEFAULT_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 /// `sourceType` value for Agentic-Wallet origin (BE-confirmed 2026-05-12).
 const SOURCE_TYPE_AGENTIC: i32 = 4;
+/// F1 below-minimum threshold: orders worth less than $1 USD are rejected
+/// locally (§1.2) and by the backend as `100010` (§1.5).
+const MIN_ORDER_USD: f64 = 1.0;
+
+/// F4 fixed wait before the terminal-state re-query (§1.3). PRD: "内部固定等待 3 秒".
+const WAIT_DURATION_SECS: u64 = 3;
+/// F4 `strategyMode` for the terminal-state re-query — U-pegged Phase 1,
+/// matching the `list` default.
+const WAIT_REQUERY_STRATEGY_MODE: i32 = 7;
 
 // order-id labels — const to avoid singular/plural typos.
 const ORDER_ID_LABEL: &str = "order-id";
@@ -56,6 +69,7 @@ pub struct CreateLimitArgs {
     pub to_token: String,
 
     /// Amount of `from_token` to sell.
+    /// [UNIT: readable]
     #[arg(long)]
     pub amount: String,
 
@@ -81,6 +95,12 @@ pub struct CreateLimitArgs {
     /// when omitted. Pass it to save one HTTP round-trip.
     #[arg(long)]
     pub current_price: Option<String>,
+
+    /// Wait for order terminal state after submission. Internally waits 3 seconds then re-queries.
+    ///
+    /// [UNIT: bool]
+    #[arg(long, default_value_t = false)]
+    pub wait: bool,
 }
 
 fn parse_direction_value(raw: &str) -> Result<i32, String> {
@@ -179,6 +199,49 @@ async fn fetch_token_price(
     Ok(price)
 }
 
+/// Build the `belowMinimum` success payload. `minFromAmount` is the smallest
+/// from-token amount worth >= $1 USD, in readable units at the token's decimal
+/// precision. `from_token_price` is USD-per-token, `from_symbol` is the ticker,
+/// `from_decimals` is the from-token's decimals.
+fn build_below_minimum(
+    from_token_price: f64,
+    from_symbol: &str,
+    from_decimals: u32,
+) -> serde_json::Value {
+    json!({
+        "belowMinimum": true,
+        "minFromAmount": format_min_from_amount(from_token_price, from_decimals),
+        "fromSymbol": from_symbol,
+    })
+}
+
+/// Smallest readable from-amount that clears the `$1` floor at `from_token_price`:
+/// `MIN_ORDER_USD / from_token_price`, rounded up at `min(from_decimals, 8)`
+/// decimals, trailing zeros stripped. Rounding up keeps the amount >= $1; the
+/// precision never exceeds the token's decimals, so the value stays divisible.
+/// Returns `"0"` when `from_token_price` is not finite or not positive.
+fn format_min_from_amount(from_token_price: f64, from_decimals: u32) -> String {
+    if !from_token_price.is_finite() || from_token_price <= 0.0 {
+        return "0".to_string();
+    }
+    let precision = from_decimals.min(8);
+    let scale = 10f64.powi(precision as i32);
+    let raw = MIN_ORDER_USD / from_token_price;
+    let rounded_up = (raw * scale).ceil() / scale;
+    let s = format!("{:.*}", precision as usize, rounded_up);
+    // Strip trailing zeros only when a decimal point is present.
+    let trimmed = if s.contains('.') {
+        s.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        s.as_str()
+    };
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     let mut client = ctx.client_async().await?;
     let session = session::load()?;
@@ -247,17 +310,53 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     };
     let strat = derive_strategy_type(dir, trigger_price_num, current_price_num)?;
 
-    // Raw amount used only in signMsg "From Amount(precision adjusted)";
-    // rule.fromAmount stays human-readable (BE contract 2026-05-07).
-    let from_decimals = fetch_token_decimals(&mut client, &from_token, &resolved_chain)
-        .await
-        .with_context(|| {
-            format!(
-                "fetch decimals for fromToken `{}` on chain `{}`",
-                from_token, resolved_chain
-            )
-        })?;
+    // Fetch from-token decimals (for the signMsg raw amount) + tokenSymbol (for
+    // the F1 belowMinimum output) in a single round-trip. Raw amount is used
+    // only in signMsg "From Amount(precision adjusted)"; rule.fromAmount stays
+    // human-readable (BE contract 2026-05-07).
+    let (from_decimals, from_symbol) =
+        fetch_from_token_info(&mut client, &from_token, &resolved_chain)
+            .await
+            .with_context(|| {
+                format!(
+                    "fetch info for fromToken `{}` on chain `{}`",
+                    from_token, resolved_chain
+                )
+            })?;
     let from_amount_raw = trader_mode::human_decimal_to_raw_integer(&args.amount, from_decimals)?;
+
+    // F1 below-minimum short-circuit (§1.2). `from_token_price` is USD-per-token
+    // for the from-token: SELL reuses `current_price_num` (already the from-token
+    // price); BUY fetches it separately because `current_price_num` is the
+    // to-token price for buy.
+    let from_token_price: f64 = match dir {
+        direction::SELL => current_price_num,
+        direction::BUY => fetch_token_price(&mut client, &from_token, &resolved_chain)
+            .await
+            .with_context(|| {
+                format!(
+                    "fetch from-token price for {} on chain {}",
+                    from_token, resolved_chain
+                )
+            })?,
+        _ => unreachable!("clap restricts --direction to buy/sell"),
+    };
+    // §8.2: only run the local pre-check when the from-token price is usable
+    // (finite and positive); otherwise fall through — the backend 100010 path
+    // still guards the minimum. `args.amount` is [UNIT: readable] (whole
+    // tokens), so `usd_value` (USD) is the direct product, no decimal scaling.
+    if from_token_price.is_finite() && from_token_price > 0.0 {
+        let amount_f64: f64 = args.amount.parse().unwrap_or(f64::NAN);
+        let usd_value = amount_f64 * from_token_price;
+        if usd_value.is_finite() && usd_value < MIN_ORDER_USD {
+            output::success(build_below_minimum(
+                from_token_price,
+                &from_symbol,
+                from_decimals,
+            ));
+            return Ok(());
+        }
+    }
 
     let rule = Rule {
         from_token_address: from_token.clone(),
@@ -334,32 +433,62 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     };
 
     // 60018 → SD-A → retry once. Spec: `trader_mode::retry_on_upgrade` + tests.
-    let order = match api::create_order(&mut client, &req).await {
+    // Collapse the first attempt and the post-SD-A retry into one Result so the
+    // F1 backend-100010 normalization (§1.5) applies uniformly to both.
+    let created = match api::create_order(&mut client, &req).await {
         Err(e) if is_upgrade_required(&e) => {
             trader_mode::activate(&mut client, &activate_ctx).await?;
-            api::create_order(&mut client, &req).await?
+            api::create_order(&mut client, &req).await
+        }
+        other => other,
+    };
+
+    // §1.5: backend `100010` (ORDER_AMOUNT_TOO_SMALL) → emit the SAME
+    // `belowMinimum` output at exit 0 as the local pre-check; no order created.
+    let order = match created {
+        Err(e) if is_order_amount_too_small(&e) => {
+            output::success(build_below_minimum(
+                from_token_price,
+                &from_symbol,
+                from_decimals,
+            ));
+            return Ok(());
         }
         Err(e) => return Err(e),
         Ok(o) => o,
     };
 
     let label = status_label(order.status);
-    output::success(json!({
-        "orderId": order.order_id,
+    let original = json!({
+        "orderId": order.order_id.clone(),
         "status": order.status,
         "statusLabel": label,
         "estimatedWaitTime": order.estimated_wait_time,
         "eventCursor": order.event_cursor,
-    }));
+    });
+
+    // §1.3/§2.3: `--wait` → fixed 3 s sleep then re-query the single order and
+    // merge terminal-state fields. Without `--wait` the output is unchanged.
+    if args.wait {
+        tokio::time::sleep(Duration::from_secs(WAIT_DURATION_SECS)).await;
+        let merged =
+            wait_and_requery(&mut client, &session.account_id, &order.order_id, original).await?;
+        output::success(merged);
+    } else {
+        output::success(original);
+    }
     Ok(())
 }
 
-/// Fetch token `decimals` via `token::fetch_info` (basic-info endpoint).
-async fn fetch_token_decimals(
+/// Fetch from-token `decimals` + `tokenSymbol` via `token::fetch_info`
+/// (basic-info endpoint) in one round-trip. `decimals` drives the raw-amount
+/// conversion; `tokenSymbol` feeds the F1 `belowMinimum` output (§2.2). A
+/// missing symbol degrades to an empty string rather than failing the order.
+async fn fetch_from_token_info(
     client: &mut ApiClient,
     address: &str,
     chain_index: &str,
-) -> Result<u32> {
+) -> Result<(u32, String)> {
     let resp = token::fetch_info(client, address, chain_index)
         .await
         .context("token info HTTP call failed")?;
@@ -375,9 +504,15 @@ async fn fetch_token_decimals(
             serde_json::to_string(item).unwrap_or_default()
         )
     })?;
-    decimal_str
+    let decimals = decimal_str
         .parse::<u32>()
-        .map_err(|e| anyhow!("token decimal `{decimal_str}` is not a u32: {e}"))
+        .map_err(|e| anyhow!("token decimal `{decimal_str}` is not a u32: {e}"))?;
+    let symbol = item
+        .get("tokenSymbol")
+        .and_then(|s| s.as_str())
+        .unwrap_or_default()
+        .to_string();
+    Ok((decimals, symbol))
 }
 
 /// CLI percent (`"15"` / `"20%"`) → BE decimal fraction (`"0.15"`).
@@ -422,6 +557,112 @@ fn build_default_preset(
 }
 
 
+// ── F4 async wait (--wait) ──
+
+/// True when a re-queried order `status` maps to a terminal `OrderStatus`
+/// (completed / cancelled / failed / expired). Unknown integers → not settled.
+fn status_is_settled(status: i32) -> bool {
+    OrderStatus::try_from(status)
+        .map(|s| s.is_terminal())
+        .unwrap_or(false)
+}
+
+/// Merge the re-queried terminal-state fields into `original` (§2.3). Always
+/// overwrites `status` + `statusLabel` and sets `settled`; the heavier terminal
+/// fields (`transactionInfo`, `executionHistoryList`, `fromToken`, `toToken`,
+/// `orderStatusUpdateTime`) are added only when `settled == true` and present in
+/// the re-query. All original fields are preserved. Pure — no network.
+fn merge_terminal_fields(original: Value, requeried: &OrderListResp) -> Value {
+    let settled = status_is_settled(requeried.status);
+    let mut obj = match original {
+        Value::Object(map) => map,
+        other => return other,
+    };
+    obj.insert("status".to_string(), json!(requeried.status));
+    obj.insert(
+        "statusLabel".to_string(),
+        json!(status_label(requeried.status)),
+    );
+    obj.insert("settled".to_string(), json!(settled));
+    if settled {
+        if let Some(v) = requeried.transaction_info.as_ref() {
+            obj.insert("transactionInfo".to_string(), v.clone());
+        }
+        if let Some(v) = requeried.execution_history_list.as_ref() {
+            obj.insert("executionHistoryList".to_string(), v.clone());
+        }
+        if let Some(v) = requeried.from_token.as_ref() {
+            obj.insert("fromToken".to_string(), v.clone());
+        }
+        if let Some(v) = requeried.to_token.as_ref() {
+            obj.insert("toToken".to_string(), v.clone());
+        }
+        if let Some(v) = requeried.order_status_update_time.as_ref() {
+            obj.insert("orderStatusUpdateTime".to_string(), json!(v));
+        }
+    }
+    Value::Object(obj)
+}
+
+/// Fold per-order merged results into the multi-order `{settled, orders}`
+/// payload (§2.3). Top-level `settled` is the logical AND of every per-order
+/// `settled`. Pure — no network.
+fn build_wait_payload(orders: Vec<Value>) -> Value {
+    let all_settled = orders
+        .iter()
+        .all(|o| o.get("settled").and_then(Value::as_bool).unwrap_or(false));
+    json!({
+        "settled": all_settled,
+        "orders": orders,
+    })
+}
+
+/// Reject the unsupported `cancel --all` + `--wait` combination (§1.3) before
+/// any cancel request is built or sent. Returns the exact `CodedError`
+/// (`invalid_input` / `wait`) so both CLI and MCP render the same envelope.
+fn reject_all_with_wait(args: &CancelArgs) -> Result<()> {
+    if args.all && args.wait {
+        return Err(crate::commands::sink::CodedError::invalid_input(
+            "wait",
+            "cancel --all combined with --wait is not supported; use --order-id or \
+             --order-ids with --wait, or omit --wait for bulk cancel",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Re-query one order's detail and merge its terminal-state fields into
+/// `original` (single-order half of the F4 merge). The fixed 3 s sleep is done
+/// once by the caller, so this is safe to map over multiple ids.
+async fn wait_and_requery(
+    client: &mut ApiClient,
+    account_id: &str,
+    order_id: &str,
+    original: Value,
+) -> Result<Value> {
+    let requeried =
+        api::open_order_detail(client, account_id, order_id, WAIT_REQUERY_STRATEGY_MODE).await?;
+    Ok(merge_terminal_fields(original, &requeried))
+}
+
+/// Sleep the fixed 3 s once, then re-query + merge each affected order id and
+/// fold the results into the `{settled, orders}` payload (§2.3). Sequential
+/// re-queries are acceptable (§9.1: 1–3 orders typical).
+async fn wait_over_ids(
+    client: &mut ApiClient,
+    account_id: &str,
+    order_ids: &[String],
+) -> Result<Value> {
+    tokio::time::sleep(Duration::from_secs(WAIT_DURATION_SECS)).await;
+    let mut orders = Vec::with_capacity(order_ids.len());
+    for id in order_ids {
+        let merged = wait_and_requery(client, account_id, id, json!({ "orderId": id })).await?;
+        orders.push(merged);
+    }
+    Ok(build_wait_payload(orders))
+}
+
 // ── cancel ──
 
 #[derive(Args, Debug)]
@@ -437,19 +678,37 @@ pub struct CancelArgs {
     /// Cancel every active order on the active account.
     #[arg(long, conflicts_with_all = ["order_id", "order_ids"])]
     pub all: bool,
+
+    /// Wait for order terminal state after submission. Internally waits 3 seconds then re-queries.
+    ///
+    /// [UNIT: bool]
+    #[arg(long, default_value_t = false)]
+    pub wait: bool,
 }
 
 pub async fn cancel(ctx: &Context, args: CancelArgs) -> Result<()> {
+    // §1.3: `cancel --all` + `--wait` is unsupported — reject at the very top,
+    // before any cancel request is built or sent.
+    reject_all_with_wait(&args)?;
+
     let mut client = ctx.client_async().await?;
     let session = session::load()?;
 
     let req = build_cancel_request(&session.account_id, &args)?;
     let resp = api::cancel(&mut client, &req).await?;
 
-    output::success(json!({
-        "updateNum": resp.update_num,
-        "estimatedWaitTime": resp.estimated_wait_time,
-    }));
+    if args.wait {
+        // `--all` is excluded by the guard above, so `req.order_ids` is always
+        // the targeted (single or CSV) id set.
+        let ids = req.order_ids.clone().unwrap_or_default();
+        let payload = wait_over_ids(&mut client, &session.account_id, &ids).await?;
+        output::success(payload);
+    } else {
+        output::success(json!({
+            "updateNum": resp.update_num,
+            "estimatedWaitTime": resp.estimated_wait_time,
+        }));
+    }
     Ok(())
 }
 
@@ -715,6 +974,12 @@ pub struct ResumeArgs {
     /// SUSPENDED + canResume orders on the active wallet.
     #[arg(long)]
     pub order_ids: Option<String>,
+
+    /// Wait for order terminal state after submission. Internally waits 3 seconds then re-queries.
+    ///
+    /// [UNIT: bool]
+    #[arg(long, default_value_t = false)]
+    pub wait: bool,
 }
 
 pub async fn resume(ctx: &Context, args: ResumeArgs) -> Result<()> {
@@ -768,10 +1033,18 @@ pub async fn resume(ctx: &Context, args: ResumeArgs) -> Result<()> {
         Ok(r) => r,
     };
 
-    output::success(json!({
-        "successIds": resp.success_ids,
-        "failIds": resp.fail_ids,
-    }));
+    // §1.3/§2.3: `--wait` → fixed 3 s sleep then per-order re-query of every
+    // reactivated id, folded into `{settled, orders}`. Without `--wait` the
+    // output is the unchanged `{successIds, failIds}`.
+    if args.wait {
+        let payload = wait_over_ids(&mut client, &session.account_id, &order_ids).await?;
+        output::success(payload);
+    } else {
+        output::success(json!({
+            "successIds": resp.success_ids,
+            "failIds": resp.fail_ids,
+        }));
+    }
     Ok(())
 }
 
@@ -817,6 +1090,7 @@ mod tests {
             order_id: None,
             order_ids: None,
             all: false,
+            wait: false,
         }
     }
 
@@ -1106,6 +1380,56 @@ mod tests {
         assert_eq!(v["buyPreset"]["slippageValue"], serde_json::json!("0.15"));
     }
 
+    // ── build_below_minimum (F1 §2.2) ────────────────────────────
+
+    #[test]
+    fn build_below_minimum_whole_amount_has_no_decimal_tail() {
+        // 1.0 / 0.1 = 10 → "10"; a whole result carries no decimal tail.
+        let v = build_below_minimum(0.1, "USDC", 6);
+        assert_eq!(v["belowMinimum"], serde_json::json!(true));
+        assert_eq!(v["minFromAmount"], serde_json::json!("10"));
+        assert_eq!(v["fromSymbol"], serde_json::json!("USDC"));
+    }
+
+    #[test]
+    fn build_below_minimum_price_one_gives_one() {
+        // 1.0 / 1.0 = 1 → "1".
+        let v = build_below_minimum(1.0, "USDC", 6);
+        assert_eq!(v["minFromAmount"], serde_json::json!("1"));
+        assert_eq!(v["fromSymbol"], serde_json::json!("USDC"));
+    }
+
+    #[test]
+    fn build_below_minimum_returns_divisible_not_whole_token() {
+        // 1 / 0.3 = 3.33… → rounded up at 8-dp precision: 3.33333334.
+        let v = build_below_minimum(0.3, "PEPE", 18);
+        assert_eq!(v["minFromAmount"], serde_json::json!("3.33333334"));
+        assert_eq!(v["fromSymbol"], serde_json::json!("PEPE"));
+    }
+
+    #[test]
+    fn build_below_minimum_high_price_token_is_fractional() {
+        // 1 / 60000 ≈ 0.0000166… → 0.00001667 (rounded up at 8 dp).
+        let v = build_below_minimum(60000.0, "WBTC", 8);
+        assert_eq!(v["minFromAmount"], serde_json::json!("0.00001667"));
+    }
+
+    #[test]
+    fn build_below_minimum_tiny_price_does_not_overflow() {
+        // 1 / 1e-9 = 1e9 → renders as a plain integer string.
+        let v = build_below_minimum(1e-9, "MEME", 6);
+        assert_eq!(v["minFromAmount"], serde_json::json!("1000000000"));
+    }
+
+    #[test]
+    fn build_below_minimum_zero_or_nonfinite_price_falls_back_to_zero() {
+        assert_eq!(build_below_minimum(0.0, "X", 6)["minFromAmount"], serde_json::json!("0"));
+        assert_eq!(
+            build_below_minimum(f64::NAN, "X", 6)["minFromAmount"],
+            serde_json::json!("0")
+        );
+    }
+
     // ── enrich_execution_history ────────────────────────────────
 
     #[test]
@@ -1171,5 +1495,161 @@ mod tests {
         assert_eq!(h[0]["terminal"], true);  // 3019 riskToken
         assert_eq!(h[1]["terminal"], true);  // 3023 orderExpired
         assert_eq!(h[2]["terminal"], false); // 3015 exceedSlippage retries
+    }
+
+    // ── F4 --wait: cancel --all guard ────────────────────────────
+
+    #[test]
+    fn cancel_all_with_wait_is_rejected_with_coded_error() {
+        // `--all` + `--wait` must fail pre-action with the exact CodedError so no
+        // cancel request is ever built/sent (guard runs before build_cancel_request).
+        let mut a = cancel_args();
+        a.all = true;
+        a.wait = true;
+        let err = reject_all_with_wait(&a).unwrap_err();
+        let coded = err
+            .downcast_ref::<crate::commands::sink::CodedError>()
+            .expect("must downcast to CodedError");
+        assert_eq!(coded.code, "invalid_input");
+        assert_eq!(coded.field.as_deref(), Some("wait"));
+        assert_eq!(
+            coded.message,
+            "cancel --all combined with --wait is not supported; use --order-id or \
+             --order-ids with --wait, or omit --wait for bulk cancel"
+        );
+    }
+
+    #[test]
+    fn cancel_all_without_wait_is_allowed() {
+        // Bulk cancel with no --wait is the supported path — guard passes.
+        let mut a = cancel_args();
+        a.all = true;
+        assert!(reject_all_with_wait(&a).is_ok());
+    }
+
+    #[test]
+    fn cancel_wait_with_order_id_is_allowed() {
+        // --wait scoped to a specific id (not --all) is supported.
+        let mut a = cancel_args();
+        a.order_id = Some("17296046425729984".into());
+        a.wait = true;
+        assert!(reject_all_with_wait(&a).is_ok());
+    }
+
+    // ── F4 --wait: status_is_settled predicate ───────────────────
+
+    #[test]
+    fn status_is_settled_true_for_terminal_states() {
+        assert!(status_is_settled(1)); // completed
+        assert!(status_is_settled(-2)); // cancelled
+        assert!(status_is_settled(-1)); // failed
+        assert!(status_is_settled(-7)); // expired
+    }
+
+    #[test]
+    fn status_is_settled_false_for_non_terminal_and_unknown() {
+        assert!(!status_is_settled(0)); // processing (trading)
+        assert!(!status_is_settled(3)); // active
+        assert!(!status_is_settled(2)); // creating
+        assert!(!status_is_settled(4)); // suspended
+        assert!(!status_is_settled(-3)); // cancelling
+        assert!(!status_is_settled(999)); // unknown integer
+    }
+
+    // ── F4 --wait: merge_terminal_fields (single order) ──────────
+
+    fn order_resp(v: Value) -> OrderListResp {
+        serde_json::from_value(v).expect("valid OrderListResp fixture")
+    }
+
+    #[test]
+    fn merge_terminal_fields_settled_overwrites_and_includes_terminal_fields() {
+        // Re-query returns a terminal (completed) order with the heavy fields.
+        let requeried = order_resp(json!({
+            "orderId": "17296046425729984",
+            "status": 1,
+            "transactionInfo": { "txHash": "0xabc" },
+            "executionHistoryList": [ { "code": 0 } ],
+            "fromToken": { "tokenSymbol": "USDC" },
+            "toToken": { "tokenSymbol": "PEPE" },
+            "orderStatusUpdateTime": "2026-07-23T00:00:00Z"
+        }));
+        // Original create-limit response (status still "creating").
+        let original = json!({
+            "orderId": "17296046425729984",
+            "status": 2,
+            "statusLabel": "creating",
+            "estimatedWaitTime": 12,
+            "eventCursor": "cur-1"
+        });
+        let merged = merge_terminal_fields(original, &requeried);
+
+        // settled + overwritten status/statusLabel.
+        assert_eq!(merged["settled"], json!(true));
+        assert_eq!(merged["status"], json!(1));
+        assert_eq!(merged["statusLabel"], json!("completed"));
+        // terminal fields merged in.
+        assert_eq!(merged["transactionInfo"]["txHash"], "0xabc");
+        assert_eq!(merged["executionHistoryList"][0]["code"], json!(0));
+        assert_eq!(merged["fromToken"]["tokenSymbol"], "USDC");
+        assert_eq!(merged["toToken"]["tokenSymbol"], "PEPE");
+        assert_eq!(merged["orderStatusUpdateTime"], "2026-07-23T00:00:00Z");
+        // original fields preserved.
+        assert_eq!(merged["orderId"], "17296046425729984");
+        assert_eq!(merged["estimatedWaitTime"], json!(12));
+        assert_eq!(merged["eventCursor"], "cur-1");
+    }
+
+    #[test]
+    fn merge_terminal_fields_non_terminal_omits_terminal_fields() {
+        // Re-query still active — even though the heavy fields exist on the
+        // re-query, they must NOT be merged while non-terminal.
+        let requeried = order_resp(json!({
+            "orderId": "123",
+            "status": 3,
+            "transactionInfo": { "txHash": "0xabc" },
+            "fromToken": { "tokenSymbol": "USDC" }
+        }));
+        let original = json!({
+            "orderId": "123",
+            "status": 2,
+            "statusLabel": "creating"
+        });
+        let merged = merge_terminal_fields(original, &requeried);
+
+        assert_eq!(merged["settled"], json!(false));
+        assert_eq!(merged["status"], json!(3));
+        assert_eq!(merged["statusLabel"], json!("active"));
+        assert!(merged.get("transactionInfo").is_none());
+        assert!(merged.get("fromToken").is_none());
+        assert!(merged.get("orderStatusUpdateTime").is_none());
+    }
+
+    // ── F4 --wait: build_wait_payload (multi-order AND) ──────────
+
+    #[test]
+    fn build_wait_payload_top_level_settled_is_logical_and() {
+        // One terminal + one non-terminal → top-level settled=false; both
+        // per-order results preserved in the `orders` array.
+        let orders = vec![
+            json!({ "orderId": "123", "settled": true, "status": 1, "statusLabel": "completed" }),
+            json!({ "orderId": "456", "settled": false, "status": 3, "statusLabel": "active" }),
+        ];
+        let payload = build_wait_payload(orders);
+        assert_eq!(payload["settled"], json!(false));
+        let arr = payload["orders"].as_array().expect("orders array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["orderId"], "123");
+        assert_eq!(arr[1]["orderId"], "456");
+    }
+
+    #[test]
+    fn build_wait_payload_all_settled_true() {
+        let orders = vec![
+            json!({ "orderId": "1", "settled": true }),
+            json!({ "orderId": "2", "settled": true }),
+        ];
+        let payload = build_wait_payload(orders);
+        assert_eq!(payload["settled"], json!(true));
     }
 }

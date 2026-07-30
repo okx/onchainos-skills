@@ -32,11 +32,7 @@ Ethereum (`1`), BSC (`56`), X Layer (`196`), Solana (`501`), Base (`8453`), Arbi
 
 `create-limit` is a write op. Present a confirmation summary and only call the CLI after explicit confirmation. Strategy type is derived inside the CLI from `(--direction, --trigger-price, current price)` — the agent never passes or computes it.
 
-**Step 0 — Minimum order value pre-flight (before Step 1).** BE enforces a $1 USD minimum (`100010 ORDER_AMOUNT_TOO_SMALL`).
-1. Fetch from-token price: stablecoin (USDT/USDC/USDG/USDe/DAI/FDUSD/…) → assume `from_price ≈ 1.0` (no HTTP); else `onchainos market price --chain <chain> --address <from_token>`, read `data[0].price`.
-2. `usd_value = from_amount × from_price`.
-3. If `usd_value < 1.0`: compute `min_from_amount = ceil(1.0 ÷ from_price)` at reasonable display precision, then surface **exactly this single line, no extra prose** (no math, no $1 mention, no echo, no apology): `Minimum order amount: <min_from_amount> <from_symbol>` (translate the prefix per Display Labels). STOP — do not render Step 1 or call the CLI; wait for a larger `--amount`, then re-run Step 0.
-4. If `usd_value ≥ 1.0`: carry `from_price` forward and proceed.
+**Step 0 — From-token price for the Value estimate (before Step 1).** For the Step 1 "Value" line, get the from-token USD price: stablecoin (USDT/USDC/USDG/USDe/DAI/FDUSD/…) → assume `from_price ≈ 1.0` (no HTTP); else `onchainos market price --chain <chain> --address <from_token>`, read `data[0].price`. Carry `from_price` forward for Step 1. **Do NOT run a $1-minimum gate here** — the CLI now enforces the $1 USD minimum itself (a local pre-check plus backend `100010` normalization) and returns a structured `belowMinimum` response at exit 0; you render that in Step 2, never compute the threshold client-side.
 
 **Step 1 — Order summary** (5 categories, none may be dropped; prose organised freely):
 
@@ -73,6 +69,8 @@ Reply confirm / change / cancel.
 
 **Step 2 — Handle the reply.** confirm/yes/submit → call `strategy create-limit`. change (e.g. "amount = 5", "trigger to 0.08") → update the field and re-render Step 1. cancel/abort → do not call the CLI; acknowledge discarded.
 
+**belowMinimum response.** If `create-limit` returns `data.belowMinimum == true` (order below the $1 USD minimum — the CLI short-circuits at exit 0, no order created; same shape whether caught by the local pre-check or backend `100010`), surface **exactly this single line, no extra prose** (no math, no $1 mention, no echo, no apology): `Minimum order amount: <minFromAmount> <fromSymbol>` — both values read verbatim from the response; translate only the prefix per Display Labels. Wait for a larger `--amount`, then re-submit.
+
 `--trigger-price` is a USD price — make this clear to avoid confusion with an exchange rate.
 
 ## list — Rendering (general "show my orders" with no status qualifier)
@@ -102,7 +100,7 @@ To see terminal orders, pass `--status` explicitly (see the status enum in [stra
 
 ## Async Wait Pattern
 
-`create-limit`, `cancel`, `resume` return after the request is **accepted**, not after terminal state. Recipe (locked): (1) run the subcommand; (2) **sleep 3 seconds** (a single fixed 3s wait covers all supported chains — do NOT sleep by `estimatedWaitTime`); (3) re-query `strategy list --order-id <orderId>` for the final state; (4) if still pending after the first re-query, surface the partial state — do not loop indefinitely. Solana returns `estimatedWaitTime=0` (queryable immediately).
+`create-limit`, `cancel`, `resume` return after the request is **accepted**, not after terminal state. Pass **`--wait`** to fold the terminal-state check into the call: the CLI sleeps a fixed 3 s (covers all supported chains — never keyed to `estimatedWaitTime`), re-queries each affected order, and merges the result — `settled` (bool; for multi-order cancel/resume it is the logical AND across orders, with a per-order `orders[]` array), `status`, `statusLabel`, plus settled-only `transactionInfo` / `executionHistoryList` / `fromToken` / `toToken` / `orderStatusUpdateTime`. If `settled == false`, surface the partial state — do not loop indefinitely. **NEVER**: combine `cancel --all` with `--wait` — the CLI rejects it (`code: invalid_input`, `field: wait`, exit 1) before any cancel is sent; use `--order-id` / `--order-ids` with `--wait`, or omit `--wait` for bulk cancel. Without `--wait`, the response is acceptance-only; re-query `strategy list --order-id <orderId>` yourself if you need terminal state. Solana settles immediately (`estimatedWaitTime=0`).
 
 ## SA Activation Transparency
 
