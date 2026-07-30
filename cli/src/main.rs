@@ -6,7 +6,7 @@ mod client;
 mod commands;
 mod config;
 pub mod crypto;
-mod device_id;
+mod device;
 mod doh;
 mod file_keyring;
 mod home;
