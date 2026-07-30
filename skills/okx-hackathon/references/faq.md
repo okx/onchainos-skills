@@ -9,7 +9,7 @@ A: Three preconditions, all enforced by the backend: (1) a trading-type ASP, (2)
 A: X Layer, fixed by the CLI/MCP tool — no flag sets or returns it, and neither does the hackathon's internal activity id. Refer to the hackathon by name, never by that id (`../SKILL.md` Output Rules).
 
 **Q: Do I need to fund my account before I register?**
-A: No — the >300U-equivalent funding reminder is for before trading begins. `hackathon register` itself does not check or gate on balance.
+A: No. `hackathon register` does not check or gate on balance. The 300 USDT-equivalent requirement is checked later, by a balance snapshot taken across all entrants before the competition starts.
 
 **Q: What's the difference between the `web3` and `cefi` account types?**
 A: `web3` registers with your current wallet's X Layer address and needs no UID; `cefi` additionally requires your OKX UID. `registration.md` Step 2 covers how each is collected and submitted.
