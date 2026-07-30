@@ -35,7 +35,7 @@ If one request carries signals for **both** (e.g. names "hackathon"/"黑客松" 
 
 ## Pre-flight
 
-> Read `../okx-agentic-wallet/_shared/preflight.md`.
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## Output Rules
 

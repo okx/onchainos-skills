@@ -8,16 +8,17 @@ Wallet login is required. If not logged in, route via `../SKILL.md` → Pre-flig
 
 ### Step 1 — Pick the Trading ASP agent
 
-1. List the user's agents (CLI only — there is no MCP tool for this call). Project the response down to the three fields this flow uses; the full rows carry `card[]` / `cells[]` render arrays this flow never reads, and they are ~35× larger:
+1. List the user's agents (CLI only — there is no MCP tool for this call). Project the response down to the few fields this flow uses; the full rows carry `card[]` / `cells[]` render arrays this flow never reads, and they are ~35× larger:
 
 ```
-onchainos agent get-my-agents --page-size 20 | jq -c '{total: .data.total, asps: [.data.list[] | select(.roleLabel == "ASP") | {agentId, name}]}'
+onchainos agent get-my-agents --page-size 20 | jq -c '[.data.list[] | (.agentList // [.])[]] as $rows | {total: .data.total, listed: ($rows|length), asps: [$rows[] | select(.roleLabel == "ASP") | {agentId, name}]}'
 ```
 
-   - **No** `--role` filter: `.data.total` must stay the all-roles count for the summary line in §2, and the `select` above already applies the exact ASP rule.
+   - **No** `--role` filter: the projection must keep every role so §2 can state the ASP-vs-other split, and the `select` above already applies the exact ASP rule.
+   - Keep `(.agentList // [.])[]`. Agent rows arrive either directly under `.data.list[]` or nested under `.data.list[].agentList[]` (grouped by owner), and only the inner rows carry `roleLabel` on the nested shape — reading `.data.list[]` alone yields `asps: []` there, which looks exactly like having no ASP.
    - `--page-size 20` avoids the default page size of 5 silently truncating the list; if the user has more than 20 agents, paginate with `--page` rather than stopping at page 1 and guessing.
-   - If `jq` is unavailable, or the projection comes back empty while the raw call clearly has agents, drop the pipe and apply §2 to the raw JSON.
-2. Split the rows client-side by role: a row is ASP-eligible **only if `roleLabel` is exactly `"ASP"`**. Any other value (`"User"`, `"Evaluator"`, anything else) or a missing/absent `roleLabel` → **not eligible**. Never default a row into the ASP bucket. Then present the summary line, followed by the ASP-only numbered list — `0` first for creating a new ASP, then one line per existing ASP with its **name and agent id** (shown here only, to disambiguate ASPs sharing a name — see `../SKILL.md` Output Rules):
+   - **Fallback** — if `jq` is unavailable, or `listed` is 0 while `total` is above 0 (the projection missed the shape): drop the pipe and apply §2 to the raw JSON. In the second case never read the empty result as "no agents", and never enter the no-ASP branch on it.
+2. Split the rows client-side by role: a row is ASP-eligible **only if `roleLabel` is exactly `"ASP"`**. Any other value (`"User"`, `"Evaluator"`, anything else) or a missing/absent `roleLabel` → **not eligible**. Never default a row into the ASP bucket. In the templates below, `N` is `listed` and `M` is the length of `asps` — never take `N` from `total`, which counts owner groups rather than agents on the nested shape and would make `N-M` wrong. Then present the summary line, followed by the ASP-only numbered list — `0` first for creating a new ASP, then one line per existing ASP with its **name and agent id** (shown here only, to disambiguate ASPs sharing a name — see `../SKILL.md` Output Rules):
 
 ```
 You have <N> agents in total, <M> of which are Trading ASPs (the other <N-M> are Evaluator / User identities and cannot register).
@@ -34,7 +35,7 @@ Reply with a number.
 
 Translate to the user's language; keep the numbered structure. Do **not** add a guessed-eligibility hint next to any name (e.g. "this one looks like it qualifies") — the three preconditions are backend-checked and not inferable from a name.
 
-**If `M` is 0** (no ASP, regardless of `N`): skip the list above — output this fixed template alone, then stop.
+**If `M` is 0** (no ASP, regardless of `N`): skip the list above — output this fixed template alone, then stop. This branch is terminal, so enter it **only** after the Step 1 fallback check has ruled out a shape mismatch.
 
 ```
 You don’t have an ASP yet. This hackathon requires a trading ASP. See the [tutorial](https://okg-block.sg.larksuite.com/docx/O9xDdhsCYovTgnxEHMWlK6Dogph) to get started.
