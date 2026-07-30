@@ -31,9 +31,9 @@ This skill drives the `onchainos hackathon` subcommand group. **Learn exact synt
 
 The step-by-step flow is `references/registration.md` Step 1-4 — not repeated here. These three gates are the ones its steps cannot state, because they bracket it:
 
-- **⛔ Pre-flight** — §Pre-flight runs before the first `onchainos` command this session, ASP listing included.
-- **⛔ Read-before-write** — `references/registration.md` is loaded before the first user-facing message, and its Step 1 fallback (`listed:0` while `total > 0`, or no `jq`) is ruled out before the terminal no-ASP branch.
-- **⚠️ Send-gate** — §Pre-Delivery Checklist runs before every message.
+- **Pre-flight (blocking)** — §Pre-flight runs before the first `onchainos` command this session, ASP listing included.
+- **Read-before-write (blocking)** — `references/registration.md` is loaded before the first user-facing message, and its Step 1 fallback (`listed:0` while `total > 0`, or no `jq`) is ruled out before the terminal no-ASP branch.
+- **Send-gate** — §Pre-Delivery Checklist runs before every message.
 
 ## Wrong-skill guard
 

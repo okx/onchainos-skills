@@ -21,9 +21,9 @@ onchainos agent get-my-agents --page-size 20 | jq -c '[.data.list[] | (.agentLis
 2. Split the rows client-side by role: a row is ASP-eligible **only if `roleLabel` is exactly `"ASP"`**. Any other value (`"User"`, `"Evaluator"`, anything else) or a missing/absent `roleLabel` → **not eligible**. Never default a row into the ASP bucket. In the templates below, `N` is `listed` and `M` is the length of `asps` — never take `N` from `total`, which counts owner groups rather than agents on the nested shape and would make `N-M` wrong. Then present the summary line, followed by the ASP-only numbered list — `0` first for creating a new ASP, then one line per existing ASP with its **name and agent id** (shown here only, to disambiguate ASPs sharing a name — see `../SKILL.md` Output Rules):
 
 ```
-You have <N> agents in total, <M> of which are Trading ASPs (the other <N-M> are Evaluator / User identities and cannot register).
+You have <N> agents in total, <M> of which are ASPs (the other <N-M> are Evaluator / User identities and cannot register).
 
-Which Trading ASP would you like to register for the OKX.AI Trading Hackathon?
+Which ASP would you like to register for the OKX.AI Trading Hackathon?
 
 0. Create a new ASP
 1. <name> (ID: <agent_id>)
