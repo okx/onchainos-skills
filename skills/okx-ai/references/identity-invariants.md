@@ -91,25 +91,27 @@ When `serviceType == "A2MCP"`, the three numbered storage lines carry a **reques
 |---|---|---|
 | `1.` | Service description — what the service does | Core-capability summary |
 | `2.` | Request method — `POST` / `GET` or the MCP tool name | What the user must provide (non-sub) / delivery note (sub) |
-| `3.` | Parameter specification — key params: name + meaning + required/optional | Delivery note (non-sub only) |
+| `3.` | Parameter specification — each key parameter on its own line in the **strict format** `<name>（<type>，必填/可选）：<含义>` (see the *Parameter-spec strict format* bullet below) | Delivery note (non-sub only) |
 
 - **Blocking, not advisory.** All three A2MCP items must be present by meaning (not literal keywords). Any missing → the Skill **blocks** the flow at register §4 / update §4 (wherever `validate-listing` runs; `activate` does not re-run QA). This differs from A2A content quality, which stays advisory (`severity:"warn"`, never blocks `pass`).
 - **Reformat rule.** The `[]`-bracket template below is **display-only fill guidance — never stored verbatim**. When the user supplies content following it, reformat into the `1./2./3.` numbered-line storage structure. Storage format is unchanged.
-- **Overflow tie-break.** When a full per-parameter enumeration cannot fit the per-segment ≤200 CJK cap, concisely listing the key parameters (name + meaning + required/optional) satisfies line `3.`; never block solely because not every parameter is enumerated (length limits are unchanged).
+- **Parameter-spec strict format (line `3.`).** Write EACH key parameter on its own line as `<name>（<type>，<必填|可选>）：<含义>` — for an **optional** parameter, append its default value to the meaning: `<name>（<type>，可选）：<含义>，<默认值>`. `<type>` is the value type (`string` / `number` / `boolean` / `object` / …); `<必填|可选>` is the required/optional marker. Render the punctuation in the user's current language — full-width `（` `，` `）` `：` for CJK (e.g. `text（string，必填）：待翻译的原文` · `target_lang（string，可选）：目标语言码，默认 en`), ASCII `(` `,` `)` `:` for Latin (e.g. `text (string, required): source text to translate` · `target_lang (string, optional): target language code, default en`).
+- **Proactively normalize a malformed param spec, then confirm — never silently store it.** If the user's parameter-spec input is **present but not in the strict format** above (e.g. free prose like "needs a text and a target language", or missing the `<type>` or the required/optional marker), the Skill MUST proactively rewrite it into the strict per-line format, SHOW the rewritten version to the user, and ask them to confirm (or correct) it **before** it is stored. This normalization is separate from the completeness block: the block (above) fires only when the parameter spec is **entirely absent**; a present-but-loosely-worded spec is normalized-and-confirmed, not rejected.
+- **Overflow tie-break.** When a full per-parameter enumeration cannot fit the per-segment ≤200 CJK cap, concisely listing the key parameters (each still in the strict `<name>（<type>，必填/可选）：<含义>` format) satisfies line `3.`; never block solely because not every parameter is enumerated (length limits are unchanged).
 
 Canonical block copy — register §4 and update §4 both display THIS (single source; render prose in the user's current language, keep machine values like `POST` verbatim):
 
 - **Rejection reason:** "The request description is incomplete — it is missing one or more of: what the service does, the request method, or the parameter specification. Buyers and the sandbox cannot determine how to call this service."
-- **User suggestion:** "In the request description, include all three: (1) what the service does, (2) the request method (POST/GET or tool name), (3) each key parameter's name, meaning, and whether it is required."
+- **User suggestion:** "In the request description, include all three: (1) what the service does, (2) the request method (POST/GET or tool name), (3) each key parameter — one per line in the format `name（type，required/optional）：meaning` (append the default value for an optional parameter)."
 - **Copyable fill template:**
 
 ```
 [Service Description] One sentence explaining what this service does
   Example: Translate input text into a target language
 [Request Method] POST (or GET, or tool name)
-[Parameter Spec] List each parameter: name (type, required/optional): meaning
-  - text (string, required): source text to translate
-  - target_lang (string, required): target language code, e.g. en / zh / ja
+[Parameter Spec] One line per parameter — <name> (<type>, required|optional): <meaning>  (optional param: append its default)
+  text (string, required): source text to translate
+  target_lang (string, optional): target language code, e.g. en / zh / ja, default en
 ```
 
 **Agent-level vs service-level description (most common mix-up):** the *agent* description is the top-level `--description` flag; each *service* description is the `serviceDescription` key **inside** the `--service` JSON. Different field, different place.
