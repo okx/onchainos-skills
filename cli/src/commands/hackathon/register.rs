@@ -15,7 +15,7 @@ use serde_json::Value;
 const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
 
 /// Fixed activity ID for the current OKX.AI trading hackathon — not user-configurable.
-const ACTIVITY_ID: &str = "5";
+const ACTIVITY_ID: &str = "okx-marathon-0730";
 /// Fixed chain index (X Layer) this hackathon registers on — not user-configurable.
 const CHAIN_INDEX: &str = "196";
 
@@ -107,6 +107,11 @@ fn build_registration_body(
     body
 }
 
+/// Builds the CLI/MCP success payload.
+///
+/// `activityId` is deliberately NOT echoed: it is an internal identifier the
+/// skill is forbidden to show the user, so keeping it out of the output removes
+/// the leak vector entirely (and trims the caller's context).
 fn build_registration_confirmation(
     agent_id: &str,
     account_type: &str,
@@ -115,7 +120,6 @@ fn build_registration_confirmation(
 ) -> Value {
     let mut confirmation = serde_json::json!({
         "registered": true,
-        "activityId": ACTIVITY_ID,
         "agentId": agent_id,
         "accountType": account_type,
         "chainIndex": CHAIN_INDEX,
@@ -185,7 +189,7 @@ mod tests {
     #[test]
     fn register_body_web3_omits_uid() {
         let body = build_registration_body("agent-1", "web3", EVM_ADDR, None);
-        assert_eq!(body["activityId"], "5");
+        assert_eq!(body["activityId"], "okx-marathon-0730");
         assert_eq!(body["agentId"], "agent-1");
         assert_eq!(body["chainIndex"], "196");
         assert_eq!(body["address"], EVM_ADDR);
@@ -202,12 +206,28 @@ mod tests {
     fn register_confirmation_web3_shape() {
         let confirmation = build_registration_confirmation("agent-1", "web3", EVM_ADDR, None);
         assert_eq!(confirmation["registered"], true);
-        assert_eq!(confirmation["activityId"], "5");
         assert_eq!(confirmation["agentId"], "agent-1");
         assert_eq!(confirmation["accountType"], "web3");
         assert_eq!(confirmation["chainIndex"], "196");
         assert_eq!(confirmation["address"], EVM_ADDR);
         assert!(confirmation.get("uid").is_none());
+    }
+
+    #[test]
+    fn register_confirmation_never_echoes_activity_id() {
+        // The internal activity id must stay out of the output on both account
+        // types — the skill is forbidden to show it to the user.
+        for (account_type, uid) in [("web3", None), ("cefi", Some("uid-1"))] {
+            let confirmation =
+                build_registration_confirmation("agent-1", account_type, EVM_ADDR, uid);
+            assert!(
+                confirmation.get("activityId").is_none(),
+                "{account_type} confirmation leaked activityId: {confirmation}"
+            );
+        }
+        // ...while the request body still carries it.
+        let body = build_registration_body("agent-1", "web3", EVM_ADDR, None);
+        assert_eq!(body["activityId"], ACTIVITY_ID);
     }
 
     #[test]

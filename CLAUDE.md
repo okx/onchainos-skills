@@ -96,7 +96,7 @@ When the user names a third-party DApp/protocol as the destination of an action,
 
 **Quick tiebreaker vs okx-agent-payments-protocol** on "订阅"/"subscription": AI-service/agent-marketplace context (ASP / Agent#N / 服务方 / 任务 / 试用期) → okx-ai (agent my-subscriptions / subscribe-detail). Resource-URL / 402 / paymentId / Permit2 context → okx-agent-payments-protocol (payment subscription …). Genuinely ambiguous → ask which one the user means.
 
-**Quick tiebreaker `okx-hackathon` vs `okx-growth-competition`**: a request naming the OKX.AI **hackathon** / 交易黑客松 / 黑客松, or asking to register a **Trading ASP agent**, routes to `okx-hackathon` (`hackathon register`). A plain "join / register for `<competition name>`" (a normal trading contest or cup) routes to `okx-growth-competition` (`competition join`). They hit different backends and different subjects (a Trading ASP agent vs. a wallet account) — never conflate them.
+**Quick tiebreaker `okx-hackathon` vs `okx-growth-competition`**: only hackathon / 交易黑客松 / 黑客松 → `okx-hackathon` (`hackathon register`); any other competition → `okx-growth-competition` (`competition join`).
 
 ## IMPORTANT: Always Load Skill Before Executing Commands
 
