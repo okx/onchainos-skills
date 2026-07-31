@@ -201,6 +201,8 @@ const REDACT_ADDR: &[&str] = &[
     "--wallet",
     "--email",
     "--address",
+    // CeFi user identifier passed to `hackathon register` — mask prefix+suffix.
+    "--uid",
     "--sub-id",
     "--new-sub-id",
     // MPP hash-mode broadcast tx identifier — mask prefix+suffix in the audit log.
@@ -350,6 +352,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Competition { command } => format!("competition {}", competition_sub(command)),
+        Commands::Hackathon { command } => format!("hackathon {}", hackathon_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Strategy { command } => format!("strategy {}", strategy_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
@@ -475,9 +478,10 @@ use crate::commands::agentic_wallet::WalletCommand;
 use crate::commands::payment::PaymentCommand;
 use crate::commands::{
     competition::CompetitionCommand, defi::DefiCommand, gateway::GatewayCommand,
-    leaderboard::LeaderboardCommand, market::MarketCommand, memepump::MemepumpCommand,
-    portfolio::PortfolioCommand, security::SecurityCommand, signal::SignalCommand,
-    social::SocialCommand, swap::SwapCommand, token::TokenCommand, tracker::TrackerCommand,
+    hackathon::HackathonCommand, leaderboard::LeaderboardCommand, market::MarketCommand,
+    memepump::MemepumpCommand, portfolio::PortfolioCommand, security::SecurityCommand,
+    signal::SignalCommand, social::SocialCommand, swap::SwapCommand, token::TokenCommand,
+    tracker::TrackerCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -738,6 +742,12 @@ fn competition_sub(c: &CompetitionCommand) -> &'static str {
         CompetitionCommand::Join { .. } => "join",
         CompetitionCommand::Claim { .. } => "claim",
         CompetitionCommand::SubmitContact { .. } => "submit-contact",
+    }
+}
+
+fn hackathon_sub(c: &HackathonCommand) -> &'static str {
+    match c {
+        HackathonCommand::Register { .. } => "register",
     }
 }
 
@@ -1014,6 +1024,31 @@ mod tests {
         ]);
         let out = redact_args(&args);
         assert_eq!(out[4], "0x1234***5678");
+    }
+
+    #[test]
+    fn hackathon_sub_register_maps_to_register() {
+        let cmd = HackathonCommand::Register {
+            agent_id: "agent-42".to_string(),
+            account_type: "web3".to_string(),
+            address: Some("0x1111111111111111111111111111111111111111".to_string()),
+            uid: None,
+        };
+        assert_eq!(hackathon_sub(&cmd), "register");
+    }
+
+    #[test]
+    fn redact_uid_prefix_suffix() {
+        let args = vec_s(&[
+            "onchainos",
+            "hackathon",
+            "register",
+            "--uid",
+            "1234567890abcdef",
+        ]);
+        let out = redact_args(&args);
+        // The CeFi uid is masked prefix+suffix (REDACT_ADDR): first 6 + last 4.
+        assert_eq!(out[4], "123456***cdef");
     }
 
     #[test]

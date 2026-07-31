@@ -48,7 +48,10 @@ fn competition_rank_all_conflicts_with_sort_type() {
         .expect("failed to execute");
     assert_error_contains(
         &output,
-        &["--all is mutually exclusive with --sort-type", "invalid_input"],
+        &[
+            "--all is mutually exclusive with --sort-type",
+            "invalid_input",
+        ],
     );
 }
 
@@ -68,19 +71,15 @@ fn social_news_latest_since_zero_is_rejected() {
 #[test]
 fn social_news_latest_since_conflicts_with_begin() {
     let output = onchainos()
-        .args([
-            "social",
-            "news-latest",
-            "--since",
-            "24h",
-            "--begin",
-            "1000",
-        ])
+        .args(["social", "news-latest", "--since", "24h", "--begin", "1000"])
         .output()
         .expect("failed to execute");
     assert_error_contains(
         &output,
-        &["--since is mutually exclusive with --begin/--end", "invalid_input"],
+        &[
+            "--since is mutually exclusive with --begin/--end",
+            "invalid_input",
+        ],
     );
 }
 
@@ -90,14 +89,7 @@ fn social_news_latest_since_conflicts_with_begin() {
 fn token_search_max_results_out_of_range_is_rejected() {
     // `--max-results` must be 1..=500; the range check runs before the request.
     let output = onchainos()
-        .args([
-            "token",
-            "search",
-            "--query",
-            "btc",
-            "--max-results",
-            "999",
-        ])
+        .args(["token", "search", "--query", "btc", "--max-results", "999"])
         .output()
         .expect("failed to execute");
     assert_error_contains(
@@ -109,15 +101,11 @@ fn token_search_max_results_out_of_range_is_rejected() {
 #[test]
 fn token_search_max_results_non_integer_is_rejected() {
     let output = onchainos()
-        .args([
-            "token",
-            "search",
-            "--query",
-            "btc",
-            "--max-results",
-            "abc",
-        ])
+        .args(["token", "search", "--query", "btc", "--max-results", "abc"])
         .output()
         .expect("failed to execute");
-    assert_error_contains(&output, &["--max-results must be an integer", "invalid_input"]);
+    assert_error_contains(
+        &output,
+        &["--max-results must be an integer", "invalid_input"],
+    );
 }

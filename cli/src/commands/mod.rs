@@ -5,6 +5,7 @@ pub mod competition;
 pub mod cross_chain;
 pub mod defi;
 pub mod gateway;
+pub mod hackathon;
 pub mod leaderboard;
 pub mod market;
 pub mod memepump;

@@ -13,8 +13,8 @@ use tokio::sync::Mutex;
 
 use crate::client::ApiClient;
 use crate::commands::{
-    competition, cross_chain, defi, gateway, leaderboard, market, memepump, payment, portfolio,
-    signal, social, swap, token, tracker, workflows,
+    competition, cross_chain, defi, gateway, hackathon, leaderboard, market, memepump, payment,
+    portfolio, signal, social, swap, token, tracker, workflows,
 };
 
 // ── DeFi ──────────────────────────────────────────────────────────────
@@ -691,6 +691,19 @@ struct CompetitionSubmitContactParams {
     contact_type: String,
     /// The contact value the user shared (max 256 chars). Examples: `@username` for Telegram/Twitter, the WeChat ID, or the full email address. Do NOT echo this value back to the user in the confirmation message.
     contact_value: String,
+}
+
+// ── Hackathon ───────────────────────────────────────────────────────────
+#[derive(Deserialize, JsonSchema)]
+struct HackathonRegisterParams {
+    /// The user's Trading ASP agent id to register (from a prior `agent get-my-agents` result).
+    agent_id: String,
+    /// Account type: "web3" (current wallet's X Layer address) or "cefi" (an OKX UID).
+    account_type: String,
+    /// Optional wallet address. If omitted, auto-resolves the current account's X Layer (EVM) address.
+    address: Option<String>,
+    /// OKX UID for the account. Required when `account_type` is "cefi".
+    uid: Option<String>,
 }
 
 // ── Gateway ────────────────────────────────────────────────────────────
@@ -2909,6 +2922,38 @@ Returns `joined: true` plus `activityId` (internal — never show to the user) a
     }
 
     #[tool(
+        name = "hackathon_register",
+        description = "Register the user's Trading ASP for the OKX.AI trading hackathon. Requires wallet login. \
+Pass `agent_id` (the user's Trading ASP, from a prior `agent get-my-agents` result) and `account_type` — \"web3\" for the current wallet's X Layer address, or \"cefi\" for an OKX UID (in which case `uid` is REQUIRED). \
+When `address` is omitted it auto-resolves the current account's X Layer (EVM) address. \
+Returns `registered: true` plus the echoed registration details."
+    )]
+    async fn hackathon_register(
+        &self,
+        Parameters(p): Parameters<HackathonRegisterParams>,
+    ) -> Result<String, String> {
+        // CeFi registration requires a uid; validate before any wallet/network
+        // access (mirrors the CLI `execute()` arm ordering).
+        if let Err(e) = hackathon::require_uid_for_cefi(&p.account_type, p.uid.as_deref()) {
+            return err(e);
+        }
+        // Auto-resolve the current account's X Layer (EVM) address when omitted
+        // (both web3 & cefi register on X Layer).
+        let address = match &p.address {
+            Some(a) => a.clone(),
+            None => match hackathon::resolve_registration_evm_address() {
+                Ok(a) => a,
+                Err(e) => return err(e),
+            },
+        };
+        match hackathon::register(&p.agent_id, &p.account_type, &address, p.uid.as_deref()).await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
         name = "competition_claim",
         description = "Atomic competition reward claim: fetch calldata → TEE-sign → broadcast on-chain → return tx hashes. Requires wallet login. Pass `activity_name` from a prior result. \
 SAFETY: Do NOT chain `gateway_broadcast` after this — the on-chain submission already happened inside this tool. Do NOT re-run claim on partial success — successful entries are already on-chain and will hit the dedup guard. \
@@ -3214,4 +3259,38 @@ pub async fn serve(base_url_override: Option<&str>) -> Result<()> {
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hackathon_register_params_minimal_deserializes() {
+        // Minimal JSON carries only the two required fields; the optionals stay
+        // absent.
+        let p: HackathonRegisterParams = serde_json::from_value(serde_json::json!({
+            "agent_id": "agent-123",
+            "account_type": "web3",
+        }))
+        .expect("minimal params must deserialize");
+        assert_eq!(p.agent_id, "agent-123");
+        assert_eq!(p.account_type, "web3");
+        assert!(p.address.is_none());
+        assert!(p.uid.is_none());
+    }
+
+    #[test]
+    fn hackathon_register_cefi_without_uid_errors() {
+        // Pure validation (no live backend): run the shared cefi-uid check the
+        // handler runs, then route it through the MCP `err()` envelope exactly as
+        // the handler does, and assert the `--uid` message survives.
+        let e =
+            hackathon::require_uid_for_cefi("cefi", None).expect_err("cefi without uid must error");
+        let envelope = err(e).expect_err("err() returns the Err variant");
+        assert!(
+            envelope.contains("--uid is required"),
+            "envelope should carry the --uid message, got: {envelope}"
+        );
+    }
 }
