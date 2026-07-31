@@ -982,10 +982,20 @@ mod tests {
         for evt in USER_NON_TERMINAL.iter().chain(USER_TERMINAL.iter()) {
             let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
             assert!(!out.is_empty(), "{evt}: body must be non-empty");
-            assert!(
-                out.contains("onchainos agent user-notify"),
-                "{evt}: must use the user-notify scaffold"
-            );
+            // sub_asp_dispute reconciled with master after MR !187 review
+            // note-9880443 asked to revert the dispute change out of this
+            // doc-removal MR as out-of-scope. On master's reverted behavior, a
+            // dispute with no prefetched provider id escalates (cli_failed)
+            // instead of rendering the user-notify scaffold, so it is exempt
+            // from the scaffold assertion here. Restoring the user-notify
+            // behavior for that branch belongs in its own dedicated MR. Every
+            // event — dispute included — must still never push a decision.
+            if *evt != "sub_asp_dispute" {
+                assert!(
+                    out.contains("onchainos agent user-notify"),
+                    "{evt}: must use the user-notify scaffold"
+                );
+            }
             assert!(
                 !out.contains("pending-decisions"),
                 "{evt}: display-only — must NOT push pending-decisions"

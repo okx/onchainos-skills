@@ -40,7 +40,7 @@ pub async fn validate_listing(args: ValidateListingArgs, _ctx: &Context) -> Resu
 struct Finding {
     field: String,
     code: String,
-    severity: String,
+    severity: &'static str,
     issue: String,
     fix: String,
 }
@@ -56,7 +56,7 @@ impl Finding {
         Finding {
             field: field.into(),
             code: code.to_string(),
-            severity: "block".to_string(),
+            severity: "block",
             issue: issue.to_string(),
             fix: fix.to_string(),
         }
@@ -143,6 +143,16 @@ pub(crate) fn run_validation(
         }
     }
     // For user / evaluator: --service is ignored silently (no findings).
+
+    // Product decision (references/identity-register.md §4): ONLY the ASP service
+    // description (`service[i].servicedescription`) is advisory — downgrade its
+    // findings to `warn` so they never fail `pass`. Every other field (agent-level
+    // `description`, name / pricing / servicetype / service-name) stays blocking.
+    for f in &mut findings {
+        if f.field.ends_with(".servicedescription") {
+            f.severity = "warn";
+        }
+    }
 
     let pass = !findings.iter().any(|f| f.severity == "block");
     ValidationResult { pass, findings }

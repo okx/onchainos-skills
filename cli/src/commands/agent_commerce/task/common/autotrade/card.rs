@@ -428,8 +428,6 @@ const DECISION_GUIDANCE: &str = "Do NOT execute any trade and do NOT read the de
 command's --user-content verbatim; do NOT re-translate or reword it, and never change the option letters \
 or any number. Then run the command to push the decision. Act on the trade only after the user answers.";
 
-// Consent copy source: OX2Hd PRD "Onchain OS 跟单执行流程" (bilingual CN/EN):
-// https://okg-block.sg.larksuite.com/docx/OX2HdUlfdoCUNWxFcl7ladsZgTf
 // Each copy ships in TWO single-language variants (en/zh) selected by the per-job
 // language marker (`user_lang::resolve`, fed deterministically from the user's
 // verbatim decision replies). Single-language is a hard requirement on the

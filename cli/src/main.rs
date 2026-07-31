@@ -6,7 +6,7 @@ mod client;
 mod commands;
 mod config;
 pub mod crypto;
-mod device_id;
+mod device;
 mod doh;
 mod file_keyring;
 mod home;
@@ -185,6 +185,10 @@ fn main() {
 #[tokio::main]
 async fn run() {
     dotenvy::dotenv().ok();
+
+    if let Err(e) = crate::home::self_heal_permissions() {
+        eprintln!("Warning: {e}");
+    }
 
     let mut cli = Cli::parse();
 

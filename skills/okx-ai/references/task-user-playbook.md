@@ -122,14 +122,14 @@ Trigger: user asks for their subscriptions (`我的订阅` / `订阅列表` / `�
 
 Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ … ] }`. Render each element as one row (localize labels for non-CN users). **Render ALL columns below — never drop 服务商 or 期数, and never merge 下次扣款 into a raw period range; 下次扣款 is a single derived date per the rule below.**
 
-| # | 服务 | 服务商 | 状态 | 试用 | 费用 | 下次扣款 | 自动续费 | 期数 |
-|---|------|--------|------|------|------|---------|---------|------|
-| 1 | {title} | Agent#{providerAgentId} | {statusName} | {trialType==1?"试用中":"—"} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | 第{periodIndex}期 |
+| # | 服务 | 服务商 | 状态 | 费用 | 下次扣款 | 自动续费 | 订阅期数 |
+|---|------|--------|------|------|---------|---------|------|
+| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {下次扣款} | {autoRenew==1?"✓":"✗"} | {期数} |
 
-- **状态**: 直接展示 CLI 返回的 `statusName`（ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>），原样输出、不翻译成中文。试用 vs 正式由独立「试用」列（`trialType`）区分。
+- **状态**: 直接展示 CLI 返回的 `statusName`（ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>），原样输出、不翻译成中文。试用 vs 正式改由「期数」列区分（`trialType==1` 显示"试用期"）。
 - **费用**: `serviceTokenAmount` 字符串原样展示（绝不转 float）；CLI 不提供 token 符号，仅 `serviceTokenAddress`。
-- **期数**: `第{periodIndex}期`（已订阅期数）。
-- **下次扣款** (no CLI field — derive): `trialType==1` → `subStartTime`(试用转正扣款日); else `autoRenew==1` → `subEndTime`; `autoRenew==0` → "不续费". Render epoch-seconds as a date.
+- **期数** (按状态分派): `trialType==1` → "试用期"; else `periodIndex` 为合法正整数(> 0) → `第{periodIndex}期`; else (`periodIndex` 为 null 或 ≤ 0) → "—"。
+- **下次扣款** (no CLI field — derive): `statusName != "ACTIVE"` → "—"; else `trialType==1` → 读 `trialEndTime`(正拼, 优先) 或 `trailEndTime`(`trail*` 旧拼, fallback) 双读(复用 AC-17)，渲染为日期(试用转正扣款日)，两者皆缺 → "日期暂缺"; else `autoRenew==1` → `subEndTime`; `autoRenew==0` → "不续费". Render epoch-seconds as a date.
 - All timestamps are **epoch seconds** — render as the user's locale date, never raw numbers.
 - Empty list → "你还没有任何订阅。" Do NOT invent rows.
 - To open one row's full detail, pass that row's **`jobId`** to `subscribe-detail` (§订阅详情).

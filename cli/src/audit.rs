@@ -108,11 +108,14 @@ fn try_log(
         error: error.map(truncate_error),
     };
     let line = serde_json::to_string(&entry).ok()?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .ok()?;
+    let mut opts = OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(&path).ok()?;
     if needs_header {
         writeln!(file, "{}", device_header_line()).ok()?;
     }

@@ -227,7 +227,7 @@ impl ApiClient {
             || std::env::var("OKX_BASE_URL").is_ok()
             || option_env!("OKX_BASE_URL").is_some();
         let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
-        doh.prepare();
+        doh.prepare()?;
 
         let mut builder = Client::builder().timeout(std::time::Duration::from_secs(10));
         if let Some((host, addr)) = doh.resolve_override() {
@@ -261,7 +261,7 @@ impl ApiClient {
             || std::env::var("OKX_BASE_URL").is_ok()
             || option_env!("OKX_BASE_URL").is_some();
         let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
-        doh.prepare();
+        doh.prepare()?;
 
         let mut builder = Client::builder().timeout(std::time::Duration::from_secs(10));
         if let Some((host, addr)) = doh.resolve_override() {
@@ -426,6 +426,8 @@ impl ApiClient {
     ///   available (spec §6.2). `get_cached_device_id()` is a pure memory read
     ///   after first init (spec §9.2); an invalid value or `None` silently skips
     ///   the header so this fn stays synchronous and infallible (spec §3.2).
+    /// - `device-name: <name>` — best-effort display name (spec §5.1). Inserted
+    ///   via `from_bytes` because the value is raw UTF-8 and may be non-ASCII.
     pub(crate) fn anonymous_headers() -> reqwest::header::HeaderMap {
         use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
         let mut map = HeaderMap::new();
@@ -439,10 +441,15 @@ impl ApiClient {
             HeaderValue::from_static("agent-cli"),
         );
         map.insert("platform", HeaderValue::from_static("agent-cli"));
-        if let Some(id) = crate::device_id::get_cached_device_id() {
+        if let Some(id) = crate::device::id::get_cached_device_id() {
             if let Ok(val) = HeaderValue::from_str(id) {
                 map.insert("device-id", val);
             }
+        }
+        if let Ok(val) =
+            HeaderValue::from_bytes(crate::device::name::get_cached_device_name().as_bytes())
+        {
+            map.insert("device-name", val);
         }
         map
     }
@@ -2282,7 +2289,7 @@ mod tests {
     #[test]
     fn anonymous_headers_includes_device_id() {
         with_temp_home("anonymous_headers_includes_device_id", || {
-            let expected = crate::device_id::get_cached_device_id();
+            let expected = crate::device::id::get_cached_device_id();
             let h = ApiClient::anonymous_headers();
             let actual = h.get("device-id").map(|v| v.to_str().unwrap());
             assert_eq!(actual, expected);
@@ -2296,8 +2303,23 @@ mod tests {
         });
     }
 
+    /// Compared on bytes, not `to_str()` — the latter only accepts visible ASCII
+    /// and errors on a non-ASCII device name.
+    #[test]
+    fn anonymous_headers_includes_device_name() {
+        with_temp_home("anonymous_headers_includes_device_name", || {
+            let expected = crate::device::name::get_cached_device_name();
+            let h = ApiClient::anonymous_headers();
+            let actual = h.get("device-name").expect("device-name is always present");
+            assert_eq!(actual.as_bytes(), expected.as_bytes());
+            assert!(!expected.is_empty());
+            assert!(!expected.chars().any(|c| c.is_control()));
+        });
+    }
+
     /// Best-effort / no-panic: `anonymous_headers()` returns a `HeaderMap` and
-    /// never panics regardless of device-id state (spec §3.2 — no `Err` path).
+    /// never panics regardless of device-id / device-name state (spec §3.2 — no
+    /// `Err` path).
     #[test]
     fn anonymous_headers_never_panics() {
         with_temp_home("anonymous_headers_never_panics", || {

@@ -662,9 +662,7 @@ pub enum AgentCommand {
     #[command(subcommand)]
     Dispute(task::asp::DisputeCommand),
 
-    /// Pending-decisions v2 — single-active queue with sessionKey primary key
-    /// and LLM-playbook output. Design doc:
-    /// https://okg-block.sg.larksuite.com/docx/URN9d8q49oYAJnxH6BYlYTkUgkd
+    /// Pending-decisions v2 queue management.
     #[command(name = "pending-decisions-v2", subcommand)]
     PendingDecisionsV2(task::common::pending_v2::PendingDecisionsV2Command),
 

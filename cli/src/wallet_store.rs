@@ -138,7 +138,7 @@ pub struct SessionJson {
     #[serde(default)]
     pub session_key_expire_at: String,
     /// Stable per-machine device id sent as the `device-id` request header
-    /// (see `crate::device_id`). Non-sensitive — it is a sha256 hash / UUIDv4
+    /// (see `crate::device::id`). Non-sensitive — it is a sha256 hash / UUIDv4
     /// that is also reported in plaintext via the header — so it lives in this
     /// on-disk session metadata rather than in the OS keyring alongside
     /// tokens / private keys. Empty string ⇒ absent (a cache miss that makes
