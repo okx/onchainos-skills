@@ -4,7 +4,7 @@ description: "Register for the OKX.AI Trading Hackathon (交易黑客松 / OKX.A
 license: MIT
 metadata:
   author: okx
-  version: "4.4.1"
+  version: "4.4.3"
   homepage: "https://web3.okx.com"
 ---
 
