@@ -3,20 +3,30 @@
 //! # Decommissioning
 //!
 //! The hackathon runs for one event and is expected to be removed afterwards.
-//! Everything it owns lives in exactly two directories — this module and
-//! `skills/okx-hackathon/` — plus `cli/tests/cli_hackathon.rs`. Every other
-//! touchpoint is a single grep-able line:
+//! Everything it owns lives in this module, in `skills/okx-activity/` (the
+//! hackathon is one activity there: `references/hackathon-*.md`), and in
+//! `cli/tests/cli_hackathon.rs`. Every other touchpoint is a single grep-able
+//! line:
 //!
 //! ```text
-//! grep -rn "hackathon\|okx-hackathon" --exclude-dir=target --exclude-dir=.git .
+//! grep -rni "hackathon" --exclude-dir=target --exclude-dir=.git .
 //! ```
 //!
-//! That returns the routing rows (`CLAUDE.md`, `AGENTS.md`, `README.md`,
-//! `.codex/`, `.opencode/`, `.openclaw/`, `openclaw_template/`,
-//! `package.json`), the `Commands::Hackathon` arm in `main.rs`, the
-//! `hackathon_register` tool in `mcp/mod.rs`, and the `"--uid"` /
-//! `Commands::Hackathon` entries in `audit.rs`. Deleting those lines and the
-//! two directories removes the feature completely; nothing else depends on it.
+//! Case-insensitive matters: the docs write it "Hackathon". That returns the
+//! rows that still name the hackathon (`CLAUDE.md`, `AGENTS.md`, `README.md`,
+//! `.opencode/`, `.openclaw/`, `openclaw_template/workspace/AGENTS.md`), the
+//! `Commands::Hackathon` arm in `main.rs`, the `hackathon_register` tool in
+//! `mcp/mod.rs`, and the `"--uid"` / `Commands::Hackathon` entries in
+//! `audit.rs`. Deleting those lines, this module, and the hackathon files under
+//! `skills/okx-activity/references/` removes the feature completely; nothing
+//! else depends on it.
+//!
+//! Not returned by that grep, and correctly so — they list only the surviving
+//! hub name `okx-activity` and stay as-is: `.codex/INSTALL.md`,
+//! `openclaw_template/workspace/TOOLS.md`, `package.json`, and the
+//! `okx-hackathon` entry in `upgrade.rs`'s `DEPRECATED_SKILLS` (which cleans up
+//! pre-rename installs and outlives the hackathon itself, as does
+//! `okx-activity`, the activity hub).
 
 mod register;
 

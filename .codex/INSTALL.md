@@ -60,7 +60,7 @@ You should see the Onchain OS skill set, including categories such as:
 - `okx-agent-payments-protocol`
 - `okx-dapp-discovery`
 - `okx-growth-competition`
-- `okx-hackathon`
+- `okx-activity`
 
 ## Optional CLI Install
 

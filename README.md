@@ -14,7 +14,7 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-guide` | Onboarding & guide hub (merges former okx-how-to-play + okx-ai-guide + okx-ai-support): Onchain OS onboarding + welcome banner, OKX.AI intro & role-registration routing, customer-support / Help Center guidance |
 | `okx-dapp-discovery` | Third-party DApp discovery and direct plugin routing — currently supports Polymarket, Aave V3, Hyperliquid, PancakeSwap V3 AMM, Morpho V1 Optimizer |
 | `okx-growth-competition` | Agentic Wallet exclusive trading competitions: list, join, view leaderboard, claim rewards |
-| `okx-hackathon` | Register for the OKX.AI Trading Hackathon (交易黑客松) with an existing Trading ASP |
+| `okx-activity` | OKX activity hub — per-activity content under `references/<activity>-*.md`. Currently: OKX.AI Trading Hackathon (交易黑客松) registration with an existing Trading ASP |
 
 ## Supported Chains
 

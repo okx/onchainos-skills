@@ -1,6 +1,10 @@
 # OKX.AI Trading Hackathon Registration — Flow & CLI Reference (`hackathon register`)
 
-> Scope: the step-by-step registration flow and CLI/MCP reference for `hackathon register`. Global rules (wrong-skill guard, pre-flight, output rules) live in `../SKILL.md` — read that first.
+> **Precondition (BLOCKING):** [`hackathon-core.md`](hackathon-core.md) must already be loaded — it
+> holds the gates, Output Rules, and Pre-Delivery Checklist that this flow's steps assume and do not
+> restate. If you reached this file first, stop and read it now, then come back.
+>
+> Scope: the step-by-step registration flow and CLI/MCP reference for `hackathon register`. The hackathon's own gates, reading order, and output rules live in [`hackathon-core.md`](hackathon-core.md) — read that first; skill-wide rules (activity routing, pre-flight, wrong-skill guard, language) live in `../SKILL.md`.
 
 ## Flow
 
@@ -22,7 +26,7 @@ onchainos agent get-my-agents --page-size 20 | jq -c 'if .ok == false then {erro
      - The projection printed `{"error": …}` → that is the CLI's own failure envelope, not a listing. Surface that message and act on it (`not logged in` → `../SKILL.md` §Pre-flight, then resume here); do not read it as an empty list.
      - `jq` is unavailable, or the command died with a `jq:` error → drop the pipe and apply §2 to the raw JSON.
      - `listed` is 0 while `total` is above 0 (the projection missed the shape) → apply §2 to the raw JSON; never read the empty result as "no agents".
-2. Split the rows client-side by role: a row is ASP-eligible **only if `roleLabel` is exactly `"ASP"`**. Any other value (`"User"`, `"Evaluator"`, anything else) or a missing/absent `roleLabel` → **not eligible**. Never default a row into the ASP bucket. In the templates below, `N` is `listed` and `M` is the length of `asps` — never take `N` from `total`, which counts owner groups rather than agents on the nested shape and would make `N-M` wrong. Then present the summary line, followed by the ASP-only numbered list — one line per existing ASP with its **name and agent id** (shown here only, to disambiguate ASPs sharing a name — see `../SKILL.md` Output Rules). Numbering starts at **`1`**; there is **no option `0`** and no "create a new ASP" entry — this skill never creates an identity (`../SKILL.md`), so creation is a tutorial pointer below the list, never a menu choice:
+2. Split the rows client-side by role: a row is ASP-eligible **only if `roleLabel` is exactly `"ASP"`**. Any other value (`"User"`, `"Evaluator"`, anything else) or a missing/absent `roleLabel` → **not eligible**. Never default a row into the ASP bucket. In the templates below, `N` is `listed` and `M` is the length of `asps` — never take `N` from `total`, which counts owner groups rather than agents on the nested shape and would make `N-M` wrong. Then present the summary line, followed by the ASP-only numbered list — one line per existing ASP with its **name and agent id** (shown here only, to disambiguate ASPs sharing a name — see `hackathon-core.md` §Output Rules). Numbering starts at **`1`**; there is **no option `0`** and no "create a new ASP" entry — this activity never creates an identity (`hackathon-core.md`), so creation is a tutorial pointer below the list, never a menu choice:
 
 ```
 You have <N> agents in total, <M> of which are ASPs (the other <N-M> are Evaluator / User identities and cannot register).
@@ -50,8 +54,8 @@ You don’t have an ASP yet. Please create a trading ASP that meets the entry re
 
 For any language, translate the English above — keep the URL byte-for-byte, keep it a link, and add nothing: no account-switching suggestion, no precondition list, no menu.
 
-3. If the reply is `0`, or the user says they want to create one instead of picking a number: do **not** treat it as invalid input and do **not** re-print the list. `0` was a menu option in an earlier version of this flow, so a returning user may still reply it out of habit — answer that intent directly, in one short message, with the create hint above (link included, translated to the user's language), then stop this flow. This skill never creates an identity (`../SKILL.md`); an explicit "create one for me" is the `okx-ai` skill's job, so hand off there rather than doing it here.
-4. Otherwise resolve the reply to the selected `agent_id`, and from here on identify the ASP **by name only** (`../SKILL.md` Output Rules).
+3. If the reply is `0`, or the user says they want to create one instead of picking a number: do **not** treat it as invalid input and do **not** re-print the list. `0` was a menu option in an earlier version of this flow, so a returning user may still reply it out of habit — answer that intent directly, in one short message, with the create hint above (link included, translated to the user's language), then stop this flow. This activity never creates an identity (`hackathon-core.md`); an explicit "create one for me" is the `okx-ai` skill's job, so hand off there rather than doing it here.
+4. Otherwise resolve the reply to the selected `agent_id`, and from here on identify the ASP **by name only** (`hackathon-core.md` §Output Rules).
    - If the user's original request already named an ASP (or gave an account type / UID) upfront, still run this list and match it against the name to get a real `agent_id` — never fabricate or guess an id. If the name matches more than one ASP, ask which one. Do not skip straight to the confirmation on a one-shot request; still show the list explicitly.
 5. Before submitting, confirm the three ASP preconditions with the user (the check at registration is authoritative and rejects on failure — this pre-confirmation only avoids surprising the user with a rejection). Keep the ASP's name in the surrounding sentence, not inside the checklist:
 
@@ -100,7 +104,7 @@ Call `hackathon_register` (MCP) or `onchainos hackathon register …` (CLI). See
 Registration received. We will take a balance snapshot of all entrants before the competition starts — make sure the account holds at least 300 USDT-equivalent in assets by then.
 ```
 
-Add nothing to it — no agent name, no chain, no account type, no wallet address, no "good luck". The template is deliberately minimal; the confirmation the user already replied to in Step 1 is what tells them which ASP was entered. If they ask afterwards which agent was registered, answer then, by name and never by an internal id (`../SKILL.md` Output Rules).
+Add nothing to it — no agent name, no chain, no account type, no wallet address, no "good luck". The template is deliberately minimal; the confirmation the user already replied to in Step 1 is what tells them which ASP was entered. If they ask afterwards which agent was registered, answer then, by name and never by an internal id (`hackathon-core.md` §Output Rules).
 
 **On failure** — two different outcomes. **MUST**: branch on the `errorCode` field, never on the wording of `error` — the wording can change without notice, while the code is the contract:
 
@@ -130,7 +134,7 @@ onchainos hackathon register --agent-id <id> --account-type <web3|cefi> [--addre
 
 The activity id and chain index (X Layer, `196`) are **fixed internally** — no flag or param sets, overrides, or returns either. MCP tool `hackathon_register` mirrors the flags above (same `address` auto-resolve; no `activity_id` / `chain_index` params) and runs the **same validation**: both surfaces share one validator, so neither accepts anything the other rejects.
 
-Success returns `{ "registered": true, "agentId", "accountType", "chainIndex", "address" }` — no `uid`; it is submitted and redacted in the audit log, never returned (masking rule: `../SKILL.md` Output Rules).
+Success returns `{ "registered": true, "agentId", "accountType", "chainIndex", "address" }` — no `uid`; it is submitted and redacted in the audit log, never returned (masking rule: `hackathon-core.md` §Output Rules).
 
 **CLI-side errors** (rejections and transport failures are handled in Step 4):
 - `--uid is required for CeFi account registration` → collect the UID and retry.
