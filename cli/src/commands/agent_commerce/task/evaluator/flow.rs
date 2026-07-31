@@ -37,7 +37,7 @@ fn notify_block(content: &str) -> String {
     format!(
         "Run `onchainos agent user-notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content>'\n\
+         onchainos agent user-notify --content \"<localized content>\"\n\
          ```\n\n\
          Canonical English content:\n\
          \x20\x20\x20\x20{content}\n"
@@ -53,7 +53,7 @@ fn notify_block_lines(lines: &[String]) -> String {
     format!(
         "Run `onchainos agent user-notify` to push the notification to the user. Translate the content below into the user's language first, then run:\n\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content>'\n\
+         onchainos agent user-notify --content \"<localized content>\"\n\
          ```\n\n\
          Canonical English content:\n\
          {body}\n"
@@ -221,7 +221,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                      ```bash\n\
                      onchainos agent evidence-info {job_id} --agent-id {agent_id} --round-num {n}\n\
                      ```\n\n\
-                     Evidence JSON top-level: `{{ title, description, provider: {{reason, texts[], files[]}}, client: {{reason, texts[], files[]}} }}`. `description` / `title` is the task's original definition. Per side: `reason` is the party's stated motivation (`provider.reason` = why arbitration was raised; `client.reason` = why delivery was rejected); `texts[]` is free-text evidence; `files[]` is **any file type** (image / PDF / video / archive / unknown binary), already downloaded — each item has `localPath` (absolute path; **the local file has NO extension** — CLI deliberately leaves type detection to the agent).\n\n\
+                     Evidence JSON top-level: `{{ title, description, provider: {{reason, texts[], files[]}}, client: {{reason, texts[], files[]}} }}`. `description` / `title` is the task's original definition. Per side: `reason` is the party's stated motivation (`provider.reason` = why evaluation was raised; `client.reason` = why delivery was rejected); `texts[]` is free-text evidence; `files[]` is **any file type** (image / PDF / video / archive / unknown binary), already downloaded — each item has `localPath` (absolute path; **the local file has NO extension** — CLI deliberately leaves type detection to the agent).\n\n\
                      **Post-evidence hard constraints** (only the rules the agent could not infer on its own — tool choice / commands are the agent's call):\n\
                      - `files[]` items arrive **without extensions** by design; probe the type yourself (`file --mime-type`, hexdump, whatever) and use whatever tools you have to inspect each one. If you rename a file to give it an extension, **update the `localPath` you cite in the verdict**.\n\
                      - **Never vote blindly on an item you could not inspect.** If a file is unreadable for any reason (unsupported format, conversion failed, archive contents inaccessible, download error), cite it in the verdict as `<short reason> — contents unreviewable` and apply the rubric's evidence-missing rule for that item.\n\
@@ -246,7 +246,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
             let vote = message.and_then(|m| i64_field(m, "vote"));
 
             let mut lines = vec![
-                format!("【Arbitration vote committed for task [{job_title}] · waiting for Reveal】"),
+                format!("【Evaluation vote committed for task [{job_title}] · waiting for Reveal】"),
                 format!("Task title: {job_title}"),
                 format!("Task ID: #{job_id}"),
             ];
@@ -267,7 +267,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
             let slashed_cooldown_seconds = message.and_then(|m| i64_field(m, "slashedCooldownSeconds"));
 
             let mut lines = vec![
-                format!("【⏰ URGENT: Arbitration vote for task [{job_title}] is about to close】"),
+                format!("【⏰ URGENT: Evaluation vote for task [{job_title}] is about to close】"),
                 format!("Task title: {job_title}"),
                 format!("Task ID: #{job_id}"),
             ];
@@ -302,7 +302,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
             let slashed_cooldown_seconds = message.and_then(|m| i64_field(m, "slashedCooldownSeconds"));
 
             let mut lines = vec![
-                format!("【⏰ URGENT: Arbitration reveal for task [{job_title}] is about to close】"),
+                format!("【⏰ URGENT: Evaluation reveal for task [{job_title}] is about to close】"),
                 format!("Task title: {job_title}"),
                 format!("Task ID: #{job_id}"),
             ];
@@ -389,8 +389,8 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                     let phase = if matches!(branch, Branch::MissedCommit) { "Commit" } else { "Reveal" };
                     let mut lines = Vec::new();
                     match &agent_name {
-                        Some(n) => lines.push(format!("【⚖️ Your Agent {n} missed [{phase}] for task [{job_title}] arbitration — penalty incoming】")),
-                        None => lines.push(format!("⚖️ You missed [{phase}] for task [{job_title}] arbitration — penalty incoming")),
+                        Some(n) => lines.push(format!("【⚖️ Your Agent {n} missed [{phase}] for task [{job_title}] evaluation — penalty incoming】")),
+                        None => lines.push(format!("⚖️ You missed [{phase}] for task [{job_title}] evaluation — penalty incoming")),
                     }
                     lines.push(format!("Task title: {job_title}"));
                     lines.push(format!("Task ID: #{job_id}"));
@@ -411,7 +411,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                 }
                 Branch::Won => {
                     let mut lines = vec![
-                        format!("【🎉 Arbitration result for task [{job_title}]: your vote aligned with the majority — reward eligible】"),
+                        format!("【🎉 Evaluation result for task [{job_title}]: your vote aligned with the majority — reward eligible】"),
                         format!("Task title: {job_title}"),
                         format!("Task ID: #{job_id}"),
                     ];
@@ -437,7 +437,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                 }
                 Branch::Lost => {
                     let mut lines = vec![
-                        format!("【⚠️ Arbitration result for task [{job_title}]: your vote disagreed with the majority — slash penalty incoming】"),
+                        format!("【⚠️ Evaluation result for task [{job_title}]: your vote disagreed with the majority — slash penalty incoming】"),
                         format!("Task title: {job_title}"),
                         format!("Task ID: #{job_id}"),
                     ];
@@ -495,8 +495,8 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                     let phase = if matches!(branch, Branch::MissedCommit) { "Commit" } else { "Reveal" };
                     let mut lines = Vec::new();
                     match &agent_name {
-                        Some(n) => lines.push(format!("【⚖️ Your Agent {n} missed [{phase}] for task [{job_title}] arbitration — penalty incoming】")),
-                        None => lines.push(format!("⚖️ You missed [{phase}] for task [{job_title}] arbitration — penalty incoming")),
+                        Some(n) => lines.push(format!("【⚖️ Your Agent {n} missed [{phase}] for task [{job_title}] evaluation — penalty incoming】")),
+                        None => lines.push(format!("⚖️ You missed [{phase}] for task [{job_title}] evaluation — penalty incoming")),
                     }
                     lines.push(format!("Task title: {job_title}"));
                     lines.push(format!("Task ID: #{job_id}"));
@@ -517,7 +517,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
                 }
                 Branch::Invalidated => {
                     let mut lines = vec![
-                        format!("【⚖️ Task [{job_title}] arbitration round invalidated】"),
+                        format!("【⚖️ Task [{job_title}] evaluation round invalidated】"),
                         format!("Task title: {job_title}"),
                         format!("Task ID: #{job_id}"),
                         "Tally: no side reached ≥ 50%".to_string(),
@@ -540,7 +540,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
 
         "reward_claimed" => format!(
             "[Current Status] reward_claimed\n\n{}\n{}",
-            notify_block("Your arbitration reward has been credited."),
+            notify_block("Your evaluation reward has been credited."),
             terminal_session_hint(job_id),
         ),
 
@@ -565,10 +565,10 @@ pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> S
          - **Prerequisite — file readability check**: read `references/evaluator-decision-rubric.md`.\n\
          \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Run `onchainos agent user-notify` (🌐 localize first), then end the turn:\n\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content>'\n\
+         onchainos agent user-notify --content \"<localized content>\"\n\
          ```\n\n\
          Canonical English content (substitute placeholders first):\n\
-         \x20\x20\x20\x20Arbitration aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\
+         \x20\x20\x20\x20Evaluation aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\
          \x20\x20\x20\x20⚠️ commit window timeout will slash your stake — please restore the file as soon as possible.\n\n\
          - Read success and evidence already output → produce the final `vote` and the verdict text per the rubric's Verdict section (whichever heading defines the verdict template).\n\n\
          → **Once Step 3's verdict text is produced, continue with Step 4 in this same turn.**\n\n\

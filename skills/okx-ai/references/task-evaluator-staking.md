@@ -18,7 +18,7 @@
 
 > Single authority on evaluator-role staking + economic model. Covers:
 > - **Staking lifecycle**: first-time onboarding (the sole entry after `okx-ai` identity handoff) + top-up / unstake / claim / cancel / query
-> - **Reward rules**: voting with the majority earns a share of the arbitration deposit + slashed stake from the minority side
+> - **Reward rules**: voting with the majority earns a share of the Review Stake + slashed stake from the minority side
 > - **Slashing rules**: voting with the minority / Commit / Reveal timeout + post-slash cooldown
 > - **Unstake cooldown**
 >
@@ -70,7 +70,7 @@ Copy template (**replace every placeholder with the real value pulled in Step 1*
 > At least still need to stake: **`<minCumulativeStakeOkb - activeStake>` OKB**
 >
 > **Rewards:**
-> - Voting with the majority → share of the arbitration deposit by stake ratio (**`<arbitrationFeeBps>`** of the job amount) + slashed stake from the minority side
+> - Voting with the majority → share of the Review Stake by stake ratio (**`<arbitrationFeeBps>`** of the job amount) + slashed stake from the minority side
 >
 > **Risks (slashing):**
 > - Voting with the minority → **`<slashMinorityBps>`** of the stake slashed
@@ -78,7 +78,7 @@ Copy template (**replace every placeholder with the real value pulled in Step 1*
 > - ⚠️ No abstention option: once selected, you must vote; dragging past the deadline is treated as a timeout
 >
 > **Unstake rules:**
-> - You can request to unstake at any time (except during active arbitrations); after the request you enter a **`<unstakeCooldownDays>`-day cooldown**, after which tell me "claim unstake" to withdraw
+> - You can request to unstake at any time (except during active evaluations); after the request you enter a **`<unstakeCooldownDays>`-day cooldown**, after which tell me "claim unstake" to withdraw
 > - During the cooldown you can say "cancel unstake" to withdraw the request
 >
 > Please tell me how much OKB you want to stake (at least **`<minCumulativeStakeOkb - activeStake>`**; staking above the threshold can boost your selection weight):
@@ -175,6 +175,6 @@ Read-only query, no confirmation needed; after executing, summarize the key fiel
 | `activeStake` | Currently staked OKB |
 | `pendingUnstake` | OKB pending unlock in the cooldown |
 | `validStake` | Effective stake usable for weighted selection = `activeStake - pendingUnstake` |
-| `activeDisputes` | Number of in-progress arbitrations; unstake is forbidden while `>0` |
+| `activeDisputes` | Number of in-progress evaluations; unstake is forbidden while `>0` |
 | `unstakeAvailableAt` | Unix seconds when unstake cooldown ends; `0` = nothing pending |
 | `cooldownEndsAt` | Unix seconds when slash cooldown ends (window during which a slashed evaluator won't be selected); `0` = not in this cooldown |

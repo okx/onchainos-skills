@@ -8,7 +8,8 @@ pub async fn handle_staking_config(
     agent_id: &str,
 ) -> Result<()> {
     let cfg = staking_types::get_staking_config(client, agent_id).await?;
-    println!("staking & arbitration config");
+    println!("staking & evaluation config");
+    // Field labels below mirror contract config keys verbatim (identifier values, not user copy) — do not rename them.
     println!("  minCumulativeStakeOkb       : {} OKB", cfg.min_cumulative_stake_okb);
     println!("  partialUnstakeMinRetainOkb  : {} OKB", cfg.partial_unstake_min_retain_okb);
     println!("  unstakeCooldownDays         : {}", cfg.unstake_cooldown_days());

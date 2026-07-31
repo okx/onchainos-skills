@@ -6,12 +6,25 @@ Load this file when: rendering a card / diff / detail view, resolving `#<id>`, t
 
 ## Lexicon (prose / Q&A / post-success rows when CLI label is absent)
 
-- **Roles:** `user` → **User** / 用户 · `asp` → **ASP** / 服务提供商 · `evaluator` → **Evaluator** / 仲裁者. Never show the raw enum token, never legacy nouns (buyer/seller), never a bilingual parenthetical.
+- **Roles:** `user` → **User** / 用户 · `asp` → **ASP** / 服务提供商 · `evaluator` → **Evaluator** / 评审员. Never show the raw enum token, never legacy nouns (buyer/seller/仲裁者/仲裁员), never a bilingual parenthetical. 仲裁者/仲裁员 are legacy aliases — recognize them on input, but always render **评审员 / Evaluator** on output.
 - **Service type:** A2MCP → **API service** · A2A → **agent to agent**. Gloss once per table: "API service = pay-per-call, fixed price; agent to agent = per-call or monthly-subscription pricing (one or the other)." Never raw A2MCP/A2A.
 - **Stars:** render `★ <value>` from CLI's `ratingStars` / `feedbackRate` / `average` **directly** — never divide by 20, never show raw 0–100. Null/0 context-split: **search** rows → `null`=`—`, `0`=`No rating yet`; **list / detail / feedback** → no rating = `No rating yet` (never `—`).
 - **Fee:** stored/sent as a plain numeric string (`"10"`); **displayed** as `N USDT` (USDT is implicit — the renderer appends it). Both API service (A2MCP) and agent to agent (A2A) support a `0` fee → an explicit `0` displays as `0 USDT` (a free service). An empty single-purchase `fee` (`""`) means "no per-call price" (a subscription-priced A2A service) → display the Fee row as `—`, with the price in the Subscription row. A2MCP with no fee → `—` (missing required fee — not `free`, since A2MCP requires a fee at create/update).
 - **Subscription (A2A only):** the `subscription[]` array carries monthly pricing tiers `{interval:"month", fee:"N"}`. **Displayed** as `N USDT / month` per tier; an empty `[]` displays as `—` (no subscription). A2MCP never has one. Fee and Subscription are **mutually exclusive** on A2A — a service shows **exactly one** of them as a real price and the other as `—` (never both real, never both `—`).
 - **Free trial (A2A subscription only):** `freeTrial` is a duration in **hours**; the skill only ever sets the fixed 3-day value `"72"`. **Displayed** as its duration — `3 days` (whole days collapse to a day count; otherwise `<N> hours`) — in the Free trial column/row; absent, single-fee A2A, or A2MCP → `—`. **Address:** lowercase `0x…1234`. **Reviewer** slot = "reviewer", never "creator".
+
+## Legacy role words — rename prompt (Evaluator)
+
+The Evaluator role was previously surfaced with legacy words. When the user's **own input** names it with any legacy role word — **仲裁者 / 仲裁员 / 评估者 / arbiter / Arbitrator** — recognize it as the **Evaluator** role and, **once per session**, emit the rename prompt (verbatim, matched to the conversation language) before proceeding, then carry out the request directly without asking for confirmation:
+
+- Chinese: 你说的角色现在叫「评审员」，已按此为你处理。
+- English: That role is now called Evaluator — proceeding.
+
+Rules:
+- Fire **once per session** — do not repeat the prompt on later turns.
+- After prompting, **execute directly** — do not wait for the user to re-confirm the rename.
+- **Never restate the old role word** in your own output afterward; use 评审员 / Evaluator from then on.
+<!-- intent: the trigger list intentionally keeps the legacy role words; they are input aliases and must be recognized. This rule normalizes presentation to the new term without dropping recognition of old input. -->
 
 ## Card skeleton (every confirmation / diff / detail card uses THIS)
 

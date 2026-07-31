@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod asset_class;
 pub mod audit;
 pub mod chains;
 mod client;
@@ -18,6 +19,12 @@ pub mod payment;
 mod payment_cache;
 mod payment_notify;
 pub mod token_alias;
+// Trade-signal parser core (Task 2). A pure, no-I/O library exercised by its own
+// unit tests; the runtime pipeline wiring is a separate task (Task 3), so nothing
+// in the shipped binary references it yet — allow dead_code / unused re-exports
+// until that lands.
+#[allow(dead_code, unused_imports)]
+mod trade_signal;
 pub mod validators;
 mod wallet_api;
 mod wallet_store;

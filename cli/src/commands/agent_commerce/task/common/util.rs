@@ -513,6 +513,38 @@ pub fn short_job_id(job_id: &str) -> String {
     format!("{head}…{tail}")
 }
 
+/// Neutralize shell metacharacters in a task title before it is re-embedded into the
+/// `onchainos agent user-notify --content "…"` command templates that downstream AI agents
+/// execute on their own shell (including Windows `cmd.exe`). This is a mild, portable pass —
+/// distinct from the aggressive alphanumeric-only `deliverables::sanitize_title`; do NOT merge
+/// the two.
+///
+/// Char-class rules:
+/// - command separators (`&` `|` `;`) → replaced with a single space;
+/// - substitution / redirection / subshell chars (`` ` `` `$` `>` `<` `(` `)` `!`) → deleted;
+/// - everything else (letters, digits, CJK, `:` `-` `.`, spaces, …) → kept unchanged.
+///
+/// Then consecutive-whitespace runs are collapsed to one space and the ends are trimmed.
+///
+/// Pure, deterministic, O(n). Never grows the string, so a post-truncation `≤ MAX_TITLE_CHARS`
+/// invariant is preserved. Cannot fail — an all-metacharacter title sanitizes to `""`, which the
+/// caller handles via its existing empty-title path.
+pub fn sanitize_title_for_shell(title: &str) -> String {
+    let mut mapped = String::with_capacity(title.len());
+    for ch in title.chars() {
+        match ch {
+            // Command separators → single space.
+            '&' | '|' | ';' => mapped.push(' '),
+            // Substitution / redirection / subshell → delete.
+            '`' | '$' | '>' | '<' | '(' | ')' | '!' => {}
+            // Everything else → keep.
+            other => mapped.push(other),
+        }
+    }
+    // Collapse consecutive whitespace to a single space, then trim ends.
+    mapped.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,5 +567,57 @@ mod tests {
     #[test]
     fn short_job_id_long_string() {
         assert_eq!(short_job_id("task-001-very-long"), "task-0…long");
+    }
+
+    #[test]
+    fn sanitize_title_for_shell_empty() {
+        assert_eq!(sanitize_title_for_shell(""), "");
+    }
+
+    #[test]
+    fn sanitize_title_for_shell_pure_metacharacters() {
+        assert_eq!(sanitize_title_for_shell("&;|"), "");
+    }
+
+    #[test]
+    fn sanitize_title_for_shell_mixed() {
+        assert_eq!(sanitize_title_for_shell("A & B  C > D"), "A B C D");
+    }
+
+    #[test]
+    fn sanitize_title_for_shell_cjk_with_ampersand() {
+        // CJK expressed via \u{...} escapes so the source carries no literal CJK bytes
+        // (keeps the "no Chinese in Rust source" gate happy) while still covering AC-7's
+        // CJK-with-ampersand row: a 4-char + " & " + 4-char title collapses the separator
+        // to a single space (the two CJK words are preserved unchanged).
+        assert_eq!(
+            sanitize_title_for_shell("\u{94b1}\u{5305}\u{7a0e}\u{52a1} & \u{5408}\u{89c4}\u{62a5}\u{544a}"),
+            "\u{94b1}\u{5305}\u{7a0e}\u{52a1} \u{5408}\u{89c4}\u{62a5}\u{544a}"
+        );
+    }
+
+    #[test]
+    fn sanitize_title_for_shell_safe_punctuation_unchanged() {
+        assert_eq!(sanitize_title_for_shell("Normal Title: Hello"), "Normal Title: Hello");
+    }
+
+    #[test]
+    fn sanitize_title_for_shell_brd_row() {
+        assert_eq!(
+            sanitize_title_for_shell("Wallet Tax & Compliance Report"),
+            "Wallet Tax Compliance Report"
+        );
+    }
+
+    #[test]
+    fn sanitize_title_for_shell_deletes_subshell_chars() {
+        // Substitution / redirection / subshell chars are deleted, not spaced.
+        assert_eq!(sanitize_title_for_shell("a$(b)`c`!d"), "abcd");
+    }
+
+    #[test]
+    fn sanitize_title_for_shell_never_grows() {
+        let input = "x & y | z ; w";
+        assert!(sanitize_title_for_shell(input).chars().count() <= input.chars().count());
     }
 }

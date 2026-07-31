@@ -383,7 +383,7 @@ pub async fn generate_next_action(
         // ─── Scene 6: User Agent rejected the deliverable ─────────────────────────────────
         Event::JobRejected => {
             // FR-4: thread the decision deadline from the inbound event message
-            // into the ASP arbitration card (unix seconds; filtered `> 0`).
+            // into the ASP evaluation card (unix seconds; filtered `> 0`).
             let expire_time = reject_expire_time(message);
             let user_prompt = super::content::job_rejected_user_decision_prompt(&short_id, expire_time);
             let to_flag = prefetched
@@ -417,7 +417,7 @@ pub async fn generate_next_action(
         Event::Other(ref s) if s == "dispute_raise" => format!(
             "[Current action] Raise dispute — phase 1 (approve)\n\
              [Role] ASP\n\n\
-             ⚠️ **Arbitration is a two-phase on-chain flow**: phase 1 approve → wait for `dispute_approved` notification → phase 2 dispute → wait for `job_disputed` notification. This turn only runs phase 1.\n\n\
+             ⚠️ **Evaluation is a two-phase on-chain flow**: phase 1 approve → wait for `dispute_approved` notification → phase 2 dispute → wait for `job_disputed` notification. This turn only runs phase 1.\n\n\
              **Step 1 — Call the CLI to run phase 1 approve (on-chain):**\n\
              ```bash\n\
              onchainos agent dispute raise {job_id} --reason \"<user-provided reason or default: completed per acceptance criteria>\" --agent-id {agent_id}\n\
@@ -508,13 +508,13 @@ pub async fn generate_next_action(
 
         // ─── Subscription: user chose to raise a dispute (pseudo-event) ──
         Event::Other(ref s) if s == "sub_dispute" => format!(
-            "[Current action] Subscription dispute — raise arbitration (§2.10 single combined call)\n\
+            "[Current action] Subscription dispute — raise evaluation (§2.10 single combined call)\n\
              [Role] ASP (subscription)\n\n\
              **Step 1 — Call the CLI (on-chain):**\n\
              ```bash\n\
              onchainos agent subscribe-dispute {job_id} --reason \"<user-provided reason, or default: delivered per acceptance criteria>\" --agent-id {agent_id}\n\
              ```\n\
-             🌐 Localize the `--reason` text to the user's language; keep it ≤2000 chars. It is persisted on-chain in the arbitration record (broadcast bizContext) — pass the ASP's actual argument, not an empty string.\n\
+             🌐 Localize the `--reason` text to the user's language; keep it ≤2000 chars. It is persisted on-chain in the evaluation record (broadcast bizContext) — pass the ASP's actual argument, not an empty string.\n\
              CLI internals: POST /task/{{jobId}}/dispute/approveAndCreateDispute (approve + create in ONE call — not the two-phase task dispute raise/confirm) → uopData → sign → broadcast (reason on bizContext); subStatus → Disputed.\n\n\
              After Step 1 → **end this turn**. Do NOT `okx-a2a xmtp-send` the buyer.\n"
         ),
@@ -531,7 +531,7 @@ pub async fn generate_next_action(
              After Step 1 → **end this turn**. Do NOT `okx-a2a xmtp-send` the buyer.\n"
         ),
 
-        // ─── Scene 7: Task completed (review passed / arbitration won) ────────────────
+        // ─── Scene 7: Task completed (review passed / evaluation won) ────────────────
         Event::JobCompleted => {
             let user_notify = super::content::job_completed_user_notify(job_id);
             let rating_notify = super::content::rating_submitted_user_notify(job_id);
@@ -575,7 +575,7 @@ pub async fn generate_next_action(
             )
         }
 
-        // ─── Scene 6.5: Arbitration ruling (won / lost branches distinguished by jobStatus in the inbound envelope) ─
+        // ─── Scene 6.5: Evaluation ruling (won / lost branches distinguished by jobStatus in the inbound envelope) ─
         Event::DisputeResolved => {
             let dispute_won_claim = super::content::dispute_won_with_claim_user_notify(job_id);
             let dispute_won_no_claim = super::content::dispute_won_no_claim_user_notify(job_id);
@@ -583,7 +583,7 @@ pub async fn generate_next_action(
             let rating_notify = super::content::rating_submitted_user_notify(job_id);
             let task_fields = inline_task_fields(&["title", "tokenAmount", "tokenSymbol", "buyerAgentId"]);
             format!(
-            "[Current state] dispute_resolved (arbitration ruling delivered)\n\
+            "[Current state] dispute_resolved (evaluation ruling delivered)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              ⚠️ **Determining win/loss**: read `message.jobStatus` from the system notification envelope you just received:\n\
              - `jobStatus = \"complete\"` → **you (ASP) won**; funds released to you\n\
@@ -679,18 +679,18 @@ pub async fn generate_next_action(
              **End this turn directly**; the refund flow is fully complete.\n"
         ),
 
-        // ─── Scene 6.4: Arbitration on-chain; CLI auto-submits evidence ─────────────────────
+        // ─── Scene 6.4: Evaluation on-chain; CLI auto-submits evidence ─────────────────────
         Event::JobDisputed => {
             let task_fields = inline_task_fields(&["buyerAgentId"]);
             format!(
-            "[Current state] job_disputed (arbitration is on-chain; CLI auto-submits evidence on this event)\n\
+            "[Current state] job_disputed (evaluation is on-chain; CLI auto-submits evidence on this event)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
              The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
              session, calls `dispute upload` (which also auto-attaches the deliverable copy saved under\n\
              `~/.onchainos/deliverables/asp/{job_id}/`), and then notifies the user via\n\
              `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
-             **Do NOT** `okx-a2a xmtp-send` anything to the User Agent — both sides see the arbitration via on-chain events.\n\n\
+             **Do NOT** `okx-a2a xmtp-send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
              {task_fields}\n\
              **Step 1 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
              ```bash\n\
@@ -709,10 +709,10 @@ pub async fn generate_next_action(
              ```bash\n\
              onchainos agent dispute upload {job_id} --role asp --agent-id {agent_id} --text \"<chat history block>\"\n\
              ```\n\
-             The CLI auto-attaches every entry under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copy saved at `deliver` time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
+             The CLI auto-attaches every entry under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copy saved at `deliver` time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the evaluator rules on what is available.\n\n\
              **Step 4 — Notify the user (after upload returns):**\n\n\
              content:\n\
-             \x20\x20\x20\x20[Arbitration opened] Arbitration for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverable). Awaiting the arbiter's verdict.\n\n\
+             \x20\x20\x20\x20[Evaluation opened] Evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverable). Awaiting the evaluator's verdict.\n\n\
              **Step 5 — End this turn.** Do NOT `okx-a2a xmtp-send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
@@ -1013,7 +1013,7 @@ pub async fn generate_next_action(
             )
         }
 
-        // ─── Arbitration sub-state-machine events — ASP cares about dispute_resolved (already has a dedicated arm); other evaluator-internal events are observed silently ─────
+        // ─── Evaluation sub-state-machine events — ASP cares about dispute_resolved (already has a dedicated arm); other evaluator-internal events are observed silently ─────
         Event::EvaluatorSelected
         | Event::RevealStarted
         | Event::VoteCommitted
@@ -1021,7 +1021,7 @@ pub async fn generate_next_action(
         | Event::RoundFailed
         | Event::VoteCommitDeadlineWarn
         | Event::VoteRevealDeadlineWarn => format!(
-            "[System notification] {event} (arbitration-internal event; handled by the evaluator)\n\
+            "[System notification] {event} (evaluation-internal event; handled by the evaluator)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              [Recommendation] Observe silently. After the `dispute_resolved` notification arrives, call next-action to wrap up.\n",
             event = event.as_str()
@@ -1045,7 +1045,7 @@ pub async fn generate_next_action(
             event = event.as_str()
         ),
 
-        // reward_claimed — own claim tx receipt (ASP may also claim arbitration rewards)
+        // reward_claimed — own claim tx receipt (ASP may also claim evaluation rewards)
         Event::RewardClaimed => {
             let failed_notify = super::content::reward_claim_failed_user_notify(job_id);
             let claimed_notify = super::content::reward_claimed_user_notify(job_id);
@@ -1110,7 +1110,7 @@ pub async fn generate_next_action(
                     "[User decision relay] source_event=`job_rejected`, user's verbatim reply: `{reply}`\n\n\
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
-                     \x20\x20• **`dispute_raise`** — user wants to challenge the rejection and go to arbitration (typical intents: A / 发起仲裁 / dispute / 不接受拒绝 / 我做得没问题 / 申诉 / 我要争 / file dispute / contest).\n\
+                     \x20\x20• **`dispute_raise`** — user wants to challenge the rejection and go to evaluation (typical intents: A / 发起仲裁 / dispute / 不接受拒绝 / 我做得没问题 / 申诉 / 我要争 / file dispute / contest).\n\
                      \x20\x20• **`agree_refund`** — user accepts the refund and walks away (typical intents: B / 同意退款 / agree refund / 退款 / 算了 / 不争了 / OK refund / let it go).\n\n\
                      If the user's reply clearly maps to one of these → call:\n\
                      ```bash\n\
@@ -1122,7 +1122,7 @@ pub async fn generate_next_action(
                     "[User decision relay] source_event=`sub_user_reject`, user's verbatim reply: `{reply}`\n\n\
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
-                     \x20\x20• **`sub_dispute`** — user wants to challenge the rejection and go to arbitration (typical intents: A / 发起仲裁 / dispute / 申诉 / 我要争 / contest).\n\
+                     \x20\x20• **`sub_dispute`** — user wants to challenge the rejection and go to evaluation (typical intents: A / 发起仲裁 / dispute / 申诉 / 我要争 / contest).\n\
                      \x20\x20• **`sub_agree_refund`** — user accepts refunding this period (typical intents: B / 同意退款 / agree refund / 退款 / 算了 / let it go).\n\n\
                      If the reply clearly maps to one → call:\n\
                      ```bash\n\
@@ -1257,18 +1257,18 @@ pub async fn generate_next_action(
                 Some(terminal_session_hint.as_str()),
             )
         }
-        // ─── Subscription arbitration: ASP auto-submits evidence ───────────────────
+        // ─── Subscription evaluation: ASP auto-submits evidence ───────────────────
         Event::SubAspDispute => {
             let task_fields = inline_task_fields(&["buyerAgentId"]);
             format!(
-            "[Current state] sub_asp_dispute (subscription arbitration on-chain; CLI auto-submits evidence on this event)\n\
+            "[Current state] sub_asp_dispute (subscription evaluation on-chain; CLI auto-submits evidence on this event)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
              The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
              session, calls `dispute upload` (which also auto-attaches the most recent 20 deliverables saved under\n\
              `~/.onchainos/deliverables/asp/{job_id}/`), and then notifies the user via\n\
              `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
-             **Do NOT** `okx-a2a xmtp-send` anything to the User Agent — both sides see the arbitration via on-chain events.\n\n\
+             **Do NOT** `okx-a2a xmtp-send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
              {task_fields}\n\
              **Step 1 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
              ```bash\n\
@@ -1287,10 +1287,10 @@ pub async fn generate_next_action(
              ```bash\n\
              onchainos agent dispute upload {job_id} --role asp --agent-id {agent_id} --max-files 20 --text \"<chat history block>\"\n\
              ```\n\
-             The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copies saved at delivery time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
+             The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copies saved at delivery time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the evaluator rules on what is available.\n\n\
              **Step 4 — Notify the user (after upload returns):**\n\n\
              content:\n\
-             \x20\x20\x20\x20[Arbitration opened] Subscription arbitration for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverables). Awaiting the arbiter's verdict.\n\n\
+             \x20\x20\x20\x20[Evaluation opened] Subscription evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverables). Awaiting the evaluator's verdict.\n\n\
              **Step 5 — End this turn.** Do NOT `okx-a2a xmtp-send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
@@ -1394,7 +1394,7 @@ fn user_attachment_received_cli(
              The caller must include all 6 fields (fileKey/digest/salt/nonce/secret/filename) in --message JSON.\n\n\
              [Your next action] Notify the user that the attachment could not be downloaded.\n\n\
              ```bash\n\
-             onchainos agent user-notify --content '<translate: [Job {short_id}] User Agent attachment download failed — encryption metadata incomplete. The User Agent may need to re-send.>'\n\
+             onchainos agent user-notify --content \"<translate: [Job {short_id}] User Agent attachment download failed — encryption metadata incomplete. The User Agent may need to re-send.>\"\n\
              ```\n\n\
              ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
              **End this turn.**\n"
@@ -1411,7 +1411,7 @@ fn user_attachment_received_cli(
                 "[user_attachment_received_cli] ERROR: file download failed: {e}\n\n\
                  [Your next action] Notify the user that the attachment could not be downloaded.\n\n\
                  ```bash\n\
-                 onchainos agent user-notify --content '<translate: [Job {short_id}] User Agent attachment download failed. Please check network and retry.>'\n\
+                 onchainos agent user-notify --content \"<translate: [Job {short_id}] User Agent attachment download failed. Please check network and retry.>\"\n\
                  ```\n\n\
                  ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
                  **End this turn.**\n"
@@ -1450,7 +1450,7 @@ fn user_attachment_received_cli(
          Canonical content:\n\
          \x20\x20{att_notify}\n\n\
          ```bash\n\
-         onchainos agent user-notify --content '<your translated content>'\n\
+         onchainos agent user-notify --content \"<your translated content>\"\n\
          ```\n\n\
          ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
          **End this turn.**\n"
@@ -1605,7 +1605,7 @@ mod tests {
         // `asp_sub_user_reject_renders_refund_dispute_decision` below.
         // `sub_renew` is NOT in this list either — it routes to the subscribe-asp-claim
         // guidance (see `asp_sub_renew_renders_claim_guidance`).
-        // `sub_asp_dispute` is NOT in this list — it renders the arbitration/evidence
+        // `sub_asp_dispute` is NOT in this list — it renders the evaluation/evidence
         // auto-upload playbook (Event::SubAspDispute arm).
         // `sub_asp_agree` IS ignored here: it is the ASP's own action, so per product
         // copy SSOT it gets no ASP-side push (owned by the action-command flow).
@@ -1675,7 +1675,7 @@ mod tests {
             "precise deadline + amount slots: {out}"
         );
         assert!(
-            out.contains("A. File a dispute for arbitration.")
+            out.contains("A. File a dispute for evaluation.")
                 && out.contains("B. Confirm the refund for this period."),
             "A/B decision preserved: {out}"
         );
@@ -1695,7 +1695,7 @@ mod tests {
     #[tokio::test]
     async fn asp_sub_dispute_guidance_passes_reason() {
         // The dispute outcome must thread a `--reason` so it reaches the on-chain
-        // arbitration record (broadcast bizContext); a bare `subscribe-dispute` drops it.
+        // evaluation record (broadcast bizContext); a bare `subscribe-dispute` drops it.
         let out = run_asp(
             "sub_dispute",
             json!({ "event": "sub_dispute", "jobId": ASP_JOB_ID }),
