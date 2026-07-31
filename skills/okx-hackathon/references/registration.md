@@ -40,7 +40,7 @@ Want a new trading ASP that meets the entry requirements instead? [See the tutor
 
 Keep `Reply with a number.` on its own line, as the last thing before the hint: it is the primary action, and folding the create hint into the same line buries it. The hint is a **separate trailing paragraph** — never a numbered row, never above the list.
 
-Translate the whole message to the user's language; keep the numbered structure, and keep the URL byte-for-byte as a link. Do **not** add a guessed-eligibility hint next to any name (e.g. "this one looks like it qualifies") — the three preconditions are backend-checked and not inferable from a name.
+Translate the whole message to the user's language; keep the numbered structure, and keep the URL byte-for-byte as a link. Do **not** add a guessed-eligibility hint next to any name (e.g. "this one looks like it qualifies") — the three preconditions are checked at registration and not inferable from a name.
 
 **If `M` is 0** (no ASP, regardless of `N`): skip the list above — output this fixed template alone, then stop. This branch is terminal, so enter it **only** after Step 1's Fallback has ruled out all three of its cases — an error envelope, a missing or failed `jq`, and a shape mismatch.
 
@@ -53,7 +53,7 @@ For any language, translate the English above — keep the URL byte-for-byte, ke
 3. If the reply is `0`, or the user says they want to create one instead of picking a number: do **not** treat it as invalid input and do **not** re-print the list. `0` was a menu option in an earlier version of this flow, so a returning user may still reply it out of habit — answer that intent directly, in one short message, with the create hint above (link included, translated to the user's language), then stop this flow. This skill never creates an identity (`../SKILL.md`); an explicit "create one for me" is the `okx-ai` skill's job, so hand off there rather than doing it here.
 4. Otherwise resolve the reply to the selected `agent_id`, and from here on identify the ASP **by name only** (`../SKILL.md` Output Rules).
    - If the user's original request already named an ASP (or gave an account type / UID) upfront, still run this list and match it against the name to get a real `agent_id` — never fabricate or guess an id. If the name matches more than one ASP, ask which one. Do not skip straight to the confirmation on a one-shot request; still show the list explicitly.
-5. Before submitting, confirm the three ASP preconditions with the user (the backend is authoritative and rejects on failure — this pre-confirmation only avoids surprising the user with a rejection). Keep the ASP's name in the surrounding sentence, not inside the checklist:
+5. Before submitting, confirm the three ASP preconditions with the user (the check at registration is authoritative and rejects on failure — this pre-confirmation only avoids surprising the user with a rejection). Keep the ASP's name in the surrounding sentence, not inside the checklist:
 
 ```
 Before I submit "<name>", please confirm it:
@@ -102,11 +102,11 @@ Registration received. We will take a balance snapshot of all entrants before th
 
 Add nothing to it — no agent name, no chain, no account type, no wallet address, no "good luck". The template is deliberately minimal; the confirmation the user already replied to in Step 1 is what tells them which ASP was entered. If they ask afterwards which agent was registered, answer then, by name and never by an internal id (`../SKILL.md` Output Rules).
 
-**On failure** — two different outcomes. **MUST**: branch on the `errorCode` field, never on the wording of `error` — the wording comes from the backend and changes without notice, while the code is the contract:
+**On failure** — two different outcomes. **MUST**: branch on the `errorCode` field, never on the wording of `error` — the wording can change without notice, while the code is the contract:
 
 | `errorCode` | Meaning | What to say |
 |---|---|---|
-| `hackathon_registration_rejected` | The backend evaluated the ASP and refused it. `error` carries the reason (e.g. not trading-type, no subscription, no 3-day trial). | **Translate `error` into the user's language** and show it as the reason — it is authoritative. Keep its condition and required action intact; do not soften, generalise, or swap in a different cause. |
+| `hackathon_registration_rejected` | The ASP was evaluated and refused. `error` carries the reason (e.g. not trading-type, no subscription, no 3-day trial). | **Translate `error` into the user's language** and show it as the reason — it is authoritative. Keep its condition and required action intact; do not soften, generalise, or swap in a different cause. Show it with nothing added: no line above it naming where it came from, no paraphrase below it — a paraphrase is where internal field identifiers leak into user text. |
 | `hackathon_service_unavailable` | The request never reached the registration logic — connection error, timeout, 5xx, or an HTML error page. | Say the hackathon registration service is currently unavailable and suggest retrying shortly. **Never** tell the user their ASP failed the trading-type / subscription / trial checks — nothing was evaluated. |
 
 Anything else (`invalid_input`, or a plain `{ok:false, error}` with no `errorCode`) is a CLI-side validation failure — see the error list at the end of this file.
@@ -126,13 +126,13 @@ onchainos hackathon register --agent-id <id> --account-type <web3|cefi> [--addre
 | `--agent-id` | Yes | — | Trading ASP agent id (from `agent get-my-agents`). |
 | `--account-type` | Yes | — | Exactly `web3` or `cefi`, lowercase. Any other value — including a differently cased `CeFi` — is rejected on both the CLI and the MCP tool. |
 | `--address` | No | wallet X Layer addr | EVM wallet address. Auto-resolved from the current wallet's X Layer address when omitted (both account types). |
-| `--uid` | Conditional | — | OKX UID. **Required when `--account-type cefi`**, and **rejected when `--account-type web3`** — the request body carries no account-type field, so uid presence is the only signal the backend gets. |
+| `--uid` | Conditional | — | OKX UID. **Required when `--account-type cefi`**, and **rejected when `--account-type web3`** — the request body carries no account-type field, so uid presence is the only signal the request carries. |
 
 The activity id and chain index (X Layer, `196`) are **fixed internally** — no flag or param sets, overrides, or returns either. MCP tool `hackathon_register` mirrors the flags above (same `address` auto-resolve; no `activity_id` / `chain_index` params) and runs the **same validation**: both surfaces share one validator, so neither accepts anything the other rejects.
 
 Success returns `{ "registered": true, "agentId", "accountType", "chainIndex", "address" }` — no `uid`; it is submitted and redacted in the audit log, never returned (masking rule: `../SKILL.md` Output Rules).
 
-**CLI-side errors** (backend rejections and transport failures are handled in Step 4):
+**CLI-side errors** (rejections and transport failures are handled in Step 4):
 - `--uid is required for CeFi account registration` → collect the UID and retry.
 - `--uid is only valid with --account-type cefi` → the user picked `web3` but a UID was passed; confirm which account they meant, then retry with one or the other.
 - `invalid account type …` → `--account-type` was not exactly `web3` or `cefi`; re-send it lowercase.

@@ -4,7 +4,7 @@ description: "Register for the OKX.AI Trading Hackathon (交易黑客松 / OKX.A
 license: MIT
 metadata:
   author: okx
-  version: "4.4.3"
+  version: "4.4.6"
   homepage: "https://web3.okx.com"
 ---
 
@@ -45,7 +45,7 @@ Copy this checklist and tick as you go. **Steps 1-4 map 1:1 onto `references/reg
 
 ## Wrong-skill guard
 
-`hackathon register` enters an existing **Trading ASP agent** in the OKX.AI hackathon. `competition join` (`okx-growth-competition`) signs the **wallet account** up for a standard trading competition. Different backends, different subjects — **NEVER** substitute one for the other.
+`hackathon register` enters an existing **Trading ASP agent** in the OKX.AI hackathon. `competition join` (`okx-growth-competition`) signs the **wallet account** up for a standard trading competition. Different systems, different subjects — **NEVER** substitute one for the other.
 
 If one request carries signals for **both** (e.g. names "hackathon"/"黑客松" *and* "competition"/"大赛"/"cup"), ask which the user means before running either command.
 

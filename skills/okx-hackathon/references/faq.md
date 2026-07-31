@@ -1,9 +1,9 @@
 # OKX.AI Trading Hackathon — FAQ
 
-> Scope: common questions about `hackathon register` outside an active registration walkthrough (that flow is `registration.md`). Answers stay short and point at `registration.md` for the mechanics — that file is the single source for flags, templates, and error handling. If a question is answered in neither file, say so and defer to the backend's own error message rather than guessing.
+> Scope: common questions about `hackathon register` outside an active registration walkthrough (that flow is `registration.md`). Answers stay short and point at `registration.md` for the mechanics — that file is the single source for flags, templates, and error handling. If a question is answered in neither file, say so and defer to the error message the command itself returned rather than guessing.
 
 **Q: What does my Trading ASP agent need to qualify?**
-A: Three preconditions, all enforced by the backend: (1) a trading-type ASP, (2) offers a subscription service, (3) offers a 3-day free trial. The backend is the authoritative check and rejects registration if any is not met — `registration.md` Step 1 covers when and how the flow pre-confirms them.
+A: Three preconditions: (1) a trading-type ASP, (2) offers a subscription service, (3) offers a 3-day free trial. All three are checked at registration and it is refused if any is not met — so they cannot be self-declared. `registration.md` Step 1 covers when and how the flow pre-confirms them.
 
 **Q: Which chain does this register against?**
 A: X Layer, fixed by the CLI/MCP tool — no flag sets or returns it, and neither does the hackathon's internal activity id. Refer to the hackathon by name, never by that id (`../SKILL.md` Output Rules).
@@ -21,7 +21,7 @@ A: It is submitted with the registration and nothing else — not returned in th
 A: Yes, for both account types — it auto-resolves from your currently selected wallet account's X Layer (EVM) address. Pass it explicitly only to override.
 
 **Q: My registration failed — what should I do?**
-A: Branch on `errorCode`, never on the wording of the message — the wording changes without notice, the code is the contract. The authoritative table (backend rejection / service unavailable / CLI-side validation, and what to say for each) is `registration.md` Step 4 — read it before replying, and note the rule that a service-unavailable failure must **never** be reported as an eligibility problem.
+A: Branch on `errorCode`, never on the wording of the message — the wording changes without notice, the code is the contract. The authoritative table (rejection / service unavailable / CLI-side validation, and what to say for each) is `registration.md` Step 4 — read it before replying, and note the rule that a service-unavailable failure must **never** be reported as an eligibility problem.
 
 **Q: The registration keeps getting rejected and the message mentions the activity, not my ASP.**
 A: This CLI build is pinned to one specific hackathon, so that means the hackathon is over rather than anything being wrong with the ASP. `registration.md` Step 4 has the exact handling; there is no flag to point the command at a different activity.
@@ -33,7 +33,7 @@ A: No. Registration needs an ASP that already exists; this skill never creates o
 A: `hackathon register` submits exactly one `--agent-id` per call, and there is no list/update/status subcommand in the current CLI or MCP surface. If asked, say it isn't supported today rather than guessing at a flow that doesn't exist.
 
 **Q: What happens if I run `hackathon register` again for the same agent?**
-A: The CLI does not track prior registration state client-side — it submits again, and the backend's response (success or a rejection message) is authoritative on whether a duplicate is allowed.
+A: The CLI does not track prior registration state client-side — it submits again, and the response (success or a rejection message) is authoritative on whether a duplicate is allowed.
 
 **Q: I asked to join a competition/trading cup — is this the right skill?**
 A: No. This skill only enters an existing Trading ASP in the OKX.AI hackathon; joining a standard trading competition or cup is `competition join` in `okx-growth-competition`.
