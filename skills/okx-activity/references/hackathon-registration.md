@@ -8,7 +8,7 @@
 
 ## Flow
 
-Wallet login is required. If not logged in, route via `../SKILL.md` → Pre-flight, then resume at the step that failed.
+Wallet login is required. If not logged in, route via `../SKILL.md` §Pre-flight Checks, then resume at the step that failed.
 
 ### Step 1 — Pick the Trading ASP agent
 
@@ -23,7 +23,7 @@ onchainos agent get-my-agents --page-size 20 | jq -c 'if .ok == false then {erro
    - `--page-size 20` avoids the default page size of 5 silently truncating the list; if the user has more than 20 agents, paginate with `--page` rather than stopping at page 1 and guessing.
    - The `if .ok == false` guard and the `// []` / `// 0` defaults are load-bearing, not tidiness: the CLI's failure envelope is `{ok:false, error, errorCode?}` with **no `data` key**, so an unguarded `.data.list[]` turns every not-logged-in, expired-token, or 5xx response into a bare `jq: error … Cannot iterate over null` — indistinguishable from an empty list.
    - **Fallback** — three distinct cases, and **none** of them means "no agents". Never enter the terminal no-ASP branch on any of them:
-     - The projection printed `{"error": …}` → that is the CLI's own failure envelope, not a listing. Surface that message and act on it (`not logged in` → `../SKILL.md` §Pre-flight, then resume here); do not read it as an empty list.
+     - The projection printed `{"error": …}` → that is the CLI's own failure envelope, not a listing. Surface that message and act on it (`not logged in` → `../SKILL.md` §Pre-flight Checks, then resume here); do not read it as an empty list.
      - `jq` is unavailable, or the command died with a `jq:` error → drop the pipe and apply §2 to the raw JSON.
      - `listed` is 0 while `total` is above 0 (the projection missed the shape) → apply §2 to the raw JSON; never read the empty result as "no agents".
 2. Split the rows client-side by role: a row is ASP-eligible **only if `roleLabel` is exactly `"ASP"`**. Any other value (`"User"`, `"Evaluator"`, anything else) or a missing/absent `roleLabel` → **not eligible**. Never default a row into the ASP bucket. In the templates below, `N` is `listed` and `M` is the length of `asps` — never take `N` from `total`, which counts owner groups rather than agents on the nested shape and would make `N-M` wrong. Then present the summary line, followed by the ASP-only numbered list — one line per existing ASP with its **name and agent id** (shown here only, to disambiguate ASPs sharing a name — see `hackathon-core.md` §Output Rules). Numbering starts at **`1`**; there is **no option `0`** and no "create a new ASP" entry — this activity never creates an identity (`hackathon-core.md`), so creation is a tutorial pointer below the list, never a menu choice:

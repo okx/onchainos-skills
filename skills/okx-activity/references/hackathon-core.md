@@ -25,8 +25,7 @@ matching file below.** Do NOT improvise the format. Do NOT shorten or reorder th
 If the intent maps to neither, ask which they meant — do **not** invent a freeform format.
 
 `onchainos hackathon --help` lists the subcommands and `onchainos hackathon register --help` its
-flags; **learn exact syntax from the CLI, not from memory** (`../SKILL.md` §Learn the CLI from the
-CLI). The flag table, return fields, and CLI-side error list live in
+flags; **learn exact syntax from the CLI, not from memory** (`../SKILL.md` §Command Index). The flag table, return fields, and CLI-side error list live in
 [hackathon-registration.md](hackathon-registration.md).
 
 ## Gates & execution checklist (registration flow)
@@ -35,7 +34,7 @@ Copy this checklist and tick as you go. **Steps 1-4 map 1:1 onto `hackathon-regi
 their content is there, not duplicated here. **Gates A/B/C** bracket the flow and exist only here,
 because its steps cannot state them.
 
-- [ ] **Gate A — Pre-flight** (**BLOCKING**) — `../SKILL.md` §Pre-flight runs before the first `onchainos` command this session, ASP listing included
+- [ ] **Gate A — Pre-flight** (**BLOCKING**) — `../SKILL.md` §Pre-flight Checks runs before the first `onchainos` command this session, ASP listing included
 - [ ] **Gate B — Read-before-write** (**BLOCKING**) — `hackathon-registration.md` is loaded before the first user-facing message
 - [ ] **Step 1 — Pick the Trading ASP** (**REQUIRED**)
   - [ ] 1a. Projection printed `{"error": …}`, died with a `jq:` error, or returned `listed:0` while `total > 0` → apply Step 1's Fallback; **none** of these means "no agents"
