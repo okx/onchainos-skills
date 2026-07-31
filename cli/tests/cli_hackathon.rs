@@ -16,7 +16,8 @@
 //!   • Mock (IT-003/008): env-driven backend, NOT wrapped in `run_with_retry`.
 //!     - IT-003 needs a mock backend (OKX_BASE_URL) returning code 0 + a session,
 //!       both operator-supplied; skipped when the mock env is absent. Verifies
-//!       the fixed activityId/chainIndex flow through unchanged.
+//!       the fixed chainIndex flows through unchanged and the internal activity
+//!       id is not echoed.
 //!     - IT-008 points OKX_BASE_URL at a closed localhost port (a test fixture,
 //!       not an environment URL, so it is a literal) to force a connection error.
 //!
@@ -157,6 +158,31 @@ fn hackathon_register_cefi_missing_uid_errors() {
     assert_eq!(output.status.code(), Some(1), "expected exit 1");
 }
 
+/// IT-005b — `--uid` on a `web3` registration is rejected instead of being
+/// silently dropped from the request body (the body carries no account-type
+/// field, so a dropped uid would register the wrong account). Bails in the same
+/// pre-request validation as IT-005, so it stays offline/deterministic.
+#[test]
+fn hackathon_register_web3_with_uid_errors() {
+    let output = onchainos()
+        .args([
+            "hackathon",
+            "register",
+            "--agent-id",
+            "agent-any",
+            "--account-type",
+            "web3",
+            "--uid",
+            "1234567890",
+            "--address",
+            "0x1111111111111111111111111111111111111111",
+        ])
+        .output()
+        .expect("failed to execute");
+    assert_error_contains(&output, &["only valid with --account-type cefi"]);
+    assert_eq!(output.status.code(), Some(1), "expected exit 1");
+}
+
 /// IT-006 — an explicit malformed `--address` fails `validate_address_for_chain`
 /// (chainIndex 196 = EVM) before any network call (exit 1). offline.
 #[test]
@@ -212,9 +238,10 @@ fn hackathon_register_invalid_account_type_is_usage_error() {
 // ── Live / flaky rows (env-gated; run through run_with_retry) ─────────────
 
 /// IT-001 — golden Web3 happy path: a logged-in user registers a qualifying
-/// Trading ASP; `activityId` is the fixed "5" and `--address` auto-resolves
-/// to the wallet's X Layer address. Requires a logged-in session + a qualifying
-/// agent id (env-supplied); skipped when the env is absent.
+/// Trading ASP; the confirmation reports `registered: true` on the fixed X Layer
+/// chain and `--address` auto-resolves to the wallet's X Layer address (the
+/// internal activity id is never echoed). Requires a logged-in session + a
+/// qualifying agent id (env-supplied); skipped when the env is absent.
 #[test]
 fn hackathon_register_web3_golden_happy_path() {
     let Some(agent_id) = std::env::var("HACKATHON_QUALIFYING_AGENT_ID")
@@ -236,8 +263,16 @@ fn hackathon_register_web3_golden_happy_path() {
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert_eq!(
-        data["activityId"], "5",
-        "expected the default hackathon activityId: {data}"
+        data["registered"], true,
+        "expected a registered confirmation: {data}"
+    );
+    assert_eq!(
+        data["chainIndex"], "196",
+        "expected the fixed X Layer chainIndex: {data}"
+    );
+    assert!(
+        data.get("activityId").is_none(),
+        "the internal activity id must not be echoed: {data}"
     );
 }
 
@@ -310,9 +345,10 @@ fn hackathon_register_non_qualifying_agent_is_rejected() {
 
 // ── Mock rows (env/fixture-driven backend; NOT wrapped in run_with_retry) ──
 
-/// IT-003 — edge: explicit `--address` flows into the confirmation, and the
-/// fixed `activityId`/`chainIndex` (not user-overridable) come through
-/// unchanged. Runs against a mock backend (OKX_BASE_URL override returning
+/// IT-003 — edge: explicit `--address` flows into the confirmation, the fixed
+/// `chainIndex` (not user-overridable) comes through unchanged, and the internal
+/// activity id stays out of the output.
+/// Runs against a mock backend (OKX_BASE_URL override returning
 /// code 0) plus a logged-in session, both operator-supplied via env; skipped
 /// when the mock env is absent (base URL is never hardcoded).
 #[test]
@@ -342,12 +378,16 @@ fn hackathon_register_web3_explicit_address_against_mock() {
         .expect("failed to execute");
     let data = assert_ok_and_extract_data(&output);
     assert_eq!(
-        data["activityId"], "5",
-        "expected the fixed hackathon activityId: {data}"
+        data["address"], "0x1111111111111111111111111111111111111111",
+        "expected the explicit --address in the confirmation: {data}"
     );
     assert_eq!(
         data["chainIndex"], "196",
         "expected the fixed X Layer chainIndex: {data}"
+    );
+    assert!(
+        data.get("activityId").is_none(),
+        "the internal activity id must not be echoed: {data}"
     );
 }
 

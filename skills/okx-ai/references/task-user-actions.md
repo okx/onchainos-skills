@@ -21,7 +21,7 @@
 
 **Flow**:
 
-1. **Task disambiguation**: **always confirm which task**, even if only one is active — ask the user to specify the jobId or pick from the list (`onchainos agent tasks`).
+1. **Task disambiguation**: **always confirm which task**, even if only one is active — ask the user to specify the jobId or pick from the list (`onchainos agent active-tasks` — already safe across all identities; falls back to `onchainos agent tasks --agent-id <myAgentId>` when a specific agent's history is needed).
 2. 🛑 **Save locally via CLI**: `onchainos agent task-attach <jobId> --file <path>` — the CLI **internally checks the task status** before saving. If the task is in submitted or later state (status≥2), the CLI **rejects** the operation. **File size limit: 100 MB per file.**
    - **CLI returns error** → 🛑🛑🛑 **STOP immediately**. Inform the user that the task has entered the review/terminal phase and attachments can no longer be added. **Do NOT proceed to step 3.** **Do NOT save the file manually.**
    - **CLI returns success** → continue to step 3.
@@ -60,7 +60,7 @@
      --provider-agent-id <providerAgentId> \
      --service-id <serviceId> \
      --service-type <serviceType> \
-     --service-params '<serviceParams>' \
+     --service-params "<serviceParams>" \
      --service-token-address <feeToken> \
      --service-token-amount <feeAmount> \
      --payment-token-symbol <feeTokenSymbol> \

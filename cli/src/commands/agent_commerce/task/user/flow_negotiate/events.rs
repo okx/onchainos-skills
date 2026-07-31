@@ -26,7 +26,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ━━━━━━━━━ escrow (paymentMode=1) ━━━━━━━━━\n\n\
      **Step 2 - notify the user via `onchainos agent user-notify`**:\n\
      \x20\x20```bash\n\
-     \x20\x20onchainos agent user-notify --content '<translated content from the template below>'\n\
+     \x20\x20onchainos agent user-notify --content \"<translated content from the template below>\"\n\
      \x20\x20```\n\
      \x20\x20content template: {payment_escrow_notify}\n\n\
      -> **end this turn** and wait for provider_applied.\n\n"));
@@ -44,7 +44,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ⚠️ **If any parameter is missing** (context compaction): run `onchainos agent common context {job_id} --role user --agent-id {agent_id}` for providerAgentId, then `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId> --format json` for endpoint, then `onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}` for acceptsJson/feeTokenSymbol/feeAmount.\n\n\
      **Step 2 — notify payment in progress**:\n\
      \x20\x20```bash\n\
-     \x20\x20onchainos agent user-notify --content '<translated>'\n\
+     \x20\x20onchainos agent user-notify --content \"<translated>\"\n\
      \x20\x20```\n\
      \x20\x20content template: {x402_paying}\n\n\
      **Step 3 — sign + accept + replay (atomic):**\n\
@@ -59,7 +59,7 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      ▸ replaySuccess=true:\n\
      **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
+     onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Content:\n\
      \x20\x20{x402_replay_ok}\n\

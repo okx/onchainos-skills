@@ -177,13 +177,13 @@ pub fn job_completed_user_notify(job_id: &str) -> String {
     )
 }
 
-/// Per-arbiter verdict rationales block shared by all three `DisputeResolved` outcomes.
+/// Per-evaluator verdict rationales block shared by all three `DisputeResolved` outcomes.
 /// Source field: `message.voteReportSummaries[*].voterReportSummary` from the system envelope.
 /// Indentation matches the ASP's 6-space bullet style (header at 6 spaces, entries at 10).
-const ARBITRATION_REASONS_BLOCK: &str = "\x20\x20\x20\x20\x20\x20- Arbitration reasons:\n\
-\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20Arbiter 1: <voterReportSummary from message.voteReportSummaries[0]>\n\
-\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20Arbiter 2: <voterReportSummary from message.voteReportSummaries[1]>\n\
-\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20... (one line per entry; first skip entries whose voterReportSummary is missing / empty / whitespace, then number the kept entries consecutively starting at 1 in array order — do NOT preserve gaps from the original index; omit this whole `- Arbitration reasons:` section if voteReportSummaries is missing, not an array, empty, or every entry would be skipped — do NOT print a header with no body, do NOT fabricate filler text)";
+const EVALUATION_REASONS_BLOCK: &str = "\x20\x20\x20\x20\x20\x20- Evaluation reasons:\n\
+\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20Evaluator 1: <voterReportSummary from message.voteReportSummaries[0]>\n\
+\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20Evaluator 2: <voterReportSummary from message.voteReportSummaries[1]>\n\
+\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20... (one line per entry; first skip entries whose voterReportSummary is missing / empty / whitespace, then number the kept entries consecutively starting at 1 in array order — do NOT preserve gaps from the original index; omit this whole `- Evaluation reasons:` section if voteReportSummaries is missing, not an array, empty, or every entry would be skipped — do NOT print a header with no body, do NOT fabricate filler text)";
 
 /// `Event::DisputeResolved` branch A (ASP wins) — user notify emitted when the
 /// agent actually claims a non-zero reward in A-Step 2.
@@ -194,7 +194,7 @@ pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Auto-claimed account reward: <claimed amount> <symbol> (txHash=<hash>)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
-         {ARBITRATION_REASONS_BLOCK}\n\
+         {EVALUATION_REASONS_BLOCK}\n\
          \x20\x20\x20\x20  \n\
          \x20\x20\x20\x20  This job is complete."
     )
@@ -209,7 +209,7 @@ pub fn dispute_won_no_claim_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Account-level pending reward: none (checked)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
-         {ARBITRATION_REASONS_BLOCK}\n\
+         {EVALUATION_REASONS_BLOCK}\n\
          \x20\x20\x20\x20  \n\
          \x20\x20\x20\x20  This job is complete."
     )
@@ -277,7 +277,7 @@ pub fn dispute_lost_user_notify(job_id: &str) -> String {
          \x20\x20\x20\x20  - Outcome: ClientWins\n\
          \x20\x20\x20\x20  - Loss: <tokenAmount> <tokenSymbol> (funds returned to the User Agent)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
-         {ARBITRATION_REASONS_BLOCK}\n\
+         {EVALUATION_REASONS_BLOCK}\n\
          \x20\x20\x20\x20  \n\
          \x20\x20\x20\x20  This job is complete."
     )
@@ -353,8 +353,7 @@ pub fn build_file_deliver_message(
          secret: {}\n\
          filename: {}\n\
          [intent:deliver]",
-        upload.file_key, upload.digest, upload.salt,
-        upload.nonce, upload.secret, upload.filename,
+        upload.file_key, upload.digest, upload.salt, upload.nonce, upload.secret, upload.filename,
     )
 }
 
@@ -383,7 +382,11 @@ fn fmt_epoch(ts: Option<i64>) -> Option<String> {
     // Backend timestamps are contract-seconds; tolerate a millisecond-scale value
     // (>= 1e12 could only be year 33658+ as seconds) so a unit drift upstream
     // renders a sane date instead of a five-digit year.
-    let ts = if ts >= 1_000_000_000_000 { ts / 1000 } else { ts };
+    let ts = if ts >= 1_000_000_000_000 {
+        ts / 1000
+    } else {
+        ts
+    };
     chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
         .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
 }
@@ -527,7 +530,9 @@ pub fn sub_user_reject_asp_decision_copy(
     }
     out.push('.');
     match fmt_epoch(reject_window_ends_at) {
-        Some(d) => out.push_str(&format!(" Please confirm the refund or file a dispute by {d}")),
+        Some(d) => out.push_str(&format!(
+            " Please confirm the refund or file a dispute by {d}"
+        )),
         None => out.push_str(" Please confirm the refund or file a dispute within about 1 day"),
     }
     out.push_str(" — otherwise a full refund");
@@ -537,7 +542,7 @@ pub fn sub_user_reject_asp_decision_copy(
         _ => {}
     }
     out.push_str(" will be issued to the user automatically.\n");
-    out.push_str("  A. File a dispute for arbitration.\n");
+    out.push_str("  A. File a dispute for evaluation.\n");
     out.push_str("  B. Confirm the refund for this period.");
     out
 }
@@ -584,7 +589,10 @@ mod tests {
             Some(1_700_000_000),
             Some(1_700_500_000),
         );
-        assert!(out.starts_with("[New Subscription]"), "canonical prefix: {out}");
+        assert!(
+            out.starts_with("[New Subscription]"),
+            "canonical prefix: {out}"
+        );
         assert!(out.contains("new subscriber for \"My Sub\""));
         assert!(out.contains("Buyer: agent-buyer-1."));
         assert!(out.contains("Job job-1"));
@@ -622,7 +630,9 @@ mod tests {
         }
         assert!(selected.contains("You have a new subscriber."));
         assert!(complete.contains("The user's subscription has completed all scheduled renewals"));
-        assert!(closed.contains("The user's subscription has ended because the renewal charge failed"));
+        assert!(
+            closed.contains("The user's subscription has ended because the renewal charge failed")
+        );
         assert!(failed.contains("The user's free trial failed to convert to a paid subscription"));
     }
 
@@ -639,9 +649,18 @@ mod tests {
             Some(1_700_000_000),
             Some(1_700_500_000),
         );
-        assert!(out.starts_with("[New Trial Subscriber]"), "trial prefix: {out}");
-        assert!(!out.contains("payment received"), "no false payment claim: {out}");
-        assert!(out.contains("No payment during the trial"), "states no charge: {out}");
+        assert!(
+            out.starts_with("[New Trial Subscriber]"),
+            "trial prefix: {out}"
+        );
+        assert!(
+            !out.contains("payment received"),
+            "no false payment claim: {out}"
+        );
+        assert!(
+            out.contains("No payment during the trial"),
+            "states no charge: {out}"
+        );
         assert!(
             out.contains("0.0005 USDT will be charged on conversion"),
             "future charge framed: {out}"

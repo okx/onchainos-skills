@@ -69,7 +69,7 @@ pub async fn handle_reject(
     );
 
     println!("✓ Review rejected (reason: {reason}); status → rejected.");
-    println!("  The provider may file for arbitration or agree to a refund.");
+    println!("  The provider may file for evaluation or agree to a refund.");
     println!("  txHash: {}", result.tx_hash);
     Ok(())
 }

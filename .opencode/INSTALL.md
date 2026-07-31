@@ -52,6 +52,7 @@ Verify by asking: `"check my ETH balance"` or `"what's the price of SOL?"`
 | `okx-ai` | ERC-8004 Agent identity + task marketplace (publish/accept/deliver/dispute) + task-progress monitor |
 | `okx-guide` | Onboarding & guide hub: Onchain OS intro, OKX.AI, customer support |
 | `okx-growth-competition` | Agentic Wallet trading competitions: list, join, rank, claim rewards |
+| `okx-activity` | OKX activities hub — currently OKX.AI Trading Hackathon registration with an existing Trading ASP |
 
 ### Loading a Skill Manually
 

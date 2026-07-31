@@ -193,6 +193,10 @@ const REDACT_FULL: &[&str] = &[
     // business params can carry sensitive challenge / order data — never log them.
     "--payload",
     "--param",
+    // CeFi user identifier passed to `hackathon register`. Fully redacted rather
+    // than prefix-masked: an OKX UID is ~10-11 digits, so prefix-6 + suffix-4
+    // would leave all but one character of it readable in the log.
+    "--uid",
 ];
 
 /// Flags whose next positional value is an address / email — keep prefix + suffix.
@@ -201,8 +205,6 @@ const REDACT_ADDR: &[&str] = &[
     "--wallet",
     "--email",
     "--address",
-    // CeFi user identifier passed to `hackathon register` — mask prefix+suffix.
-    "--uid",
     "--sub-id",
     "--new-sub-id",
     // MPP hash-mode broadcast tx identifier — mask prefix+suffix in the audit log.
@@ -1038,17 +1040,14 @@ mod tests {
     }
 
     #[test]
-    fn redact_uid_prefix_suffix() {
-        let args = vec_s(&[
-            "onchainos",
-            "hackathon",
-            "register",
-            "--uid",
-            "1234567890abcdef",
-        ]);
-        let out = redact_args(&args);
-        // The CeFi uid is masked prefix+suffix (REDACT_ADDR): first 6 + last 4.
-        assert_eq!(out[4], "123456***cdef");
+    fn redact_uid_is_fully_masked() {
+        // A real OKX UID is ~10-11 digits; prefix+suffix masking would leave it
+        // effectively readable, so `--uid` is in REDACT_FULL.
+        for uid in ["1234567890", "12345678901", "1234567890abcdef"] {
+            let args = vec_s(&["onchainos", "hackathon", "register", "--uid", uid]);
+            let out = redact_args(&args);
+            assert_eq!(out[4], "[REDACTED]", "uid {uid} was not fully redacted");
+        }
     }
 
     #[test]

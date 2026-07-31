@@ -11,6 +11,8 @@ The CLI does the work — `validate-listing` returns the QA `findings[]`, `creat
 `agent pre-check` **requires** `--role`. If the role is clear, use it; otherwise ask once (accept a number or role name: 1 User / 2 ASP / 3 Evaluator; never default or guess). Then run §2.
 
 > **CLI value is strict.** Always pass the canonical token `--role user` / `--role asp` / `--role evaluator`. The CLI rejects any other value (no `buyer` / `provider` / `requester` / numeric aliases). Map whatever the user typed — a number (1/2/3), a synonym (buyer/卖家/provider/服务提供商/client…), or a label — to one of these three **before** calling.
+>
+> **Evaluator rename (评审员).** `评审员` is the canonical Chinese label for the `evaluator` role. `仲裁者` / `仲裁员` (and English `arbitrator`) are legacy aliases — still recognize them and map to `--role evaluator`, but when the user types one, gently correct in the reply before continuing **without echoing the old word** — name only the new term: e.g. *"该角色现已更名为「评审员」，已按评审员为你处理。"* Never surface `仲裁者` / `仲裁员` in any prompt, card, confirmation, or correction message — always render **评审员 / Evaluator**.
 
 ## 2. Pre-check (Gate — `agent pre-check --role <role> [--consent-key <uuid>]`: consent + uniqueness in ONE command)
 

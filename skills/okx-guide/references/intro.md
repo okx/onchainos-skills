@@ -2,7 +2,7 @@
 
 Canonical English templates for the `ai-guide.md` skill. **Authoring rule (same as `how-to-play.md`):** render **everything** in the user's language at runtime, matched to the language of the conversation — natural-language prose, **table column headers** (`Agent ID` / `Name` / `Role` / `Rating` / `Status` → user's language), and **quoted reply phrases** (e.g. `"OKX.AI quick start"`, `"Register a User identity"` → user's language). Keep literal ONLY: emojis, the menu numbers `1`/`2`/`3`, URLs, `{placeholders}`, markdown structure, and verbatim on-chain / wire values (Agent IDs, addresses, status codes). Localizing a quoted reply phrase is safe — the reply routing (`ai-guide.md` Step 5 / Step 6) recognizes the role / menu words in the user's language.
 
-Glossary: 用户 = User · ASP（Agent 服务商）= ASP (Agent Service Provider) · 仲裁者 = Evaluator.
+Glossary: 用户 = User · ASP（Agent 服务商）= ASP (Agent Service Provider) · 评审员 = Evaluator.
 
 ## Placeholders
 
