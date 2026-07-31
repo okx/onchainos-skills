@@ -40,13 +40,7 @@ Want a new trading ASP that meets the entry requirements instead? [See the tutor
 
 Keep `Reply with a number.` on its own line, as the last thing before the hint: it is the primary action, and folding the create hint into the same line buries it. The hint is a **separate trailing paragraph** — never a numbered row, never above the list.
 
-The hint's Chinese rendering is **pinned** — same product-mandated copy as the no-ASP branch below, so use it exactly rather than re-translating:
-
-```
-想要新创建符合参赛要求的交易类 ASP，[参考教程](https://web3.okx.com/onchainos/dev-docs/okxai/how-to-become-a2a)开始创建。
-```
-
-Translate the rest to the user's language; keep the numbered structure, and keep the URL byte-for-byte as a link. Do **not** add a guessed-eligibility hint next to any name (e.g. "this one looks like it qualifies") — the three preconditions are backend-checked and not inferable from a name.
+Translate the whole message to the user's language; keep the numbered structure, and keep the URL byte-for-byte as a link. Do **not** add a guessed-eligibility hint next to any name (e.g. "this one looks like it qualifies") — the three preconditions are backend-checked and not inferable from a name.
 
 **If `M` is 0** (no ASP, regardless of `N`): skip the list above — output this fixed template alone, then stop. This branch is terminal, so enter it **only** after Step 1's Fallback has ruled out all three of its cases — an error envelope, a missing or failed `jq`, and a shape mismatch.
 
@@ -54,15 +48,9 @@ Translate the rest to the user's language; keep the numbered structure, and keep
 You don’t have an ASP yet. Please create a trading ASP that meets the entry requirements first. [See the tutorial](https://web3.okx.com/onchainos/dev-docs/okxai/how-to-become-a2a) to get started.
 ```
 
-The Chinese rendering is **pinned** — product-mandated copy, so use it exactly rather than re-translating the English:
+For any language, translate the English above — keep the URL byte-for-byte, keep it a link, and add nothing: no account-switching suggestion, no precondition list, no menu.
 
-```
-你还没有 ASP。请先创建符合参赛要求的交易类 ASP。[参考教程](https://web3.okx.com/onchainos/dev-docs/okxai/how-to-become-a2a)开始创建。
-```
-
-For any other language, translate the English above. Either way: keep the URL byte-for-byte, keep it a link, and add nothing — no account-switching suggestion, no precondition list, no menu.
-
-3. If the reply is `0`, or the user says they want to create one instead of picking a number: do **not** treat it as invalid input and do **not** re-print the list. `0` was a menu option in an earlier version of this flow, so a returning user may still reply it out of habit — answer that intent directly, in one short message, with the pinned create hint above (link included), then stop this flow. This skill never creates an identity (`../SKILL.md`); an explicit "create one for me" is the `okx-ai` skill's job, so hand off there rather than doing it here.
+3. If the reply is `0`, or the user says they want to create one instead of picking a number: do **not** treat it as invalid input and do **not** re-print the list. `0` was a menu option in an earlier version of this flow, so a returning user may still reply it out of habit — answer that intent directly, in one short message, with the create hint above (link included, translated to the user's language), then stop this flow. This skill never creates an identity (`../SKILL.md`); an explicit "create one for me" is the `okx-ai` skill's job, so hand off there rather than doing it here.
 4. Otherwise resolve the reply to the selected `agent_id`, and from here on identify the ASP **by name only** (`../SKILL.md` Output Rules).
    - If the user's original request already named an ASP (or gave an account type / UID) upfront, still run this list and match it against the name to get a real `agent_id` — never fabricate or guess an id. If the name matches more than one ASP, ask which one. Do not skip straight to the confirmation on a one-shot request; still show the list explicitly.
 5. Before submitting, confirm the three ASP preconditions with the user (the backend is authoritative and rejects on failure — this pre-confirmation only avoids surprising the user with a rejection). Keep the ASP's name in the surrounding sentence, not inside the checklist:
