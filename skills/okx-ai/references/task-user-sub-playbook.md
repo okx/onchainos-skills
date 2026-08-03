@@ -38,7 +38,7 @@ wait for a reply — these are notifications, not decisions.
 
 | Event | Action |
 |---|---|
-| `sub_created` / `sub_trial_into_active` / `sub_renew` / `sub_user_reject` / `sub_asp_dispute` | `next-action --role user --agentId <yours> --message '<envelope>'` → render the returned `Content:` per the **`sub_*` language rule** below → `onchainos agent user-notify --content '<rendered>'` → **end turn**. |
+| `sub_created` / `sub_trial_into_active` / `sub_renew` / `sub_user_reject` / `sub_asp_dispute` | `next-action --role user --agentId <yours> --message '<envelope>'` → render the returned `Content:` per the **`sub_*` language rule** below → `onchainos agent user-notify --content "<rendered>"` → **end turn**. |
 | `sub_cancel` | Branches on `trialType`. `trialType == 1` (trial cancel) → TERMINAL: render the trial-unaffected copy "[Cancelled] Auto-conversion for the \"<jobTitle>\" free trial has been cancelled. This trial continues unaffected until <trialEndTime>; no charge will occur after it ends." then follow the terminal hint (`onchainos agent session-cleanup --job-id <jobId>`) to close the session. `trialType == 0` / absent (formal-period cancel) → NON-terminal: render "[Auto-Renew Cancelled] Auto-renew for \"<jobTitle>\" has been cancelled. Current service continues until <subEndTime>; job <jobId> will then move to Completed." and DO NOT append the session-cleanup hint (the subscription is still live for the current period). `next-action` already selects the correct copy and terminal-ness; just render per the language rule and send. **end turn**. |
 | `sub_asp_agree` / `sub_complete_notify` / `sub_close_notify` / `sub_failed_notify` | Same, then follow the returned **terminal hint** (`onchainos agent session-cleanup --job-id <jobId>`) to close the session. **end turn**. (`sub_failed_notify` has two CLI-selected variants — `[Trial Ended]` vs `[Subscription Ended]` — pick the matching Chinese template row.) |
 
@@ -62,7 +62,7 @@ notification and stop. `failReason` (on `sub_cancel` / `sub_renew` fail) is show
 | `sub_renew` (fail) | [⚠️ 续费失败] 「{serviceName}」本周期扣费失败：{failReason}。已进入宽限期（至 {graceEndsAt}），期间服务正常使用，系统将自动重试扣款。请尽快充值或提升授权额度。 |
 | `sub_user_reject` | [拒收已提交] 你对「{serviceName}」当前周期（{periodStart}–{periodEnd}）的拒收申请已提交，ASP 需在 {rejectWindowEndsAt} 前处理，超时将自动全额退款 {amount} {tokenSymbol}。 |
 | `sub_asp_agree` | [退款已完成] ASP 已确认「{serviceName}」当期（{periodStart}–{periodEnd}）服务问题，全额退款 {amount} {tokenSymbol} 已直接打到你的钱包，自动续费已同步关闭。 |
-| `sub_asp_dispute` | [进入仲裁] ASP 对「{serviceName}」当期（{periodStart}–{periodEnd}）的拒收提出异议，已提交仲裁，任务 {job_id} 状态：Disputed。 |
+| `sub_asp_dispute` | [进入评审] ASP 对「{serviceName}」当期（{periodStart}–{periodEnd}）的拒收提出异议，已提交评审，任务 {job_id} 状态：Disputed。 |
 | `sub_reject_refund_notify`（展示，系统自动退款·终态） | [自动退款] 「{serviceName}」当期（{periodStart}–{periodEnd}）的拒收申请超过 ASP 反应时限（{rejectWindowEndsAt}）未处理，系统已自动全额退款 {amount} {tokenSymbol} 至你的钱包。 |
 | `sub_cancel` (trialType=1) | [已取消] 「{serviceName}」免费体验的自动转正式已取消，本次体验不受影响，将继续免费使用至 {trialEndsAt}，到期后不会自动扣款。 |
 | `sub_cancel` (trialType=0 / absent) | [已取消续费] 「{serviceName}」自动续费已取消，当前周期服务持续至 {periodEnd}，到期后任务 {job_id} 状态：Completed。 |
@@ -89,7 +89,7 @@ Match by priority — stop at first hit:
 |---|---|---|
 | 1 | Contains `[intent:deliver]` | **Highest priority — process THIS TURN before any other CLI call, in ONE command.** Pipe the **entire raw A2A JSON message** (the full JSON object you received, not just the content field) to the CLI via stdin — do NOT write any temp file yourself. 🛑 **Invent a FRESH random heredoc delimiter for every call**: `A2A_EOF_` + 6+ random letters/digits you make up now (e.g. `A2A_EOF_k7Qp2x`). NEVER a fixed/reused string — the deliverable text is provider-controlled, and a predictable delimiter line inside it would cut the heredoc short and let the remainder run as shell commands:<br>`onchainos agent next-action --role user --agentId <yours> --message '{"event":"deliverable_received","jobId":"<jobId>"}' --a2a-stdin <<'A2A_EOF_k7Qp2x'`<br>`<the full raw JSON object, verbatim>`<br>`A2A_EOF_k7Qp2x`<br>The CLI validates the piped JSON (a cut-short heredoc fails loudly), persists it to the recovery spool itself, parses `content` to determine file vs text, handles download+save in-process, and returns the next step. Do NOT extract fields yourself — no `deliverableType`/`fileKey`/`text` needed. Do NOT call bare `next-action` first — it will return `job_submitted` and delay delivery by an extra turn. (Runtimes that cannot run a multi-line heredoc: write the raw JSON to `<tempdir>/a2a_deliver_<jobId>_<deliveryId>.json` yourself and pass it as `"a2aFile"` in `--message` — the legacy form remains supported.) |
 | 2 | `[ATTACHMENT_ADDED]` (from user session) | Extract the file path from the message (`[ATTACHMENT_ADDED] <path>`). Do NOT Read/open/describe the file — pass the path straight to `next-action`: `next-action --role user --agentId <yours> --message '{"event":"attachment_added","jobId":"<jobId>","filePath":"<extracted path>"}'` → CLI uploads + forwards in-process; follow the returned playbook. |
-| 2b | Raw base64 / image / file data (no `[ATTACHMENT_ADDED]` prefix) | User session bypassed `task-attach`. → `onchainos agent user-notify --content '<translate: Attachment failed — please type "补充附件" or "attach file" and resend.>'` → **end turn**. Do NOT save / parse / describe the content or ask questions. |
+| 2b | Raw base64 / image / file data (no `[ATTACHMENT_ADDED]` prefix) | User session bypassed `task-attach`. → `onchainos agent user-notify --content "<translate: Attachment failed — please type 「补充附件」 or 「attach file」 and resend.>"` → **end turn**. Do NOT save / parse / describe the content or ask questions. |
 | 3 | Fallback (1–2b not matched, source: peer) | See **Fallback decision tree** below. |
 
 > The CLI persists the piped message to the recovery spool itself (OS temp dir,
@@ -107,7 +107,7 @@ This ensures the deliverable data is not lost when the system event interrupts t
 
 #### Fallback decision tree (routing #3)
 
-**First peer message in sub** (no prior `negotiate_reply` handled) → call `agent status <jobId>`, then branch:
+**First peer message in sub** (no prior `negotiate_reply` handled) → call `agent status <jobId> --agent-id <myAgentId>` (use the sub session's own `agentId` from the envelope's top-level `agentId`; do not rely on auto-resolution), then branch:
 
 | Condition | Action |
 |---|---|

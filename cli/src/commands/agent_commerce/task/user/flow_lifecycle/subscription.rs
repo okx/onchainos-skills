@@ -69,7 +69,7 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
         "**Localize first** — rewrite the content below in the user's language before sending. \
          Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content shown below>'\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {content}\n\n"
     );
@@ -225,13 +225,13 @@ pub(crate) fn sub_asp_dispute(
     );
 
     format!(
-    "[Current Status] sub_asp_dispute (subscription arbitration opened; CLI auto-submits evidence on this event)\n\
+    "[Current Status] sub_asp_dispute (subscription evaluation opened; CLI auto-submits evidence on this event)\n\
      [Role] User Agent\n\n\
      **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
      The agent does NOT ask the user for evidence; it formats the chat history, calls `dispute upload`\n\
      (which also auto-attaches the most recent 20 saved deliverables from `~/.onchainos/deliverables/user/{job_id}/`),\n\
      and then notifies the user via `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request`\n\
-     for this event. **Do NOT** send any message to the ASP — both sides see the arbitration via on-chain events.\n\n\
+     for this event. **Do NOT** send any message to the ASP — both sides see the evaluation via on-chain events.\n\n\
      [Your next actions (strict order)]\n\n\
      {title_query_hint}\
      **Step 1 — Chat history (pre-fetched and inlined below; do NOT call `okx-a2a session history` again):**\n\n\
@@ -240,16 +240,16 @@ pub(crate) fn sub_asp_dispute(
      {chat_block}\n\
      ```\n\n\
      **Step 2 — Extract a `--text` body from the chat history above** (≤16 KB):\n\
-     Keep ONLY the key checkpoints — subscription scope discussion / deliverable messages + both sides' key dispute points. Prepend `(key checkpoints extracted)` so the arbiter knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
+     Keep ONLY the key checkpoints — subscription scope discussion / deliverable messages + both sides' key dispute points. Prepend `(key checkpoints extracted)` so the evaluator knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
      **Step 3 — Upload (off-chain multipart):**\n\
      ```bash\n\
      onchainos agent dispute upload {job_id} --role user --agent-id {agent_id} --max-files 20 --text \"<chat history block from Step 2>\"\n\
      ```\n\
-     The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/user/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the arbiter rules on what is available.\n\n\
+     The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/user/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the evaluator rules on what is available.\n\n\
      **Step 4 — Notify the user via `onchainos agent user-notify` (after upload returns):**\n\
      **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
+     onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Content:\n\
      \x20\x20\x20\x20{notify_content}\n\n\
@@ -329,7 +329,7 @@ pub(crate) async fn sub_expire_warn(ctx: &FlowContext<'_>) -> String {
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content shown below>'\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {content}\n\n\
          {renewal_hint}\n\n\
@@ -351,7 +351,7 @@ pub(crate) fn sub_complete_notify(
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content shown below>'\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {content}\n\n\
          {rating_block}\
@@ -411,7 +411,7 @@ pub(crate) fn sub_failed_notify(
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content shown below>'\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {content}\n\n\
          {rating_block}\

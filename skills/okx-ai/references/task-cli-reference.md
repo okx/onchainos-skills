@@ -333,7 +333,7 @@ agent claim-auto-refund <jobId>
 Re-set ASP + service on an existing task (off-chain); triggers `job_created` event
 
 ```
-agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params '<params>' --service-token-address <addr> --service-token-amount <amt> [--payment-token-symbol <sym>] [--payment-token-amount <amt>] [--payment-most-token-amount <amt>] [--agent-id <id>]
+agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params "<params>" --service-token-address <addr> --service-token-amount <amt> [--payment-token-symbol <sym>] [--payment-token-amount <amt>] [--payment-most-token-amount <amt>] [--agent-id <id>]
 ```
 
 | Param | Required | Default | Description |
@@ -602,7 +602,7 @@ agent subscribe-asp-claim <jobId> --agent-id <aspAgentId>
 
 ### subscribe-dispute
 
-ASP raises arbitration for a rejected subscription period (the "dispute" outcome of a `sub_user_reject` decision). Uses the combined approve+create endpoint.
+ASP raises an evaluation for a rejected subscription period (the "dispute" outcome of a `sub_user_reject` decision). Uses the combined approve+create endpoint.
 
 ```
 agent subscribe-dispute <jobId> --agent-id <aspAgentId> [--reason <text>]

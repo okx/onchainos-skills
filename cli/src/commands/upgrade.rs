@@ -69,6 +69,10 @@ const DEPRECATED_SKILLS: &[&str] = &[
     "okx-dex-ws",
     // Renamed to `okx-dex-market` (old umbrella name, now removed).
     "okx-dex",
+    // Renamed to `okx-activity` (activity hub; the hackathon is one activity
+    // under its `references/`). No stub left behind, so a per-skill checkout
+    // would otherwise keep serving the frozen old copy alongside the new hub.
+    "okx-hackathon",
 ];
 
 #[derive(clap::Args)]

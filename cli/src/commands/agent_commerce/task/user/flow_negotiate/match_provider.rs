@@ -29,7 +29,7 @@ fn job_created_no_designated_provider(ctx: &FlowContext<'_>) -> String {
          Designate a provider with `onchainos agent set-asp` if one is not already attached.\n\n\
          **Action — Notify the user.** **Localize first** — rewrite the content below in the user's language before sending.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content>'\n\
+         onchainos agent user-notify --content \"<localized content>\"\n\
          ```\n\
          Content: [Job Created]「{title}」({short_id}) confirmed on-chain.\n\n\
          🛑 End the turn after notifying.\n"
@@ -62,7 +62,7 @@ async fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
          Content:\n\
          \x20\x20{notify_filled}\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content shown below>'\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\n"
     );
 

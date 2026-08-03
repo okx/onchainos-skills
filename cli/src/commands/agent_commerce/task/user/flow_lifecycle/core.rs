@@ -659,7 +659,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
             "✓ job_accepted (escrow). Notify the user:\n\
              **Localize first** — translate the template below into the user's language before sending.\n\
              ```bash\n\
-             onchainos agent user-notify --content '<localized content>'\n\
+             onchainos agent user-notify --content \"<localized content>\"\n\
              ```\n\
              Template:\n\
              \x20\x20[Job Accepted] Job `{job_id}` has been accepted; execution begins.\n\
@@ -690,7 +690,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      On error → notify user:\n\
      **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
+     onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Content: {complete_failed}\n\
      → End turn, wait for retry or wakeup_notify.\n\n\
@@ -701,7 +701,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
      ▸ No → notify user:\n\
      **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
+     onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Content: {accepted_x402_fail}\n\
      → Wait for `job_completed` system event.\n"
@@ -766,7 +766,7 @@ pub(crate) fn deliverable_received(ctx: &FlowContext<'_>) -> String {
      **Step 3 — Notify user**\n\
      **Localize first** — translate the template below into the user's language before sending.\n\
      ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
+     onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Template:\n\
      \x20\x20[Deliverable Received] {title_field} (`{short_id}`)\n\
@@ -1175,7 +1175,7 @@ pub(crate) async fn deliverable_received_cli(
              [Step 1] Decide score (`X.XX`, 0.00–5.00) + comment (≤100 chars). Then run:\n\
              \x20\x20onchainos agent cache-rating --job-id {job_id} --score <X.XX> --comment '<your comment>'\n\n\
              [Step 2] Fill `<score>` and `<description>` in the template below with the values you just decided, translate the filled result into the user's chat language, then run:\n\
-             \x20\x20onchainos agent cache-notify --job-id {job_id} --event-key rating_submitted --content '<your translation>'\n\
+             \x20\x20onchainos agent cache-notify --job-id {job_id} --event-key rating_submitted --content \"<your translation>\"\n\
              Template:\n\
              ```\n\
              [📝 Rating Submitted] {rating_title} (`{job_id}`) — rated.\n\
@@ -1183,7 +1183,7 @@ pub(crate) async fn deliverable_received_cli(
              💬 Comment: <description>\n\
              ```\n\n\
              [Step 3] **Localize first** — rewrite the template below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user. Preserve placeholders verbatim.\n\
-             \x20\x20onchainos agent cache-notify --job-id {job_id} --event-key job_completed_escrow --content '<your translation>'\n\
+             \x20\x20onchainos agent cache-notify --job-id {job_id} --event-key job_completed_escrow --content \"<your translation>\"\n\
              Template:\n\
              ```\n\
              {canonical_job_completed}\n\
@@ -1254,7 +1254,7 @@ pub(crate) async fn deliverable_received_cli(
          Notify the user:\n\
          **Localize first** — translate the template below into the user's language before sending.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content>'\n\
+         onchainos agent user-notify --content \"<localized content>\"\n\
          ```\n\
          Template (path must be full absolute — never abbreviate):\n\
          \x20\x20[Deliverable Received] {title} (`{short_id}`)\n\
@@ -1598,7 +1598,7 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
      **3b — Notify user (deliverable + rating in one message):**\n\
      **Localize first** — translate the composed content into the user's language before sending.\n\
      ```bash\n\
-     onchainos agent user-notify --content '<localized content>'\n\
+     onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Compose from two halves (concatenate with two blank lines):\n\
      \x20\x20▸ Deliverable (always; pick template):\n\
@@ -1657,7 +1657,7 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
     match super::super::reject::handle_reject(&mut client, job_id, reason).await {
         Ok(()) => format!(
             "[reject_review] [OK]`onchainos agent reject {job_id} --reason \"{reason}\"` broadcast in-process. End the turn now.\n\n\
-             broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (arbitration) or agree to a refund. The user cannot initiate arbitration.\n\
+             broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (evaluation) or agree to a refund. The user cannot initiate evaluation.\n\
              Do NOT send any message to the ASP about the rejection — they learn via on-chain events.\n"
         ),
         Err(e) => format!(
@@ -1754,7 +1754,7 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json:
          **Step 2 — Notify user** (completion + rating):\n\
          **Localize first** — translate the template below into the user's language before sending.\n\
          ```bash\n\
-         onchainos agent user-notify --content '<localized content>'\n\
+         onchainos agent user-notify --content \"<localized content>\"\n\
          ```\n\
          Template:\n\
          \x20\x20{completed_notify}\n\n\

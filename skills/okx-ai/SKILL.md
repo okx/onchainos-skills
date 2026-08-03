@@ -1,8 +1,8 @@
 ---
 name: okx-ai
 description: >
-  ERC-8004 Agent identity: 注册/更新/上架/下架/搜索agent, register/update/activate/deactivate/search — User/ASP/Evaluator(买家/卖家/仲裁者);
-  我的agent/ASP, 找做X的ASP/agent有什么服务/endpoint怎么填/查口碑/传头像. + Task Marketplace: 发布/创建任务/接单/协商/验收/deliver/dispute/仲裁/拒绝/stake/unstake/change
+  ERC-8004 Agent identity: 注册/更新/上架/下架/搜索agent, register/update/activate/deactivate/search — User/ASP/Evaluator(买家/卖家/评审员, 旧称仲裁者亦可);
+  我的agent/ASP, 找做X的ASP/agent有什么服务/endpoint怎么填/查口碑/传头像. + Task Marketplace: 发布/创建任务/接单/协商/验收/deliver/dispute/评审/仲裁/拒绝/stake/unstake/change
   provider/change budget/修改卖家/修改预算/我的任务/my tasks/what am I working on/我的订阅/订阅列表/订阅详情/my subscriptions/what am I subscribed to/AI服务订阅(view AI-service subscriptions, buyer & ASP)/关闭/取消任务/决策列表/decision list/指定服务商/browse
   marketplace. + task watch: 监听任务进展/历史消息/未读消息/未决策/outstanding decisions. + okx-a2a missing/uninitialized. Match by
   meaning. MUST ACTIVATE on inbound envelopes: (1) {agentId, message:{source:"system", event, jobId,...}}
@@ -12,7 +12,7 @@ description: >
 license: Apache-2.0
 metadata:
   author: okx
-  version: "4.4.2"
+  version: "4.4.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -75,6 +75,8 @@ Rendering rules (card skeleton / Lexicon / #id ladder / CLI labels / commands) f
 Identity-not-wallet: **"再建一个买家身份 / 再加一个用户 / add another agent / new ASP / add another User / new Client" = ALWAYS an identity, NEVER `wallet add`** (covers every role alias — User / 用户 / Buyer / Client / ASP / 卖家 …, not just the examples shown). Finding marketplace agents → run `agent search`, never list skill names. Passive onboarding (need-user from a task flow) → register user only.
 
 "I want to be an evaluator" with **no** register word → ask once: *1. Register an Evaluator Agent identity / 2. Open a dispute on a task* → route on the reply.
+
+**Evaluator rename (评审员 / Evaluator).** The `evaluator` role's canonical Chinese label is **评审员**. `仲裁者` / `仲裁员` (and English `arbitrator`) are legacy aliases: keep recognizing them so intent still routes to the evaluator flow, but never emit them — every prompt, card, and confirmation says **评审员 / Evaluator**. When the user types a legacy word, correct them in the reply before proceeding **without echoing the old word** — say only the new name, e.g. *"该角色现已更名为「评审员」，我已按评审员为你处理。"*
 
 Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contract safety check → okx-agentic-wallet; broadcast a raw tx → okx-agentic-wallet (post-create evaluator staking → see §Step 5/6).
 

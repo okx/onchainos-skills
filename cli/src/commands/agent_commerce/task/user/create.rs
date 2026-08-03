@@ -80,6 +80,10 @@ impl CreateTaskParams {
             Some(t) => t.clone(),
             None => self.description.chars().take(MAX_TITLE_CHARS).collect(),
         };
+        // Neutralize shell metacharacters after truncation and before the title is accepted —
+        // covers both the explicit --title and derive-from-description branches (WBW-14039 FR-3).
+        // Sanitization only removes/replaces chars, so the ≤ MAX_TITLE_CHARS invariant still holds.
+        let title = common::util::sanitize_title_for_shell(&title);
         let summary = match &self.description_summary {
             Some(s) if s.chars().count() > MAX_SUMMARY_CHARS => s.chars().take(MAX_SUMMARY_CHARS).collect(),
             Some(s) => s.clone(),

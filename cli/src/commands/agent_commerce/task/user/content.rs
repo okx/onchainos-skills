@@ -155,13 +155,13 @@ pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
 
 // ── Event::DisputeResolved ─────────────────────────────────────────
 
-/// Per-arbiter verdict rationales block shared by both `DisputeResolved` outcomes.
+/// Per-evaluator verdict rationales block shared by both `DisputeResolved` outcomes.
 /// Source field: `message.voteReportSummaries[*].voterReportSummary` from the system envelope.
-const ARBITRATION_REASONS_BLOCK: &str = concat!(
-    "- Arbitration reasons:\n",
-    "    Arbiter 1: <voterReportSummary from message.voteReportSummaries[0]>\n",
-    "    Arbiter 2: <voterReportSummary from message.voteReportSummaries[1]>\n",
-    "    ... (one line per entry; first skip entries whose voterReportSummary is missing / empty / whitespace, then number the kept entries consecutively starting at 1 in array order — do NOT preserve gaps from the original index; omit this whole `- Arbitration reasons:` section if voteReportSummaries is missing, not an array, empty, or every entry would be skipped — do NOT print a header with no body, do NOT fabricate filler text)",
+const EVALUATION_REASONS_BLOCK: &str = concat!(
+    "- Evaluation reasons:\n",
+    "    Evaluator 1: <voterReportSummary from message.voteReportSummaries[0]>\n",
+    "    Evaluator 2: <voterReportSummary from message.voteReportSummaries[1]>\n",
+    "    ... (one line per entry; first skip entries whose voterReportSummary is missing / empty / whitespace, then number the kept entries consecutively starting at 1 in array order — do NOT preserve gaps from the original index; omit this whole `- Evaluation reasons:` section if voteReportSummaries is missing, not an array, empty, or every entry would be skipped — do NOT print a header with no body, do NOT fabricate filler text)",
 );
 
 /// `Event::DisputeResolved` — user wins (B-5-4).
@@ -170,7 +170,7 @@ pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
         "[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
          - Refund: <tokenAmount> <tokenSymbol>\n\
          - Outcome: ClientWins\n\
-         {ARBITRATION_REASONS_BLOCK}\n\
+         {EVALUATION_REASONS_BLOCK}\n\
          This job is complete."
     )
 }
@@ -181,7 +181,7 @@ pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
         "[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
          - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
          - Outcome: ASPWins\n\
-         {ARBITRATION_REASONS_BLOCK}\n\
+         {EVALUATION_REASONS_BLOCK}\n\
          This job is complete."
     )
 }
@@ -288,7 +288,7 @@ pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String 
          After expiry, the ASP can auto-claim the funds.\n\
          Please decide soon:\n\
          A. Approve the deliverable\n\
-         B. Reject the deliverable — please state your reason (if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the arbitrator)"
+         B. Reject the deliverable — please state your reason (if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the Evaluator)"
     )
 }
 
@@ -590,7 +590,7 @@ pub fn sub_user_reject_user_notify(
     out
 }
 
-/// `sub_asp_dispute` (user side) — the ASP disputed the user's rejection; arbitration
+/// `sub_asp_dispute` (user side) — the ASP disputed the user's rejection; evaluation
 /// opened (non-terminal). Added the current-period range (subStartTime/subEndTime).
 pub fn sub_asp_dispute_user_notify(
     service_name: &str,
@@ -604,7 +604,7 @@ pub fn sub_asp_dispute_user_notify(
         out.push_str(&format!("'s current period ({s}–{e})"));
     }
     out.push_str(&format!(
-        " and escalated to arbitration. Job {job_id} status: Disputed."
+        " and escalated to evaluation. Job {job_id} status: Disputed."
     ));
     out
 }
@@ -822,7 +822,10 @@ mod tests {
         );
         // Degrade #1: no period/deadline/amount → core sentence only, no empty slots, no panic.
         let bare = sub_reject_refund_notify_user("My Sub", None, None, None, None, None);
-        assert!(bare.contains("for \"My Sub\" went unanswered"), "period clause omitted: {bare}");
+        assert!(
+            bare.contains("for \"My Sub\" went unanswered"),
+            "period clause omitted: {bare}"
+        );
         assert!(
             bare.contains("automatically issued a full refund to your wallet."),
             "amount clause degrades: {bare}"
@@ -836,7 +839,6 @@ mod tests {
             "{amt_only}"
         );
     }
-
 
     #[test]
     fn sub_created_renders_active_and_first_charge_verbatim() {
@@ -1124,7 +1126,7 @@ mod tests {
         assert!(out.contains("Job job-1 status: Disputed."));
         // Period absent → range omitted, core copy intact.
         let bare = sub_asp_dispute_user_notify("My Sub", "job-1", None, None);
-        assert!(bare.contains("disputed your rejection of \"My Sub\" and escalated to arbitration"));
+        assert!(bare.contains("disputed your rejection of \"My Sub\" and escalated to evaluation"));
         assert!(!bare.contains("current period"));
     }
 
