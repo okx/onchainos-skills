@@ -141,19 +141,25 @@ fn wallet_login_it_102_readonly_home_fails() {
     // readable identity present must fail clearly (exit 1) instead of a silent
     // volatile fallback (spec §3, §8.5 #8, AC#5). The bail is local so no
     // network is required.
-    let (_tmp, home) = fresh_home(SANDBOX_STEM);
-    fs::set_permissions(&home, fs::Permissions::from_mode(0o500)).expect("chmod home read-only");
+    //
+    // We point ONCHAINOS_HOME to a non-existent subdirectory inside a read-only
+    // parent. On Linux the directory owner can always chmod their own dir, so
+    // setting the existing home to 0o500 would be silently auto-repaired by
+    // `ensure_dir_permissions`. Using a child path that does not exist forces
+    // `create_dir_all` to fail (creating entries requires write on the parent).
+    let (_tmp, parent) = fresh_home(SANDBOX_STEM);
+    let home = parent.join("inner");
+    // Do NOT create `inner` — it must not exist.
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o500))
+        .expect("chmod parent read-only");
 
     let output = scrubbed(&mut onchainos(), &home)
-        .env("OKX_API_KEY", "dummyKey")
-        .env("OKX_SECRET_KEY", "dummySecret")
-        .env("OKX_PASSPHRASE", "dummyPass")
-        .args(["wallet", "login", "--force"])
+        .args(["wallet", "login"])
         .output()
-        .expect("run onchainos wallet login --force");
+        .expect("run onchainos wallet login");
 
     // Restore writable perms so the sandbox guard can tear the dir down.
-    let _ = fs::set_permissions(&home, fs::Permissions::from_mode(0o700));
+    let _ = fs::set_permissions(&parent, fs::Permissions::from_mode(0o700));
 
     assert_eq!(output.status.code(), Some(1), "read-only home login must exit 1");
     let json = parse_stdout_json(&output);

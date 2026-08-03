@@ -8,7 +8,7 @@ Commands that need auth (balance, send, contract-call, history, sign-message) re
 
 1. **Check state.** Run `wallet status`; if `data.loggedIn` is `true`, proceed. Otherwise (or on re-login request) continue.
 2. **Log in** — orchestrate `init` → auto-poll:
-   a. **Get the link.** Run `wallet login --phase init` — it returns `{ loginUrl, authSessionId, opened }` immediately and best-effort opens the browser. Keep `authSessionId` for the poll.
+   a. **Get the link (non-terminal step).** Run `wallet login --phase init` — it returns `{ loginUrl, authSessionId, opened, nextSteps }` immediately and best-effort opens the browser. Keep `authSessionId` for the poll. **NEVER**: read `init`'s `ok:true` as "login complete" — `init` only mints the session and does NOT persist credentials; the presence of `nextSteps` is the signal that a `poll` step is still required. `nextSteps.completeLogin` carries the exact poll command with `authSessionId` already interpolated; when `opened == false` the response also carries `nextSteps.openLoginUrl` (equal to `loginUrl`) — the URL to open first.
    b. **Show the link + reminder** (translate to the user's language; keep the structure, substitute `authSessionId` and `loginUrl`):
       > Your login link is ready — I'll open it in your browser.
       > • Session ID (session_id): `<authSessionId>`
@@ -16,7 +16,7 @@ Commands that need auth (balance, send, contract-call, history, sign-message) re
       >
       > Fetching the login result will block your other operations for up to 5 minutes.
    c. **Auto-poll.** Immediately run `wallet login --phase poll --session-id <authSessionId>` (the id from step a) — don't wait for the user. On timeout / no result, tell the user you couldn't get it yet: finish login on the already-open page and tell you to re-check (same id), or start over from `--phase init` (new id); don't guess whether a previous session is still valid.
-3. **After login.** Render the Account Info template (below) from the `poll` response. If the response has `"isNew": true`, output the Policy Settings template then the Wallet Export template ([portal-actions.md](wallet-portal-actions.md)); if `false`, skip.
+3. **After login.** **MUST**: judge login completion from the `poll` response — it is the step that persists credentials and returns the account — never from the `init` response (`init`'s `ok:true` is a pre-login step). Render the Account Info template (below) from the `poll` response. If the response has `"isNew": true`, output the Policy Settings template then the Wallet Export template ([portal-actions.md](wallet-portal-actions.md)); if `false`, skip.
 
 Login creates the first account automatically — never call `wallet add` for it. Use `wallet add` only when already logged in and the user explicitly wants another account (then output the Policy Settings template, see [portal-actions.md](wallet-portal-actions.md)).
 

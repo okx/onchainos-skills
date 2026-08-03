@@ -20,8 +20,8 @@ onchainos wallet login [--phase init|open|poll] [--url <url>] [--session-id <id>
 | `--url` | For `open` | Login URL to open. Required when `--phase open`. |
 | `--session-id` | No | Auth session id to poll (`--phase poll`). Defaults to the most recent `init` session when omitted. |
 
-- `--phase init` → returns `{ loginUrl, authSessionId, opened }`.
-- `--phase poll` → returns `accountId`, `accountName`, `loginType`, `isNew`, addresses, `totalValueUsd` (true `isNew` → new user; trigger Policy + Export templates, see [portal-actions.md](wallet-portal-actions.md)).
+- `--phase init` (non-terminal — does NOT persist credentials) → returns `loginUrl`, `authSessionId`, `opened`, and `nextSteps`. The `nextSteps` object always carries `completeLogin` (the exact `onchainos wallet login --phase poll --session-id <authSessionId>` command) and, only when `opened == false`, `openLoginUrl` (equal to `loginUrl`). The presence of `nextSteps` is the signal that `init` is incomplete and a `poll` step is still required.
+- `--phase poll` (persistence step — completes login) → returns `accountId`, `accountName`, `loginType`, `isNew`, addresses, `totalValueUsd` (true `isNew` → new user; trigger Policy + Export templates, see [portal-actions.md](wallet-portal-actions.md)). Credentials are persisted on this `poll` response.
 
 ### `wallet add`
 
