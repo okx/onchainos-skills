@@ -29,9 +29,9 @@ pub struct CreateArgs {
     /// Element keys:
     ///   • serviceName        — required. 5–30 chars; must differ from the agent
     ///                          name; no price info and no test/env markers.
-    ///   • serviceDescription — required. A newline-separated THREE-part structure
-    ///                          whose part meanings depend on serviceType:
-    ///                            A2MCP (request description — all three parts
+    ///   • serviceDescription — required. A newline-separated structure whose
+    ///                          part count and meanings depend on serviceType:
+    ///                            A2MCP (request description — all FOUR parts
     ///                            REQUIRED; an A2MCP listing missing any is rejected
     ///                            at listing QA): line 1 = what the service does;
     ///                            line 2 = parameter spec — ALL key parameters on
@@ -40,7 +40,9 @@ pub struct CreateArgs {
     ///                            (append the default for an optional one; concisely
     ///                            listing the key params is enough when they don't
     ///                            all fit the cap); line 3 = request method (POST /
-    ///                            GET, or the MCP tool name).
+    ///                            GET, or the MCP tool name); line 4 = request
+    ///                            example — a working `curl` command using the real
+    ///                            endpoint URL.
     ///                            A2A: line 1 = core-capability summary (required);
     ///                            line 2 = what the user must provide (required);
     ///                            line 3+ = delivery note (optional here, but
@@ -76,12 +78,13 @@ pub struct CreateArgs {
     ///     non-empty `subscription`. Never neither, and never both (the two
     ///     models are mutually exclusive).
     ///
-    /// The three-part serviceDescription is a single string with `\n` separators.
+    /// The serviceDescription is a single string with `\n` separators (3 lines
+    /// for A2A, 4 lines for A2MCP).
     ///   A2A e.g.   "Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported, e.g. X Layer | $TOKEN | BUY | 0.042-0.045 | slippage <=1% | position 5% | valid within 24h".
-    ///   A2MCP e.g. "Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST".
+    ///   A2MCP e.g. "Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST\ncurl -X POST https://api.example.com/mcp -H \"Content-Type: application/json\" -d '{\"tokenAddress\":\"0xdac17f...\",\"chainIndex\":\"1\"}'".
     ///
     /// Examples:
-    ///   A2MCP:            [{"serviceName":"Realtime price feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]
+    ///   A2MCP:            [{"serviceName":"Realtime price feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST\ncurl -X POST https://api.example.com/mcp -H \"Content-Type: application/json\" -d '{\"tokenAddress\":\"0xdac17f...\",\"chainIndex\":\"1\"}'","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]
     ///   A2A single only:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported, e.g. X Layer | $TOKEN | BUY | 0.042-0.045 | slippage <=1% | position 5% | valid within 24h","serviceType":"A2A","fee":"0.11"}]
     ///   A2A sub only:     [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]
     ///   A2A sub + trial:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}],"freeTrial":"72"}]
@@ -134,16 +137,17 @@ pub struct UpdateArgs {
     /// Optional. Incremental service changes as a JSON array — only the services
     /// you want to add / modify / remove, NOT the full list. Element keys:
     /// `serviceName` (5–30 chars, distinct from the agent name),
-    /// `serviceDescription` (newline-separated THREE-part structure whose part
-    /// meanings depend on serviceType — A2MCP request description (all three
+    /// `serviceDescription` (newline-separated structure whose part count and
+    /// meanings depend on serviceType — A2MCP request description (all FOUR
     /// REQUIRED; an A2MCP listing missing any is rejected at listing QA): line 1
     /// = what the service does, line 2 = parameter spec (ALL key params on ONE
     /// line separated by `;`, each `<name>(<type>, required/optional): <meaning>`),
-    /// line 3 = request method (POST / GET or the MCP tool name); A2A: line 1 =
-    /// core-capability summary, line 2 = what
-    /// the user must provide, line 3+ = optional delivery note with a concrete
-    /// example; each part ≤200 CJK chars, whole text ≤600 CJK chars; no URLs /
-    /// 0x addresses / test markers / guaranteed-profit wording),
+    /// line 3 = request method (POST / GET or the MCP tool name), line 4 =
+    /// request example (a working `curl` command using the real endpoint URL);
+    /// A2A: line 1 = core-capability summary, line 2 = what the user must
+    /// provide, line 3+ = optional delivery note with a concrete example; each
+    /// part ≤200 CJK chars, whole text ≤600 CJK chars; no URLs / 0x addresses /
+    /// test markers / guaranteed-profit wording),
     /// `serviceType` (`A2A` | `A2MCP`),
     /// `fee` (single-purchase price — plain number, USDT implied, ≤6 decimals),
     /// `subscription` (A2A only — array of `{interval, fee}`, `interval`
@@ -165,7 +169,7 @@ pub struct UpdateArgs {
     /// does NOT clear existing services).
     ///
     /// Example — add one A2MCP service and delete an existing one:
-    ///   --service '[{"operation":"create","serviceName":"Price feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"},{"operation":"delete","id":"svc_123"}]'
+    ///   --service '[{"operation":"create","serviceName":"Price feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST\ncurl -X POST https://api.example.com/mcp -H \"Content-Type: application/json\" -d \"{\\\"tokenAddress\\\":\\\"0xdac17f...\\\",\\\"chainIndex\\\":\\\"1\\\"}\"","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"},{"operation":"delete","id":"svc_123"}]'
     ///
     /// Example — update a subscription-priced A2A service (empty single fee):
     ///   --service '[{"operation":"update","id":"7","serviceName":"…","serviceDescription":"…","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]'
