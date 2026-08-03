@@ -18,6 +18,13 @@ fn codes(r: &ValidationResult) -> Vec<String> {
     r.findings.iter().map(|f| f.code.clone()).collect()
 }
 
+/// Severity of the first finding carrying `code` (the test module is a child of
+/// `validate`, so the private `Finding.severity` / `ValidationResult.findings`
+/// fields are readable — same access `codes()` uses for `.code`).
+fn severity_of(r: &ValidationResult, code: &str) -> Option<&'static str> {
+    r.findings.iter().find(|f| f.code == code).map(|f| f.severity)
+}
+
 #[test]
 fn every_name_finding_unifies_to_same_message() {
     // Requirement ①: multiple sub-checks under one rule group (name) all return
@@ -758,9 +765,11 @@ fn description_empty_fails_d1() {
 }
 
 #[test]
-fn description_two_parts_non_subscription_fails_d1() {
-    // FE-21: a NON-subscription (single-fee) A2A service must have EXACTLY 3
-    // paragraphs. A 2-paragraph description is the wrong count → D1.
+fn description_two_parts_non_subscription_suggests_d1() {
+    // FE-21 structural downgrade (spec §2.1): a NON-subscription (single-fee) A2A
+    // service should have EXACTLY 3 paragraphs. A 2-paragraph description is the
+    // wrong count → D1 STILL fires, but now as an ADVISORY ("suggest") finding, so
+    // the listing PASSES (pass: true) while surfacing the suggestion.
     let service = svc(
         "Doc Summarizer",
         "Summary line.\nProvide: a document and a target language.",
@@ -770,7 +779,8 @@ fn description_two_parts_non_subscription_fails_d1() {
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
-    assert!(!r.pass);
+    assert_eq!(severity_of(&r, "D1"), Some("suggest"), "D1 must be advisory, got {:?}", codes(&r));
+    assert!(r.pass, "structural D1 must not block A2A; got {:?}", codes(&r));
 }
 
 #[test]
@@ -784,12 +794,44 @@ fn description_two_parts_subscription_passes_d1() {
 }
 
 #[test]
-fn description_three_parts_subscription_fails_d1() {
-    // FE-21: a subscription service with 3 paragraphs is the wrong count → D1.
+fn description_three_parts_subscription_suggests_d1() {
+    // FE-21 structural downgrade (spec §2.1): a subscription A2A service should
+    // have EXACTLY 2 paragraphs. 3 paragraphs is the wrong count → D1 STILL fires,
+    // now as an ADVISORY ("suggest") finding → the listing PASSES. Advisory applies
+    // uniformly to all A2A regardless of billing model (no billing-model branch).
     let service = "[{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Daily signals across DEX.\\nNothing to provide.\\nDelivered as structured signals.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
     let r = run_validation("asp", Some("Agent Name"), None, Some(service));
     assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
-    assert!(!r.pass);
+    assert_eq!(severity_of(&r, "D1"), Some("suggest"), "D1 must be advisory, got {:?}", codes(&r));
+    assert!(r.pass, "structural D1 must not block A2A; got {:?}", codes(&r));
+}
+
+#[test]
+fn a2a_empty_description_still_blocks_d1() {
+    // Empty/blank A2A serviceDescription is a MISSING-REQUIRED-FIELD error and
+    // stays BLOCKING (spec §2.1 / Change 2a) — this guards the empty-vs-structural
+    // split. `parse_services_lenient` trims, so a whitespace-only description
+    // collapses to "" and hits the empty-D1 block branch.
+    let service = svc("Doc Summarizer", "   ", "A2A", "5", None);
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert_eq!(severity_of(&r, "D1"), Some("block"), "empty D1 must block, got {:?}", codes(&r));
+    assert!(!r.pass, "empty A2A description must block; got {:?}", codes(&r));
+}
+
+#[test]
+fn description_over_width_single_paragraph_suggests_not_blocks() {
+    // FE-21 length downgrade (spec §2.1): a single-paragraph A2A description whose
+    // only line exceeds the 400-width per-paragraph limit fires D3 — as an ADVISORY
+    // ("suggest") finding — and the wrong (1) paragraph count fires D1 (also
+    // advisory), so the listing still PASSES (non-empty, non-prohibited).
+    let p1 = "A".repeat(401);
+    let service = svc("Doc Summarizer", &p1, "A2A", "5", None);
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let c = codes(&r);
+    assert!(c.contains(&"D3".to_string()), "expected D3, got {:?}", c);
+    assert_eq!(severity_of(&r, "D3"), Some("suggest"), "D3 must be advisory, got {:?}", c);
+    assert!(r.pass, "over-width structural findings must not block A2A; got {:?}", c);
 }
 
 #[test]

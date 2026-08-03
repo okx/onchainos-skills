@@ -87,6 +87,19 @@ impl Finding {
             message: message.to_string(),
         }
     }
+
+    /// An advisory (suggestion-only) finding. It surfaces to the caller with the
+    /// same `code`/`message` semantics as `block`, but `severity: "suggest"` means
+    /// it does NOT flip `pass` to false (see `run_validation`, which only counts
+    /// `severity == "block"`). Used for A2A structural/length FE-21 findings.
+    fn suggest(field: impl Into<String>, code: &str, message: &str) -> Finding {
+        Finding {
+            field: field.into(),
+            code: code.to_string(),
+            severity: "suggest",
+            message: message.to_string(),
+        }
+    }
 }
 
 // ─── Service parsing (no hard-error; rules report findings instead) ─────────
@@ -160,12 +173,15 @@ pub(crate) fn run_validation(
     }
     // For user / evaluator: --service is ignored silently (no findings).
 
-    // NOTE: the former advisory downgrade of `service[i].servicedescription`
-    // findings to `warn` has been removed. Per ASP重构-身份侧校验, FE-21 (service
-    // description structure/length) and FE-22 (prohibited content) are CLI rules
-    // with 命中处置 = 阻断注册 — they now block like every other field. Only the
-    // SEMANTIC service-description quality check (FE-23) stays advisory, and that
-    // one lives in the skill layer, not here.
+    // NOTE: A2A `service[i].servicedescription` STRUCTURAL/LENGTH FE-21 findings
+    // (paragraph-count D1, total-width D2, per-paragraph-width D3/D4/D5) are
+    // ADVISORY (severity "suggest") — a structurally non-conforming but non-empty,
+    // non-prohibited A2A listing PASSES validate-listing while still surfacing the
+    // suggestions. Still BLOCKING: FE-22 prohibited content (URL D6, 0x address D7,
+    // profit guarantee D9, test marker U1) and the empty/blank-description D1 (a
+    // missing-required-field, consistent with the normalize_service bail). A2MCP is
+    // unchanged — only prohibited-content runs for it, all blocking. The SEMANTIC
+    // service-description quality check (FE-23) stays advisory in the skill layer.
 
     let pass = !findings.iter().any(|f| f.severity == "block");
     ValidationResult { pass, findings }
@@ -469,10 +485,13 @@ fn check_pricing(
 //   • FE-22 (禁用内容) — URL (D6), 0x address (D7), profit/return-guarantee
 //     wording (D9: "稳赚 / 保证收益 / 翻倍" …), test/env marker (U1). Applies to
 //     EVERY service including A2MCP.
-// Both FE-21 and FE-22 are 阻断注册 (blocking) per ASP重构-身份侧校验. The purely
-// SEMANTIC quality checks (unclear paragraphs, tech-stack leak, disclaimers,
-// declared-market / signal-example for trading-signal services) are FE-23 and
-// live in the skill layer (register.md §4), never in this mechanical validator.
+// FE-22 (prohibited content) and the empty/blank-description D1 are 阻断注册
+// (blocking); the A2A structural/length FE-21 findings (paragraph-count D1, total
+// width D2, per-paragraph width D3/D4/D5) are ADVISORY (severity "suggest") — they
+// surface but do not flip `pass`. The purely SEMANTIC quality checks (unclear
+// paragraphs, tech-stack leak, disclaimers, declared-market / signal-example for
+// trading-signal services) are FE-23 and live in the skill layer (register.md §4),
+// never in this mechanical validator.
 fn check_service_description(
     index: usize,
     desc: &str,
@@ -510,9 +529,9 @@ fn check_service_description(
         return;
     }
 
-    // D2 total display width <= 1200 (= 600 CJK characters).
+    // D2 total display width <= 1200 (= 600 CJK characters). ADVISORY for A2A.
     if display_width(desc) > 1200 {
-        findings.push(Finding::block(&fd, "D2", fe::FE21));
+        findings.push(Finding::suggest(&fd, "D2", fe::FE21));
     }
 
     // Positional paragraphs: each non-empty line is one paragraph. The doc
@@ -527,14 +546,17 @@ fn check_service_description(
         .filter(|l| !l.is_empty())
         .collect();
 
+    // Paragraph-count D1 is ADVISORY for A2A (applies uniformly to both the
+    // 3-paragraph non-subscription and 2-paragraph subscription variants — no
+    // billing-model branching in the severity choice).
     let want_parts = if is_subscription { 2 } else { 3 };
     if lines.len() != want_parts {
-        findings.push(Finding::block(&fd, "D1", fe::FE21));
+        findings.push(Finding::suggest(&fd, "D1", fe::FE21));
         // Still fall through to per-part length checks on whatever lines exist,
         // so an over-length paragraph is also surfaced under the same FE-21.
     }
 
-    // D3/D4/D5 per-paragraph display width <= 400 (= 200 CJK characters).
+    // D3/D4/D5 per-paragraph display width <= 400 (= 200 CJK characters). ADVISORY.
     for (i, line) in lines.iter().enumerate() {
         if display_width(line) > 400 {
             let code = match i {
@@ -542,7 +564,7 @@ fn check_service_description(
                 1 => "D4",
                 _ => "D5",
             };
-            findings.push(Finding::block(&fd, code, fe::FE21));
+            findings.push(Finding::suggest(&fd, code, fe::FE21));
         }
     }
 }
