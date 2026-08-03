@@ -34,15 +34,40 @@ pub async fn validate_listing(args: ValidateListingArgs, _ctx: &Context) -> Resu
     Ok(())
 }
 
+// ─── Canonical fail messages (one 提示文案 per rule group) ──────────────────
+//
+// Requirement ① (身份侧校验规则): when any CLI mechanical rule's fail-criterion is
+// hit, the returned `message` is UNIFIED to that rule's canonical 提示文案 — so
+// every sub-check under one rule group surfaces the SAME user-facing text. The
+// fine-grained internal `code` (U1/N1/S1/T1/P1/D1…) is kept for diagnostics and
+// tests; the user-facing string is `message`.
+mod fe {
+    pub const FE03: &str = "The Agent name doesn't meet the naming rules: it may contain a test marker, a 0x address, an ordinal suffix, or special symbols, or its length or bilingual format is invalid. Use a clean brand name instead: 2\u{2013}12 characters in Chinese or 3\u{2013}25 in English, with no test markers, addresses, ordinals, or special symbols; for a bilingual name, use the \"Chinese name \u{00B7} English name\" format. Then resubmit.";
+    pub const FE05: &str = "The Agent description has an issue: it contains a URL, exceeds 500 characters, or is empty. Remove any links, trim it to 500 characters or fewer, and make sure it's filled in. Then resubmit.";
+    pub const FE06: &str = "The service name doesn't meet the rules: its length is out of range, it duplicates the Agent name, or it contains pricing or a test marker. Keep the name to 5\u{2013}30 characters and different from the Agent name, move any pricing to the fee field, and remove test markers. Then resubmit.";
+    pub const FE10: &str = "The service type must be exactly A2A or A2MCP; the current value is invalid. Select A2A or A2MCP from the menu, then resubmit.";
+    pub const FE11: &str = "The endpoint configuration is invalid: A2MCP requires an endpoint while A2A must not have one, and it must be a publicly accessible HTTPS URL \u{2014} not a private-network address or one starting with 0x. For A2MCP, enter a publicly accessible https URL; for A2A, remove the endpoint. Then resubmit.";
+    pub const FE12: &str = "The A2MCP fee must be a plain number (enter 0 for free), but the current value contains units or non-numeric text. Enter the fee as a number only (e.g., 10; 0 for free) \u{2014} it's denominated in USDT by default, so no symbols or extra text. Then resubmit.";
+    pub const FE13: &str = "The service data isn't a valid JSON array, or the create/update/delete operations don't match the id rules. Follow the sample format \u{2014} omit the id when creating, and include the id when updating or deleting \u{2014} then resubmit.";
+    pub const FE17: &str = "The subscription billing setup is invalid: A2MCP doesn't support subscriptions, and an A2A service must use exactly one of pay-per-use or monthly subscription \u{2014} you can't leave both empty or fill in both. Pick one billing mode for your A2A service: set a pay-per-use fee, or set a monthly subscription (leave fee as an empty string \"\" when using subscription); for A2MCP, remove the subscription field. Then resubmit.";
+    pub const FE18: &str = "Subscriptions currently support monthly billing only, but a different interval was provided. Set the subscription tier's interval to \"month\" (weekly, yearly, and other intervals aren't supported yet), then resubmit.";
+    pub const FE19: &str = "The subscription price must be a plain number, but the current value contains units, symbols, or non-numeric text. Enter each tier's price as a number only (e.g., 10) \u{2014} denominated in USDT by default, up to 6 decimal places, no symbols or extra text. Then resubmit.";
+    pub const FE20: &str = "The free-trial setup is invalid: freeTrial can only be configured on monthly-subscription services and must be a positive integer number of hours; A2MCP and pay-per-use services can't offer a trial. To enable a trial on a monthly subscription, set freeTrial to \"72\" (a fixed 3 days); otherwise omit the freeTrial field entirely (don't set \"\" or \"0\"). Then resubmit.";
+    pub const FE21: &str = "The service description's structure or length is invalid: wrong number of paragraphs, total length over 600 CJK characters, or a single paragraph over 200 CJK characters. Write 3 paragraphs for non-subscription services (1. core capabilities; 2. what the user needs to provide; 3. what will be delivered), or 2 paragraphs for subscription services (1. core capabilities; 2. what will be delivered); keep each paragraph within 200 CJK characters and the total within 600. Then resubmit.";
+    pub const FE22: &str = "The service description contains prohibited content: a URL, a 0x address, promised returns (e.g., \"guaranteed profit\", \"double your money\", \"guaranteed returns\"), or a test marker. Remove all links, 0x addresses, test markers, and any promises of returns, guaranteed principal, or \"no losses\" \u{2014} describe what the service can do without promising outcomes. Then resubmit.";
+}
+
 // ─── Output model ───────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
 struct Finding {
     field: String,
+    /// Fine-grained internal code (diagnostics / tests): U1/N1/S1/T1/P1/D1…
     code: String,
     severity: &'static str,
-    issue: String,
-    fix: String,
+    /// Unified user-facing 提示文案 (English-canonical; skill translates).
+    /// This is the ONLY rule-message field exposed to the caller.
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -52,13 +77,14 @@ pub(crate) struct ValidationResult {
 }
 
 impl Finding {
-    fn block(field: impl Into<String>, code: &str, issue: &str, fix: &str) -> Finding {
+    /// A blocking finding. `code` is the internal diagnostic code; `message` is
+    /// the unified user-facing 提示文案 for the rule group (pass a `fe::FExx`).
+    fn block(field: impl Into<String>, code: &str, message: &str) -> Finding {
         Finding {
             field: field.into(),
             code: code.to_string(),
             severity: "block",
-            issue: issue.to_string(),
-            fix: fix.to_string(),
+            message: message.to_string(),
         }
     }
 }
@@ -111,12 +137,7 @@ pub(crate) fn run_validation(
         if role == "asp" {
             check_description_url_and_addr("description", description, &mut findings);
             if description.chars().count() > 500 {
-                findings.push(Finding::block(
-                    "description",
-                    "D8",
-                    "Agent description exceeds 500 characters.",
-                    "Shorten the description to 500 characters or fewer.",
-                ));
+                findings.push(Finding::block("description", "D8", fe::FE05));
             }
         }
     }
@@ -132,27 +153,19 @@ pub(crate) fn run_validation(
                             check_service(i, svc, name, &mut findings);
                         }
                     }
-                    Err(()) => findings.push(Finding::block(
-                        "service",
-                        "PARSE",
-                        "--service is not a valid JSON array of service objects.",
-                        "Provide a JSON array, e.g. [{\"name\":\"...\",\"servicedescription\":\"...\",\"servicetype\":\"A2MCP\",\"fee\":\"0\",\"endpoint\":\"https://...\"}].",
-                    )),
+                    Err(()) => findings.push(Finding::block("service", "PARSE", fe::FE13)),
                 }
             }
         }
     }
     // For user / evaluator: --service is ignored silently (no findings).
 
-    // Product decision (references/identity-register.md §4): ONLY the ASP service
-    // description (`service[i].servicedescription`) is advisory — downgrade its
-    // findings to `warn` so they never fail `pass`. Every other field (agent-level
-    // `description`, name / pricing / servicetype / service-name) stays blocking.
-    for f in &mut findings {
-        if f.field.ends_with(".servicedescription") {
-            f.severity = "warn";
-        }
-    }
+    // NOTE: the former advisory downgrade of `service[i].servicedescription`
+    // findings to `warn` has been removed. Per ASP重构-身份侧校验, FE-21 (service
+    // description structure/length) and FE-22 (prohibited content) are CLI rules
+    // with 命中处置 = 阻断注册 — they now block like every other field. Only the
+    // SEMANTIC service-description quality check (FE-23) stays advisory, and that
+    // one lives in the skill layer, not here.
 
     let pass = !findings.iter().any(|f| f.severity == "block");
     ValidationResult { pass, findings }
@@ -167,32 +180,18 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
         return;
     }
 
+    // All name rules share one unified 提示文案.
     // U1 (= N7) test/env marker on the name.
     if has_test_marker(name) {
-        findings.push(Finding::block(
-            "name",
-            "U1",
-            "Contains a test/environment marker.",
-            "Remove the test/environment marker.",
-        ));
+        findings.push(Finding::block("name", "U1", fe::FE03));
     }
     // U2 hex address.
     if contains_hex_address(name) {
-        findings.push(Finding::block(
-            "name",
-            "U2",
-            "Contains a 0x hex address.",
-            "Remove the 0x address.",
-        ));
+        findings.push(Finding::block("name", "U2", fe::FE03));
     }
     // U3 negative-capability phrase.
     if contains_negative_capability(name) {
-        findings.push(Finding::block(
-            "name",
-            "U3",
-            "Contains a negative-capability phrase.",
-            "Describe what the agent does, not what it cannot do.",
-        ));
+        findings.push(Finding::block("name", "U3", fe::FE03));
     }
 
     // N1 length: pure-CJK → 2..=12 chars; mixed (CJK + Latin, e.g. the
@@ -202,60 +201,30 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
     let char_count = name.chars().count();
     if contains_cjk(name) && !contains_latin_letter(name) {
         if !(2..=12).contains(&char_count) {
-            findings.push(Finding::block(
-                "name",
-                "N1",
-                "CJK name must be 2-12 characters.",
-                "Use a 2-12 character name.",
-            ));
+            findings.push(Finding::block("name", "N1", fe::FE03));
         }
     } else if !(3..=25).contains(&char_count) {
-        findings.push(Finding::block(
-            "name",
-            "N1",
-            "Name must be 3-25 characters.",
-            "Use a 3-25 character name.",
-        ));
+        findings.push(Finding::block("name", "N1", fe::FE03));
     }
 
     // N2 embedded agent id.
     if has_embedded_agent_id(name) {
-        findings.push(Finding::block(
-            "name",
-            "N2",
-            "Contains an embedded agent id / trailing number.",
-            "Remove the embedded id or trailing number from the name.",
-        ));
+        findings.push(Finding::block("name", "N2", fe::FE03));
     }
 
     // N3 ordinal suffix.
     if has_ordinal_suffix(name) {
-        findings.push(Finding::block(
-            "name",
-            "N3",
-            "Ends with an ordinal/version suffix.",
-            "Remove the ordinal suffix (e.g. _v2, (2), #3).",
-        ));
+        findings.push(Finding::block("name", "N3", fe::FE03));
     }
 
     // N6 bilingual separator.
     if contains_cjk(name) && contains_latin_letter(name) && !name.contains(" \u{00B7} ") {
-        findings.push(Finding::block(
-            "name",
-            "N6",
-            "Mixed CJK + Latin name must use ' \u{00B7} ' (space middle-dot space) as separator.",
-            "Separate the CJK and Latin parts with ' \u{00B7} '.",
-        ));
+        findings.push(Finding::block("name", "N6", fe::FE03));
     }
 
     // N8 decorative symbols.
     if has_decorative_symbols(name) {
-        findings.push(Finding::block(
-            "name",
-            "N8",
-            "Contains decorative or disallowed symbols.",
-            "Use only letters, digits, spaces, a middle dot, and at most a single internal hyphen.",
-        ));
+        findings.push(Finding::block("name", "N8", fe::FE03));
     }
 
     // NOTE: public-figure / celebrity-name checking is deliberately NOT done
@@ -265,41 +234,22 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
 
 // ─── Universal text rules (U1/U2/U3) for a generic field ────────────────────
 
+// Only caller is the agent-level `description`.
 fn check_universal_text(field: &str, text: &str, findings: &mut Vec<Finding>) {
     if has_test_marker(text) {
-        findings.push(Finding::block(
-            field,
-            "U1",
-            "Contains a test/environment marker.",
-            "Remove the test/environment marker.",
-        ));
+        findings.push(Finding::block(field, "U1", fe::FE05));
     }
     if contains_hex_address(text) {
-        findings.push(Finding::block(
-            field,
-            "U2",
-            "Contains a 0x hex address.",
-            "Remove the 0x address.",
-        ));
+        findings.push(Finding::block(field, "U2", fe::FE05));
     }
     if contains_negative_capability(text) {
-        findings.push(Finding::block(
-            field,
-            "U3",
-            "Contains a negative-capability phrase.",
-            "Describe what the agent does, not what it cannot do.",
-        ));
+        findings.push(Finding::block(field, "U3", fe::FE05));
     }
 }
 
 fn check_description_url_and_addr(field: &str, text: &str, findings: &mut Vec<Finding>) {
     if contains_url(text) {
-        findings.push(Finding::block(
-            field,
-            "D6",
-            "Contains a URL.",
-            "Remove URLs from the description.",
-        ));
+        findings.push(Finding::block(field, "D6", fe::FE05));
     }
     // D7 is the 0x check scoped to a description; U2 already covers agent-level
     // description, but the service-description path calls this with code D7. To
@@ -320,75 +270,46 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
     // ── Universal on every non-empty service field ───────────────────────
     // U2 hex address on any service field EXCEPT `servicedescription`: the
     // hex-address check on the description is emitted once as D7 by
-    // `check_service_description` (the description-scoped code), so excluding
-    // it here avoids a duplicate U2 + D7 on the same text.
-    for (sub, text) in [
-        ("name", svc.service_name.as_str()),
-        ("fee", svc.fee.as_str()),
-        ("servicetype", svc.service_type.as_str()),
-        ("endpoint", svc.endpoint.as_deref().unwrap_or("")),
+    // `check_service_description`, so excluding it here avoids a duplicate U2 + D7.
+    for (sub, text, msg) in [
+        ("name", svc.service_name.as_str(), fe::FE06),
+        ("fee", svc.fee.as_str(), fe::FE12),
+        ("servicetype", svc.service_type.as_str(), fe::FE10),
+        ("endpoint", svc.endpoint.as_deref().unwrap_or(""), fe::FE11),
     ] {
         if !text.is_empty() && contains_hex_address(text) {
-            findings.push(Finding::block(
-                f(sub),
-                "U2",
-                "Contains a 0x hex address.",
-                "Remove the 0x address.",
-            ));
+            findings.push(Finding::block(f(sub), "U2", msg));
         }
     }
-    // U3 negative-capability on name + description.
-    for (sub, text) in [
-        ("name", svc.service_name.as_str()),
-        ("servicedescription", svc.service_description.as_str()),
-    ] {
-        if !text.is_empty() && contains_negative_capability(text) {
-            findings.push(Finding::block(
-                f(sub),
-                "U3",
-                "Contains a negative-capability phrase.",
-                "Describe what the service does, not what it cannot do.",
-            ));
-        }
+    // U3 negative-capability: on the service NAME → name message; on the service
+    // DESCRIPTION it is a prohibited-content issue → description message.
+    if !svc.service_name.is_empty() && contains_negative_capability(&svc.service_name) {
+        findings.push(Finding::block(f("name"), "U3", fe::FE06));
+    }
+    if !svc.service_description.is_empty()
+        && contains_negative_capability(&svc.service_description)
+    {
+        findings.push(Finding::block(f("servicedescription"), "U3", fe::FE22));
     }
 
-    // ── ServiceType (T1/T2/T3) ───────────────────────────────────────────
+    // ── ServiceType (T1) ──────────────────────────────────────────────────
     if !is_a2mcp && !is_a2a {
-        findings.push(Finding::block(
-            f("servicetype"),
-            "T1",
-            "servicetype must be exactly A2A or A2MCP.",
-            "Set servicetype to A2A or A2MCP.",
-        ));
+        findings.push(Finding::block(f("servicetype"), "T1", fe::FE10));
     }
+    // ── Endpoint (T2/T3/T4) ───────────────────────────────────────────────
     let endpoint_empty = svc.endpoint.as_deref().map(str::trim).unwrap_or("").is_empty();
     if is_a2mcp && endpoint_empty {
-        findings.push(Finding::block(
-            f("endpoint"),
-            "T2",
-            "A2MCP service must have an endpoint.",
-            "Provide the MCP endpoint URL.",
-        ));
+        findings.push(Finding::block(f("endpoint"), "T2", fe::FE11));
     }
     if is_a2a && !endpoint_empty {
-        findings.push(Finding::block(
-            f("endpoint"),
-            "T3",
-            "A2A service must not have an endpoint.",
-            "Remove the endpoint field for A2A services.",
-        ));
+        findings.push(Finding::block(f("endpoint"), "T3", fe::FE11));
     }
 
     // ── T4: endpoint URL security (A2MCP only) ────────────────────────────
     if is_a2mcp && !endpoint_empty {
         let ep = svc.endpoint.as_deref().unwrap_or("").trim();
         if !ep.starts_with("https://") {
-            findings.push(Finding::block(
-                f("endpoint"),
-                "T4",
-                "Endpoint must use HTTPS.",
-                "Change the URL scheme to https://.",
-            ));
+            findings.push(Finding::block(f("endpoint"), "T4", fe::FE11));
         } else {
             let host = ep.strip_prefix("https://")
                 .and_then(|s| s.split('/').next())
@@ -404,12 +325,7 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
                 || host.ends_with(".internal")
                 || host.strip_prefix("172.").and_then(|r| r.split('.').next()?.parse::<u8>().ok()).map(|n| (16..=31).contains(&n)).unwrap_or(false);
             if is_private {
-                findings.push(Finding::block(
-                    f("endpoint"),
-                    "T4",
-                    "Endpoint must be a publicly reachable HTTPS URL (not localhost, 127.0.0.1, or a private network address).",
-                    "Deploy the service to a public host and provide its https:// URL.",
-                ));
+                findings.push(Finding::block(f("endpoint"), "T4", fe::FE11));
             }
         }
     }
@@ -420,64 +336,42 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
             ("name", svc.service_name.as_str()),
             ("servicedescription", svc.service_description.as_str()),
         ] {
-            if let Some(token) = contradicting_type_token(text, &stype) {
-                findings.push(Finding::block(
-                    f(sub),
-                    "U5",
-                    &format!("Mentions '{token}' but servicetype is {stype}."),
-                    "Make the text and the servicetype agree.",
-                ));
+            if contradicting_type_token(text, &stype).is_some() {
+                findings.push(Finding::block(f(sub), "U5", fe::FE10));
             }
         }
     }
 
-    // ── ServiceName (S1/S3/S4/S6) ────────────────────────────────────────
+    // ── ServiceName (S1/S3/S4/S6) ─────────────────────────────────────────
     if !svc.service_name.is_empty() {
         let name_chars = svc.service_name.chars().count();
         if !(5..=30).contains(&name_chars) {
-            findings.push(Finding::block(
-                f("name"),
-                "S1",
-                "Service name must be 5-30 characters.",
-                "Use a 5-30 character service name.",
-            ));
+            findings.push(Finding::block(f("name"), "S1", fe::FE06));
         }
         if !agent_name.is_empty()
             && svc.service_name.trim().eq_ignore_ascii_case(agent_name.trim())
         {
-            findings.push(Finding::block(
-                f("name"),
-                "S3",
-                "Service name duplicates the agent name.",
-                "Give the service a distinct name from the agent.",
-            ));
+            findings.push(Finding::block(f("name"), "S3", fe::FE06));
         }
         if contains_price_info(&svc.service_name) {
-            findings.push(Finding::block(
-                f("name"),
-                "S4",
-                "Service name contains price information.",
-                "Move price into the fee field; keep it out of the name.",
-            ));
+            findings.push(Finding::block(f("name"), "S4", fe::FE06));
         }
         if has_test_marker(&svc.service_name) {
-            findings.push(Finding::block(
-                f("name"),
-                "S6",
-                "Service name contains a test/environment marker.",
-                "Remove the test/environment marker.",
-            ));
+            findings.push(Finding::block(f("name"), "S6", fe::FE06));
         }
     }
 
     // ── Pricing (U4/P1..P6) — single fee XOR subscription ────────────────
     check_pricing(index, svc, is_a2mcp, is_a2a, findings);
 
-    // ── Description (D1-D7) on servicedescription ────────────────────────
-    // Always run: an empty / blank description is itself a D1 (handled by the
-    // empty branch inside check_service_description). Gating on non-empty here
-    // would skip that branch and let a blank description pass silently.
-    check_service_description(index, &svc.service_description, findings);
+    // ── Description on servicedescription: FE-21 (structure/length) + FE-22
+    // (prohibited content). Always run: an empty / blank A2A description is
+    // itself a structural failure (handled inside check_service_description).
+    // Structure/length is A2A-only — an A2MCP description is the request
+    // description governed by FE-16 (skill rule), so its structure is not
+    // checked here; only FE-22 prohibited-content runs for A2MCP.
+    let has_subscription = !svc.subscription.is_empty();
+    check_service_description(index, &svc.service_description, is_a2mcp, has_subscription, findings);
 }
 
 // Pricing QA. A2MCP: single-purchase `fee` required (plain number), no
@@ -503,50 +397,22 @@ fn check_pricing(
     let fee_present = !fee.is_empty();
     let has_subscription = !svc.subscription.is_empty();
     let bad_fee = |findings: &mut Vec<Finding>| {
-        findings.push(Finding::block(
-            &fee_field,
-            "P1",
-            "Fee must be a plain number.",
-            "Use a plain number, e.g. 10 — USDT is the default currency; do not add a currency symbol, parenthetical, or any other text.",
-        ));
+        findings.push(Finding::block(&fee_field, "P1", fe::FE12));
     };
 
     let trial = svc.free_trial.as_deref().map(str::trim).unwrap_or("");
     let trial_field = format!("service[{index}].freeTrial");
 
     if is_a2mcp {
-        // Subscription is not allowed on A2MCP.
         if has_subscription {
-            findings.push(Finding::block(
-                &sub_field,
-                "P3",
-                "A2MCP services do not support subscription pricing.",
-                "Remove the subscription field for A2MCP services.",
-            ));
+            findings.push(Finding::block(&sub_field, "P3", fe::FE17));
         }
-        // Free trial is a subscription-only concept → not allowed on A2MCP.
         if !trial.is_empty() {
-            findings.push(Finding::block(
-                &trial_field,
-                "P7",
-                "A2MCP services do not support a free trial.",
-                "Remove the freeTrial field for A2MCP services.",
-            ));
+            findings.push(Finding::block(&trial_field, "P7", fe::FE20));
         }
         if !fee_present {
-            // U4 + P1 for empty A2MCP fee.
-            findings.push(Finding::block(
-                &fee_field,
-                "U4",
-                "A2MCP service has an empty fee.",
-                "Set an explicit fee, e.g. 10, or 0 for a free service.",
-            ));
-            findings.push(Finding::block(
-                &fee_field,
-                "P1",
-                "A2MCP fee is required.",
-                "Provide a plain number, e.g. 10 (USDT is the default currency).",
-            ));
+            findings.push(Finding::block(&fee_field, "U4", fe::FE12));
+            findings.push(Finding::block(&fee_field, "P1", fe::FE12));
         } else if !is_plain_number(fee) {
             bad_fee(findings);
         }
@@ -554,63 +420,31 @@ fn check_pricing(
     }
 
     if is_a2a {
-        // A2A must be priced by EXACTLY ONE model — a single fee XOR a
-        // subscription. Never neither (P2), never both (P6).
+        // A2A must be priced by EXACTLY ONE model — a single fee XOR a subscription.
         if !fee_present && !has_subscription {
-            findings.push(Finding::block(
-                &fee_field,
-                "P2",
-                "A2A service has no pricing.",
-                "Provide a single-purchase fee or a monthly subscription fee (exactly one).",
-            ));
+            findings.push(Finding::block(&fee_field, "P2", fe::FE17));
         }
         if fee_present && has_subscription {
-            findings.push(Finding::block(
-                &fee_field,
-                "P6",
-                "A2A service sets both a single-purchase fee and a subscription.",
-                "Choose one billing model — a single-purchase fee or a monthly subscription, not both.",
-            ));
+            findings.push(Finding::block(&fee_field, "P6", fe::FE17));
         }
         if fee_present && !is_plain_number(fee) {
             bad_fee(findings);
         }
         for tier in &svc.subscription {
             if !tier.interval.trim().eq_ignore_ascii_case("month") {
-                findings.push(Finding::block(
-                    &sub_field,
-                    "P4",
-                    &format!("Unsupported subscription interval '{}'.", tier.interval.trim()),
-                    "Only monthly subscription is supported — set interval to 'month'.",
-                ));
+                findings.push(Finding::block(&sub_field, "P4", fe::FE18));
             }
             if !is_plain_number(tier.fee.trim()) {
-                findings.push(Finding::block(
-                    &sub_field,
-                    "P5",
-                    "Subscription fee must be a plain number.",
-                    "Use a plain number, e.g. 10 — USDT is the default currency; do not add a currency symbol or any other text.",
-                ));
+                findings.push(Finding::block(&sub_field, "P5", fe::FE19));
             }
         }
-        // Free trial (subscription-only): valid only alongside a subscription,
-        // and must be a positive integer number of hours.
+        // Free trial is subscription-only; must be a positive integer (hours).
         if !trial.is_empty() {
             if !has_subscription {
-                findings.push(Finding::block(
-                    &trial_field,
-                    "P7",
-                    "freeTrial is only valid on a subscription-priced service.",
-                    "Remove freeTrial, or price this service with a monthly subscription.",
-                ));
+                findings.push(Finding::block(&trial_field, "P7", fe::FE20));
             }
             if !is_positive_integer(trial) {
-                findings.push(Finding::block(
-                    &trial_field,
-                    "P8",
-                    "freeTrial must be a positive integer number of hours.",
-                    "Use a whole number of hours, e.g. 72; do not use decimals, 0, or any extra text.",
-                ));
+                findings.push(Finding::block(&trial_field, "P8", fe::FE20));
             }
         }
         return;
@@ -622,143 +456,93 @@ fn check_pricing(
     }
 }
 
-// Service description is a THREE-part structure per the okx.ai display spec
-// (field 5):
-//   part 1 — core-capability summary        — REQUIRED
-//   part 2 — what the user must provide      — REQUIRED
-//   part 3 — delivery note (交付物说明)       — OPTIONAL here. The spec makes it
-//            REQUIRED for trading-signal services, but "is this a trading-signal
-//            service?" is a SEMANTIC judgment left to the skill's QA layer
-//            (register.md §4), never decided by this mechanical validator.
-// Parts are the non-empty lines positionally: part 1 = line 1, part 2 = line 2,
-// part 3 = every remaining non-empty line joined. At least parts 1 and 2 must be
-// present (fewer → D1). Lengths are measured in EAST-ASIAN DISPLAY WIDTH
-// (`display_width`: CJK = 2, ASCII = 1). Limits (width units): each part ≤ 400,
-// total ≤ 1200 — i.e. the spec's "≤ 200 chars per part / ≤ 600 chars total"
-// counted in CJK characters. D9 additionally blocks deterministic profit /
-// return-guarantee wording ("稳赚 / 保证收益 / 翻倍" …); the trading-signal
-// requirements (declared markets, signal example, no abbreviations, in-scope
-// markets) are semantic and live in the skill layer, not here.
-fn check_service_description(index: usize, desc: &str, findings: &mut Vec<Finding>) {
+// Service description checks split across two doc rules:
+//   • FE-21 (结构/长度) — the A2A buyer-facing description is an EXACT-count,
+//     positional-paragraph structure (each non-empty line = one paragraph):
+//       - non-subscription → 3 paragraphs (1. core capabilities; 2. what the
+//         user provides; 3. what will be delivered)
+//       - subscription     → 2 paragraphs (1. core capabilities; 2. delivered)
+//     Wrong count (incl. empty / fewer) → D1. Lengths use EAST-ASIAN DISPLAY
+//     WIDTH (`display_width`: CJK = 2, ASCII = 1): each paragraph ≤ 400, total
+//     ≤ 1200 — the spec's "≤ 200 CJK per paragraph / ≤ 600 CJK total". FE-21 is
+//     A2A-only: an A2MCP description is the request description (FE-16, skill).
+//   • FE-22 (禁用内容) — URL (D6), 0x address (D7), profit/return-guarantee
+//     wording (D9: "稳赚 / 保证收益 / 翻倍" …), test/env marker (U1). Applies to
+//     EVERY service including A2MCP.
+// Both FE-21 and FE-22 are 阻断注册 (blocking) per ASP重构-身份侧校验. The purely
+// SEMANTIC quality checks (unclear paragraphs, tech-stack leak, disclaimers,
+// declared-market / signal-example for trading-signal services) are FE-23 and
+// live in the skill layer (register.md §4), never in this mechanical validator.
+fn check_service_description(
+    index: usize,
+    desc: &str,
+    is_a2mcp: bool,
+    is_subscription: bool,
+    findings: &mut Vec<Finding>,
+) {
     let field = |sub: &str| format!("service[{index}].{sub}");
     let fd = field("servicedescription");
 
-    // D1 (empty): a blank description has no parts at all.
-    let trimmed = desc.trim();
-    if trimmed.is_empty() {
-        findings.push(Finding::block(
-            &fd,
-            "D1",
-            "Service description must have at least 2 parts: a core-capability summary and what the user must provide, on separate lines (a delivery note is a recommended 3rd line).",
-            "Put the core-capability summary on line 1 and what the user must provide on line 2 (optionally a delivery note on line 3).",
-        ));
+    // ── Prohibited content — applies to EVERY service (A2A + A2MCP) ────────
+    if contains_url(desc) {
+        findings.push(Finding::block(&fd, "D6", fe::FE22));
+    }
+    if contains_hex_address(desc) {
+        findings.push(Finding::block(&fd, "D7", fe::FE22));
+    }
+    if contains_profit_guarantee(desc) {
+        findings.push(Finding::block(&fd, "D9", fe::FE22));
+    }
+    if has_test_marker(desc) {
+        findings.push(Finding::block(&fd, "U1", fe::FE22));
+    }
+
+    // ── Structure/length — A2A only ───────────────────────────────────────
+    // An A2MCP `serviceDescription` is the request description (skill rule);
+    // its buyer-facing structure and length limits do NOT apply here.
+    if is_a2mcp {
+        return;
+    }
+
+    // D1 (empty): a blank A2A description has no parts at all.
+    if desc.trim().is_empty() {
+        findings.push(Finding::block(&fd, "D1", fe::FE21));
         return;
     }
 
     // D2 total display width <= 1200 (= 600 CJK characters).
     if display_width(desc) > 1200 {
-        findings.push(Finding::block(
-            &fd,
-            "D2",
-            "Service description is too long (limit: 600 CJK characters, i.e. 1200 half-width).",
-            "Trim the description to 600 CJK characters (1200 half-width) or fewer.",
-        ));
+        findings.push(Finding::block(&fd, "D2", fe::FE21));
     }
 
-    // D6 URL.
-    if contains_url(desc) {
-        findings.push(Finding::block(
-            &fd,
-            "D6",
-            "Service description contains a URL.",
-            "Remove URLs from the description.",
-        ));
-    }
-    // D7 hex address (description scope).
-    if contains_hex_address(desc) {
-        findings.push(Finding::block(
-            &fd,
-            "D7",
-            "Service description contains a 0x hex address.",
-            "Remove the 0x address.",
-        ));
-    }
-    // D9 profit / return-guarantee wording (deterministic forbidden phrases).
-    if contains_profit_guarantee(desc) {
-        findings.push(Finding::block(
-            &fd,
-            "D9",
-            "Service description contains profit / return-guarantee wording (e.g. 稳赚 / 保证收益 / 翻倍 / guaranteed returns).",
-            "Remove any guaranteed-profit or guaranteed-return claims — describe the capability, not a promised outcome.",
-        ));
-    }
-    // U1 test/environment marker — the spec's universal ban ("所有字段不允许
-    // 包含 (pre)、(test)") applies to EVERY field, service description included.
-    if has_test_marker(desc) {
-        findings.push(Finding::block(
-            &fd,
-            "U1",
-            "Service description contains a test/environment marker.",
-            "Remove the test/environment marker.",
-        ));
-    }
-
-    // Three-part structure, positional: part 1 = 1st non-empty line, part 2 =
-    // 2nd, part 3 = every remaining non-empty line joined. Parts 1 and 2 are
-    // both required; fewer than 2 non-empty lines → D1.
+    // Positional paragraphs: each non-empty line is one paragraph. The doc
+    // requires an EXACT paragraph count by billing model:
+    //   • non-subscription → 3 (1. core capabilities; 2. what the user provides;
+    //                          3. what will be delivered)
+    //   • subscription     → 2 (1. core capabilities; 2. what will be delivered)
+    // Any other count (including empty / < required) is a D1 structural failure.
     let lines: Vec<&str> = desc
         .split('\n')
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect();
 
-    if lines.len() < 2 {
-        findings.push(Finding::block(
-            &fd,
-            "D1",
-            "Service description must have at least 2 parts: a core-capability summary and what the user must provide, on separate lines (a delivery note is a recommended 3rd line).",
-            "Put the core-capability summary on line 1 and what the user must provide on line 2 (optionally a delivery note on line 3).",
-        ));
-        return;
+    let want_parts = if is_subscription { 2 } else { 3 };
+    if lines.len() != want_parts {
+        findings.push(Finding::block(&fd, "D1", fe::FE21));
+        // Still fall through to per-part length checks on whatever lines exist,
+        // so an over-length paragraph is also surfaced under the same FE-21.
     }
 
-    let part1 = lines[0];
-    let part2 = lines[1];
-    // part 3 = the 3rd non-empty line onward, joined — so no trailing content
-    // escapes the per-part length gate. Absent when there are only 2 lines.
-    let part3: Option<String> = if lines.len() > 2 {
-        Some(lines[2..].join("\n"))
-    } else {
-        None
-    };
-
-    // D3 part 1 (core-capability summary) display width <= 400 (= 200 CJK characters).
-    if display_width(part1) > 400 {
-        findings.push(Finding::block(
-            &fd,
-            "D3",
-            "Description part 1 (core-capability summary) is too long (limit: 200 CJK characters, i.e. 400 half-width).",
-            "Shorten the core-capability summary to 200 CJK characters (400 half-width) or fewer.",
-        ));
-    }
-    // D4 part 2 (what the user must provide) display width <= 400 (= 200 CJK characters).
-    if display_width(part2) > 400 {
-        findings.push(Finding::block(
-            &fd,
-            "D4",
-            "Description part 2 (what the user must provide) is too long (limit: 200 CJK characters, i.e. 400 half-width).",
-            "Shorten what-the-user-must-provide to 200 CJK characters (400 half-width) or fewer.",
-        ));
-    }
-    // D5 part 3 (delivery note) display width <= 400 (= 200 CJK characters).
-    if let Some(p3) = &part3 {
-        if display_width(p3) > 400 {
-            findings.push(Finding::block(
-                &fd,
-                "D5",
-                "Description part 3 (delivery note) is too long (limit: 200 CJK characters, i.e. 400 half-width).",
-                "Shorten the delivery note to 200 CJK characters (400 half-width) or fewer.",
-            ));
+    // D3/D4/D5 per-paragraph display width <= 400 (= 200 CJK characters).
+    for (i, line) in lines.iter().enumerate() {
+        if display_width(line) > 400 {
+            let code = match i {
+                0 => "D3",
+                1 => "D4",
+                _ => "D5",
+            };
+            findings.push(Finding::block(&fd, code, fe::FE21));
         }
     }
 }

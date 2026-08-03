@@ -19,6 +19,20 @@ fn codes(r: &ValidationResult) -> Vec<String> {
 }
 
 #[test]
+fn every_name_finding_unifies_to_same_message() {
+    // Requirement ①: multiple sub-checks under one rule group (name) all return
+    // the SAME unified 提示文案 in `message`, regardless of which internal code
+    // (U1/N1/N3/…) fired. Bad name below trips several name sub-checks.
+    let r = run_validation("asp", Some("Trump_v2(test)#3!"), None, None);
+    let name_findings: Vec<&Finding> = r.findings.iter().filter(|f| f.field == "name").collect();
+    assert!(name_findings.len() > 1, "expected several name findings, got {:?}", codes(&r));
+    let expected_msg = super::fe::FE03;
+    for f in &name_findings {
+        assert_eq!(f.message, expected_msg, "name finding {:?} message not unified", f.code);
+    }
+}
+
+#[test]
 fn clean_asp_passes() {
     // 3-part description, good name, valid A2MCP service.
     let desc = "Summarizes text.\\nHandles long docs and articles.\\nSummarize this article";
@@ -744,8 +758,9 @@ fn description_empty_fails_d1() {
 }
 
 #[test]
-fn description_two_parts_passes_d1() {
-    // Line 1 = summary, line 2 = what to provide → valid (part 3 optional).
+fn description_two_parts_non_subscription_fails_d1() {
+    // FE-21: a NON-subscription (single-fee) A2A service must have EXACTLY 3
+    // paragraphs. A 2-paragraph description is the wrong count → D1.
     let service = svc(
         "Doc Summarizer",
         "Summary line.\nProvide: a document and a target language.",
@@ -754,7 +769,59 @@ fn description_two_parts_passes_d1() {
         None,
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
+fn description_two_parts_subscription_passes_d1() {
+    // FE-21: a SUBSCRIPTION-priced A2A service uses EXACTLY 2 paragraphs
+    // (1. core capabilities; 2. what will be delivered) → no D1.
+    let service = "[{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Daily signals across DEX.\\nDelivered as structured signals; copy-trading supported.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
+    let r = run_validation("asp", Some("Agent Name"), Some("A helpful agent."), Some(service));
     assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "got {:?}", codes(&r));
+}
+
+#[test]
+fn description_three_parts_subscription_fails_d1() {
+    // FE-21: a subscription service with 3 paragraphs is the wrong count → D1.
+    let service = "[{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Daily signals across DEX.\\nNothing to provide.\\nDelivered as structured signals.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
+    let r = run_validation("asp", Some("Agent Name"), None, Some(service));
+    assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
+fn a2mcp_description_skips_structure_no_d1() {
+    // FE-21 is A2A-only. An A2MCP `serviceDescription` is the request description
+    // (FE-16, skill rule) — its buyer-facing paragraph structure is NOT checked
+    // here, so a 1-paragraph A2MCP description must NOT trip D1.
+    let service = svc(
+        "Doc Summarizer",
+        "1.[Service Description] summarizes text",
+        "A2MCP",
+        "10",
+        Some("https://example.com/mcp"),
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn a2mcp_description_still_blocks_prohibited_content_fe22() {
+    // FE-22 (prohibited content) applies to EVERY service, including A2MCP:
+    // a URL in an A2MCP description must still surface D6 and block.
+    let service = svc(
+        "Doc Summarizer",
+        "Summarizes text, see https://example.com",
+        "A2MCP",
+        "10",
+        Some("https://example.com/mcp"),
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D6".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
 }
 
 #[test]
@@ -1178,5 +1245,107 @@ fn no_ordinal_suffix_integration_fails_n3() {
     assert!(has_ordinal_suffix("BotNo3"));
     let r = run_validation("asp", Some("BotNo3"), None, None);
     assert!(codes(&r).contains(&"N3".to_string()), "got {:?}", codes(&r));
+}
+
+// ─── Message-unification invariant (same rule group → same message) ───────────
+// After removing the `fe` field, message unification is the only grouping
+// mechanism. Each test below fires multiple sub-checks under one rule group and
+// asserts every finding for that field shares a single message.
+
+#[test]
+fn service_name_findings_unify_to_same_message() {
+    // S1 (length) + S3 (duplicates agent) + S4 (price) + S6 (test marker) all
+    // map to the service-name message. Craft a name that hits S1 + S6 + S4.
+    // "ab(test)USDT" < 5 chars is not easy to combine, so test one multi-hit
+    // combo: an 4-char name with "free" and a test marker.
+    let service = svc(
+        "free(test)",
+        "Does a thing.\nMore detail here.\nDo the thing",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let field_findings: Vec<&Finding> = r
+        .findings
+        .iter()
+        .filter(|f| f.field == "service[0].name")
+        .collect();
+    assert!(field_findings.len() > 1, "expected multiple service-name findings, got {:?}", codes(&r));
+    let first_msg = &field_findings[0].message;
+    for f in &field_findings {
+        assert_eq!(&f.message, first_msg, "service-name finding {:?} has diverging message", f.code);
+    }
+    assert_eq!(first_msg, super::fe::FE06);
+}
+
+#[test]
+fn description_prohibited_findings_unify_to_same_message() {
+    // D6 (URL) + U1 (test marker) + D9 (profit guarantee) all map to the
+    // prohibited-content message. A description can't have D7 (hex) + D6
+    // simultaneously in a short string without other noise, so use U1 + D6.
+    let desc_with_url_and_marker =
+        "稳赚不赔 — see https://example.com (test).\nProvide something.\nDelivery: file.";
+    let service = svc("Doc Summarizer", desc_with_url_and_marker, "A2A", "5", None);
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let fd = "service[0].servicedescription";
+    let field_findings: Vec<&Finding> =
+        r.findings.iter().filter(|f| f.field == fd).collect();
+    assert!(field_findings.len() > 1, "expected multiple description findings, got {:?}", codes(&r));
+    let first_msg = &field_findings[0].message;
+    for f in &field_findings {
+        assert_eq!(&f.message, first_msg, "description finding {:?} has diverging message", f.code);
+    }
+    assert_eq!(first_msg, super::fe::FE22);
+}
+
+#[test]
+fn json_output_does_not_contain_fe_key() {
+    // The serialized JSON for a blocking finding must never include an "fe" key —
+    // it was internal only and has been removed from the struct entirely.
+    let r = run_validation("asp", Some("Trump_v2(test)"), None, None);
+    assert!(!r.pass);
+    let json = serde_json::to_string(&r).unwrap();
+    assert!(
+        !json.contains("\"fe\""),
+        "serialized output must not contain 'fe' key, got: {json}"
+    );
+}
+
+#[test]
+fn json_output_contains_expected_fields_only() {
+    // Each finding must serialize exactly: field, code, severity, message.
+    let r = run_validation("asp", Some("X"), None, None);
+    let json: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+    let finding = &json["findings"][0];
+    assert!(finding["field"].is_string(), "missing 'field'");
+    assert!(finding["code"].is_string(), "missing 'code'");
+    assert!(finding["severity"].is_string(), "missing 'severity'");
+    assert!(finding["message"].is_string(), "missing 'message'");
+    assert!(finding["fe"].is_null(), "'fe' must not be present in JSON");
+}
+
+#[test]
+fn endpoint_findings_unify_to_same_message() {
+    // T2 (A2MCP missing endpoint) fires alone; pair it with U2 (hex address as
+    // endpoint) to get two findings on the endpoint field with the same message.
+    // Easiest: supply an A2MCP service with a 0x hex address as the endpoint
+    // (fails T4 — not https:// — and U2 — hex in endpoint field).
+    let service = format!(
+        "[{{\"serviceName\":\"Some MCP\",\"serviceDescription\":\"Does a thing.\\nMore detail.\\nDo the thing\",\
+         \"serviceType\":\"A2MCP\",\"fee\":\"5\",\"endpoint\":\"0xdeadbeefdeadbeef\"}}]"
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let ep_findings: Vec<&Finding> = r
+        .findings
+        .iter()
+        .filter(|f| f.field == "service[0].endpoint")
+        .collect();
+    assert!(ep_findings.len() > 1, "expected multiple endpoint findings, got {:?}", codes(&r));
+    let first_msg = &ep_findings[0].message;
+    for f in &ep_findings {
+        assert_eq!(&f.message, first_msg, "endpoint finding {:?} has diverging message", f.code);
+    }
+    assert_eq!(first_msg, super::fe::FE11);
 }
 
