@@ -4,7 +4,14 @@ Load on a swap failure or edge case. Items in the swap.md Risk Controls table (h
 
 ## Error Retry (after `swap execute` returns an error)
 
-An error may be caused by a preceding approval tx not yet confirmed on-chain:
+**Chain not support (`81104`) — evaluate this FIRST, before every rule below.** "Chain not support" is a deterministic, permanent condition: the target chain does not support swap, so the outcome cannot change between attempts.
+
+- **NEVER**: issue a second `swap execute` on code `81104` — a retry re-hits the same unsupported chain and returns the identical error, wasting a backend round-trip.
+- **NEVER**: run the pending-approval wait below for `81104` — no block-time delay and no "waiting for on-chain confirmation" message; this early-exit takes precedence over every branch that follows.
+- **NEVER**: show the raw code `81104` to the user — mirror the region-restriction row's hardcoded-message pattern.
+- **MUST**: display a fixed reminder, then stop: "⚠️ This chain does not currently support swap. Please try a different chain."
+
+If the error is **not** `81104`, it may be caused by a preceding approval tx not yet confirmed on-chain:
 
 1. **Wait** by chain block time before retrying: Ethereum ~15s · BSC ~5s · Arbitrum / Base ~3s · XLayer ~3s · other EVM ~10s.
 2. **Inform the user**, e.g. "Swap failed, possibly due to a pending approval — waiting for on-chain confirmation before retrying."
