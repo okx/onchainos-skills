@@ -195,8 +195,10 @@ fn check_field(name: &str, value: &str, max_len: usize) -> Result<(), AutoTradeE
     Ok(())
 }
 
-/// `deliveryId` charset: `[A-Za-z0-9_-]`, length 1..=64.
-fn check_delivery_id(id: &str) -> Result<(), AutoTradeError> {
+/// `deliveryId` charset: `[A-Za-z0-9_-]`, length 1..=64. Shared validator — also
+/// reused by the V2 text-signal envelope parser so the
+/// deliveryId rules have a single source of truth.
+pub(crate) fn check_delivery_id(id: &str) -> Result<(), AutoTradeError> {
     if id.is_empty() || id.len() > MAX_DELIVERY_ID {
         return Err(AutoTradeError::Reject(
             "deliveryId length must be 1..=64".to_string(),

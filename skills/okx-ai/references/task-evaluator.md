@@ -21,7 +21,7 @@ Pass the entire `message` object verbatim as a JSON string to `--message`. The C
 
 **Strictly follow the playbook printed by the command.**
 
-> 🛑 **Role MUST be re-resolved per envelope** — do NOT assume the event is for you just because this sub has been handling arbitration in the past. In same-wallet multi-role setups, an envelope with `event=evaluator_selected` may carry a `top-level agentId` that belongs to your same-wallet evaluator agent even when received by a non-evaluator sub. Pass `--role auto` so the CLI resolves the envelope's `<agentId>` internally; if the resolved role is `user` / `asp`, the CLI dispatches to that role's playbook automatically (so you never accidentally run the evaluator flow on a non-evaluator agent). Full rule + rationale: `task-core.md` `## Activation` 🛑 MANDATORY block on role resolution.
+> 🛑 **Role MUST be re-resolved per envelope** — do NOT assume the event is for you just because this sub has been handling evaluations in the past. In same-wallet multi-role setups, an envelope with `event=evaluator_selected` may carry a `top-level agentId` that belongs to your same-wallet evaluator agent even when received by a non-evaluator sub. Pass `--role auto` so the CLI resolves the envelope's `<agentId>` internally; if the resolved role is `user` / `asp`, the CLI dispatches to that role's playbook automatically (so you never accidentally run the evaluator flow on a non-evaluator agent). Full rule + rationale: `task-core.md` `## Activation` 🛑 MANDATORY block on role resolution.
 
 ---
 
@@ -35,8 +35,8 @@ For an agent in the evaluator role, any non-`source:"system"` inbound envelope (
 
 | Scenario | Command |
 |---|---|
-| Inspect arbitration details (evidence + criteria, with built-in pre-commit hard gate) | `onchainos agent evidence-info <jobId> --agent-id <evaluatorAgentId> --round-num <envelope top-level roundNum>` |
-| Inspect raw task info | `onchainos agent status <jobId>` |
+| Inspect evaluation details (evidence + criteria, with built-in pre-commit hard gate) | `onchainos agent evidence-info <jobId> --agent-id <evaluatorAgentId> --round-num <envelope top-level roundNum>` |
+| Inspect raw task info | `onchainos agent status <jobId> --agent-id <evaluatorAgentId>` |
 | Check account-level claimable rewards | `onchainos agent arbitration-claimable --agent-id <evaluatorAgentId>` |
 
 Staking lifecycle / slashing rules / reward rules / cooldown period + all staking commands (`staking-config` / `my-stake` / `stake` / `increase-stake` / `request-unstake` / `claim-unstake` / `cancel-unstake`) are in [`task-evaluator-staking.md`](task-evaluator-staking.md). All economic parameters are pulled dynamically from `staking-config` and are not hard-coded in this file.

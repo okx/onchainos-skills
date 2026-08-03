@@ -637,8 +637,9 @@ fn check_pricing(
 // total ≤ 1200 — i.e. the spec's "≤ 200 chars per part / ≤ 600 chars total"
 // counted in CJK characters. D9 additionally blocks deterministic profit /
 // return-guarantee wording ("稳赚 / 保证收益 / 翻倍" …); the trading-signal
-// requirements (declared markets, signal example, no abbreviations, in-scope
-// markets) are semantic and live in the skill layer, not here.
+// recommendations (declared markets, signal example) are semantic and live in
+// the skill layer, not here — and there is no market whitelist (any market is
+// allowed).
 fn check_service_description(index: usize, desc: &str, findings: &mut Vec<Finding>) {
     let field = |sub: &str| format!("service[{index}].{sub}");
     let fd = field("servicedescription");

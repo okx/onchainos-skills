@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
+pub mod asset_class;
 pub mod audit;
 pub mod chains;
 mod client;
 mod commands;
 mod config;
 pub mod crypto;
-mod device_id;
+mod device;
 mod doh;
 mod file_keyring;
 mod home;
@@ -18,6 +19,12 @@ pub mod payment;
 mod payment_cache;
 mod payment_notify;
 pub mod token_alias;
+// Trade-signal parser core (Task 2). A pure, no-I/O library exercised by its own
+// unit tests; the runtime pipeline wiring is a separate task (Task 3), so nothing
+// in the shipped binary references it yet — allow dead_code / unused re-exports
+// until that lands.
+#[allow(dead_code, unused_imports)]
+mod trade_signal;
 pub mod validators;
 mod wallet_api;
 mod wallet_store;
@@ -126,6 +133,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::competition::CompetitionCommand,
     },
+    /// Register for the OKX.AI Trading Hackathon with an existing Trading ASP
+    Hackathon {
+        #[command(subcommand)]
+        command: commands::hackathon::HackathonCommand,
+    },
     /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
@@ -181,6 +193,10 @@ fn main() {
 async fn run() {
     dotenvy::dotenv().ok();
 
+    if let Err(e) = crate::home::self_heal_permissions() {
+        eprintln!("Warning: {e}");
+    }
+
     let mut cli = Cli::parse();
 
     // The agent subsystem runs only on XLayer (chainId=196, chain name "xlayer").
@@ -234,6 +250,7 @@ async fn run() {
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::payment::execute(command).await,
         Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
+        Commands::Hackathon { command } => commands::hackathon::execute(&ctx, command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Strategy { command } => {
             commands::agentic_wallet::strategy::execute(&ctx, *command).await

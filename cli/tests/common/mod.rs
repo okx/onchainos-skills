@@ -137,3 +137,99 @@ pub fn assert_limit_non_empty(data: &Value, limit: usize, label: &str) {
         items.len()
     );
 }
+
+// ── Isolated ONCHAINOS_HOME sandbox helpers ────────────────────────────────
+//
+// Shared by the persistence-refactor integration files (`cli_wallet_persistence`,
+// `cli_ws`, and the offline `market` rows). Sandboxes live under
+// `cli/target/test_tmp/<stem>/<unique>` — NOT `tempfile::tempdir()`, whose
+// `/var/folders/.../T/` target is denied write by CI/agent sandboxes.
+
+/// Per-test sandbox directory that removes itself on drop.
+pub struct TestHome {
+    path: std::path::PathBuf,
+}
+
+impl TestHome {
+    /// Absolute path of the sandbox directory.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl Drop for TestHome {
+    fn drop(&mut self) {
+        // Best-effort: a test may have chmod'd the dir; restore write so the
+        // recursive remove can succeed, then ignore any residual error.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o700));
+        }
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+static SANDBOX_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Build a fresh, isolated sandbox directory under
+/// `cli/target/test_tmp/<stem>/<pid>-<nanos>-<counter>` and return an RAII guard
+/// plus its path. The uniqueness suffix (`process::id + nanos + AtomicU64`)
+/// keeps parallel tests in the same binary from colliding.
+pub fn fresh_home(stem: &str) -> (TestHome, std::path::PathBuf) {
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test_tmp")
+        .join(stem);
+    std::fs::create_dir_all(&base).expect("create test_tmp base");
+    let pid = std::process::id();
+    let n = SANDBOX_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = base.join(format!("{pid}-{ts}-{n}"));
+    std::fs::create_dir_all(&dir).expect("create per-test sandbox dir");
+    (TestHome { path: dir.clone() }, dir)
+}
+
+/// Strip inherited `OKX_*` / `ONCHAINOS_HOME` / `OKX_DOH_BINARY_PATH` env so each
+/// test sees a pristine environment, then pin `ONCHAINOS_HOME` to `home`
+/// **per-invocation** via `Command::env` (never `std::env::set_var`, which is
+/// process-global and races across parallel tests). The caller re-sets only what
+/// the specific case needs after this.
+pub fn scrubbed<'a>(
+    cmd: &'a mut assert_cmd::Command,
+    home: &std::path::Path,
+) -> &'a mut assert_cmd::Command {
+    cmd.env_remove("OKX_API_KEY")
+        .env_remove("OKX_ACCESS_KEY")
+        .env_remove("OKX_SECRET_KEY")
+        .env_remove("OKX_PASSPHRASE")
+        .env_remove("OKX_BASE_URL")
+        .env_remove("OKX_DOH_BINARY_PATH")
+        .env("ONCHAINOS_HOME", home)
+}
+
+/// Parse `stdout` as JSON. Panics with the raw stdout/stderr on parse failure so
+/// a non-JSON crash is legible instead of an opaque serde error.
+pub fn parse_stdout_json(output: &std::process::Output) -> Value {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!("invalid JSON in stdout: {e}\nstdout: {stdout}\nstderr: {stderr}")
+    })
+}
+
+/// Unix permission bits (`mode & 0o777`) of a file. Unix-only — permission
+/// assertions are `#[cfg(unix)]` at every call site (spec §11 #3: Windows is a
+/// documented no-op).
+#[cfg(unix)]
+pub fn file_mode(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .unwrap_or_else(|e| panic!("stat {}: {e}", path.display()))
+        .permissions()
+        .mode()
+        & 0o777
+}

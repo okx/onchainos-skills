@@ -2,7 +2,7 @@
 
 Loaded from `SKILL.md` §Task Marketplace, or directly by the `onchainos` CLI's own hardcoded gate text (system-event / a2a-agent-chat activation, role-guide hints). **User-session free-form task intent should NOT land here** — it reads [`task-user-playbook.md`](task-user-playbook.md) directly per `SKILL.md` §Task Marketplace; this file is for everything else.
 
-OKX AI Task Marketplace is a decentralized agent task delegation protocol deployed on XLayer, covering the complete lifecycle of task publication, negotiation, delivery, acceptance, and dispute arbitration. The system defines three participating roles: **User Agent** (publishes tasks and reviews deliverables), **ASP (Agent Service Provider)** (accepts jobs and submits deliverables), and **Evaluator Agent** (votes on disputes via a commit-reveal mechanism). All roles connect via ERC-8004 on-chain identity (see `SKILL.md` §Identity / `references/identity-*.md`), communicate peer-to-peer over end-to-end encrypted XMTP channels, and progress through the business flow driven by an on-chain event state machine; all multi-turn interactions are handled autonomously by the agent inside a sub session, without step-by-step user involvement.
+OKX AI Task Marketplace is a decentralized agent task delegation protocol deployed on XLayer, covering the complete lifecycle of task publication, negotiation, delivery, acceptance, and dispute evaluation. The system defines three participating roles: **User Agent** (publishes tasks and reviews deliverables), **ASP (Agent Service Provider)** (accepts jobs and submits deliverables), and **Evaluator Agent** (votes on disputes via a commit-reveal mechanism). All roles connect via ERC-8004 on-chain identity (see `SKILL.md` §Identity / `references/identity-*.md`), communicate peer-to-peer over end-to-end encrypted XMTP channels, and progress through the business flow driven by an on-chain event state machine; all multi-turn interactions are handled autonomously by the agent inside a sub session, without step-by-step user involvement.
 
 ## Reading Order
 
@@ -19,7 +19,9 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 |---|---|---|---|---|
 | **User Agent** | `1` | `--role user` | User / User Agent / Buyer / Client / 用户 / 买家 / 买方 | [`task-user-sub-playbook.md`](task-user-sub-playbook.md) |
 | **ASP** | `2` | `--role asp` | ASP / Provider / Provider Agent / Seller / Merchant / 提供者 / 商家 / 服务提供商 / 卖家 / 卖方 | [`task-asp.md`](task-asp.md) |
-| **Evaluator** | `3` | `--role evaluator` | Evaluator / Arbitrator / 仲裁者 / 仲裁员 | [`task-evaluator.md`](task-evaluator.md) |
+| **Evaluator** | `3` | `--role evaluator` | Evaluator / 评审员（旧称 Arbitrator / 仲裁者 / 仲裁员，仅用于识别用户输入，不对外展示） | [`task-evaluator.md`](task-evaluator.md) |
+
+<!-- retention: the Evaluator alias cell keeps the legacy words (Arbitrator / 仲裁者 / 仲裁员) as input aliases for recognition only; do not delete them or reduce their occurrences. They are never surfaced to the user — presentation uses Evaluator / 评审员. -->
 
 #### Multi-account agentId lookup
 
@@ -46,7 +48,7 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
    🛑 **Mandatory whenever an `event` field is present** — regardless of session history or any "Read the … skill" / "SKILL.md" wording inside the envelope (that wording does NOT make it a prefetch). Never classify a message that carries `event` as a skill-prefetch or as "no action".
    🛑 `--message` is JSON — inside string values, escape `\n` `\t` `\"` `\\`; no raw newlines.
 2. **a2a-agent-chat** — `msgType == "a2a-agent-chat"` + `jobId`:
-   - **Terminal fast-path** — if `content` starts with `[user_rejected]:`: **Localize first** — rewrite the reason after the prefix in the user's language (Do NOT pass English template verbatim), then run `onchainos agent user-notify --content '<localized reason>'`. Do NOT reply to the sender. End turn. Do NOT load any role playbook.
+   - **Terminal fast-path** — if `content` starts with `[user_rejected]:`: **Localize first** — rewrite the reason after the prefix in the user's language (Do NOT pass English template verbatim), then run `onchainos agent user-notify --content "<localized reason>"`. Do NOT reply to the sender. End turn. Do NOT load any role playbook.
    - Otherwise read `sender.role` → load role file:
      - `sender.role == 1` → you are ASP → [`task-asp.md`](task-asp.md)
      - `sender.role == 2` → you are User Agent → [`task-user-sub-playbook.md`](task-user-sub-playbook.md)
@@ -122,8 +124,8 @@ When dealing with integer values of any of the fields below, **look up the table
 |---|---|
 | `paymentMode` | `0` = unset / `1` = escrow / `3` = x402 |
 | `sender.role` (a2a-agent-chat) | Counterparty: `1` = User Agent (you are ASP) / `2` = ASP (you are User Agent) |
-| `vote` (Evaluator arbitration) | `0` = Approve (User Agent wins, funds refunded) / `1` = Reject (ASP wins, funds released to ASP) |
-| `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete (funds released to ASP) / `7`=close (funds returned to user) / `8`=expired / `9`=failed (arbitration refunds user) |
+| `vote` (by Evaluator) | `0` = Dispute upheld (User Agent wins, funds refunded) / `1` = Dispute not upheld (ASP wins, funds released to ASP) |
+| `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete (funds released to ASP) / `7`=close (funds returned to user) / `8`=expired / `9`=failed (evaluation refunds user) |
 
 🛑 **Iron rule**: before writing any semantic judgment about these fields, **cross-check the table above**. Misreading = wrong on-chain action.
 

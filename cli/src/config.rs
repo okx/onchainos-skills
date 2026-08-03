@@ -21,6 +21,27 @@ pub struct AppConfig {
 impl AppConfig {
     pub fn load() -> Result<Self> {
         let path = config_path()?;
+        // Cwd migration (spec §4, AC#9): if the home config does not exist but
+        // a stale `./.onchainos/config.json` in the cwd does, auto-copy it to
+        // ONCHAINOS_HOME and prompt the user to delete the stale file.
+        if !path.exists() {
+            if let Ok(cwd) = std::env::current_dir() {
+                let stale = cwd.join(".onchainos").join("config.json");
+                if stale.exists() {
+                    if let Ok(bytes) = fs::read(&stale) {
+                        // atomic_write(path, bytes, sensitive=false) — config.json
+                        // contains no sensitive data after dead-field deletion.
+                        let _ = crate::home::atomic_write(&path, &bytes, false);
+                        eprintln!(
+                            "Migrated config from {stale_dir}/config.json to {home}. \
+                             You can safely delete the stale .onchainos directory at {stale_dir}.",
+                            stale_dir = stale.parent().unwrap_or(&cwd).display(),
+                            home = path.display(),
+                        );
+                    }
+                }
+            }
+        }
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -43,12 +64,5 @@ impl AppConfig {
 }
 
 fn config_path() -> Result<PathBuf> {
-    // Priority: ONCHAINOS_HOME env > ./.onchainos/ (project-local)
-    let base = match std::env::var("ONCHAINOS_HOME") {
-        Ok(p) => PathBuf::from(p),
-        Err(_) => std::env::current_dir()
-            .context("cannot get cwd")?
-            .join(".onchainos"),
-    };
-    Ok(base.join("config.json"))
+    Ok(crate::home::onchainos_home()?.join("config.json"))
 }

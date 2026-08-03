@@ -79,7 +79,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 | Subscription detail | `subscribe-detail {subId}` | show subscription detail |
 | Enable auto-renew | `start-autorenew {subId}` | on-chain, needs EIP-712 sign; may require approve |
 | Cancel subscription (trial cancel / close auto-renew) | `subscribe-cancel {subId}` | unified: trial → cancel auto-conversion, no charge incurred, Closed; active → close auto-renew, current period continues to expiry |
-| Apply for refund (退款 / 发起退款 / 申请退款 / 拒收 / 申请仲裁 / 仲裁 / refund / dispute) | `reject {id} --reason "..."` | **unified command** — auto-detects subscription vs regular task. User says any of these keywords → **always use `reject`** as the first step |
+| Apply for refund (退款 / 发起退款 / 申请退款 / 拒收 / 申请仲裁 / 申请评审 / 仲裁 / 评审 / refund / dispute / evaluation / arbitration) | `reject {id} --reason "..."` | **unified command** — auto-detects subscription vs regular task. User says any of these keywords → **always use `reject`** as the first step |
 | Claim refund after timeout | `claim-auto-refund {id}` | 🛑 **NEVER use as first step** — only after `reject` AND ASP misses 1-day response window |
 | Active subscription cost | `subscribe-cost` | total monthly cost of active formal subscriptions (no params needed) |
 
@@ -87,9 +87,10 @@ If the user does not specify a `subId`, use `subscribe-detail` to check the subs
 
 ### Reject + refund flow (detailed)
 
-> **Intent mapping**: "退款" / "发起退款" / "申请退款" / "拒收" / "申请仲裁" / "仲裁" / "refund" / "dispute" / "apply for refund" → `reject` (Step 1 below).
+> **Intent mapping**: "退款" / "发起退款" / "申请退款" / "拒收" / "申请仲裁" / "申请评审" / "仲裁" / "评审" / "refund" / "dispute" / "evaluation" / "arbitration" / "apply for refund" → `reject` (Step 1 below).
 > The `reject` command is unified — it auto-detects subscription vs regular task by `jobType`.
 > 🛑 `claim-auto-refund` is NOT the entry point — NEVER call it directly for any refund/退款 intent. It is only used in Step 3 after ASP timeout.
+<!-- intent: 申请仲裁 / 仲裁 / arbitration are kept here as input aliases for recognition only — do not delete them or reduce their occurrences. When any action word in this list matches, route straight to reject (the refund / refusal flow) and return NO legacy-role rename prompt; that is a deliberate decision, not an omission — these are task actions, not the Evaluator role. -->
 
 When the user is unhappy with a delivery (subscription or regular task):
 
@@ -102,7 +103,7 @@ Step 1 — Reject (on-chain, user initiates)
 
 Step 2 — ASP responds (one of three outcomes)
   A. ASP agrees to refund → sub_asp_agree event → status = Failed (funds returned)
-  B. ASP files dispute   → sub_asp_dispute event → status = Disputed (awaiting DM arbitration)
+  B. ASP files dispute   → sub_asp_dispute event → status = Disputed (awaiting DM evaluation)
   C. ASP does not respond within 1 day
      → user may claim refund manually:
 

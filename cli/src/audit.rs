@@ -108,11 +108,14 @@ fn try_log(
         error: error.map(truncate_error),
     };
     let line = serde_json::to_string(&entry).ok()?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .ok()?;
+    let mut opts = OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(&path).ok()?;
     if needs_header {
         writeln!(file, "{}", device_header_line()).ok()?;
     }
@@ -190,6 +193,10 @@ const REDACT_FULL: &[&str] = &[
     // business params can carry sensitive challenge / order data — never log them.
     "--payload",
     "--param",
+    // CeFi user identifier passed to `hackathon register`. Fully redacted rather
+    // than prefix-masked: an OKX UID is ~10-11 digits, so prefix-6 + suffix-4
+    // would leave all but one character of it readable in the log.
+    "--uid",
 ];
 
 /// Flags whose next positional value is an address / email — keep prefix + suffix.
@@ -347,6 +354,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Competition { command } => format!("competition {}", competition_sub(command)),
+        Commands::Hackathon { command } => format!("hackathon {}", hackathon_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Strategy { command } => format!("strategy {}", strategy_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
@@ -472,9 +480,10 @@ use crate::commands::agentic_wallet::WalletCommand;
 use crate::commands::payment::PaymentCommand;
 use crate::commands::{
     competition::CompetitionCommand, defi::DefiCommand, gateway::GatewayCommand,
-    leaderboard::LeaderboardCommand, market::MarketCommand, memepump::MemepumpCommand,
-    portfolio::PortfolioCommand, security::SecurityCommand, signal::SignalCommand,
-    social::SocialCommand, swap::SwapCommand, token::TokenCommand, tracker::TrackerCommand,
+    hackathon::HackathonCommand, leaderboard::LeaderboardCommand, market::MarketCommand,
+    memepump::MemepumpCommand, portfolio::PortfolioCommand, security::SecurityCommand,
+    signal::SignalCommand, social::SocialCommand, swap::SwapCommand, token::TokenCommand,
+    tracker::TrackerCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -735,6 +744,12 @@ fn competition_sub(c: &CompetitionCommand) -> &'static str {
         CompetitionCommand::Join { .. } => "join",
         CompetitionCommand::Claim { .. } => "claim",
         CompetitionCommand::SubmitContact { .. } => "submit-contact",
+    }
+}
+
+fn hackathon_sub(c: &HackathonCommand) -> &'static str {
+    match c {
+        HackathonCommand::Register { .. } => "register",
     }
 }
 
@@ -1011,6 +1026,28 @@ mod tests {
         ]);
         let out = redact_args(&args);
         assert_eq!(out[4], "0x1234***5678");
+    }
+
+    #[test]
+    fn hackathon_sub_register_maps_to_register() {
+        let cmd = HackathonCommand::Register {
+            agent_id: "agent-42".to_string(),
+            account_type: "web3".to_string(),
+            address: Some("0x1111111111111111111111111111111111111111".to_string()),
+            uid: None,
+        };
+        assert_eq!(hackathon_sub(&cmd), "register");
+    }
+
+    #[test]
+    fn redact_uid_is_fully_masked() {
+        // A real OKX UID is ~10-11 digits; prefix+suffix masking would leave it
+        // effectively readable, so `--uid` is in REDACT_FULL.
+        for uid in ["1234567890", "12345678901", "1234567890abcdef"] {
+            let args = vec_s(&["onchainos", "hackathon", "register", "--uid", uid]);
+            let out = redact_args(&args);
+            assert_eq!(out[4], "[REDACTED]", "uid {uid} was not fully redacted");
+        }
     }
 
     #[test]

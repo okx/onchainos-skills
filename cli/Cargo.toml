@@ -1,6 +1,6 @@
 [package]
 name = "onchainos-cli"
-version = "4.4.2"
+version = "4.4.5"
 edition = "2021"
 
 [[bin]]
@@ -81,6 +81,9 @@ hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
 # Device fingerprint (machine_uid::get() reads /etc/machine-id / MachineGuid / IOPlatformUUID); pin 0.3 per spec §11.2 TBC[2] — do NOT upgrade to 0.6
 machine-uid = "0.3"
+# Device display name (whoami::devicename() reads ComputerName / COMPUTERNAME / hostname);
+# must stay on 1.x — 2.x moved/renamed devicename() and will not compile
+whoami = "1.6.1"
 qrcode = { version = "0.14", default-features = false }
 # Cross-platform browser open (macOS/Windows/Linux + WSL); failure is caught, never fatal
 open = "5"
