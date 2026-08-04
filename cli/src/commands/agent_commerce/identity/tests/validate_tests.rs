@@ -788,15 +788,47 @@ fn a2mcp_description_skips_structure_no_d1() {
 }
 
 #[test]
-fn a2mcp_description_still_blocks_prohibited_content_fe22() {
-    // FE-22 (prohibited content) applies to EVERY service, including A2MCP:
-    // a URL in an A2MCP description must still surface D6 and block.
+fn a2mcp_description_allows_url_no_d6() {
+    // D6 (URL) is A2A-only: the A2MCP request description REQUIRES a `curl`
+    // example carrying the real https endpoint (FE-16, skill rule), so a URL
+    // in an A2MCP description must NOT trip D6.
     let service = svc(
         "Doc Summarizer",
-        "Summarizes text, see https://example.com",
+        "1.[Service Description] summarizes text\\n2.[Parameter Spec] text (string, required): source text\\n3.[Request Method] POST\\n4.[Request Example] curl -X POST https://example.com/mcp -d '{\\\"text\\\":\\\"hi\\\"}'",
         "A2MCP",
         "10",
         Some("https://example.com/mcp"),
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(!codes(&r).contains(&"D6".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "expected pass, got {:?}", codes(&r));
+}
+
+#[test]
+fn a2mcp_description_still_blocks_profit_guarantee_and_test_marker_fe22() {
+    // FE-22 D9 (profit guarantee) and U1 (test marker) still apply to A2MCP.
+    let service = svc(
+        "Doc Summarizer",
+        "保证收益的服务(test)",
+        "A2MCP",
+        "10",
+        Some("https://example.com/mcp"),
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
+    assert!(codes(&r).contains(&"U1".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
+fn a2a_description_with_url_still_fails_d6() {
+    // The URL ban stays fully in force for A2A descriptions.
+    let service = svc(
+        "Doc Summarizer",
+        "Summarizes text, see https://example.com\nProvide a document.\nDelivers a markdown file.",
+        "A2A",
+        "5",
+        None,
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D6".to_string()), "got {:?}", codes(&r));

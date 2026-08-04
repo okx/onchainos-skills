@@ -440,8 +440,10 @@ fn check_pricing(
 //     "≤ 1000 CJK total"; there is no per-paragraph limit. FE-21 is
 //     A2A-only: an A2MCP description is the request description (FE-16, skill).
 //   • FE-22 (禁用内容) — URL (D6), profit/return-guarantee wording (D9:
-//     "稳赚 / 保证收益 / 翻倍" …), test/env marker (U1). Applies to EVERY
-//     service including A2MCP. 
+//     "稳赚 / 保证收益 / 翻倍" …), test/env marker (U1). D9/U1 apply to EVERY
+//     service including A2MCP; the URL ban (D6) is A2A-only — an A2MCP request
+//     description REQUIRES a working `curl` example carrying the real
+//     `https://` endpoint (line 4, FE-16 skill rule), so URLs are legal there.
 // Both FE-21 and FE-22 are 阻断注册 (blocking) per ASP重构-身份侧校验. The purely
 // SEMANTIC quality checks (unclear paragraphs, tech-stack leak, disclaimers,
 // declared-market / signal-example for trading-signal services) are FE-23 and
@@ -456,8 +458,10 @@ fn check_service_description(
     let field = |sub: &str| format!("service[{index}].{sub}");
     let fd = field("servicedescription");
 
-    // ── Prohibited content — applies to EVERY service (A2A + A2MCP) ────────
-    if contains_url(desc) {
+    // ── Prohibited content ─────────────────────────────────────────────────
+    // D6 URL is A2A-only: the A2MCP request description must carry a `curl`
+    // example with the real https endpoint (FE-16), so a URL is expected there.
+    if !is_a2mcp && contains_url(desc) {
         findings.push(Finding::block(&fd, "D6", fe::FE22));
     }
     if contains_profit_guarantee(desc) {

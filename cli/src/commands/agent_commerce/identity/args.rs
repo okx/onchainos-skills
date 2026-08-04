@@ -50,9 +50,11 @@ pub struct CreateArgs {
     ///                            delivery format and whether copy-trading is
     ///                            supported, with a concrete example).
     ///                          Whole text ≤1000 CJK chars (2000 half-width); no
-    ///                          per-part length limit. No URLs, no
-    ///                          0x addresses, no test/env markers, and no
-    ///                          guaranteed-profit / risk-free wording.
+    ///                          per-part length limit. No URLs (A2A only — the
+    ///                          A2MCP request example necessarily carries the
+    ///                          endpoint URL), no 0x addresses, no test/env
+    ///                          markers, and no guaranteed-profit / risk-free
+    ///                          wording.
     ///   • serviceType        — `A2A` (agent-to-agent) or `A2MCP` (API service).
     ///   • fee                — single-purchase price. A plain number as a JSON
     ///                          string ("10"), USDT implied, ≤6 decimals. An
@@ -145,9 +147,10 @@ pub struct UpdateArgs {
     /// line 3 = request method (POST / GET or the MCP tool name), line 4 =
     /// request example (a working `curl` command using the real endpoint URL);
     /// A2A: line 1 = core-capability summary, line 2 = what the user must
-    /// provide, line 3+ = optional delivery note with a concrete example; each
-    /// part ≤200 CJK chars, whole text ≤600 CJK chars; no URLs / 0x addresses /
-    /// test markers / guaranteed-profit wording),
+    /// provide, line 3+ = optional delivery note with a concrete example; whole
+    /// text ≤1000 CJK chars (2000 half-width), no per-part length limit; no URLs
+    /// (A2A only — the A2MCP request example necessarily carries the endpoint
+    /// URL) / 0x addresses / test markers / guaranteed-profit wording),
     /// `serviceType` (`A2A` | `A2MCP`),
     /// `fee` (single-purchase price — plain number, USDT implied, ≤6 decimals),
     /// `subscription` (A2A only — array of `{interval, fee}`, `interval`
