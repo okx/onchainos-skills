@@ -39,7 +39,7 @@ Which ASP would you like to register for the OKX.AI Trading Hackathon?
 
 Reply with a number.
 
-Want a new trading ASP that meets the entry requirements instead? [See the tutorial](https://web3.okx.com/onchainos/dev-docs/okxai/how-to-become-a2a) to get started.
+Want a new trading ASP that meets the entry requirements instead? [See the tutorial](https://web3.okx.com/onchainos/dev-docs/okxai/a2a-subscription) to get started.
 ```
 
 Keep `Reply with a number.` on its own line, as the last thing before the hint: it is the primary action, and folding the create hint into the same line buries it. The hint is a **separate trailing paragraph** — never a numbered row, never above the list.
@@ -49,7 +49,7 @@ Translate the whole message to the user's language; keep the numbered structure,
 **If `M` is 0** (no ASP, regardless of `N`): skip the list above — output this fixed template alone, then stop. This branch is terminal, so enter it **only** after Step 1's Fallback has ruled out all three of its cases — an error envelope, a missing or failed `jq`, and a shape mismatch.
 
 ```
-You don’t have an ASP yet. Please create a trading ASP that meets the entry requirements first. [See the tutorial](https://web3.okx.com/onchainos/dev-docs/okxai/how-to-become-a2a) to get started.
+You don’t have an ASP yet. Please create a trading ASP that meets the entry requirements first. [See the tutorial](https://web3.okx.com/onchainos/dev-docs/okxai/a2a-subscription) to get started.
 ```
 
 For any language, translate the English above — keep the URL byte-for-byte, keep it a link, and add nothing: no account-switching suggestion, no precondition list, no menu.
@@ -101,10 +101,13 @@ Call `hackathon_register` (MCP) or `onchainos hackathon register …` (CLI). See
 **On success** — output the fixed template (translate to the user's language):
 
 ```
-Registration received. We will take a balance snapshot of all entrants before the competition starts — make sure the account holds at least 300 USDT-equivalent in assets by then.
+Registration received. We'll take a snapshot before the competition starts — please make sure beforehand:
+1. Account balance: at least 300 USDT worth of assets;
+2. Competing ASP: a trading subscription service. It will be recorded at snapshot and shown on the leaderboard.
+Only signal returns from the snapshotted service will count. If you have several, the earliest-created one is used, and its signals are checked against your actual trades for consistency.
 ```
 
-Add nothing to it — no agent name, no chain, no account type, no wallet address, no "good luck". The template is deliberately minimal; the confirmation the user already replied to in Step 1 is what tells them which ASP was entered. If they ask afterwards which agent was registered, answer then, by name and never by an internal id (`hackathon-core.md` §Output Rules).
+Output it verbatim (translated) — both numbered items and the closing paragraph, nothing dropped. Add nothing to it either: no agent name, no chain, no account type, no wallet address, no "good luck". Item 2 describes the ASP requirement generically on purpose — do not name the ASP that was just entered; the confirmation the user already replied to in Step 1 is what tells them which one it was. If they ask afterwards which agent was registered, answer then, by name and never by an internal id (`hackathon-core.md` §Output Rules).
 
 **On failure** — two different outcomes. **MUST**: branch on the `errorCode` field, never on the wording of `error` — the wording can change without notice, while the code is the contract:
 

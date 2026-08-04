@@ -19,6 +19,20 @@ fn codes(r: &ValidationResult) -> Vec<String> {
 }
 
 #[test]
+fn every_name_finding_unifies_to_same_message() {
+    // Requirement ①: multiple sub-checks under one rule group (name) all return
+    // the SAME unified 提示文案 in `message`, regardless of which internal code
+    // (U1/N1/N3/…) fired. Bad name below trips several name sub-checks.
+    let r = run_validation("asp", Some("Trump_v2(test)#3!"), None, None);
+    let name_findings: Vec<&Finding> = r.findings.iter().filter(|f| f.field == "name").collect();
+    assert!(name_findings.len() > 1, "expected several name findings, got {:?}", codes(&r));
+    let expected_msg = super::fe::FE03;
+    for f in &name_findings {
+        assert_eq!(f.message, expected_msg, "name finding {:?} message not unified", f.code);
+    }
+}
+
+#[test]
 fn clean_asp_passes() {
     // 3-part description, good name, valid A2MCP service.
     let desc = "Summarizes text.\\nHandles long docs and articles.\\nSummarize this article";
@@ -281,33 +295,12 @@ fn pure_cjk_over_twelve_chars_fails_n1() {
 }
 
 #[test]
-fn hex_in_service_description_emits_d7_not_duplicate_u2() {
-    // A 0x address in `servicedescription` must surface once as D7, never
-    // also as U2 for the same field (no duplicate diagnostic).
-    let desc = "Summarizes text 0xdeadbeefdeadbeef.\\nHandles long docs.\\nSummarize this";
+fn hex_in_service_description_passes() {
+    // A 0x address in `servicedescription` is not checked.
+    let desc = "Summarizes text 0xdeadbeefdeadbeef.\nHandles long docs.\nSummarize this";
     let service = svc("Document Summarizer", desc, "A2A", "0", None);
     let r = run_validation("asp", Some("Summary Bot"), None, Some(&service));
-    let desc_field = "service[0].servicedescription";
-    let desc_codes: Vec<&str> = r
-        .findings
-        .iter()
-        .filter(|f| f.field == desc_field)
-        .map(|f| f.code.as_str())
-        .collect();
-    assert!(
-        desc_codes.contains(&"D7"),
-        "expected D7, got {desc_codes:?}"
-    );
-    assert!(
-        !desc_codes.contains(&"U2"),
-        "U2 must not duplicate D7, got {desc_codes:?}"
-    );
-}
-
-#[test]
-fn hex_address_in_name_fails_u2() {
-    let r = run_validation("user", Some("Agent 0xdeadbeef"), None, None);
-    assert!(codes(&r).contains(&"U2".to_string()));
+    assert!(r.pass, "got {:?}", codes(&r));
 }
 
 #[test]
@@ -744,8 +737,9 @@ fn description_empty_fails_d1() {
 }
 
 #[test]
-fn description_two_parts_passes_d1() {
-    // Line 1 = summary, line 2 = what to provide → valid (part 3 optional).
+fn description_two_parts_non_subscription_fails_d1() {
+    // FE-21: a NON-subscription (single-fee) A2A service must have EXACTLY 3
+    // paragraphs. A 2-paragraph description is the wrong count → D1.
     let service = svc(
         "Doc Summarizer",
         "Summary line.\nProvide: a document and a target language.",
@@ -754,7 +748,91 @@ fn description_two_parts_passes_d1() {
         None,
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
+fn description_two_parts_subscription_passes_d1() {
+    // FE-21: a SUBSCRIPTION-priced A2A service uses EXACTLY 2 paragraphs
+    // (1. core capabilities; 2. what will be delivered) → no D1.
+    let service = "[{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Daily signals across DEX.\\nDelivered as structured signals; copy-trading supported.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
+    let r = run_validation("asp", Some("Agent Name"), Some("A helpful agent."), Some(service));
     assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "got {:?}", codes(&r));
+}
+
+#[test]
+fn description_three_parts_subscription_fails_d1() {
+    // FE-21: a subscription service with 3 paragraphs is the wrong count → D1.
+    let service = "[{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Daily signals across DEX.\\nNothing to provide.\\nDelivered as structured signals.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
+    let r = run_validation("asp", Some("Agent Name"), None, Some(service));
+    assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
+fn a2mcp_description_skips_structure_no_d1() {
+    // FE-21 is A2A-only. An A2MCP `serviceDescription` is the request description
+    // (FE-16, skill rule) — its buyer-facing paragraph structure is NOT checked
+    // here, so a 1-paragraph A2MCP description must NOT trip D1.
+    let service = svc(
+        "Doc Summarizer",
+        "1.[Service Description] summarizes text",
+        "A2MCP",
+        "10",
+        Some("https://example.com/mcp"),
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn a2mcp_description_allows_url_no_d6() {
+    // D6 (URL) is A2A-only: the A2MCP request description REQUIRES a `curl`
+    // example carrying the real https endpoint (FE-16, skill rule), so a URL
+    // in an A2MCP description must NOT trip D6.
+    let service = svc(
+        "Doc Summarizer",
+        "1.[Service Description] summarizes text\\n2.[Parameter Spec] text (string, required): source text\\n3.[Request Method] POST\\n4.[Request Example] curl -X POST https://example.com/mcp -d '{\\\"text\\\":\\\"hi\\\"}'",
+        "A2MCP",
+        "10",
+        Some("https://example.com/mcp"),
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(!codes(&r).contains(&"D6".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "expected pass, got {:?}", codes(&r));
+}
+
+#[test]
+fn a2mcp_description_still_blocks_profit_guarantee_and_test_marker_fe22() {
+    // FE-22 D9 (profit guarantee) and U1 (test marker) still apply to A2MCP.
+    let service = svc(
+        "Doc Summarizer",
+        "保证收益的服务(test)",
+        "A2MCP",
+        "10",
+        Some("https://example.com/mcp"),
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
+    assert!(codes(&r).contains(&"U1".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
+fn a2a_description_with_url_still_fails_d6() {
+    // The URL ban stays fully in force for A2A descriptions.
+    let service = svc(
+        "Doc Summarizer",
+        "Summarizes text, see https://example.com\nProvide a document.\nDelivers a markdown file.",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"D6".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
 }
 
 #[test]
@@ -793,8 +871,6 @@ fn spec_trading_signal_correct_example_passes() {
     // carries the canonical structured signal example. This MUST pass QA. It is a
     // regression for several description edge cases that co-occur in a real
     // signal example and are easy to break by tightening a rule:
-    //   • truncated token address "0x12…ab" — < 6 trailing hex digits, so it must
-    //     NOT trip D7 (a full 0x address would); the spec writes addresses this way.
     //   • pipe / "$TOKEN" / "≤" / "%" symbols in the delivery note — description
     //     has no decorative-symbol rule (that is name-only N8), so they must pass.
     //   • "支持跟单" delivery attribute — must NOT trip U3 (bare-"不支持" narrowing).
@@ -808,33 +884,20 @@ fn spec_trading_signal_correct_example_passes() {
     let r = run_validation("asp", Some("SignalRaven"), None, Some(&service));
     assert!(
         r.pass,
-        "spec trading-signal example must pass (truncated 0x12…ab must not trip D7), got {:?}",
+        "spec trading-signal example must pass, got {:?}",
         codes(&r)
     );
 }
 
 #[test]
-fn description_part3_over_400_width_fails_d5() {
-    // Part 3 = the 3rd line; 401 half-width chars > 400 width → D5 (not D3/D4).
-    let p3 = "C".repeat(401);
+fn description_long_part_within_total_passes() {
+    // No per-paragraph limit: a single 900-half-width part is fine as long as
+    // the total display width stays ≤ 2000.
+    let p3 = "C".repeat(900);
     let desc = format!("Short summary.\nProvide a document.\n{p3}");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D5".to_string()), "got {:?}", codes(&r));
-    // Parts 1 and 2 are within limits → no D3/D4.
-    assert!(!codes(&r).contains(&"D3".to_string()), "got {:?}", codes(&r));
-    assert!(!codes(&r).contains(&"D4".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn description_middle_line_length_gated_as_part2() {
-    // With 3 lines, part 2 is the MIDDLE line (not the last) — a too-long middle
-    // line must surface as D4, proving parts are positional not first/last.
-    let p2 = "B".repeat(401);
-    let desc = format!("Short summary.\n{p2}\nDelivery: a file.");
-    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
-    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D4".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "long part within total must pass, got {:?}", codes(&r));
 }
 
 #[test]
@@ -892,45 +955,24 @@ fn clean_description_has_no_profit_guarantee_d9() {
 }
 
 #[test]
-fn description_over_1200_width_fails_d2() {
-    // 1201 half-width chars across two lines → total display width 1201 > 1200.
-    let part1 = "x".repeat(600);
-    let part2 = "y".repeat(601);
+fn description_over_2000_width_fails_d2() {
+    // 2001 half-width chars across two lines → total display width 2001 > 2000.
+    let part1 = "x".repeat(1000);
+    let part2 = "y".repeat(1001);
     let desc = format!("{part1}\n{part2}");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
-    // Each part is also >400 width → D3/D4 fire too; this test only pins D2.
 }
 
 #[test]
 fn description_cjk_width_counts_double_d2() {
-    // 601 CJK chars on one line + a short second line. Width = 601*2 = 1202 > 1200.
-    let part1 = "测".repeat(601);
+    // 1001 CJK chars on one line + a short second line. Width = 1001*2 = 2002 > 2000.
+    let part1 = "测".repeat(1001);
     let desc = format!("{part1}\n需要提供钱包地址");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn description_part1_over_400_width_fails_d3() {
-    // Part 1 = first line; 401 half-width chars > 400 width.
-    let p1 = "A".repeat(401);
-    let desc = format!("{p1}\nProvide a document.");
-    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
-    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D3".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn description_part2_over_400_width_fails_d4() {
-    // Part 2 = LAST line; 401 half-width chars > 400 width.
-    let p2 = "B".repeat(401);
-    let desc = format!("Short summary.\n{p2}");
-    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
-    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D4".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
@@ -994,27 +1036,6 @@ fn service_name_thirty_one_chars_fails_s1() {
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
-}
-
-// ─── contains_hex_address boundary values ─────────────────────────────────
-
-#[test]
-fn hex_address_five_digits_is_not_detected() {
-    // Exactly 5 hex chars after "0x" — below the 6-char threshold.
-    assert!(!contains_hex_address("0x12345"));
-    assert!(!contains_hex_address("prefix 0xabcde suffix"));
-}
-
-#[test]
-fn hex_address_six_digits_is_detected() {
-    // Exactly 6 hex chars — meets the threshold.
-    assert!(contains_hex_address("0x123456"));
-    assert!(contains_hex_address("0xABCDEF"));
-}
-
-#[test]
-fn hex_address_uppercase_x_is_detected() {
-    assert!(contains_hex_address("0XDEADBEEF12"));
 }
 
 // ─── has_test_marker full branch coverage ──────────────────────────────────
@@ -1151,20 +1172,11 @@ fn empty_service_name_does_not_trigger_s1() {
     assert!(!codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
 }
 
-// contains_hex_address: non-hex char terminates the run before 6 digits
-#[test]
-fn hex_address_non_hex_char_terminates_run() {
-    // "0x12345g" — 'g' is not a hex digit; run length = 5 < 6 → false.
-    assert!(!contains_hex_address("0x12345g"));
-    // "0x123456g" — 6 hex digits before 'g' → true.
-    assert!(contains_hex_address("0x123456g"));
-}
-
 // D1 + D2 both fire on a single over-long line
 #[test]
-fn description_over_1200_single_line_fails_d1_and_d2() {
-    // A single line of 1201 chars → D2 (total width > 1200) and D1 (only 1 part).
-    let long = "x".repeat(1201);
+fn description_over_2000_single_line_fails_d1_and_d2() {
+    // A single line of 2001 chars → D2 (total width > 2000) and D1 (only 1 part).
+    let long = "x".repeat(2001);
     let service = svc("Doc Summarizer", &long, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);
@@ -1178,5 +1190,100 @@ fn no_ordinal_suffix_integration_fails_n3() {
     assert!(has_ordinal_suffix("BotNo3"));
     let r = run_validation("asp", Some("BotNo3"), None, None);
     assert!(codes(&r).contains(&"N3".to_string()), "got {:?}", codes(&r));
+}
+
+// ─── Message-unification invariant (same rule group → same message) ───────────
+// After removing the `fe` field, message unification is the only grouping
+// mechanism. Each test below fires multiple sub-checks under one rule group and
+// asserts every finding for that field shares a single message.
+
+#[test]
+fn service_name_findings_unify_to_same_message() {
+    // S1 (length) + S3 (duplicates agent) + S4 (price) + S6 (test marker) all
+    // map to the service-name message. Craft a name that hits S1 + S6 + S4.
+    // "ab(test)USDT" < 5 chars is not easy to combine, so test one multi-hit
+    // combo: an 4-char name with "free" and a test marker.
+    let service = svc(
+        "free(test)",
+        "Does a thing.\nMore detail here.\nDo the thing",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let field_findings: Vec<&Finding> = r
+        .findings
+        .iter()
+        .filter(|f| f.field == "service[0].name")
+        .collect();
+    assert!(field_findings.len() > 1, "expected multiple service-name findings, got {:?}", codes(&r));
+    let first_msg = &field_findings[0].message;
+    for f in &field_findings {
+        assert_eq!(&f.message, first_msg, "service-name finding {:?} has diverging message", f.code);
+    }
+    assert_eq!(first_msg, super::fe::FE06);
+}
+
+#[test]
+fn description_prohibited_findings_unify_to_same_message() {
+    // D6 (URL) + U1 (test marker) + D9 (profit guarantee) all map to the
+    // prohibited-content message; use U1 + D6 here.
+    let desc_with_url_and_marker =
+        "稳赚不赔 — see https://example.com (test).\nProvide something.\nDelivery: file.";
+    let service = svc("Doc Summarizer", desc_with_url_and_marker, "A2A", "5", None);
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let fd = "service[0].servicedescription";
+    let field_findings: Vec<&Finding> =
+        r.findings.iter().filter(|f| f.field == fd).collect();
+    assert!(field_findings.len() > 1, "expected multiple description findings, got {:?}", codes(&r));
+    let first_msg = &field_findings[0].message;
+    for f in &field_findings {
+        assert_eq!(&f.message, first_msg, "description finding {:?} has diverging message", f.code);
+    }
+    assert_eq!(first_msg, super::fe::FE22);
+}
+
+#[test]
+fn json_output_does_not_contain_fe_key() {
+    // The serialized JSON for a blocking finding must never include an "fe" key —
+    // it was internal only and has been removed from the struct entirely.
+    let r = run_validation("asp", Some("Trump_v2(test)"), None, None);
+    assert!(!r.pass);
+    let json = serde_json::to_string(&r).unwrap();
+    assert!(
+        !json.contains("\"fe\""),
+        "serialized output must not contain 'fe' key, got: {json}"
+    );
+}
+
+#[test]
+fn json_output_contains_expected_fields_only() {
+    // Each finding must serialize exactly: field, code, severity, message.
+    let r = run_validation("asp", Some("X"), None, None);
+    let json: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+    let finding = &json["findings"][0];
+    assert!(finding["field"].is_string(), "missing 'field'");
+    assert!(finding["code"].is_string(), "missing 'code'");
+    assert!(finding["severity"].is_string(), "missing 'severity'");
+    assert!(finding["message"].is_string(), "missing 'message'");
+    assert!(finding["fe"].is_null(), "'fe' must not be present in JSON");
+}
+
+#[test]
+fn non_https_endpoint_fails_t4() {
+    // A non-https endpoint (here a 0x address) on A2MCP fails T4 with FE11.
+    let service = format!(
+        "[{{\"serviceName\":\"Some MCP\",\"serviceDescription\":\"Does a thing.\\nMore detail.\\nDo the thing\",\
+         \"serviceType\":\"A2MCP\",\"fee\":\"5\",\"endpoint\":\"0xdeadbeefdeadbeef\"}}]"
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let ep_findings: Vec<&Finding> = r
+        .findings
+        .iter()
+        .filter(|f| f.field == "service[0].endpoint")
+        .collect();
+    assert_eq!(ep_findings.len(), 1, "expected one endpoint finding, got {:?}", codes(&r));
+    assert_eq!(ep_findings[0].code, "T4");
+    assert_eq!(ep_findings[0].message, super::fe::FE11);
 }
 
