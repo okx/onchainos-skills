@@ -53,7 +53,7 @@ mod fe {
     pub const FE18: &str = "Subscriptions currently support monthly billing only, but a different interval was provided. Set the subscription tier's interval to \"month\" (weekly, yearly, and other intervals aren't supported yet), then resubmit.";
     pub const FE19: &str = "The subscription price must be a plain number, but the current value contains units, symbols, or non-numeric text. Enter each tier's price as a number only (e.g., 10) \u{2014} denominated in USDT by default, up to 6 decimal places, no symbols or extra text. Then resubmit.";
     pub const FE20: &str = "The free-trial setup is invalid: freeTrial can only be configured on monthly-subscription services and must be a positive integer number of hours; A2MCP and pay-per-use services can't offer a trial. To enable a trial on a monthly subscription, set freeTrial to \"72\" (a fixed 3 days); otherwise omit the freeTrial field entirely (don't set \"\" or \"0\"). Then resubmit.";
-    pub const FE21: &str = "The service description's structure or length is invalid: wrong number of paragraphs, total length over 600 CJK characters, or a single paragraph over 200 CJK characters. Write 3 paragraphs for non-subscription services (1. core capabilities; 2. what the user needs to provide; 3. what will be delivered), or 2 paragraphs for subscription services (1. core capabilities; 2. what will be delivered); keep each paragraph within 200 CJK characters and the total within 600. Then resubmit.";
+    pub const FE21: &str = "The service description's structure or length is invalid: wrong number of paragraphs or total length over 1000 CJK characters. Write 3 paragraphs for non-subscription services (1. core capabilities; 2. what the user needs to provide; 3. what will be delivered), or 2 paragraphs for subscription services (1. core capabilities; 2. what will be delivered); keep the total within 1000 CJK characters. Then resubmit.";
     pub const FE22: &str = "The service description contains prohibited content: a URL, promised returns (e.g., \"guaranteed profit\", \"double your money\", \"guaranteed returns\"), or a test marker. Remove all links, test markers, and any promises of returns, guaranteed principal, or \"no losses\" \u{2014} describe what the service can do without promising outcomes. Then resubmit.";
 }
 
@@ -129,7 +129,7 @@ pub(crate) fn run_validation(
 
     // ── Description checks ────────────────────────────────────────────────
     // Universal U1/U3 apply to a supplied non-empty description for every
-    // role. The 3-part structure (D1/D3/D4/D5) is asp-service-only and is
+    // role. The 3-part structure (D1) is asp-service-only and is
     // NEVER applied to the agent-level description. Agent-level description for
     // ASPs additionally gets D6 (and U1/U3 already above).
     if !description.is_empty() {
@@ -435,9 +435,9 @@ fn check_pricing(
 //       - non-subscription → 3 paragraphs (1. core capabilities; 2. what the
 //         user provides; 3. what will be delivered)
 //       - subscription     → 2 paragraphs (1. core capabilities; 2. delivered)
-//     Wrong count (incl. empty / fewer) → D1. Lengths use EAST-ASIAN DISPLAY
-//     WIDTH (`display_width`: CJK = 2, ASCII = 1): each paragraph ≤ 400, total
-//     ≤ 1200 — the spec's "≤ 200 CJK per paragraph / ≤ 600 CJK total". FE-21 is
+//     Wrong count (incl. empty / fewer) → D1. Length uses EAST-ASIAN DISPLAY
+//     WIDTH (`display_width`: CJK = 2, ASCII = 1): total ≤ 2000 — the spec's
+//     "≤ 1000 CJK total"; there is no per-paragraph limit. FE-21 is
 //     A2A-only: an A2MCP description is the request description (FE-16, skill).
 //   • FE-22 (禁用内容) — URL (D6), profit/return-guarantee wording (D9:
 //     "稳赚 / 保证收益 / 翻倍" …), test/env marker (U1). Applies to EVERY
@@ -480,8 +480,8 @@ fn check_service_description(
         return;
     }
 
-    // D2 total display width <= 1200 (= 600 CJK characters).
-    if display_width(desc) > 1200 {
+    // D2 total display width <= 2000 (= 1000 CJK characters).
+    if display_width(desc) > 2000 {
         findings.push(Finding::block(&fd, "D2", fe::FE21));
     }
 
@@ -500,20 +500,6 @@ fn check_service_description(
     let want_parts = if is_subscription { 2 } else { 3 };
     if lines.len() != want_parts {
         findings.push(Finding::block(&fd, "D1", fe::FE21));
-        // Still fall through to per-part length checks on whatever lines exist,
-        // so an over-length paragraph is also surfaced under the same FE-21.
-    }
-
-    // D3/D4/D5 per-paragraph display width <= 400 (= 200 CJK characters).
-    for (i, line) in lines.iter().enumerate() {
-        if display_width(line) > 400 {
-            let code = match i {
-                0 => "D3",
-                1 => "D4",
-                _ => "D5",
-            };
-            findings.push(Finding::block(&fd, code, fe::FE21));
-        }
     }
 }
 

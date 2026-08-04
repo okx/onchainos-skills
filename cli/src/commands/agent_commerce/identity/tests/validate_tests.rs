@@ -858,27 +858,14 @@ fn spec_trading_signal_correct_example_passes() {
 }
 
 #[test]
-fn description_part3_over_400_width_fails_d5() {
-    // Part 3 = the 3rd line; 401 half-width chars > 400 width → D5 (not D3/D4).
-    let p3 = "C".repeat(401);
+fn description_long_part_within_total_passes() {
+    // No per-paragraph limit: a single 900-half-width part is fine as long as
+    // the total display width stays ≤ 2000.
+    let p3 = "C".repeat(900);
     let desc = format!("Short summary.\nProvide a document.\n{p3}");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D5".to_string()), "got {:?}", codes(&r));
-    // Parts 1 and 2 are within limits → no D3/D4.
-    assert!(!codes(&r).contains(&"D3".to_string()), "got {:?}", codes(&r));
-    assert!(!codes(&r).contains(&"D4".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn description_middle_line_length_gated_as_part2() {
-    // With 3 lines, part 2 is the MIDDLE line (not the last) — a too-long middle
-    // line must surface as D4, proving parts are positional not first/last.
-    let p2 = "B".repeat(401);
-    let desc = format!("Short summary.\n{p2}\nDelivery: a file.");
-    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
-    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D4".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "long part within total must pass, got {:?}", codes(&r));
 }
 
 #[test]
@@ -936,45 +923,24 @@ fn clean_description_has_no_profit_guarantee_d9() {
 }
 
 #[test]
-fn description_over_1200_width_fails_d2() {
-    // 1201 half-width chars across two lines → total display width 1201 > 1200.
-    let part1 = "x".repeat(600);
-    let part2 = "y".repeat(601);
+fn description_over_2000_width_fails_d2() {
+    // 2001 half-width chars across two lines → total display width 2001 > 2000.
+    let part1 = "x".repeat(1000);
+    let part2 = "y".repeat(1001);
     let desc = format!("{part1}\n{part2}");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
-    // Each part is also >400 width → D3/D4 fire too; this test only pins D2.
 }
 
 #[test]
 fn description_cjk_width_counts_double_d2() {
-    // 601 CJK chars on one line + a short second line. Width = 601*2 = 1202 > 1200.
-    let part1 = "测".repeat(601);
+    // 1001 CJK chars on one line + a short second line. Width = 1001*2 = 2002 > 2000.
+    let part1 = "测".repeat(1001);
     let desc = format!("{part1}\n需要提供钱包地址");
     let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn description_part1_over_400_width_fails_d3() {
-    // Part 1 = first line; 401 half-width chars > 400 width.
-    let p1 = "A".repeat(401);
-    let desc = format!("{p1}\nProvide a document.");
-    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
-    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D3".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn description_part2_over_400_width_fails_d4() {
-    // Part 2 = LAST line; 401 half-width chars > 400 width.
-    let p2 = "B".repeat(401);
-    let desc = format!("Short summary.\n{p2}");
-    let service = svc("Doc Summarizer", &desc, "A2A", "5", None);
-    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D4".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
@@ -1176,9 +1142,9 @@ fn empty_service_name_does_not_trigger_s1() {
 
 // D1 + D2 both fire on a single over-long line
 #[test]
-fn description_over_1200_single_line_fails_d1_and_d2() {
-    // A single line of 1201 chars → D2 (total width > 1200) and D1 (only 1 part).
-    let long = "x".repeat(1201);
+fn description_over_2000_single_line_fails_d1_and_d2() {
+    // A single line of 2001 chars → D2 (total width > 2000) and D1 (only 1 part).
+    let long = "x".repeat(2001);
     let service = svc("Doc Summarizer", &long, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);

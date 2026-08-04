@@ -49,8 +49,8 @@ pub struct CreateArgs {
     ///                            expected for trading-signal services — state the
     ///                            delivery format and whether copy-trading is
     ///                            supported, with a concrete example).
-    ///                          Each part ≤200 CJK chars (400 half-width); whole
-    ///                          text ≤600 CJK chars (1200 half-width). No URLs, no
+    ///                          Whole text ≤1000 CJK chars (2000 half-width); no
+    ///                          per-part length limit. No URLs, no
     ///                          0x addresses, no test/env markers, and no
     ///                          guaranteed-profit / risk-free wording.
     ///   • serviceType        — `A2A` (agent-to-agent) or `A2MCP` (API service).
