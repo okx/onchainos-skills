@@ -49,8 +49,8 @@ pub struct CreateArgs {
     ///                            expected for trading-signal services — state the
     ///                            delivery format and whether copy-trading is
     ///                            supported, with a concrete example).
-    ///                          Each part ≤200 CJK chars (400 half-width); whole
-    ///                          text ≤600 CJK chars (1200 half-width). No URLs, no
+    ///                          Whole text ≤1000 CJK chars (2000 half-width); no
+    ///                          per-part length limit. No URLs, no
     ///                          test/env markers, and no
     ///                          guaranteed-profit / risk-free wording.
     ///   • serviceType        — `A2A` (agent-to-agent) or `A2MCP` (API service).
@@ -145,8 +145,8 @@ pub struct UpdateArgs {
     /// line 3 = request method (POST / GET or the MCP tool name), line 4 =
     /// request example (a working `curl` command using the real endpoint URL);
     /// A2A: line 1 = core-capability summary, line 2 = what the user must
-    /// provide, line 3+ = optional delivery note with a concrete example; each
-    /// part ≤200 CJK chars, whole text ≤600 CJK chars; no URLs /
+    /// provide, line 3+ = optional delivery note with a concrete example;
+    /// whole text ≤1000 CJK chars, no per-part limit; no URLs /
     /// test markers / guaranteed-profit wording),
     /// `serviceType` (`A2A` | `A2MCP`),
     /// `fee` (single-purchase price — plain number, USDT implied, ≤6 decimals),
