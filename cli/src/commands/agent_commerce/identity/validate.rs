@@ -42,7 +42,7 @@ pub async fn validate_listing(args: ValidateListingArgs, _ctx: &Context) -> Resu
 // fine-grained internal `code` (U1/N1/S1/T1/P1/D1…) is kept for diagnostics and
 // tests; the user-facing string is `message`.
 mod fe {
-    pub const FE03: &str = "The Agent name doesn't meet the naming rules: it may contain a test marker, a 0x address, an ordinal suffix, or special symbols, or its length or bilingual format is invalid. Use a clean brand name instead: 2\u{2013}12 characters in Chinese or 3\u{2013}25 in English, with no test markers, addresses, ordinals, or special symbols; for a bilingual name, use the \"Chinese name \u{00B7} English name\" format. Then resubmit.";
+    pub const FE03: &str = "The Agent name doesn't meet the naming rules: it may contain a test marker, an ordinal suffix, or special symbols, or its length or bilingual format is invalid. Use a clean brand name instead: 2\u{2013}12 characters in Chinese or 3\u{2013}25 in English, with no test markers, ordinals, or special symbols; for a bilingual name, use the \"Chinese name \u{00B7} English name\" format. Then resubmit.";
     pub const FE05: &str = "The Agent description has an issue: it contains a URL, exceeds 500 characters, or is empty. Remove any links, trim it to 500 characters or fewer, and make sure it's filled in. Then resubmit.";
     pub const FE06: &str = "The service name doesn't meet the rules: its length is out of range, it duplicates the Agent name, or it contains pricing or a test marker. Keep the name to 5\u{2013}30 characters and different from the Agent name, move any pricing to the fee field, and remove test markers. Then resubmit.";
     pub const FE10: &str = "The service type must be exactly A2A or A2MCP; the current value is invalid. Select A2A or A2MCP from the menu, then resubmit.";
@@ -54,7 +54,7 @@ mod fe {
     pub const FE19: &str = "The subscription price must be a plain number, but the current value contains units, symbols, or non-numeric text. Enter each tier's price as a number only (e.g., 10) \u{2014} denominated in USDT by default, up to 6 decimal places, no symbols or extra text. Then resubmit.";
     pub const FE20: &str = "The free-trial setup is invalid: freeTrial can only be configured on monthly-subscription services and must be a positive integer number of hours; A2MCP and pay-per-use services can't offer a trial. To enable a trial on a monthly subscription, set freeTrial to \"72\" (a fixed 3 days); otherwise omit the freeTrial field entirely (don't set \"\" or \"0\"). Then resubmit.";
     pub const FE21: &str = "The service description's structure or length is invalid: wrong number of paragraphs, total length over 600 CJK characters, or a single paragraph over 200 CJK characters. Write 3 paragraphs for non-subscription services (1. core capabilities; 2. what the user needs to provide; 3. what will be delivered), or 2 paragraphs for subscription services (1. core capabilities; 2. what will be delivered); keep each paragraph within 200 CJK characters and the total within 600. Then resubmit.";
-    pub const FE22: &str = "The service description contains prohibited content: a URL, a 0x address, promised returns (e.g., \"guaranteed profit\", \"double your money\", \"guaranteed returns\"), or a test marker. Remove all links, 0x addresses, test markers, and any promises of returns, guaranteed principal, or \"no losses\" \u{2014} describe what the service can do without promising outcomes. Then resubmit.";
+    pub const FE22: &str = "The service description contains prohibited content: a URL, promised returns (e.g., \"guaranteed profit\", \"double your money\", \"guaranteed returns\"), or a test marker. Remove all links, test markers, and any promises of returns, guaranteed principal, or \"no losses\" \u{2014} describe what the service can do without promising outcomes. Then resubmit.";
 }
 
 // ─── Output model ───────────────────────────────────────────────────────────
@@ -141,10 +141,10 @@ pub(crate) fn run_validation(
     check_name(name, &mut findings);
 
     // ── Description checks ────────────────────────────────────────────────
-    // Universal U1/U2/U3 apply to a supplied non-empty description for every
+    // Universal U1/U3 apply to a supplied non-empty description for every
     // role. The 3-part structure (D1/D3/D4/D5) is asp-service-only and is
     // NEVER applied to the agent-level description. Agent-level description for
-    // ASPs additionally gets D6/D7 (and U2/U3 already above).
+    // ASPs additionally gets D6 (and U1/U3 already above).
     if !description.is_empty() {
         check_universal_text("description", description, &mut findings);
         if role == "asp" {
@@ -177,7 +177,7 @@ pub(crate) fn run_validation(
     // (paragraph-count D1, total-width D2, per-paragraph-width D3/D4/D5) are
     // ADVISORY (severity "suggest") — a structurally non-conforming but non-empty,
     // non-prohibited A2A listing PASSES validate-listing while still surfacing the
-    // suggestions. Still BLOCKING: FE-22 prohibited content (URL D6, 0x address D7,
+    // suggestions. Still BLOCKING: FE-22 prohibited content (URL D6,
     // profit guarantee D9, test marker U1) and the empty/blank-description D1 (a
     // missing-required-field, consistent with the normalize_service bail). A2MCP is
     // unchanged — only prohibited-content runs for it, all blocking. The SEMANTIC
@@ -187,7 +187,7 @@ pub(crate) fn run_validation(
     ValidationResult { pass, findings }
 }
 
-// ─── Name rules (N1, N2, N3, N6, N8) + Universal U1/U2/U3 on the name ───────
+// ─── Name rules (N1, N2, N3, N6, N8) + Universal U1/U3 on the name ──────────
 
 fn check_name(name: &str, findings: &mut Vec<Finding>) {
     if name.is_empty() {
@@ -200,10 +200,6 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
     // U1 (= N7) test/env marker on the name.
     if has_test_marker(name) {
         findings.push(Finding::block("name", "U1", fe::FE03));
-    }
-    // U2 hex address.
-    if contains_hex_address(name) {
-        findings.push(Finding::block("name", "U2", fe::FE03));
     }
     // U3 negative-capability phrase.
     if contains_negative_capability(name) {
@@ -248,15 +244,12 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
     // not as a CLI mechanical rule. Do not add a hard-coded name blocklist.
 }
 
-// ─── Universal text rules (U1/U2/U3) for a generic field ────────────────────
+// ─── Universal text rules (U1/U3) for a generic field ───────────────────────
 
 // Only caller is the agent-level `description`.
 fn check_universal_text(field: &str, text: &str, findings: &mut Vec<Finding>) {
     if has_test_marker(text) {
         findings.push(Finding::block(field, "U1", fe::FE05));
-    }
-    if contains_hex_address(text) {
-        findings.push(Finding::block(field, "U2", fe::FE05));
     }
     if contains_negative_capability(text) {
         findings.push(Finding::block(field, "U3", fe::FE05));
@@ -267,12 +260,6 @@ fn check_description_url_and_addr(field: &str, text: &str, findings: &mut Vec<Fi
     if contains_url(text) {
         findings.push(Finding::block(field, "D6", fe::FE05));
     }
-    // D7 is the 0x check scoped to a description; U2 already covers agent-level
-    // description, but the service-description path calls this with code D7. To
-    // avoid a duplicate U2 + D7 on the same agent-level text we only emit D7
-    // here when U2 has not been added for the same field. Simplest: emit D7
-    // only for the service path (handled in check_service). For agent-level we
-    // skip D7 (U2 covers it). So nothing to do here for the address.
 }
 
 // ─── Service rules (T, S, U4, U5, P, D) ─────────────────────────────────────
@@ -283,20 +270,6 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
     let is_a2mcp = stype == "A2MCP";
     let is_a2a = stype == "A2A";
 
-    // ── Universal on every non-empty service field ───────────────────────
-    // U2 hex address on any service field EXCEPT `servicedescription`: the
-    // hex-address check on the description is emitted once as D7 by
-    // `check_service_description`, so excluding it here avoids a duplicate U2 + D7.
-    for (sub, text, msg) in [
-        ("name", svc.service_name.as_str(), fe::FE06),
-        ("fee", svc.fee.as_str(), fe::FE12),
-        ("servicetype", svc.service_type.as_str(), fe::FE10),
-        ("endpoint", svc.endpoint.as_deref().unwrap_or(""), fe::FE11),
-    ] {
-        if !text.is_empty() && contains_hex_address(text) {
-            findings.push(Finding::block(f(sub), "U2", msg));
-        }
-    }
     // U3 negative-capability: on the service NAME → name message; on the service
     // DESCRIPTION it is a prohibited-content issue → description message.
     if !svc.service_name.is_empty() && contains_negative_capability(&svc.service_name) {
@@ -482,9 +455,9 @@ fn check_pricing(
 //     WIDTH (`display_width`: CJK = 2, ASCII = 1): each paragraph ≤ 400, total
 //     ≤ 1200 — the spec's "≤ 200 CJK per paragraph / ≤ 600 CJK total". FE-21 is
 //     A2A-only: an A2MCP description is the request description (FE-16, skill).
-//   • FE-22 (禁用内容) — URL (D6), 0x address (D7), profit/return-guarantee
-//     wording (D9: "稳赚 / 保证收益 / 翻倍" …), test/env marker (U1). Applies to
-//     EVERY service including A2MCP.
+//   • FE-22 (禁用内容) — URL (D6), profit/return-guarantee wording (D9:
+//     "稳赚 / 保证收益 / 翻倍" …), test/env marker (U1). Applies to EVERY
+//     service including A2MCP.
 // FE-22 (prohibited content) and the empty/blank-description D1 are 阻断注册
 // (blocking); the A2A structural/length FE-21 findings (paragraph-count D1, total
 // width D2, per-paragraph width D3/D4/D5) are ADVISORY (severity "suggest") — they
@@ -505,9 +478,6 @@ fn check_service_description(
     // ── Prohibited content — applies to EVERY service (A2A + A2MCP) ────────
     if contains_url(desc) {
         findings.push(Finding::block(&fd, "D6", fe::FE22));
-    }
-    if contains_hex_address(desc) {
-        findings.push(Finding::block(&fd, "D7", fe::FE22));
     }
     if contains_profit_guarantee(desc) {
         findings.push(Finding::block(&fd, "D9", fe::FE22));
@@ -647,25 +617,6 @@ fn delimited_marker_present(lower: &str, delim: char, word: &str) -> bool {
             return true;
         }
         search_from = start + 1;
-    }
-    false
-}
-
-/// U2 / D7: a `0x` hex address — `0x` followed by >= 6 hex digits.
-fn contains_hex_address(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    let mut i = 0usize;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'0' && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X') {
-            let mut j = i + 2;
-            while j < bytes.len() && bytes[j].is_ascii_hexdigit() {
-                j += 1;
-            }
-            if j - (i + 2) >= 6 {
-                return true;
-            }
-        }
-        i += 1;
     }
     false
 }

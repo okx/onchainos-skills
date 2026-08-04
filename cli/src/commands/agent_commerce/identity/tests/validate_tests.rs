@@ -302,33 +302,12 @@ fn pure_cjk_over_twelve_chars_fails_n1() {
 }
 
 #[test]
-fn hex_in_service_description_emits_d7_not_duplicate_u2() {
-    // A 0x address in `servicedescription` must surface once as D7, never
-    // also as U2 for the same field (no duplicate diagnostic).
-    let desc = "Summarizes text 0xdeadbeefdeadbeef.\\nHandles long docs.\\nSummarize this";
+fn hex_in_service_description_passes() {
+    // A 0x address in `servicedescription` is not checked.
+    let desc = "Summarizes text 0xdeadbeefdeadbeef.\nHandles long docs.\nSummarize this";
     let service = svc("Document Summarizer", desc, "A2A", "0", None);
     let r = run_validation("asp", Some("Summary Bot"), None, Some(&service));
-    let desc_field = "service[0].servicedescription";
-    let desc_codes: Vec<&str> = r
-        .findings
-        .iter()
-        .filter(|f| f.field == desc_field)
-        .map(|f| f.code.as_str())
-        .collect();
-    assert!(
-        desc_codes.contains(&"D7"),
-        "expected D7, got {desc_codes:?}"
-    );
-    assert!(
-        !desc_codes.contains(&"U2"),
-        "U2 must not duplicate D7, got {desc_codes:?}"
-    );
-}
-
-#[test]
-fn hex_address_in_name_fails_u2() {
-    let r = run_validation("user", Some("Agent 0xdeadbeef"), None, None);
-    assert!(codes(&r).contains(&"U2".to_string()));
+    assert!(r.pass, "got {:?}", codes(&r));
 }
 
 #[test]
@@ -902,8 +881,6 @@ fn spec_trading_signal_correct_example_passes() {
     // carries the canonical structured signal example. This MUST pass QA. It is a
     // regression for several description edge cases that co-occur in a real
     // signal example and are easy to break by tightening a rule:
-    //   • truncated token address "0x12…ab" — < 6 trailing hex digits, so it must
-    //     NOT trip D7 (a full 0x address would); the spec writes addresses this way.
     //   • pipe / "$TOKEN" / "≤" / "%" symbols in the delivery note — description
     //     has no decorative-symbol rule (that is name-only N8), so they must pass.
     //   • "支持跟单" delivery attribute — must NOT trip U3 (bare-"不支持" narrowing).
@@ -917,7 +894,7 @@ fn spec_trading_signal_correct_example_passes() {
     let r = run_validation("asp", Some("SignalRaven"), None, Some(&service));
     assert!(
         r.pass,
-        "spec trading-signal example must pass (truncated 0x12…ab must not trip D7), got {:?}",
+        "spec trading-signal example must pass, got {:?}",
         codes(&r)
     );
 }
@@ -1105,27 +1082,6 @@ fn service_name_thirty_one_chars_fails_s1() {
     assert!(codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
 }
 
-// ─── contains_hex_address boundary values ─────────────────────────────────
-
-#[test]
-fn hex_address_five_digits_is_not_detected() {
-    // Exactly 5 hex chars after "0x" — below the 6-char threshold.
-    assert!(!contains_hex_address("0x12345"));
-    assert!(!contains_hex_address("prefix 0xabcde suffix"));
-}
-
-#[test]
-fn hex_address_six_digits_is_detected() {
-    // Exactly 6 hex chars — meets the threshold.
-    assert!(contains_hex_address("0x123456"));
-    assert!(contains_hex_address("0xABCDEF"));
-}
-
-#[test]
-fn hex_address_uppercase_x_is_detected() {
-    assert!(contains_hex_address("0XDEADBEEF12"));
-}
-
 // ─── has_test_marker full branch coverage ──────────────────────────────────
 
 #[test]
@@ -1260,15 +1216,6 @@ fn empty_service_name_does_not_trigger_s1() {
     assert!(!codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
 }
 
-// contains_hex_address: non-hex char terminates the run before 6 digits
-#[test]
-fn hex_address_non_hex_char_terminates_run() {
-    // "0x12345g" — 'g' is not a hex digit; run length = 5 < 6 → false.
-    assert!(!contains_hex_address("0x12345g"));
-    // "0x123456g" — 6 hex digits before 'g' → true.
-    assert!(contains_hex_address("0x123456g"));
-}
-
 // D1 + D2 both fire on a single over-long line
 #[test]
 fn description_over_1200_single_line_fails_d1_and_d2() {
@@ -1324,8 +1271,7 @@ fn service_name_findings_unify_to_same_message() {
 #[test]
 fn description_prohibited_findings_unify_to_same_message() {
     // D6 (URL) + U1 (test marker) + D9 (profit guarantee) all map to the
-    // prohibited-content message. A description can't have D7 (hex) + D6
-    // simultaneously in a short string without other noise, so use U1 + D6.
+    // prohibited-content message; use U1 + D6 here.
     let desc_with_url_and_marker =
         "稳赚不赔 — see https://example.com (test).\nProvide something.\nDelivery: file.";
     let service = svc("Doc Summarizer", desc_with_url_and_marker, "A2A", "5", None);
@@ -1368,11 +1314,8 @@ fn json_output_contains_expected_fields_only() {
 }
 
 #[test]
-fn endpoint_findings_unify_to_same_message() {
-    // T2 (A2MCP missing endpoint) fires alone; pair it with U2 (hex address as
-    // endpoint) to get two findings on the endpoint field with the same message.
-    // Easiest: supply an A2MCP service with a 0x hex address as the endpoint
-    // (fails T4 — not https:// — and U2 — hex in endpoint field).
+fn non_https_endpoint_fails_t4() {
+    // A non-https endpoint (here a 0x address) on A2MCP fails T4 with FE11.
     let service = format!(
         "[{{\"serviceName\":\"Some MCP\",\"serviceDescription\":\"Does a thing.\\nMore detail.\\nDo the thing\",\
          \"serviceType\":\"A2MCP\",\"fee\":\"5\",\"endpoint\":\"0xdeadbeefdeadbeef\"}}]"
@@ -1383,11 +1326,8 @@ fn endpoint_findings_unify_to_same_message() {
         .iter()
         .filter(|f| f.field == "service[0].endpoint")
         .collect();
-    assert!(ep_findings.len() > 1, "expected multiple endpoint findings, got {:?}", codes(&r));
-    let first_msg = &ep_findings[0].message;
-    for f in &ep_findings {
-        assert_eq!(&f.message, first_msg, "endpoint finding {:?} has diverging message", f.code);
-    }
-    assert_eq!(first_msg, super::fe::FE11);
+    assert_eq!(ep_findings.len(), 1, "expected one endpoint finding, got {:?}", codes(&r));
+    assert_eq!(ep_findings[0].code, "T4");
+    assert_eq!(ep_findings[0].message, super::fe::FE11);
 }
 

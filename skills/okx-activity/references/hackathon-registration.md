@@ -39,7 +39,7 @@ Which ASP would you like to register for the OKX.AI Trading Hackathon?
 
 Reply with a number.
 
-Want a new trading ASP that meets the entry requirements instead? [See the tutorial](https://web3.okx.com/onchainos/dev-docs/okxai/how-to-become-a2a) to get started.
+Want a new trading ASP that meets the entry requirements instead? [See the tutorial](https://web3.okx.com/onchainos/dev-docs/okxai/a2a-subscription) to get started.
 ```
 
 Keep `Reply with a number.` on its own line, as the last thing before the hint: it is the primary action, and folding the create hint into the same line buries it. The hint is a **separate trailing paragraph** — never a numbered row, never above the list.
@@ -49,7 +49,7 @@ Translate the whole message to the user's language; keep the numbered structure,
 **If `M` is 0** (no ASP, regardless of `N`): skip the list above — output this fixed template alone, then stop. This branch is terminal, so enter it **only** after Step 1's Fallback has ruled out all three of its cases — an error envelope, a missing or failed `jq`, and a shape mismatch.
 
 ```
-You don’t have an ASP yet. Please create a trading ASP that meets the entry requirements first. [See the tutorial](https://web3.okx.com/onchainos/dev-docs/okxai/how-to-become-a2a) to get started.
+You don’t have an ASP yet. Please create a trading ASP that meets the entry requirements first. [See the tutorial](https://web3.okx.com/onchainos/dev-docs/okxai/a2a-subscription) to get started.
 ```
 
 For any language, translate the English above — keep the URL byte-for-byte, keep it a link, and add nothing: no account-switching suggestion, no precondition list, no menu.
