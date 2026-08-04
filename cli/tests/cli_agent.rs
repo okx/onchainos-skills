@@ -97,57 +97,58 @@ fn validate_listing_a2a_well_structured_passes() {
     );
 }
 
-// ── IT-002: a mis-structured (2-paragraph) A2A listing now passes with advice ──
-//   The paragraph-count D1 is downgraded from block → suggest for A2A, so pass
-//   flips to true while the suggestion still surfaces.
+// ── IT-002: a 2-paragraph A2A listing passes cleanly ──────────────────────────
+//   The paragraph-count rule is gone entirely, so a 2-paragraph non-subscription
+//   description is simply valid — pass:true with no findings at all (not even a
+//   suggestion).
 #[test]
-fn validate_listing_a2a_two_paragraph_non_subscription_suggests() {
+fn validate_listing_a2a_two_paragraph_non_subscription_passes() {
     let result = validate_listing(
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget","serviceType":"A2A","fee":"0.11"}]"#,
     );
     assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
     assert!(
-        findings(&result).iter().any(|f| f["severity"] == "suggest"),
-        "expected at least one advisory (suggest) finding, got {result}"
-    );
-    assert!(
-        findings(&result).iter().all(|f| f["severity"] != "block"),
-        "no finding should be blocking for a merely mis-structured A2A listing, got {result}"
+        findings(&result).is_empty(),
+        "paragraph count is not validated — expected zero findings, got {result}"
     );
 }
 
-// ── IT-003: a subscription A2A listing with the wrong paragraph count advises ──
-//   subscription wants 2 paragraphs; a 3-paragraph body raises a lone `suggest`
-//   D1 finding while pass stays true.
+// ── IT-003: billing model does not change the description rules ────────────────
+//   The same 3-paragraph body that is valid per-call is equally valid on a
+//   subscription service: no billing-model branch remains in the validator.
 #[test]
-fn validate_listing_a2a_subscription_wrong_paragraph_count_suggests() {
+fn validate_listing_a2a_subscription_paragraph_count_not_checked() {
     let result = validate_listing(
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]"#,
     );
-    assert_eq!(
-        findings(&result).first().map(|f| &f["severity"]),
-        Some(&Value::String("suggest".into())),
-        "expected findings[0].severity == \"suggest\", got {result}"
-    );
-    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
-}
-
-// ── IT-004: an overly long A2A paragraph no longer blocks — length is advisory ─
-//   The D2/D3 display-width downgrade to suggest for A2A: the first paragraph
-//   exceeds the per-paragraph width limit while the paragraph count is correct,
-//   so no block finding is raised and pass stays true.
-#[test]
-fn validate_listing_a2a_overlong_paragraph_suggests() {
-    let result = validate_listing(
-        "asp",
-        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides real-time DEX arbitrage trading signals across many chains with detailed routing analysis, slippage estimates, and expected net spread for every opportunity so subscribers can act quickly on each alert delivered throughout the trading day and night without missing any profitable cross-market movement that the monitoring engine continuously detects, ranks, and explains in plain language for confident and fast decisions\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
-    );
     assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
     assert!(
+        findings(&result).is_empty(),
+        "a subscription service must be validated identically to a per-call one, got {result}"
+    );
+}
+
+// ── IT-004: an over-length A2A description advises but never blocks ───────────
+//   D2 (total display width over 2000 = 1000 CJK) is advisory: exactly one
+//   `suggest` finding, pass stays true. There is no per-paragraph limit.
+#[test]
+fn validate_listing_a2a_overlong_description_suggests() {
+    // 2 400 half-width chars on one line → display width 2400 > 2000.
+    let long = "A".repeat(2400);
+    let service = format!(
+        r#"[{{"serviceName":"DEX Arbitrage Signals","serviceDescription":"{long}","serviceType":"A2A","fee":"0.11"}}]"#
+    );
+    let result = validate_listing("asp", &service);
+    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert!(
+        findings(&result).iter().any(|f| f["severity"] == "suggest"),
+        "expected an advisory (suggest) length finding, got {result}"
+    );
+    assert!(
         findings(&result).iter().all(|f| f["severity"] != "block"),
-        "an over-length A2A paragraph must not block, got {result}"
+        "an over-length A2A description must not block, got {result}"
     );
 }
 
@@ -213,26 +214,38 @@ fn validate_listing_a2a_url_blocks() {
     assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false for a URL in the description, got {result}");
 }
 
-// ── IT-009: an A2A description containing a 0x address is still rejected ───────
-//   Prohibited-content D7 (0x address) stays blocking for A2A.
+// ── IT-009: a 0x address in an A2A description does NOT block ─────────────────
+//   The former D7 hex-address rule was removed (a contract address is legitimate
+//   content in a service description); this pins that it no longer blocks. Mirrors
+//   the `hex_in_service_description_passes` unit test.
 #[test]
-fn validate_listing_a2a_hex_address_blocks() {
+fn validate_listing_a2a_hex_address_passes() {
     let result = validate_listing(
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides signals for token 0x1234567890abcdef pairs\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false for a 0x address in the description, got {result}");
+    assert_eq!(result["pass"].as_bool(), Some(true), "a 0x address must not block, got {result}");
 }
 
-// ── IT-010: an A2A description promising guaranteed profit is still rejected ───
-//   Prohibited-content D9 (profit/return guarantee) stays blocking for A2A.
+// ── IT-010: a profit guarantee advises instead of blocking ────────────────────
+//   D9 is advisory: the hardcoded phrase list is only a partial backstop (the
+//   skill layer flags guarantee wording in any language by meaning), so it
+//   surfaces as `suggest` and pass stays true.
 #[test]
-fn validate_listing_a2a_profit_guarantee_blocks() {
+fn validate_listing_a2a_profit_guarantee_suggests() {
     let result = validate_listing(
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Guaranteed profit DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false for a profit guarantee, got {result}");
+    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert!(
+        findings(&result).iter().any(|f| f["severity"] == "suggest"),
+        "expected an advisory (suggest) profit-guarantee finding, got {result}"
+    );
+    assert!(
+        findings(&result).iter().all(|f| f["severity"] != "block"),
+        "a profit guarantee must not block, got {result}"
+    );
 }
 
 // ── IT-011: an A2A description carrying a test/env marker is still rejected ────
@@ -258,17 +271,20 @@ fn validate_listing_a2mcp_url_blocks() {
     assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false for a URL in an A2MCP description, got {result}");
 }
 
-// ── IT-013: a mis-structured A2A listing that also carries a URL still fails ───
-//   Interaction case: the advisory paragraph-count D1 (suggest) does NOT rescue a
-//   listing that also carries a blocking D6 (URL); pass is driven only by block
-//   findings.
+// ── IT-013: an advisory finding never rescues a blocking one ──────────────────
+//   Interaction case: a description carrying BOTH an advisory profit guarantee (D9)
+//   and a blocking URL (D6) still fails — `pass` is driven only by block findings.
 #[test]
-fn validate_listing_a2a_misstructured_and_url_blocks() {
+fn validate_listing_a2a_suggest_and_block_together_blocks() {
     let result = validate_listing(
         "asp",
-        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals, see https://example.com\nUser provides the target chain and budget","serviceType":"A2A","fee":"0.11"}]"#,
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Guaranteed profit DEX arbitrage signals, see https://example.com\nUser provides the target chain and budget","serviceType":"A2A","fee":"0.11"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false — a blocking URL overrides the advisory structure finding, got {result}");
+    assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false — a blocking URL overrides the advisory finding, got {result}");
+    assert!(
+        findings(&result).iter().any(|f| f["severity"] == "suggest"),
+        "expected the advisory D9 to still surface alongside the block, got {result}"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════

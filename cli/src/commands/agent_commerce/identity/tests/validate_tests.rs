@@ -720,11 +720,17 @@ fn user_ignores_invalid_service_json() {
     assert!(r.pass, "got {:?}", codes(&r));
 }
 
-// ─── D1–D9: service description structure (three-part, display-width) ──────
+// ─── D1–D9: service description required-ness, length, prohibited content ──
+//
+// There is NO paragraph-count rule: the 3-part (per-call) / 2-part (subscription)
+// layout is collection-time guidance in the skill (register.md §3 Step 2c), so the
+// validator accepts a non-empty A2A description of ANY shape — the tests below pin
+// that (single-line, 2-part, 3-part all pass identically for both billing models).
 
 #[test]
-fn description_single_line_fails_d1() {
-    // Only one non-empty line → part 2 absent → D1.
+fn description_single_line_passes_no_d1() {
+    // A single non-empty line is a valid A2A description: paragraph count is not
+    // validated, so no D1 and the listing passes.
     let service = svc(
         "Doc Summarizer",
         "Does one thing only",
@@ -733,7 +739,8 @@ fn description_single_line_fails_d1() {
         None,
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "a non-empty single-line description must pass, got {:?}", codes(&r));
 }
 
 #[test]
@@ -744,11 +751,9 @@ fn description_empty_fails_d1() {
 }
 
 #[test]
-fn description_two_parts_non_subscription_suggests_d1() {
-    // FE-21 structural downgrade (spec §2.1): a NON-subscription (single-fee) A2A
-    // service should have EXACTLY 3 paragraphs. A 2-paragraph description is the
-    // wrong count → D1 STILL fires, but now as an ADVISORY ("suggest") finding, so
-    // the listing PASSES (pass: true) while surfacing the suggestion.
+fn description_two_parts_non_subscription_passes_no_d1() {
+    // A NON-subscription (single-fee) A2A service with 2 paragraphs: the paragraph
+    // count is not validated, so no D1 and the listing passes.
     let service = svc(
         "Doc Summarizer",
         "Summary line.\nProvide: a document and a target language.",
@@ -757,15 +762,13 @@ fn description_two_parts_non_subscription_suggests_d1() {
         None,
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
-    assert_eq!(severity_of(&r, "D1"), Some("suggest"), "D1 must be advisory, got {:?}", codes(&r));
-    assert!(r.pass, "structural D1 must not block A2A; got {:?}", codes(&r));
+    assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "got {:?}", codes(&r));
 }
 
 #[test]
-fn description_two_parts_subscription_passes_d1() {
-    // FE-21: a SUBSCRIPTION-priced A2A service uses EXACTLY 2 paragraphs
-    // (1. core capabilities; 2. what will be delivered) → no D1.
+fn description_two_parts_subscription_passes_no_d1() {
+    // Same 2-paragraph shape on a SUBSCRIPTION-priced A2A service → also no D1.
     let service = "[{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Daily signals across DEX.\\nDelivered as structured signals; copy-trading supported.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
     let r = run_validation("asp", Some("Agent Name"), Some("A helpful agent."), Some(service));
     assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
@@ -773,16 +776,14 @@ fn description_two_parts_subscription_passes_d1() {
 }
 
 #[test]
-fn description_three_parts_subscription_suggests_d1() {
-    // FE-21 structural downgrade (spec §2.1): a subscription A2A service should
-    // have EXACTLY 2 paragraphs. 3 paragraphs is the wrong count → D1 STILL fires,
-    // now as an ADVISORY ("suggest") finding → the listing PASSES. Advisory applies
-    // uniformly to all A2A regardless of billing model (no billing-model branch).
+fn description_three_parts_subscription_passes_no_d1() {
+    // Billing model no longer affects the description rules: a 3-paragraph body on
+    // a subscription service is accepted exactly like the 2-paragraph one above —
+    // there is no paragraph-count rule to branch on.
     let service = "[{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Daily signals across DEX.\\nNothing to provide.\\nDelivered as structured signals.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
     let r = run_validation("asp", Some("Agent Name"), None, Some(service));
-    assert!(codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
-    assert_eq!(severity_of(&r, "D1"), Some("suggest"), "D1 must be advisory, got {:?}", codes(&r));
-    assert!(r.pass, "structural D1 must not block A2A; got {:?}", codes(&r));
+    assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "got {:?}", codes(&r));
 }
 
 #[test]
@@ -799,19 +800,17 @@ fn a2a_empty_description_still_blocks_d1() {
 }
 
 #[test]
-fn description_long_single_paragraph_suggests_d1_no_per_paragraph_limit() {
-    // No per-paragraph length limit (spec §2.1 length downgrade): a single-paragraph
+fn description_long_single_paragraph_has_no_findings() {
+    // No per-paragraph length limit and no paragraph-count rule: a single-paragraph
     // A2A description whose only line is long (401 chars, well under the 2000-width
-    // total cap) fires only the wrong (1) paragraph count as an ADVISORY ("suggest")
-    // D1 finding — never D3 (removed) — so the listing still PASSES.
+    // total cap) raises NOTHING — never D3 (removed) and never D1.
     let p1 = "A".repeat(401);
     let service = svc("Doc Summarizer", &p1, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);
-    assert!(c.contains(&"D1".to_string()), "expected D1, got {:?}", c);
-    assert_eq!(severity_of(&r, "D1"), Some("suggest"), "D1 must be advisory, got {:?}", c);
+    assert!(!c.contains(&"D1".to_string()), "paragraph count is not validated, got {:?}", c);
     assert!(!c.contains(&"D3".to_string()), "D3 no longer exists, got {:?}", c);
-    assert!(r.pass, "advisory structural findings must not block A2A; got {:?}", c);
+    assert!(r.pass, "got {:?}", c);
 }
 
 #[test]
@@ -912,7 +911,10 @@ fn description_long_part_within_total_passes() {
 }
 
 #[test]
-fn description_profit_guarantee_cjk_fails_d9() {
+fn description_profit_guarantee_cjk_suggests_d9() {
+    // D9 is ADVISORY: the guarantee phrase surfaces as a suggestion (the hardcoded
+    // phrase list is only a partial backstop — the skill layer flags the rest by
+    // meaning), so the listing still passes.
     let service = svc(
         "Signal Service",
         "每日推送交易信号，稳赚不赔。\n无需提供额外材料。",
@@ -922,10 +924,12 @@ fn description_profit_guarantee_cjk_fails_d9() {
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
+    assert_eq!(severity_of(&r, "D9"), Some("suggest"), "D9 must be advisory, got {:?}", codes(&r));
+    assert!(r.pass, "an advisory D9 must not block; got {:?}", codes(&r));
 }
 
 #[test]
-fn description_profit_guarantee_en_fails_d9() {
+fn description_profit_guarantee_en_suggests_d9() {
     let service = svc(
         "Signal Service",
         "Daily trade signals with guaranteed returns.\nNothing to provide.",
@@ -935,6 +939,25 @@ fn description_profit_guarantee_en_fails_d9() {
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
+    assert_eq!(severity_of(&r, "D9"), Some("suggest"), "D9 must be advisory, got {:?}", codes(&r));
+    assert!(r.pass, "an advisory D9 must not block; got {:?}", codes(&r));
+}
+
+#[test]
+fn a2mcp_profit_guarantee_also_suggests_d9() {
+    // D9's advisory severity is service-type agnostic — an A2MCP description with
+    // guarantee wording suggests rather than blocks, exactly like A2A. (URL D6 and
+    // test-marker U1 still block for A2MCP — see the FE-22 test above.)
+    let service = svc(
+        "Price Feed MCP",
+        "Returns price quotes, guaranteed profit for every call",
+        "A2MCP",
+        "10",
+        Some("https://api.example.com/mcp"),
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert_eq!(severity_of(&r, "D9"), Some("suggest"), "D9 must be advisory, got {:?}", codes(&r));
+    assert!(r.pass, "an advisory D9 must not block A2MCP; got {:?}", codes(&r));
 }
 
 #[test]
@@ -1185,14 +1208,18 @@ fn empty_service_name_does_not_trigger_s1() {
 
 // D1 + D2 both fire on a single over-long line
 #[test]
-fn description_over_2000_single_line_fails_d1_and_d2() {
-    // A single line of 2001 chars → D2 (total width > 2000) and D1 (only 1 part).
+fn description_over_2000_single_line_suggests_d2_only() {
+    // A single line of 2001 chars → D2 (total width > 2000) as the ONLY finding:
+    // being a single paragraph is not itself a problem, so no D1 accompanies it,
+    // and the advisory D2 does not fail the listing.
     let long = "x".repeat(2001);
     let service = svc("Doc Summarizer", &long, "A2A", "5", None);
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);
     assert!(c.contains(&"D2".to_string()), "expected D2, got {:?}", c);
-    assert!(c.contains(&"D1".to_string()), "expected D1 (single line → no part 2), got {:?}", c);
+    assert_eq!(severity_of(&r, "D2"), Some("suggest"), "D2 must be advisory, got {:?}", c);
+    assert!(!c.contains(&"D1".to_string()), "paragraph count is not validated, got {:?}", c);
+    assert!(r.pass, "an over-length description must not block, got {:?}", c);
 }
 
 // N3 integration: No. suffix through run_validation
