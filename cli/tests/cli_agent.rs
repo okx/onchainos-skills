@@ -259,16 +259,31 @@ fn validate_listing_a2a_test_marker_blocks() {
     assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false for a test marker, got {result}");
 }
 
-// ── IT-012: an A2MCP description containing a web link is still rejected ───────
-//   Regression guard: FE-22 prohibited content applies to every service type,
-//   including A2MCP.
+// ── IT-012: an A2MCP description may carry a URL; other prohibited content can't ─
+//   The URL ban (D6) is A2A-only: an A2MCP request description MUST include a
+//   working `curl` example using the real endpoint, so a URL there is legal and
+//   must NOT fail the listing. The test marker (U1) still blocks A2MCP.
 #[test]
-fn validate_listing_a2mcp_url_blocks() {
-    let result = validate_listing(
+fn validate_listing_a2mcp_url_allowed_test_marker_still_blocks() {
+    let with_curl = validate_listing(
         "asp",
-        r#"[{"serviceName":"Realtime Price Feed","serviceDescription":"Returns token price quotes, docs at https://example.com/api\ntokenAddress (string, required): token contract\nPOST","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]"#,
+        r#"[{"serviceName":"Realtime Price Feed","serviceDescription":"Returns token price quotes\ntokenAddress (string, required): token contract\nPOST\ncurl -X POST https://api.example.com/mcp -d '{\"tokenAddress\":\"0x1234\"}'","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false for a URL in an A2MCP description, got {result}");
+    assert_eq!(
+        with_curl["pass"].as_bool(),
+        Some(true),
+        "an A2MCP request example carrying the endpoint URL must not block, got {with_curl}"
+    );
+
+    let with_marker = validate_listing(
+        "asp",
+        r#"[{"serviceName":"Realtime Price Feed","serviceDescription":"Returns token price quotes (test)\ntokenAddress (string, required): token contract\nPOST","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]"#,
+    );
+    assert_eq!(
+        with_marker["pass"].as_bool(),
+        Some(false),
+        "a test marker must still block an A2MCP listing, got {with_marker}"
+    );
 }
 
 // ── IT-013: an advisory finding never rescues a blocking one ──────────────────

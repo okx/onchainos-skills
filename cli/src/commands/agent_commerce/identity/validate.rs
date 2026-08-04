@@ -142,10 +142,10 @@ pub(crate) fn run_validation(
     check_name(name, &mut findings);
 
     // ── Description checks ────────────────────────────────────────────────
-    // Universal U1/U3 apply to a supplied non-empty description for every
+    // Universal U1 applies to a supplied non-empty description for every
     // role. The 3-part structure (D1) is asp-service-only and is
     // NEVER applied to the agent-level description. Agent-level description for
-    // ASPs additionally gets D6 (and U1/U3 already above).
+    // ASPs additionally gets D6 (and U1 already above).
     if !description.is_empty() {
         check_universal_text("description", description, &mut findings);
         if role == "asp" {
@@ -460,9 +460,12 @@ fn check_pricing(
 //     layout is guidance in the skill's collection prompts (register.md §3 Step 2c)
 //     and is never counted here, so subscription and non-subscription services are
 //     validated identically.
-//   • FE-22 (禁用内容) — URL (D6) and test/env marker (U1) are BLOCKING;
-//     profit/return-guarantee wording (D9: "稳赚 / 保证收益 / 翻倍" …) is
-//     ADVISORY. Applies to EVERY service including A2MCP.
+//   • FE-22 (禁用内容) — test/env marker (U1) is BLOCKING for every service type;
+//     profit/return-guarantee wording (D9: "稳赚 / 保证收益 / 翻倍" …) is ADVISORY
+//     for every service type; the URL ban (D6) is BLOCKING but A2A-ONLY — an
+//     A2MCP request description REQUIRES a working `curl` example carrying the
+//     real `https://` endpoint (line 4, FE-16 skill rule), so URLs are legal
+//     there.
 // The purely SEMANTIC quality checks (unclear wording, tech-stack leak,
 // disclaimers) are FE-23 and live in the skill layer (register.md §4), never in
 // this mechanical validator. A2A has no declared-market and no signal-example
@@ -476,8 +479,10 @@ fn check_service_description(
     let field = |sub: &str| format!("service[{index}].{sub}");
     let fd = field("servicedescription");
 
-    // ── Prohibited content — applies to EVERY service (A2A + A2MCP) ────────
-    if contains_url(desc) {
+    // ── Prohibited content ─────────────────────────────────────────────────
+    // D6 URL is A2A-only: the A2MCP request description must carry a `curl`
+    // example with the real https endpoint (FE-16), so a URL is expected there.
+    if !is_a2mcp && contains_url(desc) {
         findings.push(Finding::block(&fd, "D6", fe::FE22));
     }
     // D9 is ADVISORY: the hardcoded guarantee-phrase list can only ever be a

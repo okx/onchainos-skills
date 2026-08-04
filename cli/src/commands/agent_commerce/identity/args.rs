@@ -53,9 +53,11 @@ pub struct CreateArgs {
     ///                            copy-trading notes for a signal service). No
     ///                            declared-market or signal-example requirement.
     ///                          Whole text ≤1000 CJK chars (2000 half-width); no
-    ///                          per-part length limit. No URLs, no
-    ///                          test/env markers, and no
-    ///                          guaranteed-profit / risk-free wording.
+    ///                          per-part length limit. No URLs (A2A only — the
+    ///                          A2MCP request example necessarily carries the
+    ///                          endpoint URL), no test/env markers, and no
+    ///                          guaranteed-profit / risk-free wording. A wallet
+    ///                          or contract address is allowed anywhere.
     ///   • serviceType        — `A2A` (agent-to-agent) or `A2MCP` (API service).
     ///   • fee                — single-purchase price. A plain number as a JSON
     ///                          string ("10"), USDT implied, ≤6 decimals. An
@@ -149,9 +151,10 @@ pub struct UpdateArgs {
     /// request example (a working `curl` command using the real endpoint URL);
     /// A2A (same shape for per-call and subscription pricing): line 1 =
     /// core-capability summary (REQUIRED), line 2 = what the user must provide
-    /// (OPTIONAL), line 3 = delivery note (OPTIONAL);
-    /// whole text ≤1000 CJK chars, no per-part limit; no URLs /
-    /// test markers / guaranteed-profit wording),
+    /// (OPTIONAL), line 3 = delivery note (OPTIONAL); whole text ≤1000 CJK chars
+    /// (2000 half-width), no per-part length limit; no URLs (A2A only — the
+    /// A2MCP request example necessarily carries the endpoint URL) / test
+    /// markers / guaranteed-profit wording),
     /// `serviceType` (`A2A` | `A2MCP`),
     /// `fee` (single-purchase price — plain number, USDT implied, ≤6 decimals),
     /// `subscription` (A2A only — array of `{interval, fee}`, `interval`
