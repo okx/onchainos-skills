@@ -20,7 +20,7 @@ onchainos wallet login [--phase init|open|poll] [--url <url>] [--session-id <id>
 | `--url` | For `open` | Login URL to open. Required when `--phase open`. |
 | `--session-id` | No | Auth session id to poll (`--phase poll`). Defaults to the most recent `init` session when omitted. |
 
-- `--phase init` → returns `{ loginUrl, authSessionId, opened }`.
+- `--phase init` → returns `loginUrl`, `authSessionId`, `opened`, and `nextSteps`. `nextSteps` always carries `completeLogin` (the exact `onchainos wallet login --phase poll --session-id <authSessionId>` command) and, only when `opened == false`, `openLoginUrl` (equal to `loginUrl`).
 - `--phase poll` → returns `accountId`, `accountName`, `loginType`, `isNew`, addresses, `totalValueUsd` (true `isNew` → new user; trigger Policy + Export templates, see [portal-actions.md](wallet-portal-actions.md)).
 
 ### `wallet add`
