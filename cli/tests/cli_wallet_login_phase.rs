@@ -18,6 +18,13 @@
 //! (main.rs:247-248), so each test asserts the exit is non-success AND the
 //! envelope carries the expected message — never a bare `.failure()`.
 //!
+//! A second, **golden** group pins the C4 discoverability guarantee added to the
+//! `init` success packet: `data.nextSteps.completeLogin` is the exact `--phase
+//! poll` command with the packet's own `authSessionId` interpolated, and — when
+//! the browser could not be opened (`ONCHAINOS_NO_BROWSER=1` → `opened:false`) —
+//! `data.nextSteps.openLoginUrl` echoes `data.loginUrl`. `init` mints the session
+//! locally, so these succeed offline with no backend round-trip.
+//!
 //! ── Sandbox conventions ──────────────────────────────────────────────────
 //!
 //! - `ONCHAINOS_HOME` points at a fresh isolated dir under
@@ -31,7 +38,7 @@
 
 mod common;
 
-use common::onchainos;
+use common::{assert_ok_and_extract_data, onchainos};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -206,5 +213,125 @@ fn login_phase_full_is_rejected() {
     assert!(
         combined.contains("invalid value") || combined.contains("full"),
         "expected clap invalid-value error for `--phase full`\noutput: {combined}",
+    );
+}
+
+// ── C4 discoverability: `init` next-step commands ────────────────────
+//
+// `init` mints the session locally (uuid + keypair) and never touches the
+// backend, so these golden cases run offline. `assert_ok_and_extract_data`
+// (shared `common` helper) parses stdout, asserts `ok:true`, and returns `data`.
+
+/// IT-001 — `init` shows the exact command to finish signing in.
+///
+/// `data.nextSteps.completeLogin` MUST be the `--phase poll` command whose
+/// embedded `--session-id` equals `data.authSessionId` — the C4 discoverability
+/// guarantee (spec §6.2/§8.1). Asserting full-string equality (not just the
+/// `contains:` substring the plan lists) also proves the session id is
+/// interpolated, not a placeholder.
+#[test]
+fn login_init_next_steps_complete_login_matches_session_id() {
+    let (_tmp, home) = fresh_home();
+
+    let output = scrubbed(&mut onchainos(), &home)
+        .args(["wallet", "login", "--phase", "init"])
+        .output()
+        .expect("run onchainos");
+
+    let data = assert_ok_and_extract_data(&output);
+
+    let session_id = data["authSessionId"]
+        .as_str()
+        .expect("init data.authSessionId must be a string");
+    let complete_login = data["nextSteps"]["completeLogin"]
+        .as_str()
+        .expect("init data.nextSteps.completeLogin must be a string");
+
+    assert_eq!(
+        complete_login,
+        format!("onchainos wallet login --phase poll --session-id {session_id}"),
+        "completeLogin must be the poll command with authSessionId interpolated\ndata: {data}",
+    );
+}
+
+/// IT-002 — if the browser doesn't open, `init` shows which URL to open.
+///
+/// Bare `wallet login` defaults to `--phase init`; with the browser suppressed
+/// (`opened:false`) the packet emits `data.nextSteps.openLoginUrl`, which MUST be
+/// non-empty and equal `data.loginUrl` (spec §4.3/§6.2/§17.3-3). Also exercises
+/// the `--phase` default boundary. The `opened:true` branch (openLoginUrl
+/// omitted) is unreachable headless and is covered by the `next_steps_for_login`
+/// unit test (spec §18.2).
+#[test]
+fn login_bare_default_init_next_steps_open_login_url() {
+    let (_tmp, home) = fresh_home();
+
+    let output = scrubbed(&mut onchainos(), &home)
+        .args(["wallet", "login"])
+        .output()
+        .expect("run onchainos");
+
+    let data = assert_ok_and_extract_data(&output);
+
+    let login_url = data["loginUrl"]
+        .as_str()
+        .expect("init data.loginUrl must be a string");
+    let open_login_url = data["nextSteps"]["openLoginUrl"]
+        .as_str()
+        .expect("data.nextSteps.openLoginUrl must be present when browser is suppressed");
+
+    assert!(
+        !open_login_url.is_empty(),
+        "openLoginUrl must be non-empty\ndata: {data}",
+    );
+    assert_eq!(
+        open_login_url, login_url,
+        "openLoginUrl must echo loginUrl so the user can open it manually\ndata: {data}",
+    );
+}
+
+/// IT-006 — `init` shows the finish command even against a different backend.
+///
+/// The base URL used to build `data.loginUrl` is override-driven (`OKX_BASE_URL`
+/// → `option_env!` → `DEFAULT_BASE_URL`), so the override host is fed in as the
+/// test input and re-used to build the expected substring — no environment-drift
+/// literal. `data.loginUrl` MUST use the overridden host and
+/// `data.nextSteps.completeLogin` MUST still be present and correct: the
+/// discoverability guarantee is base-URL-independent (spec §7.4/§10.1; C4).
+#[test]
+fn login_init_next_steps_base_url_independent() {
+    // Fed to the CLI as `OKX_BASE_URL` AND used to build the expected substring,
+    // so this asserts against the injected value (offline), not a live host.
+    const OVERRIDE_BASE_URL: &str = "https://web3.okx.com";
+
+    let (_tmp, home) = fresh_home();
+
+    // `scrubbed` clears any inherited `OKX_BASE_URL`; re-set the override after.
+    let output = scrubbed(&mut onchainos(), &home)
+        .env("OKX_BASE_URL", OVERRIDE_BASE_URL)
+        .args(["wallet", "login", "--phase", "init"])
+        .output()
+        .expect("run onchainos");
+
+    let data = assert_ok_and_extract_data(&output);
+
+    let login_url = data["loginUrl"]
+        .as_str()
+        .expect("init data.loginUrl must be a string");
+    assert!(
+        login_url.contains(&format!("{OVERRIDE_BASE_URL}/account/sociallogin")),
+        "loginUrl must use the overridden base host\ndata: {data}",
+    );
+
+    let session_id = data["authSessionId"]
+        .as_str()
+        .expect("init data.authSessionId must be a string");
+    let complete_login = data["nextSteps"]["completeLogin"]
+        .as_str()
+        .expect("init data.nextSteps.completeLogin must be a string");
+    assert_eq!(
+        complete_login,
+        format!("onchainos wallet login --phase poll --session-id {session_id}"),
+        "completeLogin must stay correct regardless of base URL\ndata: {data}",
     );
 }
