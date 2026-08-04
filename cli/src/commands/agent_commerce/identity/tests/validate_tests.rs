@@ -486,13 +486,32 @@ fn cjk_negative_capability_fails_u3() {
 
 #[test]
 fn copytrading_delivery_note_is_not_negative_capability_u3() {
-    // The field-5 part-3 delivery descriptor "(不)支持跟单" is a delivery
-    // attribute, NOT a capability gap — it must never trip U3. This is the
-    // spec's own correct normal-service example wording.
+    // "(不)支持跟单" in a delivery note is a permanent delivery attribute, NOT a
+    // capability gap — it must never trip U3 (the rule still runs on the agent
+    // description and the service name).
     assert!(!contains_negative_capability("交付物形式为文件，不支持跟单。"));
     assert!(!contains_negative_capability("交付物形式为结构化信号，支持跟单。"));
     // A bare "不支持" without the "目前/暂" gap framing no longer fires either.
     assert!(!contains_negative_capability("不支持"));
+}
+
+#[test]
+fn service_description_negative_capability_no_longer_blocks_u3() {
+    // U3 does NOT run on the service DESCRIPTION any more: declaring a capability
+    // boundary ("暂不支持 Solana") is honest disclosure, not a defect. Guards
+    // against re-adding the check — it used to block while reporting FE22, whose
+    // text never mentions negative-capability wording, leaving the user unable to
+    // tell what to fix. The service NAME and the agent description still block.
+    let service = svc(
+        "Doc Summarizer",
+        "提供多链文档摘要能力，面向研究员。\n需要提供：文档链接以外的原文。\n交付物为文件，暂不支持 Solana。",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("GoodBot"), None, Some(&service));
+    assert!(!codes(&r).contains(&"U3".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "a capability-boundary note must not block, got {:?}", codes(&r));
 }
 
 #[test]
@@ -861,9 +880,10 @@ fn description_three_parts_passes() {
 
 #[test]
 fn spec_normal_service_correct_example_passes() {
-    // The spec's own "正确示范（普通服务）" — a 3-part description whose part 3 is
-    // "交付物形式为文件，不支持跟单". This MUST pass QA (regression: the bare-"不支持"
-    // U3 rule used to block the spec's own example).
+    // A realistic ordinary-service description whose part 3 is "交付物形式为文件,
+    // 不支持跟单". Regression for the bare-"不支持" U3 narrowing: a permanent
+    // delivery attribute must never read as a capability gap. (The paragraph
+    // layout here is illustrative only — part count is not validated.)
     let service = svc(
         "Meme Token 一键发币",
         "提供 Meme token 一键发行能力，只需要图片和名称，就可以帮你发布 memetoken。\n需要提供：Meme token 的图片，和名称。\n提供的交付物形式为文件，不支持跟单。",
@@ -877,10 +897,11 @@ fn spec_normal_service_correct_example_passes() {
 
 #[test]
 fn spec_trading_signal_correct_example_passes() {
-    // The spec's own "正确示范（交易信号类）" — a 3-part description whose part 3
-    // carries the canonical structured signal example. This MUST pass QA. It is a
-    // regression for several description edge cases that co-occur in a real
-    // signal example and are easy to break by tightening a rule:
+    // A signal-service description that happens to enumerate markets and carry a
+    // structured signal example. NEITHER is required any more (no declared-market
+    // rule, no signal-example rule) — this test does NOT pin those requirements.
+    // It pins the description edge cases that co-occur in such text and are easy
+    // to break by tightening a rule:
     //   • pipe / "$TOKEN" / "≤" / "%" symbols in the delivery note — description
     //     has no decorative-symbol rule (that is name-only N8), so they must pass.
     //   • "支持跟单" delivery attribute — must NOT trip U3 (bare-"不支持" narrowing).

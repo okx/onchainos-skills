@@ -274,15 +274,16 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
     let is_a2mcp = stype == "A2MCP";
     let is_a2a = stype == "A2A";
 
-    // U3 negative-capability: on the service NAME → name message; on the service
-    // DESCRIPTION it is a prohibited-content issue → description message.
+    // U3 negative-capability applies to the service NAME only. It deliberately
+    // does NOT run on the service DESCRIPTION: "暂不支持 X" there is an honest
+    // capability-boundary disclosure, not a defect, and blocking it contradicted
+    // the wording-vs-safety split every other description rule now follows
+    // (only URL / test marker block; length and guarantee wording advise). The
+    // former description-level U3 was also unreachable-by-repair — it reported
+    // FE22, whose text never mentions negative-capability wording, so a user
+    // could not tell what to change.
     if !svc.service_name.is_empty() && contains_negative_capability(&svc.service_name) {
         findings.push(Finding::block(f("name"), "U3", fe::FE06));
-    }
-    if !svc.service_description.is_empty()
-        && contains_negative_capability(&svc.service_description)
-    {
-        findings.push(Finding::block(f("servicedescription"), "U3", fe::FE22));
     }
 
     // ── ServiceType (T1) ──────────────────────────────────────────────────
@@ -597,10 +598,10 @@ fn delimited_marker_present(lower: &str, delim: char, word: &str) -> bool {
 
 /// U3: negative-capability phrases (case-insensitive substring). Scoped to the
 /// spec's "目前不支持"-style negative info — a capability GAP / "not yet" framing
-/// that signals an incomplete product. It deliberately does NOT match a bare
-/// "不支持": the field-5 part-3 delivery note states whether copy-trading is
-/// supported ("支持跟单" / "不支持跟单"), and that permanent delivery attribute —
-/// used verbatim in the spec's own correct example — must pass QA.
+/// that signals an incomplete product. Callers: the agent `description` and the
+/// service NAME (never the service description — see `check_service`).
+/// It deliberately does NOT match a bare "不支持", which is a permanent
+/// attribute rather than a gap ("不支持跟单" = copy-trading is not offered).
 fn contains_negative_capability(s: &str) -> bool {
     let lower = s.to_ascii_lowercase();
     const EN: &[&str] = &[
