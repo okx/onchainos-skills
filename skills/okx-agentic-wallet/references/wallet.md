@@ -8,7 +8,7 @@ Commands that need auth (balance, send, contract-call, history, sign-message) re
 
 1. **Check state.** Run `wallet status`; if `data.loggedIn` is `true`, proceed. Otherwise (or on re-login request) continue.
 2. **Log in** — orchestrate `init` → auto-poll:
-   a. **Get the link.** Run `wallet login --phase init` — it returns `{ loginUrl, authSessionId, opened }` immediately and best-effort opens the browser. Keep `authSessionId` for the poll.
+   a. **Get the link.** Run `wallet login --phase init` — it returns `{ loginUrl, authSessionId, opened, nextSteps }` immediately and best-effort opens the browser. `nextSteps.completeLogin` is the exact poll command with `authSessionId` interpolated; when `opened == false`, `nextSteps.openLoginUrl` (equal to `loginUrl`) is the URL to open first. Keep `authSessionId` for the poll.
    b. **Show the link + reminder** (translate to the user's language; keep the structure, substitute `authSessionId` and `loginUrl`):
       > Your login link is ready — I'll open it in your browser.
       > • Session ID (session_id): `<authSessionId>`

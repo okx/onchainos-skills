@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use base64::Engine;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::keyring_store;
 use crate::output;
@@ -545,8 +545,30 @@ pub(super) async fn cmd_login_init() -> Result<()> {
         "loginUrl": login_url,
         "authSessionId": auth_session_id,
         "opened": opened,
+        "nextSteps": next_steps_for_login(&auth_session_id, opened, &login_url),
     }));
     Ok(())
+}
+
+/// Build ready-to-paste next-step commands for the `init` success packet,
+/// mirroring the `next_steps_for_swap` / `next_steps_for_bridge` pattern.
+///
+/// `completeLogin` is always emitted — the exact `poll` command with
+/// `authSessionId` interpolated. `openLoginUrl` (= `loginUrl`) is emitted only
+/// when the browser was not opened, so the caller knows to open it manually.
+fn next_steps_for_login(auth_session_id: &str, opened: bool, login_url: &str) -> Value {
+    let mut steps = serde_json::Map::new();
+    steps.insert(
+        "completeLogin".to_string(),
+        json!(format!(
+            "onchainos wallet login --phase poll --session-id {}",
+            auth_session_id
+        )),
+    );
+    if !opened {
+        steps.insert("openLoginUrl".to_string(), json!(login_url));
+    }
+    Value::Object(steps)
 }
 
 /// Phase `open`: best-effort open of the login URL in the system browser.
@@ -1337,5 +1359,40 @@ mod tests {
         // Sub-floor values are rejected and fall back to the default (not clamped).
         assert_eq!(resolve_social_login_timeout_secs(Some("9")), 300);
         assert_eq!(resolve_social_login_timeout_secs(Some("0")), 300);
+    }
+
+    #[test]
+    fn next_steps_for_login_opened_has_only_complete_login() {
+        let steps = next_steps_for_login("test-session-abc-123", true, "https://login.example/x");
+        // completeLogin is the exact poll command with authSessionId interpolated.
+        assert_eq!(
+            steps["completeLogin"].as_str(),
+            Some("onchainos wallet login --phase poll --session-id test-session-abc-123")
+        );
+        // The embedded command carries the input session id.
+        assert!(steps["completeLogin"]
+            .as_str()
+            .unwrap()
+            .contains("test-session-abc-123"));
+        // openLoginUrl is omitted when the browser was already opened.
+        assert!(steps.get("openLoginUrl").is_none());
+    }
+
+    #[test]
+    fn next_steps_for_login_not_opened_includes_open_login_url() {
+        let steps = next_steps_for_login(
+            "test-session-abc-123",
+            false,
+            "https://web3.okx.com/login?session=abc123",
+        );
+        assert_eq!(
+            steps["completeLogin"].as_str(),
+            Some("onchainos wallet login --phase poll --session-id test-session-abc-123")
+        );
+        // openLoginUrl is present and equals loginUrl when not opened.
+        assert_eq!(
+            steps["openLoginUrl"].as_str(),
+            Some("https://web3.okx.com/login?session=abc123")
+        );
     }
 }
