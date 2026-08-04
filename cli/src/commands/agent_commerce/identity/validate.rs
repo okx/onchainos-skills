@@ -462,10 +462,10 @@ fn check_pricing(
 //   • FE-22 (禁用内容) — URL (D6) and test/env marker (U1) are BLOCKING;
 //     profit/return-guarantee wording (D9: "稳赚 / 保证收益 / 翻倍" …) is
 //     ADVISORY. Applies to EVERY service including A2MCP.
-// The purely SEMANTIC quality checks (unclear paragraphs, tech-stack leak,
-// disclaimers, declared-market / signal-example for trading-signal services) are
-// FE-23 and live in the skill layer (register.md §4), never in this mechanical
-// validator.
+// The purely SEMANTIC quality checks (unclear wording, tech-stack leak,
+// disclaimers) are FE-23 and live in the skill layer (register.md §4), never in
+// this mechanical validator. A2A has no declared-market and no signal-example
+// requirement in either layer.
 fn check_service_description(
     index: usize,
     desc: &str,
