@@ -78,11 +78,10 @@ mod fe {
     /// FE-22 (禁用内容) — COMPOSED per finding-set instead of a fixed constant.
     ///
     /// The rule group is no longer homogeneous: the URL ban (D6) is A2A-only and
-    /// blocking, the test marker (U1) is blocking for every service type, and the
-    /// profit/return guarantee (D9) is ADVISORY. A single fixed sentence therefore
-    /// had to enumerate all three and command "remove all links" — telling an A2MCP
-    /// ASP to delete the endpoint URL its request example is REQUIRED to carry, and
-    /// using blocking language for an advisory-only hit.
+    /// blocking, while the test marker (U1) is blocking for every service type. A
+    /// single fixed sentence therefore had to enumerate both and command "remove
+    /// all links" — telling an A2MCP ASP to delete the endpoint URL its request
+    /// example is REQUIRED to carry.
     ///
     /// This composer keeps requirement ① intact — every FE-22 finding on the SAME
     /// field is handed the SAME string, so the skill layer's de-duplication by
@@ -91,7 +90,7 @@ mod fe {
     /// "Then resubmit." only when at least one BLOCKING check fired.
     ///
     /// Callers pass the already-decided booleans; see `check_service_description`.
-    pub fn fe22(has_url: bool, has_guarantee: bool, has_marker: bool) -> String {
+    pub fn fe22(has_url: bool, has_marker: bool) -> String {
         // Removal items collapse into one clause ("remove the link and the test
         // marker") so the sentence never repeats the verb.
         let mut removals: Vec<&str> = Vec::new();
@@ -106,21 +105,12 @@ mod fe {
         if !removals.is_empty() {
             clauses.push(format!("remove {}", removals.join(" and ")));
         }
-        if has_guarantee {
-            clauses.push(
-                "replace the promise of returns (e.g., \"guaranteed profit\", \"double your money\") \
-                 with a description of what the service can do"
-                    .to_string(),
-            );
-        }
-
         // Defensive: never called with nothing set, but stay descriptive if it is.
         if clauses.is_empty() {
             return "The service description contains content that isn't allowed here.".to_string();
         }
 
         let mut msg = format!("The service description needs a change: {}.", clauses.join(", and "));
-        // Only D6 / U1 block; an advisory-only (D9) hit must not command a resubmit.
         if has_url || has_marker {
             msg.push_str(" Then resubmit.");
         }
@@ -163,7 +153,7 @@ impl Finding {
     /// same `code`/`message` semantics as `block`, but `severity: "suggest"` means
     /// it does NOT flip `pass` to false (see `run_validation`, which only counts
     /// `severity == "block"`). Used for the A2A description length finding (FE-21
-    /// D2) and the profit/return-guarantee finding (FE-22 D9).
+    /// D2).
     fn suggest(field: impl Into<String>, code: &str, message: &str) -> Finding {
         Finding {
             field: field.into(),
@@ -248,14 +238,13 @@ pub(crate) fn run_validation(
     // NOTE: on `service[i].servicedescription` only these are ADVISORY
     // (severity "suggest" — they surface but never flip `pass`):
     //   • FE-21 D2 — A2A total display width over the cap.
-    //   • FE-22 D9 — profit/return-guarantee wording (any service type).
     // Still BLOCKING: the empty/blank A2A description (D1 — a missing-required-field,
     // consistent with the normalize_service bail) and the remaining FE-22 prohibited
     // content (URL D6, test marker U1). There is NO paragraph-count rule at all:
     // the buyer-facing paragraph layout is guidance in the skill's collection prompts
     // (register.md §3 Step 2c) and is never mechanically counted here, so the
-    // subscription / non-subscription split no longer affects validation. A2MCP is
-    // unchanged — only prohibited content runs for it. The SEMANTIC
+    // pricing model no longer affects validation. A2MCP is unchanged — only
+    // prohibited content runs for it. The SEMANTIC
     // service-description quality check (FE-23) stays advisory in the skill layer.
 
     let pass = !findings.iter().any(|f| f.severity == "block");
@@ -516,15 +505,12 @@ fn check_pricing(
 //     and is never counted here, so subscription and non-subscription services are
 //     validated identically.
 //   • FE-22 (禁用内容) — test/env marker (U1) is BLOCKING for every service type;
-//     profit/return-guarantee wording (D9: "稳赚 / 保证收益 / 翻倍" …) is ADVISORY
-//     for every service type; the URL ban (D6) is BLOCKING but A2A-ONLY — an
-//     A2MCP request description REQUIRES a working `curl` example carrying the
-//     real `https://` endpoint (line 4, FE-16 skill rule), so URLs are legal
-//     there.
-// The purely SEMANTIC quality checks (unclear wording, tech-stack leak,
-// disclaimers) are FE-23 and live in the skill layer (register.md §4), never in
-// this mechanical validator. A2A has no declared-market and no signal-example
-// requirement in either layer.
+//     the URL ban (D6) is BLOCKING but A2A-ONLY — an A2MCP request description
+//     REQUIRES a working `curl` example carrying the real `https://` endpoint
+//     (line 4, FE-16 skill rule), so URLs are legal there.
+// The service-description semantic quality check is limited to the A2A
+// three-part guidance in the skill layer (register.md §4), never in this
+// mechanical validator.
 fn check_service_description(
     index: usize,
     desc: &str,
@@ -543,20 +529,12 @@ fn check_service_description(
     // D6 URL is A2A-only: the A2MCP request description must carry a `curl`
     // example with the real https endpoint (FE-16), so a URL is expected there.
     let has_url = !is_a2mcp && contains_url(desc);
-    // D9 is ADVISORY: the hardcoded guarantee-phrase list can only ever be a
-    // partial backstop, so it suggests a rewrite instead of blocking registration.
-    // The skill layer flags guarantee wording in any language as the same
-    // suggestion (register.md §4 step 4).
-    let has_guarantee = contains_profit_guarantee(desc);
     let has_marker = has_test_marker(desc);
 
-    if has_url || has_guarantee || has_marker {
-        let msg = fe::fe22(has_url, has_guarantee, has_marker);
+    if has_url || has_marker {
+        let msg = fe::fe22(has_url, has_marker);
         if has_url {
             findings.push(Finding::block(&fd, "D6", &msg));
-        }
-        if has_guarantee {
-            findings.push(Finding::suggest(&fd, "D9", &msg));
         }
         if has_marker {
             findings.push(Finding::block(&fd, "U1", &msg));
@@ -581,9 +559,9 @@ fn check_service_description(
         findings.push(Finding::suggest(&fd, "D2", fe::FE21_D2));
     }
 
-    // NO paragraph-count check: the 3-part (per-call) / 2-part (subscription)
-    // layout is collection-time guidance in the skill (register.md §3 Step 2c),
-    // not a mechanical rule — a non-empty A2A description of any shape is valid.
+    // NO paragraph-count check: the A2A three-part layout is collection-time
+    // guidance in the skill (register.md §3 Step 2c), not a mechanical rule — a
+    // non-empty A2A description of any shape is valid.
 }
 
 // ─── Pure predicate helpers (no regex crate; plain string ops) ──────────────
@@ -673,32 +651,6 @@ fn delimited_marker_present(lower: &str, delim: char, word: &str) -> bool {
 // service name and service description. Stating a capability boundary is honest
 // disclosure, and no FE message ever explained the rule, so it was
 // unreachable-by-repair. Do not re-add it.
-
-/// D9: profit / return-guarantee wording (deterministic phrase check). Blocks
-/// the spec's forbidden "收益承诺" wording — 稳赚 / 保证收益 / 翻倍 and close
-/// equivalents — in either language. Kept to unambiguous guarantee phrases so a
-/// legitimate capability description is not falsely blocked.
-fn contains_profit_guarantee(s: &str) -> bool {
-    // CJK phrases (match on raw — not ASCII-lowercased).
-    const CJK: &[&str] = &[
-        "稳赚", "稳赚不赔", "保证收益", "收益保证", "保本", "包赚", "必赚", "翻倍", "零风险",
-    ];
-    if CJK.iter().any(|p| s.contains(p)) {
-        return true;
-    }
-    let lower = s.to_ascii_lowercase();
-    const EN: &[&str] = &[
-        "guaranteed return",
-        "guaranteed returns",
-        "guaranteed profit",
-        "guaranteed income",
-        "guaranteed gains",
-        "risk-free",
-        "risk free",
-    ];
-    EN.iter().any(|p| lower.contains(p))
-}
-
 
 /// N2: embedded agent id — `#\d+` or `_\d+` anywhere, OR a bare trailing number
 /// after a space (e.g. `Bot 3`).

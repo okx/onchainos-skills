@@ -955,12 +955,12 @@ fn user_ignores_invalid_service_json() {
     assert!(r.pass, "got {:?}", codes(&r));
 }
 
-// ─── D1–D9: service description required-ness, length, prohibited content ──
+// ─── D1–D6: service description required-ness, length, prohibited content ──
 //
-// There is NO paragraph-count rule: the 3-part (per-call) / 2-part (subscription)
-// layout is collection-time guidance in the skill (register.md §3 Step 2c), so the
-// validator accepts a non-empty A2A description of ANY shape — the tests below pin
-// that (single-line, 2-part, 3-part all pass identically for both billing models).
+// There is NO paragraph-count rule: the A2A three-part layout is collection-time
+// guidance in the skill (register.md §3 Step 2c), so the validator accepts a
+// non-empty A2A description of ANY shape — the tests below pin that (single-line,
+// 2-part, 3-part all pass identically for both billing models).
 
 #[test]
 fn description_single_line_passes_no_d1() {
@@ -1125,8 +1125,8 @@ fn a2mcp_description_allows_url_no_d6() {
 }
 
 #[test]
-fn a2mcp_description_still_blocks_profit_guarantee_and_test_marker_fe22() {
-    // FE-22 D9 (profit guarantee) and U1 (test marker) still apply to A2MCP.
+fn a2mcp_description_still_blocks_test_marker_fe22() {
+    // U1 (test marker) still applies to A2MCP.
     let service = svc(
         "Doc Summarizer",
         "保证收益的服务(test)",
@@ -1135,7 +1135,6 @@ fn a2mcp_description_still_blocks_profit_guarantee_and_test_marker_fe22() {
         Some("https://example.com/mcp"),
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
     assert!(codes(&r).contains(&"U1".to_string()), "got {:?}", codes(&r));
     assert!(!r.pass);
 }
@@ -1173,11 +1172,8 @@ fn description_three_parts_passes() {
 fn description_decorative_symbols_pass() {
     // A description has NO decorative-symbol rule — that is name-only N8. Pipes,
     // "$TOKEN", "≤", "%" and an ellipsis in a delivery note / example line must
-    // raise nothing. (The two former `spec_*_correct_example_passes` tests are
-    // gone: there is no declared-market rule, no signal-example rule and no
-    // paragraph-count rule, so nothing about a signal service is special here —
-    // see validate.rs `check_service_description`. This is the one live claim
-    // they carried.)
+    // raise nothing. Paragraph count is not validated, so nothing about a signal
+    // service is special here — see validate.rs `check_service_description`.
     let service = svc(
         "Doc Summarizer",
         "面向链上交易者的服务，每日推送 3-5 条可执行信号。\n无需提供额外材料。\n交付物形式为结构化信号：X Layer | $TOKEN (0x12…ab) | BUY | 0.042-0.045 | 滑点 ≤1% | 仓位 5%。",
@@ -1201,10 +1197,7 @@ fn description_long_part_within_total_passes() {
 }
 
 #[test]
-fn description_profit_guarantee_cjk_suggests_d9() {
-    // D9 is ADVISORY: the guarantee phrase surfaces as a suggestion (the hardcoded
-    // phrase list is only a partial backstop — the skill layer flags the rest by
-    // meaning), so the listing still passes.
+fn description_profit_guarantee_cjk_has_no_description_finding() {
     let service = svc(
         "Signal Service",
         "每日推送交易信号，稳赚不赔。\n无需提供额外材料。",
@@ -1213,13 +1206,12 @@ fn description_profit_guarantee_cjk_suggests_d9() {
         None,
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
-    assert_eq!(severity_of(&r, "D9"), Some("suggest"), "D9 must be advisory, got {:?}", codes(&r));
-    assert!(r.pass, "an advisory D9 must not block; got {:?}", codes(&r));
+    assert!(r.pass, "profit wording is no longer a service-description rule; got {:?}", codes(&r));
+    assert!(r.findings.is_empty(), "got {:?}", codes(&r));
 }
 
 #[test]
-fn description_profit_guarantee_en_suggests_d9() {
+fn description_profit_guarantee_en_has_no_description_finding() {
     let service = svc(
         "Signal Service",
         "Daily trade signals with guaranteed returns.\nNothing to provide.",
@@ -1228,16 +1220,12 @@ fn description_profit_guarantee_en_suggests_d9() {
         None,
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
-    assert_eq!(severity_of(&r, "D9"), Some("suggest"), "D9 must be advisory, got {:?}", codes(&r));
-    assert!(r.pass, "an advisory D9 must not block; got {:?}", codes(&r));
+    assert!(r.pass, "profit wording is no longer a service-description rule; got {:?}", codes(&r));
+    assert!(r.findings.is_empty(), "got {:?}", codes(&r));
 }
 
 #[test]
-fn a2mcp_profit_guarantee_also_suggests_d9() {
-    // D9's advisory severity is service-type agnostic — an A2MCP description with
-    // guarantee wording suggests rather than blocks, exactly like A2A. (URL D6 and
-    // test-marker U1 still block for A2MCP — see the FE-22 test above.)
+fn a2mcp_profit_guarantee_has_no_description_finding() {
     let service = svc(
         "Price Feed MCP",
         "Returns price quotes, guaranteed profit for every call",
@@ -1246,8 +1234,8 @@ fn a2mcp_profit_guarantee_also_suggests_d9() {
         Some("https://api.example.com/mcp"),
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert_eq!(severity_of(&r, "D9"), Some("suggest"), "D9 must be advisory, got {:?}", codes(&r));
-    assert!(r.pass, "an advisory D9 must not block A2MCP; got {:?}", codes(&r));
+    assert!(r.pass, "profit wording is no longer a service-description rule; got {:?}", codes(&r));
+    assert!(r.findings.is_empty(), "got {:?}", codes(&r));
 }
 
 #[test]
@@ -1262,20 +1250,6 @@ fn description_test_marker_fails_u1() {
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"U1".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn clean_description_has_no_profit_guarantee_d9() {
-    // A legitimate description must not trip D9.
-    let service = svc(
-        "Signal Service",
-        "面向链上交易者的跟单信号服务，覆盖 DEX 现货。\n无需提供额外材料。\n交付物形式为结构化信号，支持跟单。",
-        "A2A",
-        "5",
-        None,
-    );
-    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(!codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
 }
 
 #[test]
@@ -1530,8 +1504,8 @@ fn service_name_findings_unify_to_same_message() {
 #[test]
 fn description_prohibited_findings_unify_to_same_message() {
     // Requirement ① still holds after FE-22 became a composed sentence: D6 (URL) +
-    // U1 (test marker) + D9 (profit guarantee) on the SAME field all carry the SAME
-    // message, so the skill layer's de-dup by (field, message) renders one line.
+    // U1 (test marker) on the SAME field both carry the SAME message, so the skill
+    // layer's de-dup by (field, message) renders one line.
     let desc_with_url_and_marker =
         "稳赚不赔 — see https://example.com (test).\nProvide something.\nDelivery: file.";
     let service = svc("Doc Summarizer", desc_with_url_and_marker, "A2A", "5", None);
@@ -1544,8 +1518,8 @@ fn description_prohibited_findings_unify_to_same_message() {
     for f in &field_findings {
         assert_eq!(&f.message, first_msg, "description finding {:?} has diverging message", f.code);
     }
-    // All three fired, so the composed sentence names all three fixes.
-    assert_eq!(first_msg, &super::fe::fe22(true, true, true), "got: {first_msg}");
+    assert!(!codes(&r).contains(&"D9".to_string()), "got {:?}", codes(&r));
+    assert_eq!(first_msg, &super::fe::fe22(true, true), "got: {first_msg}");
 }
 
 // ─── FE-22 composed message (only the checks that fired are named) ──────────
@@ -1555,33 +1529,23 @@ fn fe22_names_only_the_checks_that_fired() {
     // A test-marker-only hit (the A2MCP case) must NOT mention links — the old
     // fixed sentence told those ASPs to delete the endpoint URL their request
     // example is required to carry.
-    let marker_only = super::fe::fe22(false, false, true);
+    let marker_only = super::fe::fe22(false, true);
     assert!(marker_only.contains("remove the test marker"), "got: {marker_only}");
     assert!(!marker_only.contains("link"), "must not mention links: {marker_only}");
-    assert!(!marker_only.contains("promise"), "must not mention guarantees: {marker_only}");
 
-    let url_only = super::fe::fe22(true, false, false);
+    let url_only = super::fe::fe22(true, false);
     assert!(url_only.contains("remove the link"), "got: {url_only}");
     assert!(!url_only.contains("test marker"), "got: {url_only}");
 
     // Both removals collapse into one clause — never "remove … and remove …".
-    let both = super::fe::fe22(true, false, true);
+    let both = super::fe::fe22(true, true);
     assert!(both.contains("remove the link and the test marker"), "got: {both}");
     assert_eq!(both.matches("remove").count(), 1, "verb repeated: {both}");
 }
 
 #[test]
-fn fe22_advisory_only_hit_does_not_command_a_resubmit() {
-    // D9 alone is `suggest`, so the sentence stays advisory: it describes the
-    // rewrite and never appends the blocking "Then resubmit."
-    let guarantee_only = super::fe::fe22(false, true, false);
-    assert!(guarantee_only.contains("replace the promise of returns"), "got: {guarantee_only}");
-    assert!(
-        !guarantee_only.contains("Then resubmit"),
-        "an advisory-only message must not command a resubmit: {guarantee_only}"
-    );
-    // Any blocking companion brings the imperative back.
-    for blocking in [super::fe::fe22(true, true, false), super::fe::fe22(false, true, true)] {
+fn fe22_blocking_hits_command_a_resubmit() {
+    for blocking in [super::fe::fe22(true, false), super::fe::fe22(false, true)] {
         assert!(blocking.contains("Then resubmit"), "got: {blocking}");
     }
 }
@@ -1590,7 +1554,7 @@ fn fe22_advisory_only_hit_does_not_command_a_resubmit() {
 fn fe22_empty_input_stays_descriptive() {
     // Defensive branch — never reached from check_service_description, but it must
     // not produce a dangling "needs a change: ." sentence.
-    let none = super::fe::fe22(false, false, false);
+    let none = super::fe::fe22(false, false);
     assert!(!none.contains("needs a change"), "got: {none}");
     assert!(!none.is_empty());
 }
@@ -1638,4 +1602,3 @@ fn non_https_endpoint_fails_t4() {
     assert_eq!(ep_findings[0].code, "T4");
     assert_eq!(ep_findings[0].message, super::fe::FE11);
 }
-
