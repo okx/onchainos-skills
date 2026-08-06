@@ -14,7 +14,7 @@ pub struct CreateArgs {
     #[arg(long)]
     pub role: Option<String>,
     /// Agent description. Required for `asp`; optional for `user` / `evaluator`.
-    /// For `asp` it must be ≤500 characters and carry no URLs, no 0x addresses,
+    /// For `asp` it must be ≤500 characters and carry no URLs
     /// and no test/env markers.
     #[arg(long)]
     pub description: Option<String>,
@@ -43,18 +43,19 @@ pub struct CreateArgs {
     ///                            GET, or the MCP tool name); line 4 = request
     ///                            example — a working `curl` command using the real
     ///                            endpoint URL.
-    ///                            A2A: line 1 = core-capability summary (required);
-    ///                            line 2 = what the user must provide (required);
-    ///                            line 3+ = delivery note (optional here, but
-    ///                            expected for trading-signal services — state the
-    ///                            delivery format and whether copy-trading is
-    ///                            supported, with a concrete example).
+    ///                            A2A (same shape for per-call and subscription
+    ///                            pricing): line 1 = core-capability summary
+    ///                            (REQUIRED — capability points + who it's for,
+    ///                            plus the kind of signals for a signal service);
+    ///                            line 2 = what the user must provide (OPTIONAL —
+    ///                            e.g. wallet address / amount / chain); line 3 =
+    ///                            delivery note (OPTIONAL — delivery format, plus
+    ///                            copy-trading notes for a signal service).
     ///                          Whole text ≤1000 CJK chars (2000 half-width); no
     ///                          per-part length limit. No URLs (A2A only — the
     ///                          A2MCP request example necessarily carries the
-    ///                          endpoint URL), no 0x addresses, no test/env
-    ///                          markers, and no guaranteed-profit / risk-free
-    ///                          wording.
+    ///                          endpoint URL), and no test/env markers. A wallet
+    ///                          or contract address is allowed anywhere.
     ///   • serviceType        — `A2A` (agent-to-agent) or `A2MCP` (API service).
     ///   • fee                — single-purchase price. A plain number as a JSON
     ///                          string ("10"), USDT implied, ≤6 decimals. An
@@ -80,14 +81,14 @@ pub struct CreateArgs {
     ///     non-empty `subscription`. Never neither, and never both (the two
     ///     models are mutually exclusive).
     ///
-    /// The serviceDescription is a single string with `\n` separators (3 lines
-    /// for A2A, 4 lines for A2MCP).
-    ///   A2A e.g.   "Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported, e.g. X Layer | $TOKEN | BUY | 0.042-0.045 | slippage <=1% | position 5% | valid within 24h".
+    /// The serviceDescription is a single string with `\n` separators (up to 3
+    /// lines for A2A — only line 1 is required; exactly 4 for A2MCP).
+    ///   A2A e.g.   "Provides DEX arbitrage trading signals for onchain traders\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported".
     ///   A2MCP e.g. "Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST\ncurl -X POST https://api.example.com/mcp -H \"Content-Type: application/json\" -d '{\"tokenAddress\":\"0xdac17f...\",\"chainIndex\":\"1\"}'".
     ///
     /// Examples:
     ///   A2MCP:            [{"serviceName":"Realtime price feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST\ncurl -X POST https://api.example.com/mcp -H \"Content-Type: application/json\" -d '{\"tokenAddress\":\"0xdac17f...\",\"chainIndex\":\"1\"}'","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]
-    ///   A2A single only:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported, e.g. X Layer | $TOKEN | BUY | 0.042-0.045 | slippage <=1% | position 5% | valid within 24h","serviceType":"A2A","fee":"0.11"}]
+    ///   A2A single only:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals for onchain traders\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"0.11"}]
     ///   A2A sub only:     [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]
     ///   A2A sub + trial:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}],"freeTrial":"72"}]
     #[arg(long)]
@@ -146,11 +147,12 @@ pub struct UpdateArgs {
     /// line separated by `;`, each `<name>(<type>, required/optional): <meaning>`),
     /// line 3 = request method (POST / GET or the MCP tool name), line 4 =
     /// request example (a working `curl` command using the real endpoint URL);
-    /// A2A: line 1 = core-capability summary, line 2 = what the user must
-    /// provide, line 3+ = optional delivery note with a concrete example; whole
-    /// text ≤1000 CJK chars (2000 half-width), no per-part length limit; no URLs
-    /// (A2A only — the A2MCP request example necessarily carries the endpoint
-    /// URL) / 0x addresses / test markers / guaranteed-profit wording),
+    /// A2A (same shape for per-call and subscription pricing): line 1 =
+    /// core-capability summary (REQUIRED), line 2 = what the user must provide
+    /// (OPTIONAL), line 3 = delivery note (OPTIONAL); whole text ≤1000 CJK chars
+    /// (2000 half-width), no per-part length limit; no URLs (A2A only — the
+    /// A2MCP request example necessarily carries the endpoint URL) / test
+    /// markers),
     /// `serviceType` (`A2A` | `A2MCP`),
     /// `fee` (single-purchase price — plain number, USDT implied, ≤6 decimals),
     /// `subscription` (A2A only — array of `{interval, fee}`, `interval`

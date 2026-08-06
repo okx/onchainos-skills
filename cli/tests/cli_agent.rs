@@ -1,0 +1,375 @@
+//! Integration tests — `onchainos agent` identity listing validation for the
+//! A2A serviceDescription advisory-handling requirement (WWINFRA-3659 /
+//! OLI-B-WWINFRA-3659).
+//!
+//! Source plan: `oli-docs/identity-a2a-service-description/integration-plan.csv`
+//!   rows IT-001…IT-015. Spec: `oli-docs/identity-a2a-service-description/spec.md`.
+//!
+//! ─── Why a new `cli_agent.rs` ─────────────────────────────────────────────────
+//! `agent` is a top-level subcommand with no existing integration file (identity
+//! was previously covered only by the inline `#[path]` unit tests under
+//! `src/commands/agent_commerce/identity/tests/`). Per the repo's one-file-per-
+//! top-level-area convention (`project-context.md` `test-file-naming: cli_<area>.rs`,
+//! `project-knowledge.md` §13) these `agent validate-listing` / `create` / `update`
+//! rows land in a single new `cli_agent.rs`.
+//!
+//! ─── Conventions ──────────────────────────────────────────────────────────────
+//!   - Every `validate-listing` row is `network_required: offline`: the command is
+//!     a PURE-LOCAL validator (no HTTP, no wallet) — so it runs directly, NEVER via
+//!     `run_with_retry`. Each still gets an isolated `ONCHAINOS_HOME` sandbox
+//!     (audit logging writes there) staged under `cli/target/test_tmp/cli_agent/…`
+//!     via the shared `fresh_home` + `scrubbed` helpers — NOT `tempfile::tempdir()`.
+//!   - `validate-listing` prints the RAW `ValidationResult` (`{ pass, findings }`),
+//!     NOT the `{ ok, data }` envelope, and always exits 0 (findings are data, not
+//!     an error). So assertions parse stdout JSON directly with `parse_stdout_json`
+//!     — `assert_ok_and_extract_data` does not apply here.
+//!   - Offline assertions are DETERMINISTIC (the validator is a pure function of its
+//!     input), so exact `pass` / `severity` / findings-count assertions are correct
+//!     here — they are not network-varying results.
+//!   - The two `create` / `update` rows are `network_required: live` AND require a
+//!     logged-in test wallet: `create_impl`/`update_impl` run auth + signing-session
+//!     load BEFORE `parse_services` (mutations.rs:117-140), so the empty-description
+//!     `normalize_service` bail is only reachable with real creds. They are therefore
+//!     `#[ignore]`d and, as live rows, go through the project's `run_with_retry`
+//!     helper (rate-limit tolerance) rather than a bare invocation.
+//!   - No environment-specific base URL or hostname is hardcoded anywhere.
+
+mod common;
+
+use common::{fresh_home, onchainos, parse_stdout_json, run_with_retry, scrubbed};
+use serde_json::Value;
+
+/// Run `agent validate-listing` offline in an isolated `ONCHAINOS_HOME` sandbox
+/// and return the parsed raw `{ pass, findings }` JSON. Asserts exit 0 (the CSV
+/// `exit_code` for every validate-listing row): validate-listing surfaces findings
+/// as data and never fails the process, even when `pass == false`.
+fn validate_listing(role: &str, service_json: &str) -> Value {
+    let (_home, dir) = fresh_home("cli_agent");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "validate-listing",
+            "--role",
+            role,
+            "--service",
+            service_json,
+        ])
+        .output()
+        .expect("failed to execute `onchainos agent validate-listing`");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "validate-listing must exit 0 (findings are data, not a process error)\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    parse_stdout_json(&output)
+}
+
+/// Extract the `findings` array, panicking with the full envelope if the shape is
+/// wrong — a clearer failure than an index into a missing field.
+fn findings(result: &Value) -> &Vec<Value> {
+    result["findings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("`findings` is not an array: {result}"))
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  agent validate-listing — A2A advisory (suggest) cases
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── IT-001: a well-structured A2A listing passes with no findings ─────────────
+//   Golden happy path: valid 3-paragraph non-subscription A2A description →
+//   pass:true, zero findings, exit 0.
+#[test]
+fn validate_listing_a2a_well_structured_passes() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"0.11"}]"#,
+    );
+    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert!(
+        findings(&result).is_empty(),
+        "a well-structured A2A listing should raise no findings, got {result}"
+    );
+}
+
+// ── IT-002: a 2-paragraph A2A listing passes cleanly ──────────────────────────
+//   The paragraph-count rule is gone entirely, so a 2-paragraph non-subscription
+//   description is simply valid — pass:true with no findings at all (not even a
+//   suggestion).
+#[test]
+fn validate_listing_a2a_two_paragraph_non_subscription_passes() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget","serviceType":"A2A","fee":"0.11"}]"#,
+    );
+    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert!(
+        findings(&result).is_empty(),
+        "paragraph count is not validated — expected zero findings, got {result}"
+    );
+}
+
+// ── IT-003: billing model does not change the description rules ────────────────
+//   The same 3-paragraph body that is valid per-call is equally valid on a
+//   subscription service: no billing-model branch remains in the validator.
+#[test]
+fn validate_listing_a2a_subscription_paragraph_count_not_checked() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]"#,
+    );
+    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert!(
+        findings(&result).is_empty(),
+        "a subscription service must be validated identically to a per-call one, got {result}"
+    );
+}
+
+// ── IT-004: an over-length A2A description advises but never blocks ───────────
+//   D2 (total display width over 2000 = 1000 CJK) is advisory: exactly one
+//   `suggest` finding, pass stays true. There is no per-paragraph limit.
+#[test]
+fn validate_listing_a2a_overlong_description_suggests() {
+    // 2 400 half-width chars on one line → display width 2400 > 2000.
+    let long = "A".repeat(2400);
+    let service = format!(
+        r#"[{{"serviceName":"DEX Arbitrage Signals","serviceDescription":"{long}","serviceType":"A2A","fee":"0.11"}}]"#
+    );
+    let result = validate_listing("asp", &service);
+    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert!(
+        findings(&result).iter().any(|f| f["severity"] == "suggest"),
+        "expected an advisory (suggest) length finding, got {result}"
+    );
+    assert!(
+        findings(&result).iter().all(|f| f["severity"] != "block"),
+        "an over-length A2A description must not block, got {result}"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  agent validate-listing — A2MCP regression guards (unchanged by this change)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── IT-005: a valid A2MCP listing keeps passing exactly as before ─────────────
+//   Regression guard: A2MCP is explicitly out of scope; a valid request-style
+//   description exits 0 with pass:true.
+#[test]
+fn validate_listing_a2mcp_valid_passes() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"Realtime Price Feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]"#,
+    );
+    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+}
+
+// ── IT-006: an A2MCP single-paragraph description raises zero findings ─────────
+//   A2MCP early-returns before the structural checks, so a single-paragraph
+//   layout is not checked → no D1, empty findings.
+#[test]
+fn validate_listing_a2mcp_single_paragraph_no_findings() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"Realtime Price Feed","serviceDescription":"Summarizes input text into a short abstract","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]"#,
+    );
+    assert!(
+        findings(&result).is_empty(),
+        "A2MCP structure is not checked — expected zero findings, got {result}"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  agent validate-listing — still-blocking cases (block preserved)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── IT-007: an empty A2A service description is still rejected ─────────────────
+//   The empty-description D1 branch stays severity `block` (missing-required-
+//   field), consistent with the create/update normalize_service bail.
+#[test]
+fn validate_listing_a2a_empty_description_blocks() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"","serviceType":"A2A","fee":"0.11"}]"#,
+    );
+    assert_eq!(
+        findings(&result).first().map(|f| &f["severity"]),
+        Some(&Value::String("block".into())),
+        "expected findings[0].severity == \"block\" for an empty A2A description, got {result}"
+    );
+}
+
+// ── IT-008: an A2A description containing a web link is still rejected ─────────
+//   Prohibited-content D6 (URL) stays blocking for A2A on anti-abuse grounds.
+#[test]
+fn validate_listing_a2a_url_blocks() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals, see https://example.com\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
+    );
+    assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false for a URL in the description, got {result}");
+}
+
+// ── IT-009: a 0x address in an A2A description does NOT block ─────────────────
+//   The former D7 hex-address rule was removed (a contract address is legitimate
+//   content in a service description); this pins that it no longer blocks. Mirrors
+//   the `hex_in_service_description_passes` unit test.
+#[test]
+fn validate_listing_a2a_hex_address_passes() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides signals for token 0x1234567890abcdef pairs\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
+    );
+    assert_eq!(result["pass"].as_bool(), Some(true), "a 0x address must not block, got {result}");
+}
+
+// ── IT-010: a profit guarantee advises instead of blocking ────────────────────
+//   D9 is advisory: the hardcoded phrase list is only a partial backstop (the
+//   skill layer flags guarantee wording in any language by meaning), so it
+//   surfaces as `suggest` and pass stays true.
+#[test]
+fn validate_listing_a2a_profit_guarantee_suggests() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Guaranteed profit DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
+    );
+    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert!(
+        findings(&result).iter().any(|f| f["severity"] == "suggest"),
+        "expected an advisory (suggest) profit-guarantee finding, got {result}"
+    );
+    assert!(
+        findings(&result).iter().all(|f| f["severity"] != "block"),
+        "a profit guarantee must not block, got {result}"
+    );
+}
+
+// ── IT-011: an A2A description carrying a test/env marker is still rejected ────
+//   Prohibited-content U1 (test marker) stays blocking for A2A.
+#[test]
+fn validate_listing_a2a_test_marker_blocks() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals (test)\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
+    );
+    assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false for a test marker, got {result}");
+}
+
+// ── IT-012: an A2MCP description may carry a URL; other prohibited content can't ─
+//   The URL ban (D6) is A2A-only: an A2MCP request description MUST include a
+//   working `curl` example using the real endpoint, so a URL there is legal and
+//   must NOT fail the listing. The test marker (U1) still blocks A2MCP.
+#[test]
+fn validate_listing_a2mcp_url_allowed_test_marker_still_blocks() {
+    let with_curl = validate_listing(
+        "asp",
+        r#"[{"serviceName":"Realtime Price Feed","serviceDescription":"Returns token price quotes\ntokenAddress (string, required): token contract\nPOST\ncurl -X POST https://api.example.com/mcp -d '{\"tokenAddress\":\"0x1234\"}'","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]"#,
+    );
+    assert_eq!(
+        with_curl["pass"].as_bool(),
+        Some(true),
+        "an A2MCP request example carrying the endpoint URL must not block, got {with_curl}"
+    );
+
+    let with_marker = validate_listing(
+        "asp",
+        r#"[{"serviceName":"Realtime Price Feed","serviceDescription":"Returns token price quotes (test)\ntokenAddress (string, required): token contract\nPOST","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]"#,
+    );
+    assert_eq!(
+        with_marker["pass"].as_bool(),
+        Some(false),
+        "a test marker must still block an A2MCP listing, got {with_marker}"
+    );
+}
+
+// ── IT-013: an advisory finding never rescues a blocking one ──────────────────
+//   Interaction case: a description carrying BOTH an advisory profit guarantee (D9)
+//   and a blocking URL (D6) still fails — `pass` is driven only by block findings.
+#[test]
+fn validate_listing_a2a_suggest_and_block_together_blocks() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Guaranteed profit DEX arbitrage signals, see https://example.com\nUser provides the target chain and budget","serviceType":"A2A","fee":"0.11"}]"#,
+    );
+    assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false — a blocking URL overrides the advisory finding, got {result}");
+    assert!(
+        findings(&result).iter().any(|f| f["severity"] == "suggest"),
+        "expected the advisory D9 to still surface alongside the block, got {result}"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  agent create / update — §2.2 normalize_service seam (live, wallet-gated)
+// ════════════════════════════════════════════════════════════════════════════
+//
+//  Both rows are `network_required: live` and require a logged-in test wallet:
+//  auth (`ensure_tokens_refreshed`) + signing-session load run BEFORE
+//  `parse_services` (mutations.rs:117-140), so the empty-`serviceDescription`
+//  bail from `normalize_service` (utils.rs) is only reachable with real creds.
+//  They are `#[ignore]`d so CI (no wallet) does not fail on the earlier auth
+//  error; run them explicitly with `cargo test -- --ignored` against a wallet.
+//  As live rows they go through `run_with_retry` for rate-limit tolerance.
+
+// ── IT-014: `agent create` with an empty service description is rejected ───────
+//   §2.2 seam: normalize_service bails with the missing-required-field message on
+//   stdout ($.error) with exit 1.
+#[test]
+#[ignore = "live: requires a logged-in test wallet — auth/signing runs before service validation, so the serviceDescription bail is only reachable with creds"]
+fn agent_create_empty_service_description_missing_required_field() {
+    let output = run_with_retry(&[
+        "agent",
+        "create",
+        "--role",
+        "asp",
+        "--name",
+        "Arb Signals Bot",
+        "--description",
+        "DEX arbitrage trading signal provider",
+        "--service",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"","serviceType":"A2A","fee":"0.11"}]"#,
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected exit 1\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("missing required field in --service: serviceDescription"),
+        "expected the missing-required-field error on stdout, got: {stdout}"
+    );
+}
+
+// ── IT-015: `agent update` to an empty service description is rejected ─────────
+//   Same §2.2 consistency contract as create via normalize_service; message on
+//   stdout ($.error) with exit 1.
+#[test]
+#[ignore = "live: requires a logged-in test wallet — auth/signing runs before service validation, so the serviceDescription bail is only reachable with creds"]
+fn agent_update_empty_service_description_missing_required_field() {
+    let output = run_with_retry(&[
+        "agent",
+        "update",
+        "--agent-id",
+        "12345",
+        "--service",
+        r#"[{"operation":"update","id":"7","serviceName":"DEX Arbitrage Signals","serviceDescription":"","serviceType":"A2A","fee":"0.11"}]"#,
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected exit 1\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("missing required field in --service: serviceDescription"),
+        "expected the missing-required-field error on stdout, got: {stdout}"
+    );
+}
