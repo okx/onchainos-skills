@@ -125,10 +125,7 @@ Single 8-column table; values verbatim. Service-type gloss once per table (wordi
 ```
 
 - `#` numbered from 1. Type per Lexicon (API service / agent to agent), never raw A2MCP/A2A.
-- **Fee:** plain number → `<N> USDT`; subscription-priced A2A (empty `fee` with a `subscription` present) → `—`; empty A2MCP → `—` (missing required fee — not `free`); other unpriced (e.g. A2A with neither) → `free`.
-  **Subscription:** each `{interval:"month", fee:N}` tier → `<N> USDT / month`; empty `[]` (or A2MCP) → `—`.
-  **Free trial:** a subscription trial → `<N> days` (or `<N> hours`), e.g. `3 days`; none, single-fee A2A, or A2MCP → `—`.
-  An A2A service always resolves to exactly one of the two (single price XOR subscription); the CLI does the mapping — render `cells` verbatim.
+- **Fee / Subscription / Free trial:** render per identity-invariants.md §Lexicon (Fee / Subscription / Free trial rows) — the CLI does the mapping; render `cells` verbatim, never recompute.
   **Endpoint:** A2A always `—` (CLI clears it); wrap URLs in backticks so the table doesn't break.
 - Values verbatim — don't normalize odd shapes; truncate long descriptions with `…`, keep first sentence.
   If a value's shape diverges from the local schema (e.g. `serviceType: query`, fee in ETH), render it as-is

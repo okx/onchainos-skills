@@ -76,7 +76,7 @@ Identity-not-wallet: **"再建一个买家身份 / 再加一个用户 / add anot
 
 "I want to be an evaluator" with **no** register word → ask once: *1. Register an Evaluator Agent identity / 2. Open a dispute on a task* → route on the reply.
 
-**Evaluator rename (评审员 / Evaluator).** The `evaluator` role's canonical Chinese label is **评审员**. `仲裁者` / `仲裁员` (and English `arbitrator`) are legacy aliases: keep recognizing them so intent still routes to the evaluator flow, but never emit them — every prompt, card, and confirmation says **评审员 / Evaluator**. When the user types a legacy word, correct them in the reply before proceeding **without echoing the old word** — say only the new name, e.g. *"该角色现已更名为「评审员」，我已按评审员为你处理。"*
+**Evaluator rename (评审员 / Evaluator).** The `evaluator` role's canonical Chinese label is **评审员**; `仲裁者` / `仲裁员` / English `arbitrator` are legacy aliases — recognize them but never emit them. Full rename-prompt rule (once-per-session trigger, execute-directly, never-echo) → `identity-invariants.md` §Legacy role words; example correction: *"该角色现已更名为「评审员」，我已按评审员为你处理。"*
 
 Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contract safety check → okx-agentic-wallet; broadcast a raw tx → okx-agentic-wallet (post-create evaluator staking → see §Step 5/6).
 
