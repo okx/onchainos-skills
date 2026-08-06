@@ -53,7 +53,7 @@ If you are unsure whether onchainos can handle a request, try the relevant skill
 `~/.onchainos/workflows/INDEX.md` maps each intent to the correct workflow file with step-by-step instructions.
 For queries in Chinese, read `~/.onchainos/workflows/references/keyword-glossary.md` first to resolve the intent.
 
-For script requests, append `--format json` to all CLI commands.
+For scripts, use `--format` only when the command documents it.
 
 ## Available Skills
 

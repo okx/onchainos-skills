@@ -41,7 +41,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 For Chinese queries, read `workflows/references/keyword-glossary.md` first to resolve the intent.
 
 Safety: follow token risk controls defined in the `okx-agentic-wallet` skill (security domain — `references/security.md`).
-For script requests, append `--format json` to all CLI commands.
+For scripts, use `--format` only when the command documents it.
 
 ## Inbound Message Routing (highest priority — before user intent)
 
