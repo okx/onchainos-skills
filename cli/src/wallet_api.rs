@@ -631,17 +631,23 @@ pub struct BroadcastResponse {
     pub tx_hash: String,
 }
 
-/// Detect the backend's "access token revoked / invalid" signal (code 10008 /
-/// "Invalid access token"). Both `ApiClient` (`API error (code=10008): ...`)
-/// and `WalletApiClient` (`Wallet API error (code=10008): ...`) format the
-/// code into the error string, so a substring match works for either client.
+/// Detect the backend's "access token revoked / invalid" signals (codes 10001,
+/// 10008, 53017, and 130100031, or their corresponding messages). Both `ApiClient`
+/// (`API error (code=N): ...`) and `WalletApiClient`
+/// (`Wallet API error (code=N): ...`) format the code into the error string,
+/// so a substring match works for either client.
 ///
 /// Used by the transport-layer retry: local JWT `exp` may still be in the
 /// future yet the backend has invalidated the token (re-login on another
 /// device, password change, server-side risk control).
 pub(crate) fn is_invalid_token_error(e: &anyhow::Error) -> bool {
     let s = e.to_string();
-    s.contains("code=10008") || s.contains("Invalid access token")
+    s.contains("code=10001")
+        || s.contains("code=10008")
+        || s.contains("code=53017")
+        || s.contains("code=130100031")
+        || s.contains("Invalid access token")
+        || s.contains("access token invalid")
 }
 
 /// Force-refresh the access token via the refresh-token endpoint, bypassing the
@@ -1801,9 +1807,23 @@ mod tests {
         assert!(is_invalid_token_error(&anyhow::anyhow!(
             "Wallet API error (code=10008): token revoked"
         )));
+        // The agent-commerce gateway uses a different code/message pair for
+        // the same invalid-access-token condition.
+        assert!(is_invalid_token_error(&anyhow::anyhow!(
+            "Wallet API error (code=130100031): access token invalid"
+        )));
+        assert!(is_invalid_token_error(&anyhow::anyhow!(
+            "Wallet API error (code=10001): authentication failed"
+        )));
+        assert!(is_invalid_token_error(&anyhow::anyhow!(
+            "Wallet API error (code=53017): authentication failed"
+        )));
         // Bare message match (no code in the string).
         assert!(is_invalid_token_error(&anyhow::anyhow!(
             "auth failed: Invalid access token"
+        )));
+        assert!(is_invalid_token_error(&anyhow::anyhow!(
+            "auth failed: access token invalid"
         )));
         // Unrelated errors must NOT trigger a force-refresh retry.
         assert!(!is_invalid_token_error(&anyhow::anyhow!(
