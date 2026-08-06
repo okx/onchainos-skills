@@ -20,7 +20,7 @@ This is an **onchainos skill + workflow collection** providing 17 skills and pre
 For Chinese queries, read `workflows/references/keyword-glossary.md` first.
 
 Safety: follow token risk controls defined in `okx-agentic-wallet` SKILL.md.
-For script requests, append `--format json` to all CLI commands.
+For scripts, use `--format` only when the command documents it.
 
 ## Available Skills
 

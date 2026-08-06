@@ -15,7 +15,7 @@ onchainos --help      # full command reference
 
 - `--chain` accepts chain names (e.g. `solana`, `ethereum`, `base`, `xlayer`) or chain indexes (e.g. `501`, `1`, `8453`)
 - `--address` always expects a full contract address - never guess; resolve with `onchainos token search` first
-- `--format json` appends raw JSON output to any command - use for scripting
+- For scripts, use `--format` only when the command documents it.
 - `--readable-amount` handles token decimals automatically for swap commands
 
 ## Wallet

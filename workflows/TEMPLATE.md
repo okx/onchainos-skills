@@ -24,5 +24,5 @@ Every workflow doc must include all sections below, in order:
 - **CLI-first**: use only `onchainos` CLI commands — do not reference MCP tool names
 - **Language**: English only — no inline Chinese. Add a `## Keyword Glossary` section pointing to `references/keyword-glossary.md` instead
 - **Security rules**: follow token risk controls defined in `okx-agentic-wallet` SKILL.md — do not redefine them
-- **Script mode**: all CLI commands support `--format json`; Output Template targets conversational mode, script mode consumes JSON directly
+- **Script mode**: use `--format` only when the command documents it; consume the command's machine-readable output directly
 - **Follow-up Workflows**: optional — `## Actions` is sufficient for most workflows; add this section only when multiple downstream workflows are explicitly chained
