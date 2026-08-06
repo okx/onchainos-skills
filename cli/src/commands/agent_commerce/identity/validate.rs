@@ -43,9 +43,18 @@ pub async fn validate_listing(args: ValidateListingArgs, _ctx: &Context) -> Resu
 // tests; the user-facing string is `message`.
 mod fe {
     pub const FE03: &str = "The Agent name doesn't meet the naming rules: it may contain a test marker, an ordinal suffix, or special symbols, or its length or bilingual format is invalid. Use a clean brand name instead: 2\u{2013}12 characters in Chinese or 3\u{2013}25 in English, with no test markers, ordinals, or special symbols; for a bilingual name, use the \"Chinese name \u{00B7} English name\" format. Then resubmit.";
-    pub const FE05: &str = "The Agent description has an issue: it contains a URL, exceeds 500 characters, or is empty. Remove any links, trim it to 500 characters or fewer, and make sure it's filled in. Then resubmit.";
+    pub const FE05: &str = "The Agent description has an issue: it contains a URL or a test marker (e.g. \"(test)\", \"-pre\", or a trailing \"beta\"), exceeds 500 characters, or is empty. Remove any links and test markers, trim it to 500 characters or fewer, and make sure it's filled in. Then resubmit.";
     pub const FE06: &str = "The service name doesn't meet the rules: its length is out of range, it duplicates the Agent name, or it contains pricing or a test marker. Keep the name to 5\u{2013}30 characters and different from the Agent name, move any pricing to the fee field, and remove test markers. Then resubmit.";
+    /// FE-10 proper — the `serviceType` VALUE itself is neither A2A nor A2MCP (T1).
     pub const FE10: &str = "The service type must be exactly A2A or A2MCP; the current value is invalid. Select A2A or A2MCP from the menu, then resubmit.";
+    /// U5 — the serviceType value is VALID, but the service name or description
+    /// names the OTHER protocol. It must not reuse FE10: that text says the type
+    /// value is invalid and tells the ASP to re-pick from the menu, which sends
+    /// them to change a field that is already correct (and, for A2A → A2MCP,
+    /// cascades into T2 "endpoint required" / P3 "no subscriptions"). The offending
+    /// field is `service[i].name` / `service[i].servicedescription`, so the message
+    /// has to point there.
+    pub const FE10_U5: &str = "The service name or description mentions a different service type than the one selected \u{2014} an A2A service that says \"A2MCP\", or the reverse. Keep the service type you picked and delete that word from the name or description; only change the service type if you actually offer the other one. Then resubmit.";
     pub const FE11: &str = "The endpoint configuration is invalid: A2MCP requires an endpoint while A2A must not have one, and it must be a publicly accessible HTTPS URL \u{2014} not a private-network address or one starting with 0x. For A2MCP, enter a publicly accessible https URL; for A2A, remove the endpoint. Then resubmit.";
     pub const FE12: &str = "The A2MCP fee must be a plain number (enter 0 for free), but the current value contains units or non-numeric text. Enter the fee as a number only (e.g., 10; 0 for free) \u{2014} it's denominated in USDT by default, so no symbols or extra text. Then resubmit.";
     pub const FE13: &str = "The service data isn't a valid JSON array, or the create/update/delete operations don't match the id rules. Follow the sample format \u{2014} omit the id when creating, and include the id when updating or deleting \u{2014} then resubmit.";
@@ -53,8 +62,60 @@ mod fe {
     pub const FE18: &str = "Subscriptions currently support monthly billing only, but a different interval was provided. Set the subscription tier's interval to \"month\" (weekly, yearly, and other intervals aren't supported yet), then resubmit.";
     pub const FE19: &str = "The subscription price must be a plain number, but the current value contains units, symbols, or non-numeric text. Enter each tier's price as a number only (e.g., 10) \u{2014} denominated in USDT by default, up to 6 decimal places, no symbols or extra text. Then resubmit.";
     pub const FE20: &str = "The free-trial setup is invalid: freeTrial can only be configured on monthly-subscription services and must be a positive integer number of hours; A2MCP and pay-per-use services can't offer a trial. To enable a trial on a monthly subscription, set freeTrial to \"72\" (a fixed 3 days); otherwise omit the freeTrial field entirely (don't set \"\" or \"0\"). Then resubmit.";
-    pub const FE21: &str = "The service description's structure or length is invalid: wrong number of paragraphs or total length over 1000 CJK characters. Write 3 paragraphs for non-subscription services (1. core capabilities; 2. what the user needs to provide; 3. what will be delivered), or 2 paragraphs for subscription services (1. core capabilities; 2. what will be delivered); keep the total within 1000 CJK characters. Then resubmit.";
-    pub const FE22: &str = "The service description contains prohibited content: a URL, promised returns (e.g., \"guaranteed profit\", \"double your money\", \"guaranteed returns\"), or a test marker. Remove all links, test markers, and any promises of returns, guaranteed principal, or \"no losses\" \u{2014} describe what the service can do without promising outcomes. Then resubmit.";
+    /// FE-21 (必填 / 长度) — SPLIT per sub-check, because the two are not
+    /// interchangeable: D1 is a BLOCKING missing-required-field, D2 is ADVISORY
+    /// over-length. The former single sentence told an ASP who had written 1001
+    /// characters that the description was "empty" and ordered a resubmit even
+    /// though `pass` was true. Unlike the FE-22 group these two can never co-occur
+    /// (D1 returns early), so each field still carries at most ONE of them and the
+    /// skill layer's de-dup by (`field`, `message`) is unaffected.
+    ///
+    /// Neither sentence mentions the per-part line layout any more: paragraph
+    /// count is not a mechanical rule (collection-time guidance only), and naming
+    /// it here made the skill re-flow a description that was already valid.
+    pub const FE21_D1: &str = "The service description is empty. Fill in what the service does, then resubmit.";
+    pub const FE21_D2: &str = "The service description is longer than the recommended 1000 CJK characters (2000 half-width). Trimming it is recommended \u{2014} this is a suggestion, so you can submit it as is.";
+    /// FE-22 (禁用内容) — COMPOSED per finding-set instead of a fixed constant.
+    ///
+    /// The rule group is no longer homogeneous: the URL ban (D6) is A2A-only and
+    /// blocking, while the test marker (U1) is blocking for every service type. A
+    /// single fixed sentence therefore had to enumerate both and command "remove
+    /// all links" — telling an A2MCP ASP to delete the endpoint URL its request
+    /// example is REQUIRED to carry.
+    ///
+    /// This composer keeps requirement ① intact — every FE-22 finding on the SAME
+    /// field is handed the SAME string, so the skill layer's de-duplication by
+    /// (`field`, `message`) still collapses it to one rendered line — while naming
+    /// only the checks that actually fired, and appending the imperative
+    /// "Then resubmit." only when at least one BLOCKING check fired.
+    ///
+    /// Callers pass the already-decided booleans; see `check_service_description`.
+    pub fn fe22(has_url: bool, has_marker: bool) -> String {
+        // Removal items collapse into one clause ("remove the link and the test
+        // marker") so the sentence never repeats the verb.
+        let mut removals: Vec<&str> = Vec::new();
+        if has_url {
+            removals.push("the link");
+        }
+        if has_marker {
+            removals.push("the test marker");
+        }
+
+        let mut clauses: Vec<String> = Vec::new();
+        if !removals.is_empty() {
+            clauses.push(format!("remove {}", removals.join(" and ")));
+        }
+        // Defensive: never called with nothing set, but stay descriptive if it is.
+        if clauses.is_empty() {
+            return "The service description contains content that isn't allowed here.".to_string();
+        }
+
+        let mut msg = format!("The service description needs a change: {}.", clauses.join(", and "));
+        if has_url || has_marker {
+            msg.push_str(" Then resubmit.");
+        }
+        msg
+    }
 }
 
 // ─── Output model ───────────────────────────────────────────────────────────
@@ -91,7 +152,8 @@ impl Finding {
     /// An advisory (suggestion-only) finding. It surfaces to the caller with the
     /// same `code`/`message` semantics as `block`, but `severity: "suggest"` means
     /// it does NOT flip `pass` to false (see `run_validation`, which only counts
-    /// `severity == "block"`). Used for A2A structural/length FE-21 findings.
+    /// `severity == "block"`). Used for the A2A description length finding (FE-21
+    /// D2).
     fn suggest(field: impl Into<String>, code: &str, message: &str) -> Finding {
         Finding {
             field: field.into(),
@@ -141,10 +203,10 @@ pub(crate) fn run_validation(
     check_name(name, &mut findings);
 
     // ── Description checks ────────────────────────────────────────────────
-    // Universal U1/U3 apply to a supplied non-empty description for every
+    // Universal U1 applies to a supplied non-empty description for every
     // role. The 3-part structure (D1) is asp-service-only and is
     // NEVER applied to the agent-level description. Agent-level description for
-    // ASPs additionally gets D6 (and U1/U3 already above).
+    // ASPs additionally gets D6 (and U1 already above).
     if !description.is_empty() {
         check_universal_text("description", description, &mut findings);
         if role == "asp" {
@@ -173,21 +235,23 @@ pub(crate) fn run_validation(
     }
     // For user / evaluator: --service is ignored silently (no findings).
 
-    // NOTE: A2A `service[i].servicedescription` STRUCTURAL/LENGTH FE-21 findings
-    // (paragraph-count D1, total-width D2) are
-    // ADVISORY (severity "suggest") — a structurally non-conforming but non-empty,
-    // non-prohibited A2A listing PASSES validate-listing while still surfacing the
-    // suggestions. Still BLOCKING: FE-22 prohibited content (URL D6,
-    // profit guarantee D9, test marker U1) and the empty/blank-description D1 (a
-    // missing-required-field, consistent with the normalize_service bail). A2MCP is
-    // unchanged — only prohibited-content runs for it, all blocking. The SEMANTIC
+    // NOTE: on `service[i].servicedescription` only these are ADVISORY
+    // (severity "suggest" — they surface but never flip `pass`):
+    //   • FE-21 D2 — A2A total display width over the cap.
+    // Still BLOCKING: the empty/blank A2A description (D1 — a missing-required-field,
+    // consistent with the normalize_service bail) and the remaining FE-22 prohibited
+    // content (URL D6, test marker U1). There is NO paragraph-count rule at all:
+    // the buyer-facing paragraph layout is guidance in the skill's collection prompts
+    // (register.md §3 Step 2c) and is never mechanically counted here, so the
+    // pricing model no longer affects validation. A2MCP is unchanged — only
+    // prohibited content runs for it. The SEMANTIC
     // service-description quality check (FE-23) stays advisory in the skill layer.
 
     let pass = !findings.iter().any(|f| f.severity == "block");
     ValidationResult { pass, findings }
 }
 
-// ─── Name rules (N1, N2, N3, N6, N8) + Universal U1/U3 on the name ──────────
+// ─── Name rules (N1, N2, N3, N6, N8) + Universal U1 on the name ─────────────
 
 fn check_name(name: &str, findings: &mut Vec<Finding>) {
     if name.is_empty() {
@@ -201,11 +265,6 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
     if has_test_marker(name) {
         findings.push(Finding::block("name", "U1", fe::FE03));
     }
-    // U3 negative-capability phrase.
-    if contains_negative_capability(name) {
-        findings.push(Finding::block("name", "U3", fe::FE03));
-    }
-
     // N1 length: pure-CJK → 2..=12 chars; mixed (CJK + Latin, e.g. the
     // N6-encouraged "CJK · English" form) and Latin → 3..=25 chars. Only a
     // purely-CJK name uses the dense 12-char bound, so a bilingual name is not
@@ -244,15 +303,13 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
     // not as a CLI mechanical rule. Do not add a hard-coded name blocklist.
 }
 
-// ─── Universal text rules (U1/U3) for a generic field ───────────────────────
+// ─── Universal text rules (U1) for a generic field ──────────────────────────
 
-// Only caller is the agent-level `description`.
+// Only caller is the agent-level `description`. U1 (test/env marker) is the only
+// universal text rule — negative-capability wording is deliberately not checked.
 fn check_universal_text(field: &str, text: &str, findings: &mut Vec<Finding>) {
     if has_test_marker(text) {
         findings.push(Finding::block(field, "U1", fe::FE05));
-    }
-    if contains_negative_capability(text) {
-        findings.push(Finding::block(field, "U3", fe::FE05));
     }
 }
 
@@ -269,17 +326,6 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
     let stype = svc.service_type.to_ascii_uppercase();
     let is_a2mcp = stype == "A2MCP";
     let is_a2a = stype == "A2A";
-
-    // U3 negative-capability: on the service NAME → name message; on the service
-    // DESCRIPTION it is a prohibited-content issue → description message.
-    if !svc.service_name.is_empty() && contains_negative_capability(&svc.service_name) {
-        findings.push(Finding::block(f("name"), "U3", fe::FE06));
-    }
-    if !svc.service_description.is_empty()
-        && contains_negative_capability(&svc.service_description)
-    {
-        findings.push(Finding::block(f("servicedescription"), "U3", fe::FE22));
-    }
 
     // ── ServiceType (T1) ──────────────────────────────────────────────────
     if !is_a2mcp && !is_a2a {
@@ -326,7 +372,8 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
             ("servicedescription", svc.service_description.as_str()),
         ] {
             if contradicting_type_token(text, &stype).is_some() {
-                findings.push(Finding::block(f(sub), "U5", fe::FE10));
+                // FE10_U5, not FE10 — the type value is fine; the wording isn't.
+                findings.push(Finding::block(f(sub), "U5", fe::FE10_U5));
             }
         }
     }
@@ -353,14 +400,13 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
     // ── Pricing (U4/P1..P6) — single fee XOR subscription ────────────────
     check_pricing(index, svc, is_a2mcp, is_a2a, findings);
 
-    // ── Description on servicedescription: FE-21 (structure/length) + FE-22
-    // (prohibited content). Always run: an empty / blank A2A description is
-    // itself a structural failure (handled inside check_service_description).
-    // Structure/length is A2A-only — an A2MCP description is the request
-    // description governed by FE-16 (skill rule), so its structure is not
-    // checked here; only FE-22 prohibited-content runs for A2MCP.
-    let has_subscription = !svc.subscription.is_empty();
-    check_service_description(index, &svc.service_description, is_a2mcp, has_subscription, findings);
+    // ── Description on servicedescription: FE-21 (required/length) + FE-22
+    // (prohibited content). Always run: an empty / blank A2A description is a
+    // missing required field (handled inside check_service_description).
+    // The length cap is A2A-only — an A2MCP description is the request
+    // description governed by FE-16 (skill rule), so it is not length-checked
+    // here; only FE-22 prohibited-content runs for A2MCP.
+    check_service_description(index, &svc.service_description, is_a2mcp, findings);
 }
 
 // Pricing QA. A2MCP: single-purchase `fee` required (plain number), no
@@ -446,83 +492,76 @@ fn check_pricing(
 }
 
 // Service description checks split across two doc rules:
-//   • FE-21 (结构/长度) — the A2A buyer-facing description is an EXACT-count,
-//     positional-paragraph structure (each non-empty line = one paragraph):
-//       - non-subscription → 3 paragraphs (1. core capabilities; 2. what the
-//         user provides; 3. what will be delivered)
-//       - subscription     → 2 paragraphs (1. core capabilities; 2. delivered)
-//     Wrong count (incl. empty / fewer) → D1. Length uses EAST-ASIAN DISPLAY
-//     WIDTH (`display_width`: CJK = 2, ASCII = 1): total ≤ 2000 — the spec's
-//     "≤ 1000 CJK total"; there is no per-paragraph limit. FE-21 is
-//     A2A-only: an A2MCP description is the request description (FE-16, skill).
-//   • FE-22 (禁用内容) — URL (D6), profit/return-guarantee wording (D9:
-//     "稳赚 / 保证收益 / 翻倍" …), test/env marker (U1). Applies to EVERY
-//     service including A2MCP.
-// FE-22 (prohibited content) and the empty/blank-description D1 are 阻断注册
-// (blocking); the A2A structural/length FE-21 findings (paragraph-count D1, total
-// width D2) are ADVISORY (severity "suggest") — they
-// surface but do not flip `pass`. The purely SEMANTIC quality checks (unclear
-// paragraphs, tech-stack leak, disclaimers, declared-market / signal-example for
-// trading-signal services) are FE-23 and live in the skill layer (register.md §4),
-// never in this mechanical validator.
+//   • FE-21 (必填/长度) — A2A-only (an A2MCP description is the request
+//     description, FE-16, skill layer):
+//       - empty / blank → D1, BLOCKING (missing required field).
+//       - total length over the cap → D2, ADVISORY. Length uses EAST-ASIAN
+//         DISPLAY WIDTH (`display_width`: CJK = 2, ASCII = 1): total ≤ 2000 —
+//         the spec's "≤ 1000 CJK total". No per-paragraph limit.
+//       - the two carry SEPARATE messages (`fe::FE21_D1` / `fe::FE21_D2`) and can
+//         never co-occur, since D1 returns early.
+//     There is deliberately NO paragraph-count rule: the buyer-facing paragraph
+//     layout is guidance in the skill's collection prompts (register.md §3 Step 2c)
+//     and is never counted here, so subscription and non-subscription services are
+//     validated identically.
+//   • FE-22 (禁用内容) — test/env marker (U1) is BLOCKING for every service type;
+//     the URL ban (D6) is BLOCKING but A2A-ONLY — an A2MCP request description
+//     REQUIRES a working `curl` example carrying the real `https://` endpoint
+//     (line 4, FE-16 skill rule), so URLs are legal there.
+// The service-description semantic quality check is limited to the A2A
+// three-part guidance in the skill layer (register.md §4), never in this
+// mechanical validator.
 fn check_service_description(
     index: usize,
     desc: &str,
     is_a2mcp: bool,
-    is_subscription: bool,
     findings: &mut Vec<Finding>,
 ) {
     let field = |sub: &str| format!("service[{index}].{sub}");
     let fd = field("servicedescription");
 
-    // ── Prohibited content — applies to EVERY service (A2A + A2MCP) ────────
-    if contains_url(desc) {
-        findings.push(Finding::block(&fd, "D6", fe::FE22));
-    }
-    if contains_profit_guarantee(desc) {
-        findings.push(Finding::block(&fd, "D9", fe::FE22));
-    }
-    if has_test_marker(desc) {
-        findings.push(Finding::block(&fd, "U1", fe::FE22));
+    // ── Prohibited content ─────────────────────────────────────────────────
+    // Decide every sub-check FIRST, then compose ONE message naming only what
+    // actually fired (fe::fe22) and hand that same string to each finding — so
+    // the skill layer's de-dup by (`field`, `message`) still renders one line,
+    // and the sentence never asks the user to fix something that isn't there.
+    //
+    // D6 URL is A2A-only: the A2MCP request description must carry a `curl`
+    // example with the real https endpoint (FE-16), so a URL is expected there.
+    let has_url = !is_a2mcp && contains_url(desc);
+    let has_marker = has_test_marker(desc);
+
+    if has_url || has_marker {
+        let msg = fe::fe22(has_url, has_marker);
+        if has_url {
+            findings.push(Finding::block(&fd, "D6", &msg));
+        }
+        if has_marker {
+            findings.push(Finding::block(&fd, "U1", &msg));
+        }
     }
 
-    // ── Structure/length — A2A only ───────────────────────────────────────
+    // ── Required / length — A2A only ──────────────────────────────────────
     // An A2MCP `serviceDescription` is the request description (skill rule);
-    // its buyer-facing structure and length limits do NOT apply here.
+    // the buyer-facing length limit does NOT apply here.
     if is_a2mcp {
         return;
     }
 
-    // D1 (empty): a blank A2A description has no parts at all.
+    // D1 (empty): a blank A2A description is a missing required field. BLOCKING.
     if desc.trim().is_empty() {
-        findings.push(Finding::block(&fd, "D1", fe::FE21));
+        findings.push(Finding::block(&fd, "D1", fe::FE21_D1));
         return;
     }
 
-    // D2 total display width <= 2000 (= 1000 CJK characters). ADVISORY for A2A.
+    // D2 total display width <= 2000 (= 1000 CJK characters). ADVISORY.
     if display_width(desc) > 2000 {
-        findings.push(Finding::suggest(&fd, "D2", fe::FE21));
+        findings.push(Finding::suggest(&fd, "D2", fe::FE21_D2));
     }
 
-    // Positional paragraphs: each non-empty line is one paragraph. The doc
-    // requires an EXACT paragraph count by billing model:
-    //   • non-subscription → 3 (1. core capabilities; 2. what the user provides;
-    //                          3. what will be delivered)
-    //   • subscription     → 2 (1. core capabilities; 2. what will be delivered)
-    // Any other count (including empty / < required) is a D1 structural failure.
-    let lines: Vec<&str> = desc
-        .split('\n')
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
-
-    // Paragraph-count D1 is ADVISORY for A2A (applies uniformly to both the
-    // 3-paragraph non-subscription and 2-paragraph subscription variants — no
-    // billing-model branching in the severity choice).
-    let want_parts = if is_subscription { 2 } else { 3 };
-    if lines.len() != want_parts {
-        findings.push(Finding::suggest(&fd, "D1", fe::FE21));
-    }
+    // NO paragraph-count check: the A2A three-part layout is collection-time
+    // guidance in the skill (register.md §3 Step 2c), not a mechanical rule — a
+    // non-empty A2A description of any shape is valid.
 }
 
 // ─── Pure predicate helpers (no regex crate; plain string ops) ──────────────
@@ -607,52 +646,11 @@ fn delimited_marker_present(lower: &str, delim: char, word: &str) -> bool {
     false
 }
 
-/// U3: negative-capability phrases (case-insensitive substring). Scoped to the
-/// spec's "目前不支持"-style negative info — a capability GAP / "not yet" framing
-/// that signals an incomplete product. It deliberately does NOT match a bare
-/// "不支持": the field-5 part-3 delivery note states whether copy-trading is
-/// supported ("支持跟单" / "不支持跟单"), and that permanent delivery attribute —
-/// used verbatim in the spec's own correct example — must pass QA.
-fn contains_negative_capability(s: &str) -> bool {
-    let lower = s.to_ascii_lowercase();
-    const EN: &[&str] = &[
-        "currently not supported",
-        "not supported yet",
-        "not yet supported",
-    ];
-    if EN.iter().any(|p| lower.contains(p)) {
-        return true;
-    }
-    // CJK: match only the temporal "currently / for-now not supported" gap
-    // phrasing — never a bare "不支持" (which false-positives on "不支持跟单").
-    s.contains("暂不支持") || s.contains("目前不支持")
-}
-
-/// D9: profit / return-guarantee wording (deterministic phrase check). Blocks
-/// the spec's forbidden "收益承诺" wording — 稳赚 / 保证收益 / 翻倍 and close
-/// equivalents — in either language. Kept to unambiguous guarantee phrases so a
-/// legitimate capability description is not falsely blocked.
-fn contains_profit_guarantee(s: &str) -> bool {
-    // CJK phrases (match on raw — not ASCII-lowercased).
-    const CJK: &[&str] = &[
-        "稳赚", "稳赚不赔", "保证收益", "收益保证", "保本", "包赚", "必赚", "翻倍", "零风险",
-    ];
-    if CJK.iter().any(|p| s.contains(p)) {
-        return true;
-    }
-    let lower = s.to_ascii_lowercase();
-    const EN: &[&str] = &[
-        "guaranteed return",
-        "guaranteed returns",
-        "guaranteed profit",
-        "guaranteed income",
-        "guaranteed gains",
-        "risk-free",
-        "risk free",
-    ];
-    EN.iter().any(|p| lower.contains(p))
-}
-
+// NOTE: the former `contains_negative_capability` (U3 — "暂不支持 / 目前不支持 /
+// currently not supported") is REMOVED for every field: name, agent description,
+// service name and service description. Stating a capability boundary is honest
+// disclosure, and no FE message ever explained the rule, so it was
+// unreachable-by-repair. Do not re-add it.
 
 /// N2: embedded agent id — `#\d+` or `_\d+` anywhere, OR a bare trailing number
 /// after a space (e.g. `Bot 3`).
