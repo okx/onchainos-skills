@@ -595,15 +595,17 @@ impl ApiClient {
         match result {
             Ok(data) => Ok(data),
             Err(e) => {
-                // Server-side token revocation (10008) while the local JWT exp
+                // Server-side token invalidation while the local JWT exp
                 // is still in the future: force-refresh, swap our cached auth,
                 // and retry once. Only meaningful when we are actually sending a
-                // JWT (AK / anonymous never get a 10008 from token revocation).
+                // JWT (AK / anonymous do not use an access token).
                 if matches!(self.auth, AuthMode::Jwt(_))
                     && crate::wallet_api::is_invalid_token_error(&e)
                 {
                     if cfg!(feature = "debug-log") {
-                        eprintln!("[DEBUG][get_with_headers] 10008 invalid token → force-refresh + retry once");
+                        eprintln!(
+                            "[DEBUG][get_with_headers] invalid token → force-refresh + retry once"
+                        );
                     }
                     let new_token = crate::wallet_api::force_refresh_access_token().await?;
                     self.auth = AuthMode::Jwt(new_token);
@@ -758,13 +760,15 @@ impl ApiClient {
         match result {
             Ok(data) => Ok(data),
             Err(e) => {
-                // Server-side token revocation (10008): force-refresh, swap our
+                // Server-side token invalidation: force-refresh, swap our
                 // cached auth, and retry once. See `get_with_headers`.
                 if matches!(self.auth, AuthMode::Jwt(_))
                     && crate::wallet_api::is_invalid_token_error(&e)
                 {
                     if cfg!(feature = "debug-log") {
-                        eprintln!("[DEBUG][post_with_headers] 10008 invalid token → force-refresh + retry once");
+                        eprintln!(
+                            "[DEBUG][post_with_headers] invalid token → force-refresh + retry once"
+                        );
                     }
                     let new_token = crate::wallet_api::force_refresh_access_token().await?;
                     self.auth = AuthMode::Jwt(new_token);
