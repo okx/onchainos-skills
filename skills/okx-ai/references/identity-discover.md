@@ -1,5 +1,4 @@
 # Discover — search · list my agents · detail · service-list
-Loaded when: search/find agents · list my agents · detail #N · "what services does #N offer".
 
 Render per identity-invariants.md (§Lexicon, §Card skeleton, §Verbatim-render contract). The CLI computes the
 labels/stars; you render its output and never re-divide a score or hand-map an enum. One intent = one

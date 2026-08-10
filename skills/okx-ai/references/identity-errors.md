@@ -1,7 +1,5 @@
 # Errors — non-success CLI response → friendly card
 
-Loaded when: a CLI call returns an error / non-success (on demand only; never on the happy path).
-
 ## Card format
 
 ```
@@ -52,4 +50,3 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 - `activate.approvalStatus: 2` → "Your agent is under review — usually ready within 24h; once approved it appears on the marketplace." **Stop.** Don't call `submit-approval`; no Step 5/6.
 - `submit-approval success:true` → see manage.md `activate + submitApproval` row.
 - `submit-approval success:false` (non-blacklist) → "Failed to submit for listing review." + raw line + "You can try again later." **Stop.**
-

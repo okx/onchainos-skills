@@ -1,7 +1,5 @@
 # Register flow — create (all 3 roles) · consent · QA · avatar · update
 
-Loaded when: the user registers / creates an agent (any role), or arrives via passive need-user. Pairs with SKILL.md. (For update / fix-rejected-listing → load `identity-update.md` instead.)
-
 The CLI does the work — `validate-listing` returns the QA `findings[]`, `create` always returns `newAgentId` — a string id when the WS push succeeded, `null` when it timed out. You collect fields → render the identity-invariants.md §Card skeleton card → confirm → invoke once → render the post-success template. Never re-implement a rule table or reconstruct an id.
 
 ---

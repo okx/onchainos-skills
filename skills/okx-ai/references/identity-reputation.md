@@ -1,5 +1,6 @@
 # Reputation flow — view an agent's reviews
-Loaded when: the intent is "view reviews / reputation #N". (Rating/scoring an agent is not offered by this skill.)
+
+Rating/scoring an agent is not offered by this identity flow.
 
 The CLI converts wire scores back to 0.00–5.00 stars on read. You render the CLI's review list
 verbatim; never do score arithmetic skill-side (identity-invariants.md §Verbatim-render contract).

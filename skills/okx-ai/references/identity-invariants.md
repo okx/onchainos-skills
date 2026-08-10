@@ -1,7 +1,5 @@
 # Invariants — rendering rules, id ladder, fields, commands
 
-Load this file when: rendering a card / diff / detail view, resolving `#<id>`, translating CLI labels, or handling `--service` fields.
-
 ---
 
 ## Lexicon (prose / Q&A / post-success rows when CLI label is absent)
