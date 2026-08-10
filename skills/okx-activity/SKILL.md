@@ -1,6 +1,6 @@
 ---
 name: okx-activity
-description: "Register for the OKX.AI Trading Hackathon or explain its entry requirements and eligibility. Trigger on requests in any language to register, sign up, join, enter, or participate in the hackathon. Registers an existing Trading ASP; never creates one."
+description: "OKX.AI Trading Hackathon registration and entry requirements. Use when the user asks to register, sign up, join, enter, or participate in the hackathon, or asks about its entry requirements."
 license: MIT
 metadata:
   author: okx
