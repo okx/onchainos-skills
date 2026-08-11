@@ -1,6 +1,6 @@
 # Security Scanning — CLI Reference
 
-Syntax, parameters, return fields, and risk catalogs for the 5 `onchainos security` subcommands. Behavior/policy is in [security.md](security.md). Verify flags with `onchainos security <subcommand> --help` when unsure.
+Syntax, parameters, return fields, and risk catalogs for the 5 `onchainos security` subcommands. Follow the already-loaded security flow for behavior and policy. Verify flags with `onchainos security <subcommand> --help` when unsure.
 
 ## `security token-scan`
 
@@ -26,7 +26,7 @@ onchainos security token-scan --address <addr> [--chain <chain>] [--trade-direct
 | `action` | String | `block` / `pause` / `warn` / `safe`, from the CLI's riskLevel×direction matrix (below). |
 | `isNative` | bool | `true` when the token has no contract address. |
 
-Top level: `combinedAction` = strictest `action` across all non-native tokens (severity `block` > `pause` > `warn` > `safe`; `safe` when none), `tradeDirection` = echo of the flag. Exit code is 0 even for `block` — the CLI classifies, the agent decides (see [security.md](security.md)).
+Top level: `combinedAction` = strictest `action` across all non-native tokens (severity `block` > `pause` > `warn` > `safe`; `safe` when none), `tradeDirection` = echo of the flag. Exit code is 0 even for `block` — the CLI classifies and the already-loaded security flow decides the interaction.
 
 CLI riskLevel×direction matrix (returned in `action`; do NOT recompute — kept here for transparency):
 
@@ -47,7 +47,7 @@ CLI riskLevel×direction matrix (returned in `action`; do NOT recompute — kept
 
 Tax thresholds feed `riskLevel` server-side (do NOT recompute): ≥50% → contributes CRITICAL; 21–50% → HIGH; 0–21% → MEDIUM; 0/null → no tax risk. Display tax % when non-null; omit when null.
 
-Interpretation: read `riskLevel` (authoritative); collect `true` boolean labels for display (include `isHasAssetEditAuth` only on Solana); if `riskLevel` is non-LOW but no label is true, display "flagged by composite analysis, no specific label identified". With `--trade-direction` the CLI already resolves the verdict — read the returned `action` / `combinedAction`, do not apply the matrix by hand (see [security.md](security.md)).
+Interpretation: read `riskLevel` (authoritative); collect `true` boolean labels for display (include `isHasAssetEditAuth` only on Solana); if `riskLevel` is non-LOW but no label is true, display "flagged by composite analysis, no specific label identified". With `--trade-direction` the CLI already resolves the verdict — read the returned `action` / `combinedAction`; do not apply the matrix by hand.
 
 ## `security dapp-scan`
 
