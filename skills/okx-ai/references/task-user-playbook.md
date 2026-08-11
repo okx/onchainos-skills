@@ -70,17 +70,28 @@ See `task-user-actions-publish.md` **Appendix A2** for the subscription confirma
 
 ### Post-creation: Offline-deliverables question
 
-AFTER a `create-subscribe` succeeds — in **both** the normal branch and the degraded branch (`deviceRoutingDegraded: true`) — render this question block so the user can decide what happens to deliverables produced while they are offline. Chinese-language sessions render it **VERBATIM**; other languages translate faithfully, preserving meaning, per the §Localization banner. `{任务名}` is the **just-created REAL subscription title** — never a hard-coded sample.
+AFTER a `create-subscribe` succeeds — in **all** success branches (normal default, explicit device choice, and degraded `deviceRoutingDegraded: true`) — render this question block so the user can decide what happens to deliverables produced while they are offline. Chinese-language sessions render it **VERBATIM**; other languages translate faithfully, preserving meaning, per the §Localization banner. `{任务名}` is the **just-created REAL subscription title** — never a hard-coded sample.
 
 **Ordering with the mandatory watch:** render this block, but do **not** pause or wait for the user's choice. Immediately continue to §Post-creation: Watch check below and enter watch. Handle the user's preference only when their reply arrives; the preference question must never delay the initial watch or the `sub_created` event.
 
+**Device-routing copy contract:** render exactly one device-routing line after the success title and before the offline-deliverables question. The line is informational only: do not ask a device question or wait for a device confirmation.
+
+- Degraded: `设备列表暂不可用，本任务消息目前仅推送至本设备，可稍后调整接收设备。`
+- Explicit choice: `本任务消息将推送至您选择的设备，可随时调整接收设备。`
+- Normal default: `本任务消息将推送至所有已登录设备，可随时调整接收设备。`
+
+Branch priority is fixed: `deviceRoutingDegraded == true` → degraded; otherwise any `--exclude-device` → explicit choice; otherwise → normal default. This priority applies even when the create used exclusions: a degraded success always uses the degraded line.
+
+For all three branches, continue in the same turn to the existing offline-deliverables block and mandatory watch; never end, pause, or wait because of the device line.
+
 > 「{任务名}」订阅任务已创建成功 ✅
+> {设备路由说明：从本节的 Device-routing copy contract 恰好选择一行}
 > 您离线期间，这个任务会持续产生交付物。重新上线后，这批交付物怎么处理？
 > · 补推给我（默认）—— 上线后补上，后台照常接收并处理
 > · 清理掉 —— 离线消息直接丢弃，后台不再接收，避免白白消耗算力
 > 💡 用 Codex / Claude Code 的话：选「补推」时，消息也是先到后台，要在对话里看到还需说一句「监听 {任务名}」。
 
-**Old comm-package branch** — read the `create-subscribe` success envelope's `offlineReplaySupported` (the CLI already probed it; **never run `okx-a2a capabilities` yourself**). When it is `false`, append this VERBATIM line to the END of the question block above (the four-segment block + 💡 line itself stays byte-identical). Chinese sessions render it verbatim; other languages translate faithfully, preserving meaning, per the §Localization banner:
+**Old comm-package branch** — read the `create-subscribe` success envelope's `offlineReplaySupported` (the CLI already probed it; **never run `okx-a2a capabilities` yourself**). When it is `false`, append this VERBATIM line to the END of the question block above. The existing offline-deliverables question/options + 💡 line stay byte-identical, and the selected device-routing line remains between the success title and that question. Chinese sessions render it verbatim; other languages translate faithfully, preserving meaning, per the §Localization banner:
 
 > 💡 当前通信包版本暂不支持离线回放偏好。您现在的选择会保存，待通信包升级后生效（升级命令：{fixCommands}）；升级前，所有订阅消息仍会正常补推。
 
@@ -253,13 +264,17 @@ Trigger: `设备列表` / `我登录了哪些设备` / `哪些设备在线` / `d
 - **接收的订阅任务消息**: derived by joining each `deviceId` against the subscriptions' `deviceList` (from `my-subscriptions`). `deviceList:null` matches every logged-in buyer device; `[]` matches none; a non-empty array uses membership. E.g. list which subscriptions that device receives, or 是/否 for a specific subscription in context.
 - Empty list (`list: []`) → tell the user no devices are currently listable. If the command errors (endpoint not live yet / transport), see the degraded render in §My Subscriptions / §Subscription Detail — state that device info is temporarily unavailable rather than presenting a partial picture as complete.
 
-## Create-subscribe device preview
+## Create-subscribe device routing
 
-Before creating a subscription, show the device table (设备 + 最后在线时间 from `device-list`) and tell the user the task's messages will **auto-push to all logged-in devices**, and any device can be disconnected later. Precede the device table with this VERBATIM pre-create line (Chinese-language sessions: render verbatim; other languages: translate faithfully, preserving meaning, per the §Localization banner):
+This section applies only to signal subscriptions created with `create-subscribe`; do not apply it to ordinary `create-task`.
 
-> 您当前登录了以下设备，本任务消息会自动推送给所有已登陆设备。想让某台设备不再接收，随时告诉我。
+Without an explicit device-management intent, do **not** run `onchainos agent device-list` before `create-subscribe`, do not show a device table, and do not branch on the device count. The CLI resolves and persists the default receive-device set inside `create-subscribe`.
+
+Only when the user explicitly asks to view, choose, or exclude receive devices, run `onchainos agent device-list` on demand. If the user has not named a device, show the complete returned list and wait for their selection before creating. Do not cache the returned device list locally or treat it as an account-level preference.
 
 On create, the CLI always sends `deviceList` explicitly (all logged-in devices minus any excluded).
 
-- **Excluding a device at creation time** (the user names one while reviewing the table — 「别推给 X」/「X 不用收」): pass `--exclude-device <deviceId>` on `create-subscribe`, **repeated once per excluded device**. Resolve each name to its id via the `device-list` rows; if a named device cannot be resolved, ask which row they meant rather than guessing or silently dropping the exclusion. Omitting the flag keeps the default all-devices set — there is no other way to honor an exclusion at creation time, so an exclusion the user asked for and that is not expressed as this flag is silently lost.
-- **Degrade:** if `device-list` fails/empty, the create still **proceeds with this device only**, the CLI returns `data.deviceRoutingDegraded: true`, and the skill tells the user only this device was set (do NOT abort). Surface this as a plain notice, not an error.
+- **Explicit choice at creation time:** Resolve every named device against that fresh list and pass `--exclude-device <deviceId>` once per excluded row. For an “only X” request, exclude every other row from the complete fresh list. Omitting the flag keeps the default all-devices set — there is no include-device flag, and an exclusion the user asked for but that is not expressed as `--exclude-device` is silently lost.
+- **Ambiguous name:** If a name matches more than one row, show the distinguishing rows and wait for the user to disambiguate; do not create yet.
+- **Explicit-intent lookup failure:** If the on-demand `device-list` fails, is empty, or cannot safely resolve the request, do not run `create-subscribe`. Tell the user the device choice cannot be applied yet; never guess or silently drop their request.
+- **Create-internal degradation:** after `create-subscribe` starts, its own device lookup may still degrade to this device only and return `data.deviceRoutingDegraded: true`. The subscription is already created; do not retry or roll it back. Render the degraded success notice below.
