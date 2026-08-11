@@ -1,13 +1,13 @@
 # Limit-Order Strategy — CLI Reference
 
-4 subcommands: `create-limit`, `cancel`, `list`, `resume`. All emit the JSON envelope `{ok:true,data:{...}}` on stdout (no `--format` flag — strategy CLI is agent-facing; the agent renders any user-visible table from JSON). Behavior/flow is in [strategy.md](strategy.md).
+4 subcommands: `create-limit`, `cancel`, `list`, `resume`. All emit the JSON envelope `{ok:true,data:{...}}` on stdout (no `--format` flag — strategy CLI is agent-facing; the agent renders any user-visible table from JSON). Follow the already-loaded strategy flow for behavior.
 
 ## `strategy create-limit`
 
 ```bash
 onchainos strategy create-limit --chain-id <id|alias> --from-token <address> --to-token <address> \
   --amount <decimal-string> --direction <buy|sell> --trigger-price <usd> \
-  [--current-price <usd>] [--slippage <percent>] [--mev-protection <on|off|default>] [--expires-in <secs>] [--wait]
+  [--current-price <usd>] [--slippage <percent>] [--mev-protection <on|off|default>] [--wait]
 ```
 
 | Flag | Required | Notes |
@@ -20,12 +20,13 @@ onchainos strategy create-limit --chain-id <id|alias> --from-token <address> --t
 | `--current-price` | N | Current USD price of the comparison token (to-token for buy, from-token for sell). Omit → CLI fetches via `market price`. |
 | `--slippage` | N | Percent, default `15`. Pass a plain number (`20%` → `20`; `0.05` = 0.05%, not 5%). |
 | `--mev-protection` | N | `on` / `off` / `default` (default = BE picks). |
-| `--expires-in` | N | TTL in seconds. Default `604800` (7 days). |
 | `--wait` | N | bool `[UNIT: bool]`, default `false`. Wait for terminal state: fixed 3 s sleep, then re-query + merge (see Output). |
+
+Order TTL is fixed at `604800` seconds (7 days) by the CLI and cannot be configured with a command-line flag.
 
 Output: `{orderId, status:<int>, statusLabel, estimatedWaitTime:<int|null>, eventCursor:<string|null>}`. Solana returns `estimatedWaitTime=0`; other chains follow the async wait pattern.
 
-**belowMinimum (exit 0, no order created):** below the $1 USD minimum — caught by the local pre-check OR by normalizing backend `100010` — the CLI returns `{belowMinimum:true, minFromAmount:<string>, fromSymbol:<string>}` instead. `minFromAmount = ceil(1.0 / from_token_price)` as an integer string; both paths emit identical shape. Render per [strategy.md](strategy.md) Step 2.
+**belowMinimum (exit 0, no order created):** below the $1 USD minimum — caught by the local pre-check OR by normalizing backend `100010` — the CLI returns `{belowMinimum:true, minFromAmount:<string>, fromSymbol:<string>}` instead. `minFromAmount = ceil(1.0 / from_token_price)` as an integer string; both paths emit identical shape. Return this object to the already-loaded strategy flow for rendering.
 
 **`--wait` merge:** appends `settled:<bool>`; when settled, also `transactionInfo` / `executionHistoryList` / `fromToken` / `toToken` / `orderStatusUpdateTime`. `status` / `statusLabel` reflect the re-query.
 
@@ -115,7 +116,7 @@ Emitted by the TEE swap-trade engine on an active order. Read the **latest** ent
 
 Reading patterns: latest entry wins; same code recurring every ~10s without a `txHash` = soft retry loop (surface the latest message + repeat count, ask wait/cancel/adjust); `terminal=true` → stop and surface; `terminal=false` repeating 3+ times → treat as user-actionable; code `0` with `txHash` → success (surface `txHash` + explorer link).
 
-Action hints by hot code: `0` success (txHash + explorer) · `3013` top up from-token or smaller amount · `3014` fund the native fee token · `3015` widen `--slippage` · `3016` non-transient (different pair / smaller amount / wider trigger / different chain) · `3017` engine retries (recurring 3+ → treat like 3016) · `3019` terminal, destination token blocklisted · `3020` terminal, wallet flagged · `3023` recreate with longer `--expires-in`. Codes outside this list: follow the CLI's `terminal` field.
+Action hints by hot code: `0` success (txHash + explorer) · `3013` top up from-token or smaller amount · `3014` fund the native fee token · `3015` widen `--slippage` · `3016` non-transient (different pair / smaller amount / wider trigger / different chain) · `3017` engine retries (recurring 3+ → treat like 3016) · `3019` terminal, destination token blocklisted · `3020` terminal, wallet flagged · `3023` the fixed TTL expired; ask whether to create a new order. Codes outside this list: follow the CLI's `terminal` field.
 
 ## `getOpenOrder` request body (reference only — agent never builds it)
 
