@@ -37,13 +37,9 @@ If the inbound message is a structured envelope — not free-form user text — 
 
 Do **not** apply the free-text Routing table below to any of these — envelope shape always wins.
 
-## Pre-flight (BLOCKING — the FIRST thing you do, before ANY `onchainos` command)
+## Pre-flight Checks
 
-**Before the first `onchainos` command in this conversation you MUST open and follow `../okx-agentic-wallet/_shared/preflight.md`.** Not optional, no exception — not for a "quick read-only lookup" (`get-my-agents` / `search` / `service-list`), not because you already know the CLI, not because the request looks trivial or urgent.
-
-- **Session-once means *per session*.** A new conversation resets it. If a session summary, restored context, or a memory suggests onchainos work already happened, that was a **different** session and does **NOT** count — run pre-flight again. Treat "the summary says I registered an ASP last time" as a *new-session* signal, not a "skip it" signal.
-- **No `onchainos` call from memory first.** Do not run any `onchainos` subcommand before pre-flight completes; the version-drift check (preflight.md step 4) is REQUIRED even when steps 1–3 are skipped.
-- **Self-catch:** about to type `onchainos ...` and you haven't run pre-flight this session? → stop, run pre-flight, then proceed.
+At the start of each conversation, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Language Lock (apply on EVERY turn — highest priority, before routing)
 

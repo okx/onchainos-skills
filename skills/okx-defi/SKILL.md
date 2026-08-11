@@ -14,7 +14,7 @@ Multi-chain, OKX-aggregated DeFi in two capabilities behind one skill. Both wrap
 
 ## Pre-flight Checks
 
-> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
+At the start of each conversation, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Intent Routing
 

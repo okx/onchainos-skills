@@ -16,10 +16,7 @@ copy — so adding an activity never changes the rules of an existing one.
 
 ## Pre-flight Checks
 
-Before your first onchainos command, read `../okx-agentic-wallet/_shared/preflight.md` once. If it does not exist, read `_shared/preflight.md` instead.
-
-**BLOCKING** — it runs before the first `onchainos` command of the session, for every activity, a
-read-only listing call included.
+At the start of each conversation, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Intent Routing
 
