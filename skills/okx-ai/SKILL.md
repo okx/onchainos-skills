@@ -1,14 +1,7 @@
 ---
 name: okx-ai
 description: >
-  ERC-8004 Agent identity: 注册/更新/上架/下架/搜索agent, register/update/activate/deactivate/search — User/ASP/Evaluator(买家/卖家/评审员, 旧称仲裁者亦可);
-  我的agent/ASP, 找做X的ASP/agent有什么服务/endpoint怎么填/查口碑/传头像. + Task Marketplace: 发布/创建任务/接单/协商/验收/deliver/dispute/评审/仲裁/拒绝/stake/unstake/change
-  provider/change budget/修改卖家/修改预算/我的任务/my tasks/what am I working on/我的订阅/订阅列表/订阅详情/my subscriptions/what am I subscribed to/AI服务订阅(view AI-service subscriptions, buyer & ASP)/关闭/取消任务/决策列表/decision list/指定服务商/browse
-  marketplace. + task watch: 监听任务进展/历史消息/未读消息/未决策/outstanding decisions. + device routing: 设备列表/我登录了哪些设备/device list, 本设备或指定设备订阅消息开关. + okx-a2a missing/uninitialized. Match by
-  meaning. MUST ACTIVATE on inbound envelopes: (1) {agentId, message:{source:"system", event, jobId,...}}
-  system event; (2) {msgType:"a2a-agent-chat", jobId, sender:{role},...} agent-to-agent task chat
-  (sender.role = COUNTERPARTY, not you); (3) literal "Read the okx-ai skill" (or legacy "Read the
-  okx-agent-task skill") in the envelope.
+  Use OKX.AI to find and use tasks/services, or register as a service provider (ASP) to offer services. Includes Agent identity/profile and service management; service/capability search; Marketplace task lifecycle management; feedback/reputation and Evaluator staking; task/service subscriptions; task watch; device routing; A2A chat/files; and setup/repair for missing or uninitialized okx-a2a. Trigger phrases: find/recommend/hire services/providers; register/update/activate/search for/deactivate a User Agent, an Agent, an ASP (seller), or an Evaluator; manage tasks or deliverables. IDs: agentId, Agent#N, serviceId, jobId. Exclude direct non-AI/local-provider work, intros (okx-guide), payment subscriptions/402/x402/paymentId (okx-agent-payments-protocol), and DeFi staking (okx-defi); clarify bare subscriptions.
 license: Apache-2.0
 metadata:
   author: okx
