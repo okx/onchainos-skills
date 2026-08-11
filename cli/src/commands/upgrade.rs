@@ -1126,14 +1126,12 @@ fn compute_drift(effective_cli: &str, skill_version: Option<&str>) -> Option<Str
     }
 }
 
-/// One-shot session-start check: resolve the latest release, auto-update the
-/// binary + local skill checkouts when newer (reusing the `upgrade` machinery),
-/// verify binary integrity, and report version drift. Always exits 0 with a JSON
-/// payload; the agent acts only on `data.action`. Unlike `upgrade`, it does not
-/// throttle — the prompt constrains it to run once per session.
+/// Session-start check: at most once every 12 hours, resolve the latest release,
+/// auto-update the binary + local skill checkouts when newer (reusing the
+/// `upgrade` machinery), verify binary integrity, and report version drift.
+/// Always exits 0 with a JSON payload; the agent acts only on `data.action`.
 pub async fn preflight(args: PreflightArgs) -> Result<()> {
     let current = CURRENT_VERSION;
-    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
     let skill_version = args.skill_version.as_deref();
     let no_self_update = args.no_self_update || env_disables_self_update();
     let binary_identity = crate::audit::binary_identity();
@@ -1147,6 +1145,37 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
             None,
         );
     }
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Share upgrade's last_check stamp so frequent sessions do not repeatedly
+    // hit GitHub, pull skill checkouts, or run package-manager cleanup. Local
+    // CLI/skill drift can still be reported without a remote check.
+    if let Ok(home) = crate::home::onchainos_home() {
+        if is_throttled(&home, now_secs) {
+            let drift = compute_drift(current, skill_version);
+            output::success(json!({
+                "status": "fresh",
+                "currentVersion": current,
+                "updated": false,
+                "throttled": true,
+                "selfUpdateDisabled": no_self_update,
+                "binaryIdentity": binary_identity,
+                "integrity": "skipped",
+                "drift": match &drift {
+                    Some(_) => json!({ "skill": skill_version, "cli": current }),
+                    None => Value::Null,
+                },
+                "action": drift,
+            }));
+            return Ok(());
+        }
+    }
+
+    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
 
     // Channel resolution — identical policy to `execute()`.
     let use_beta = skill_requests_beta(current, skill_version);
@@ -1312,6 +1341,15 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
     if !reported.is_empty() {
         payload["skills"] = json!(reported);
     }
+
+    // Match upgrade --throttle semantics: a successful version check starts a
+    // new 12-hour window. Offline checks and failed binary installs remain
+    // immediately retryable.
+    if status != "offline" && status != "update_failed" {
+        if let Ok(home) = crate::home::ensure_onchainos_home() {
+            let _ = record_check(&home, now_secs);
+        }
+    }
     output::success(payload);
 
     Ok(())
@@ -1323,10 +1361,10 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
 mod tests {
     use super::{
         artifact_name, compute_drift, current_branch, decide_target, decorate_graduation,
-        discover_skill_paths_in, highest_version, is_dev_build_path, is_throttled,
-        parse_ls_remote_versions, parse_release_tag_url, record_check, remote_is_trusted_okx,
-        removal_action, reportable_skills, semver_gt, skill_requests_beta, update_one_checkout,
-        env_disables_self_update,
+        discover_skill_paths_in, env_disables_self_update, highest_version, is_dev_build_path,
+        is_throttled, parse_ls_remote_versions, parse_release_tag_url, record_check,
+        remote_is_trusted_okx, removal_action, reportable_skills, semver_gt, skill_requests_beta,
+        update_one_checkout,
     };
     use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
