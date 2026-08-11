@@ -61,7 +61,7 @@ onchainos agent asp-match --task-desc \"<description>\" --format json
 - Empty → no matching ASP found. Ask the user to: (a) specify a provider agentId manually, or (b) adjust the description, then re-run asp-match. Loop until a match is found or the user gives up.
 - Non-empty → auto-select the top-ranked recommendation's provider and service. Proceed as if the user had designated that provider.
 
-**Field extraction** (both paths): from the selected recommendation/service retain `providerAgentId`, `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount`→serviceTokenAmount (`asp-match` normalizes a missing/null value from the monthly `subscription[].fee`), `feeToken`→serviceTokenAddress, `feeTokenSymbol`, `endpoint` (if A2MCP), **`supportSubscription`** (subscription array non-empty → true), **`supportTrial`** / **`supportTrail`** (boolean — whether trial is available; check both spellings), **`freeTrial`** (trial hours), and the complete **`autoTradePreflight` object verbatim**. Do not retain only the compact text summary: the subscription branch needs the structured `reminders[]`, `tools[]`, and `pluginId` values.
+**Field extraction** (both paths): from the selected recommendation/service retain `providerAgentId`, `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (non-subscription service fee only), `feeToken`→serviceTokenAddress, `feeTokenSymbol`, `endpoint` (if A2MCP), **`supportSubscription`** (branch flag), **`subscriptionInfo`** (billing interval, subscription fee from `subscription[].fee`, and trial snapshot), **`supportTrial`** / **`supportTrail`** (boolean — whether trial is available; check both spellings), **`freeTrial`** (trial hours), and the complete **`autoTradePreflight` object verbatim**. Do not retain only the compact text summary: the subscription branch needs the structured `reminders[]`, `tools[]`, and `pluginId` values.
 - If the same ASP returns both subscription and non-subscription services, display each with `[Subscription]` / `[One-time]` label and let the user choose. The chosen service determines the branch.
 
 ================================================
@@ -156,13 +156,13 @@ Step 4 -- Subscription field collection
 
 For subscription tasks, Currency and Budget are derived from the service — do NOT ask the user:
 - **Currency** = `feeTokenSymbol` from asp-match (auto-filled)
-- **Budget** = `feeAmount` from asp-match (auto-filled; this is the fixed subscription price)
+- **Budget** = `subscriptionInfo.feeAmount` from asp-match (auto-filled fixed subscription price)
 
 Collect/infer:
 
 1. **serviceParams inference** (same logic as §serviceParams inference below).
 
-2. **useTrial**: if `supportTrial == true` (or `supportTrail == true` — legacy typo, check both) from asp-match → automatically set to `true` (do NOT ask the user). Otherwise `false`. Display trial hours from `freeTrial` field in the confirmation form.
+2. **useTrial**: if `subscriptionInfo.supportTrial == true` (or `subscriptionInfo.supportTrail == true`; fallback to top-level `supportTrial` / `supportTrail`) from asp-match → automatically set to `true` (do NOT ask the user). Otherwise `false`. Display trial hours from `subscriptionInfo.freeTrial` (fallback `freeTrial`) in the confirmation form.
 
 3. **autoRenew**: ask the user explicitly (0=off, 1=on). Do NOT pre-fill a default — collect the answer before Step 5.
 
@@ -181,7 +181,7 @@ Collect/infer:
 
    If there is no actionable reminder, skip this gate and proceed to Step 5. Missing/invalid preflight also skips the gate and remains non-blocking.
 
-**Max budget is NOT collected** for subscription tasks — the price is fixed at `feeAmount`.
+**Max budget is NOT collected** for subscription tasks — the price is fixed at `subscriptionInfo.feeAmount`.
 
 → Proceed to **Step 5** (subscription confirmation form).
 
@@ -196,8 +196,8 @@ Step 5 -- Subscription confirmation form
 | Description | <full content> (if <=200 chars in table; if >200 write `see below` and render below) |
 | Provider | Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent |
 | Service params | <serviceParams readable display, or \"None\"> |
-| Service price | <feeAmount> <feeTokenSymbol> / month |
-| Trial | Yes (<freeTrial> hours free) / No (based on `supportTrial` or `supportTrail` field) |
+| Service price | <subscriptionInfo.feeAmount> <feeTokenSymbol> / month |
+| Trial | Yes (<subscriptionInfo.freeTrial or freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial/supportTrail`, fallback top-level `supportTrial/supportTrail`) |
 | Auto-renew | On / Off |
 
 > Confirm? Once confirmed, the subscription will be created on-chain.
@@ -224,7 +224,7 @@ Step 6 -- Publish subscription (create-subscribe)
 onchainos agent create-subscribe \\
   --service-id <sid> \\
   --use-trial <true|false> \\
-  --service-token-amount \"<feeAmount>\" \\
+  --service-token-amount \"<subscriptionInfo.feeAmount>\" \\
   --service-token-address \"<feeToken>\" \\
   --auto-renew <0|1> \\
   --title \"<title>\" \\

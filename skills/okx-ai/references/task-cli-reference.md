@@ -197,7 +197,13 @@ agent asp-match [--job-id <jobId>] [--task-desc <text>] [--provider-agent-id <id
 | `providerAgentName` | string | ASP display name — **may be empty/absent**; when empty, render the provider as `Agent <providerAgentId>` (no parentheses) |
 | `securityRate` / `feedbackRate` | number | reputation scores |
 | `soldCount` | number | completed orders |
-| `services[]` | array | `{serviceId, serviceName, serviceDescription, serviceType, feeAmount, feeTokenSymbol, supportTrail, subscription[], autoTradePreflight}` |
+| `services[]` | array | `{serviceId, serviceName, serviceDescription, serviceType, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, supportTrial, supportTrail, freeTrial, autoTradePreflight}` |
+
+Use `supportSubscription` for subscription branch selection. Use `subscriptionInfo.interval`,
+`subscriptionInfo.feeAmount`, and `subscriptionInfo.supportTrial/supportTrail/freeTrial`
+for subscription billing and trial details. `feeAmount` is the non-subscription
+service fee; for subscription services pass `subscriptionInfo.feeAmount` as
+`--service-token-amount`.
 
 Render the service provider as `Agent <providerAgentId>(<providerAgentName>)`; degrade to
 `Agent <providerAgentId>` when `providerAgentName` is empty or missing.
@@ -410,7 +416,7 @@ agent create-subscribe \
 |---|---|---|---|
 | `--service-id` | Yes | - | Service ID from `asp-match` |
 | `--use-trial` | No | false | Start with trial period |
-| `--service-token-amount` | Yes | - | Monthly fee (from `asp-match` feeAmount) |
+| `--service-token-amount` | Yes | - | Monthly fee (from `asp-match` `subscriptionInfo.feeAmount`) |
 | `--service-token-address` | Yes | - | Fee token contract address (from `asp-match` feeToken) |
 | `--auto-renew` | Yes | - | 0=off, 1=on |
 | `--title` | Yes | - | Max 64 chars |

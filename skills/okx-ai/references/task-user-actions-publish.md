@@ -69,8 +69,8 @@ Display as a single `| Field | Value |` table with exactly these **7** fields in
 | 2 | 任务描述 | 用户 Description | ≤200 字符内联；>200 字符 → 表内写 "见下方"，完整文本渲染在表格下方 |
 | 3 | 服务方 | asp-match / designated-route | `Agent <providerAgentId>(<providerAgentName>)`；无名称时降级为 `Agent <providerAgentId>` |
 | 4 | 服务参数 | Agent 从 serviceDescription 推断 | 无参数时显示 `None` |
-| 5 | 服务价格 | asp-match `feeAmount` + `feeTokenSymbol` | `<feeAmount> <symbol> / month` |
-| 6 | 试用 | asp-match `supportTrial` + `freeTrial` | `Yes (<freeTrial> 小时免费)` 或 `No` |
+| 5 | 服务价格 | asp-match `subscriptionInfo.feeAmount` + `feeTokenSymbol` | `<subscriptionInfo.feeAmount> <symbol> / month` |
+| 6 | 试用 | asp-match `subscriptionInfo.supportTrial/supportTrail/freeTrial`；fallback `supportTrial` + `freeTrial` | `Yes (<freeTrial> 小时免费)` 或 `No` |
 | 7 | 自动续费 | 默认 `On`，确认时用户可编辑 | `On` 或 `Off` |
 
 If attachments present, add an Attachments row.
@@ -91,7 +91,7 @@ Before displaying this confirmation table, apply the subscription playbook's **T
 
 > Confirm? Once confirmed, the subscription will be created on-chain.
 
-Rules: description rendering same as A1. 试用 row: `supportTrial == true` (or `supportTrail == true` — legacy typo, check both) → `Yes (freeTrial 小时免费)`, otherwise `No`. 自动续费: `On` 或 `Off`. 服务方 shows `Agent <id>(<name>)`, degrade to `Agent <id>` when the name is empty/absent.
+Rules: description rendering same as A1. 服务价格 row uses `subscriptionInfo.feeAmount` because backend `services.feeAmount` is the non-subscription service fee while `subscription[].fee` is the subscription fee. 试用 row: `subscriptionInfo.supportTrial == true` (or `subscriptionInfo.supportTrail == true`; fallback to top-level `supportTrial` / `supportTrail`) → `Yes (<subscriptionInfo.freeTrial or freeTrial> 小时免费)`, otherwise `No`. 自动续费: `On` 或 `Off`. 服务方 shows `Agent <id>(<name>)`, degrade to `Agent <id>` when the name is empty/absent.
 
 ---
 
@@ -125,7 +125,7 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `S
 ### Path A — ServiceTitle is missing (e.g. "购买ASP#1960的服务" without specifying which service) → service discovery:
 1. `onchainos agent service-list --agent-id <agentId>` — list all services the ASP offers. Empty result → provider does not exist or has no services; inform the user and stop.
 2. Display the service list to the user and ask them to pick one.
-3. Fill `ServiceTitle`, `ServiceType`, `ServiceDescription`, `Price`, `symbol`, `serviceId`, `endpoint` from the chosen service. For subscriptions, `asp-match` normalizes a missing/null `feeAmount` from the monthly `subscription[].fee`.
+3. Fill `ServiceTitle`, `ServiceType`, `ServiceDescription`, `Price`, `symbol`, `serviceId`, `endpoint` from the chosen service. For services chosen from `service-list`, derive subscription status and billing details from that service's `subscription` / `freeTrial` fields. For services chosen from `asp-match`, use `supportSubscription` for branch selection and `subscriptionInfo` for billing interval / trial details.
 4. Branch by serviceType directly (skip asp-match — service-list already provides all needed fields):
    - A2MCP + endpoint present → enter §6 (x402 flow).
    - Otherwise → A2A: enter step 2 of the Flow below.

@@ -59,10 +59,10 @@ If a single ASP returns both subscription and non-subscription services, display
 | Field | Source | Notes |
 |---|---|---|
 | `serviceId` | from `asp-match` response | auto-filled |
-| `useTrial` | `supportTrial == true` (or `supportTrail == true` — legacy typo, check both) from `asp-match` → auto `true`; otherwise `false`. Display hours from `freeTrial` field | **auto-filled, do NOT ask user** |
+| `useTrial` | `subscriptionInfo.supportTrial == true` (or `subscriptionInfo.supportTrail == true`; fallback to top-level `supportTrial` / `supportTrail`) from `asp-match` → auto `true`; otherwise `false`. Display hours from `subscriptionInfo.freeTrial` / `freeTrial` field | **auto-filled, do NOT ask user** |
 | `autoRenew` | ask user explicitly before form — no default | 0=off, 1=on |
 | Signal preflight | Retain the complete structured `autoTradePreflight` object from `asp-match`. Surface its `assetClasses`, each `tools[].readiness`, and `reminders[]` (bilingual `messageEn`/`messageZh`, all non-blocking). If install/configure reminders exist, show a separate mandatory-turn gate before the subscription confirmation: one optional preparation action per unavailable tool plus “Later — continue subscribing”, then end the turn. State that Later preserves delivery display/storage and later manual execution through any user-chosen available tool. Act only on the user's explicit choice. After preparation, re-run the same `asp-match`, re-select the same `serviceId`, and repeat the gate with fresh readiness. Preparing a tool does not select it, save a venue preference, or establish consent. Do not infer an install from the raw description, block creation, pick a venue, or install automatically. Missing preflight only hides these advisory rows. | **advisory; not a subscription input** |
-| `serviceTokenAmount` | from `asp-match` response `feeAmount` | must match listing price; CLI normalizes a missing/null value from monthly `subscription[].fee` |
+| `serviceTokenAmount` | from `asp-match` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
 
 The `create-subscribe` CLI command handles the full flow internally: providerConfirmStatus → EIP-712 terms signing → create API → sign uopData → broadcast(bizType=101). The current backend delivery marker is written internally as `copyTrade=1`; it is not a user choice or CLI argument. Wait for `sub_created` event to confirm success.
 

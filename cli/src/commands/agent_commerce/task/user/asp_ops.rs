@@ -16,29 +16,12 @@ use crate::commands::agent_commerce::task::signing;
 
 // ── asp-match ────────────────────────────────────────────────────────────
 
-/// Older ASP-match responses may expose a subscription price only as
-/// `subscription[].fee` while leaving the canonical `feeAmount` null. Normalize
-/// that response shape once so JSON consumers and the text renderer see the
-/// same fixed subscription price. An explicit `feeAmount` always wins.
+/// ASP-match exposes subscription billing under `subscription[].fee`. Normalize
+/// that response shape for the text renderer so it shows the fixed subscription
+/// price instead of a possibly unrelated one-time listing price. The compact
+/// JSON response keeps subscription billing under `subscriptionInfo.feeAmount`.
 fn normalize_subscription_fee(service: &mut serde_json::Value) {
-    let fee_amount_missing = service
-        .get("feeAmount")
-        .is_none_or(|value| value.is_null() || value.as_str().is_some_and(|s| s.trim().is_empty()));
-    if !fee_amount_missing {
-        return;
-    }
-
-    let Some(subscriptions) = service.get("subscription").and_then(|v| v.as_array()) else {
-        return;
-    };
-    let fee = subscriptions
-        .iter()
-        .find(|entry| entry.get("interval").and_then(|v| v.as_str()) == Some("month"))
-        .or_else(|| subscriptions.first())
-        .and_then(|entry| entry.get("fee"))
-        .filter(|value| !value.is_null() && !value.as_str().is_some_and(|s| s.trim().is_empty()))
-        .cloned();
-    if let Some(fee) = fee {
+    if let Some(fee) = selected_subscription_fee(service) {
         service["feeAmount"] = fee;
     }
 }
@@ -56,6 +39,143 @@ fn scalar_display(value: &serde_json::Value) -> Option<String> {
 fn supports_trial(service: &serde_json::Value) -> bool {
     service["supportTrial"].as_bool().unwrap_or(false)
         || service["supportTrail"].as_bool().unwrap_or(false)
+}
+
+fn selected_subscription(service: &serde_json::Value) -> Option<&serde_json::Value> {
+    let subscriptions = service.get("subscription")?.as_array()?;
+    subscriptions
+        .iter()
+        .find(|entry| entry.get("interval").and_then(|v| v.as_str()) == Some("month"))
+        .or_else(|| subscriptions.first())
+}
+
+fn selected_subscription_fee(service: &serde_json::Value) -> Option<serde_json::Value> {
+    selected_subscription(service)
+        .and_then(|entry| entry.get("fee"))
+        .filter(|value| !value.is_null() && !value.as_str().is_some_and(|s| s.trim().is_empty()))
+        .cloned()
+}
+
+fn build_subscription_info(service: &serde_json::Value) -> serde_json::Value {
+    let subscription = selected_subscription(service);
+    let subscription_fee = selected_subscription_fee(service);
+    let support_subscription = subscription.is_some()
+        || service
+            .get("supportSubscription")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+    if !support_subscription {
+        return serde_json::Value::Null;
+    }
+
+    serde_json::json!({
+        "interval": subscription
+            .and_then(|entry| entry.get("interval"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "feeAmount": subscription_fee.unwrap_or(serde_json::Value::Null),
+        "supportTrial": service.get("supportTrial").and_then(|value| value.as_bool()).unwrap_or(false),
+        "supportTrail": service.get("supportTrail").and_then(|value| value.as_bool()).unwrap_or(false),
+        "freeTrial": service.get("freeTrial").cloned().unwrap_or(serde_json::json!(0)),
+    })
+}
+
+fn copy_field(
+    target: &mut serde_json::Map<String, serde_json::Value>,
+    source: &serde_json::Value,
+    key: &str,
+) {
+    if let Some(value) = source.get(key) {
+        target.insert(key.to_string(), value.clone());
+    }
+}
+
+fn compact_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
+    let subscription_info = build_subscription_info(&service);
+    let support_subscription = !subscription_info.is_null();
+    let mut compact = serde_json::Map::new();
+    for key in [
+        "serviceId",
+        "serviceName",
+        "serviceType",
+        "serviceDescription",
+        "feeToken",
+        "feeTokenSymbol",
+        "endpoint",
+        "autoTradePreflight",
+    ] {
+        copy_field(&mut compact, &service, key);
+    }
+    if !support_subscription {
+        copy_field(&mut compact, &service, "feeAmount");
+    }
+    compact.insert(
+        "supportSubscription".to_string(),
+        serde_json::Value::Bool(support_subscription),
+    );
+    compact.insert("subscriptionInfo".to_string(), subscription_info);
+    compact.insert(
+        "supportTrial".to_string(),
+        serde_json::Value::Bool(service.get("supportTrial").and_then(|value| value.as_bool()).unwrap_or(false)),
+    );
+    compact.insert(
+        "supportTrail".to_string(),
+        serde_json::Value::Bool(service.get("supportTrail").and_then(|value| value.as_bool()).unwrap_or(false)),
+    );
+    compact.insert(
+        "freeTrial".to_string(),
+        service.get("freeTrial").cloned().unwrap_or(serde_json::json!(0)),
+    );
+
+    serde_json::Value::Object(compact)
+}
+
+fn compact_recommendation_for_ai(rec: &serde_json::Value) -> serde_json::Value {
+    let mut compact = serde_json::Map::new();
+    for key in [
+        "providerAgentId",
+        "providerAgentName",
+        "securityRate",
+        "feedbackRate",
+        "soldCount",
+        "supportA2MCP",
+    ] {
+        copy_field(&mut compact, rec, key);
+    }
+    let services = rec
+        .get("services")
+        .and_then(|value| value.as_array())
+        .map(|services| {
+            services
+                .iter()
+                .map(compact_service_for_ai)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    compact.insert("services".to_string(), serde_json::Value::Array(services));
+    serde_json::Value::Object(compact)
+}
+
+fn compact_asp_match_response(resp: serde_json::Value) -> serde_json::Value {
+    let recommendations = resp
+        .get("recommendations")
+        .and_then(|value| value.as_array())
+        .map(|recs| {
+            recs.iter()
+                .map(compact_recommendation_for_ai)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut compact = serde_json::Map::new();
+    compact.insert(
+        "recommendations".to_string(),
+        serde_json::Value::Array(recommendations),
+    );
+    if let Some(next_page) = resp.get("nextPage") {
+        compact.insert("nextPage".to_string(), next_page.clone());
+    }
+    serde_json::Value::Object(compact)
 }
 
 /// Render a service provider header as `Agent <pid>(<pname>)`, degrading to
@@ -167,7 +287,7 @@ pub async fn handle_asp_match(
     );
 
     if json_mode {
-        crate::output::success(resp);
+        crate::output::success(compact_asp_match_response(resp));
         return Ok(());
     }
 
@@ -580,13 +700,13 @@ mod tests {
     }
 
     #[test]
-    fn explicit_fee_amount_wins_and_monthly_fallback_is_preferred() {
-        let mut explicit = json!({
+    fn subscription_fee_wins_and_monthly_fallback_is_preferred() {
+        let mut subscription_service = json!({
             "feeAmount": "2.5",
             "subscription": [{"fee": 0.1, "interval": "month"}],
         });
-        super::normalize_subscription_fee(&mut explicit);
-        assert_eq!(explicit["feeAmount"], json!("2.5"));
+        super::normalize_subscription_fee(&mut subscription_service);
+        assert_eq!(subscription_service["feeAmount"], json!(0.1));
 
         let mut fallback = json!({
             "subscription": [
@@ -603,6 +723,95 @@ mod tests {
         assert!(super::supports_trial(&json!({"supportTrial": true})));
         assert!(super::supports_trial(&json!({"supportTrail": true})));
         assert!(!super::supports_trial(&json!({})));
+    }
+
+    #[test]
+    fn compact_response_preserves_ai_fields_and_derives_subscription_info() {
+        let resp = json!({
+            "recommendations": [{
+                "providerAgentId": "6607",
+                "providerAgentName": "Quick ASP",
+                "securityRate": 4.8,
+                "feedbackRate": 4.9,
+                "soldCount": 12,
+                "supportA2MCP": false,
+                "avatar": "https://example.invalid/avatar.png",
+                "services": [{
+                    "serviceId": "svc-1",
+                    "serviceName": "Quick Moment",
+                    "serviceType": "A2A",
+                    "serviceDescription": "Please provide the target market before subscribing.",
+                    "feeAmount": "100",
+                    "feeToken": "0xToken",
+                    "feeTokenSymbol": "USDT",
+                    "endpoint": null,
+                    "supportTrail": true,
+                    "freeTrial": 24,
+                    "subscription": [
+                        {"interval": "week", "fee": "0.03"},
+                        {"interval": "month", "fee": "0.1"}
+                    ],
+                    "autoTradePreflight": {
+                        "isTradingSignal": true,
+                        "assetClasses": ["spot"],
+                        "tools": [{"displayName": "Trade Kit", "readiness": "ready"}],
+                        "reminders": []
+                    },
+                    "rawServiceStatus": "ACTIVE"
+                }]
+            }],
+            "nextPage": null,
+            "debug": {"requestId": "abc"}
+        });
+
+        let compact = super::compact_asp_match_response(resp);
+        let rec = &compact["recommendations"][0];
+        let svc = &rec["services"][0];
+
+        assert_eq!(rec["providerAgentId"], json!("6607"));
+        assert!(rec.get("avatar").is_none());
+        assert!(compact.get("debug").is_none());
+
+        assert_eq!(svc["serviceDescription"], json!("Please provide the target market before subscribing."));
+        assert_eq!(svc["autoTradePreflight"]["assetClasses"], json!(["spot"]));
+        assert!(svc.get("feeAmount").is_none());
+        assert_eq!(svc["supportSubscription"], json!(true));
+        assert_eq!(svc["subscriptionInfo"]["interval"], json!("month"));
+        assert_eq!(svc["subscriptionInfo"]["feeAmount"], json!("0.1"));
+        assert_eq!(svc["subscriptionInfo"]["supportTrial"], json!(false));
+        assert_eq!(svc["subscriptionInfo"]["supportTrail"], json!(true));
+        assert_eq!(svc["subscriptionInfo"]["freeTrial"], json!(24));
+        assert!(svc.get("subscription").is_none());
+        assert!(svc.get("rawServiceStatus").is_none());
+    }
+
+    #[test]
+    fn compact_response_marks_regular_services_without_subscription_info() {
+        let resp = json!({
+            "recommendations": [{
+                "providerAgentId": "42",
+                "services": [{
+                    "serviceId": "svc-2",
+                    "serviceName": "One-shot Audit",
+                    "serviceType": "A2A",
+                    "serviceDescription": "Audit one transaction.",
+                    "feeAmount": "5",
+                    "feeToken": "0xToken",
+                    "feeTokenSymbol": "USDT",
+                    "autoTradePreflight": {"isTradingSignal": false}
+                }]
+            }]
+        });
+
+        let compact = super::compact_asp_match_response(resp);
+        let svc = &compact["recommendations"][0]["services"][0];
+
+        assert_eq!(svc["supportSubscription"], json!(false));
+        assert!(svc["subscriptionInfo"].is_null());
+        assert_eq!(svc["feeAmount"], json!("5"));
+        assert_eq!(svc["serviceDescription"], json!("Audit one transaction."));
+        assert_eq!(svc["autoTradePreflight"]["isTradingSignal"], json!(false));
+        assert!(svc.get("subscription").is_none());
     }
 
     #[test]
