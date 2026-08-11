@@ -27,6 +27,23 @@ pub fn onchainos() -> assert_cmd::Command {
     cargo_bin_cmd!("onchainos")
 }
 
+/// Assert a CLI command failed and its stdout/stderr error envelope contains
+/// every expected fragment.
+pub fn assert_error_contains(output: &std::process::Output, needles: &[&str]) {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "expected failure, got success\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    for needle in needles {
+        assert!(
+            stdout.contains(needle) || stderr.contains(needle),
+            "expected output to contain {needle:?}\nstdout: {stdout}\nstderr: {stderr}"
+        );
+    }
+}
+
 /// Parse stdout as JSON, assert `ok: true`, and return the `data` field.
 pub fn assert_ok_and_extract_data(output: &std::process::Output) -> Value {
     let stdout = String::from_utf8_lossy(&output.stdout);

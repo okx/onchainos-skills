@@ -279,10 +279,6 @@ const REDACT_FULL: &[&str] = &[
     // x402 task-402-pay replay business body: a free-form JSON blob POSTed to the
     // ASP endpoint that can carry order / challenge data — never log it (SR-5).
     "--body",
-    // CeFi user identifier passed to `hackathon register`. Fully redacted rather
-    // than prefix-masked: an OKX UID is ~10-11 digits, so prefix-6 + suffix-4
-    // would leave all but one character of it readable in the log.
-    "--uid",
 ];
 
 /// Flags whose next positional value is an address / email — keep prefix + suffix.
@@ -441,8 +437,6 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
-        Commands::Competition { command } => format!("competition {}", competition_sub(command)),
-        Commands::Hackathon { command } => format!("hackathon {}", hackathon_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Strategy { command } => format!("strategy {}", strategy_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
@@ -572,11 +566,10 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
 use crate::commands::agentic_wallet::WalletCommand;
 use crate::commands::payment::PaymentCommand;
 use crate::commands::{
-    competition::CompetitionCommand, defi::DefiCommand, gateway::GatewayCommand,
-    hackathon::HackathonCommand, leaderboard::LeaderboardCommand, market::MarketCommand,
-    memepump::MemepumpCommand, portfolio::PortfolioCommand, security::SecurityCommand,
-    signal::SignalCommand, social::SocialCommand, swap::SwapCommand, token::TokenCommand,
-    tracker::TrackerCommand,
+    defi::DefiCommand, gateway::GatewayCommand, leaderboard::LeaderboardCommand,
+    market::MarketCommand, memepump::MemepumpCommand, portfolio::PortfolioCommand,
+    security::SecurityCommand, signal::SignalCommand, social::SocialCommand, swap::SwapCommand,
+    token::TokenCommand, tracker::TrackerCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -825,24 +818,6 @@ fn defi_sub(c: &DefiCommand) -> &'static str {
         DefiCommand::Collect { .. } => "collect",
         DefiCommand::Positions { .. } => "positions",
         DefiCommand::PositionDetail { .. } => "position-detail",
-    }
-}
-
-fn competition_sub(c: &CompetitionCommand) -> &'static str {
-    match c {
-        CompetitionCommand::List { .. } => "list",
-        CompetitionCommand::Detail { .. } => "detail",
-        CompetitionCommand::Rank { .. } => "rank",
-        CompetitionCommand::UserStatus { .. } => "user-status",
-        CompetitionCommand::Join { .. } => "join",
-        CompetitionCommand::Claim { .. } => "claim",
-        CompetitionCommand::SubmitContact { .. } => "submit-contact",
-    }
-}
-
-fn hackathon_sub(c: &HackathonCommand) -> &'static str {
-    match c {
-        HackathonCommand::Register { .. } => "register",
     }
 }
 
@@ -1156,28 +1131,6 @@ mod tests {
         ]);
         let out = redact_args(&args);
         assert_eq!(out[4], "0x1234***5678");
-    }
-
-    #[test]
-    fn hackathon_sub_register_maps_to_register() {
-        let cmd = HackathonCommand::Register {
-            agent_id: "agent-42".to_string(),
-            account_type: "web3".to_string(),
-            address: Some("0x1111111111111111111111111111111111111111".to_string()),
-            uid: None,
-        };
-        assert_eq!(hackathon_sub(&cmd), "register");
-    }
-
-    #[test]
-    fn redact_uid_is_fully_masked() {
-        // A real OKX UID is ~10-11 digits; prefix+suffix masking would leave it
-        // effectively readable, so `--uid` is in REDACT_FULL.
-        for uid in ["1234567890", "12345678901", "1234567890abcdef"] {
-            let args = vec_s(&["onchainos", "hackathon", "register", "--uid", uid]);
-            let out = redact_args(&args);
-            assert_eq!(out[4], "[REDACTED]", "uid {uid} was not fully redacted");
-        }
     }
 
     #[test]

@@ -671,8 +671,8 @@ pub(crate) fn is_invalid_token_error(e: &anyhow::Error) -> bool {
 /// tokens, and returns the new access token.
 ///
 /// This is the single shared force-refresh primitive used by both clients'
-/// transport-layer invalid-token retry (`ApiClient` + `WalletApiClient`) and by the
-/// competition module. It does NOT apply `chainUpdated` from the refresh
+/// transport-layer invalid-token retry (`ApiClient` + `WalletApiClient`). It does
+/// NOT apply `chainUpdated` from the refresh
 /// response — that stays the responsibility of `ensure_tokens_refreshed`'s
 /// normal TTL path; this primitive's only job is to obtain a valid token.
 pub(crate) async fn force_refresh_access_token() -> Result<String> {

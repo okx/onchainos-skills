@@ -10,7 +10,9 @@
 
 mod common;
 
-use common::{assert_ok_and_extract_data, onchainos, run_with_retry, tokens};
+use common::{
+    assert_error_contains, assert_ok_and_extract_data, onchainos, run_with_retry, tokens,
+};
 use predicates::prelude::*;
 use serde_json::Value;
 
@@ -52,6 +54,37 @@ fn social_news_latest_with_coin_filter() {
     assert!(
         data.get("articles").is_some(),
         "expected 'articles' field: {data}"
+    );
+}
+
+#[test]
+fn social_news_latest_since_zero_is_rejected() {
+    let output = onchainos()
+        .args(["social", "news-latest", "--since", "0"])
+        .output()
+        .expect("failed to execute");
+    assert_error_contains(&output, &["duration must be positive", "invalid_input"]);
+}
+
+#[test]
+fn social_news_latest_since_conflicts_with_begin() {
+    let output = onchainos()
+        .args([
+            "social",
+            "news-latest",
+            "--since",
+            "24h",
+            "--begin",
+            "1000",
+        ])
+        .output()
+        .expect("failed to execute");
+    assert_error_contains(
+        &output,
+        &[
+            "--since is mutually exclusive with --begin/--end",
+            "invalid_input",
+        ],
     );
 }
 

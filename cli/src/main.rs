@@ -123,16 +123,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::payment::PaymentCommand,
     },
-    /// Trading competition: list, join, rank, claim rewards (Agentic Wallet exclusive)
-    Competition {
-        #[command(subcommand)]
-        command: commands::competition::CompetitionCommand,
-    },
-    /// Register for the OKX.AI Trading Hackathon with an existing Trading ASP
-    Hackathon {
-        #[command(subcommand)]
-        command: commands::hackathon::HackathonCommand,
-    },
     /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
@@ -244,8 +234,6 @@ async fn run() {
         Commands::Wallet { command } => commands::agentic_wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::payment::execute(command).await,
-        Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
-        Commands::Hackathon { command } => commands::hackathon::execute(&ctx, command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Strategy { command } => {
             commands::agentic_wallet::strategy::execute(&ctx, *command).await

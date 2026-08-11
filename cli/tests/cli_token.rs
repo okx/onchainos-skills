@@ -5,8 +5,8 @@
 mod common;
 
 use common::{
-    assert_limit_non_empty, assert_ok_and_extract_data, extract_items, onchainos, run_with_retry,
-    tokens,
+    assert_error_contains, assert_limit_non_empty, assert_ok_and_extract_data, extract_items,
+    onchainos, run_with_retry, tokens,
 };
 use predicates::prelude::*;
 
@@ -72,6 +72,44 @@ fn token_search_missing_query_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
+}
+
+#[test]
+fn token_search_max_results_out_of_range_is_rejected() {
+    let output = onchainos()
+        .args([
+            "token",
+            "search",
+            "--query",
+            "btc",
+            "--max-results",
+            "999",
+        ])
+        .output()
+        .expect("failed to execute");
+    assert_error_contains(
+        &output,
+        &["--max-results must be between 1 and 500", "invalid_input"],
+    );
+}
+
+#[test]
+fn token_search_max_results_non_integer_is_rejected() {
+    let output = onchainos()
+        .args([
+            "token",
+            "search",
+            "--query",
+            "btc",
+            "--max-results",
+            "abc",
+        ])
+        .output()
+        .expect("failed to execute");
+    assert_error_contains(
+        &output,
+        &["--max-results must be an integer", "invalid_input"],
+    );
 }
 
 // ─── info ───────────────────────────────────────────────────────────

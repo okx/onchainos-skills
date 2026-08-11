@@ -1,6 +1,6 @@
 # onchainos — Agent Instructions
 
-This is an **onchainos skill + workflow collection** providing 17 skills and pre-built workflows for on-chain operations across 20+ blockchains.
+This is an **onchainos skill + workflow collection** providing 16 skills and pre-built workflows for on-chain operations across 20+ blockchains.
 
 ## Workflows (Primary Routing)
 
@@ -33,8 +33,6 @@ For scripts, use `--format` only when the command documents it.
 | okx-guide | Onboarding & guide hub (merges former okx-how-to-play + okx-ai-guide + okx-ai-support): Onchain OS onboarding + welcome banner, OKX.AI intro & role-registration routing, customer-support / Help Center guidance — routes via its `## Intent Routing` table | First-time user ("what is onchainos", "how do I use/play this", "getting started", "I just installed"); OKX.AI questions (是什么/能做什么/怎么用/怎么开始, "OKX.AI 快速开始", spelling variants); or customer service / talk to a human / complaint / feedback / help center / FAQ |
 | okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred`), MPP (`charge` / `session`), and a2a-pay (paymentId). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session/charge, or a paymentId / `a2a_...` link / payment status |
 | okx-dapp-discovery | Third-party DApp discovery + direct plugin routing | User names a specific third-party DApp/protocol (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, …) or asks "what dapps are available" — installs the matching plugin on demand and forwards the prompt to its quickstart |
-| okx-growth-competition | Agentic Wallet exclusive trading competitions: list, join, rank, claim rewards | User asks about trading competitions, wants to join/register for a competition, check leaderboard ranking, or claim competition rewards |
-| okx-activity | OKX activity hub — one entry per campaign activity, routed internally to `references/<activity>-core.md`. Currently: the OKX.AI Trading Hackathon (交易黑客松) — enters an ASP the user already has; never creates one | User wants to register for / sign up for / enter / 报名 an OKX activity — today the OKX.AI trading hackathon ("Register me for the OKX.AI Trading Hackathon", "帮我报名 OKX.AI 的交易黑客松"), or mentions "黑客松" / "hackathon" |
 
 ## DApp routing — `okx-dapp-discovery`
 
@@ -46,7 +44,7 @@ Onchainos-skills intentionally does **not** enumerate which DApps are supported 
 
 ## Architecture
 
-- **skills/** — 21 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 20 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **workflows/** — Pre-built workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
