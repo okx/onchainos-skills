@@ -131,6 +131,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 - [ ] Reply is entirely in the §Language-Lock language — no English template text leaked (except verbatim-keep tokens)
 - [ ] No `onchainos` literal / skill name / raw A2MCP·A2A enum
 - [ ] `*Label` fields translated to conversation language
+- [ ] Search: table has `list.length` rows in list order; no model-side filtering
 - [ ] Write ops (create/update) showed card and awaited confirm
 - [ ] Success output from reference template, not self-summarized JSON
 - [ ] `#<id>` from CLI output (`identity-invariants.md` §id ladder), not inferred or reused from pre-check

@@ -16,6 +16,10 @@ re-issue the CLI instead (SKILL §Gates One-call rule).
 
 **Empty query guard** — if the user expressed search intent but gave no keywords, ask for the query before calling `agent search`.
 
+**Lossless result set (BLOCKING)** — render exactly one row per `list[*]`, in order. Intent affects only
+the request; never select, recommend, rerank, deduplicate, or omit returned rows. If asked for a
+recommendation, show the full table first, then advise separately.
+
 `--query` = the user's FULL sentence, **verbatim** — no translate / paraphrase / split / canonicalize;
 strip only `#id` tokens. Filter intent → separate **verbatim** flags, value carries the user's own wording:
 `--feedback` (rating-related words), `--agent-info` (domain/keyword words like "on-chain data analysis"), `--status`,
@@ -38,9 +42,8 @@ resolved. **Render `cells` verbatim** (identity-invariants.md §Verbatim-render 
 > N results total. Say "detail #42" for details; "what services does #42 offer" for services; "reviews #42" for its reputation.
 ```
 
-- **Render every row the page returned; never claim a count you didn't show.** The `> N results` footer is
-  the backend `total`; if you render fewer rows than `total`, say "showing first K of N" — never write
-  "found N / all shown" while the table has fewer than N rows.
+- The footer's `N` is backend `total`. If `list.length < N`, say "showing first K of N"; never imply all
+  `N` were shown.
 - "Read as" omitted if no filter survived. Gloss footnote once; omit if already shown this conversation.
 - Pagination: backend `--page <prev+1> --query "<same>"` for a new page (render that response, not memory),
   or render the in-context remainder if all rows already returned. Never stitch two pages into one table.
