@@ -14,10 +14,7 @@ The single entry point for onboarding, OKX.AI onboarding, and customer-support i
 
 ## Pre-flight Checks
 
-**MUST**: Run the shared preflight **only for the onboarding flow** (§1 → `references/how-to-play.md`): read `../okx-agentic-wallet/_shared/preflight.md`; if that file does not exist, read `_shared/preflight.md` instead.
-
-- **OKX.AI** (§2 → `references/ai-guide.md`): do **NOT** run the shared preflight here. `ai-guide.md` does its own login/identity check via `onchainos wallet status`, and the registration playbooks run their own preflight. (This matches the pre-merge standalone behavior and avoids an extra CLI round-trip.)
-- **Support** (§3 → `references/ai-support.md`): conversation-layer only (no CLI) — no preflight.
+At the start of each conversation, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Intent Routing
 

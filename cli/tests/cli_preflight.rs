@@ -29,6 +29,8 @@ fn fresh_last_check_skips_remote_preflight_work() {
     assert_eq!(json["data"]["throttled"], true);
     assert_eq!(json["data"]["updated"], false);
     assert_eq!(json["data"]["action"], serde_json::Value::Null);
+    assert_eq!(json["data"]["binaryIdentity"], serde_json::Value::Null);
+    assert!(!home.join("binary_identity.json").exists());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -40,7 +42,11 @@ fn fresh_last_check_skips_remote_preflight_work() {
         "unexpected skill checkout update: {stderr}"
     );
     assert!(
-        !stderr.contains("Removing deprecated skills"),
+        !stderr.contains("Cleaning up deprecated skills"),
         "unexpected package-manager cleanup: {stderr}"
+    );
+    assert!(
+        !stderr.contains("[preflight timing]"),
+        "unexpected preflight timing log: {stderr}"
     );
 }

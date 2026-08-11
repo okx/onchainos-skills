@@ -38,7 +38,7 @@ Match the user intent to a row, then **read that row's linked file first** — i
 
 ## Pre-flight Checks
 
-Before the first `onchainos` command this session, read and follow [_shared/preflight.md](_shared/preflight.md).
+At the start of each conversation, complete the checks in [_shared/preflight.md](_shared/preflight.md).
 
 ## Build the Command
 
