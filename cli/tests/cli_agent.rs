@@ -36,7 +36,9 @@
 
 mod common;
 
-use common::{fresh_home, onchainos, parse_stdout_json, run_with_retry, scrubbed};
+use common::{
+    assert_error_contains, fresh_home, onchainos, parse_stdout_json, run_with_retry, scrubbed,
+};
 use serde_json::Value;
 
 /// Run `agent validate-listing` offline in an isolated `ONCHAINOS_HOME` sandbox
@@ -303,6 +305,95 @@ fn validate_listing_a2a_suggest_and_block_together_blocks() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+//  agent autotrade-consent-set --mode pause — local compatibility contract
+// ══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn autotrade_pause_needs_only_job_id_and_keeps_existing_output() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_pause");
+    let job_id = "job_pause_zh";
+
+    for store in ["consent", "grants", "pending"] {
+        let store_dir = dir.join("autotrade").join(store);
+        std::fs::create_dir_all(&store_dir).expect("create autotrade store");
+        std::fs::write(store_dir.join(format!("{job_id}.json")), b"seed")
+            .expect("seed autotrade state");
+    }
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            job_id,
+            "--mode",
+            "pause",
+        ])
+        .output()
+        .expect("run autotrade pause");
+    let data = common::assert_ok_and_extract_data(&output);
+
+    assert_eq!(
+        data,
+        serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id})
+    );
+
+    for store in ["consent", "grants", "pending"] {
+        assert!(
+            !dir.join("autotrade")
+                .join(store)
+                .join(format!("{job_id}.json"))
+                .exists(),
+            "pause must clear the {store} record"
+        );
+    }
+}
+
+#[test]
+fn autotrade_pause_keeps_legacy_agent_id_compatible() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_pause_legacy");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job_pause_legacy",
+            "--agent-id",
+            "5254",
+            "--mode",
+            "pause",
+        ])
+        .output()
+        .expect("run legacy autotrade pause");
+    let data = common::assert_ok_and_extract_data(&output);
+    assert_eq!(data["consentMode"], "pause");
+    assert_eq!(data["cleared"], true);
+}
+
+#[test]
+fn autotrade_non_pause_modes_still_require_agent_id() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_non_pause");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job_manual",
+            "--mode",
+            "manual",
+        ])
+        .output()
+        .expect("run autotrade manual without agent id");
+
+    assert_error_contains(&output, &["--agent-id is required unless --mode pause"]);
+}
+
+// ════════════════════════════════════════════════════════════════════════
 //  agent create / update — §2.2 normalize_service seam (live, wallet-gated)
 // ════════════════════════════════════════════════════════════════════════════
 //

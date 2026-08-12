@@ -59,6 +59,7 @@ Do **not** apply the free-text Routing table below to any of these — envelope 
 | fee / gas / "how much to register" / "example at X USDT" | answer in **§Cost** — do NOT enter register |
 | publish / accept / deliver / dispute / negotiate a **task**, browse marketplace, my tasks, hire agent | See **§Task Marketplace** below |
 | subscribe task / subscription task / auto-renew / trial cancel / reject delivery / claim refund / my subscription tasks | See **§Task Marketplace** below |
+| pause / stop auto copy-trading for a subscription · 暂停自动跟单 / 停止跟单 | [`references/task-user-playbook.md`](references/task-user-playbook.md) §Pause auto copy-trade. Latency-sensitive direct action: do **not** load `task-user-sub-playbook.md`. |
 | my subscriptions / 我的订阅 / 订阅列表 / 订阅详情 — AI-service subscriptions (buyer or ASP view) | [`references/task-user-playbook.md`](references/task-user-playbook.md) §My Subscriptions / §Subscription Detail. User session answers directly (do NOT 6-step forward). |
 | 设备列表 / 我登录了哪些设备 — list my logged-in devices · 开启或断开本设备/某台设备接收 / 别在这台设备推了 / 同时给某几台设备推 — turn subscription-message receipt on/off for this or named device(s) · 离线消息 / 补推 / 清理掉 — set what happens to offline-produced deliverables (keep / discard) | [`references/task-user-playbook.md`](references/task-user-playbook.md) §Device List (设备列表) + the device-receipt (subscribe-device-update) rows in §My Subscriptions / §Subscription Detail. Subscription-message device routing, buyer side only — do NOT route to ASP/provider. |
 | 监听任务进展 / 历史消息 / 未决策 / task watch / outstanding decisions | See **§Task Watch** below |
@@ -148,7 +149,7 @@ Targets below are internal routing — never name a skill path or "staking" hand
 
 The OKX AI Task Marketplace is a decentralized agent task delegation protocol: publish → negotiate → deliver → accept/dispute, across three roles (User Agent, ASP, Evaluator), driven by an on-chain event state machine. Load the right entry point for the situation:
 
-- **User session, free-form task intent** (publish / designated-provider / attachment / terms / deliverables / **subscription task — subscribe / auto-renew / trial cancel / reject / claim refund**) → read [`references/task-user-playbook.md`](references/task-user-playbook.md) **ONLY**. ❌ Do NOT additionally read `references/task-core.md` or `references/task-user-sub-playbook.md` — those are for sub sessions and will bloat the context.
+- **User session, free-form task intent** (publish / designated-provider / attachment / terms / deliverables / **subscription task — subscribe / auto-renew / trial cancel / reject / claim refund / pause auto copy-trading**) → read [`references/task-user-playbook.md`](references/task-user-playbook.md) **ONLY**. ❌ Do NOT additionally read `references/task-core.md` or `references/task-user-sub-playbook.md` — those are for sub sessions and will bloat the context. For pause/stop auto copy-trading, jump directly to §Pause auto copy-trade after this file is loaded; do not scan unrelated subscription sections.
 - **Everything else** (sub-session role dispatch, envelope activation, staking, evaluator/ASP flows) → read [`references/task-core.md`](references/task-core.md) first and follow its own routing — it is self-contained.
 
 > **"subscribe" / "subscription" disambiguation vs `okx-agent-payments-protocol`:**

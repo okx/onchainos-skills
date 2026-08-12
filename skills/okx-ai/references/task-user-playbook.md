@@ -124,6 +124,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 | Apply for refund (退款 / 发起退款 / 申请退款 / 拒收 / 申请仲裁 / 申请评审 / 仲裁 / 评审 / refund / dispute / evaluation / arbitration) | `reject {id} --reason "..."` | **unified command** — auto-detects subscription vs regular task. User says any of these keywords → **always use `reject`** as the first step |
 | Claim refund after timeout | `claim-auto-refund {id}` | 🛑 **NEVER use as first step** — only after `reject` AND ASP misses 1-day response window |
 | Active subscription cost | `subscribe-cost` | total monthly cost of active formal subscriptions (no params needed) |
+| Pause / stop auto copy-trading (`暂停自动跟单` / `停止跟单` / `pause auto copy-trading` / `stop copy-trading`) | `autotrade-consent-set --job-id <jobId> --mode pause` | Direct local action; follow §Pause auto copy-trade below. Do **not** load `task-user-sub-playbook.md`, query subscription state, or resolve an agent id. |
 | 让本机开始接收某订阅消息 (start receiving on this device) | `subscribe-device-update --job-id <id> --device-list <fresh list + this device>` | **fresh-read first** (`subscribe-detail <id> --format json` or `my-subscriptions`). If `deviceList:null`, default-all is already active: tell the user this device already receives and do **NOT** write. For an explicit array, if this device is already present, likewise do not write; otherwise union it in, write, re-read, and mark ✅是（本次新增）. |
 | 让某台/某几台指名设备开始接收某订阅 (start receiving on named device(s)) | `subscribe-device-update --job-id <id> --device-list <fresh list ∪ named device ids>` | **fresh-read first** (`subscribe-detail <id> --format json` or `my-subscriptions`); resolve device name→id via `device-list` — a name that cannot be resolved must **not** be fabricated. If `deviceList:null`, every logged-in device already receives: report no change and do **NOT** write. For an explicit array, build the new list as the **UNION** of the just-read list and named ids; overwrite; re-read; confirm with this VERBATIM copy frame: 「好的，「Y」现在会同时推送到 X1 和 X2。」 where the device-name list enumerates the **complete post-write receiving set from the re-read** (readable names, not just newly added devices; two devices joined by 和, three or more separated by 、 with 和 before the last). |
 | 停止向某设备推送某订阅 (stop pushing to a device) | `subscribe-device-update --job-id <id> --device-list <explicit receiver set − device>` | resolve device name→id via `device-list`. If the fresh `deviceList` is an explicit array, subtract from that array. If it is `null` (default-all), first fetch the complete logged-in `device-list`, then materialize the explicit receiver set as **all logged-in device ids minus the target**; if the complete device table is unavailable, stop and explain that the update cannot be done safely — never turn `null` into `[]` or a partial list. After write, read back remaining receivers and branch on that result: non-empty → 「已停止向 X 推送「Y」。现在这个任务只会推到 Z。」（名称不可得时降级为数量，绝不编造名称）; empty → 「已停止向 X 推送「Y」。现在该订阅没有任何设备接收消息。」 Never invent a Z for the empty set. |
@@ -132,6 +133,24 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 | 监听任务/消息（未指定任务）(listen, no task specified) | — | confirm exactly one task（「一次只能监听一个」）→ turn on this-device receipt → enter the existing watch flow (`watch-core.md`) → tell the user new messages push live into this conversation |
 
 If the user does not specify a `subId`, use `subscribe-detail` to check the subscription, or ask the user to provide it.
+
+### Pause auto copy-trade
+
+This is a latency-sensitive local authorization toggle owned by the user session. Clear automatic
+execution authorization for **that one subscription** so a later actionable signal requests execution
+configuration again:
+
+```bash
+onchainos agent autotrade-consent-set --job-id <jobId> --mode pause
+```
+
+- Resolve `jobId` from the specific copy-trade notification the user is replying to. If the request is
+  bare and more than one subscription is auto-following, ask which subscription; never guess.
+- Do not query subscription detail, resolve an agent id, load `task-user-sub-playbook.md`, or interrupt
+  the business flow with an extra confirmation. Scope remains this `jobId` only.
+- Success returns the existing `consentMode:"pause"`, `cleared:true`, and `jobId` fields. Tell the user
+  that automatic execution is paused while the subscription and signal receipt remain active.
+- Pausing automatic execution does not cancel the subscription or disable signal receipt.
 
 **Device-routing safety flows (must be encoded as copy/behavior):**
 - **Tri-state contract (never collapse):** `deviceList:null` or a missing field = historical/unconfigured routing, so **all logged-in buyer devices receive by default**; `deviceList:[]` = the buyer explicitly selected no receiving device; a non-empty array = only those device ids receive. The CLI's `thisDeviceReceives` already applies this contract for the buyer view. Never use truthiness or `unwrap_or_default`-style reasoning that makes `null` and `[]` equivalent.

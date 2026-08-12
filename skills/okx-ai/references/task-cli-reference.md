@@ -947,14 +947,14 @@ Persist the buyer's per-subscription execution policy. This command never parses
 the active subscription signal skill owns the current execution turn.
 
 ```
-agent autotrade-consent-set --job-id <jobId> --mode <mode> --agent-id <agentId> [--cap <amount>] [--trade-amount <amount>] [--ttl-sec <secs>] [--plugin <id>] [--quote <usdc|usdt>] [--tool <tool>]
+agent autotrade-consent-set --job-id <jobId> --mode <mode> [--agent-id <agentId>] [--cap <amount>] [--trade-amount <amount>] [--ttl-sec <secs>] [--plugin <id>] [--quote <usdc|usdt>] [--tool <tool>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--job-id` | Yes | - | Subscription job ID |
 | `--mode` | Yes | - | `auto`, `manual`, `decline`, `pause`, `cap-adjust`, or `plugin-ready-check` (`plugin-approved` compatibility alias) |
-| `--agent-id` | Yes | - | Buyer agent ID |
+| `--agent-id` | Except `pause` | - | Buyer agent ID; omitted for `pause`, required for every other mode |
 | `--cap` | For `auto` | - | Per-trade cap in quote-stablecoin units |
 | `--trade-amount` | No | - | Optional policy amount; the model/tool must still read and validate each delivery |
 | `--ttl-sec` | No | 31536000 | Consent lifetime in seconds (default 365 days) |
