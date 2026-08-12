@@ -85,6 +85,13 @@ enum Prepared {
     Text { tmp_path: String },
 }
 
+/// Keep accepting the retired `--autotrade` argument so older ASP scripts do
+/// not fail at CLI parsing, but never put that payload on the wire. Text/file
+/// deliverables are now the only delivery source of truth.
+fn build_outbound_deliver_message(base_message: String, _autotrade: &str) -> String {
+    base_message
+}
+
 // ── Debug-only local E2E mock (ONCHAINOS_TEST_MOCK_SUBSCRIPTION=1) ───────────
 // Lets the resident-script subscription flow be exercised end-to-end with NO backend,
 // credentials, or XMTP — the precondition task detail is synthesized (accepted + escrow +
@@ -293,26 +300,11 @@ pub async fn handle_deliver(
         bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
 
-    // ── 0. FR-2: structure-validate + stamp the auto-trade signal BEFORE any
-    //         network read, upload, send, or on-chain action. An invalid signal
-    //         aborts the whole delivery here; nothing is sent. Also capture the
-    //         deliveryId (idempotency key) for the outbound sent-marker.
-    use crate::commands::agent_commerce::task::common::autotrade::schema;
-    let has_signal = !autotrade.is_empty();
-    let (autotrade_line, signal_delivery_id): (String, Option<String>) = if !has_signal {
-        (String::new(), None)
-    } else {
-        let mut signal: schema::AutoTradeSignal = serde_json::from_str(autotrade)
-            .map_err(|e| anyhow::anyhow!("signal rejected: invalid JSON: {e}"))?;
-        signal.signal_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        schema::validate_structure(&signal).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let did = signal.delivery_id.clone();
-        let line = schema::canonical_json(&signal).map_err(|e| anyhow::anyhow!("{e}"))?;
-        (line, Some(did))
-    };
+    // `--autotrade` is a retired compatibility argument. Deliberately do not
+    // parse, validate, stamp, append, or derive execution/idempotency state from
+    // it. The explicit text/file deliverable is the sole source of truth.
+    let legacy_autotrade_ignored = !autotrade.trim().is_empty();
+    let signal_delivery_id: Option<String> = None;
 
     // ── 1. Precondition checks ──────────────────────────────────────────
 
@@ -336,27 +328,25 @@ pub async fn handle_deliver(
 
     let base_tags = vec![format!("jobId={job_id}"), format!("agentId={agent_id}")];
 
-    // ── Outbound idempotency + ended-subscription short-circuit (before any send) ──
-    // (1) Dedup: a signal-bearing SUBSCRIPTION delivery whose jobId×deliveryId was already
-    // sent returns alreadyDelivered and never re-sends. Gated on is_subscription so a one-shot
-    // task delivered with --autotrade (which submits on-chain) is never replay-skipped.
-    // (2) Ended subscription: the ASP neither delivers nor submits — report subscriptionExpired
+    if legacy_autotrade_ignored {
+        audit::log(
+            "cli",
+            "ASP/deliver_legacy_autotrade_ignored",
+            true,
+            Duration::default(),
+            Some(base_tags.clone()),
+            Some("retired --autotrade value ignored; text/file deliverable is the only payload"),
+        );
+    }
+
+    // ── Ended-subscription short-circuit (before any send) ──
+    // The ASP neither delivers nor submits — report subscriptionExpired
     // and let the resident script drop the job. A stale signal on a dead subscription is thus
     // never delivered.
-    if is_subscription && has_signal {
-        if let Some(did) = &signal_delivery_id {
-            if subscription::is_already_sent(job_id, did) {
-                audit::log("cli", "ASP/deliver_already_delivered", true, Duration::default(),
-                    Some([base_tags.clone(), vec![format!("deliveryId={did}")]].concat()), None);
-                print_deliver_result(&DeliverOutcome::AlreadyDelivered { delivery_id: did.clone() }, job_id);
-                return Ok(());
-            }
-        }
-    }
     if routing == Routing::Ended {
         let backend_code = format!("subStatus={sub_status_code}");
         audit::log("cli", "ASP/deliver_subscription_expired", false, Duration::default(),
-            Some([base_tags.clone(), vec![format!("subStatus={sub_status_code}"), format!("hasSignal={has_signal}")]].concat()),
+            Some([base_tags.clone(), vec![format!("subStatus={sub_status_code}"), format!("legacyAutotradeIgnored={legacy_autotrade_ignored}")]].concat()),
             Some("subscription ended → not delivered; settlement is backend-automatic"));
         print_deliver_result(&DeliverOutcome::SubscriptionExpired { backend_code }, job_id);
         return Ok(());
@@ -380,9 +370,9 @@ pub async fn handle_deliver(
         audit::log("cli", "ASP/deliver_file_uploaded", true, Duration::default(),
             Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key)]].concat()), None);
 
-        let msg = super::content::with_autotrade_line(
+        let msg = build_outbound_deliver_message(
             super::content::build_file_deliver_message(job_id, &upload),
-            &autotrade_line,
+            autotrade,
         );
         if !user_agent_id.is_empty() {
             match send_or_mock(job_id, user_agent_id, &msg) {
@@ -414,9 +404,9 @@ pub async fn handle_deliver(
                 audit::log("cli", "ASP/deliver_long_text_uploaded", true, Duration::default(),
                     Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key), format!("path={tmp_str}")]].concat()), None);
 
-                let msg = super::content::with_autotrade_line(
+                let msg = build_outbound_deliver_message(
                     super::content::build_file_deliver_message(job_id, &upload),
-                    &autotrade_line,
+                    autotrade,
                 );
                 let mut local_err: Option<String> = None;
                 if !user_agent_id.is_empty() {
@@ -441,9 +431,9 @@ pub async fn handle_deliver(
                     audit::log("cli", "ASP/deliver_long_text_fallback", false, Duration::default(),
                         Some([base_tags.clone(), vec![format!("charCount={text_len}")]].concat()), Some(&e.to_string()));
 
-                    let msg = super::content::with_autotrade_line(
+                    let msg = build_outbound_deliver_message(
                         super::content::build_text_deliver_message(job_id, deliverable_text),
-                        &autotrade_line,
+                        autotrade,
                     );
                     if !user_agent_id.is_empty() {
                         match send_or_mock(job_id, user_agent_id, &msg) {
@@ -466,9 +456,9 @@ pub async fn handle_deliver(
             }
         } else {
             // ▸ Short text → inline text-format xmtp
-            let msg = super::content::with_autotrade_line(
+            let msg = build_outbound_deliver_message(
                 super::content::build_text_deliver_message(job_id, deliverable_text),
-                &autotrade_line,
+                autotrade,
             );
             if !user_agent_id.is_empty() {
                 match send_or_mock(job_id, user_agent_id, &msg) {
@@ -501,18 +491,6 @@ pub async fn handle_deliver(
                 Some(base_tags.clone()), Some(msg));
             print_deliver_result(&DeliverOutcome::SendFailed(msg.clone()), job_id);
             return Ok(());
-        }
-    }
-
-    // Write-behind outbound sent-marker: only after a SUCCESSFUL send on a SUBSCRIPTION
-    // delivery, keyed jobId×deliveryId. Recording after (not before) the send means the worst
-    // case is a re-send on crash, which the buyer's latch collapses to a notify.
-    if is_subscription && has_signal && send_error.is_none() {
-        if let Some(did) = &signal_delivery_id {
-            if let Err(e) = subscription::record_sent(job_id, did) {
-                audit::log("cli", "ASP/deliver_sent_marker_failed", false, Duration::default(),
-                    Some([base_tags.clone(), vec![format!("deliveryId={did}")]].concat()), Some(&e.to_string()));
-            }
         }
     }
 
@@ -586,4 +564,25 @@ pub async fn handle_deliver(
         println!("    - You will receive a `job_submitted` system notification after on-chain confirmation");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retired_autotrade_never_changes_outbound_text() {
+        let base = super::super::content::build_text_deliver_message(
+            "job-1",
+            "【合约信号】BTC-PERP | LONG 2x | 10分钟内有效",
+        );
+        let valid_legacy_json = r#"{"schemaVersion":1,"deliveryId":"old-1"}"#;
+
+        for retired_value in ["", valid_legacy_json, "{not-json"] {
+            let outbound = build_outbound_deliver_message(base.clone(), retired_value);
+            assert_eq!(outbound, base);
+            assert!(!outbound.contains("autotrade:"));
+            assert!(!outbound.contains("schemaVersion"));
+        }
+    }
 }

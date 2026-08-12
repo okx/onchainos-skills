@@ -21,6 +21,7 @@ use std::time::Duration;
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
+use crate::commands::agent_commerce::task::user::subscription_ops::select_subscription_agent_id;
 
 /// `jobType` value that marks a task as a subscription (Subscribe API doc §1.3).
 pub const JOB_TYPE_SUBSCRIBE: i64 = 1;
@@ -311,9 +312,8 @@ pub struct ActiveSubscription {
 /// depends on the backend; to avoid buyer-view rows leaking into an ASP fan-out set we
 /// additionally keep only items whose `providerAgentId` matches the caller (when present).
 pub async fn handle_active(client: &mut TaskApiClient, agent_id: &str) -> Result<()> {
-    if agent_id.is_empty() {
-        bail!("--agent-id is required (the ASP's own agentId; the backend keys the subscription list off it)");
-    }
+    let validated_agent_id = select_subscription_agent_id("", agent_id)?;
+    let agent_id = validated_agent_id.as_str();
     let now_secs = chrono::Local::now().timestamp();
 
     #[cfg(debug_assertions)]
@@ -383,9 +383,8 @@ pub async fn handle_agree_refund(
     job_id: &str,
     agent_id: &str,
 ) -> Result<()> {
-    if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
-    }
+    let validated_agent_id = select_subscription_agent_id("", agent_id)?;
+    let agent_id = validated_agent_id.as_str();
     let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
     let body = serde_json::json!({});
 
@@ -431,9 +430,8 @@ pub async fn handle_asp_claim(
     job_id: &str,
     agent_id: &str,
 ) -> Result<()> {
-    if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
-    }
+    let validated_agent_id = select_subscription_agent_id("", agent_id)?;
+    let agent_id = validated_agent_id.as_str();
     let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
     let body = serde_json::json!({});
 
@@ -480,9 +478,8 @@ pub async fn handle_dispute(
     reason: &str,
     agent_id: &str,
 ) -> Result<()> {
-    if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
-    }
+    let validated_agent_id = select_subscription_agent_id("", agent_id)?;
+    let agent_id = validated_agent_id.as_str();
     if reason.chars().count() > MAX_DISPUTE_REASON_CHARS {
         bail!("Dispute reason exceeds {MAX_DISPUTE_REASON_CHARS} characters. Please shorten it and try again.");
     }

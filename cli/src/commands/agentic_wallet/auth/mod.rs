@@ -378,9 +378,6 @@ const MAX_CONSECUTIVE_TRANSIENT_POLLS: u32 = 5;
 const SOCIAL_LOGIN_TIMEOUT_DEFAULT_SECS: u64 = 300;
 /// Minimum accepted override; values below this fall back to the default.
 const SOCIAL_LOGIN_TIMEOUT_FLOOR_SECS: u64 = 10;
-/// Best-effort subscription/device enrichment must never turn a successful
-/// wallet login into an unbounded wait or a failed login.
-const POST_LOGIN_SNAPSHOT_TIMEOUT_SECS: u64 = 15;
 /// The complete login-only device classification, heartbeat and routing flow
 /// shares one deadline instead of stacking three independent timeout budgets.
 const POST_LOGIN_SETUP_TIMEOUT_SECS: u64 = 15;
@@ -516,36 +513,23 @@ pub(super) fn attach_post_login_subscriptions(
     obj.insert("postLoginSubscriptions".to_string(), snapshot);
 }
 
-/// Shared bounded hook for both a newly completed login and an explicit
-/// user-facing login-status check. It is intentionally unavailable to ordinary
-/// internal auth preconditions, which keep using bare `wallet status`.
-pub(super) async fn fetch_post_login_subscriptions_bounded() -> Option<serde_json::Value> {
-    match tokio::time::timeout(
-        Duration::from_secs(POST_LOGIN_SNAPSHOT_TIMEOUT_SECS),
-        crate::commands::agent_commerce::task::user::fetch_post_login_subscriptions(),
-    )
-    .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(_) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!(
-                    "[DEBUG][post-login] snapshot timed out after {POST_LOGIN_SNAPSHOT_TIMEOUT_SECS}s"
-                );
-            }
-            None
-        }
-    }
+fn validated_post_login_agentic_id(agentic_id: Option<&str>) -> Option<String> {
+    agentic_id
+        .map(str::trim)
+        .filter(|agentic_id| !agentic_id.is_empty())
+        .map(str::to_string)
 }
 
 /// Capture the pre-heartbeat device state within the same bounded budget used
 /// by the ordinary post-login snapshot. A timeout suppresses the optional table
 /// and skips registration so a later login can still detect the new device.
 async fn prepare_post_login_subscriptions_bounded(
+    agentic_id: &str,
+    deadline: tokio::time::Instant,
 ) -> Option<crate::commands::agent_commerce::task::user::PostLoginSubscriptionsPreparation> {
-    match tokio::time::timeout(
-        Duration::from_secs(POST_LOGIN_PREPARE_TIMEOUT_SECS),
-        crate::commands::agent_commerce::task::user::prepare_post_login_subscriptions(),
+    match tokio::time::timeout_at(
+        deadline,
+        crate::commands::agent_commerce::task::user::prepare_post_login_subscriptions(agentic_id),
     )
     .await
     {
@@ -649,6 +633,22 @@ async fn report_device_and_finalize_post_login(
     }
 }
 
+async fn run_post_login_setup(
+    client: &mut WalletApiClient,
+    access_token: &str,
+    agentic_id: Option<&str>,
+    preparation_deadline: tokio::time::Instant,
+    deadline: tokio::time::Instant,
+) -> Option<serde_json::Value> {
+    let prepared = match validated_post_login_agentic_id(agentic_id) {
+        Some(agentic_id) => {
+            prepare_post_login_subscriptions_bounded(&agentic_id, preparation_deadline).await
+        }
+        None => None,
+    };
+    report_device_and_finalize_post_login(client, access_token, prepared, deadline).await
+}
+
 /// Poll for the verify result, persist the session, and emit the account
 /// summary. Shared by the `poll` phase and the legacy all-in-one flow.
 async fn complete_login(
@@ -667,19 +667,27 @@ async fn complete_login(
 
     let post_login_deadline =
         tokio::time::Instant::now() + Duration::from_secs(POST_LOGIN_SETUP_TIMEOUT_SECS);
+    let post_login_preparation_deadline =
+        tokio::time::Instant::now() + Duration::from_secs(POST_LOGIN_PREPARE_TIMEOUT_SECS);
 
-    // Capture device membership before heartbeat so a genuinely new device can
-    // be distinguished from an existing device the user manually opted out.
-    let prepared_post_login = prepare_post_login_subscriptions_bounded().await;
+    let resolved_agentic_id = tokio::time::timeout_at(
+        post_login_preparation_deadline,
+        crate::commands::agent_commerce::task::user::resolve_post_login_agentic_id(),
+    )
+    .await
+    .ok()
+    .and_then(Result::ok);
+    let post_login_agentic_id = validated_post_login_agentic_id(resolved_agentic_id.as_deref());
 
     // Device registration is independent from optional subscription lookup.
     // When classification failed we still report the heartbeat, but suppress
     // automatic routing because newness is unknown and an existing device's
     // explicit opt-out must never be overwritten.
-    let post_login = report_device_and_finalize_post_login(
+    let post_login = run_post_login_setup(
         client,
         &resp.access_token,
-        prepared_post_login,
+        post_login_agentic_id.as_deref(),
+        post_login_preparation_deadline,
         post_login_deadline,
     )
     .await;
@@ -1229,8 +1237,22 @@ mod tests {
         assert_eq!(summary, before);
     }
 
+    #[test]
+    fn post_login_agentic_gate_rejects_missing_or_blank_id() {
+        assert_eq!(validated_post_login_agentic_id(None), None);
+        assert_eq!(validated_post_login_agentic_id(Some("   ")), None);
+    }
+
+    #[test]
+    fn post_login_agentic_gate_accepts_and_trims_valid_id() {
+        assert_eq!(
+            validated_post_login_agentic_id(Some("  5254  ")),
+            Some("5254".to_string()),
+        );
+    }
+
     #[tokio::test]
-    async fn post_login_without_subscription_preparation_still_sends_heartbeat() {
+    async fn post_login_without_agentic_id_only_sends_heartbeat() {
         use std::io::{Read, Write};
         use std::sync::{Arc, Mutex};
 
@@ -1312,10 +1334,11 @@ mod tests {
 
         let mut client = WalletApiClient::with_base_url(Some(&format!("http://{address}")))
             .expect("build heartbeat client");
-        let snapshot = report_device_and_finalize_post_login(
+        let snapshot = run_post_login_setup(
             &mut client,
             "login-access-token",
             None,
+            tokio::time::Instant::now() + Duration::from_secs(5),
             tokio::time::Instant::now() + Duration::from_secs(5),
         )
         .await;

@@ -122,6 +122,18 @@ pub enum AgentCommand {
         #[arg(long = "service-description", default_value = "")]
         service_description: String,
         #[arg(long = "service-interval", default_value = "month")] service_interval: String,
+        /// Explicit user-confirmed automatic signal execution (`auto`).
+        #[arg(long = "autotrade-mode")] autotrade_mode: Option<String>,
+        /// Fixed quote amount used for every delivered signal.
+        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
+        /// e.g. 20.5; never minimal units; do not include a USDT/USDC suffix.]
+        #[arg(long = "autotrade-amount")] autotrade_amount: Option<String>,
+        /// Per-delivery automatic-execution quote cap.
+        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
+        /// e.g. 50; never minimal units; do not include a USDT/USDC suffix.]
+        #[arg(long = "autotrade-cap")] autotrade_cap: Option<String>,
+        /// Quote currency for amount/cap (`usdt` or `usdc`).
+        #[arg(long = "autotrade-quote")] autotrade_quote: Option<String>,
         #[arg(long, default_value = "")] format: String,
         /// Device ids to omit from the default all-devices routing set (repeatable).
         #[arg(long = "exclude-device")] exclude_device: Option<Vec<String>>,
@@ -467,9 +479,8 @@ pub enum AgentCommand {
         #[arg(long = "deliverable-text", default_value = "")] deliverable_text: String,
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")] agent_id: String,
-        /// Single-line JSON auto-trade signal (omitting `signalTime`). When non-empty the CLI
-        /// stamps `signalTime`, structure-validates the signal, and appends an `autotrade:` line
-        /// to the delivery content. Invalid ⇒ `signal rejected: <reason>` (exit 1), nothing sent.
+        /// Deprecated compatibility argument. Accepted but ignored; only the
+        /// explicit text/file deliverable is sent and processed.
         #[arg(long, default_value = "")] autotrade: String,
     },
 
@@ -478,7 +489,7 @@ pub enum AgentCommand {
     #[command(name = "autotrade-grant-check")]
     AutotradeGrantCheck {
         #[arg(long = "job-id")] job_id: String,
-        /// `dex` | `hyperliquid` (alias of `dex`) | `defi` | `polymarket`.
+        /// `dex` | `hyperliquid` (alias of `dex`) | `defi` | `polymarket` | `trade_kit`.
         #[arg(long)] venue: String,
         /// `buy` | `sell`.
         #[arg(long)] action: String,
@@ -493,7 +504,7 @@ pub enum AgentCommand {
     #[command(name = "autotrade-grant-write", hide = true)]
     AutotradeGrantWrite {
         #[arg(long = "job-id")] job_id: String,
-        /// `dex` | `hyperliquid` (alias of `dex`) | `defi` | `polymarket`.
+        /// `dex` | `hyperliquid` (alias of `dex`) | `defi` | `polymarket` | `trade_kit`.
         #[arg(long)] venue: String,
         #[arg(long = "max-buy")] max_buy: Option<String>,
         #[arg(long = "max-sell")] max_sell: Option<String>,
@@ -1047,8 +1058,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }, ctx,
         ).await,
 
-        AgentCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, format, exclude_device } =>
-            task::user::run_task(T::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, format, exclude_device }, ctx).await,
+        AgentCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device } =>
+            task::user::run_task(T::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device }, ctx).await,
 
         AgentCommand::SubscribeCancel { sub_id } =>
             task::user::run_task(T::SubscribeCancel { sub_id }, ctx).await,

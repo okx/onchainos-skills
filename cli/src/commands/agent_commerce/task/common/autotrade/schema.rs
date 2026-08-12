@@ -1,9 +1,7 @@
-//! FR-1 signal schema: envelope + per-type params + structure validation.
+//! Retired structured-signal schema retained for compatibility helpers and tests.
 //!
-//! `validate_structure` is the single structure-only entry point, used **outbound**
-//! (`deliver --autotrade`) and as the inbound first pass. It never touches the
-//! network — it validates shape, charset, unit-by-side, slippage cap, and chain
-//! support only.
+//! Production `agent deliver` accepts but ignores `--autotrade`, and the User
+//! route handles only the delivered text/file through the model-selected Skill.
 
 use serde::{Deserialize, Serialize};
 
@@ -40,8 +38,7 @@ pub struct AutoTradeSignal {
     /// 1..=64, charset `[A-Za-z0-9_-]`; the idempotency key.
     pub delivery_id: String,
     pub signal_type: SignalType,
-    /// ms; CLI-stamped outbound (`--autotrade` omits it → `default` 0 → stamped);
-    /// `0` ⇒ reject at validation.
+    /// Milliseconds since epoch; `0` is rejected by the retained validator.
     #[serde(default)]
     pub signal_time: u64,
     /// 1..=86400.
@@ -371,10 +368,7 @@ pub fn parse_and_validate(signal: &AutoTradeSignal) -> Result<TypedParams, AutoT
 
 /// Structure-only validation (FR-1). Envelope fields + per-type typed parse.
 ///
-/// Outbound (`deliver --autotrade`): any `Reject` aborts delivery. Reserved types
-/// pass envelope validation (they are delivered and degraded inbound), so a
-/// `TypeDegrade` from `parse_and_validate` is **not** treated as a structural
-/// failure here.
+/// Retained structure-only validator for compatibility tests.
 pub fn validate_structure(signal: &AutoTradeSignal) -> Result<(), AutoTradeError> {
     check_delivery_id(&signal.delivery_id)?;
     // SEC-02: reject a signal from a newer schema — v2 may reinterpret existing fields,
@@ -402,8 +396,7 @@ pub fn validate_structure(signal: &AutoTradeSignal) -> Result<(), AutoTradeError
     }
 }
 
-/// Canonicalize a signal to a single-line JSON string (used to append the
-/// `autotrade:` line after `signalTime` stamping).
+/// Canonicalize a retained structured signal to a single-line JSON string.
 pub fn canonical_json(signal: &AutoTradeSignal) -> Result<String, AutoTradeError> {
     serde_json::to_string(signal)
         .map_err(|e| AutoTradeError::Reject(format!("failed to serialize signal: {e}")))

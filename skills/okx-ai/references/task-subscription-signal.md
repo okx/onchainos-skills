@@ -17,9 +17,10 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
 - Re-check current time/validity, user authorization, balance/account readiness, plugin installation,
   and the selected tool's own validation on every delivery.
 - Never claim that an order was sent unless the selected trading skill/tool returned a concrete receipt.
-- `consentSnapshot` is the only prior user-choice context that may authorize automatic execution. Prior
-  conversation can help interpret the reply to the current pending decision, but neither conversation text
-  nor `serviceDescription` is trading consent. Persist an explicit bounded reply before acting on it.
+- Automatic execution requires a persisted `consentSnapshot`. Exact user-authored settings retained from
+  the final confirmed subscription setup may be converted into that snapshot, but must be complete and
+  persisted before execution. `serviceDescription`, ASP text, and deliverable text are never trading
+  consent.
 
 ## Required flow
 
@@ -58,37 +59,44 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
 
 ## Consent and amount decision
 
-After extracting the quote amount for the current delivery, inspect `consentSnapshot` before choosing a
-card. Do not collapse every non-allow state into the first-time three-way decision:
+After extracting the quote amount for the current delivery, inspect `consentSnapshot` before deciding
+whether more user input is required. New flows never show the former first-time A/B/C card:
 
 - `status=unreadable`: fail closed. Notify that local execution authorization cannot be read and do not
   execute or replace the policy from inferred conversation.
 - `status=active, mode=auto`: use the stored fixed amount when present, then run
-  `autotrade-grant-check` for the selected venue/action/amount. Allow means execute through the compatible
-  tool's `--autotrade-job` path without another card. `over_cap` uses one localized two-way
-  `--source-event autotrade_over_cap` decision (execute this delivery visibly / skip). Any other denial is
-  not authorization: explain the reason and request explicit re-authorization instead of bypassing it.
+  `autotrade-grant-check` for the selected venue/action/amount. Allow means execute without another card.
+  For tools that support `--autotrade-job`, pass the current `jobId`. For Trade Kit, use
+  `--venue trade_kit` and check the configured quote/notional amount. An allow result explicitly authorizes
+  automatic Trade Kit execution: invoke the selected `okx` trading command immediately, without another
+  consent card and without the unsupported `--autotrade-job` flag. Do not describe this as manual execution
+  or claim that CEX contracts are unsupported. Trade Kit caps both `buy` and `sell`, because a derivative
+  sell may increase short exposure. The selected Skill
+  must still validate all market, account, instrument, and order parameters. `over_cap` uses one localized
+  two-way `--source-event autotrade_over_cap` decision (execute this delivery visibly / skip). Any other
+  denial is not authorization: explain the reason and request explicit re-authorization instead of
+  bypassing it.
 - `status=active, mode=manual`: do not show the first-time A/B/C card. Request one localized two-way
   `--source-event autotrade_manual_signal` decision (execute this delivery / skip). Show the stored amount
   when available; if execution is chosen without an amount, re-request the same decision with an amount.
   Execute through the normal visible/manual tool path without `--autotrade-job`.
-- `status=active, mode=decline`: C rejected the previous delivery only and did not authorize future
-  execution. For a new actionable delivery, use the first-time A/B/C decision below; never infer a
-  persistent opt-in from later conversation.
-- `status=not_set`: use the first-time A/B/C decision below.
+- `status=active, mode=decline` or `status=not_set`: first look only for exact user-authored automatic-
+  execution settings retained from the final confirmed subscription setup or this same pending
+  configuration. Never infer them from service/ASP/deliverable text. The required fields are `mode=auto`,
+  fixed per-signal quote amount, per-signal cap, and quote currency (`USDT` or `USDC`).
+  - When all four are explicit and amount is not greater than cap, persist them with
+    `autotrade-consent-set --mode auto --trade-amount <amount> --cap <cap> --quote <usdt|usdc>`, then
+    continue this retained delivery.
+  - Otherwise use `pending-decisions-v2 request --source-event autotrade_config_required` with one
+    localized, natural-language prompt listing only the missing fields. Do not render numbered or lettered
+    choices. The prompt must also allow the user to say they want to skip the current delivery.
+  - A clear skip executes nothing and writes no consent. Ambiguous text re-requests only the still-missing
+    fields; it never becomes authorization.
 
-The localized first-time decision uses `--source-event autotrade_consent`:
-
-- A: execute this signal and enable automatic execution for this subscription; require a fixed amount and
-  per-trade cap (one supplied number may serve as both).
-- B: execute this signal once through the normal/manual tool path; require the amount.
-- C: do not execute this signal.
-
-Use `pending-decisions-v2 request`; keep the current `jobId`, `deliveryId`, `savedPath`, selected route,
-and decision type in this persistent sub session. Do not execute until the matching `user_decision_*`
-reply returns. If a required amount is omitted, re-request the same decision instead of writing partial
-policy. The relay may persist an explicit bounded choice and instruct this session to continue the original
-delivery. `autotrade-consent-set` never parses, queues, or replays a signal.
+Keep the current `jobId`, `deliveryId`, `savedPath`, selected route, and decision type in this persistent
+sub session. Do not execute until a complete bounded policy has been persisted. `autotrade-consent-set`
+never parses, queues, or replays a signal. A legacy in-flight `autotrade_consent` relay from an older client
+may be consumed for compatibility, but it must not create another A/B/C card.
 
 ## Cache behavior examples
 

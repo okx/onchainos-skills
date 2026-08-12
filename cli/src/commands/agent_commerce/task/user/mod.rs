@@ -117,6 +117,18 @@ pub enum TaskCommand {
         /// Service billing interval (from asp-match subscription.interval, e.g. "month")
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
+        /// Explicit user-confirmed automatic signal execution (`auto`).
+        #[arg(long = "autotrade-mode")]
+        autotrade_mode: Option<String>,
+        /// Fixed quote-currency amount used for every delivered signal.
+        #[arg(long = "autotrade-amount")]
+        autotrade_amount: Option<String>,
+        /// Per-delivery automatic-execution cap.
+        #[arg(long = "autotrade-cap")]
+        autotrade_cap: Option<String>,
+        /// Quote currency for amount/cap (`usdt` or `usdc`).
+        #[arg(long = "autotrade-quote")]
+        autotrade_quote: Option<String>,
         /// Output format: "json" for raw JSON
         #[arg(long, default_value = "")]
         format: String,
@@ -402,15 +414,21 @@ fn device_needs_default_routing(was_registered: bool, already_pending: bool) -> 
     already_pending || !was_registered
 }
 
+pub(crate) async fn resolve_post_login_agentic_id() -> Result<String> {
+    create::resolve_user_agent()
+        .await
+        .map(|(agent_id, _)| agent_id)
+}
+
 /// Fetch the device table before the registration heartbeat. Device-query
 /// failure deliberately suppresses only automatic routing/the login table; the
 /// login orchestrator still sends the heartbeat so device registration is never
 /// coupled to this optional classification step.
 pub(crate) async fn prepare_post_login_subscriptions(
+    agentic_id: &str,
 ) -> Option<PostLoginSubscriptionsPreparation> {
-    let mut client = TaskApiClient::new();
-    let (agent_id, _) = match create::resolve_user_agent().await {
-        Ok(identity) => identity,
+    let agent_id = match subscription_ops::select_subscription_agent_id(agentic_id, "") {
+        Ok(agent_id) => agent_id,
         Err(e) => {
             if cfg!(feature = "debug-log") {
                 eprintln!("[DEBUG][post-login] buyer identity unavailable: {e:#}");
@@ -418,6 +436,7 @@ pub(crate) async fn prepare_post_login_subscriptions(
             return None;
         }
     };
+    let mut client = TaskApiClient::new();
 
     let Some(current_device_id) = crate::device::id::get_cached_device_id().map(str::to_string)
     else {
@@ -646,52 +665,6 @@ pub(crate) async fn finalize_post_login_subscriptions(
     compose_post_login_subscriptions(subscriptions, false, devices)
 }
 
-/// Best-effort login post-condition: fetch the buyer's subscriptions and, only
-/// when non-empty, the complete logged-in-device table. Subscription failures
-/// and empty lists are intentionally silent; device failures preserve the
-/// subscription data and select the documented degraded render.
-pub(crate) async fn fetch_post_login_subscriptions() -> Option<serde_json::Value> {
-    let mut client = TaskApiClient::new();
-    let subscriptions = match subscription_ops::fetch_my_subscriptions_snapshot(
-        &mut client,
-        subscription_ops::SubscriptionRole::Buyer,
-        None,
-    )
-    .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] subscription snapshot unavailable: {e:#}");
-            }
-            return None;
-        }
-    };
-
-    if subscriptions.is_empty {
-        return None;
-    }
-
-    let devices = match device_routing::fetch_device_list_snapshot(
-        &mut client,
-        &subscriptions.agent_id,
-        1,
-        20,
-    )
-    .await
-    {
-        Ok(snapshot) => Some(snapshot),
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] device snapshot unavailable; degrading: {e:#}");
-            }
-            None
-        }
-    };
-
-    compose_post_login_subscriptions(subscriptions.data, false, devices)
-}
-
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     let mut client = TaskApiClient::new();
 
@@ -703,11 +676,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 title, provider, attachments, endpoint, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount,
             }).await,
-        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, format, exclude_device } => {
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
                 service_id, use_trial, service_params, service_token_amount, service_token_address,
-                auto_renew, title, description, provider_agent_id, service_description, service_interval, format, exclude_device,
+                auto_renew, title, description, provider_agent_id, service_description, service_interval,
+                autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device,
             }).await
         }
         TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
@@ -837,5 +811,10 @@ mod post_login_tests {
             !device_needs_default_routing(true, false),
             "ordinary re-login must preserve this device's manual opt-outs"
         );
+    }
+
+    #[tokio::test]
+    async fn post_login_preparation_rejects_blank_agentic_id_before_network() {
+        assert!(prepare_post_login_subscriptions("   ").await.is_none());
     }
 }

@@ -6,8 +6,8 @@
 //! to every `asp-match` service (see [`super::super::user::asp_ops`]).
 //!
 //! Safety model (FR-5 / org GR_RESTRICTED_FILE_ACCESS, GR_DATA_LEAKAGE): readiness
-//! probes inspect ONLY presence/non-emptiness of skill dirs, executables, and config
-//! files — never the contents of a credential. `evidence[]` carries only fixed
+//! probes inspect ONLY presence of skill dirs and executables — never credential
+//! or configuration state. `evidence[]` carries only fixed
 //! diagnostic codes, never raw description text.
 //!
 //! This module is ORTHOGONAL to [`super::schema::SignalType`] (the venue/wire
@@ -622,7 +622,6 @@ impl ToolInventory {
         let hyperliquid = plugin_readiness(home, "hyperliquid-plugin");
         let trade_kit = match super::trade_kit::probe_local_with(home, path_var).readiness() {
             super::trade_kit::LocalReadiness::Missing => Readiness::Missing,
-            super::trade_kit::LocalReadiness::NeedsConfiguration => Readiness::NeedsConfiguration,
             super::trade_kit::LocalReadiness::Ready => Readiness::Ready,
         };
         ToolInventory {
@@ -1322,41 +1321,29 @@ mod tests {
         }
     }
 
-    // ── reminders: single Trade-Kit-only class needing config → ConfigureTool ──
+    // ── reminders: installed Trade Kit never causes subscription auth prompts ──
     #[test]
-    fn reminders_configure_tool_when_trade_kit_needs_config() {
-        // Trade Kit executable present but config absent/empty ⇒ NeedsConfiguration.
+    fn installed_trade_kit_without_config_has_no_configure_reminder() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("okx"), b"#!/bin/sh\n").unwrap();
         let inv = ToolInventory::detect_with(home, bin.to_str().unwrap());
-        assert_eq!(
-            inv.readiness_of(ExecutionTool::TradeKit),
-            Readiness::NeedsConfiguration
-        );
+        assert_eq!(inv.readiness_of(ExecutionTool::TradeKit), Readiness::Ready);
 
-        // Option is a Trade-Kit-only class (single candidate), so the single
-        // effective tool being NeedsConfiguration yields exactly one ConfigureTool
-        // reminder — non-blocking and bilingual (AC-6).
+        // Option is Trade-Kit-only. Subscription preflight must not infer auth
+        // state or prompt for configuration from a missing config.toml marker.
         let pf = build_preflight(
             "\u{3010}Options Signal\u{3011} buy BTC call option, strike 70000",
             &inv,
         );
         assert_eq!(pf.asset_classes, vec![AssetClass::Option]);
-        let configure: Vec<&Reminder> = pf
+        assert!(pf
             .reminders
             .iter()
-            .filter(|r| r.kind == ReminderKind::ConfigureTool)
-            .collect();
-        assert_eq!(configure.len(), 1, "exactly one ConfigureTool reminder");
-        let r = configure[0];
-        assert_eq!(r.tool, Some(ExecutionTool::TradeKit));
-        assert!(!r.blocking, "ConfigureTool reminder is non-blocking");
-        assert!(!r.message_en.is_empty(), "message_en present");
-        assert!(!r.message_zh.is_empty(), "message_zh present");
-        assert!(r.asset_classes.contains(&AssetClass::Option));
+            .all(|r| r.kind != ReminderKind::ConfigureTool));
+        assert!(pf.reminders.is_empty());
     }
 
     // ── ToolInventory readiness ────────────────────────────────────────────
@@ -1402,7 +1389,7 @@ mod tests {
     }
 
     #[test]
-    fn readiness_trade_kit_three_states() {
+    fn readiness_trade_kit_depends_only_on_cli_presence() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let readiness = |path_var: &str| {
@@ -1412,27 +1399,26 @@ mod tests {
         // (1) CLI absent → Missing
         assert_eq!(readiness(""), Readiness::Missing);
 
-        // (2) CLI present, no config → NeedsConfiguration
+        // (2) CLI present, no config → Ready. Runtime owns auth checks.
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("okx"), b"#!/bin/sh\n").unwrap();
         let path_var = bin.to_str().unwrap();
-        assert_eq!(readiness(path_var), Readiness::NeedsConfiguration);
+        assert_eq!(readiness(path_var), Readiness::Ready);
 
         // (3) CLI + non-empty ~/.okx/config.toml → Ready
         std::fs::create_dir_all(home.join(".okx")).unwrap();
         std::fs::write(home.join(".okx/config.toml"), b"[trade]\nk = 1\n").unwrap();
         assert_eq!(readiness(path_var), Readiness::Ready);
 
-        // empty config.toml stays NeedsConfiguration
+        // An empty config marker does not change subscription-time readiness.
         std::fs::write(home.join(".okx/config.toml"), b"").unwrap();
-        assert_eq!(readiness(path_var), Readiness::NeedsConfiguration);
+        assert_eq!(readiness(path_var), Readiness::Ready);
 
-        // a stray ~/.okx/config.json is NOT the Trade Kit config source: with only
-        // config.json present (no config.toml) readiness stays NeedsConfiguration.
+        // Other configuration markers are likewise irrelevant at subscription time.
         std::fs::remove_file(home.join(".okx/config.toml")).unwrap();
         std::fs::write(home.join(".okx/config.json"), b"{\"k\":1}").unwrap();
-        assert_eq!(readiness(path_var), Readiness::NeedsConfiguration);
+        assert_eq!(readiness(path_var), Readiness::Ready);
     }
 
     // ── reminders: plugin missing → single install; installed → none ───────
@@ -1523,20 +1509,16 @@ mod tests {
     // ── reminders: readiness advisory only when EVERY candidate is unready ─────
     #[test]
     fn reminders_readiness_advisory_multi_venue() {
-        // (1) generic Prediction; Polymarket missing + Trade Kit present-but-
-        //     unconfigured (NeedsConfiguration) → every candidate unready → one
-        //     merged, non-blocking readiness advisory (plus choose and the two
-        //     actionable preparation reminders).
+        // (1) generic Prediction; Polymarket missing + Trade Kit installed with no
+        //     config marker → Trade Kit is locally ready. Do not infer auth state,
+        //     emit ConfigureTool, or claim every candidate is unavailable.
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("okx"), b"#!/bin/sh\n").unwrap(); // CLI present, no config
         let inv = ToolInventory::detect_with(home, bin.to_str().unwrap());
-        assert_eq!(
-            inv.readiness_of(ExecutionTool::TradeKit),
-            Readiness::NeedsConfiguration
-        );
+        assert_eq!(inv.readiness_of(ExecutionTool::TradeKit), Readiness::Ready);
         assert_eq!(
             inv.readiness_of(ExecutionTool::PolymarketPlugin),
             Readiness::Missing
@@ -1550,23 +1532,13 @@ mod tests {
             .iter()
             .filter(|r| r.kind == ReminderKind::ReadinessAdvisory)
             .collect();
-        assert_eq!(advisory.len(), 1, "exactly one merged readiness advisory");
-        assert!(advisory[0].tool.is_none());
-        assert!(!advisory[0].blocking);
-        assert!(!advisory[0].message_en.is_empty());
-        assert!(!advisory[0].message_zh.is_empty());
-        assert!(advisory[0].asset_classes.contains(&AssetClass::Prediction));
-        let poly_install = pf.reminders.iter().find(|r| {
-            r.kind == ReminderKind::InstallPlugin && r.tool == Some(ExecutionTool::PolymarketPlugin)
-        });
-        assert!(poly_install.is_some(), "missing Polymarket install action");
-        let trade_kit_configure = pf.reminders.iter().find(|r| {
-            r.kind == ReminderKind::ConfigureTool && r.tool == Some(ExecutionTool::TradeKit)
-        });
-        assert!(
-            trade_kit_configure.is_some(),
-            "missing Trade Kit configuration action"
-        );
+        assert!(advisory.is_empty(), "Trade Kit is an available candidate");
+        assert!(pf
+            .reminders
+            .iter()
+            .all(|r| r.kind != ReminderKind::ConfigureTool));
+        assert_eq!(pf.reminders.len(), 1);
+        assert_eq!(pf.reminders[0].kind, ReminderKind::ChooseAtFirstSignal);
 
         // (2) generic Prediction with Polymarket READY → at least one candidate
         //     ready → NO readiness advisory (no redundant-backup nudge).

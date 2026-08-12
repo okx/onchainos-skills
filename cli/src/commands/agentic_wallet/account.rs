@@ -56,10 +56,63 @@ pub(super) async fn cmd_switch(account_id: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logged_in_wallet_status_summary_has_no_subscription_or_device_snapshot() {
+        let wallets = WalletsJson {
+            email: "buyer@example.com".to_string(),
+            login_type: "email".to_string(),
+            selected_account_id: "account-1".to_string(),
+            accounts: vec![crate::wallet_store::AccountInfo {
+                project_id: "project-1".to_string(),
+                account_id: "account-1".to_string(),
+                account_name: "Trading".to_string(),
+                is_default: true,
+            }],
+            ..Default::default()
+        };
+
+        let summary =
+            build_wallet_status_summary(&wallets, true, "Trading", json!({ "enabled": true }));
+
+        assert_eq!(summary["loggedIn"], json!(true));
+        assert_eq!(summary["currentAccountId"], json!("account-1"));
+        assert_eq!(summary["policy"], json!({ "enabled": true }));
+        assert!(summary.get("postLoginSubscriptions").is_none());
+        assert!(summary.get("devices").is_none());
+    }
+}
+
 // ── status ───────────────────────────────────────────────────────────
 
-/// onchainos wallet status [--include-subscriptions]
-pub(super) async fn cmd_status(include_subscriptions: bool) -> Result<()> {
+fn build_wallet_status_summary(
+    wallets: &WalletsJson,
+    logged_in: bool,
+    current_account_name: &str,
+    policy: serde_json::Value,
+) -> serde_json::Value {
+    let login_type = if !logged_in || wallets.login_type.is_empty() {
+        serde_json::Value::Null
+    } else {
+        json!(wallets.login_type)
+    };
+
+    json!({
+        "email": wallets.email,
+        "loggedIn": logged_in,
+        "loginType": login_type,
+        "currentAccountId": wallets.selected_account_id,
+        "currentAccountName": current_account_name,
+        "accountCount": wallets.accounts.len(),
+        "policy": policy,
+    })
+}
+
+/// onchainos wallet status
+pub(super) async fn cmd_status() -> Result<()> {
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG] cmd_status: start");
     }
@@ -132,13 +185,6 @@ pub(super) async fn cmd_status(include_subscriptions: bool) -> Result<()> {
         );
     }
 
-    // loginType from `wallets.login_type`; empty → null, no inference.
-    let login_type: serde_json::Value = if !logged_in || wallets.login_type.is_empty() {
-        serde_json::Value::Null
-    } else {
-        json!(wallets.login_type)
-    };
-
     // Query policy for the current account when logged in
     let policy = if logged_in && !wallets.selected_account_id.is_empty() {
         match query_policy(&wallets.selected_account_id).await {
@@ -154,19 +200,7 @@ pub(super) async fn cmd_status(include_subscriptions: bool) -> Result<()> {
         serde_json::Value::Null
     };
 
-    let mut summary = json!({
-        "email": wallets.email,
-        "loggedIn": logged_in,
-        "loginType": login_type,
-        "currentAccountId": wallets.selected_account_id,
-        "currentAccountName": current_account_name,
-        "accountCount": wallets.accounts.len(),
-        "policy": policy,
-    });
-    if logged_in && include_subscriptions {
-        let post_login = super::auth::fetch_post_login_subscriptions_bounded().await;
-        super::auth::attach_post_login_subscriptions(&mut summary, post_login);
-    }
+    let summary = build_wallet_status_summary(&wallets, logged_in, &current_account_name, policy);
     output::success(summary);
     Ok(())
 }

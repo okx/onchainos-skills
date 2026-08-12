@@ -336,14 +336,14 @@ fn login_init_next_steps_base_url_independent() {
     );
 }
 
-// ── explicit login/status path can request the combined snapshot ─────
+// ── legacy status flag compatibility ───────────────────────────────────────
 
 #[test]
 fn wallet_status_accepts_include_subscriptions_flag() {
     let (_tmp, home) = fresh_home();
 
-    // A clean home is logged out, so this remains fully offline while pinning
-    // the new one-command user-facing status surface.
+    // Keep accepting the old flag so existing callers do not break, but treat
+    // it as an offline no-op that cannot add the post-login snapshot.
     let output = scrubbed(&mut onchainos(), &home)
         .args(["wallet", "status", "--include-subscriptions"])
         .output()
@@ -352,9 +352,30 @@ fn wallet_status_accepts_include_subscriptions_flag() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
-        "combined status flag must be accepted\nstdout: {stdout}\nstderr: {}",
+        "legacy status flag must remain accepted\nstdout: {stdout}\nstderr: {}",
         String::from_utf8_lossy(&output.stderr),
     );
     assert!(stdout.contains("\"loggedIn\":false"));
     assert!(!stdout.contains("postLoginSubscriptions"));
+}
+
+#[test]
+fn wallet_status_hides_legacy_include_subscriptions_flag_from_help() {
+    let (_tmp, home) = fresh_home();
+
+    let output = scrubbed(&mut onchainos(), &home)
+        .args(["wallet", "status", "--help"])
+        .output()
+        .expect("run onchainos wallet status --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "wallet status --help must succeed\nstdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !stdout.contains("--include-subscriptions"),
+        "legacy compatibility flag must not be advertised\nstdout: {stdout}",
+    );
 }

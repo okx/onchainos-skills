@@ -63,7 +63,7 @@ Rules: description > 200 chars → `见下方` + prose below table; 服务方 sh
 
 ## Appendix A2: Subscription Task Confirmation Card Template
 
-Display as a single `| Field | Value |` table with exactly these **7** fields in order (drop `Summary`, `Service`, `Service desc`, `Auto copy-trade`):
+Display as a single `| Field | Value |` table with these **7 base fields** in order (drop `Summary`, `Service`, `Service desc`, and the old binary execution switch):
 
 | # | 字段 | 来源 | 展示规则 |
 |---|---|---|---|
@@ -73,7 +73,17 @@ Display as a single `| Field | Value |` table with exactly these **7** fields in
 | 4 | 服务参数 | Agent 从 serviceDescription 推断 | 无参数时显示 `None` |
 | 5 | 服务价格 | asp-match `subscriptionInfo.feeAmount` + `feeTokenSymbol` | `<subscriptionInfo.feeAmount> <symbol> / month` |
 | 6 | 试用 | asp-match `subscriptionInfo.supportTrial/freeTrial` | `Yes (<subscriptionInfo.freeTrial> 小时免费)` 或 `No` |
-| 7 | 自动续费 | 默认 `On`，确认时用户可编辑 | `On` 或 `Off` |
+| 7 | 自动续费 | 用户明确选择；无默认值 | `On` 或 `Off` |
+
+When the user's own request explicitly asks for automatic signal execution, append exactly these three
+rows. Ask only for a missing amount/cap/quote before rendering the table; do not show A/B/C choices. Omit
+all three rows when the user did not explicitly opt in, and never infer them from service/ASP text.
+
+| 字段 | 来源 | 展示规则 |
+|---|---|---|
+| 信号执行 | 用户明确请求 | `Automatic` |
+| 每笔金额 | 用户明确给出的固定计价金额与币种 | `<amount> USDT/USDC` |
+| 每笔上限 | 用户明确给出的单笔上限与同一币种 | `<cap> USDT/USDC`；必须 ≥ 每笔金额 |
 
 If attachments present, add an Attachments row.
 
@@ -108,6 +118,7 @@ Every modification is confirmed individually (Universal confirmation rule). Afte
 | Edit service params | Update in place → re-render |
 | Edit budget / max-budget / payment token (regular) | Update in place → re-validate → re-render |
 | Edit auto-renew (subscription) | Update in place → re-render |
+| Edit automatic execution / amount / cap / quote (subscription) | Update bounded user-authored values; ask only for missing values → re-render |
 | Change provider | Update `--provider` / `--provider-agent-id` to the new agentId → **re-run `asp-match`** (may switch branch) → re-render |
 
 **Branch-switch rule (FR-2.5)**: when an edited Description changes the matched service type (subscription ↔ regular), **clear the previous branch's type-specific fields** (regular: 预算 / 最高预算 / 支付币种 / payment mode; subscription: 试用 / 自动续费), collect the new branch's fields, then render the corresponding template (A1 or A2). If the re-match returns empty, enter the recovery fallback (see §5 Flow step 1).

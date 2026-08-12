@@ -685,7 +685,7 @@ fn request_prompt_inner(
         };
         let llm_content = resolve_llm_content_cli(&entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
-        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        okx_a2a::user_decision_request(&entry.job_id, &entry.user_content, &llm_content)?;
         if print_ok {
             println!("OK");
         }
@@ -729,7 +729,7 @@ fn request_prompt_inner(
         let entry = q.entries.last().unwrap();
         let llm_content = resolve_llm_content_prompt_user(entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
-        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        okx_a2a::user_decision_request(&entry.job_id, &entry.user_content, &llm_content)?;
         if print_ok {
             println!("OK");
         }

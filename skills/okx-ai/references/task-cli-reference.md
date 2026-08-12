@@ -217,6 +217,10 @@ Render the service provider as `Agent <providerAgentId>(<providerAgentName>)`; d
 - `reminders[]` = bilingual (`messageEn`+`messageZh`), `blocking:false`, de-duplicated install/config hints
 - `evidence[]` = stable diagnostic codes only (never raw text/secrets)
 
+For Trade Kit, subscription-time `ready` means only that the local `okx` CLI exists. The
+preflight never reads configuration or credential state and never invokes the CLI; the first
+real signal re-checks authentication, account permissions, and runtime capabilities.
+
 Undetermined descriptions yield `isTradingSignal:false`, `assetClasses:[]`, and `reminders:[]`. On an internal preflight error the object degrades to `evidence:["preflight:unavailable"]` and `asp-match` still returns `ok:true`. Preflight absence never blocks subscription creation.
 
 ### mark-failed
@@ -410,6 +414,8 @@ agent create-subscribe \
   --auto-renew <0|1> \
   --title <txt> --description <txt> \
   [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
+  [--autotrade-mode auto --autotrade-amount <decimal-number> --autotrade-cap <decimal-number> \
+   --autotrade-quote <usdt|usdc>] \
   [--exclude-device <id>]... [--format json]
 ```
 
@@ -424,13 +430,17 @@ agent create-subscribe \
 | `--description` | Yes | - | Max 4096 chars |
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
 | `--service-description` | No | `""` | Exact service description from `asp-match`; persisted only as bounded routing hints |
+| `--autotrade-mode` | No | - | Explicit user-confirmed automatic signal execution; currently only `auto`. When supplied, all other `--autotrade-*` fields are required |
+| `--autotrade-amount` | With mode | - | Positive human-readable quote amount for each signal; decimal number only (for example `10` or `20.5`), never minimal units or a currency suffix; currency is selected by `--autotrade-quote`; must be ≤ cap |
+| `--autotrade-cap` | With mode | - | Positive human-readable per-signal quote cap; decimal number only, never minimal units or a currency suffix; currency is selected by `--autotrade-quote` |
+| `--autotrade-quote` | With mode | - | `usdt` or `usdc` |
 | `--exclude-device` | No | *(none)* | Device id to omit from the default all-devices routing set (repeatable) |
 
 > **Device routing:** the request now **always** carries `deviceList` — by default **all logged-in devices** (from `device-list`, paged to completion) minus any `--exclude-device`. If the device-list query fails or is empty the create **degrades to this device only** and the success `data` carries `deviceRoutingDegraded: true` (absent/false = normal); the create never aborts.
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
-The CLI always writes the current backend delivery-routing compatibility field as `copyTrade=1`. There is no subscription-time auto-copy-trade question or `--copy-trade` input. The inbound client no longer uses that field or a deterministic text parser for routing: it requires an exactly Active subscription, then the subscription-signal Skill interprets each saved delivery and applies consent, cap, freshness, and selected-tool checks.
+The CLI always writes the current backend delivery-routing compatibility field as `copyTrade=1`. There is no old subscription-time binary copy-trade question or `--copy-trade` input. The inbound client no longer uses that field or a deterministic text parser for routing: it requires an exactly Active subscription, then the subscription-signal Skill interprets each saved delivery and applies consent, cap, freshness, and selected-tool checks. The optional `--autotrade-*` group is different: it persists a complete, explicit user-authored execution policy after the subscription jobId is created. Partial groups fail closed and report exactly which fields are missing. JSON success reports `autoTradeConfigRequested` and `autoTradeConfigured`; a persistence failure does not roll back the already-created subscription and leaves execution unconfigured.
 
 ### subscribe-detail
 
@@ -562,9 +572,8 @@ agent apply <jobId> --token-amount <price> --token-symbol <USDT|USDG> --agent-id
 
 Submit the deliverable on-chain (only allowed when status=accepted)
 
-> When `--autotrade` is supplied, the signal is structure-validated **before** any upload/send/broadcast; an
-> invalid signal aborts delivery with `signal rejected: <reason>` (exit 1). Unit is constrained by side
-> (buy=quote, sell=base|pct; deposit=quote; withdraw=pct; polymarket buy=quote/sell=base).
+> `--autotrade` is a retired compatibility argument. The CLI accepts but completely ignores its value;
+> only `--deliverable-text` or `--file` is sent and processed.
 
 ```
 agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<txt>"] --agent-id <aspAgentId> [--autotrade '<single-line JSON>']
@@ -576,7 +585,7 @@ agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<
 | `--file` | No | `""` | Local file path for delivery (message-only if omitted) |
 | `--message` | No | `Task completed, please review` | Delivery message |
 | `--agent-id` | Yes | - | ASP agentId |
-| `--autotrade` | No | (none) | Single-line JSON auto-trade signal, **omitting `signalTime`**. CLI stamps `signalTime`, runs structure validation, and appends an `autotrade:` line to the delivery content. Invalid signal → command errors and **nothing is sent**. Empty/absent = ordinary delivery. |
+| `--autotrade` | No | (none) | Deprecated compatibility argument. Accepted but ignored; malformed or valid JSON never changes, blocks, or augments the text/file deliverable. |
 
 ### autotrade-grant-check
 
@@ -585,15 +594,15 @@ contract — output is a top-level `{"ok":true}` / `{"ok":false,"reason":"…"}`
 exit code equals `ok`.
 
 ```
-agent autotrade-grant-check --job-id <id> --venue <dex|hyperliquid|defi|polymarket> --action <buy|sell> --amount <decimal> --format json
+agent autotrade-grant-check --job-id <id> --venue <dex|hyperliquid|defi|polymarket|trade_kit> --action <buy|sell> --amount <decimal> --format json
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--job-id` | Yes | — | Job id (charset-checked before use as grant filename). |
-| `--venue` | Yes | — | `dex` \| `hyperliquid` (canonicalized to `dex`) \| `defi` \| `polymarket`. |
+| `--venue` | Yes | — | `dex` \| `hyperliquid` (canonicalized to `dex`) \| `defi` \| `polymarket` \| `trade_kit`. Trade Kit has an independent grant and does not alias to `dex`. |
 | `--action` | Yes | — | `buy` \| `sell`. |
-| `--amount` | Yes | — | Decimal string; the per-trade amount to check against the written cap. |
+| `--amount` | Yes | — | Decimal string; the per-trade amount to check against the written cap. For Trade Kit, pass the configured quote/notional amount for both buy and sell. |
 | `--format` | Yes | — | Only `json` is accepted. |
 
 ### task-deliverable-list

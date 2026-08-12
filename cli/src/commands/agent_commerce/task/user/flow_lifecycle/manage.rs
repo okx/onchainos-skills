@@ -169,9 +169,13 @@ Collect/infer:
 
 3. **autoRenew**: ask the user explicitly (0=off, 1=on). Do NOT pre-fill a default — collect the answer before Step 5.
 
-4. **Signal capability preflight**: **Do NOT parse `serviceDescription` yourself and do NOT ask whether to enable auto copy-trade.** Use `autoTradePreflight.assetClasses`, each `tools[].readiness`, and any `reminders[]` only for the separate optional preparation gate below. Keep the Step 5 confirmation form at exactly seven rows; never block the subscription on a missing/unconfigured tool, never pick a venue, and never trigger an install unless the user explicitly asks.
+4. **Signal execution setup and capability preflight**:
+   - Never ask the old standalone binary execution opt-in question and never infer financial authorization from `serviceDescription`, ASP text, candidate tools, or the backend delivery marker.
+   - If the user's own request explicitly asks for automatic signal execution, collect/infer exactly four bounded fields from user-authored context: mode=`auto`, fixed per-signal quote amount, per-signal cap, and quote currency (`USDT` or `USDC`). If any field is missing, ask only for those missing fields in one localized natural-language question, then **END THIS TURN**. Do not use A/B/C or numbered choices. Amount must be positive and no greater than cap.
+   - If the user did not explicitly request automatic execution, collect no execution settings and continue normally. The first actionable delivery may ask for the missing configuration then; a service description alone never opts the user in.
+   - Use `autoTradePreflight.assetClasses`, each `tools[].readiness`, and any `reminders[]` only for the separate optional preparation gate below. Never block the subscription on a missing/unconfigured tool, never pick a venue, and never trigger an install unless the user explicitly asks.
 
-   The preflight is advisory only and does not control delivery routing. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the preparation card and continue creating the subscription. Do not retry `asp-match` solely to obtain preflight data. The CLI writes the backend delivery marker internally; there is no `copyTrade` field to collect and no `--copy-trade` argument to pass.
+   The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the preparation card and continue creating the subscription. Do not retry `asp-match` solely to obtain preflight data. The CLI writes the backend delivery marker internally; there is no `copyTrade` field to collect and no `--copy-trade` argument to pass.
 
    **Pre-confirmation gate (mandatory when an actionable reminder exists):** if `reminders[]` contains at least one `install_plugin` or `configure_tool`, render one separate, localized **Tool preparation (optional)** choice card now. Build one action from each actionable reminder, identified by its exact `tool` / `pluginId` and using its localized message; de-duplicate by tool. Append a final `Later — continue subscribing` action. The card footer must say that skipping preparation does not affect subscription, delivery visibility/storage, or the user's ability to ask their agent later to execute the delivered signal manually with any available tool. Do not invent actions from `serviceDescription`, DApp names, `choose_at_first_signal`, or `readiness_advisory`.
 
@@ -202,6 +206,9 @@ Step 5 -- Subscription confirmation form
 | Service price | <subscriptionInfo.feeAmount> <feeTokenSymbol> / month |
 | Trial | Yes (<subscriptionInfo.freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial`) |
 | Auto-renew | On / Off |
+| Signal execution | Automatic (only when explicitly requested; otherwise omit this row) |
+| Per-signal amount | <amount> <USDT/USDC> (only with Signal execution) |
+| Per-signal cap | <cap> <USDT/USDC> (only with Signal execution) |
 
 > Confirm? Once confirmed, the subscription will be created on-chain.
 
@@ -216,6 +223,7 @@ Step 5.5 -- Route by user decision (separate turn)
 - Edit serviceParams → update → Step 5
 - Change ASP → update `--provider` to the new agentId → **re-run asp-match** (may switch branch) → Step 4 → Step 5
 - Edit autoRenew → update → Step 5
+- Edit automatic signal execution / amount / cap / quote currency → update; ask only for any missing bounded field → Step 5
 - Prepare a tool now → run only the explicitly selected install/configuration flow, re-run the original `asp-match`, re-select the same `serviceId`, and repeat the Step 4 pre-confirmation gate; do not save a venue preference
 - Later / skip tool preparation → Step 5 without blocking subscription
 
@@ -233,8 +241,14 @@ onchainos agent create-subscribe \\
   --title \"<title>\" \\
   --description \"<description>\" \\
   --service-description \"<serviceDescription>\" \\
-  --provider-agent-id <agentId>
+  --provider-agent-id <agentId> \\
+  [--autotrade-mode auto \\
+   --autotrade-amount \"<decimal-number>\" \\
+   --autotrade-cap \"<decimal-number>\" \\
+   --autotrade-quote <usdt|usdc>]
 ```
+- Pass the four `--autotrade-*` flags together only when the final subscription confirmation contained the user's explicit automatic-execution setup. Never synthesize them from service or deliverable content.
+- `--autotrade-amount` and `--autotrade-cap` are human-readable quote amounts selected by `--autotrade-quote`: pass a decimal number only (for example `10` or `20.5`), never minimal units and never a `USDT`/`USDC` suffix.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
 
 {attachments_stop}",
@@ -495,14 +509,19 @@ mod tests {
             out.contains("autoTradePreflight"),
             "subscription playbook must reference autoTradePreflight: {out}"
         );
-        // The confirmation form must NOT render an Auto copy-trade On/Off row —
-        // Auto copy-trade is not an opt-in switch shown at subscription time.
+        // The confirmation form must NOT render the old binary On/Off row.
         assert!(
             !out.contains("| Auto copy-trade |"),
             "confirmation form must not contain an Auto copy-trade row: {out}"
         );
-        // WBW-14172 keeps the confirmation card at exactly seven rows; preflight
-        // readiness belongs only to the separate optional preparation card.
+        // Explicit user-authored automatic execution is shown as bounded fields;
+        // these rows are omitted entirely when the user did not opt in.
+        assert!(out.contains("| Signal execution | Automatic"));
+        assert!(out.contains("| Per-signal amount |"));
+        assert!(out.contains("| Per-signal cap |"));
+        assert!(out.contains("otherwise omit this row"));
+        assert!(out.contains("Do not use A/B/C or numbered choices"));
+        // Preflight readiness belongs only to the separate optional preparation card.
         assert!(
             !out.contains("| Signal types |"),
             "confirmation form must not add a Signal types row: {out}"

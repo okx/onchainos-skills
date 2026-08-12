@@ -26,6 +26,7 @@ use crate::output;
 
 use super::create::resolve_user_agent;
 use super::create_subscribe::SUBSCRIBE_API_PREFIX;
+use super::subscription_ops::select_subscription_agent_id;
 
 /// Parse and client-validate the `--flag` argument. Only `0` and `1` are legal;
 /// everything else (`2`, `-1`, `true`, empty, …) is rejected locally before any
@@ -99,6 +100,7 @@ pub async fn handle_subscribe_offline_update(
         .await
         .map_err(|e| anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
     let (user_agent_id, _) = resolve_user_agent().await?;
+    let user_agent_id = select_subscription_agent_id(&user_agent_id, "")?;
 
     let body = build_offline_body(flag);
     let path = offline_receive_path(job_id);
