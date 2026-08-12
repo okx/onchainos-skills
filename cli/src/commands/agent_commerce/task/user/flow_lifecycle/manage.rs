@@ -33,11 +33,14 @@ Description: MUST come from user's explicit input — no guessing/auto-fill. Tit
 | Title | --title | <=30 chars | Agent-generated; count chars, shorten if >30 |
 | Designated provider | --provider | Optional; provider agentId | Extract the provider the user names. If not given, leave blank — Step 3 will auto-discover |
 
+**Draft-description confirmation gate**: if the Description is a consolidation, summary, or reuse of the user's prior/current message rather than an exact explicitly-confirmed task description, show the draft Description and ask whether to use it for ASP matching. **End this turn. Do NOT run `asp-match` until the user explicitly confirms.** If the user edits it, use the edited text and then proceed.
+
 ================================================
 Step 2 -- Basic validation
 ================================================
 
 1. Description < 20 chars → ask to expand
+2. Draft Description not explicitly confirmed → ask for confirmation (per gate above), then end turn
 
 ================================================
 Step 3 -- ASP matching
@@ -456,6 +459,19 @@ pub(crate) fn attachment_added_cli(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn common_create_task_requires_draft_description_confirmation_before_matching() {
+        let out = create_task_common();
+        assert!(
+            out.contains("Draft-description confirmation gate"),
+            "common create_task playbook must include the confirmation gate: {out}"
+        );
+        assert!(
+            out.contains("Do NOT run `asp-match` until the user explicitly confirms"),
+            "draft descriptions must be confirmed before ASP matching: {out}"
+        );
+    }
 
     #[test]
     fn subscription_playbook_reads_preflight_not_prompt() {

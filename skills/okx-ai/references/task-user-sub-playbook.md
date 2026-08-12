@@ -137,18 +137,9 @@ does not parse fields or select an execution command. Read and follow
 [`task-subscription-signal.md`](task-subscription-signal.md) in the same turn. `copyTrade` and the local
 route cache are hints only, never trading consent.
 
-**Pause auto copy-trade (user says「暂停自动跟单」/ "pause auto copy-trading" / "stop copy-trading"):**
-Clear the auto-follow authorization for **that one subscription** so the next signal re-shows the
-three-way prompt:
-```bash
-onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <yours> --mode pause
-```
-- **Which `jobId`**: the subscription the user means. If the user is replying to a specific copy-trade
-  notification, use that signal's `jobId` from context. If they say it bare and have **more than one**
-  auto-following subscription, **ask which one** — do not guess.
-- Scope is this `jobId` only (not all subscriptions). Returns `{"consentMode":"pause","cleared":true}`.
-  Afterwards the next delivery for this subscription re-shows the three-way consent card ("尚未开启自动执行");
-  re-enabling is just choosing A again. Tell the user it's paused.
+**Pause auto copy-trade is owned by the user session.** Route user requests such as「暂停自动跟单」/
+"pause auto copy-trading" to `task-user-playbook.md` §Pause auto copy-trade. Do not duplicate or execute
+that rule from a sub session.
 
 ---
 

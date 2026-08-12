@@ -513,8 +513,9 @@ pub enum AgentCommand {
         /// Fixed quote-stablecoin amount used by the model-driven subscription.
         #[arg(long = "trade-amount")]
         trade_amount: Option<String>,
-        /// Buyer agent id (retained for rolling CLI compatibility).
-        #[arg(long = "agent-id")] agent_id: String,
+        /// Buyer agent id (optional; retained only for rolling CLI compatibility).
+        /// Local consent operations, including `pause`, do not use it.
+        #[arg(long = "agent-id")] agent_id: Option<String>,
         /// Consent lifetime in seconds (default 365 days).
         #[arg(long = "ttl-sec", default_value_t = 31_536_000)] ttl_sec: u64,
         /// Plugin-store id checked by `plugin-ready-check` (the legacy
@@ -1318,7 +1319,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::AutotradeConsentSet { job_id, mode, cap, trade_amount, agent_id: _, ttl_sec, plugin, tool, quote } => {
+        AgentCommand::AutotradeConsentSet { job_id, mode, cap, trade_amount, agent_id, ttl_sec, plugin, tool, quote } => {
             use task::common::autotrade::{consent, grants};
             if tool.is_some() { anyhow::bail!("--tool is deprecated; use subscription-route-set"); }
             if mode == "pause" {
@@ -1326,6 +1327,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 consent::clear_consent(&job_id); grants::clear_grant(&job_id); consent::clear_pending_signal(&job_id);
                 crate::output::success(serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id}));
                 return Ok(());
+            }
+            if agent_id.is_none() {
+                anyhow::bail!("--agent-id is required unless --mode pause");
             }
             if mode == "plugin-ready-check" || mode == "plugin-approved" {
                 if cap.is_some() || trade_amount.is_some() || quote.is_some() { anyhow::bail!("plugin-ready-check accepts only --plugin"); }
