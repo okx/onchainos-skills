@@ -21,12 +21,14 @@ use serde_json::{json, Value};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
+use crate::commands::agent_commerce::task::common::subscription_identity::{
+    select_subscription_agent_id,
+};
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::output;
 
 use super::create::resolve_user_agent;
 use super::create_subscribe::SUBSCRIBE_API_PREFIX;
-use super::subscription_ops::select_subscription_agent_id;
 
 /// Parse and client-validate the `--flag` argument. Only `0` and `1` are legal;
 /// everything else (`2`, `-1`, `true`, empty, …) is rejected locally before any

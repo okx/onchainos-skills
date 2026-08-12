@@ -135,8 +135,8 @@ pub enum AgentCommand {
         /// Quote currency for amount/cap (`usdt` or `usdc`).
         #[arg(long = "autotrade-quote")] autotrade_quote: Option<String>,
         #[arg(long, default_value = "")] format: String,
-        /// Device ids to omit from the default all-devices routing set (repeatable).
-        #[arg(long = "exclude-device")] exclude_device: Option<Vec<String>>,
+        /// Legacy compatibility input. Create-time device selection is rejected.
+        #[arg(long = "exclude-device", hide = true)] exclude_device: Option<Vec<String>>,
     },
 
     /// Cancel a subscription (unified: trial cancel + close auto-renew)

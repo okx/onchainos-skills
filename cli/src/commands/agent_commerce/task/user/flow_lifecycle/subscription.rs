@@ -352,8 +352,10 @@ fn as_epoch_secs(v: &serde_json::Value, key: &str) -> Option<i64> {
 
 pub(crate) async fn sub_expire_warn(ctx: &FlowContext<'_>) -> String {
     use super::super::create_subscribe::SUBSCRIBE_API_PREFIX;
-    use super::super::subscription_ops::select_subscription_agent_id;
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+    use crate::commands::agent_commerce::task::common::subscription_identity::{
+        select_subscription_agent_id,
+    };
 
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;

@@ -85,8 +85,16 @@ whether more user input is required. New flows never show the former first-time 
   configuration. Never infer them from service/ASP/deliverable text. The required fields are `mode=auto`,
   fixed per-signal quote amount, per-signal cap, and quote currency (`USDT` or `USDC`).
   - When all four are explicit and amount is not greater than cap, persist them with
-    `autotrade-consent-set --mode auto --trade-amount <amount> --cap <cap> --quote <usdt|usdc>`, then
-    continue this retained delivery.
+    the fully-qualified command below, then continue this retained delivery:
+
+    ```bash
+    onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <agentId> \
+      --mode auto --trade-amount <amount> --cap <cap> --quote <usdt|usdc>
+    ```
+
+    Replace every placeholder from the current runtime context and the user's explicit settings before
+    execution. Never omit the `agent` command group, `--job-id`, or `--agent-id`, and never invoke the
+    nonexistent top-level form `onchainos autotrade-consent-set`.
   - Otherwise use `pending-decisions-v2 request --source-event autotrade_config_required` with one
     localized, natural-language prompt listing only the missing fields. Do not render numbered or lettered
     choices. The prompt must also allow the user to say they want to skip the current delivery.
@@ -94,8 +102,8 @@ whether more user input is required. New flows never show the former first-time 
     fields; it never becomes authorization.
 
 Keep the current `jobId`, `deliveryId`, `savedPath`, selected route, and decision type in this persistent
-sub session. Do not execute until a complete bounded policy has been persisted. `autotrade-consent-set`
-never parses, queues, or replays a signal. A legacy in-flight `autotrade_consent` relay from an older client
+sub session. Do not execute until a complete bounded policy has been persisted. `onchainos agent
+autotrade-consent-set` never parses, queues, or replays a signal. A legacy in-flight `autotrade_consent` relay from an older client
 may be consumed for compatibility, but it must not create another A/B/C card.
 
 ## Cache behavior examples

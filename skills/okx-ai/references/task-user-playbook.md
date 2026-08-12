@@ -77,22 +77,16 @@ See `task-user-actions-publish.md` **Appendix A2** for the subscription confirma
 
 ### Post-creation: Offline-deliverables question
 
-AFTER a `create-subscribe` succeeds — in **all** success branches (normal default, explicit device choice, and degraded `deviceRoutingDegraded: true`) — render this question block so the user can decide what happens to deliverables produced while they are offline. Chinese-language sessions render it **VERBATIM**; other languages translate faithfully, preserving meaning, per the §Localization banner. `{任务名}` is the **just-created REAL subscription title** — never a hard-coded sample.
+AFTER a `create-subscribe` succeeds, render this question block so the user can decide what happens to deliverables produced while they are offline. Chinese-language sessions render it **VERBATIM**; other languages translate faithfully, preserving meaning, per the §Localization banner. `{任务名}` is the **just-created REAL subscription title** — never a hard-coded sample.
 
 **Ordering with the mandatory watch:** render this block, but do **not** pause or wait for the user's choice. Immediately continue to §Post-creation: Watch check below and enter watch. Handle the user's preference only when their reply arrives; the preference question must never delay the initial watch or the `sub_created` event.
 
-**Device-routing copy contract:** render exactly one device-routing line after the success title and before the offline-deliverables question. The line is informational only: do not ask a device question or wait for a device confirmation.
+**Device-routing copy contract:** after every successful creation, render the single device-routing line in the response template below after the success title and before the offline-deliverables question. The line is informational only: do not ask a device question or wait for a device confirmation.
 
-- Degraded: `设备列表暂不可用，本任务消息目前仅推送至本设备，可稍后调整接收设备。`
-- Explicit choice: `本任务消息将推送至您选择的设备，可随时调整接收设备。`
-- Normal default: `本任务消息将推送至所有已登录设备，可随时调整接收设备。`
-
-Branch priority is fixed: `deviceRoutingDegraded == true` → degraded; otherwise any `--exclude-device` → explicit choice; otherwise → normal default. This priority applies even when the create used exclusions: a degraded success always uses the degraded line.
-
-For all three branches, continue in the same turn to the existing offline-deliverables block and mandatory watch; never end, pause, or wait because of the device line.
+Continue in the same turn to the existing offline-deliverables block and mandatory watch; never end, pause, or wait because of the device line.
 
 > 「{任务名}」订阅任务已创建成功 ✅
-> {设备路由说明：从本节的 Device-routing copy contract 恰好选择一行}
+> 本任务消息将推送至所有已登录设备。想让某台设备开始或停止接收，随时告诉我就行。
 > 您离线期间，这个任务会持续产生交付物。重新上线后，这批交付物怎么处理？
 > · 补推给我（默认）—— 上线后补上，后台照常接收并处理
 > · 清理掉 —— 离线消息直接丢弃，后台不再接收，避免白白消耗算力
@@ -294,13 +288,8 @@ Trigger: `设备列表` / `我登录了哪些设备` / `哪些设备在线` / `d
 
 This section applies only to signal subscriptions created with `create-subscribe`; do not apply it to ordinary `create-task`.
 
-Without an explicit device-management intent, do **not** run `onchainos agent device-list` before `create-subscribe`, do not show a device table, and do not branch on the device count. The CLI resolves and persists the default receive-device set inside `create-subscribe`.
+Creation always defaults to all logged-in devices. Do **not** run `onchainos agent device-list` before `create-subscribe`, do not show a device table, and do not branch on device count or device names.
 
-Only when the user explicitly asks to view, choose, or exclude receive devices, run `onchainos agent device-list` on demand. If the user has not named a device, show the complete returned list and wait for their selection before creating. Do not cache the returned device list locally or treat it as an account-level preference.
+Create-time device selection or exclusion is unsupported. If the user asks to choose, include, or exclude devices during creation, explain that a successful subscription starts on all logged-in devices and that they can adjust receiving devices after creation. Do not translate the request into CLI flags and do not silently claim that it was applied.
 
-On create, the CLI always sends `deviceList` explicitly (all logged-in devices minus any excluded).
-
-- **Explicit choice at creation time:** Resolve every named device against that fresh list and pass `--exclude-device <deviceId>` once per excluded row. For an “only X” request, exclude every other row from the complete fresh list. Omitting the flag keeps the default all-devices set — there is no include-device flag, and an exclusion the user asked for but that is not expressed as `--exclude-device` is silently lost.
-- **Ambiguous name:** If a name matches more than one row, show the distinguishing rows and wait for the user to disambiguate; do not create yet.
-- **Explicit-intent lookup failure:** If the on-demand `device-list` fails, is empty, or cannot safely resolve the request, do not run `create-subscribe`. Tell the user the device choice cannot be applied yet; never guess or silently drop their request.
-- **Create-internal degradation:** after `create-subscribe` starts, its own device lookup may still degrade to this device only and return `data.deviceRoutingDegraded: true`. The subscription is already created; do not retry or roll it back. Render the degraded success notice below.
+After creation, explicit user requests to view or change receiving devices continue to use §Device List and §Subscription management with fresh reads before updates.

@@ -28,12 +28,14 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::subscription_identity::{
+    select_subscription_agent_id,
+};
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::output;
 
 use super::create::resolve_user_agent;
 use super::create_subscribe::SUBSCRIBE_API_PREFIX;
-use super::subscription_ops::select_subscription_agent_id;
 
 /// Wallet device-list endpoint (userId resolved from JWT — never passed).
 const DEVICE_LIST_PATH: &str = "/priapi/v5/wallet/agentic/agent/device-list";
@@ -357,56 +359,6 @@ async fn fetch_all_devices(
         cur += 1;
     }
     Ok(DevicePage { list: acc, total })
-}
-
-/// Fetch every logged-in device id (paginated to completion). Reuse convenience
-/// for `create-subscribe`'s default all-devices routing set — NOT an MCP `fetch_*`
-/// delegate. The caller decides how to handle an error / empty result (degrade).
-pub(crate) async fn fetch_all_device_ids(
-    client: &mut TaskApiClient,
-    agent_id: &str,
-) -> Result<Vec<String>> {
-    let aggregated = fetch_all_devices(client, agent_id, 1, DEFAULT_PAGE_SIZE).await?;
-    Ok(device_ids(aggregated))
-}
-
-/// Resolve `create-subscribe`'s `deviceList` + `deviceRoutingDegraded` flag:
-/// - fetch succeeded with ≥ 1 device ⇒ all fetched ids minus `excluded`, not degraded;
-/// - fetch failed (`None`) or returned no devices ⇒ **this device only**, degraded.
-///
-/// An unresolved this-device id in the degrade branch yields an empty list (still
-/// degraded) — the create flow must not abort.
-pub(crate) fn resolve_create_device_set(
-    fetched: Option<Vec<String>>,
-    excluded: &[String],
-    this_device_id: Option<&str>,
-) -> (Vec<String>, bool) {
-    match fetched {
-        Some(ids) if !ids.is_empty() => {
-            let kept: Vec<String> = ids
-                .into_iter()
-                .filter(|id| !excluded.iter().any(|e| e == id))
-                .collect();
-            if kept.is_empty() {
-                // Every fetched device was excluded → the subscription would
-                // receive nowhere. Degrade + flag rather than return a silent
-                // empty set; fall back to this device unless it too was excluded.
-                let fallback = this_device_id
-                    .filter(|id| !excluded.iter().any(|e| e == id))
-                    .map(|id| vec![id.to_string()])
-                    .unwrap_or_default();
-                (fallback, true)
-            } else {
-                (kept, false)
-            }
-        }
-        _ => (
-            this_device_id
-                .map(|id| vec![id.to_string()])
-                .unwrap_or_default(),
-            true,
-        ),
-    }
 }
 
 /// Fetch the complete device-list command payload for an already-resolved
@@ -1149,72 +1101,6 @@ mod tests {
         // `--items '[]'` resolves to an empty array → 0-item boundary.
         let items = normalize_items(None, None, Some("[]")).unwrap();
         assert!(validate_items_len(items.len()).is_err());
-    }
-
-    // ── create-subscribe device set resolution ──────────────────────────
-    #[test]
-    fn create_device_set_default_all_devices() {
-        let fetched = Some(vec!["d1".to_string(), "d2".to_string(), "d3".to_string()]);
-        let (list, degraded) = resolve_create_device_set(fetched, &[], Some("d2"));
-        assert_eq!(list, vec!["d1", "d2", "d3"]);
-        assert!(!degraded);
-    }
-
-    #[test]
-    fn create_device_set_excludes_named_devices() {
-        let fetched = Some(vec!["d1".to_string(), "d2".to_string(), "d3".to_string()]);
-        let excluded = vec!["d2".to_string()];
-        let (list, degraded) = resolve_create_device_set(fetched, &excluded, Some("d1"));
-        assert_eq!(list, vec!["d1", "d3"]);
-        assert!(!degraded); // exclusion is a user choice, not a degrade
-    }
-
-    #[test]
-    fn create_device_set_degrades_to_this_device_on_fetch_failure() {
-        // Fetch failed (None) → this-device only, degraded.
-        let (list, degraded) = resolve_create_device_set(None, &[], Some("dME"));
-        assert_eq!(list, vec!["dME"]);
-        assert!(degraded);
-    }
-
-    #[test]
-    fn create_device_set_degrades_on_empty_fetch() {
-        // Fetch succeeded but returned no devices → degrade too.
-        let (list, degraded) = resolve_create_device_set(Some(vec![]), &[], Some("dME"));
-        assert_eq!(list, vec!["dME"]);
-        assert!(degraded);
-    }
-
-    #[test]
-    fn create_device_set_degrade_with_unresolved_this_device_is_empty() {
-        let (list, degraded) = resolve_create_device_set(None, &[], None);
-        assert!(list.is_empty());
-        assert!(degraded); // still degraded; create must not abort
-    }
-
-    #[test]
-    fn create_device_set_all_excluded_degrades_to_unexcluded_this_device() {
-        // Every fetched device is excluded, but this device is NOT in the
-        // exclusion list → degrade to this device (flagged), never a silent empty.
-        let fetched = Some(vec!["d1".to_string(), "d2".to_string()]);
-        let excluded = vec!["d1".to_string(), "d2".to_string()];
-        let (list, degraded) = resolve_create_device_set(fetched, &excluded, Some("dME"));
-        assert_eq!(list, vec!["dME"]);
-        assert!(degraded);
-    }
-
-    #[test]
-    fn create_device_set_all_excluded_incl_this_device_is_empty_but_flagged() {
-        // All fetched devices excluded AND this device is one of them → empty
-        // routing set, but degraded=true so it is never reported as a clean list.
-        let fetched = Some(vec!["d1".to_string(), "d2".to_string()]);
-        let excluded = vec!["d1".to_string(), "d2".to_string()];
-        let (list, degraded) = resolve_create_device_set(fetched, &excluded, Some("d1"));
-        assert!(list.is_empty());
-        assert!(
-            degraded,
-            "all-excluded must not be reported as not-degraded"
-        );
     }
 
     // ── pagination helpers ───────────────────────────────────────────────

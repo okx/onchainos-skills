@@ -39,6 +39,9 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::subscription_identity::{
+    select_subscription_agent_id,
+};
 use crate::commands::Context;
 
 // ─── task subcommands ──────────────────────────────────────────────────────
@@ -132,8 +135,8 @@ pub enum TaskCommand {
         /// Output format: "json" for raw JSON
         #[arg(long, default_value = "")]
         format: String,
-        /// Device ids to omit from the default all-devices routing set (repeatable).
-        #[arg(long = "exclude-device")]
+        /// Legacy compatibility input. Create-time device selection is rejected.
+        #[arg(long = "exclude-device", hide = true)]
         exclude_device: Option<Vec<String>>,
     },
     /// Search matching ASPs (pre-publish or post-publish)
@@ -427,7 +430,7 @@ pub(crate) async fn resolve_post_login_agentic_id() -> Result<String> {
 pub(crate) async fn prepare_post_login_subscriptions(
     agentic_id: &str,
 ) -> Option<PostLoginSubscriptionsPreparation> {
-    let agent_id = match subscription_ops::select_subscription_agent_id(agentic_id, "") {
+    let agent_id = match select_subscription_agent_id(agentic_id, "") {
         Ok(agent_id) => agent_id,
         Err(e) => {
             if cfg!(feature = "debug-log") {

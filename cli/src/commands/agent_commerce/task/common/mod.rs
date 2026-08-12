@@ -30,6 +30,7 @@ pub mod query;
 pub mod review_gate;
 pub mod session_cleanup;
 pub mod state_machine;
+pub mod subscription_identity;
 pub mod util;
 pub mod version_notice;
 
