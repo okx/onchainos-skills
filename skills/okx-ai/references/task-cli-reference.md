@@ -113,7 +113,7 @@ agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message
 | `--role` | Yes | - | `user` / `asp` / `evaluator` / `auto` |
 | `--agentId` | Yes | - | Receiving agent's id |
 | `--message` | Yes | - | Entire `message` object from envelope as JSON string |
-| `--a2a-file` | No | - | User-side `[intent:deliver]` only: path to the complete raw A2A JSON envelope stored as a temp input file. CLI validates it and writes a canonical 0600 recovery spool copy before processing. Do not pass only `content`, and do not use stdin/heredoc/pipe/inline JSON for this envelope in tool-use runtimes. |
+| `--a2a-file` | No | - | User-side `[intent:deliver]` only: path to the complete raw A2A JSON envelope stored as a temp input file. Write this file with a JSON serializer for the whole envelope; treat `content` as an opaque string, even when it is not JSON. CLI validates the file and writes a canonical 0600 recovery spool copy before processing. Do not pass only `content`, and do not use stdin/heredoc/pipe/inline JSON for this envelope in tool-use runtimes. |
 
 #### Fields CLI reads from `--message`
 
