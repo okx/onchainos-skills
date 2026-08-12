@@ -138,6 +138,12 @@ impl TaskApiClient {
     /// (non-subscription) tasks and surfaces as `Err`; the caller treats it as a
     /// fail-safe not-copy-trade degrade, never an error.
     pub async fn fetch_subscription(&mut self, job_id: &str, agent_id: &str) -> Result<Value> {
+        let agent_id = agent_id.trim();
+        if agent_id.is_empty() {
+            return Err(anyhow!(
+                "agenticId is required to fetch subscription detail"
+            ));
+        }
         let path = self.subscribe_path(job_id);
         self.get_with_identity(&path, agent_id).await
     }

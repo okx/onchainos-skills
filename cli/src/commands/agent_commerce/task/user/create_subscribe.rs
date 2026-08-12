@@ -15,6 +15,8 @@ use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplay
 use crate::commands::agent_commerce::task::common::{self, DEBUG_LOG};
 use crate::commands::agent_commerce::task::signing;
 
+use super::subscription_ops::select_subscription_agent_id;
+
 pub(crate) const SUBSCRIBE_API_PREFIX: &str = "/priapi/v1/aieco/task/subscribe";
 /// Compatibility marker required by the current subscription API. It enables
 /// delivery routing only; runtime parsing, consent, cap and tool checks remain
@@ -240,6 +242,7 @@ pub async fn handle_create_subscribe(
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
     let (user_agent_id, _) = super::create::resolve_user_agent().await?;
+    let user_agent_id = select_subscription_agent_id(&user_agent_id, "")?;
     if DEBUG_LOG {
         eprintln!("[create-subscribe] user identity check passed (agentId: {user_agent_id})");
     }

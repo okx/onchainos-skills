@@ -57,10 +57,9 @@ pub enum WalletCommand {
     },
     /// Show current wallet status
     Status {
-        /// Include the best-effort post-login subscription/device snapshot.
-        /// Use only for an explicit user-facing login/status request; ordinary
-        /// internal authentication preconditions should omit it.
-        #[arg(long = "include-subscriptions")]
+        /// Legacy compatibility no-op. Subscription/device snapshots are
+        /// produced only by a newly completed login.
+        #[arg(long = "include-subscriptions", hide = true)]
         include_subscriptions: bool,
     },
     /// Show wallet addresses grouped by chain category (XLayer, EVM, Solana)
@@ -454,9 +453,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
         },
         WalletCommand::Add => auth::cmd_add().await,
         WalletCommand::Switch { account_id } => account::cmd_switch(&account_id).await,
-        WalletCommand::Status {
-            include_subscriptions,
-        } => account::cmd_status(include_subscriptions).await,
+        WalletCommand::Status { .. } => account::cmd_status().await,
         WalletCommand::Addresses { chain } => account::cmd_addresses(chain.as_deref()).await,
         WalletCommand::Qrcode { address } => cmd_qrcode(&address),
         WalletCommand::Logout => auth::cmd_logout().await,

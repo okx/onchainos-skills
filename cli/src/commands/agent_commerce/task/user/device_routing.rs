@@ -33,6 +33,7 @@ use crate::output;
 
 use super::create::resolve_user_agent;
 use super::create_subscribe::SUBSCRIBE_API_PREFIX;
+use super::subscription_ops::select_subscription_agent_id;
 
 /// Wallet device-list endpoint (userId resolved from JWT — never passed).
 const DEVICE_LIST_PATH: &str = "/priapi/v5/wallet/agentic/agent/device-list";
@@ -327,6 +328,8 @@ async fn fetch_all_devices(
     page: i64,
     page_size: i64,
 ) -> Result<DevicePage> {
+    let validated_agent_id = select_subscription_agent_id(agent_id, "")?;
+    let agent_id = validated_agent_id.as_str();
     let (start_page, norm_size) = normalize_page_params(page, page_size);
 
     let mut acc: Vec<DeviceRow> = Vec::new();
@@ -654,6 +657,8 @@ async fn post_update_items(
     agent_id: &str,
     items: &[UpdateItem],
 ) -> Result<()> {
+    let validated_agent_id = select_subscription_agent_id(agent_id, "")?;
+    let agent_id = validated_agent_id.as_str();
     validate_items_len(items.len())?;
     let body = build_update_body(items);
     let path = format!("{SUBSCRIBE_API_PREFIX}/device/batchUpdate");

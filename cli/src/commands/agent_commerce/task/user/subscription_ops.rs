@@ -113,6 +113,7 @@ fn print_watch_after_subscription_mutation(mutation: SubscriptionMutation, sub_i
 pub async fn handle_subscribe_cancel(client: &mut TaskApiClient, sub_id: &str) -> Result<()> {
     ensure_tokens_refreshed().await?;
     let (user_agent_id, _) = resolve_user_agent().await?;
+    let user_agent_id = select_subscription_agent_id(&user_agent_id, "")?;
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
 
     let resp = client
@@ -160,6 +161,7 @@ pub async fn handle_subscribe_cancel(client: &mut TaskApiClient, sub_id: &str) -
 pub async fn handle_start_autorenew(client: &mut TaskApiClient, sub_id: &str) -> Result<()> {
     ensure_tokens_refreshed().await?;
     let (user_agent_id, _) = resolve_user_agent().await?;
+    let user_agent_id = select_subscription_agent_id(&user_agent_id, "")?;
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
 
     // Step 1: providerConfirmStatus to get terms (with existing subId)
@@ -258,13 +260,14 @@ pub(crate) async fn handle_subscribe_reject_inner(
     reason: &str,
     user_agent_id: &str,
 ) -> Result<()> {
-    let (account_id, address) = signing::resolve_wallet_by_agent_id(user_agent_id).await?;
+    let user_agent_id = select_subscription_agent_id(user_agent_id, "")?;
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
 
     let resp = client
         .post_with_identity(
             &format!("{SUBSCRIBE_API_PREFIX}/{sub_id}/reject"),
             &serde_json::json!({}),
-            user_agent_id,
+            &user_agent_id,
         )
         .await
         .map_err(|e| anyhow::anyhow!("subscribe-reject failed: {e}"))?;
@@ -278,7 +281,7 @@ pub(crate) async fn handle_subscribe_reject_inner(
         &address,
         sub_id,
         biz_type,
-        user_agent_id,
+        &user_agent_id,
         Some(&reason_extra),
     )
     .await?;
@@ -303,6 +306,21 @@ pub(crate) async fn handle_subscribe_reject_inner(
 
 // ── subscribe-detail ────────────────────────────────────────────────────
 
+pub(crate) fn select_subscription_agent_id(
+    user_agent_id: &str,
+    asp_agent_id: &str,
+) -> Result<String> {
+    for agent_id in [user_agent_id, asp_agent_id] {
+        let agent_id = agent_id.trim();
+        if !agent_id.is_empty() {
+            return Ok(agent_id.to_string());
+        }
+    }
+    Err(anyhow!(
+        "agenticId is required for subscription requests"
+    ))
+}
+
 pub async fn handle_subscribe_detail(
     client: &mut TaskApiClient,
     sub_id: &str,
@@ -310,12 +328,17 @@ pub async fn handle_subscribe_detail(
 ) -> Result<()> {
     ensure_tokens_refreshed().await?;
 
-    let agent_id = match signing::resolve_agent_id_by_role(AGENT_ROLE_USER).await {
-        Ok(id) => id,
-        Err(_) => signing::resolve_agent_id_by_role(AGENT_ROLE_ASP)
+    let user_agent_id = signing::resolve_agent_id_by_role(AGENT_ROLE_USER)
+        .await
+        .unwrap_or_default();
+    let asp_agent_id = if user_agent_id.trim().is_empty() {
+        signing::resolve_agent_id_by_role(AGENT_ROLE_ASP)
             .await
-            .unwrap_or_default(),
+            .unwrap_or_default()
+    } else {
+        String::new()
     };
+    let agent_id = select_subscription_agent_id(&user_agent_id, &asp_agent_id)?;
 
     let json_mode = format.eq_ignore_ascii_case("json");
 
@@ -426,6 +449,7 @@ fn trial_window(resp: &serde_json::Value) -> (i64, i64) {
 pub async fn handle_subscribe_cost(client: &mut TaskApiClient) -> Result<()> {
     ensure_tokens_refreshed().await?;
     let (agent_id, _) = resolve_user_agent().await?;
+    let agent_id = select_subscription_agent_id(&agent_id, "")?;
     let path = format!("{SUBSCRIBE_API_PREFIX}/cost/active");
     let resp = client
         .get_with_identity(&path, &agent_id)
@@ -799,12 +823,7 @@ pub(crate) async fn fetch_my_subscriptions_snapshot_for_agent(
     status: Option<i32>,
     header_agent: String,
 ) -> Result<MySubscriptionsSnapshot> {
-    let header_agent = header_agent.trim().to_string();
-    if header_agent.is_empty() {
-        return Err(anyhow!(
-            "agenticId is required to fetch subscription snapshot"
-        ));
-    }
+    let header_agent = select_subscription_agent_id(&header_agent, "")?;
 
     let path = my_subscriptions_path();
     let data = client
@@ -1121,6 +1140,22 @@ mod tests {
         assert!(!path.contains('?'));
     }
 
+    #[test]
+    fn subscription_identity_rejects_blank_user_and_asp_ids() {
+        let error = select_subscription_agent_id("   ", "")
+            .expect_err("subscription requests require a usable agenticId");
+
+        assert!(error.to_string().contains("agenticId is required"));
+    }
+
+    #[test]
+    fn subscription_identity_falls_back_to_asp() {
+        let selected = select_subscription_agent_id("", "  asp-5254  ")
+            .expect("ASP identity should authorize subscription detail lookup");
+
+        assert_eq!(selected, "asp-5254");
+    }
+
     #[tokio::test]
     async fn my_subscriptions_rejects_blank_agentic_id_before_request() {
         let mut client = TaskApiClient::new();
@@ -1134,6 +1169,22 @@ mod tests {
         .await;
         let error = match result {
             Ok(_) => panic!("blank agenticId must be rejected before any HTTP request"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("agenticId is required"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn subscription_detail_transport_rejects_blank_agentic_id_before_request() {
+        let mut client = TaskApiClient::new();
+
+        let result = client.fetch_subscription("subscription-1", "   ").await;
+        let error = match result {
+            Ok(_) => panic!("blank agenticId must be rejected before subscription detail HTTP"),
             Err(error) => error,
         };
 
