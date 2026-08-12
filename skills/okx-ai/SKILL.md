@@ -5,7 +5,7 @@ description: >
 license: Apache-2.0
 metadata:
   author: okx
-  version: "4.4.10"
+  version: "4.4.9"
   homepage: "https://web3.okx.com"
 ---
 
