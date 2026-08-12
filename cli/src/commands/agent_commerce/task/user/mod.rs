@@ -132,8 +132,8 @@ pub enum TaskCommand {
         /// Output format: "json" for raw JSON
         #[arg(long, default_value = "")]
         format: String,
-        /// Device ids to omit from the default all-devices routing set (repeatable).
-        #[arg(long = "exclude-device")]
+        /// Legacy compatibility input. Create-time device selection is rejected.
+        #[arg(long = "exclude-device", hide = true)]
         exclude_device: Option<Vec<String>>,
     },
     /// Search matching ASPs (pre-publish or post-publish)

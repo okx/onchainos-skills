@@ -415,7 +415,7 @@ agent create-subscribe \
   [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
   [--autotrade-mode auto --autotrade-amount <decimal-number> --autotrade-cap <decimal-number> \
    --autotrade-quote <usdt|usdc>] \
-  [--exclude-device <id>]... [--format json]
+  [--format json]
 ```
 
 | Param | Required | Default | Description |
@@ -433,9 +433,8 @@ agent create-subscribe \
 | `--autotrade-amount` | With mode | - | Positive human-readable quote amount for each signal; decimal number only (for example `10` or `20.5`), never minimal units or a currency suffix; currency is selected by `--autotrade-quote`; must be ≤ cap |
 | `--autotrade-cap` | With mode | - | Positive human-readable per-signal quote cap; decimal number only, never minimal units or a currency suffix; currency is selected by `--autotrade-quote` |
 | `--autotrade-quote` | With mode | - | `usdt` or `usdc` |
-| `--exclude-device` | No | *(none)* | Device id to omit from the default all-devices routing set (repeatable) |
 
-> **Device routing:** the request now **always** carries `deviceList` — by default **all logged-in devices** (from `device-list`, paged to completion) minus any `--exclude-device`. If the device-list query fails or is empty the create **degrades to this device only** and the success `data` carries `deviceRoutingDegraded: true` (absent/false = normal); the create never aborts.
+> **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
