@@ -793,6 +793,13 @@ pub(crate) async fn fetch_my_subscriptions_snapshot_for_agent(
     status: Option<i32>,
     header_agent: String,
 ) -> Result<MySubscriptionsSnapshot> {
+    let header_agent = header_agent.trim().to_string();
+    if header_agent.is_empty() {
+        return Err(anyhow!(
+            "agenticId is required to fetch subscription snapshot"
+        ));
+    }
+
     let path = my_subscriptions_path();
     let data = client
         .get_with_agent_id(&path, &header_agent)
@@ -1096,6 +1103,28 @@ mod tests {
         let path = my_subscriptions_path();
         assert_eq!(path, "/priapi/v1/aieco/task/subscribe/my");
         assert!(!path.contains('?'));
+    }
+
+    #[tokio::test]
+    async fn my_subscriptions_rejects_blank_agentic_id_before_request() {
+        let mut client = TaskApiClient::new();
+
+        let result = fetch_my_subscriptions_snapshot_for_agent(
+            &mut client,
+            SubscriptionRole::Buyer,
+            None,
+            "   ".to_string(),
+        )
+        .await;
+        let error = match result {
+            Ok(_) => panic!("blank agenticId must be rejected before any HTTP request"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("agenticId is required"),
+            "unexpected error: {error:#}"
+        );
     }
 
     fn sub(buyer: &str, provider: &str, status: i64) -> SubscriptionInfo {
