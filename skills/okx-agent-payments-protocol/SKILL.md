@@ -4,7 +4,7 @@ description: "Use when an agent hits HTTP 402 / payment-required, or the user me
 license: MIT
 metadata:
   author: okx
-  version: "4.4.9"
+  version: "4.4.11-beta"
   homepage: "https://web3.okx.com"
 ---
 
