@@ -18,7 +18,7 @@ Read-only price estimate. **No `--slippage`.**
 onchainos swap quote --from <addr> --to <addr> --readable-amount <amt> --chain <chain> [--swap-mode <exactIn|exactOut>]
 ```
 
-`--readable-amount` (human units, CLI converts) or `--amount` (raw minimal units) — one of. Key return: `toTokenAmount`, `fromTokenAmount`, `estimateGasFee`, `tradeFee` (USD), `priceImpactPercent`, `dexRouterList[]` (`dexName`, `percentage`), and per-side `fromToken` / `toToken` with `isHoneyPot`, `taxRate`, `decimal`, `tokenUnitPrice`. Each route also carries the always-on SW2 fields `action` (`ok` / `warn` / `block`) and `reason` (semicolon-joined, deduplicated; empty string when `ok`) — the CLI classifies honeypot / tax-rate risk per route; read them, do not recompute (see [swap.md](swap.md) Risk Controls).
+`--readable-amount` (human units, CLI converts) or `--amount` (raw minimal units) — one of. Key return: `toTokenAmount`, `fromTokenAmount`, `estimateGasFee`, `tradeFee` (USD), `priceImpactPercent`, `dexRouterList[]` (`dexName`, `percentage`), and per-side `fromToken` / `toToken` with `isHoneyPot`, `taxRate`, `decimal`, `tokenUnitPrice`. Each route also carries the always-on SW2 fields `action` (`ok` / `warn` / `block`) and `reason` (semicolon-joined, deduplicated; empty string when `ok`) — the CLI classifies honeypot / tax-rate risk per route; read the returned verdict and do not recompute it.
 
 ## `swap execute`
 

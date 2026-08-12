@@ -13,11 +13,11 @@ Token risk / honeypot detection, DApp/URL phishing detection, transaction pre-ex
 
 | `action` | Level | Behavior |
 |---|---|---|
-| empty/null | Low | Safe to proceed |
+| empty/null | Low | Report: “No risk was detected within the checks performed.” |
 | `warn` | Medium | Show risk details, ask for explicit confirmation |
 | `block` | High | Do NOT proceed, show details, recommend cancel |
 
-The risk result is valid even if simulation fails (`simulator.revertReason` may hold the reason). A populated `warnings` field means the scan completed but data may be incomplete — still present available risk info. Empty `action` means "no risk" only on a **successful** response; on a failed call, apply the fail-safe principle.
+The risk result is valid even if simulation fails (`simulator.revertReason` may hold the reason). A populated `warnings` field means the scan completed but data may be incomplete — still present available risk info. On a **successful** response, an empty `action` means only that no risk was detected within the checks performed; on a failed call, apply the fail-safe principle.
 
 **token-scan**: pass `--trade-direction buy|sell` when the scan is part of a trade — the CLI then classifies each token server-side and returns the verdict as fields, so **MUST**: read them directly and **NEVER**: recompute the verdict from raw `riskLevel` client-side (the riskLevel×direction matrix lives in the CLI now; a hand-derived copy drifts from it). Each token carries `normalizedRiskLevel` (`CRITICAL` / `HIGH` / `MEDIUM` / `LOW`), `action`, and `isNative`; the top level carries `combinedAction` (strictest `action` across all non-native tokens) and `tradeDirection`. Respond to the `action` enum (severity `block` > `pause` > `warn` > `safe`):
 
@@ -26,7 +26,7 @@ The risk result is valid even if simulation fails (`simulator.revertReason` may 
 | `block` | Refuse the buy; show the risk. |
 | `pause` | Require an explicit yes/no before continuing. |
 | `warn` | Show the risk as an info notice; continue (buy) or allow (sell). |
-| `safe` | Proceed. |
+| `safe` | Report the scope-limited no-risk wording above, then continue as the matched flow allows. |
 
 Buy is stricter than sell, but that mapping is the CLI's — do not re-derive it. Omit `--trade-direction` for a standalone scan (no trade context): the CLI returns the raw backend array with no `action` field and you present all triggered labels without buy/sell logic. Show only the overall `normalizedRiskLevel` (never individual label levels), listing triggered labels without level prefixes. `isChainSupported: false` → skip with a warning, do not block. In swap context, a token-scan API failure auto-continues with a warning (overrides the general fail-safe to avoid blocking time-sensitive trades); standalone, follow the general fail-safe. Missing / `null` / unrecognized `riskLevel` normalizes to HIGH (the CLI does this).
 
@@ -51,7 +51,7 @@ The tx-scan risk item `ACCOUNT_IN_RISK` (existing malicious approvals) → guide
 
 ## dapp-scan
 
-`isMalicious: false` → safe to proceed; `true` → do NOT access, return the phishing warning immediately.
+`isMalicious: false` → report “No risk was detected within the checks performed”; `true` → do NOT access, return the phishing warning immediately.
 
 ## Integration with Other Domains
 

@@ -1,20 +1,19 @@
-# Shared Pre-flight Check
+# Preflight Checks
 
-> Run ONCE at the start of each conversation, before the first `onchainos` command; don't repeat it on later turns.
-
-## Default — do this, then stop
+> At the start of each session, run the following checks in order.
 
 1. Run: `onchainos preflight --skill-version <this skill's frontmatter version>`
-2. Read `data.action` from the JSON it prints (preflight always exits 0 — don't block on it):
+2. Read `data.action` from the JSON it prints:
    - **null** → continue silently; don't echo routine output.
-   - **non-null** → show it to the user (their language) and do exactly what it says (e.g. re-read this SKILL.md; for a package-manager skill, update via its manager; on integrity/update failure run `onchainos upgrade --force`).
+   - **non-null** → show it to the user and do exactly what it says
 
-`preflight` already updates the binary + skill checkouts, verifies integrity, and reports version + drift. That is the whole check — **do NOT run any other onchainos command** (`--version`, `upgrade`, `which`, ...) on your own initiative; then proceed to the user's request.
 
-For an explicitly pinned feature/E2E binary, the test launcher sets `ONCHAINOS_NO_SELF_UPDATE=1` (or adds `--no-self-update`) so preflight records the running binary identity without replacing it. Never enable this for an ordinary production session.
+## Global Notes
 
-## Fallbacks — ignore this whole section unless its exact trigger fires
-
-- **The `onchainos preflight` command above errored with "command not found"** (onchainos not installed) → open the README "Install CLI" section (`https://github.com/okx/onchainos-skills?tab=readme-ov-file#install-cli`), identify the current OS, and run the install command from that section matching it (macOS/Linux: the shell command; Windows: the PowerShell command); use the `-beta` install variant if this skill's frontmatter version contains `-beta`. Then re-run preflight (`onchainos preflight --skill-version <this skill's frontmatter version>`) and continue the user's original request. Stop only if the install itself fails.
-- **A later onchainos command fails** → don't auto-reinstall; report the error and suggest a manual reinstall.
+- **`onchainos preflight` fails with `command not found` or `unrecognized subcommand 'preflight'`** → install/replace the CLI directly. Use beta only when this skill's frontmatter version contains `-beta`; otherwise use stable:
+  - macOS/Linux stable: `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh`
+  - macOS/Linux beta: `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh -s -- --beta`
+  - Windows stable: `irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1 | iex`
+  - Windows beta: `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1))) --beta`
+  Then re-run `onchainos preflight --skill-version <this skill's frontmatter version>` and continue the original request. Stop only if installation fails.
 - **A global install printed `PromptScript does not support global skill installation`** (only with `npx skills add … --yes -g`) → known upstream `npx skills` limitation: the skill files installed correctly. Tell the user it's safe to ignore.

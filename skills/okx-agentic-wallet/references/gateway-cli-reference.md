@@ -39,7 +39,7 @@ onchainos gateway broadcast --signed-tx <tx> --address <address> --chain <chain>
 | `--signed-tx` | Yes | Fully signed tx (hex for EVM, base58 for Solana). |
 | `--address` | Yes | Sender wallet address. |
 | `--chain` | Yes | Chain name or ID. |
-| `--mev-protection` | No | Boolean; enables MEV protection on EVM (`enableMevProtection: true`). See [gateway.md](gateway.md) → MEV Protection. |
+| `--mev-protection` | No | Boolean; enables MEV protection on EVM (`enableMevProtection: true`). |
 
 Returns `orderId` (for status queries) and `txHash`.
 

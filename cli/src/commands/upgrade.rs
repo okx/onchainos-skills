@@ -4,13 +4,12 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::output;
 
 const REPO: &str = "okx/onchainos-skills";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-
 /// Known locations where onchainos-skills may be installed as a single
 /// monorepo git checkout. Paths are relative to the user's home directory.
 const SKILL_INSTALL_PATHS: &[&str] = &[
@@ -452,16 +451,32 @@ async fn download_and_install(client: &Client, version: &str) -> Result<()> {
         REPO, tag
     );
 
-    eprintln!("Fetching checksums...");
-    let checksums = client
-        .get(&checksums_url)
-        .header("User-Agent", "onchainos-cli")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await
-        .context("failed to download checksums.txt")?
-        .text()
-        .await?;
+    eprintln!("Downloading {} {} and checksums...", binary_name, tag);
+    let checksums_download = async {
+        client
+            .get(&checksums_url)
+            .header("User-Agent", "onchainos-cli")
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await
+            .context("failed to download checksums.txt")?
+            .text()
+            .await
+            .context("failed to read checksums.txt")
+    };
+    let binary_download = async {
+        client
+            .get(&binary_url)
+            .header("User-Agent", "onchainos-cli")
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await
+            .context("failed to download binary")?
+            .bytes()
+            .await
+            .context("failed to read binary bytes")
+    };
+    let (checksums, bytes) = tokio::try_join!(checksums_download, binary_download)?;
 
     let expected_hash = checksums
         .lines()
@@ -469,18 +484,6 @@ async fn download_and_install(client: &Client, version: &str) -> Result<()> {
         .and_then(|l| l.split_whitespace().next())
         .context("checksum not found for this platform in checksums.txt")?
         .to_string();
-
-    eprintln!("Downloading {} {}...", binary_name, tag);
-    let bytes = client
-        .get(&binary_url)
-        .header("User-Agent", "onchainos-cli")
-        .timeout(Duration::from_secs(120))
-        .send()
-        .await
-        .context("failed to download binary")?
-        .bytes()
-        .await
-        .context("failed to read binary bytes")?;
 
     // SHA-256 verification
     let actual_hash = hex::encode(Sha256::digest(&bytes));
@@ -654,7 +657,6 @@ fn graduate_checkout(path: &Path, path_str: &str) -> Value {
             "reason": "could not resolve the default branch for this beta checkout",
         });
     };
-
     let fail = |reason: String| {
         eprintln!(
             "Warning: could not switch {} to {} — {}",
@@ -751,7 +753,7 @@ fn update_one_checkout(path: &Path, graduated: bool) -> Value {
 /// Drop `skipped` checkouts from the payload. An `updated` entry drives the
 /// re-read hint and a `failed` one flags a real problem, but `skipped` (non-git
 /// / package-manager installs) is the normal case for most skills — listing it
-/// would flood the payload with noise. Shared by `execute` and `preflight`.
+/// would flood the payload with noise.
 fn reportable_skills(skills: &[Value]) -> Vec<&Value> {
     skills.iter().filter(|s| s["status"] != "skipped").collect()
 }
@@ -785,7 +787,7 @@ fn update_skill_checkouts(graduated: bool) -> Vec<Value> {
 /// on-disk pre-check is needed. Best-effort: an absent npx, a non-zero exit, or
 /// a 30s timeout all degrade to a result carrying a manual-command `hint` rather
 /// than hanging session start. Returns `Value::Null` only when the list is empty.
-fn remove_deprecated_skills() -> Value {
+async fn remove_deprecated_skills() -> Value {
     if DEPRECATED_SKILLS.is_empty() {
         return Value::Null;
     }
@@ -802,20 +804,17 @@ fn remove_deprecated_skills() -> Value {
         })
     };
 
-    eprintln!(
-        "Removing deprecated skills: {}...",
-        DEPRECATED_SKILLS.join(", ")
-    );
     // Spawn directly — no separate `npx --version` probe, since that call is
     // itself unbounded and could hang before the timeout guard below applies.
     // A missing npx surfaces here as a NotFound spawn error → reported as a skip.
-    let mut child = match Command::new("npx")
+    let mut child = match tokio::process::Command::new("npx")
         .args(["skills", "remove"])
         .args(DEPRECATED_SKILLS)
         .args(["-g", "-y"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .kill_on_drop(true)
         .spawn()
     {
         Ok(c) => c,
@@ -827,28 +826,19 @@ fn remove_deprecated_skills() -> Value {
 
     // Bounded wait: never block session start for more than 30s. On timeout the
     // child is killed and reaped so no npx process is left dangling.
-    let timeout = Duration::from_secs(30);
-    let start = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => {
-                return json!({ "status": "removed", "skills": DEPRECATED_SKILLS });
-            }
-            Ok(Some(_)) => {
-                return degrade("failed", "npx skills remove exited non-zero".to_string());
-            }
-            Ok(None) => {
-                if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return degrade(
-                        "failed",
-                        "npx skills remove timed out after 30s".to_string(),
-                    );
-                }
-                std::thread::sleep(Duration::from_millis(200));
-            }
-            Err(e) => return degrade("failed", e.to_string()),
+    match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
+        Ok(Ok(status)) if status.success() => {
+            json!({ "status": "removed", "skills": DEPRECATED_SKILLS })
+        }
+        Ok(Ok(_)) => degrade("failed", "npx skills remove exited non-zero".to_string()),
+        Ok(Err(e)) => degrade("failed", e.to_string()),
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            degrade(
+                "failed",
+                "npx skills remove timed out after 30s".to_string(),
+            )
         }
     }
 }
@@ -1127,16 +1117,43 @@ fn compute_drift(effective_cli: &str, skill_version: Option<&str>) -> Option<Str
     }
 }
 
-/// One-shot session-start check: resolve the latest release, auto-update the
-/// binary + local skill checkouts when newer (reusing the `upgrade` machinery),
-/// verify binary integrity, and report version drift. Always exits 0 with a JSON
-/// payload; the agent acts only on `data.action`. Unlike `upgrade`, it does not
-/// throttle — the prompt constrains it to run once per session.
+/// Session-start check: at most once every 12 hours, resolve the latest release,
+/// auto-update the binary, clean up deprecated skills, verify binary integrity,
+/// and report version drift.
+/// Always exits 0 with a JSON payload; the agent acts only on `data.action`.
 pub async fn preflight(args: PreflightArgs) -> Result<()> {
     let current = CURRENT_VERSION;
-    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
     let skill_version = args.skill_version.as_deref();
     let no_self_update = args.no_self_update || env_disables_self_update();
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Share upgrade's last_check stamp so frequent sessions do not repeatedly
+    // hit GitHub or run package-manager cleanup. Local CLI/skill drift can still
+    // be reported without a remote check.
+    if let Ok(home) = crate::home::onchainos_home() {
+        if is_throttled(&home, now_secs) {
+            let drift = compute_drift(current, skill_version);
+            output::success(json!({
+                "status": "fresh",
+                "currentVersion": current,
+                "updated": false,
+                "throttled": true,
+                "selfUpdateDisabled": no_self_update,
+                "binaryIdentity": Value::Null,
+                "integrity": "skipped",
+                "drift": match &drift {
+                    Some(_) => json!({ "skill": skill_version, "cli": current }),
+                    None => Value::Null,
+                },
+                "action": drift,
+            }));
+            return Ok(());
+        }
+    }
+
     let binary_identity = crate::audit::binary_identity();
     if let Some(identity) = &binary_identity {
         crate::audit::log(
@@ -1148,6 +1165,13 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
             None,
         );
     }
+    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
+
+    // Cleanup is independent from release resolution and integrity verification,
+    // so run it concurrently. We still join before output to preserve failure
+    // hints and the 30-second timeout guarantee.
+    eprintln!("Cleaning up deprecated skills in the background...");
+    let removal_task = tokio::spawn(remove_deprecated_skills());
 
     // Channel resolution — identical policy to `execute()`.
     let use_beta = skill_requests_beta(current, skill_version);
@@ -1168,7 +1192,6 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
             .await
             .map(|stable| decide_target(current, &stable, None))
     };
-
     let mut actions: Vec<String> = Vec::new();
 
     // 1. binary status
@@ -1234,7 +1257,6 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
             ("offline", None, false, false, current.to_string())
         }
     };
-
     // beta→stable graduation hint (reuse the exact wording from `upgrade`).
     if graduated {
         let mut g = json!({});
@@ -1244,29 +1266,7 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
         }
     }
 
-    // 2. skill checkouts (local git topologies only). A git checkout that was
-    //    actually pulled means its on-disk SKILL.md changed under the agent, so
-    //    prompt a re-read. Package-manager installs can't be auto-updated, but we
-    //    do NOT nag about them here every session — when the skill is genuinely
-    //    behind, the drift action below already tells the user (incl. package
-    //    managers). Unconditional nagging would violate the "action=null when
-    //    nothing to do" contract.
-    let skills = update_skill_checkouts(graduated);
-    if skills.iter().any(|s| s["status"] == "updated") {
-        actions.push(
-            "A local skill checkout was updated — re-read the active SKILL.md to pick up the changes.".to_string(),
-        );
-    }
-
-    // 2b. Purge merged/retired skills unconditionally (npx no-ops on ones that
-    //     aren't installed). Best-effort: it degrades to a hint rather than
-    //     blocking on a stuck npx, so preflight's later steps always run.
-    let deprecated_removal = remove_deprecated_skills();
-    if let Some(a) = removal_action(&deprecated_removal) {
-        actions.push(a);
-    }
-
-    // 3. integrity. Skip right after an install (this process still reports the
+    // 2. integrity. Skip right after an install (this process still reports the
     //    OLD version, so a re-hash would false-mismatch) and when offline (GitHub
     //    is unreachable — re-fetching the checksum would only fail again).
     let integrity = if no_self_update {
@@ -1284,8 +1284,7 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
         }
         i.as_str().to_string()
     };
-
-    // 4. drift (skill behind CLI)
+    // 3. drift (skill behind CLI)
     let drift = compute_drift(&effective_version, skill_version);
     let drift_json = match &drift {
         Some(msg) => {
@@ -1294,6 +1293,23 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
         }
         None => Value::Null,
     };
+    // 4. Collect the background cleanup result. Usually this adds no latency
+    // because it has already completed alongside the network checks above.
+    let deprecated_removal = match removal_task.await {
+        Ok(result) => result,
+        Err(e) => json!({
+            "status": "failed",
+            "reason": format!("background cleanup task failed: {e}"),
+            "skills": DEPRECATED_SKILLS,
+            "hint": format!(
+                "npx skills remove {} -g -y",
+                DEPRECATED_SKILLS.join(" ")
+            ),
+        }),
+    };
+    if let Some(a) = removal_action(&deprecated_removal) {
+        actions.push(a);
+    }
 
     let mut payload = json!({
         "status": status,
@@ -1309,9 +1325,14 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
         payload["channel"] = json!(if is_prerelease(&lv) { "beta" } else { "stable" });
         payload["latestVersion"] = json!(lv);
     }
-    let reported = reportable_skills(&skills);
-    if !reported.is_empty() {
-        payload["skills"] = json!(reported);
+    // Match upgrade --throttle semantics: a successful version check starts a
+    // new 12-hour window. Offline checks and failed binary installs remain
+    // immediately retryable.
+    let should_record_stamp = status != "offline" && status != "update_failed";
+    if should_record_stamp {
+        if let Ok(home) = crate::home::ensure_onchainos_home() {
+            let _ = record_check(&home, now_secs);
+        }
     }
     output::success(payload);
 
@@ -1324,10 +1345,10 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
 mod tests {
     use super::{
         artifact_name, compute_drift, current_branch, decide_target, decorate_graduation,
-        discover_skill_paths_in, highest_version, is_dev_build_path, is_throttled,
-        parse_ls_remote_versions, parse_release_tag_url, record_check, remote_is_trusted_okx,
-        removal_action, reportable_skills, semver_gt, skill_requests_beta, update_one_checkout,
-        DEPRECATED_SKILLS, env_disables_self_update,
+        discover_skill_paths_in, env_disables_self_update, highest_version, is_dev_build_path,
+        is_throttled, parse_ls_remote_versions, parse_release_tag_url, record_check,
+        remote_is_trusted_okx, removal_action, reportable_skills, semver_gt, skill_requests_beta,
+        update_one_checkout, DEPRECATED_SKILLS,
     };
     use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
@@ -1899,11 +1920,7 @@ ccc333\trefs/heads/main
 
     #[test]
     fn retired_activity_skills_remain_in_removal_list() {
-        for skill in [
-            "okx-hackathon",
-            "okx-activity",
-            "okx-growth-competition",
-        ] {
+        for skill in ["okx-hackathon", "okx-activity", "okx-growth-competition"] {
             assert!(
                 DEPRECATED_SKILLS.contains(&skill),
                 "retired skill {skill} must be removed during upgrade"
