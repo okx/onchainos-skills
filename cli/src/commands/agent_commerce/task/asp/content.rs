@@ -362,19 +362,6 @@ pub fn user_attachment_received_user_notify(job_id: &str) -> String {
     format!("[Job `{job_id}`] The User Agent sent an attachment (reference material for this task). File downloaded and saved locally.")
 }
 
-/// Append the FR-2 `autotrade: <canonical json>` line to a delivery message.
-///
-/// Empty `autotrade_line` ⇒ the message is returned byte-for-byte unchanged
-/// (ordinary delivery). The buyer sub parses this trailing line to run the
-/// auto-trade pipeline.
-pub fn with_autotrade_line(message: String, autotrade_line: &str) -> String {
-    if autotrade_line.is_empty() {
-        message
-    } else {
-        format!("{message}\nautotrade: {autotrade_line}")
-    }
-}
-
 // ── Subscription notifications (display-class) ─────────────────────
 
 fn fmt_epoch(ts: Option<i64>) -> Option<String> {

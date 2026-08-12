@@ -86,6 +86,30 @@ pub(crate) fn ensure_subscription_session(
 
 // ── subscribe-cancel ────────────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
+enum SubscriptionMutation {
+    Cancel,
+    Reject,
+}
+
+fn should_watch_after_subscription_mutation(mutation: SubscriptionMutation) -> bool {
+    matches!(mutation, SubscriptionMutation::Reject)
+}
+
+fn print_watch_after_subscription_mutation(mutation: SubscriptionMutation, sub_id: &str) {
+    if !super::content::is_cli_mode() || !should_watch_after_subscription_mutation(mutation) {
+        return;
+    }
+    println!();
+    println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
+    println!();
+    println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
+    println!();
+    println!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{sub_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read watch-core.md first.)");
+    println!();
+    println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
+}
+
 pub async fn handle_subscribe_cancel(client: &mut TaskApiClient, sub_id: &str) -> Result<()> {
     ensure_tokens_refreshed().await?;
     let (user_agent_id, _) = resolve_user_agent().await?;
@@ -126,16 +150,7 @@ pub async fn handle_subscribe_cancel(client: &mut TaskApiClient, sub_id: &str) -
     println!("  subId:  {sub_id}");
     println!("  txHash: {tx_hash}");
 
-    if super::content::is_cli_mode() {
-        println!();
-        println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
-        println!();
-        println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
-        println!();
-        println!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{sub_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read watch-core.md first.)");
-        println!();
-        println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
-    }
+    print_watch_after_subscription_mutation(SubscriptionMutation::Cancel, sub_id);
 
     Ok(())
 }
@@ -281,16 +296,7 @@ pub(crate) async fn handle_subscribe_reject_inner(
     println!("  subId:  {sub_id}");
     println!("  txHash: {tx_hash}");
 
-    if super::content::is_cli_mode() {
-        println!();
-        println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
-        println!();
-        println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
-        println!();
-        println!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{sub_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read watch-core.md first.)");
-        println!();
-        println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
-    }
+    print_watch_after_subscription_mutation(SubscriptionMutation::Reject, sub_id);
 
     Ok(())
 }
@@ -892,6 +898,16 @@ mod tests {
             }
             _ => panic!("expected SubscribeCancel"),
         }
+    }
+
+    #[test]
+    fn subscribe_cancel_does_not_rearm_scoped_watch() {
+        assert!(!should_watch_after_subscription_mutation(
+            SubscriptionMutation::Cancel
+        ));
+        assert!(should_watch_after_subscription_mutation(
+            SubscriptionMutation::Reject
+        ));
     }
 
     #[test]

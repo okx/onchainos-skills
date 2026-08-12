@@ -117,6 +117,18 @@ pub enum TaskCommand {
         /// Service billing interval (from asp-match subscription.interval, e.g. "month")
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
+        /// Explicit user-confirmed automatic signal execution (`auto`).
+        #[arg(long = "autotrade-mode")]
+        autotrade_mode: Option<String>,
+        /// Fixed quote-currency amount used for every delivered signal.
+        #[arg(long = "autotrade-amount")]
+        autotrade_amount: Option<String>,
+        /// Per-delivery automatic-execution cap.
+        #[arg(long = "autotrade-cap")]
+        autotrade_cap: Option<String>,
+        /// Quote currency for amount/cap (`usdt` or `usdc`).
+        #[arg(long = "autotrade-quote")]
+        autotrade_quote: Option<String>,
         /// Output format: "json" for raw JSON
         #[arg(long, default_value = "")]
         format: String,
@@ -703,11 +715,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 title, provider, attachments, endpoint, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount,
             }).await,
-        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, format, exclude_device } => {
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
                 service_id, use_trial, service_params, service_token_amount, service_token_address,
-                auto_renew, title, description, provider_agent_id, service_description, service_interval, format, exclude_device,
+                auto_renew, title, description, provider_agent_id, service_description, service_interval,
+                autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device,
             }).await
         }
         TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>

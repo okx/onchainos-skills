@@ -18,7 +18,7 @@ pub struct GrantFile {
     /// This version = 1; a higher version ⇒ reject.
     pub version: u32,
     pub job_id: String,
-    /// `"dex" | "defi" | "polymarket"` ⇒ caps.
+    /// `"dex" | "defi" | "polymarket" | "trade_kit"` ⇒ caps.
     pub grants: BTreeMap<String, VenueGrant>,
     /// seconds.
     pub created_at: u64,
@@ -51,7 +51,7 @@ pub const DENY_VENUE_NOT_AUTHORIZED: &str = "venue not authorized";
 pub const DENY_NO_CAP: &str = "no cap for action";
 pub const DENY_OVER_CAP: &str = "per-trade cap exceeded";
 
-const VENUES: &[&str] = &["dex", "defi", "polymarket"];
+const VENUES: &[&str] = &["dex", "defi", "polymarket", "trade_kit"];
 const ACTIONS: &[&str] = &["buy", "sell"];
 
 /// Map plugin-specific venue names onto the stable grant namespaces.
@@ -135,9 +135,9 @@ fn now_secs() -> u64 {
 /// The single shared grant-check core (FR-8). Runs the fixed validation chain in
 /// order; any failure ⇒ `GrantDeny(reason)`.
 ///
-/// `venue` ∈ {dex,hyperliquid,defi,polymarket}, where `hyperliquid` is an alias
-/// of `dex`; `action` ∈ {buy,sell}. `buy` checks against `maxBuy`, `sell`
-/// against `maxSell`.
+/// `venue` ∈ {dex,hyperliquid,defi,polymarket,trade_kit}, where `hyperliquid`
+/// is an alias of `dex`; `action` ∈ {buy,sell}. `buy` checks against `maxBuy`,
+/// `sell` against `maxSell`.
 pub fn check_grant(job_id: &str, venue: &str, action: &str, amount: &str) -> Result<(), GrantDeny> {
     // 1. jobId charset (path-traversal defense) — before any filesystem use.
     if !job_id_is_safe(job_id) {
@@ -214,7 +214,7 @@ pub fn write_grant(
         anyhow::bail!("invalid job id");
     }
     let venue = canonical_venue(venue).ok_or_else(|| {
-        anyhow::anyhow!("invalid venue (must be dex|hyperliquid|defi|polymarket)")
+        anyhow::anyhow!("invalid venue (must be dex|hyperliquid|defi|polymarket|trade_kit)")
     })?;
     if ttl_sec == 0 {
         anyhow::bail!("--ttl-sec must be > 0");
@@ -260,11 +260,12 @@ pub fn write_grant(
 /// polymarket sells get blocked by the plugin.
 const CONSENT_SELL_UNLIMITED: &str = "1000000000000000000"; // 1e18, far above any real sell
 
-/// Mirror the consent per-trade cap into the grant file so the out-of-process
-/// `autotrade-grant-check` (polymarket plugin) enforces the same buy-side cap the
-/// in-process pipeline does: `maxBuy = cap_u`, and `maxSell` = unlimited sentinel so
-/// auto-mode sells pass (sells are not cap-gated). Written by `autotrade-consent-set`
-/// for `Auto` mode.
+/// Mirror the consent per-trade cap into the grant file so model-selected execution
+/// tools enforce the same buy-side cap as the in-process pipeline. Existing DEX/DeFi/
+/// Polymarket routes retain their reduce-position sell allowance. Trade Kit is kept in
+/// a separate authorization domain and caps both sides because a CEX derivative
+/// `sell` may open or increase a short rather than reduce an existing position.
+/// Written by `autotrade-consent-set` for `Auto` mode.
 pub fn write_cap_grant(job_id: &str, cap_u: &str, ttl_sec: u64) -> anyhow::Result<()> {
     if !job_id_is_safe(job_id) {
         anyhow::bail!("invalid job id");
@@ -277,11 +278,16 @@ pub fn write_cap_grant(job_id: &str, cap_u: &str, ttl_sec: u64) -> anyhow::Resul
     let created_at = now_secs();
     let mut grants = BTreeMap::new();
     for venue in VENUES {
+        let max_sell = if *venue == "trade_kit" {
+            cap_u
+        } else {
+            CONSENT_SELL_UNLIMITED
+        };
         grants.insert(
             (*venue).to_string(),
             VenueGrant {
                 max_buy: Some(cap_u.to_string()),
-                max_sell: Some(CONSENT_SELL_UNLIMITED.to_string()),
+                max_sell: Some(max_sell.to_string()),
             },
         );
     }
@@ -339,6 +345,8 @@ mod tests {
             assert!(check_grant("job1", "hyperliquid", "buy", "100").is_ok());
             assert!(check_grant("job1", "defi", "buy", "50").is_ok());
             assert!(check_grant("job1", "polymarket", "buy", "99.99").is_ok());
+            assert!(check_grant("job1", "trade_kit", "buy", "100").is_ok());
+            assert!(check_grant("job1", "trade_kit", "sell", "100").is_ok());
             // over cap denies
             assert_eq!(
                 check_grant("job1", "dex", "buy", "100.01").unwrap_err().0,
@@ -346,6 +354,18 @@ mod tests {
             );
             assert_eq!(
                 check_grant("job1", "hyperliquid", "buy", "100.01")
+                    .unwrap_err()
+                    .0,
+                DENY_OVER_CAP
+            );
+            assert_eq!(
+                check_grant("job1", "trade_kit", "buy", "100.01")
+                    .unwrap_err()
+                    .0,
+                DENY_OVER_CAP
+            );
+            assert_eq!(
+                check_grant("job1", "trade_kit", "sell", "100.01")
                     .unwrap_err()
                     .0,
                 DENY_OVER_CAP

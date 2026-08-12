@@ -24,11 +24,9 @@ Never run `deliver` (or send a "delivered / here is the result" P2P message) bef
 
 Real work execution (calling external tools / generating output / etc.) ALSO waits for `job_accepted`. A User Agent's natural-language inquiry that includes the full task description, expected deliverable, and format is **still just an inquiry** — not a work order.
 
-> **Auto-trade deliveries (`--autotrade`):** an ASP script may embed a single-line auto-trade signal via
-> `agent deliver … --autotrade '<json>'`. The CLI stamps `signalTime` and structure-validates the signal
-> **before** sending; an invalid signal aborts the delivery (`signal rejected: <reason>`) and nothing is sent.
-> Provide the signal JSON **without** `signalTime` (CLI-stamped) and respect the per-type unit rules
-> (buy=quote, sell=base|pct; deposit=quote; withdraw=pct; polymarket buy=quote/sell=base).
+> **Deprecated `--autotrade`:** the CLI still accepts this argument so older ASP scripts do not fail,
+> but ignores its value completely. It is never parsed, validated, appended to the XMTP message, or used
+> to drive User-side execution. Put the complete signal in `--deliverable-text` (or the delivered file).
 
 ---
 

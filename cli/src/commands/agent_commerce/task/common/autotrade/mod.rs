@@ -6,7 +6,7 @@
 //! helpers; it no longer parses or executes delivered signal text.
 //!
 //! This module is shared by:
-//! - the legacy **ASP outbound** `agent deliver --autotrade` compatibility path;
+//! - the retired ASP `agent deliver --autotrade` argument (accepted but ignored);
 //! - the Active-subscription route cache and consent/grant commands used by the
 //!   model-selected Skill/tool;
 //! - compatibility rendering for decisions produced by earlier releases.
@@ -116,8 +116,8 @@ impl std::fmt::Display for DegradeReason {
 #[derive(Debug)]
 pub enum AutoTradeError {
     /// Structural / schema violation.
-    /// - Outbound (`deliver --autotrade`): `output::error("signal rejected: …")`, exit 1, nothing sent.
-    /// - Inbound: notify-only with this reason (a *reject*, not a silent ignore).
+    /// Retained for compatibility helpers and their tests; delivered text is no
+    /// longer parsed into this schema on either side.
     Reject(String),
 
     /// Runtime fail-safe (query fail, not-active, no wallet, over-cap, holding-fail,

@@ -1,8 +1,8 @@
 //! Local OKX Agent Trade Kit discovery and machine-readable capability parsing.
 //!
 //! Subscription preflight must stay side-effect free: it only checks whether the
-//! `okx` CLI and non-sensitive local setup markers exist. It never launches the
-//! CLI, reads credential contents, touches the keychain, or performs network I/O.
+//! `okx` CLI exists. It never launches the CLI, reads credential/configuration
+//! state, touches the keychain, or performs network I/O.
 //! Runtime authentication and account checks belong to the selected trading
 //! Skill/tool and must run for every delivery.
 
@@ -25,11 +25,8 @@ pub const CLI_PACKAGE: &str = "@okx_ai/okx-trade-cli";
 pub enum LocalReadiness {
     /// The skill may be installed, but the required `okx` runtime is absent.
     Missing,
-    /// The runtime exists, but no non-empty API-key configuration marker exists.
-    /// An OAuth session may still be valid; runtime preflight must check it later.
-    NeedsConfiguration,
-    /// The runtime and a non-empty local configuration marker both exist.
-    /// Runtime preflight must still re-check auth and required capabilities.
+    /// The runtime exists. Authentication, account permissions, and required
+    /// capabilities are intentionally re-checked by the first signal at runtime.
     Ready,
 }
 
@@ -40,17 +37,14 @@ pub enum LocalReadiness {
 pub struct LocalProbe {
     pub cli_path: Option<PathBuf>,
     pub skill_installed: bool,
-    pub config_present: bool,
 }
 
 impl LocalProbe {
     pub fn readiness(&self) -> LocalReadiness {
         if self.cli_path.is_none() {
             LocalReadiness::Missing
-        } else if self.config_present {
-            LocalReadiness::Ready
         } else {
-            LocalReadiness::NeedsConfiguration
+            LocalReadiness::Ready
         }
     }
 }
@@ -68,7 +62,6 @@ pub fn probe_local_with(home: &Path, path_var: &str) -> LocalProbe {
     LocalProbe {
         cli_path: find_cli(home, path_var),
         skill_installed: crate::commands::upgrade::is_skill_installed_in(home, TRADE_SKILL_ID),
-        config_present: config_marker_present(home),
     }
 }
 
@@ -110,16 +103,6 @@ fn find_cli(home: &Path, path_var: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-/// The API-key wizard writes this file. Presence and non-zero length are the
-/// only subscription-time signals consumed; credential contents are never read.
-/// A missing file does not prove OAuth is absent, hence `NeedsConfiguration`
-/// rather than `Missing` when the CLI exists.
-fn config_marker_present(home: &Path) -> bool {
-    std::fs::metadata(home.join(".okx/config.toml"))
-        .map(|m| m.is_file() && m.len() > 0)
-        .unwrap_or(false)
 }
 
 /// Sanitized result of `okx list-tools --json`. It retains only version and tool
@@ -215,7 +198,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn local_probe_uses_okx_cli_and_config_marker() {
+    fn local_probe_readiness_depends_only_on_okx_cli() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let bin = home.join("bin");
@@ -235,7 +218,7 @@ mod tests {
 
         std::fs::write(bin.join(CLI_BINARY), b"x").unwrap();
         let installed = probe_local_with(home, bin.to_str().unwrap());
-        assert_eq!(installed.readiness(), LocalReadiness::NeedsConfiguration);
+        assert_eq!(installed.readiness(), LocalReadiness::Ready);
         assert!(installed.cli_path.is_some());
 
         std::fs::create_dir_all(home.join(".okx")).unwrap();
@@ -248,7 +231,7 @@ mod tests {
         std::fs::write(home.join(".okx/config.toml"), b"").unwrap();
         assert_eq!(
             probe_local_with(home, bin.to_str().unwrap()).readiness(),
-            LocalReadiness::NeedsConfiguration
+            LocalReadiness::Ready
         );
     }
 

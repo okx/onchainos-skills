@@ -339,16 +339,35 @@ pub fn user_notify(content: &str, print_output: bool) -> Result<()> {
 /// Sub-side replacement for the MCP `xmtp_prompt_user` tool. Pushes a
 /// decision card into the okx-a2a CLI's SQLite `user_attention` table so the
 /// user-session can surface it and relay the user's reply back later.
-/// All routing fields (job_id / role / agent_id / to_agent_id / source_event)
-/// are encoded inside `llm_content` by the caller (see `resolve_llm_content_cli`).
-pub fn user_decision_request(user_content: &str, llm_content: &str) -> Result<()> {
+/// The job id is also passed as a first-class CLI argument so okx-a2a can
+/// atomically replace an older pending decision for the same job. The remaining
+/// routing fields are encoded inside `llm_content` by the caller (see
+/// `resolve_llm_content_cli`).
+fn user_decision_request_args<'a>(
+    job_id: &'a str,
+    user_content: &'a str,
+    llm_content: &'a str,
+) -> Vec<&'a str> {
+    vec![
+        "user",
+        "decision-request",
+        "--user-content",
+        user_content,
+        "--llm-content",
+        llm_content,
+        "--job-id",
+        job_id,
+        "--json",
+    ]
+}
+
+pub fn user_decision_request(job_id: &str, user_content: &str, llm_content: &str) -> Result<()> {
+    if job_id.trim().is_empty() {
+        anyhow::bail!("job id is required for an atomic user decision request");
+    }
+    let args = user_decision_request_args(job_id, user_content, llm_content);
     let out = Command::new("okx-a2a")
-        .args([
-            "user", "decision-request",
-            "--user-content", user_content,
-            "--llm-content", llm_content,
-            "--json",
-        ])
+        .args(args)
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
@@ -691,6 +710,31 @@ pub fn file_download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decision_request_is_bound_to_job_for_atomic_coalescing() {
+        let args = user_decision_request_args("job-123", "prompt", "route");
+        assert_eq!(
+            args,
+            [
+                "user",
+                "decision-request",
+                "--user-content",
+                "prompt",
+                "--llm-content",
+                "route",
+                "--job-id",
+                "job-123",
+                "--json",
+            ]
+        );
+    }
+
+    #[test]
+    fn decision_request_rejects_an_empty_job_binding() {
+        let err = user_decision_request("  ", "prompt", "route").unwrap_err();
+        assert!(err.to_string().contains("job id is required"));
+    }
 
     // The verdict is exercised through the pure `interpret_capabilities_output` seam
     // with injected output — no real `okx-a2a` binary is spawned (the `capabilities`

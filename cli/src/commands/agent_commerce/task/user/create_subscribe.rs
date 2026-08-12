@@ -7,6 +7,9 @@ use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
+use crate::commands::agent_commerce::task::common::autotrade::{
+    amount::Decimal, consent, grants,
+};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
 use crate::commands::agent_commerce::task::common::{self, DEBUG_LOG};
@@ -30,6 +33,10 @@ pub struct CreateSubscribeParams {
     pub provider_agent_id: Option<String>,
     pub service_description: String,
     pub service_interval: String,
+    pub autotrade_mode: Option<String>,
+    pub autotrade_amount: Option<String>,
+    pub autotrade_cap: Option<String>,
+    pub autotrade_quote: Option<String>,
     pub format: String,
     /// Device ids to omit from the default all-devices routing set (repeatable).
     pub exclude_device: Option<Vec<String>>,
@@ -37,6 +44,14 @@ pub struct CreateSubscribeParams {
 
 const MAX_TITLE_CHARS: usize = 64;
 const MAX_DESCRIPTION_CHARS: usize = 4096;
+const SUBSCRIPTION_AUTOTRADE_TTL_SEC: u64 = 31_536_000;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SubscriptionAutoTradeConfig {
+    amount: String,
+    cap: String,
+    quote: String,
+}
 
 impl CreateSubscribeParams {
     fn validate(&self) -> Result<()> {
@@ -64,8 +79,91 @@ impl CreateSubscribeParams {
         if self.description.chars().count() > MAX_DESCRIPTION_CHARS {
             bail!("--description exceeds {MAX_DESCRIPTION_CHARS} characters");
         }
+        self.autotrade_config()?;
         Ok(())
     }
+
+    fn autotrade_config(&self) -> Result<Option<SubscriptionAutoTradeConfig>> {
+        let has_policy_field = self.autotrade_amount.is_some()
+            || self.autotrade_cap.is_some()
+            || self.autotrade_quote.is_some();
+        let Some(mode) = self.autotrade_mode.as_deref() else {
+            if has_policy_field {
+                bail!("--autotrade-mode auto is required when automatic execution fields are supplied");
+            }
+            return Ok(None);
+        };
+        if !mode.eq_ignore_ascii_case("auto") {
+            bail!("--autotrade-mode currently supports only: auto");
+        }
+
+        let mut missing = Vec::new();
+        if self.autotrade_amount.as_deref().map_or(true, str::is_empty) {
+            missing.push("--autotrade-amount");
+        }
+        if self.autotrade_cap.as_deref().map_or(true, str::is_empty) {
+            missing.push("--autotrade-cap");
+        }
+        if self.autotrade_quote.as_deref().map_or(true, str::is_empty) {
+            missing.push("--autotrade-quote");
+        }
+        if !missing.is_empty() {
+            bail!(
+                "automatic signal execution is missing required fields: {}",
+                missing.join(", ")
+            );
+        }
+
+        let amount = self.autotrade_amount.as_deref().unwrap_or_default();
+        let cap = self.autotrade_cap.as_deref().unwrap_or_default();
+        let parsed_amount = Decimal::parse(amount)
+            .map_err(|_| anyhow::anyhow!("--autotrade-amount must be a positive decimal"))?;
+        let parsed_cap = Decimal::parse(cap)
+            .map_err(|_| anyhow::anyhow!("--autotrade-cap must be a positive decimal"))?;
+        if parsed_amount.is_zero() {
+            bail!("--autotrade-amount must be greater than 0");
+        }
+        if parsed_cap.is_zero() {
+            bail!("--autotrade-cap must be greater than 0");
+        }
+        if !parsed_amount.le(&parsed_cap) {
+            bail!("--autotrade-amount must not exceed --autotrade-cap");
+        }
+        let quote = self
+            .autotrade_quote
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !consent::QUOTE_WHITELIST.contains(&quote.as_str()) {
+            bail!("--autotrade-quote must be one of: usdt | usdc");
+        }
+
+        Ok(Some(SubscriptionAutoTradeConfig {
+            amount: parsed_amount.to_plain_string(),
+            cap: parsed_cap.to_plain_string(),
+            quote,
+        }))
+    }
+}
+
+fn persist_subscription_autotrade(
+    job_id: &str,
+    config: &SubscriptionAutoTradeConfig,
+) -> Result<()> {
+    consent::write_consent_with_trade_amount(
+        job_id,
+        consent::ConsentMode::Auto,
+        Some(&config.cap),
+        Some(&config.amount),
+        Some(&config.quote),
+        SUBSCRIPTION_AUTOTRADE_TTL_SEC,
+    )?;
+    if let Err(err) = grants::write_cap_grant(job_id, &config.cap, SUBSCRIPTION_AUTOTRADE_TTL_SEC) {
+        consent::clear_consent(job_id);
+        grants::clear_grant(job_id);
+        return Err(err);
+    }
+    Ok(())
 }
 
 /// Assemble the `create` request body. `device_list` is ALWAYS embedded (even
@@ -111,12 +209,16 @@ fn build_create_success(
     tx_hash: &str,
     degraded: bool,
     offline_replay: &OfflineReplayCapability,
+    autotrade_requested: bool,
+    autotrade_configured: bool,
 ) -> serde_json::Value {
     let mut envelope = serde_json::json!({
         "subId": sub_id,
         "txHash": tx_hash,
         "deviceRoutingDegraded": degraded,
         "offlineReplaySupported": offline_replay.supported,
+        "autoTradeConfigRequested": autotrade_requested,
+        "autoTradeConfigured": autotrade_configured,
     });
     if !offline_replay.supported {
         envelope["offlineReplayFixCommands"] =
@@ -130,6 +232,7 @@ pub async fn handle_create_subscribe(
     params: CreateSubscribeParams,
 ) -> Result<()> {
     params.validate()?;
+    let autotrade_config = params.autotrade_config()?;
 
     let json_mode = params.format.eq_ignore_ascii_case("json");
 
@@ -271,6 +374,21 @@ pub async fn handle_create_subscribe(
         client, uop_data, &account_id, &address, &sub_id, biz_type, &user_agent_id, None,
     ).await?;
 
+    // The jobId exists only after create + broadcast. Persist the user's final,
+    // explicit subscription setup into the same fail-closed policy files used
+    // by runtime execution. A write failure cannot roll back the subscription.
+    let autotrade_requested = autotrade_config.is_some();
+    let autotrade_configured = match autotrade_config.as_ref() {
+        Some(config) => match persist_subscription_autotrade(&sub_id, config) {
+            Ok(()) => true,
+            Err(err) => {
+                eprintln!("[autotrade] subscription created, but automatic execution configuration could not be persisted: {err}");
+                false
+            }
+        },
+        None => false,
+    };
+
     // Persist only bounded classifier output. Failure is advisory: the
     // subscription already exists and runtime still has safe shape defaults.
     if !params.service_description.trim().is_empty() {
@@ -298,6 +416,8 @@ pub async fn handle_create_subscribe(
             format!("useTrial={effective_use_trial}"),
             format!("autoRenew={}", params.auto_renew),
             format!("copyTrade={SUBSCRIPTION_DELIVERY_ENABLED}"),
+            format!("autoTradeConfigRequested={autotrade_requested}"),
+            format!("autoTradeConfigured={autotrade_configured}"),
             format!("txHash={tx_hash}"),
         ]),
         None,
@@ -319,6 +439,8 @@ pub async fn handle_create_subscribe(
             &tx_hash,
             device_routing_degraded,
             &offline_replay,
+            autotrade_requested,
+            autotrade_configured,
         ));
         // Balance is verified *before* broadcast now (blocking), so a success
         // envelope no longer carries a `balanceWarning` — an insufficiency exits
@@ -339,6 +461,12 @@ pub async fn handle_create_subscribe(
     println!("✓ Subscription submitted (transaction broadcast, awaiting on-chain confirmation)");
     println!("  jobId:  {sub_id}");
     println!("  txHash: {tx_hash}");
+    if autotrade_requested {
+        println!(
+            "  Automatic signal execution: {}",
+            if autotrade_configured { "configured" } else { "configuration pending" }
+        );
+    }
     if device_routing_degraded {
         println!(
             "  ⚠ Device list unavailable — this subscription was set to receive on THIS device only; other devices can be added later."
@@ -455,6 +583,10 @@ mod tests {
                 service_description,
                 service_params,
                 service_interval,
+                autotrade_mode,
+                autotrade_amount,
+                autotrade_cap,
+                autotrade_quote,
                 format,
                 exclude_device,
             } => {
@@ -469,6 +601,10 @@ mod tests {
                 assert_eq!(service_description, "");
                 assert_eq!(service_params, "");
                 assert_eq!(service_interval, "month");
+                assert!(autotrade_mode.is_none());
+                assert!(autotrade_amount.is_none());
+                assert!(autotrade_cap.is_none());
+                assert!(autotrade_quote.is_none());
                 assert_eq!(format, "");
                 assert!(exclude_device.is_none());
             }
@@ -543,6 +679,10 @@ mod tests {
             provider_agent_id: provider.map(str::to_string),
             service_description: String::new(),
             service_interval: "month".to_string(),
+            autotrade_mode: None,
+            autotrade_amount: None,
+            autotrade_cap: None,
+            autotrade_quote: None,
             format: "json".to_string(),
             exclude_device: None,
         }
@@ -578,13 +718,15 @@ mod tests {
             supported: true,
             fix_commands: Vec::new(),
         };
-        let degraded = super::build_create_success("0xjob", "0xhash", true, &supported);
+        let degraded = super::build_create_success("0xjob", "0xhash", true, &supported, true, true);
         assert_eq!(degraded["deviceRoutingDegraded"], serde_json::json!(true));
         assert_eq!(degraded["subId"], serde_json::json!("0xjob"));
         assert_eq!(degraded["txHash"], serde_json::json!("0xhash"));
         assert_eq!(degraded["offlineReplaySupported"], serde_json::json!(true));
+        assert_eq!(degraded["autoTradeConfigRequested"], serde_json::json!(true));
+        assert_eq!(degraded["autoTradeConfigured"], serde_json::json!(true));
         assert!(degraded.get("offlineReplayFixCommands").is_none());
-        let ok = super::build_create_success("0xjob", "0xhash", false, &supported);
+        let ok = super::build_create_success("0xjob", "0xhash", false, &supported, false, false);
         assert_eq!(ok["deviceRoutingDegraded"], serde_json::json!(false));
     }
 
@@ -596,7 +738,7 @@ mod tests {
             supported: false,
             fix_commands: vec!["npm i -g @okxweb3/a2a-node@1.2.3".to_string()],
         };
-        let env = super::build_create_success("0xjob", "0xhash", false, &unsupported);
+        let env = super::build_create_success("0xjob", "0xhash", false, &unsupported, false, false);
         assert_eq!(env["offlineReplaySupported"], serde_json::json!(false));
         assert_eq!(
             env["offlineReplayFixCommands"],
@@ -607,7 +749,7 @@ mod tests {
             supported: false,
             fix_commands: Vec::new(),
         };
-        let env2 = super::build_create_success("0xjob", "0xhash", false, &unsupported_default);
+        let env2 = super::build_create_success("0xjob", "0xhash", false, &unsupported_default, false, false);
         assert_eq!(
             env2["offlineReplayFixCommands"],
             serde_json::json!(["npm install -g @okxweb3/a2a-node@latest"])
@@ -642,6 +784,10 @@ mod tests {
             provider_agent_id: Some("agent-99".to_string()),
             service_description: String::new(),
             service_interval: "month".to_string(),
+            autotrade_mode: None,
+            autotrade_amount: None,
+            autotrade_cap: None,
+            autotrade_quote: None,
             format: "json".to_string(),
             exclude_device: None,
         };
@@ -658,5 +804,95 @@ mod tests {
         assert_eq!(body["providerAgentId"], serde_json::json!("agent-99"));
         assert_eq!(body["description"], params.description);
         assert!(body.get("descriptionSummary").is_none());
+    }
+
+    #[test]
+    fn cli_create_subscribe_accepts_complete_autotrade_configuration() {
+        let cli = TestCli::parse_from([
+            "test", "create-subscribe",
+            "--service-id", "svc_auto",
+            "--service-token-amount", "1",
+            "--service-token-address", "0xA",
+            "--auto-renew", "1",
+            "--title", "Signals",
+            "--description", "Execute the delivered signals",
+            "--autotrade-mode", "auto",
+            "--autotrade-amount", "20.00",
+            "--autotrade-cap", "50",
+            "--autotrade-quote", "USDT",
+        ]);
+        let super::super::TaskCommand::CreateSubscribe {
+            autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, ..
+        } = cli.cmd else {
+            panic!("expected CreateSubscribe");
+        };
+        assert_eq!(autotrade_mode.as_deref(), Some("auto"));
+        assert_eq!(autotrade_amount.as_deref(), Some("20.00"));
+        assert_eq!(autotrade_cap.as_deref(), Some("50"));
+        assert_eq!(autotrade_quote.as_deref(), Some("USDT"));
+    }
+
+    #[test]
+    fn autotrade_config_reports_only_missing_fields() {
+        let mut params = params_fixture(None);
+        params.autotrade_mode = Some("auto".to_string());
+        params.autotrade_amount = Some("20".to_string());
+        let error = params.validate().unwrap_err().to_string();
+        assert!(error.contains("--autotrade-cap"));
+        assert!(error.contains("--autotrade-quote"));
+        assert!(!error.contains("--autotrade-amount,"));
+    }
+
+    #[test]
+    fn autotrade_config_normalizes_and_rejects_amount_above_cap() {
+        let mut params = params_fixture(None);
+        params.autotrade_mode = Some("auto".to_string());
+        params.autotrade_amount = Some("20.00".to_string());
+        params.autotrade_cap = Some("50.0".to_string());
+        params.autotrade_quote = Some("USDT".to_string());
+        let config = params.autotrade_config().unwrap().unwrap();
+        assert_eq!(config.amount, "20");
+        assert_eq!(config.cap, "50");
+        assert_eq!(config.quote, "usdt");
+
+        params.autotrade_amount = Some("51".to_string());
+        assert!(params.validate().unwrap_err().to_string().contains("must not exceed"));
+    }
+
+    #[test]
+    fn persist_subscription_autotrade_writes_consent_and_enforceable_grants() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("create_subscribe_autotrade");
+        if home.exists() {
+            std::fs::remove_dir_all(&home).ok();
+        }
+        std::fs::create_dir_all(&home).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &home);
+
+        let config = SubscriptionAutoTradeConfig {
+            amount: "20".to_string(),
+            cap: "50".to_string(),
+            quote: "usdt".to_string(),
+        };
+        persist_subscription_autotrade("job-subscribe-auto", &config).unwrap();
+
+        let stored = consent::load_consent("job-subscribe-auto")
+            .unwrap()
+            .expect("consent must exist");
+        assert_eq!(stored.mode, consent::ConsentMode::Auto);
+        assert_eq!(stored.trade_amount_u.as_deref(), Some("20"));
+        assert_eq!(stored.cap_u.as_deref(), Some("50"));
+        assert_eq!(stored.quote_token.as_deref(), Some("usdt"));
+        assert!(grants::check_grant("job-subscribe-auto", "dex", "buy", "50").is_ok());
+        assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "50").is_ok());
+        assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "51").is_err());
+
+        std::env::remove_var("ONCHAINOS_HOME");
+        std::fs::remove_dir_all(home).ok();
     }
 }

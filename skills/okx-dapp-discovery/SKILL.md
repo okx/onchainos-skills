@@ -8,7 +8,7 @@ description: |
 license: MIT
 metadata:
   author: okx
-  version: "4.4.9"
+  version: "4.4.10"
   homepage: "https://web3.okx.com"
 ---
 
