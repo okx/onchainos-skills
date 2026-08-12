@@ -28,12 +28,14 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::subscription_identity::{
+    select_subscription_agent_id,
+};
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::output;
 
 use super::create::resolve_user_agent;
 use super::create_subscribe::SUBSCRIBE_API_PREFIX;
-use super::subscription_ops::select_subscription_agent_id;
 
 /// Wallet device-list endpoint (userId resolved from JWT — never passed).
 const DEVICE_LIST_PATH: &str = "/priapi/v5/wallet/agentic/agent/device-list";

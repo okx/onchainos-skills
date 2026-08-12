@@ -20,8 +20,10 @@ use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::subscription_identity::{
+    select_subscription_agent_id,
+};
 use crate::commands::agent_commerce::task::signing;
-use crate::commands::agent_commerce::task::user::subscription_ops::select_subscription_agent_id;
 
 /// `jobType` value that marks a task as a subscription (Subscribe API doc §1.3).
 pub const JOB_TYPE_SUBSCRIBE: i64 = 1;

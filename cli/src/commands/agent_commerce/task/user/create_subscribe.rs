@@ -12,10 +12,11 @@ use crate::commands::agent_commerce::task::common::autotrade::{
 };
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
+use crate::commands::agent_commerce::task::common::subscription_identity::{
+    select_subscription_agent_id,
+};
 use crate::commands::agent_commerce::task::common::{self, DEBUG_LOG};
 use crate::commands::agent_commerce::task::signing;
-
-use super::subscription_ops::select_subscription_agent_id;
 
 pub(crate) const SUBSCRIBE_API_PREFIX: &str = "/priapi/v1/aieco/task/subscribe";
 /// Compatibility marker required by the current subscription API. It enables

@@ -22,6 +22,9 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::common::okx_a2a;
 use crate::commands::agent_commerce::task::common::query as common_query;
 use crate::commands::agent_commerce::task::common::state_machine::SubStatus;
+use crate::commands::agent_commerce::task::common::subscription_identity::{
+    select_subscription_agent_id,
+};
 use crate::commands::agent_commerce::task::common::{AGENT_ROLE_ASP, AGENT_ROLE_USER};
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
@@ -305,21 +308,6 @@ pub(crate) async fn handle_subscribe_reject_inner(
 }
 
 // ── subscribe-detail ────────────────────────────────────────────────────
-
-pub(crate) fn select_subscription_agent_id(
-    user_agent_id: &str,
-    asp_agent_id: &str,
-) -> Result<String> {
-    for agent_id in [user_agent_id, asp_agent_id] {
-        let agent_id = agent_id.trim();
-        if !agent_id.is_empty() {
-            return Ok(agent_id.to_string());
-        }
-    }
-    Err(anyhow!(
-        "agenticId is required for subscription requests"
-    ))
-}
 
 pub async fn handle_subscribe_detail(
     client: &mut TaskApiClient,
@@ -1138,22 +1126,6 @@ mod tests {
         let path = my_subscriptions_path();
         assert_eq!(path, "/priapi/v1/aieco/task/subscribe/my");
         assert!(!path.contains('?'));
-    }
-
-    #[test]
-    fn subscription_identity_rejects_blank_user_and_asp_ids() {
-        let error = select_subscription_agent_id("   ", "")
-            .expect_err("subscription requests require a usable agenticId");
-
-        assert!(error.to_string().contains("agenticId is required"));
-    }
-
-    #[test]
-    fn subscription_identity_falls_back_to_asp() {
-        let selected = select_subscription_agent_id("", "  asp-5254  ")
-            .expect("ASP identity should authorize subscription detail lookup");
-
-        assert_eq!(selected, "asp-5254");
     }
 
     #[tokio::test]
