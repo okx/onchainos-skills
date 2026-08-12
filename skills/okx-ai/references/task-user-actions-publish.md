@@ -70,7 +70,7 @@ Display as a single `| Field | Value |` table with exactly these **7** fields in
 | 3 | 服务方 | asp-match / designated-route | `Agent <providerAgentId>(<providerAgentName>)`；无名称时降级为 `Agent <providerAgentId>` |
 | 4 | 服务参数 | Agent 从 serviceDescription 推断 | 无参数时显示 `None` |
 | 5 | 服务价格 | asp-match `subscriptionInfo.feeAmount` + `feeTokenSymbol` | `<subscriptionInfo.feeAmount> <symbol> / month` |
-| 6 | 试用 | asp-match `subscriptionInfo.supportTrial/supportTrail/freeTrial`；fallback `supportTrial` + `freeTrial` | `Yes (<freeTrial> 小时免费)` 或 `No` |
+| 6 | 试用 | asp-match `subscriptionInfo.supportTrial/freeTrial` | `Yes (<subscriptionInfo.freeTrial> 小时免费)` 或 `No` |
 | 7 | 自动续费 | 默认 `On`，确认时用户可编辑 | `On` 或 `Off` |
 
 If attachments present, add an Attachments row.
@@ -91,7 +91,7 @@ Before displaying this confirmation table, apply the subscription playbook's **T
 
 > Confirm? Once confirmed, the subscription will be created on-chain.
 
-Rules: description rendering same as A1. 服务价格 row uses `subscriptionInfo.feeAmount` because backend `services.feeAmount` is the non-subscription service fee while `subscription[].fee` is the subscription fee. 试用 row: `subscriptionInfo.supportTrial == true` (or `subscriptionInfo.supportTrail == true`; fallback to top-level `supportTrial` / `supportTrail`) → `Yes (<subscriptionInfo.freeTrial or freeTrial> 小时免费)`, otherwise `No`. 自动续费: `On` 或 `Off`. 服务方 shows `Agent <id>(<name>)`, degrade to `Agent <id>` when the name is empty/absent.
+Rules: description rendering same as A1. 服务价格 row uses `subscriptionInfo.feeAmount` because backend `services.feeAmount` is the non-subscription service fee while `subscription[].fee` is the subscription fee. 试用 row: `subscriptionInfo.supportTrial == true` → `Yes (<subscriptionInfo.freeTrial> 小时免费)`, otherwise `No`. 自动续费: `On` 或 `Off`. 服务方 shows `Agent <id>(<name>)`, degrade to `Agent <id>` when the name is empty/absent.
 
 ---
 

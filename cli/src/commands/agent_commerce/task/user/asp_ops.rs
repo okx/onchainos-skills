@@ -38,7 +38,6 @@ fn scalar_display(value: &serde_json::Value) -> Option<String> {
 
 fn supports_trial(service: &serde_json::Value) -> bool {
     service["supportTrial"].as_bool().unwrap_or(false)
-        || service["supportTrail"].as_bool().unwrap_or(false)
 }
 
 fn selected_subscription(service: &serde_json::Value) -> Option<&serde_json::Value> {
@@ -74,8 +73,7 @@ fn build_subscription_info(service: &serde_json::Value) -> serde_json::Value {
             .cloned()
             .unwrap_or(serde_json::Value::Null),
         "feeAmount": subscription_fee.unwrap_or(serde_json::Value::Null),
-        "supportTrial": service.get("supportTrial").and_then(|value| value.as_bool()).unwrap_or(false),
-        "supportTrail": service.get("supportTrail").and_then(|value| value.as_bool()).unwrap_or(false),
+        "supportTrial": supports_trial(service),
         "freeTrial": service.get("freeTrial").cloned().unwrap_or(serde_json::json!(0)),
     })
 }
@@ -114,18 +112,6 @@ fn compact_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
         serde_json::Value::Bool(support_subscription),
     );
     compact.insert("subscriptionInfo".to_string(), subscription_info);
-    compact.insert(
-        "supportTrial".to_string(),
-        serde_json::Value::Bool(service.get("supportTrial").and_then(|value| value.as_bool()).unwrap_or(false)),
-    );
-    compact.insert(
-        "supportTrail".to_string(),
-        serde_json::Value::Bool(service.get("supportTrail").and_then(|value| value.as_bool()).unwrap_or(false)),
-    );
-    compact.insert(
-        "freeTrial".to_string(),
-        service.get("freeTrial").cloned().unwrap_or(serde_json::json!(0)),
-    );
 
     serde_json::Value::Object(compact)
 }
@@ -719,9 +705,8 @@ mod tests {
     }
 
     #[test]
-    fn trial_support_accepts_current_and_legacy_spellings() {
+    fn trial_support_reads_support_trial_only() {
         assert!(super::supports_trial(&json!({"supportTrial": true})));
-        assert!(super::supports_trial(&json!({"supportTrail": true})));
         assert!(!super::supports_trial(&json!({})));
     }
 
@@ -745,7 +730,7 @@ mod tests {
                     "feeToken": "0xToken",
                     "feeTokenSymbol": "USDT",
                     "endpoint": null,
-                    "supportTrail": true,
+                    "supportTrial": true,
                     "freeTrial": 24,
                     "subscription": [
                         {"interval": "week", "fee": "0.03"},
@@ -778,9 +763,10 @@ mod tests {
         assert_eq!(svc["supportSubscription"], json!(true));
         assert_eq!(svc["subscriptionInfo"]["interval"], json!("month"));
         assert_eq!(svc["subscriptionInfo"]["feeAmount"], json!("0.1"));
-        assert_eq!(svc["subscriptionInfo"]["supportTrial"], json!(false));
-        assert_eq!(svc["subscriptionInfo"]["supportTrail"], json!(true));
+        assert_eq!(svc["subscriptionInfo"]["supportTrial"], json!(true));
         assert_eq!(svc["subscriptionInfo"]["freeTrial"], json!(24));
+        assert!(svc.get("supportTrial").is_none());
+        assert!(svc.get("freeTrial").is_none());
         assert!(svc.get("subscription").is_none());
         assert!(svc.get("rawServiceStatus").is_none());
     }

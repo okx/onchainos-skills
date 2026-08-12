@@ -61,7 +61,7 @@ onchainos agent asp-match --task-desc \"<description>\" --format json
 - Empty → no matching ASP found. Ask the user to: (a) specify a provider agentId manually, or (b) adjust the description, then re-run asp-match. Loop until a match is found or the user gives up.
 - Non-empty → auto-select the top-ranked recommendation's provider and service. Proceed as if the user had designated that provider.
 
-**Field extraction** (both paths): from the selected recommendation/service retain `providerAgentId`, `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (non-subscription service fee only), `feeToken`→serviceTokenAddress, `feeTokenSymbol`, `endpoint` (if A2MCP), **`supportSubscription`** (branch flag), **`subscriptionInfo`** (billing interval, subscription fee from `subscription[].fee`, and trial snapshot), **`supportTrial`** / **`supportTrail`** (boolean — whether trial is available; check both spellings), **`freeTrial`** (trial hours), and the complete **`autoTradePreflight` object verbatim**. Do not retain only the compact text summary: the subscription branch needs the structured `reminders[]`, `tools[]`, and `pluginId` values.
+**Field extraction** (both paths): from the selected recommendation/service retain `providerAgentId`, `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (non-subscription service fee only), `feeToken`→serviceTokenAddress, `feeTokenSymbol`, `endpoint` (if A2MCP), **`supportSubscription`** (branch flag), **`subscriptionInfo`** (billing interval, subscription fee from `subscription[].fee`, and normalized trial snapshot: `supportTrial` + `freeTrial`), and the complete **`autoTradePreflight` object verbatim**. Do not retain only the compact text summary: the subscription branch needs the structured `reminders[]`, `tools[]`, and `pluginId` values.
 - If the same ASP returns both subscription and non-subscription services, display each with `[Subscription]` / `[One-time]` label and let the user choose. The chosen service determines the branch.
 
 ================================================
@@ -162,7 +162,7 @@ Collect/infer:
 
 1. **serviceParams inference** (same logic as §serviceParams inference below).
 
-2. **useTrial**: if `subscriptionInfo.supportTrial == true` (or `subscriptionInfo.supportTrail == true`; fallback to top-level `supportTrial` / `supportTrail`) from asp-match → automatically set to `true` (do NOT ask the user). Otherwise `false`. Display trial hours from `subscriptionInfo.freeTrial` (fallback `freeTrial`) in the confirmation form.
+2. **useTrial**: if `subscriptionInfo.supportTrial == true` from asp-match → automatically set to `true` (do NOT ask the user). Otherwise `false`. Display trial hours from `subscriptionInfo.freeTrial` in the confirmation form.
 
 3. **autoRenew**: ask the user explicitly (0=off, 1=on). Do NOT pre-fill a default — collect the answer before Step 5.
 
@@ -197,7 +197,7 @@ Step 5 -- Subscription confirmation form
 | Provider | Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent |
 | Service params | <serviceParams readable display, or \"None\"> |
 | Service price | <subscriptionInfo.feeAmount> <feeTokenSymbol> / month |
-| Trial | Yes (<subscriptionInfo.freeTrial or freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial/supportTrail`, fallback top-level `supportTrial/supportTrail`) |
+| Trial | Yes (<subscriptionInfo.freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial`) |
 | Auto-renew | On / Off |
 
 > Confirm? Once confirmed, the subscription will be created on-chain.
