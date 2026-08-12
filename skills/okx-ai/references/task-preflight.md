@@ -1,6 +1,6 @@
 # Shared Pre-flight Check
 
-> Shared across all onchainos skills. Run ONCE at the start of each conversation, before the first `onchainos` command; don't repeat it on later turns.
+> Shared across all onchainos skills. Run ONCE at the start of each session, before the first `onchainos` command; don't repeat it on later turns.
 
 ## Default — do this, then stop
 

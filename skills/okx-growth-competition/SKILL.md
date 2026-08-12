@@ -73,7 +73,7 @@ If the user's intent does not clearly map to one of the above, ask which they me
 
 ## Pre-flight
 
-At the start of each conversation, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
+At the start of each session, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 **Cross-skill routing on common errors**:
 - `not logged in` → walk the user through the `okx-agentic-wallet` login flow (run `onchainos wallet login`), then retry the original action.

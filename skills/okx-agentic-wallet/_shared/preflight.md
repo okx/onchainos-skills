@@ -1,11 +1,11 @@
 # Preflight Checks
 
-> At the start of each conversation, run the following checks in order.
+> At the start of each session, run the following checks in order.
 
 1. Run: `onchainos preflight --skill-version <this skill's frontmatter version>`
 2. Read `data.action` from the JSON it prints:
    - **null** → continue silently; don't echo routine output.
-   - **non-null** → show it to the user and do exactly what it says (e.g. re-read this SKILL.md; for a package-manager skill, update via its manager.
+   - **non-null** → show it to the user and do exactly what it says
 
 
 ## Global Notes
