@@ -14,7 +14,7 @@ Route onboarding, OKX.AI introduction, and customer-support requests to one exis
 
 ## Pre-flight Checks
 
-At the start of each conversation, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
+At the start of each session, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Intent Routing
 
