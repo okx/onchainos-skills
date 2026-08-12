@@ -21,7 +21,7 @@ onchainos agent next-action --role user --agentId <agentId> --message '{"event":
 
 Follow the returned script verbatim. The confirmation form format is in **Appendix A** below.
 
-**Description confirmation before ASP matching:** if the task Description is drafted by consolidating, summarizing, or reusing the user's prior/current message, show that draft to the user and ask whether to use it for ASP matching. End the turn and wait for explicit confirmation before running `asp-match`. If the user edits the draft, use the edited text.
+**Description confirmation before ASP matching:** this gate applies only to publish/create-task `asp-match`. It does not apply to identity discovery or `onchainos agent search`. If the task Description is drafted by consolidating, summarizing, or reusing the user's prior/current message, show that draft to the user and ask whether to use it for ASP matching. End the turn and wait for explicit confirmation before running `asp-match`. If the user edits the draft, use the edited text.
 
 ---
 

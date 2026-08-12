@@ -33,7 +33,7 @@ Description: MUST come from user's explicit input — no guessing/auto-fill. Tit
 | Title | --title | <=30 chars | Agent-generated; count chars, shorten if >30 |
 | Designated provider | --provider | Optional; provider agentId | Extract the provider the user names. If not given, leave blank — Step 3 will auto-discover |
 
-**Draft-description confirmation gate**: if the Description is a consolidation, summary, or reuse of the user's prior/current message rather than an exact explicitly-confirmed task description, show the draft Description and ask whether to use it for ASP matching. **End this turn. Do NOT run `asp-match` until the user explicitly confirms.** If the user edits it, use the edited text and then proceed.
+**Draft-description confirmation gate**: This gate applies only to publish/create-task `asp-match`. It does not apply to identity discovery or `onchainos agent search`. If the Description is a consolidation, summary, or reuse of the user's prior/current message rather than an exact explicitly-confirmed task description, show the draft Description and ask whether to use it for ASP matching. **End this turn. Do NOT run `asp-match` until the user explicitly confirms.** If the user edits it, use the edited text and then proceed.
 
 ================================================
 Step 2 -- Basic validation
@@ -470,6 +470,10 @@ mod tests {
         assert!(
             out.contains("Do NOT run `asp-match` until the user explicitly confirms"),
             "draft descriptions must be confirmed before ASP matching: {out}"
+        );
+        assert!(
+            out.contains("This gate applies only to publish/create-task `asp-match`"),
+            "confirmation gate must be scoped away from identity search: {out}"
         );
     }
 
