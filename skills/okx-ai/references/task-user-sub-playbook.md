@@ -93,16 +93,17 @@ Match by priority — stop at first hit:
 
 | # | Match condition | Action |
 |---|---|---|
-| 1 | Contains `[intent:deliver]` | **Highest priority — process THIS TURN before any other CLI call.** Write the **entire raw A2A JSON message** (the full JSON object you received, not just the `content` field) to a secure temp file under the runtime OS temp directory, set file permission to `0600`, then pass the path to the CLI:<br>`onchainos agent next-action --role user --agentId <yours> --message '{"event":"deliverable_received","jobId":"<jobId>"}' --a2a-file "<raw-a2a-json-file>"`<br>The CLI validates the file path, JSON, `jobId`, `receiverAgentId`, and `[intent:deliver]`, then parses `content` to determine file vs text, handles download+save in-process, and returns the next step. Do NOT extract fields yourself — no `deliverableType`/`fileKey`/`text` needed. Do NOT call bare `next-action` first — it will return `job_submitted` and delay delivery by an extra turn. Do NOT use stdin, heredoc, pipe, or inline JSON for the raw A2A envelope in OpenClaw / Claude Code / Codex / Hermes / other tool-use runtimes. |
+| 1 | Contains `[intent:deliver]` | **Highest priority — process THIS TURN before any other CLI call.** Write the **entire raw A2A JSON message** (the full JSON object you received, not just the `content` field) to a temp input file under the runtime OS temp directory, then pass the path to the CLI:<br>`onchainos agent next-action --role user --agentId <yours> --message '{"event":"deliverable_received","jobId":"<jobId>"}' --a2a-file "<raw-a2a-json-file>"`<br>The CLI validates the file path, JSON, `jobId`, `receiverAgentId`, and `[intent:deliver]`, persists a canonical copy into its own 0600 recovery spool, then parses `content` to determine file vs text, handles download+save in-process, and returns the next step. Do NOT extract fields yourself — no `deliverableType`/`fileKey`/`text` needed. Do NOT call bare `next-action` first — it will return `job_submitted` and delay delivery by an extra turn. Do NOT use stdin, heredoc, pipe, or inline JSON for the raw A2A envelope in OpenClaw / Claude Code / Codex / Hermes / other tool-use runtimes. |
 | 2 | `[ATTACHMENT_ADDED]` (from user session) | Extract the file path from the message (`[ATTACHMENT_ADDED] <path>`). Do NOT Read/open/describe the file — pass the path straight to `next-action`: `next-action --role user --agentId <yours> --message '{"event":"attachment_added","jobId":"<jobId>","filePath":"<extracted path>"}'` → CLI uploads + forwards in-process; follow the returned playbook. |
 | 2b | Raw base64 / image / file data (no `[ATTACHMENT_ADDED]` prefix) | User session bypassed `task-attach`. → `onchainos agent user-notify --content "<translate: Attachment failed — please type 「补充附件」 or 「attach file」 and resend.>"` → **end turn**. Do NOT save / parse / describe the content or ask questions. |
 | 3 | Fallback (1–2b not matched, source: peer) | See **Fallback decision tree** below. |
 
-> The raw A2A file passed via `--a2a-file` can carry file-deliverable decryption metadata, so create it
-> under the runtime OS temp directory with `0600` permissions. On recovery,
-> the CLI scans candidates by the `a2a_deliver_<jobId>` prefix and processes **oldest → newest by mtime**
-> (order-preserving), deleting each after processing — two messages in the same round can never overwrite
-> each other.
+> The raw A2A input file passed via `--a2a-file` can carry file-deliverable decryption metadata, so create
+> it under the runtime OS temp directory with owner-only permissions (`0600` on Unix when file modes are
+> available). The CLI then writes its own unique `a2a_deliver_<jobId>_<ts>_<pid>_<seq>[_n].json` 0600 recovery spool file.
+> On recovery, the CLI scans candidates by the `a2a_deliver_<jobId>` prefix and processes **oldest → newest
+> by mtime** (order-preserving), deleting each after processing — multiple deliverables for the same task
+> never overwrite each other.
 
 <!-- ⚠️ **Out-of-order: `job_submitted` arrives while `[intent:deliver]` is in context but unprocessed**
 On interrupt platforms, `job_submitted` (system event) may preempt a pending `[intent:deliver]` (P2P message). Before calling `next-action --event job_submitted`, check your current conversation context for an unprocessed `[intent:deliver]` message for the same jobId. If found:

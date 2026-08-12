@@ -1906,6 +1906,94 @@ fn parse_a2a_json_arg(raw: &str) -> anyhow::Result<serde_json::Value> {
     }
 }
 
+fn write_secure_temp_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("a2a");
+    let pid = std::process::id();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    for n in 0..20u32 {
+        let tmp = parent.join(format!(".{fname}.{pid}.{ts}.{n}.tmp"));
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = match opts.open(&tmp) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        };
+        if let Err(e) = f.write_all(contents).and_then(|_| f.flush()) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        f.sync_all()?;
+        drop(f);
+        return std::fs::rename(&tmp, path).inspect_err(|_| {
+            let _ = std::fs::remove_file(&tmp);
+        });
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not allocate a unique temp file",
+    ))
+}
+
+fn a2a_intake_spool_dir() -> std::path::PathBuf {
+    #[cfg(test)]
+    {
+        return std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+    }
+    #[cfg(not(test))]
+    {
+        std::env::temp_dir()
+    }
+}
+
+fn persist_validated_a2a_spool(job_id: &str, canonical: &str) -> anyhow::Result<String> {
+    static A2A_SPOOL_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    if job_id.is_empty()
+        || !job_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        anyhow::bail!("--a2a-file: invalid jobId for the spool filename");
+    }
+    let dir = a2a_intake_spool_dir();
+    std::fs::create_dir_all(&dir)?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    let seq = A2A_SPOOL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    for n in 0..20u32 {
+        let name = if n == 0 {
+            format!("a2a_deliver_{job_id}_{ts}_{pid}_{seq}.json")
+        } else {
+            format!("a2a_deliver_{job_id}_{ts}_{pid}_{seq}_{n}.json")
+        };
+        let path = dir.join(name);
+        if path.exists() {
+            continue;
+        }
+        write_secure_temp_file(&path, canonical.as_bytes())
+            .map_err(|e| anyhow::anyhow!("--a2a-file secure spool write failed: {e}"))?;
+        return Ok(path.to_string_lossy().into_owned());
+    }
+    anyhow::bail!("--a2a-file: could not allocate a unique spool filename");
+}
+
 fn validate_a2a_file_arg(path: &str, message_job_id: &str, agent_id: &str) -> anyhow::Result<String> {
     let fp = std::path::Path::new(path);
     if !is_safe_a2a_file_path(fp) {
@@ -1961,9 +2049,7 @@ fn validate_a2a_file_arg(path: &str, message_job_id: &str, agent_id: &str) -> an
         anyhow::bail!("--a2a-file content must contain [intent:deliver]");
     }
     let canonical = serde_json::to_string(&payload)?;
-    std::fs::write(fp, canonical)
-        .map_err(|e| anyhow::anyhow!("--a2a-file canonical write failed: {e}"))?;
-    Ok(path.to_string())
+    persist_validated_a2a_spool(pj, &canonical)
 }
 
 #[cfg(test)]
@@ -2027,13 +2113,24 @@ mod escape_control_chars_tests {
     #[test]
     fn validates_a2a_file_arg_for_deliver_message() {
         let job_id = "0xabc123";
+        let raw = r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#;
         let path = write_temp_a2a(
             "valid-a2a.json",
-            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+            raw,
         );
 
         let got = validate_a2a_file_arg(path.to_str().unwrap(), job_id, "1696").unwrap();
-        assert_eq!(got, path.to_string_lossy());
+        assert_ne!(got, path.to_string_lossy());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+        let spool_name = std::path::Path::new(&got)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap();
+        assert!(spool_name.starts_with("a2a_deliver_0xabc123_"));
+        assert!(spool_name.ends_with(".json"));
+        let parsed: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&got).unwrap()).unwrap();
+        assert_eq!(parsed["jobId"], "0xabc123");
+        std::fs::remove_file(got).ok();
     }
 
     #[test]
@@ -2069,10 +2166,44 @@ mod escape_control_chars_tests {
             "{ \"msgType\":\"a2a-agent-chat\", \"jobId\":\"0xabc123\", \"receiverAgentId\":\"1696\", \"content\":\"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]\" }",
         );
 
-        validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696").unwrap();
-        let rewritten = std::fs::read_to_string(&path).unwrap();
+        let original = std::fs::read_to_string(&path).unwrap();
+        let got = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        let rewritten = std::fs::read_to_string(&got).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
         assert_eq!(parsed["content"].as_str().unwrap().lines().next(), Some("jobId: 0xabc123"));
+        std::fs::remove_file(got).ok();
+    }
+
+    #[test]
+    fn creates_unique_spool_files_for_multiple_deliverables_in_same_job() {
+        let first = write_temp_a2a(
+            "multi-deliver-1.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nfirst\n- - -\n[intent:deliver]"}"#,
+        );
+        let second = write_temp_a2a(
+            "multi-deliver-2.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nsecond\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let spool1 = validate_a2a_file_arg(first.to_str().unwrap(), "0xabc123", "1696").unwrap();
+        let spool2 = validate_a2a_file_arg(second.to_str().unwrap(), "0xabc123", "1696").unwrap();
+
+        assert_ne!(spool1, spool2);
+        assert_eq!(std::fs::read_to_string(&first).unwrap().contains("first"), true);
+        assert_eq!(std::fs::read_to_string(&second).unwrap().contains("second"), true);
+        assert_eq!(std::fs::read_to_string(&spool1).unwrap().contains("first"), true);
+        assert_eq!(std::fs::read_to_string(&spool2).unwrap().contains("second"), true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode1 = std::fs::metadata(&spool1).unwrap().permissions().mode() & 0o777;
+            let mode2 = std::fs::metadata(&spool2).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode1, 0o600);
+            assert_eq!(mode2, 0o600);
+        }
+        std::fs::remove_file(spool1).ok();
+        std::fs::remove_file(spool2).ok();
     }
 
     #[test]
