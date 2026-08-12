@@ -26,7 +26,7 @@ mod offline_receive;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
-pub(crate) use flow_lifecycle::{persist_a2a_spool, try_recover_from_temp_file, route_subscription_delivery_to_skill};
+pub(crate) use flow_lifecycle::{try_recover_from_temp_file, route_subscription_delivery_to_skill};
 mod flow_negotiate;
 pub(crate) mod negotiate;
 mod query;

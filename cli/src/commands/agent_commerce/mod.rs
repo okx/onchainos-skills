@@ -899,13 +899,11 @@ pub enum AgentCommand {
         /// may consume directly).
         #[arg(long)]
         message: String,
-        /// Read the full raw inbound A2A message from stdin (quoted heredoc) and
-        /// persist it to the recovery spool in-process — replaces the agent
-        /// hand-writing `/tmp/a2a_deliver_….json` before the call (one fewer
-        /// model turn). The written path is injected into `--message` as
-        /// `a2aFile` before dispatch.
-        #[arg(long, default_value_t = false)]
-        a2a_stdin: bool,
+        /// Read the full raw inbound A2A message from a secure temp JSON file.
+        /// The validated path is injected into `--message` as `a2aFile` before
+        /// dispatch so the user-side delivery handler can parse and save it.
+        #[arg(long = "a2a-file")]
+        a2a_file: Option<String>,
     },
 
     // Chat
@@ -1464,7 +1462,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
-        AgentCommand::NextAction { agent_id, role, message, a2a_stdin } => {
+        AgentCommand::NextAction { agent_id, role, message, a2a_file } => {
             // Parse the `--message` envelope (required). Try strict parse first;
             // on failure, attempt a one-shot repair that escapes raw control chars
             // (LF / CR / TAB) inside string scope and retries. This covers the
@@ -1495,71 +1493,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     parsed_message.as_object().map(|o| o.len()).unwrap_or(0));
             }
 
-            // `--a2a-stdin`: the raw inbound A2A message arrives piped on stdin;
-            // the CLI persists it to the recovery spool itself and injects the
-            // path as `a2aFile` — the agent no longer hand-writes the temp file
-            // in a separate turn. The rest of the flow is byte-identical to a
-            // caller-supplied `a2aFile` (which stays supported for older
-            // sessions and recovery replays).
-            if a2a_stdin {
-                use std::io::{IsTerminal, Read};
-                if std::io::stdin().is_terminal() {
-                    anyhow::bail!(
-                        "--a2a-stdin expects the raw A2A JSON piped on stdin (e.g. a quoted heredoc)"
-                    );
-                }
-                let mut raw = String::new();
-                std::io::stdin().read_to_string(&mut raw)?;
-                let raw = raw.trim();
-                if raw.is_empty() {
-                    anyhow::bail!("--a2a-stdin: stdin was empty");
-                }
-                // Deliver payloads are JSON: validate (with the same control-char
-                // repair as --message) so a mangled paste — or a heredoc cut short
-                // by a delimiter collision — fails LOUDLY here instead of becoming
-                // a poison spool file that recovery re-chews forever.
-                let payload: serde_json::Value = match serde_json::from_str(raw) {
-                    Ok(v) => v,
-                    Err(strict_err) => {
-                        let repaired = escape_control_chars_in_strings(raw);
-                        match serde_json::from_str::<serde_json::Value>(&repaired) {
-                            Ok(v) => {
-                                eprintln!(
-                                    "[next-action] --a2a-stdin payload had raw control chars inside string values; \
-                                     auto-repaired. Strict parse error was: {strict_err}"
-                                );
-                                v
-                            }
-                            Err(_) => anyhow::bail!(
-                                "--a2a-stdin: piped payload is not valid JSON (truncated heredoc or mangled paste?): {strict_err}"
-                            ),
-                        }
-                    }
-                };
-                let stdin_job_id = parsed_message
+            if let Some(path) = a2a_file.as_deref() {
+                let message_job_id = parsed_message
                     .get("jobId")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                // Full-format check up front (next-action redoes it later for every
-                // event) so an invalid jobId can't leave an orphan spool file behind.
-                if let Err(msg) = task::common::util::validate_job_id(stdin_job_id) {
-                    anyhow::bail!("--a2a-stdin: {msg}");
-                }
-                // Cross-check: the payload's own jobId (present on a2a-agent-chat
-                // envelopes) must match --message — job A's consent must never gate
-                // job B's signal. Absent jobId is tolerated (legacy shapes).
-                if let Some(pj) = payload.get("jobId").and_then(|v| v.as_str()) {
-                    if pj != stdin_job_id {
-                        anyhow::bail!(
-                            "--a2a-stdin: payload jobId {pj} does not match --message jobId {stdin_job_id}"
-                        );
-                    }
-                }
-                // Persist the canonical serialization (single-line, escaped) — what
-                // the recovery parser expects, independent of paste formatting.
-                let canonical = serde_json::to_string(&payload)?;
-                let spool_path = task::user::persist_a2a_spool(stdin_job_id, &canonical)?;
-                parsed_message["a2aFile"] = serde_json::Value::String(spool_path);
+                let validated_path = validate_a2a_file_arg(path, message_job_id, &agent_id)?;
+                parsed_message["a2aFile"] = serde_json::Value::String(validated_path);
             }
 
             // Field extractors — all routing inputs live inside `--message`.
@@ -1907,9 +1847,124 @@ pub(crate) fn escape_control_chars_in_strings(s: &str) -> String {
     out
 }
 
+fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
+    if path.as_os_str().is_empty() {
+        return false;
+    }
+    let c_path = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let tmp_dir = std::env::temp_dir();
+    if let Ok(c_tmp) = tmp_dir.canonicalize() {
+        if c_path.starts_with(c_tmp) {
+            return true;
+        }
+    }
+    #[cfg(unix)]
+    {
+        if let Ok(c_tmp) = std::path::Path::new("/tmp").canonicalize() {
+            if c_path.starts_with(c_tmp) {
+                return true;
+            }
+        }
+    }
+    #[cfg(test)]
+    {
+        let test_tmp = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        if let Ok(c_tmp) = test_tmp.canonicalize() {
+            if c_path.starts_with(c_tmp) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn parse_a2a_json_arg(raw: &str) -> anyhow::Result<serde_json::Value> {
+    match serde_json::from_str(raw) {
+        Ok(v) => Ok(v),
+        Err(strict_err) => {
+            let repaired = escape_control_chars_in_strings(raw);
+            match serde_json::from_str::<serde_json::Value>(&repaired) {
+                Ok(v) => {
+                    eprintln!(
+                        "[next-action] --a2a-file payload had raw control chars inside string values; \
+                         auto-repaired. Strict parse error was: {strict_err}"
+                    );
+                    Ok(v)
+                }
+                Err(_) => anyhow::bail!("--a2a-file payload is not valid JSON: {strict_err}"),
+            }
+        }
+    }
+}
+
+fn validate_a2a_file_arg(path: &str, message_job_id: &str, agent_id: &str) -> anyhow::Result<String> {
+    let fp = std::path::Path::new(path);
+    if !is_safe_a2a_file_path(fp) {
+        anyhow::bail!("--a2a-file must point to a file under the OS temp directory");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(fp)
+            .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?
+            .permissions()
+            .mode()
+            & 0o777;
+        if mode & 0o077 != 0 {
+            anyhow::bail!("--a2a-file must not be readable, writable, or executable by group/others; use chmod 600");
+        }
+    }
+    let raw = std::fs::read_to_string(fp)
+        .map_err(|e| anyhow::anyhow!("--a2a-file read failed: {e}"))?;
+    let raw = raw.trim();
+    if raw.is_empty() {
+        anyhow::bail!("--a2a-file payload is empty");
+    }
+    let payload = parse_a2a_json_arg(raw)?;
+    let msg_type = payload
+        .get("msgType")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.msgType is required"))?;
+    if msg_type != "a2a-agent-chat" {
+        anyhow::bail!("--a2a-file payload.msgType must be a2a-agent-chat");
+    }
+    let pj = payload
+        .get("jobId")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.jobId is required"))?;
+    if pj != message_job_id {
+        anyhow::bail!(
+            "--a2a-file payload jobId {pj} does not match --message jobId {message_job_id}"
+        );
+    }
+    if let Some(receiver) = payload.get("receiverAgentId").and_then(|v| v.as_str()) {
+        if receiver != agent_id {
+            anyhow::bail!(
+                "--a2a-file receiverAgentId {receiver} does not match --agentId {agent_id}"
+            );
+        }
+    }
+    let content = payload
+        .get("content")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.content is required"))?;
+    if !content.contains("[intent:deliver]") {
+        anyhow::bail!("--a2a-file content must contain [intent:deliver]");
+    }
+    let canonical = serde_json::to_string(&payload)?;
+    std::fs::write(fp, canonical)
+        .map_err(|e| anyhow::anyhow!("--a2a-file canonical write failed: {e}"))?;
+    Ok(path.to_string())
+}
+
 #[cfg(test)]
 mod escape_control_chars_tests {
-    use super::escape_control_chars_in_strings;
+    use super::{escape_control_chars_in_strings, validate_a2a_file_arg};
 
     #[test]
     fn escapes_raw_lf_inside_string() {
@@ -1947,6 +2002,129 @@ mod escape_control_chars_tests {
         let repaired = escape_control_chars_in_strings(input);
         let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
         assert_eq!(parsed["text"], "line1\nline2");
+    }
+
+    fn write_temp_a2a(name: &str, content: &str) -> std::path::PathBuf {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("onchainos-a2a-file-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, content).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        path
+    }
+
+    #[test]
+    fn validates_a2a_file_arg_for_deliver_message() {
+        let job_id = "0xabc123";
+        let path = write_temp_a2a(
+            "valid-a2a.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let got = validate_a2a_file_arg(path.to_str().unwrap(), job_id, "1696").unwrap();
+        assert_eq!(got, path.to_string_lossy());
+    }
+
+    #[test]
+    fn rejects_a2a_file_arg_with_mismatched_job_id() {
+        let path = write_temp_a2a(
+            "wrong-job.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xother","receiverAgentId":"1696","content":"jobId: 0xother\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("jobId mismatch must fail")
+            .to_string();
+        assert!(err.contains("payload jobId 0xother does not match --message jobId 0xabc123"));
+    }
+
+    #[test]
+    fn rejects_a2a_file_arg_without_top_level_job_id() {
+        let path = write_temp_a2a(
+            "missing-job.json",
+            r#"{"msgType":"a2a-agent-chat","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("missing top-level jobId must fail")
+            .to_string();
+        assert!(err.contains("payload.jobId is required"));
+    }
+
+    #[test]
+    fn canonicalizes_repaired_a2a_file_arg_for_downstream_strict_parse() {
+        let path = write_temp_a2a(
+            "raw-control-char.json",
+            "{ \"msgType\":\"a2a-agent-chat\", \"jobId\":\"0xabc123\", \"receiverAgentId\":\"1696\", \"content\":\"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]\" }",
+        );
+
+        validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696").unwrap();
+        let rewritten = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
+        assert_eq!(parsed["content"].as_str().unwrap().lines().next(), Some("jobId: 0xabc123"));
+    }
+
+    #[test]
+    fn rejects_a2a_file_arg_without_deliver_intent() {
+        let path = write_temp_a2a(
+            "no-intent.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"hello"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("missing intent must fail")
+            .to_string();
+        assert!(err.contains("content must contain [intent:deliver]"));
+    }
+
+    #[test]
+    fn rejects_a2a_file_arg_with_wrong_msg_type() {
+        let path = write_temp_a2a(
+            "wrong-msg-type.json",
+            r#"{"msgType":"other","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("wrong msgType must fail")
+            .to_string();
+        assert!(err.contains("payload.msgType must be a2a-agent-chat"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a2a_file_arg_with_group_readable_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = write_temp_a2a(
+            "group-readable.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("group-readable file must fail")
+            .to_string();
+        assert!(err.contains("chmod 600"));
+    }
+
+    #[test]
+    fn rejects_a2a_file_arg_for_wrong_receiver() {
+        let path = write_temp_a2a(
+            "wrong-receiver.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"8779","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("receiver mismatch must fail")
+            .to_string();
+        assert!(err.contains("receiverAgentId 8779 does not match --agentId 1696"));
     }
 }
 
