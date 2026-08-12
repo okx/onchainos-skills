@@ -12,6 +12,10 @@ use crate::wallet_store::{self, AccountMapEntry, AddressInfo, WalletsJson};
 
 // ── Token / session helpers ──────────────────────────────────────────
 
+/// Treat JWTs as expired before their actual expiry so in-flight requests do
+/// not reach the server with an expired token.
+const TOKEN_EXPIRY_MARGIN_SECS: i64 = 60;
+
 /// Ensure accessToken and refreshToken exist and the session is still valid.
 pub(super) fn ensure_tokens() -> Result<(String, String)> {
     let session = wallet_store::load_session()?;
@@ -60,8 +64,15 @@ pub(super) fn ensure_tokens() -> Result<(String, String)> {
                 .to_string();
             let diff = exp_ts - now_ts;
             eprintln!(
-                "[DEBUG][ensure_tokens] refresh_token: exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h), expired={}",
-                exp_ts, exp_dt, now_ts, now_dt, diff, diff as f64 / 60.0, diff as f64 / 3600.0, now_ts >= exp_ts
+                "[DEBUG][ensure_tokens] refresh_token: exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h), expired_or_expiring={}",
+                exp_ts,
+                exp_dt,
+                now_ts,
+                now_dt,
+                diff,
+                diff as f64 / 60.0,
+                diff as f64 / 3600.0,
+                is_exp_timestamp_expired(exp_ts, now_ts)
             );
         } else {
             eprintln!("[DEBUG][ensure_tokens] refresh_token: failed to parse exp from JWT");
@@ -91,8 +102,15 @@ pub(super) fn ensure_tokens() -> Result<(String, String)> {
                 .to_string();
             let diff = exp_ts - now_ts;
             eprintln!(
-                "[DEBUG][ensure_tokens] access_token: exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h), expired={}",
-                exp_ts, exp_dt, now_ts, now_dt, diff, diff as f64 / 60.0, diff as f64 / 3600.0, now_ts >= exp_ts
+                "[DEBUG][ensure_tokens] access_token: exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h), expired_or_expiring={}",
+                exp_ts,
+                exp_dt,
+                now_ts,
+                now_dt,
+                diff,
+                diff as f64 / 60.0,
+                diff as f64 / 3600.0,
+                is_exp_timestamp_expired(exp_ts, now_ts)
             );
         } else {
             eprintln!("[DEBUG][ensure_tokens] access_token: failed to parse exp from JWT");
@@ -102,13 +120,14 @@ pub(super) fn ensure_tokens() -> Result<(String, String)> {
     Ok((access_token, refresh_token))
 }
 
-/// Returns a valid accessToken, refreshing only when it is actually expired.
+/// Returns a valid accessToken, refreshing when it is expired or within the
+/// expiry safety margin.
 ///
 /// Flow:
 ///   1. session_key expired           → bail, ask the user to log in again
 ///   2. no tokens in keychain         → bail, ask the user to log in again
-///   3. refresh_token expired         → bail, ask the user to log in again
-///   4. access_token expired          → call auth_refresh, store new tokens, return new JWT
+///   3. refresh_token expired/expiring → bail, ask the user to log in again
+///   4. access_token expired/expiring  → call auth_refresh, store new tokens, return new JWT
 ///   5. access_token still valid      → return as-is
 pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
     // ── Step 1: session_key guard ────────────────────────────────────
@@ -172,10 +191,10 @@ pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
         if let Some(exp_ts) = token_exp_timestamp(&refresh_token) {
             let diff = exp_ts - now_ts;
             eprintln!(
-                "[DEBUG][ensure_tokens_refreshed] refresh_token: diff={}s ({:.1}h), expired={}",
+                "[DEBUG][ensure_tokens_refreshed] refresh_token: diff={}s ({:.1}h), expired_or_expiring={}",
                 diff,
                 diff as f64 / 3600.0,
-                now_ts >= exp_ts
+                is_exp_timestamp_expired(exp_ts, now_ts)
             );
         }
     }
@@ -184,7 +203,7 @@ pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
         eprintln!("Session expired. Please log in again: onchainos wallet login");
         if cfg!(feature = "debug-log") {
             eprintln!(
-                "[DEBUG][ensure_tokens_refreshed] refresh_token expired → session expired (bail)"
+                "[DEBUG][ensure_tokens_refreshed] refresh_token expired/expiring → session expired (bail)"
             );
         }
         return session_expired_err();
@@ -257,14 +276,19 @@ fn session_expired_err() -> Result<String> {
     bail!("session expired, please login again: onchainos wallet login")
 }
 
-/// Decode JWT and check if it is expired.
+/// Decode a JWT and treat it as expired once it enters the refresh margin.
 pub(super) fn is_token_expired(token: &str) -> bool {
+    is_token_expired_at(token, chrono::Utc::now().timestamp())
+}
+
+fn is_token_expired_at(token: &str, now: i64) -> bool {
     token_exp_timestamp(token)
-        .map(|exp| {
-            let now = chrono::Utc::now().timestamp();
-            now >= exp
-        })
+        .map(|exp| is_exp_timestamp_expired(exp, now))
         .unwrap_or(true)
+}
+
+fn is_exp_timestamp_expired(exp: i64, now: i64) -> bool {
+    now.saturating_add(TOKEN_EXPIRY_MARGIN_SECS) >= exp
 }
 
 /// Extract `exp` claim from a JWT without signature verification.
@@ -1382,6 +1406,15 @@ mod tests {
     #[test]
     fn is_token_expired_true_for_invalid() {
         assert!(is_token_expired("garbage"));
+    }
+
+    #[test]
+    fn is_token_expired_respects_refresh_margin_boundary() {
+        let now = 1_700_000_000;
+
+        assert!(is_token_expired_at(&make_jwt(now + 59), now));
+        assert!(is_token_expired_at(&make_jwt(now + 60), now));
+        assert!(!is_token_expired_at(&make_jwt(now + 61), now));
     }
 
     #[test]
