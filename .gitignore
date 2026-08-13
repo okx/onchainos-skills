@@ -50,6 +50,7 @@ yarn-error.log*
 CLAUDE.local.md
 
 # AI Assistant directories (auto-generated)
+.agents/
 .cursor
 .ai-mat
 .cursorrules
