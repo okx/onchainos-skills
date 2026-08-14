@@ -1,6 +1,6 @@
 # Preflight Checks
 
-> At the start of each session, run the following checks in order.
+> At the start of each thread, run the following checks in order.
 
 1. Run: `onchainos preflight --skill-version <this skill's frontmatter version>`
 2. Read `data.action` from the JSON it prints:

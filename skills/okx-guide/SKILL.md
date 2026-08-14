@@ -14,7 +14,7 @@ Route onboarding, OKX.AI introduction, and customer-support requests to one exis
 
 ## Pre-flight Checks
 
-At the start of each session, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
+At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Intent Routing
 
@@ -25,4 +25,3 @@ Apply the first matching row, read that reference before responding, and follow 
 | 1 | Human support, customer service, complaint, feedback, bug/system error, Help Center, FAQ, or user guide | [ai-support.md](references/ai-support.md) |
 | 2 | Explicit OKX.AI subject or spelling variant, quick start, platform compatibility, or User/ASP/Evaluator registration | [ai-guide.md](references/ai-guide.md) |
 | 3 | Generic Onchain OS introduction, first use, tutorial, getting started, “what can it do?”, or “where do I start?” | [how-to-play.md](references/how-to-play.md) |
-

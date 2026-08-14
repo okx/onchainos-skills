@@ -39,7 +39,7 @@ Do **not** apply the free-text Routing table below to any of these — envelope 
 
 ## Pre-flight Checks
 
-At the start of each session, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
+At the start of each thread, complete the checks in [`../okx-agentic-wallet/_shared/preflight.md`](../okx-agentic-wallet/_shared/preflight.md).
 
 ## Language Lock (apply on EVERY turn — highest priority, before routing)
 

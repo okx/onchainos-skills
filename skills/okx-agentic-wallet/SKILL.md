@@ -38,7 +38,7 @@ Match the user intent to a row, then **read that row's linked file first** — i
 
 ## Pre-flight Checks
 
-At the start of each session, complete the checks in [_shared/preflight.md](_shared/preflight.md).
+At the start of each thread, complete the checks in [_shared/preflight.md](_shared/preflight.md).
 
 ## Build the Command
 
@@ -55,7 +55,7 @@ At the start of each session, complete the checks in [_shared/preflight.md](_sha
 Some state-changing commands return **confirming** (exit code **2**) when the backend needs user confirmation. The response carries `message` (prompt to show) and `next` (what to do after they confirm).
 
 1. **Display** `message` and ask for confirmation.
-2. **Confirms** → follow `next` (usually: re-run the same command with `--force` appended).
+2. **Confirms** → immediately follow `next` (usually: re-run the same command with `--force` appended). For `wallet send`, do not query `wallet balance` between confirmation and the re-run; the server validates balances and gas.
 3. **Declines** → do NOT proceed; tell the user it was cancelled.
 
 Never pass `--force` on the FIRST invocation of a state-changing command. Add `--force` only after all of: (1) you ran the command once without it, (2) the CLI returned a Confirming response (exit code 2, `"confirming": true`), (3) you displayed `message` and the user explicitly confirmed.
@@ -72,7 +72,7 @@ Never pass `--force` on the FIRST invocation of a state-changing command. Add `-
 
 - **Credential protection**: never log, display, or ask for session tokens, `clientId`, API keys, private keys, seed phrases, or passwords. Never expose: `accessToken`, `refreshToken`, `apiKey`, `secretKey`, `passphrase`, `sessionKey`, `sessionCert`, `teeId`, `saTeeId`, `encryptedSessionSk`, `signingKey`, raw tx data. Show raw `accountName` (never raw `accountId` to the user).
 - **Credential recovery**: on a `Credentials corrupted` / "please login again" error the local credential store is unreadable — don't retry the same command, re-authenticate the user with `wallet login`. See [wallet-troubleshooting.md](references/wallet-troubleshooting.md).
-- **Address integrity (funds-loss risk)**: any on-chain identifier shown to the user (wallet address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout. Never reproduce an identifier from memory, expand an abbreviated form, or re-type it across messages — re-invoke the CLI (`wallet addresses` or `wallet status`) and copy from fresh stdout. Never paraphrase, normalize case, insert spaces, or line-break inside an identifier. Always display the **full** `txHash`.
+- **Address integrity (funds-loss risk)**: any on-chain identifier shown to the user (wallet address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout. Never reproduce an identifier from memory, expand an abbreviated form, or re-type it across messages — re-invoke the command that produced it; for a wallet address, use `wallet addresses`. Never paraphrase, normalize case, insert spaces, or line-break inside an identifier. Always display the **full** `txHash`.
 - **No address hallucination**: never fabricate a contract address — malicious tokens clone legitimate names. Only use addresses from a token lookup or the user's explicit input.
 - **Recipient validation**: EVM `0x`-prefixed, 42 chars; Solana Base58, 32–44 chars. Validate before sending.
 - **Transaction simulation**: the CLI runs pre-execution simulation; if `executeResult` is false → show `executeErrorMsg`, do NOT broadcast.

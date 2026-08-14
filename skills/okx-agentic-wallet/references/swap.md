@@ -34,7 +34,7 @@ Multiple results → show name / symbol / CA / chain and ask the user to confirm
 - Amount: pass the human-readable value as `--readable-amount` (CLI converts).
 - Slippage: omit for autoSlippage. Pass `--slippage <pct>` only if the user explicitly requests. Never pass `--slippage` to `swap quote`. `--max-auto-slippage <pct>` caps the autoSlippage upper bound (only meaningful when `--slippage` is omitted).
 - Gas level: default `average`; `fast` for meme / time-sensitive; `slow` for cost-sensitive non-urgent.
-- Wallet: run `wallet status`. Not logged in → `wallet login`. Single account → active address. Multiple → list and ask.
+- Wallet: run `wallet addresses --chain <chain>` and use the active account's address for that chain as `--wallet`. If it reports that login is required, run `wallet login`.
 
 Trading presets (slippage / gas):
 
@@ -90,7 +90,7 @@ Every flag that broadcasts or expands spending authority needs an explicit user 
 
 | Flag | Effect | Gate |
 |---|---|---|
-| `--wallet <addr>` | Broadcasts from this wallet. | From `wallet status` or explicitly typed. Multi-account → ask. |
+| `--wallet <addr>` | Broadcasts from this wallet. | Use the active account's address from `wallet addresses --chain <chain>`, or the user's explicit address. |
 | `--slippage <pct>` | Looser slippage = larger potential loss. | Default autoSlippage; override only on explicit request. |
 | `--mev-protection` / `--tips <sol>` | Enables MEV protection. | Auto-set by chain threshold (below); user override allowed. |
 | `--gas-token-address` / `--relayer-id` / `--enable-gas-station` | Pays gas via Gas Station (Solana). | Only after the user is informed / opted in. See [gas-station.md](gas-station.md). |
