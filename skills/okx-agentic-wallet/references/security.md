@@ -43,7 +43,7 @@ Native tokens (ETH/BNB/SOL/OKB) are silently skipped (no contract address). Disp
 
 ## approvals — Revoke Guidance
 
-Approvals are EVM-only — always pass an EVM address (from `wallet status` when logged in; only ask the user if no session). After identifying risky approvals, construct `approve(spender, 0)` calldata and **always run `security tx-scan` on the revoke calldata before executing**, then:
+Approvals are EVM-only — when logged in, run `wallet addresses` and pass the active account's EVM address; only ask the user if no session. After identifying risky approvals, construct `approve(spender, 0)` calldata and **always run `security tx-scan` on the revoke calldata before executing**, then:
 - **External wallet**: user signs the revoke calldata → `gateway broadcast`.
 - **Agentic Wallet**: `wallet contract-call --to <token_contract> --chain <chain> --input-data <revoke_calldata>`.
 
