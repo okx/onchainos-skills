@@ -11,8 +11,8 @@ The task state machine has moved into the CLI (`onchainos agent next-action`) �
 ## Deposit-address QR (insufficient-balance — MANDATORY)
 
 🛑 **Rule:** when any ASP command (`dispute raise`, `subscribe-dispute`, etc.) returns a JSON error containing a non-empty `depositAddress` field:
-1. **Render QR**: run `onchainos wallet qrcode --address <depositAddress>` and display the QR under option 1 of the funding list. Do NOT rewrite or drop the 4-option list.
-2. **Relay** (sub-session): if relaying to the user session via `user-notify --content`, translate freely but keep all 4 options and the wallet address intact. The user session's playbook will extract the address and render QR on its side.
+1. **Build notice**: run `onchainos agent funding-notice --chain <chain> --currency <symbol> --shortfall <amount> --deposit-address <addr> --format json` (add optional balance fields only if present).
+2. **Relay**: `displayMode=terminal-unicode` → show `terminalQr` + full notice; `displayMode=image-notify` → localize `contentCanonical` and run `notifyCommandArgs`.
 
 ---
 

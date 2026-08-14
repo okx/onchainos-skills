@@ -74,8 +74,8 @@ pub(crate) fn notify_swap_outcome(
             // cap-gated — claiming a 500-dollar sell was "within your 50 limit"
             // would be false). The line carries the ACTUAL paid stablecoin's
             // symbol so it matches the swap line above it (PRD copy: USDT).
-            let from_is_quote = super::consent::QUOTE_WHITELIST
-                .contains(&from_arg.to_ascii_lowercase().as_str());
+            let from_is_quote =
+                super::consent::QUOTE_WHITELIST.contains(&from_arg.to_ascii_lowercase().as_str());
             let cap = if auto_mode && from_is_quote {
                 consent
                     .and_then(|c| c.cap_u)
@@ -96,7 +96,7 @@ pub(crate) fn notify_swap_outcome(
             failure_message(&t, &flatten_reason(&format!("{e:#}")), lang)
         }
     };
-    if let Err(e) = super::super::okx_a2a::user_notify(&msg, false) {
+    if let Err(e) = super::super::okx_a2a::user_notify(&msg, None, false) {
         eprintln!("[autotrade] outcome notification failed (non-fatal): {e}");
     }
 }
@@ -214,7 +214,7 @@ pub(crate) fn push_degrade_notice(n: &mut super::card::NotifyOnly, job_id: &str)
     }
     let lang = user_lang::resolve(job_id);
     let msg = degrade_message(job_id, &n.reason, lang);
-    match super::super::okx_a2a::user_notify(&msg, false) {
+    match super::super::okx_a2a::user_notify(&msg, None, false) {
         Ok(()) => {
             n.notification_pushed = true;
             n.notification_template = String::new();
@@ -283,10 +283,7 @@ fn short_id(s: &str) -> String {
 
 /// One-line, bounded failure reason: anyhow chains can be multi-line and long.
 fn flatten_reason(raw: &str) -> String {
-    let mut one_line = raw
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let mut one_line = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     const MAX: usize = 300;
     if one_line.chars().count() > MAX {
         one_line = one_line.chars().take(MAX).collect::<String>() + "…";
@@ -311,7 +308,10 @@ mod tests {
     #[test]
     fn success_en_is_single_language_with_tx_and_cap_pause_line() {
         let msg = success_message(&t(), "0xTxHash", "", Some("50 USDT"), true, Lang::En);
-        assert!(msg.contains("[Auto Copy-Trade] Job 0xb5b8…9b35"), "got: {msg}");
+        assert!(
+            msg.contains("[Auto Copy-Trade] Job 0xb5b8…9b35"),
+            "got: {msg}"
+        );
         assert!(msg.contains("swap 25 USDC → PEPE on base"));
         assert!(msg.contains("Tx: 0xTxHash"));
         assert!(msg.contains("50 USDT per-trade auto limit"));
@@ -383,10 +383,21 @@ mod tests {
 
     #[test]
     fn degrade_message_is_single_language_with_reason() {
-        let en = degrade_message("0xb5b8b2b800000000000000000000000000000000000000000000000000009b35", "freshness_expired", Lang::En);
-        assert!(en.contains("job 0xb5b8…9b35") && en.contains("(freshness_expired)"), "got: {en}");
+        let en = degrade_message(
+            "0xb5b8b2b800000000000000000000000000000000000000000000000000009b35",
+            "freshness_expired",
+            Lang::En,
+        );
+        assert!(
+            en.contains("job 0xb5b8…9b35") && en.contains("(freshness_expired)"),
+            "got: {en}"
+        );
         assert!(!en.contains("自动跟单"));
-        let zh = degrade_message("0xb5b8b2b800000000000000000000000000000000000000000000000000009b35", "freshness_expired", Lang::Zh);
+        let zh = degrade_message(
+            "0xb5b8b2b800000000000000000000000000000000000000000000000000009b35",
+            "freshness_expired",
+            Lang::Zh,
+        );
         assert!(zh.contains("[自动跟单]") && zh.contains("freshness_expired"));
         assert!(!zh.contains("[Auto Copy-Trade]"));
     }

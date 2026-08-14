@@ -18,7 +18,7 @@ use super::args::{
 };
 use super::models::XLAYER_CHAIN_INDEX;
 use super::utils::{
-    add_agent_list_cells, add_feedback_list_cells, add_search_cells, add_service_list_cells,
+    add_agent_list_cells, add_feedback_list_cells, add_service_list_cells, build_search_table,
     convert_feedback_list_scores, enrich_agent_detail_rows, enrich_agent_get_rows,
     normalize_role_code, normalize_singleton_object, parse_u32_arg, push_multi_query,
     push_optional_query, reconstruct_get_url_for_log, redact_token_for_debug, require_non_empty,
@@ -322,12 +322,11 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
         Err(e) => debug_log!("[agent-identity] search response err: {:#}", e),
     }
 
-    // Additive: add a ready-to-render `cells` array per search row (the §6
-    // search columns — note the distinct search schema: feedbackRate is
-    // already 0–5, serviceMinPrice is the price, services may be absent).
-    let mut out = normalize_singleton_object(result?);
-    add_search_cells(&mut out);
-    Ok(out)
+    let out = normalize_singleton_object(result?);
+    // Search has one stable output contract: a display-ready table. Keeping a
+    // single shape prevents callers from accidentally depending on backend
+    // fields that may change independently of the CLI.
+    Ok(build_search_table(&out))
 }
 
 // ─── `agent service-list` ─────────────────────────────────────────────────
@@ -576,6 +575,17 @@ async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<V
 // [dev-dependencies] in Cargo.toml to enable unit-level HTTP mocking here.
 #[cfg(test)]
 mod tests {
-    #[allow(unused_imports)]
     use super::*;
+
+    #[test]
+    fn search_output_is_always_table() {
+        let response = serde_json::json!({
+            "total": 1,
+            "list": [{ "agentId": "4424", "name": "OpenModels" }]
+        });
+        let output = build_search_table(&response);
+        assert!(output.get("table").is_some());
+        assert!(output.get("list").is_none());
+    }
+
 }

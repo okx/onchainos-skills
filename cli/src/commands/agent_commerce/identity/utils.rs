@@ -1098,7 +1098,7 @@ fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
 // the skill renders the table by simply laying out cells. Mirrors:
 //   • references/discover.md   §list         → `build_agent_list_cells`
 //   • references/discover.md   §service-list → `build_service_cells`
-//   • references/discover.md   §search       → `build_search_cells`
+//   • references/discover.md   §search       → `build_search_table`
 //   • references/reputation.md §feedback-list → `build_feedback_cells`
 // All builders are additive: raw fields + existing `card`/labels stay intact.
 // The `cells` insert is an intentional unconditional overwrite — see the
@@ -1226,22 +1226,22 @@ pub(super) fn add_agent_list_cells(v: &mut Value) {
 mod precheck;
 pub(super) use precheck::{build_precheck, collect_owned_agents};
 
-// ─── §6 search-result row cells ───────────────────────────────────────────
+// ─── §6 search-result table ────────────────────────────────────────────
 //
 // Search uses a DIFFERENT backend schema than
 // `agent get`. Columns (references/discover.md §search Field mapping), in order:
-//   Agent ID | Name | Rating | Min price | Top service
+//   Agent ID | Name | Sold Count | Rating | Min price | Top service
 // Critical schema differences handled HERE:
-//   • Rating source is `feedbackRate`, ALREADY a 0–5 float — rendered
-//     directly, NO `/20`. `null` → `—`; `0` → `No rating yet` (0 means no
-//     feedback yet, never `★ 0`).
+//   • Rating source is `feedbackRate`, a backend 0–100 score converted to
+//     0–5 stars by dividing by 20. `null` → `—`; `0` → `No rating yet`
+//     (0 means no feedback yet, never `★ 0`).
 //   • Description is `profileDescription` (not surfaced as a column here).
 //   • Price is `serviceMinPrice` (bare number, NO unit; `null`/missing → `—`).
 //   • `services` may be ABSENT entirely (`@JsonInclude(NON_NULL)`) → `—`.
 //   • Per-service fields are camelCase `serviceName` / `serviceType` /
 //     `feeAmount` / `feeToken`.
 // Forbidden columns (Role / Status / Description / Endpoint) are NOT emitted.
-fn build_search_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
+fn build_search_table_row(map: &serde_json::Map<String, Value>) -> Value {
     let agent_id = read_agent_id(map)
         .map(|id| format!("#{id}"))
         .unwrap_or_else(|| "—".to_string());
@@ -1254,12 +1254,12 @@ fn build_search_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
         .map(|s| truncate_name(s, 20))
         .unwrap_or_else(|| "—".to_string());
 
-    // Rating: feedbackRate is already a 0–5 float — render directly (NO /20).
+    // Rating: convert the backend's 0–100 feedbackRate to 0–5 stars.
     // null/missing → `—`; exactly 0 → `No rating yet` (never `★ 0`).
     let rating = match map.get("feedbackRate") {
         Some(Value::Number(n)) => match n.as_f64() {
             Some(0.0) => "No rating yet".to_string(),
-            Some(rate) => format!("★ {}", format_search_rate(rate)),
+            Some(rate) => format!("★ {}", format_search_rate(rate / 20.0)),
             None => "—".to_string(),
         },
         _ => "—".to_string(),
@@ -1280,16 +1280,23 @@ fn build_search_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
         .and_then(format_top_service)
         .unwrap_or_else(|| "—".to_string());
 
-    vec![
-        cell("Agent ID", agent_id),
-        cell("Name", name),
-        cell("Rating", rating),
-        cell("Min price", min_price),
-        cell("Top service", top_service),
-    ]
+    let sold_count = map
+        .get("soldCount")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or_else(|| Value::String("—".to_string()));
+
+    serde_json::json!({
+        "agentId": agent_id,
+        "name": name,
+        "soldCount": sold_count,
+        "rating": rating,
+        "minPrice": min_price,
+        "recommendService": top_service,
+    })
 }
 
-/// Format a search `feedbackRate` (0–5 float) for display: up to 2 decimals,
+/// Format a converted search rating (0–5 float) for display: up to 2 decimals,
 /// trailing zeros (and bare trailing dot) trimmed (`4.60` → "4.6", `5.0` →
 /// "5", `4.45` → "4.45").
 fn format_search_rate(rate: f64) -> String {
@@ -1350,18 +1357,35 @@ fn format_top_service(service: &Value) -> Option<String> {
     Some(truncate_name(&full, 40))
 }
 
-/// Add `cells` (per §6) to every search row at the flat `list[*]`. No-op when
-/// the shape doesn't match. Additive.
-pub(super) fn add_search_cells(v: &mut Value) {
-    let Some(rows) = v.get_mut("list").and_then(Value::as_array_mut) else {
-        return;
-    };
-    for row in rows.iter_mut() {
-        if let Value::Object(map) = row {
-            let cells = build_search_cells(map);
-            map.insert("cells".to_string(), Value::Array(cells));
+/// Build the display-ready output returned by `agent search`.
+/// Invalid/non-object rows are ignored because they cannot populate the fixed
+/// table schema. Missing `list` degrades to an empty table.
+pub(super) fn build_search_table(v: &Value) -> Value {
+    let rows: Vec<Value> = v
+        .get("list")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+        .map(build_search_table_row)
+        .collect();
+
+    serde_json::json!({
+        "total": v.get("total").cloned().unwrap_or(Value::Null),
+        "page": v.get("page").cloned().unwrap_or(Value::Null),
+        "pageSize": v.get("pageSize").cloned().unwrap_or(Value::Null),
+        "table": {
+            "columns": [
+                { "key": "agentId", "label": "Agent ID" },
+                { "key": "name", "label": "Name" },
+                { "key": "soldCount", "label": "Sold Count" },
+                { "key": "rating", "label": "Rating" },
+                { "key": "minPrice", "label": "Min price" },
+                { "key": "recommendService", "label": "Top service" }
+            ],
+            "rows": rows
         }
-    }
+    })
 }
 
 // ─── §4 service-list row cells ────────────────────────────────────────────

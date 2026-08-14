@@ -71,9 +71,36 @@ pub struct Candidate {
     /// Display-only human amount (`amount / 10^decimals`). Never used for math.
     #[serde(rename = "amountHuman")]
     pub amount_human: String,
+    /// Token decimals used for exact atomic balance comparison.
+    #[serde(default)]
+    pub decimals: u32,
+    /// Backward-compatible positive-balance hint. New callers should use
+    /// `balanceStatus`, which compares the available amount with the full
+    /// required payment amount.
     #[serde(rename = "hasBalance")]
     pub has_balance: bool,
+    /// `sufficient` | `insufficient` | `unavailable`.
+    #[serde(rename = "balanceStatus", default = "default_balance_status")]
+    pub balance_status: String,
+    /// Human-readable current token balance (exact decimal string).
+    #[serde(rename = "availableAmount", default)]
+    pub available_amount: String,
+    /// Human-readable amount required by this candidate.
+    #[serde(rename = "requiredAmount", default)]
+    pub required_amount: String,
+    /// Human-readable deficit; `0` when sufficient, empty when unavailable.
+    #[serde(default)]
+    pub shortfall: String,
+    /// Selected wallet's receive address on this candidate's chain. Returned
+    /// for post-selection funding guidance; the skill must not display it in
+    /// the pre-selection candidate list.
+    #[serde(rename = "depositAddress", default)]
+    pub deposit_address: String,
     pub recommended: Option<bool>,
+}
+
+fn default_balance_status() -> String {
+    "unavailable".to_string()
 }
 
 /// The decoded 402 challenge, normalized to a stable shape. Money fields are

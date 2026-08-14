@@ -319,8 +319,32 @@ fn interpret_capabilities_output(stdout: Option<&[u8]>) -> OfflineReplayCapabili
 /// stdout is consumed directly by a human / shell. In-process callers inside
 /// playbook handlers (e.g. `next-action` event dispatch) must pass `false`,
 /// otherwise the `OK` would prepend the playbook returned to the LLM.
-pub fn user_notify(content: &str, print_output: bool) -> Result<()> {
+pub fn compose_user_notify_content(content: &str, image_path: Option<&std::path::Path>) -> Result<String> {
     let content = content.replace("\\n", "\n");
+    if content.contains("file://") || (content.contains("![") && content.contains("](")) {
+        anyhow::bail!("local image links in --content are not supported; use --image-path <file>");
+    }
+    let Some(path) = image_path else {
+        return Ok(content);
+    };
+    let path = path.to_string_lossy();
+    if path.trim().is_empty() || path.contains('\n') || path.contains('\r') {
+        anyhow::bail!("--image-path must be a non-empty single-line path");
+    }
+    Ok(format!("{content}\n\nMEDIA:{path}"))
+}
+
+pub fn user_notify(
+    content: &str,
+    image_path: Option<&std::path::Path>,
+    print_output: bool,
+) -> Result<()> {
+    if let Some(path) = image_path {
+        if !path.exists() {
+            anyhow::bail!("--image-path file not found: {}", path.display());
+        }
+    }
+    let content = compose_user_notify_content(content, image_path)?;
     let out = Command::new("okx-a2a")
         .args(["user", "notify", "--content", &content, "--json"])
         .output()
@@ -728,6 +752,35 @@ mod tests {
                 "--json",
             ]
         );
+    }
+
+    #[test]
+    fn user_notify_content_appends_media_path() {
+        let content =
+            compose_user_notify_content("line1\\nline2", Some(std::path::Path::new("/tmp/qr.png")))
+                .expect("compose notify content");
+        assert_eq!(content, "line1\nline2\n\nMEDIA:/tmp/qr.png");
+    }
+
+    #[test]
+    fn user_notify_content_rejects_multiline_media_path() {
+        let err = compose_user_notify_content("notice", Some(std::path::Path::new("/tmp/a\nb.png")))
+            .expect_err("path must be rejected");
+        assert!(err.to_string().contains("single-line path"));
+    }
+
+    #[test]
+    fn user_notify_content_rejects_local_image_links() {
+        let md_err = compose_user_notify_content(
+            "1. Scan\n![QR Code](file:///tmp/deposit.png)",
+            None,
+        )
+        .expect_err("markdown local image must be rejected");
+        assert!(md_err.to_string().contains("--image-path"));
+
+        let file_err = compose_user_notify_content("QR: file:///tmp/deposit.png", None)
+            .expect_err("file url must be rejected");
+        assert!(file_err.to_string().contains("--image-path"));
     }
 
     #[test]

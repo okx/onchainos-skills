@@ -39,14 +39,14 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 | `agent not found` / 404 | "Agent not found." → verify id with `agent get-agents --agent-ids`. |
 | `already active` / `already inactive` | "Agent is already active / inactive." No-op; show detail card. |
 | `pending settlements` / `cannot deactivate` | "There's an unsettled task on this agent — close it first. Want me to take you there?" → on yes, hand to task flow internally (no skill name). |
-| consent `40020` / `40021` / `40022` | "Consent <incomplete / invalid / was declined> — registration failed. Please restart the registration flow." Raw line shown. **Hard stop**, no auto-retry, no in-flow re-agree (40022 = restart from scratch). No Step 5/6. |
-| `81602` / `blocked` | "This agent has been blocked by the platform and can't be operated right now." **Stop.** Don't suggest re-activate / update. No Step 5/6. |
+| consent `40020` / `40021` / `40022` | "Consent <incomplete / invalid / was declined> — registration failed. Please restart the registration flow." Raw line shown. **Hard stop**, no auto-retry, no in-flow re-agree (40022 = restart from scratch). No post-mutation continuation. |
+| `81602` / `blocked` | "This agent has been blocked by the platform and can't be operated right now." **Stop.** Don't suggest re-activate / update. No post-mutation continuation. |
 | Region `50125` / `80001` | "Service is not available in your region." **Never** echo the code (not in summary, reason, next step, or raw line — omit the raw line entirely for region errors). **Never** suggest checking the network environment, using a VPN, or any region workaround. No auto-retry. |
 | `stake` / `staking` / `insufficient` on create evaluator | Not a normal path — create doesn't consume the stake. "Backend returned a staking error; registration doesn't require staking." Surface raw line; point to the task-side staking flow; don't cache drafts. |
 | `HTTP 500` | "Backend temporarily unavailable." Retry once; if persists, surface and move on. |
 
 ### activate / submit-approval outcomes
 
-- `activate.approvalStatus: 2` → "Your agent is under review — usually ready within 24h; once approved it appears on the marketplace." **Stop.** Don't call `submit-approval`; no Step 5/6.
+- `activate.approvalStatus: 2` → "Your agent is under review — usually ready within 24h; once approved it appears on the marketplace." **Stop.** Don't call `submit-approval`; no post-mutation continuation.
 - `submit-approval success:true` → see manage.md `activate + submitApproval` row.
 - `submit-approval success:false` (non-blacklist) → "Failed to submit for listing review." + raw line + "You can try again later." **Stop.**

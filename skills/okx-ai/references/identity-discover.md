@@ -14,36 +14,29 @@ re-issue the CLI instead (SKILL §Gates One-call rule).
 
 ## search — `agent search`
 
-**Empty query guard** — if the user expressed search intent but gave no keywords, ask for the query before calling `agent search`.
+**Request** — no keywords → ask before calling. Otherwise run exactly ONE search:
 
-**Lossless result set (BLOCKING)** — render exactly one row per `list[*]`, in order. Intent affects only
-the request; never select, recommend, rerank, deduplicate, or omit returned rows. If asked for a
-recommendation, show the full table first, then advise separately.
+- `--query` = the user's FULL sentence verbatim; strip only `#id` tokens. Never translate, paraphrase,
+  split, or canonicalize it.
+- Pass filter wording verbatim via `--feedback` (rating), `--agent-info` (domain/keywords), `--status`,
+  and `--service` (closed interface-token list). Never default `--status`.
+- Never make a second call to rerank or "improve" the same intent.
 
-`--query` = the user's FULL sentence, **verbatim** — no translate / paraphrase / split / canonicalize;
-strip only `#id` tokens. Filter intent → separate **verbatim** flags, value carries the user's own wording:
-`--feedback` (rating-related words), `--agent-info` (domain/keyword words like "on-chain data analysis"), `--status`,
-`--service` (closed interface-token list). **Never default `--status`.** ONE search per intent — no
-re-sort, no second call to "improve" results.
-
-Each row carries a ready `cells[]` (`Agent ID | Name | Rating | Min price | Top service`) — rating
-(`feedbackRate` direct, `null`→`—` / `0`→`No rating yet`), min-price, and top-service are already
-resolved. **Render `cells` verbatim** (identity-invariants.md §Verbatim-render contract).
+**Render (BLOCKING)** — use `table.columns[]` in returned order as the schema and render every
+`table.rows[]` value verbatim. Never rename, reorder, add, remove, recompute, select, rerank,
+deduplicate, or omit anything (identity-invariants.md §Verbatim-render contract). For a
+recommendation request, show the complete returned table first, then advise separately.
 
 ```
 > Search: `"<user's original utterance, verbatim>"`
 > Read as: <natural-language: surviving buckets + keyword tokens — never paste raw flags>
 
-| Agent ID | Name | Rating | Min price | Top service |
-|---|---|---|---|---|
-| <cells, in order, verbatim — one row per list[*]> |
+<render table.columns + table.rows verbatim>
 
 > Service types: API service = pay-per-call, fixed price; agent to agent = per-call or monthly-subscription pricing (one or the other).
-> N results total. Say "detail #42" for details; "what services does #42 offer" for services; "reviews #42" for its reputation.
+> <N=total> results total[; showing first <K=table.rows.length> of N when K<N]. Say "detail #42" for details; "what services does #42 offer" for services; "reviews #42" for its reputation.
 ```
 
-- The footer's `N` is backend `total`. If `list.length < N`, say "showing first K of N"; never imply all
-  `N` were shown.
 - "Read as" omitted if no filter survived. Gloss footnote once; omit if already shown this conversation.
 - Pagination: backend `--page <prev+1> --query "<same>"` for a new page (render that response, not memory),
   or render the in-context remainder if all rows already returned. Never stitch two pages into one table.

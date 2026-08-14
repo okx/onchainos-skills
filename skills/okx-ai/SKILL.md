@@ -32,7 +32,7 @@ Do **not** apply the free-text Routing table below to any of these — envelope 
 
 ## Pre-flight Checks
 
-At the start of each session, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
+At the start of each session, complete the checks in [`../okx-agentic-wallet/_shared/preflight.md`](../okx-agentic-wallet/_shared/preflight.md).
 
 ## Language Lock (apply on EVERY turn — highest priority, before routing)
 
@@ -69,7 +69,7 @@ Identity-not-wallet: **"再建一个买家身份 / 再加一个用户 / add anot
 
 **Evaluator rename (评审员 / Evaluator).** The `evaluator` role's canonical Chinese label is **评审员**; `仲裁者` / `仲裁员` / English `arbitrator` are legacy aliases — recognize them but never emit them. Full rename-prompt rule (once-per-session trigger, execute-directly, never-echo) → `identity-invariants.md` §Legacy role words; example correction: *"该角色现已更名为「评审员」，我已按评审员为你处理。"*
 
-Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contract safety check → okx-agentic-wallet; broadcast a raw tx → okx-agentic-wallet (post-create evaluator staking → see §Step 5/6).
+Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contract safety check → okx-agentic-wallet; broadcast a raw tx → okx-agentic-wallet (post-create evaluator staking → see §Post-mutation continuation).
 
 "Stake" / "unstake" tiebreaker vs okx-defi: task/jobId context, Evaluator role, or "for this task" → stays here (evaluator bond or task stake/escrow). Generic DeFi-protocol yield staking with no task context → okx-defi.
 
@@ -81,7 +81,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 - [ ] Step 1: Route — match intent to reference per table above — **BLOCKING**
 - [ ] Step 2: Load reference + `identity-invariants.md`; follow reference steps — **REQUIRED**
 - [ ] Step 3: Run CLI → render output (read: reference template; write: card → confirm → CLI → template) → run §Pre-Delivery Checklist
-- [ ] Step 4: Success → §Step 5/6; failure → load `references/identity-errors.md`
+- [ ] Step 4: Success → §Post-mutation continuation; failure → load `references/identity-errors.md`
 
 ## Gates (non-overridable, identity ops)
 
@@ -121,7 +121,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 - [ ] Reply is entirely in the §Language-Lock language — no English template text leaked (except verbatim-keep tokens)
 - [ ] No `onchainos` literal / skill name / raw A2MCP·A2A enum
 - [ ] `*Label` fields translated to conversation language
-- [ ] Search: table has `list.length` rows in list order; no model-side filtering
+- [ ] Search: render every `table.rows[]` entry in returned order; no model-side filtering or reordering
 - [ ] Write ops (create/update) showed card and awaited confirm
 - [ ] Success output from reference template, not self-summarized JSON
 - [ ] `#<id>` from CLI output (`identity-invariants.md` §id ladder), not inferred or reused from pre-check
@@ -130,7 +130,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 
 On-chain actions (create / update / activate / deactivate) cost the user **nothing** — OKX covers network fees. Never say "not specified / check the docs". Never fabricate fee categories. For "example at X USDT", run `agent search --query "<X> USDT ..."` and cite a **real** agent's fee.
 
-## Step 5/6 — post-mutation continuation (same response, after the post-success line, identity ops)
+## Post-mutation continuation (same response, after the post-success line, identity ops)
 
 Targets below are internal routing — never name a skill path or "staking" handoff in user text (UX Red Line 1).
 

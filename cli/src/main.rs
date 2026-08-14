@@ -273,23 +273,32 @@ async fn run() {
                     // {ok,reason?}); just exit with its code, no standard error envelope.
                     // audit::log already fired above for both allow and deny.
                     Ok(b) => std::process::exit(b.0),
-                    Err(e) => match e.downcast::<commands::sink::CodedError>() {
-                        Ok(c) => {
-                            output::error_coded(&c.code, c.field.as_deref(), &c.message);
-                            std::process::exit(1);
+                    Err(e) => {
+                        let e = match e.downcast::<output::CliFundingBlocked>() {
+                            Ok(blocked) => {
+                                output::error_data(blocked.data);
+                                std::process::exit(1);
+                            }
+                            Err(e) => e,
+                        };
+                        match e.downcast::<commands::sink::CodedError>() {
+                            Ok(c) => {
+                                output::error_coded(&c.code, c.field.as_deref(), &c.message);
+                                std::process::exit(1);
+                            }
+                            Err(e) => match e
+                                .downcast::<commands::agent_commerce::task::common::deposit_qr::InsufficientBalanceError>()
+                            {
+                                Ok(ib) => {
+                                    output::error_insufficient_balance(&ib);
+                                    std::process::exit(1);
+                                }
+                                Err(e) => {
+                                    output::error(&format!("{e:#}"));
+                                    std::process::exit(1);
+                                }
+                            },
                         }
-                        Err(e) => match e
-                            .downcast::<commands::agent_commerce::task::common::deposit_qr::InsufficientBalanceError>()
-                        {
-                            Ok(ib) => {
-                                output::error_insufficient_balance(&ib);
-                                std::process::exit(1);
-                            }
-                            Err(e) => {
-                                output::error(&format!("{e:#}"));
-                                std::process::exit(1);
-                            }
-                        },
                     },
                 },
             },

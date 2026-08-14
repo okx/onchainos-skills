@@ -4,7 +4,7 @@
 //! sites (`create-task` advisory; `set-payment-mode` / `confirm-accept` /
 //! `dispute raise` blocking) enrich their output with the caller's XLayer
 //! receiving address: a machine-readable `depositAddress` in the JSON envelope
-//! plus a scannable Unicode QR rendered to STDERR when stderr is a TTY.
+//! plus a terminal-only Unicode QR rendered to STDERR when stderr is a TTY.
 //!
 //! Every path silent-degrades (FR-6): any address-resolution or QR failure falls
 //! back to today's exact behavior — never a new error, never a panic.
@@ -231,7 +231,7 @@ pub fn enrich_blocking_at(err: anyhow::Error, address: &str) -> anyhow::Error {
 /// Build the base `balanceWarning` object (no address) — pure, per
 /// `cli_command_spec.md`. `depositAddress` / `depositChain` are added by
 /// [`balance_warning_with_address`] only when an address resolves.
-fn balance_warning_base(err: &InsufficientBalanceError) -> serde_json::Value {
+pub(crate) fn balance_warning_base(err: &InsufficientBalanceError) -> serde_json::Value {
     serde_json::json!({
         "sufficient": false,
         "chain": err.deposit_chain,

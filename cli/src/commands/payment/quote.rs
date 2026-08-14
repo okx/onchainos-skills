@@ -9,6 +9,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 
+use alloy_primitives::U256;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -725,7 +726,13 @@ async fn build_candidates(
             token_symbol,
             amount: a.amount.clone(),
             amount_human: human_amount(&a.amount, decimals),
+            decimals,
             has_balance: false,
+            balance_status: "unavailable".to_string(),
+            available_amount: String::new(),
+            required_amount: human_amount(&a.amount, decimals),
+            shortfall: String::new(),
+            deposit_address: String::new(),
             recommended: None,
         });
     }
@@ -758,7 +765,9 @@ async fn preflight_balances(
         Ok(Some(w)) if !w.selected_account_id.is_empty() => w,
         _ => return Some("login_required".to_string()),
     };
-    let account = wallets.accounts_map.get(&wallets.selected_account_id)?;
+    let Some(account) = wallets.accounts_map.get(&wallets.selected_account_id) else {
+        return Some("login_required".to_string());
+    };
 
     let mut client = match crate::client::ApiClient::new(None) {
         Ok(c) => c,
@@ -774,8 +783,12 @@ async fn preflight_balances(
             .find(|a| a.chain_index == chain_id)
             .map(|a| a.address.clone())
         else {
+            any_error = true;
             continue;
         };
+        for c in candidates.iter_mut().filter(|c| c.chain_id == chain_id) {
+            c.deposit_address = addr.clone();
+        }
         match crate::commands::portfolio::fetch_all_balances(
             &mut client,
             &addr,
@@ -795,7 +808,30 @@ async fn preflight_balances(
                         .find(|a| a.index == c.accepts_index)
                         .map(|a| a.asset.as_str())
                         .unwrap_or("");
-                    c.has_balance = json_has_positive_balance(&bal, &c.token_symbol, asset);
+                    match candidate_balance_atomic(&bal, &c.token_symbol, asset, c.decimals) {
+                        Some(available) => {
+                            let Ok(required) = U256::from_str_radix(&c.amount, 10) else {
+                                any_error = true;
+                                c.balance_status = "unavailable".to_string();
+                                continue;
+                            };
+                            c.has_balance = available > U256::ZERO;
+                            c.available_amount = human_amount(&available.to_string(), c.decimals);
+                            c.required_amount = c.amount_human.clone();
+                            if available >= required {
+                                c.balance_status = "sufficient".to_string();
+                                c.shortfall = "0".to_string();
+                            } else {
+                                c.balance_status = "insufficient".to_string();
+                                c.shortfall =
+                                    human_amount(&(required - available).to_string(), c.decimals);
+                            }
+                        }
+                        None => {
+                            any_error = true;
+                            c.balance_status = "unavailable".to_string();
+                        }
+                    }
                 }
             }
             Err(_) => any_error = true,
@@ -806,6 +842,91 @@ async fn preflight_balances(
     } else {
         None
     }
+}
+
+/// Exact candidate balance in atomic units. Contract address is authoritative
+/// whenever the response exposes one; symbol matching is a compatibility
+/// fallback for older balance responses without token addresses.
+fn candidate_balance_atomic(
+    balances: &Value,
+    symbol: &str,
+    asset: &str,
+    decimals: u32,
+) -> Option<U256> {
+    let by_address = !asset.is_empty() && balance_has_contract_addr_field(balances);
+    let entry = find_balance_entry(balances, |o| {
+        if by_address {
+            balance_entry_addr(o).is_some_and(|a| a.eq_ignore_ascii_case(asset))
+        } else {
+            o.get("symbol")
+                .and_then(Value::as_str)
+                .is_some_and(|s| s.eq_ignore_ascii_case(symbol))
+        }
+    });
+    match entry {
+        Some(o) => balance_entry_atomic(o, decimals),
+        None => Some(U256::ZERO),
+    }
+}
+
+fn find_balance_entry<'a, F>(value: &'a Value, matches: F) -> Option<&'a Map<String, Value>>
+where
+    F: Fn(&Map<String, Value>) -> bool + Copy,
+{
+    match value {
+        Value::Array(items) => items.iter().find_map(|v| find_balance_entry(v, matches)),
+        Value::Object(object) => {
+            if matches(object) {
+                Some(object)
+            } else {
+                object.values().find_map(|v| find_balance_entry(v, matches))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn balance_entry_atomic(entry: &Map<String, Value>, decimals: u32) -> Option<U256> {
+    if let Some(raw) = entry
+        .get("rawBalance")
+        .or_else(|| entry.get("balanceRawAmount"))
+        .and_then(Value::as_str)
+    {
+        if let Ok(value) = U256::from_str_radix(raw, 10) {
+            return Some(value);
+        }
+    }
+    entry
+        .get("balance")
+        .and_then(Value::as_str)
+        .and_then(|human| human_to_atomic(human, decimals))
+}
+
+fn human_to_atomic(human: &str, decimals: u32) -> Option<U256> {
+    let raw = human.trim();
+    if raw.is_empty() || raw.starts_with('-') || raw.contains(['e', 'E']) {
+        return None;
+    }
+    let (whole, fraction) = raw.split_once('.').unwrap_or((raw, ""));
+    if !whole.chars().all(|c| c.is_ascii_digit())
+        || !fraction.chars().all(|c| c.is_ascii_digit())
+        || fraction.len() > decimals as usize
+    {
+        return None;
+    }
+    let mut digits = whole.to_string();
+    digits.push_str(fraction);
+    digits.extend(std::iter::repeat('0').take(decimals as usize - fraction.len()));
+    let normalized = digits.trim_start_matches('0');
+    U256::from_str_radix(
+        if normalized.is_empty() {
+            "0"
+        } else {
+            normalized
+        },
+        10,
+    )
+    .ok()
 }
 
 /// Is `s` a positive numeric balance string?
@@ -1129,7 +1250,13 @@ mod tests {
             token_symbol: "USDC".into(),
             amount: "50000".into(),
             amount_human: "0.05".into(),
+            decimals: 6,
             has_balance: true,
+            balance_status: "sufficient".into(),
+            available_amount: "1".into(),
+            required_amount: "0.05".into(),
+            shortfall: "0".into(),
+            deposit_address: "0xwallet".into(),
             recommended: Some(true),
         };
         // `upto` is a spend cap → "up to" wording so 0.05 isn't read as fixed.
@@ -1151,6 +1278,51 @@ mod tests {
         assert_eq!(human_amount("1234567", 6), "1.234567");
         assert_eq!(human_amount("0", 6), "0");
         assert_eq!(human_amount("500", 0), "500");
+    }
+
+    #[test]
+    fn candidate_balance_compares_exact_atomic_amount() {
+        let bal = serde_json::json!({
+            "data": [{ "tokenAssets": [{
+                "symbol": "USDT",
+                "tokenContractAddress": "0xaaa",
+                "balance": "0.009999",
+                "rawBalance": "9999"
+            }]}]
+        });
+        assert_eq!(
+            candidate_balance_atomic(&bal, "USDT", "0xAAA", 6),
+            Some(U256::from(9_999u64))
+        );
+        assert!(
+            candidate_balance_atomic(&bal, "USDT", "0xAAA", 6).unwrap() < U256::from(10_000u64)
+        );
+    }
+
+    #[test]
+    fn candidate_balance_zero_when_matching_token_is_absent() {
+        let bal = serde_json::json!({
+            "data": [{ "tokenAssets": [{
+                "symbol": "USDT",
+                "tokenContractAddress": "0xaaa",
+                "rawBalance": "50000"
+            }]}]
+        });
+        assert_eq!(
+            candidate_balance_atomic(&bal, "USDC", "0xbbb", 6),
+            Some(U256::ZERO)
+        );
+    }
+
+    #[test]
+    fn human_balance_conversion_rejects_precision_loss() {
+        assert_eq!(
+            human_to_atomic("1.234567", 6),
+            Some(U256::from(1_234_567u64))
+        );
+        assert_eq!(human_to_atomic("0.01", 6), Some(U256::from(10_000u64)));
+        assert_eq!(human_to_atomic("0.0000001", 6), None);
+        assert_eq!(human_to_atomic("1e-2", 6), None);
     }
 
     #[test]

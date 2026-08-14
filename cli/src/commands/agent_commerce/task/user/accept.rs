@@ -152,9 +152,7 @@ pub async fn handle_set_payment_mode(
                 common::ensure_sufficient_balance(resolved.fee_amount, &resolved.fee_token_symbol)
                     .await
             {
-                // FR-1: enrich the blocking insufficiency with the caller's XLayer
-                // deposit address + stderr QR (silent-degrade if unresolved).
-                return Err(common::deposit_qr::enrich_blocking(e, &agent_id).await);
+                return print_payment_funding_block_from_error(e, &agent_id, "Payment mode update").await;
             }
         }
         Some(resolved)
@@ -164,8 +162,7 @@ pub async fn handle_set_payment_mode(
         let amt: f64 = amt_str.parse().unwrap_or(0.0);
         if amt > 0.0 {
             if let Err(e) = common::ensure_sufficient_balance(amt, &sym).await {
-                // FR-1: enrich the blocking insufficiency (set-payment-mode escrow).
-                return Err(common::deposit_qr::enrich_blocking(e, &agent_id).await);
+                return print_payment_funding_block_from_error(e, &agent_id, "Payment mode update").await;
             }
         }
         None
@@ -331,8 +328,7 @@ pub async fn handle_confirm_accept(
     let amt: f64 = token_amount.parse().unwrap_or(0.0);
     if amt > 0.0 {
         if let Err(e) = common::ensure_sufficient_balance(amt, &token_symbol).await {
-            // FR-1: enrich the blocking insufficiency (confirm-accept escrow pre-check).
-            return Err(common::deposit_qr::enrich_blocking(e, &agent_id).await);
+            return print_payment_funding_block_from_error(e, &agent_id, "Task payment").await;
         }
     }
 
@@ -1171,6 +1167,28 @@ pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str, agent
 
     crate::output::success(data);
     Ok(())
+}
+
+async fn print_payment_funding_block_from_error(
+    err: anyhow::Error,
+    agent_id: &str,
+    action: &str,
+) -> Result<()> {
+    match err.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
+        Some(ib) => {
+            let ib_owned = ib.clone();
+            let (warning, _) = common::deposit_qr::balance_warning_json(&ib_owned, agent_id).await;
+            Err(crate::output::CliFundingBlocked {
+                data: common::funding_notice::funding_blocked_envelope(
+                    &warning,
+                    "task-payment",
+                    action,
+                ),
+            }
+            .into())
+        }
+        None => Err(err),
+    }
 }
 
 #[cfg(test)]
