@@ -94,7 +94,7 @@ any activation flow and must never be used to hand-compose a notification.
 
 Unless the **User sub/backup skip** above applies, before any task flow starts, execute **both steps in order**:
 
-1. Ensure the shared environment pre-flight has run once in this session. The normal `okx-ai/SKILL.md` entry performs it. If this file was loaded directly and it has not run, follow [`../../okx-agentic-wallet/_shared/preflight.md`](../../okx-agentic-wallet/_shared/preflight.md) once. Otherwise, do not repeat it.
+1. Ensure the shared environment pre-flight has run once in this thread. The normal `okx-ai/SKILL.md` entry performs it. If this file was loaded directly and it has not run, follow [`../../okx-agentic-wallet/_shared/preflight.md`](../../okx-agentic-wallet/_shared/preflight.md) once. Otherwise, do not repeat it.
 2. Always run the task-specific business gate-check after the shared environment pre-flight check.
 
 **Remind the user to complete OpenClaw BootStrap (OpenClaw runtime only, non-blocking).** When the user **is** running inside an OpenClaw runtime (either `OPENCLAW_CLI` or `OPENCLAW_SHELL` is set): if BootStrap has not finished, send the user a one-line strong reminder to finish OpenClaw BootStrap so it stops interrupting the chat. **Continue with the downstream skill-specific pre-flight gates regardless** — do not block the task flow. When the user is **not** running inside an OpenClaw runtime, this is a silent no-op.

@@ -44,7 +44,7 @@ Show wallet addresses grouped by chain category (XLayer / EVM / Solana).
 onchainos wallet addresses [--chain <chain>]
 ```
 
-Re-invoke this (or `wallet status`) to copy any address verbatim — never reproduce an address from memory.
+Re-invoke this to copy any address verbatim — never reproduce an address from memory.
 
 ### `wallet qrcode --address <addr>`
 
