@@ -248,6 +248,19 @@ pub async fn handle_create_subscribe(
         eprintln!("[create-subscribe] user identity check passed (agentId: {user_agent_id})");
     }
 
+    if let Some(warning) = subscribe_balance_warning(
+        &params.service_token_amount,
+        &params.service_token_address,
+        &user_agent_id,
+    )
+    .await?
+    {
+        return Err(crate::output::CliFundingBlocked {
+            data: build_subscription_funding_block(&warning),
+        }
+        .into());
+    }
+
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
 
     // Step 1: providerConfirmStatus → terms object
@@ -333,27 +346,6 @@ pub async fn handle_create_subscribe(
         eprintln!("[create-subscribe] subId={sub_id}, bizType={biz_type}");
     }
 
-    // Blocking balance pre-check (the "6th" balance checkpoint). Unlike
-    // create-task — which only *registers* the task and involves no transfer, so
-    // an advisory (non-blocking) warning is appropriate — create-subscribe's
-    // broadcast performs an *immediate* ERC20 token transfer. An insufficient
-    // business-token balance must therefore block *before* broadcast: the
-    // previous advisory mode continued to broadcast, the transfer reverted
-    // on-chain as an opaque `estimateGas` error ("ERC20: transfer amount exceeds
-    // balance") propagated via `?`, and the already-computed deposit
-    // address + QR were dropped (JSON output missing depositAddress; non-TTY
-    // runtimes got no output at all). On insufficiency this bails the enriched
-    // `InsufficientBalanceError`, which `main.rs` downcasts into the structured
-    // `error_insufficient_balance` JSON envelope (carrying `depositAddress`); the
-    // agent playbook reads that field and calls `onchainos wallet qrcode` to
-    // render the QR in non-TTY runtimes.
-    ensure_subscribe_balance(
-        &params.service_token_amount,
-        &params.service_token_address,
-        &user_agent_id,
-    )
-    .await?;
-
     // Step 4 + 5: sign uopData → broadcast (reuses the standard task broadcast endpoint)
     let tx_hash = signing::sign_uop_and_broadcast(
         client, uop_data, &account_id, &address, &sub_id, biz_type, &user_agent_id, None,
@@ -426,9 +418,8 @@ pub async fn handle_create_subscribe(
             autotrade_requested,
             autotrade_configured,
         ));
-        // Balance is verified *before* broadcast now (blocking), so a success
-        // envelope no longer carries a `balanceWarning` — an insufficiency exits
-        // earlier via the structured `error_insufficient_balance` envelope.
+        // Balance is verified before create/broadcast; insufficiency exits earlier
+        // via the blocked funding-notice envelope.
         if super::content::is_cli_mode() {
             println!();
             println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
@@ -471,27 +462,14 @@ pub async fn handle_create_subscribe(
     Ok(())
 }
 
-/// Blocking balance pre-check for the subscription flow — the "6th" balance
-/// checkpoint. Unlike create-task's advisory checkpoint, create-subscribe's
-/// broadcast performs an *immediate* ERC20 transfer, so an insufficient balance
-/// must block *before* broadcast. Subscribe carries a token *address* (not a
-/// symbol), so the symbol is resolved first. On an insufficient XLayer
-/// business-token balance this bails the enriched `InsufficientBalanceError`
-/// (deposit address attached + XLayer QR rendered to stderr on TTY, silent-degrade
-/// if the address can't be resolved), which `main.rs` downcasts into the
-/// structured `error_insufficient_balance` JSON envelope. Pre-check inputs that
-/// carry no balance obligation (a zero/unparsable amount) or that can't be mapped
-/// to a symbol silent-degrade to `Ok(())` — the symbol lookup is a subscribe-only
-/// pre-check step and must never introduce a new blocking failure mode for an
-/// otherwise-fundable subscription (FR-6).
-async fn ensure_subscribe_balance(
+async fn subscribe_balance_warning(
     service_token_amount: &str,
     service_token_address: &str,
     user_agent_id: &str,
-) -> Result<()> {
+) -> Result<Option<serde_json::Value>> {
     let required: f64 = service_token_amount.parse().unwrap_or(0.0);
     if required <= 0.0 {
-        return Ok(());
+        return Ok(None);
     }
 
     let symbol = match common::util::resolve_token_symbol_by_address(
@@ -508,22 +486,26 @@ async fn ensure_subscribe_balance(
                      (skipping balance pre-check): {e}"
                 );
             }
-            return Ok(());
+            return Ok(None);
         }
     };
 
-    if let Err(e) = common::ensure_sufficient_balance(required, &symbol).await {
-        // Blocking: enrich the insufficiency with the caller's XLayer deposit
-        // address + stderr QR (silent-degrade if unresolved), then bail so main.rs
-        // downcasts to the structured `error_insufficient_balance` JSON. A
-        // non-insufficiency infra error (login expired, balance-query failure)
-        // passes through `enrich_blocking` unchanged and blocks the same way the
-        // sibling checkpoints (accept / dispute) do — consistent with a flow whose
-        // very next step is an immediate on-chain transfer.
-        return Err(common::deposit_qr::enrich_blocking(e, user_agent_id).await);
+    match common::ensure_sufficient_balance(required, &symbol).await {
+        Ok(()) => Ok(None),
+        Err(e) => match e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
+            Some(ib) => {
+                let ib_owned = ib.clone();
+                let (warning, _) =
+                    common::deposit_qr::balance_warning_json(&ib_owned, user_agent_id).await;
+                Ok(Some(warning))
+            }
+            None => Err(e),
+        },
     }
+}
 
-    Ok(())
+fn build_subscription_funding_block(warning: &serde_json::Value) -> serde_json::Value {
+    common::funding_notice::funding_blocked_envelope(warning, "subscription", "Subscription")
 }
 
 #[cfg(test)]
@@ -763,6 +745,29 @@ mod tests {
         assert_eq!(
             env2["offlineReplayFixCommands"],
             serde_json::json!(["npm install -g @okxweb3/a2a-node@latest"])
+        );
+    }
+
+    #[test]
+    fn subscription_funding_block_uses_funding_notice_protocol() {
+        let warning = serde_json::json!({
+            "sufficient": false,
+            "chain": "XLayer",
+            "currency": "USDT",
+            "available": "0",
+            "required": "0.0001",
+            "shortfall": "0.0001",
+            "depositAddress": "0x1234567890abcdef1234567890abcdef12345678",
+            "depositChain": "XLayer"
+        });
+
+        let output = build_subscription_funding_block(&warning);
+        assert_eq!(output["blocked"], serde_json::json!(true));
+        assert_eq!(output["submitted"], serde_json::json!(false));
+        assert_eq!(output["mustRunFundingNotice"], serde_json::json!(true));
+        assert_eq!(
+            output["fundingNoticeCommand"],
+            "onchainos agent funding-notice --chain XLayer --currency USDT --shortfall 0.0001 --deposit-address 0x1234567890abcdef1234567890abcdef12345678 --available 0 --required 0.0001 --deposit-chain XLayer --reason subscription --format json"
         );
     }
 

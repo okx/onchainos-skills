@@ -145,9 +145,9 @@ agent list-attachments <jobId>
 
 ### create-task
 
-Publish a new task on-chain (params provided by `next-action` playbook; auto-checks wallet balance)
+Publish a new task on-chain (params provided by `next-action` playbook; blocks on insufficient wallet balance)
 
-> **Insufficient-balance output (XLayer):** when the caller is under-funded, `create-task` still succeeds and on-chains (advisory), and the success `data` gains a `balanceWarning` object: `{ sufficient:false, chain:"XLayer", chainIndex:"196", currency, required, available, shortfall, depositAddress?, depositChain:"XLayer" }`. `depositAddress` is the caller's XLayer receiving address (omitted if address resolution fails — silent-degrade). On an interactive TTY a scannable QR of `depositAddress` is also printed to **stderr** (never to stdout JSON, never in MCP/piped output). `balanceWarning` is absent when balance is sufficient.
+> **Insufficient-balance output (XLayer):** when under-funded, `create-task` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs`. If missing, show `balanceWarning`.
 
 ```
 agent create-task --description <txt> --budget <num> --max-budget <num> --currency <USDT|USDG> \
@@ -173,6 +173,16 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
 | `--endpoint` | No | - | Designated service endpoint URL             |
 | `--file` | No | - | Local file paths to attach (repeatable)     |
 | `--payment-mode` | No | unset | `escrow` or `x402`                          |
+
+### funding-notice
+
+Build an English canonical insufficient-funding notice plus QR output. TTY returns `terminalQr`; non-TTY returns PNG `imagePath` + `notifyCommandArgs`.
+
+```
+agent funding-notice --chain <chain> --currency <symbol> --shortfall <amount> --deposit-address <addr> --format json
+```
+
+Optional: `--available <amount>`, `--required <amount>`, `--deposit-chain <chain>`, `--reason <task-payment|payment-402|dispute-bond|subscription>`.
 
 ### asp-match
 
@@ -301,7 +311,7 @@ agent active-tasks [--role <r>] [--include-terminal]
 
 Set the task's payment mode on-chain (params provided by `next-action` playbook)
 
-> **Insufficient-balance output (XLayer):** when under-funded this command still blocks (exit 1) with the existing error message, now carrying machine-readable siblings on the error envelope: `depositAddress` (caller's XLayer address), `depositChain:"XLayer"`, `currency`, `shortfall`. On resolution failure the envelope degrades to the plain `{ok:false,error}` verbatim. On a TTY, a QR of `depositAddress` is printed to **stderr** only.
+> **Insufficient-balance output:** when under-funded, this command returns blocked funding-notice JSON. If `fundingNoticeCommand` exists, run it; otherwise show `balanceWarning`.
 
 ```
 agent set-payment-mode <jobId> --payment-mode <escrow|x402> [--token-symbol <sym>] [--token-amount <amt>] [--endpoint <url>]
@@ -311,7 +321,7 @@ agent set-payment-mode <jobId> --payment-mode <escrow|x402> [--token-symbol <sym
 
 User Agent confirms ASP acceptance + escrow payment (params provided by `next-action` playbook)
 
-> **Insufficient-balance output (XLayer):** when under-funded this command still blocks (exit 1) with the existing error message, now carrying machine-readable siblings on the error envelope: `depositAddress` (caller's XLayer address), `depositChain:"XLayer"`, `currency`, `shortfall`. On resolution failure the envelope degrades to the plain `{ok:false,error}` verbatim. On a TTY, a QR of `depositAddress` is printed to **stderr** only.
+> **Insufficient-balance output:** when under-funded, this command returns blocked funding-notice JSON. If `fundingNoticeCommand` exists, run it; otherwise show `balanceWarning`.
 
 ```
 agent confirm-accept <jobId>
@@ -436,6 +446,8 @@ agent create-subscribe \
 | `--autotrade-quote` | With mode | - | `usdt` or `usdc` |
 
 > **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
+
+> **Insufficient-balance output:** when under-funded, `create-subscribe` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs`. If missing, show `balanceWarning`.
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
@@ -720,7 +732,7 @@ agent subscribe-dispute <jobId> --agent-id <aspAgentId> [--reason <text>]
 
 Dispute step 1: ERC-20 approve dispute deposit (params provided by `next-action` playbook)
 
-> **Insufficient-bond output (XLayer):** when the ASP signing account cannot cover the dispute bond (task amount × 5%), the error envelope carries `depositAddress` == the ASP signing account (verbatim), `depositChain:"XLayer"`, `currency`, `shortfall`; a QR of that address prints to **stderr** on a TTY. Silent-degrade to plain `{ok:false,error}` if unavailable.
+> **Insufficient-bond output:** when under-funded, this command returns blocked funding-notice JSON with `--reason dispute-bond`. If `fundingNoticeCommand` exists, run it; otherwise show `balanceWarning`.
 
 ```
 agent dispute raise <jobId> --reason "<txt>" --agent-id <providerAgentId>

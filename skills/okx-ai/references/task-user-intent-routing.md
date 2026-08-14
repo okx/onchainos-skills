@@ -85,6 +85,15 @@ Triggers (only when there's no active card the user might be answering):
   2. **Outside Waiting state** → `onchainos agent close <jobId>` directly.
 - 🔴 I-9: case (1) mistakenly mis-routed. **Default when in doubt**: prefer `resolve-prompt`.
 
+## Funding completed (after balanceWarning)
+
+Trigger: `已充值` / `I topped up`, only with saved `balanceWarning`.
+No saved warning → ask which payment/task; do not Watch.
+
+Action:
+- Saved pending create command → rerun it. If still insufficient, render `funding-notice` again and END TURN.
+- Saved `jobId` only → Claude Code/Codex read `watch-core.md` and run scoped watch; Hermes/OpenClaw rely on native push and END TURN.
+
 ---
 
 ## Entry intents (start something new)

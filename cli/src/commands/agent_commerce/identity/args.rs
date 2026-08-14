@@ -304,6 +304,37 @@ pub struct SearchArgs {
     pub page_size: Option<String>,
 }
 
+#[cfg(test)]
+mod search_args_tests {
+    use super::SearchArgs;
+    use clap::Parser;
+
+    #[derive(Debug, Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        search: SearchArgs,
+    }
+
+    #[test]
+    fn search_accepts_query_without_format() {
+        let cli = TestCli::parse_from(["test", "--query", "market analysis"]);
+        assert_eq!(cli.search.query.as_deref(), Some("market analysis"));
+    }
+
+    #[test]
+    fn search_rejects_removed_format_flag() {
+        for value in ["table", "raw"] {
+            assert!(TestCli::try_parse_from([
+                "test",
+                "--query",
+                "market analysis",
+                "--format",
+                value,
+            ])
+            .is_err());
+        }
+    }
+}
 
 #[derive(Args, Clone, Debug)]
 pub struct ServiceListArgs {

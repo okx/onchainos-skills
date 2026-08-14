@@ -487,6 +487,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
         AgentCommand::RejectApply { .. } => "reject-apply".into(),
         AgentCommand::UserNotify { .. } => "user-notify".into(),
+        AgentCommand::FundingNotice(_) => "funding-notice".into(),
         AgentCommand::CacheNotify { .. } => "cache-notify".into(),
         AgentCommand::CacheRating { .. } => "cache-rating".into(),
         AgentCommand::TaskAttach { .. } => "task-attach".into(),

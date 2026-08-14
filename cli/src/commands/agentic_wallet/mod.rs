@@ -14,6 +14,7 @@ pub mod transfer;
 
 use anyhow::{bail, Result};
 use clap::{Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 /// Stage of the social-login flow. The skill orchestrates `init` → `open` →
 /// `poll` so the login URL is returned immediately (before the browser opens),
@@ -29,6 +30,15 @@ pub enum LoginPhase {
     Open,
     /// Poll for the login result (using state from `init`) and persist it.
     Poll,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Default)]
+pub enum QrcodeFormat {
+    /// Print Unicode block QR art to stdout.
+    #[default]
+    Unicode,
+    /// Write a PNG QR image to --output.
+    Png,
 }
 
 #[derive(Subcommand)]
@@ -73,6 +83,12 @@ pub enum WalletCommand {
         /// Address (or arbitrary string) to encode verbatim into the QR
         #[arg(long)]
         address: String,
+        /// Output format. Defaults to Unicode text on stdout.
+        #[arg(long, value_enum, default_value_t = QrcodeFormat::Unicode)]
+        format: QrcodeFormat,
+        /// File path for --format png.
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
     /// Logout and clear all stored credentials
     Logout,
@@ -421,17 +437,32 @@ async fn resolve_send_amount(
     bail!("Either --amt or --readable-amount is required")
 }
 
-fn cmd_qrcode(address: &str) -> Result<()> {
+fn cmd_qrcode(address: &str, format: QrcodeFormat, output: Option<PathBuf>) -> Result<()> {
     let trimmed = address.trim();
     if trimmed.is_empty() {
         bail!("--address must not be empty");
     }
-    // Delegate to the single shared in-process encoder (crate::qr). Output stays
-    // byte-for-byte identical (same builder chain / render params) and continues
-    // to go to stdout.
-    let rendered = crate::qr::render_address_qr_unicode(trimmed)
-        .map_err(|e| anyhow::anyhow!("Failed to encode QR for {}: {}", trimmed, e))?;
-    println!("{}", rendered);
+    match format {
+        QrcodeFormat::Unicode => {
+            if output.is_some() {
+                bail!("--output requires --format png");
+            }
+            // Delegate to the single shared in-process encoder (crate::qr).
+            let rendered = crate::qr::render_address_qr_unicode(trimmed)
+                .map_err(|e| anyhow::anyhow!("Failed to encode QR for {}: {}", trimmed, e))?;
+            println!("{}", rendered);
+        }
+        QrcodeFormat::Png => {
+            let Some(path) = output else {
+                bail!("--output is required when --format png");
+            };
+            let png = crate::qr::render_address_qr_png(trimmed)
+                .map_err(|e| anyhow::anyhow!("Failed to encode QR for {}: {}", trimmed, e))?;
+            std::fs::write(&path, png)
+                .map_err(|e| anyhow::anyhow!("failed to write QR PNG {}: {}", path.display(), e))?;
+            println!("{}", path.display());
+        }
+    }
     Ok(())
 }
 
@@ -455,7 +486,11 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
         WalletCommand::Switch { account_id } => account::cmd_switch(&account_id).await,
         WalletCommand::Status { .. } => account::cmd_status().await,
         WalletCommand::Addresses { chain } => account::cmd_addresses(chain.as_deref()).await,
-        WalletCommand::Qrcode { address } => cmd_qrcode(&address),
+        WalletCommand::Qrcode {
+            address,
+            format,
+            output,
+        } => cmd_qrcode(&address, format, output),
         WalletCommand::Logout => auth::cmd_logout().await,
         WalletCommand::Chains => chain::execute(chain::ChainCommand::List).await,
         WalletCommand::Geoblock => geoblock::cmd_check().await,

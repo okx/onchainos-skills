@@ -121,6 +121,7 @@ fn attachments_and_stop() -> String {
     let watch_section = if is_cli_mode() {
         "\
 **After create-task/create-subscribe + task-attach (if any), check CLI output for a `[Watch]` block:**
+0. If balanceWarning exists, stop here; do not Watch.
 1. `[Watch]` block present → follow its instructions: read `skills/okx-ai/references/watch-core.md`, execute watch, then **end this turn**.
 2. No `[Watch]` block → **end this turn immediately**."
     } else {
@@ -136,10 +137,11 @@ If the user included file(s)/image(s) as task material → for each: `onchainos 
 
 ================================================
 
-After success, tell the user directly (you are in the user session, no `onchainos agent user-notify` needed):
+After success:
 
-- \"{create_designated}\"
-Append `Insufficient ... balance` warning from CLI output if present. Localize.
+- `blockedReason=insufficient-balance`: save the exact `create-task` command + `balanceWarning`; if `fundingNoticeCommand` exists, run it. `terminal-unicode`: show `terminalQr` + full notice. `image-notify`: localize `contentCanonical`, run `notifyCommandArgs`, then repeat the full notice in final. If missing, show `balanceWarning`. END TURN; do not create again or Watch.
+- No `balanceWarning`: tell the user directly: \"{create_designated}\"
+- Legacy submitted `balanceWarning`: save `jobId` + warning, render `funding-notice`; on Codex/Claude Code repeat the full notice in final. END TURN; do not Watch.
 
 {watch_section}
 
@@ -599,5 +601,23 @@ mod tests {
         assert!(out.contains("authorization limit/cap"));
         assert!(out.contains("venue/tool choice"));
         assert!(out.contains("serviceParams` MUST be empty"));
+    }
+
+    #[test]
+    fn regular_create_task_requires_full_balance_notice_before_watch() {
+        let out = create_task_regular();
+        assert!(out.contains("balanceWarning"));
+        assert!(out.contains("blockedReason=insufficient-balance"));
+        assert!(out.contains("save the exact `create-task` command + `balanceWarning`"));
+        assert!(out.contains("if `fundingNoticeCommand` exists, run it"));
+        assert!(out.contains("`terminal-unicode`"));
+        assert!(out.contains("show `terminalQr` + full notice"));
+        assert!(out.contains("`image-notify`"));
+        assert!(out.contains("run `notifyCommandArgs`"));
+        assert!(out.contains("If missing, show `balanceWarning`"));
+        assert!(out.contains("END TURN"));
+        assert!(out.contains("do not create again or Watch"));
+        assert!(out.contains("Legacy submitted `balanceWarning`"));
+        assert!(out.contains("do not Watch"));
     }
 }

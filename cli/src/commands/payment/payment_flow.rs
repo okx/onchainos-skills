@@ -1336,8 +1336,9 @@ fn cmp_candidates(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
 /// Rank payment candidates into `(candidates, alternatives)` per architecture §5:
 ///
 /// - Fewer than 2 distinct trigger schemes (`exact`/`aggr_deferred`/`charge`) →
-///   no multi-scheme card: pick the single best, `recommended:true`, no alternatives.
-/// - All candidates zero-balance → `recommended:null` on every candidate, list
+///   no multi-scheme card: pick the best candidate; preserve remaining quote
+///   entries as alternatives so every balance status remains visible.
+/// - No candidate has sufficient balance → `recommended:null` on every candidate, list
 ///   all as `candidates`, no auto-pick.
 /// - Otherwise → payable-first ranking; winner `recommended:true` in
 ///   `candidates`, the rest `recommended:false` (ordered) in `alternatives`.
@@ -1353,14 +1354,19 @@ pub fn rank_candidates(candidates: Vec<Candidate>) -> (Vec<Candidate>, Vec<Candi
         .filter(|s| matches!(*s, "exact" | "aggr_deferred" | "charge"))
         .collect();
     let multi = distinct_trigger.len() >= 2;
-    let any_balance = candidates.iter().any(|c| c.has_balance);
+    let any_balance = candidates.iter().any(|c| c.balance_status == "sufficient");
 
     // Payable candidates first, then by the lexicographic comparator.
     let mut ranked = candidates;
-    ranked.sort_by(|a, b| match (a.has_balance, b.has_balance) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => cmp_candidates(a, b),
+    ranked.sort_by(|a, b| {
+        match (
+            a.balance_status == "sufficient",
+            b.balance_status == "sufficient",
+        ) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => cmp_candidates(a, b),
+        }
     });
 
     if !multi {
@@ -1369,11 +1375,20 @@ pub fn rank_candidates(candidates: Vec<Candidate>) -> (Vec<Candidate>, Vec<Candi
         // recommended:null (mirrors the multi-scheme "all zero balance → no
         // auto-pick" guard below) so the CLI never recommends a candidate the
         // buyer can't afford — the confirmation card would otherwise wave a
-        // buyer through to sign/settle before the shortfall surfaces. No
-        // alternatives either way.
+        // buyer through to sign/settle before the shortfall surfaces. The
+        // remaining same-scheme entries are still returned as alternatives
+        // so quote reports every accepts[] candidate's balance status. This
+        // does not turn the flow into a multi-scheme recommendation card.
         let mut best = ranked.remove(0);
-        best.recommended = if best.has_balance { Some(true) } else { None };
-        return (vec![best], vec![]);
+        best.recommended = if best.balance_status == "sufficient" {
+            Some(true)
+        } else {
+            None
+        };
+        for candidate in ranked.iter_mut() {
+            candidate.recommended = Some(false);
+        }
+        return (vec![best], ranked);
     }
 
     if !any_balance {
@@ -2045,7 +2060,25 @@ mod tests {
             token_symbol: token.into(),
             amount: amount.into(),
             amount_human: amount.into(),
+            decimals: 6,
             has_balance,
+            balance_status: if has_balance {
+                "sufficient".into()
+            } else {
+                "insufficient".into()
+            },
+            available_amount: if has_balance {
+                amount.into()
+            } else {
+                "0".into()
+            },
+            required_amount: amount.into(),
+            shortfall: if has_balance {
+                "0".into()
+            } else {
+                amount.into()
+            },
+            deposit_address: "0xwallet".into(),
             recommended: None,
         }
     }
@@ -2124,6 +2157,22 @@ mod tests {
         assert!(alt.is_empty());
     }
 
+    #[test]
+    fn rank_single_scheme_preserves_every_candidate_status() {
+        let sufficient = cand("exact", "USDC", "5000", true, true);
+        let mut insufficient = cand("exact", "USDC", "10000", true, true);
+        insufficient.balance_status = "insufficient".into();
+        insufficient.available_amount = "0.005".into();
+        insufficient.required_amount = "0.01".into();
+        insufficient.shortfall = "0.005".into();
+
+        let (candidates, alternatives) = rank_candidates(vec![insufficient, sufficient]);
+        assert_eq!(candidates.len() + alternatives.len(), 2);
+        assert_eq!(candidates[0].balance_status, "sufficient");
+        assert_eq!(alternatives[0].balance_status, "insufficient");
+        assert_eq!(alternatives[0].shortfall, "0.005");
+    }
+
     // ── pay_confirming index-space alignment (fund-safety) ────────────
     //
     // Regression guard: `pay_confirming`'s preview MUST describe the exact
@@ -2148,7 +2197,13 @@ mod tests {
             token_symbol: "USDC".into(),
             amount: "5000".into(),
             amount_human: "0.005".into(),
+            decimals: 6,
             has_balance: true,
+            balance_status: "sufficient".into(),
+            available_amount: "1".into(),
+            required_amount: "0.005".into(),
+            shortfall: "0".into(),
+            deposit_address: "0xwallet".into(),
             recommended: Some(true),
         };
         let alt = Candidate {
@@ -2160,7 +2215,13 @@ mod tests {
             token_symbol: "USDC".into(),
             amount: "10000".into(),
             amount_human: "0.01".into(),
+            decimals: 6,
             has_balance: true,
+            balance_status: "sufficient".into(),
+            available_amount: "1".into(),
+            required_amount: "0.01".into(),
+            shortfall: "0".into(),
+            deposit_address: "0xwallet".into(),
             recommended: Some(false),
         };
         let st = PaymentState {

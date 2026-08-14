@@ -36,7 +36,7 @@
 
 ## Deposit-address QR (insufficient-balance — MANDATORY)
 
-🛑 **Rule:** when a CLI JSON response contains a non-empty `depositAddress` field, run `onchainos wallet qrcode --address <depositAddress>` and render the QR under option 1 of the funding list. When no JSON field is present (relayed notification), extract the first `0x` + 40-hex-char address from the 4-option funding text and use that. Render the QR once; do NOT rewrite or drop the 4-option list.
+🛑 **Rule:** if `fundingNoticeCommand` exists, run it. `terminal-unicode`: show `terminalQr` + full notice. `image-notify`: localize `contentCanonical`, run `notifyCommandArgs`, then repeat the full notice in final. If missing, show `balanceWarning`. Never summarize the 4 options/address/gas/resume.
 
 ## Subscription
 

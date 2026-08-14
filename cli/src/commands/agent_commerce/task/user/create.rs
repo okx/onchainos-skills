@@ -219,35 +219,26 @@ pub async fn handle_create(
         eprintln!("[task-create] user identity check passed (agentId: {user_agent_id})");
     }
 
-    // Advisory balance check (non-blocking — the task still on-chains). On an
-    // insufficiency we attach a structured `balanceWarning` (FR-1) to the success
-    // `data`; `balance_warning_json` resolves the caller's XLayer deposit address
-    // and renders the QR to stderr (TTY-only). A non-insufficiency error (e.g.
-    // balance-query failure) is not surfaced — create-task is advisory.
-    let (balance_warning, balance_msg) =
-        match common::ensure_sufficient_balance(params.budget, &validated.currency).await {
-            Err(e) => {
-                if DEBUG_LOG {
-                    let mut err = std::io::stderr();
-                    let _ = writeln!(err, "[task-create] ⚠ balance warning: {e}");
-                }
-                match e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
-                    Some(ib) => {
-                        let ib_owned = ib.clone();
-                        // `balance_warning_json` returns the marker-filled advisory
-                        // message alongside the structured warning, so the guidance
-                        // text carries the QR position (under option 1) regardless of
-                        // the stderr side-effect.
-                        let (warning, msg) =
-                            common::deposit_qr::balance_warning_json(&ib_owned, &user_agent_id)
-                                .await;
-                        (Some(warning), Some(msg))
-                    }
-                    None => (None, None),
-                }
-            }
-            Ok(()) => (None, None),
-        };
+    // Blocking balance gate for regular task creation. If the caller is under-funded,
+    // do not create the backend task or broadcast anything. Query failures remain
+    // non-blocking so an unavailable balance service does not prevent creation.
+    if let Err(e) = common::ensure_sufficient_balance(params.budget, &validated.currency).await {
+        if DEBUG_LOG {
+            let mut err = std::io::stderr();
+            let _ = writeln!(err, "[task-create] ⚠ balance check: {e}");
+        }
+        if let Some(ib) = e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
+            let ib_owned = ib.clone();
+            let (warning, _) =
+                common::deposit_qr::balance_warning_json(&ib_owned, &user_agent_id).await;
+            crate::output::success(common::funding_notice::funding_blocked_envelope(
+                &warning,
+                "task-payment",
+                "Task creation",
+            ));
+            return Ok(());
+        }
+    }
 
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
 
@@ -336,12 +327,9 @@ pub async fn handle_create(
         None,
     );
 
-    // Terminal success emit — routed through `output::success` so stdout is a
-    // pure JSON envelope carrying the advisory `data.balanceWarning` (drift
-    // resolved per architecture §5.2/§10 #3). The human/agent-facing guidance
-    // (summary, advisory framing, [Watch] mandatory-gate block, set-payment-mode
-    // note) is preserved verbatim under `data.guidance` so agent orchestration is
-    // unchanged; only its carrier moved from raw stdout lines into the envelope.
+    // Terminal success emit — routed through `output::success` so stdout stays a
+    // pure JSON envelope. The human/agent-facing guidance remains under
+    // `data.guidance` so agent orchestration is unchanged.
     let mut guidance = String::new();
     guidance.push_str(
         "✓ Task publish in progress (transaction broadcast, awaiting on-chain confirmation)\n",
@@ -352,12 +340,6 @@ pub async fn handle_create(
         guidance.push_str(&format!("  Designated provider: {}\n", params.provider));
     }
     guidance.push('\n');
-    if let Some(ref msg) = balance_msg {
-        guidance.push('\n');
-        guidance.push_str("Advisory (NOT an error; task is on-chain; do NOT re-run create-task; the ASP may or may not apply — do NOT promise the user it will). Top up so the payment step doesn't fail if the ASP applies:\n");
-        guidance.push_str(msg);
-        guidance.push('\n');
-    }
     // In CLI mode (Claude Code / Codex), skip the "Next: wait for ..." hint —
     // its passive "wait" + "automatically" phrasing reads as a conversation-ending
     // cue to LLM-driven watch loops and was observed to suppress the immediately
@@ -384,10 +366,6 @@ pub async fn handle_create(
     });
     if !params.provider.is_empty() {
         data["designatedProvider"] = serde_json::json!(params.provider);
-    }
-    // `balanceWarning` is present ONLY on insufficiency (absent when sufficient).
-    if let Some(warning) = balance_warning {
-        data["balanceWarning"] = warning;
     }
     crate::output::success(data);
     Ok(())
@@ -578,6 +556,36 @@ mod tests {
         assert_eq!(body["title"], "t");
         assert_eq!(body["description"], "a long enough description text for the task");
         assert_eq!(body["providerAgentId"], "agent-1");
+    }
+
+    #[test]
+    fn task_create_funding_block_uses_shared_envelope() {
+        let warning = serde_json::json!({
+            "chain": "XLayer",
+            "currency": "USDT",
+            "shortfall": "0.01",
+            "available": "0",
+            "required": "0.01",
+            "depositAddress": "0x1234567890abcdef1234567890abcdef12345678",
+            "depositChain": "XLayer"
+        });
+        let envelope = common::funding_notice::funding_blocked_envelope(
+            &warning,
+            "task-payment",
+            "Task creation",
+        );
+        assert_eq!(envelope["blocked"], serde_json::json!(true));
+        assert_eq!(envelope["submitted"], serde_json::json!(false));
+        assert_eq!(envelope["mustRepeatInFinalResponse"], serde_json::json!(true));
+        assert_eq!(envelope["forbidFundingSummary"], serde_json::json!(true));
+        assert_eq!(
+            envelope["fundingNoticeCommand"],
+            "onchainos agent funding-notice --chain XLayer --currency USDT --shortfall 0.01 --deposit-address 0x1234567890abcdef1234567890abcdef12345678 --available 0 --required 0.01 --deposit-chain XLayer --reason task-payment --format json"
+        );
+        assert!(envelope["finalResponsePolicy"]
+            .as_str()
+            .expect("finalResponsePolicy")
+            .contains("never summarize"));
     }
 
     // Reconciled with master's `validate_budget` after MR !187 review note-9880442

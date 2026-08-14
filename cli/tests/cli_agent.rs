@@ -40,6 +40,7 @@ use common::{
     assert_error_contains, fresh_home, onchainos, parse_stdout_json, run_with_retry, scrubbed,
 };
 use serde_json::Value;
+use std::fs;
 
 /// Run `agent validate-listing` offline in an isolated `ONCHAINOS_HOME` sandbox
 /// and return the parsed raw `{ pass, findings }` JSON. Asserts exit 0 (the CSV
@@ -77,6 +78,163 @@ fn findings(result: &Value) -> &Vec<Value> {
     result["findings"]
         .as_array()
         .unwrap_or_else(|| panic!("`findings` is not an array: {result}"))
+}
+
+fn funding_notice_image_dir() -> std::path::PathBuf {
+    let image_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test_tmp")
+        .join("funding notice");
+    fs::create_dir_all(&image_dir).expect("create funding-notice image dir");
+    image_dir
+}
+
+#[test]
+fn funding_notice_outputs_canonical_json_and_png() {
+    let image_dir = funding_notice_image_dir();
+    let output = onchainos()
+        .env_remove("CODEX_THREAD_ID")
+        .args([
+            "agent",
+            "funding-notice",
+            "--chain",
+            "XLayer",
+            "--currency",
+            "USDT",
+            "--shortfall",
+            "0.01",
+            "--deposit-address",
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "--format",
+            "json",
+            "--image-dir",
+            image_dir.to_str().expect("utf8 image dir"),
+        ])
+        .output()
+        .expect("run funding-notice");
+
+    let data = common::assert_ok_and_extract_data(&output);
+    assert_eq!(data["mustLocalize"], true);
+    assert_eq!(data["mustNotifyWithImagePath"], true);
+    assert_eq!(data["mustRunNotifyCommand"], true);
+    assert_eq!(data["mustRepeatInFinalResponse"], true);
+    assert_eq!(data["displayMode"], "image-notify");
+    assert!(data["terminalQr"].is_null());
+    assert_eq!(data["endTurn"], true);
+    assert_eq!(data["chain"], "XLayer");
+    assert_eq!(data["depositChain"], "XLayer");
+    assert_eq!(data["currency"], "USDT");
+    assert_eq!(data["shortfall"], "0.01");
+    assert_eq!(
+        data["depositAddress"],
+        "0x1234567890abcdef1234567890abcdef12345678"
+    );
+
+    let content = data["contentCanonical"].as_str().expect("contentCanonical");
+    for expected in [
+        "Insufficient USDT balance on XLayer",
+        "1. Scan and deposit",
+        "2. Swap",
+        "3. Bridge",
+        "4. Withdraw from OKX",
+        "Gas is paid by the platform",
+        "After topping up, tell me \"I topped up\".",
+    ] {
+        assert!(
+            content.contains(expected),
+            "contentCanonical missing {expected:?}: {content}"
+        );
+    }
+    let notify_command = data["notifyCommand"]
+        .as_str()
+        .expect("notifyCommand");
+    assert!(notify_command.contains("$ONCHAINOS_FUNDING_NOTICE_CONTENT"));
+    assert!(notify_command.contains("--image-path"));
+    assert!(notify_command.contains("'"));
+    let notify_args = data["notifyCommandArgs"]
+        .as_array()
+        .expect("notifyCommandArgs");
+    assert_eq!(notify_args[0], "onchainos");
+    assert_eq!(notify_args[1], "agent");
+    assert_eq!(notify_args[2], "user-notify");
+    assert!(notify_args.iter().any(|arg| arg == "--image-path"));
+    assert!(notify_args
+        .iter()
+        .any(|arg| arg.as_str().is_some_and(|value| value.contains("funding notice"))));
+    let policy = data["displayPolicy"].as_str().expect("displayPolicy");
+    assert!(policy.contains("Non-TTY"));
+    assert!(policy.contains("run notifyCommandArgs"));
+
+    let image_path = data["imagePath"].as_str().expect("imagePath");
+    let bytes = fs::read(image_path).expect("read generated QR PNG");
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    let _ = fs::remove_file(image_path);
+}
+
+#[test]
+fn funding_notice_unknown_chain_does_not_claim_gas_subsidy() {
+    let image_dir = funding_notice_image_dir();
+    let output = onchainos()
+        .args([
+            "agent",
+            "funding-notice",
+            "--chain",
+            "Base",
+            "--currency",
+            "USDC",
+            "--shortfall",
+            "2.5",
+            "--deposit-address",
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "--format",
+            "json",
+            "--image-dir",
+            image_dir.to_str().expect("utf8 image dir"),
+        ])
+        .output()
+        .expect("run funding-notice");
+
+    let data = common::assert_ok_and_extract_data(&output);
+    let content = data["contentCanonical"].as_str().expect("contentCanonical");
+    assert!(content.contains("Insufficient USDC balance on Base"));
+    assert!(content.contains("2.5 USDC"));
+    assert!(content.contains("Ensure the wallet meets the network gas requirements."));
+    assert!(!content.contains("Gas is paid by the platform"));
+
+    let image_path = data["imagePath"].as_str().expect("imagePath");
+    let _ = fs::remove_file(image_path);
+}
+
+#[test]
+fn funding_notice_accepts_payment_402_reason() {
+    let output = onchainos()
+        .env_remove("CODEX_THREAD_ID")
+        .args([
+            "agent",
+            "funding-notice",
+            "--chain",
+            "XLayer",
+            "--currency",
+            "USDT",
+            "--shortfall",
+            "0.01",
+            "--deposit-address",
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "--reason",
+            "payment-402",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run funding-notice");
+
+    let data = common::assert_ok_and_extract_data(&output);
+    assert_eq!(data["reason"], "payment-402");
+    let image_path = data["imagePath"].as_str().expect("imagePath");
+    assert!(fs::read(image_path)
+        .expect("read generated QR PNG")
+        .starts_with(b"\x89PNG\r\n\x1a\n"));
+    let _ = fs::remove_file(image_path);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -391,6 +549,44 @@ fn autotrade_non_pause_modes_still_require_agent_id() {
         .expect("run autotrade manual without agent id");
 
     assert_error_contains(&output, &["--agent-id is required unless --mode pause"]);
+}
+
+#[test]
+fn user_notify_image_path_must_exist() {
+    let (_home, dir) = fresh_home("cli_agent_user_notify_image");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "user-notify",
+            "--content",
+            "notice",
+            "--image-path",
+            "/tmp/onchainos-missing-qr.png",
+        ])
+        .output()
+        .expect("run user-notify with missing image");
+
+    assert_error_contains(&output, &["--image-path file not found"]);
+}
+
+#[test]
+fn user_notify_rejects_local_image_links_in_content() {
+    let (_home, dir) = fresh_home("cli_agent_user_notify_local_image_link");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "user-notify",
+            "--content",
+            "![QR Code](file:///tmp/deposit_usdt.png)",
+        ])
+        .output()
+        .expect("run user-notify with local image link");
+
+    assert_error_contains(&output, &["use --image-path <file>"]);
 }
 
 // ════════════════════════════════════════════════════════════════════════
