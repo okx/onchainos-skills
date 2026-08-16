@@ -13,15 +13,15 @@
 
 > ⚠️ In "publish/create a task for XXX", XXX is the task description, NOT an action to execute directly.
 
-Run the CLI to get the complete publishing playbook (field collection, validation, ASP matching, confirmation form, `create-task` command):
+Resolve `<agentId>` from the current User-role context; if missing, run `onchainos agent get-my-agents --role user`. No result → route to User Agent registration and stop; otherwise use the returned `agentId`.
+
+Run the CLI to get the complete publishing playbook (field collection, validation, service matching, confirmation form, `create-task` command):
 
 ```bash
 onchainos agent next-action --role user --agentId <agentId> --message '{"event":"create_task","jobId":"_"}'
 ```
 
 Follow the returned script verbatim. The confirmation form format is in **Appendix A** below.
-
-**Description confirmation before ASP matching:** this gate applies only to publish/create-task `asp-match`. It does not apply to identity discovery or `onchainos agent search`. If the task Description is drafted by consolidating, summarizing, or reusing the user's prior/current message, show that draft to the user and ask whether to use it for ASP matching. End the turn and wait for explicit confirmation before running `asp-match`. If the user edits the draft, use the edited text.
 
 ---
 
@@ -33,9 +33,9 @@ Display as a single `| Field | Value |` table with exactly these **8** fields in
 |---|---|---|---|
 | 1 | Task Name | Agent-generated Title | ≤30 characters |
 | 2 | Task Description | User Description | Inline when ≤200 characters; when >200, show `See below` and render the full text below the table |
-| 3 | Provider | asp-match / designated-route | `Agent <providerAgentId>(<providerAgentName>)`; fall back to `Agent <providerAgentId>` |
+| 3 | Provider | task-service-select / designated-route | `Agent <providerAgentId>(<providerAgentName>)`; fall back to `Agent <providerAgentId>` |
 | 4 | Service Parameters | Agent-inferred | `None` when empty |
-| 5 | Service Price | asp-match `feeAmount` + `feeTokenSymbol` | `<feeAmount> <symbol>`; **omit the row when `feeAmount` is absent** |
+| 5 | Service Price | task-service-select `feeAmount` + `feeTokenSymbol` | `<feeAmount> <symbol>`; **omit the row when `feeAmount` is absent** |
 | 6 | Budget | User input | ≤5 decimals; maximum 10,000,000 |
 | 7 | Maximum Budget | User input | Negotiation cap |
 | 8 | Payment Currency | User input; must match `feeTokenSymbol` | `USDT` or `USDG` |
@@ -54,10 +54,10 @@ Display as a single `| Field | Value |` table with these **7 base fields** in or
 |---|---|---|---|
 | 1 | Task Name | Agent-generated Title | ≤30 characters |
 | 2 | Task Description | User Description | Inline when ≤200 characters; when >200, show `See below` and render the full text below the table |
-| 3 | Provider | asp-match / designated-route | `Agent <providerAgentId>(<providerAgentName>)`; fall back to `Agent <providerAgentId>` when unnamed |
+| 3 | Provider | task-service-select / designated-route | `Agent <providerAgentId>(<providerAgentName>)`; fall back to `Agent <providerAgentId>` when unnamed |
 | 4 | Service Parameters | Agent-inferred from `serviceDescription` | `None` when empty |
-| 5 | Service Price | `asp-match`: `subscriptionInfo.feeAmount`; `service-list`: selected `subscription[].fee` | `<fee> <symbol> / month`; never use the one-time `fee` / `feeAmount` field |
-| 6 | Trial | `asp-match`: `subscriptionInfo.supportTrial/freeTrial`; `service-list`: selected service `freeTrial` | A positive `freeTrial` → `Yes (<freeTrial> hours free)`; otherwise `No` |
+| 5 | Service Price | `task-service-select`: `subscriptionInfo.feeAmount`; `service-list`: selected `subscription[].fee` | `<fee> <symbol> / month`; never use the one-time `fee` / `feeAmount` field |
+| 6 | Trial | `task-service-select`: `subscriptionInfo.supportTrial/freeTrial`; `service-list`: selected service `freeTrial` | A positive `freeTrial` → `Yes (<freeTrial> hours free)`; otherwise `No` |
 | 7 | Auto-Renew | Explicit user choice; no default | `On` or `Off` |
 
 When the user's own request explicitly asks for automatic signal execution, append exactly these three
@@ -72,7 +72,7 @@ all three rows when the user did not explicitly opt in, and never infer them fro
 
 If attachments present, add an Attachments row.
 
-Before displaying this confirmation table, apply the subscription playbook's **Tool preparation (optional)** gate. If actionable `install_plugin` / `configure_tool` reminders exist, display that choice as a separate card and end the turn; do not add tool rows to this seven-field confirmation card. A preparation action must be followed by a fresh `asp-match` for the same provider and the same `serviceId`. Choosing Later proceeds to confirmation and does not affect later delivery visibility/storage or manual execution with another available tool.
+Before displaying this confirmation table, apply the subscription playbook's **Tool preparation (optional)** gate. If actionable `install_plugin` / `configure_tool` reminders exist, display that choice as a separate card and end the turn; do not add tool rows to this seven-field confirmation card. A preparation action must be followed by a fresh `task-service-select` for the same search intent/provider and the same `serviceId`. Choosing Later proceeds to confirmation and does not affect later delivery visibility/storage or manual execution with another available tool.
 
 End with a localized confirmation blockquote and wait for explicit confirmation.
 
@@ -85,12 +85,12 @@ Every modification is confirmed individually (Universal confirmation rule). Afte
 | User action | Handling |
 |---|---|
 | Confirm & publish | Run `create-task` (regular) / `create-subscribe` (subscription) **without** any `descriptionSummary` — the field no longer exists |
-| Edit description | **Immediately re-run `asp-match`** with the updated description as `--task-desc`; the re-match may change the recommended service/provider and may **switch the branch** (subscription ↔ regular) — re-render the matching card |
+| Edit description | Re-parse search intent and **immediately re-run `task-service-select`**; the re-match may change the recommended service/provider and may **switch the branch** (subscription ↔ regular) — re-render the matching card |
 | Edit service params | Update in place → re-render |
 | Edit budget / max-budget / payment token (regular) | Update in place → re-validate → re-render |
 | Edit auto-renew (subscription) | Update in place → re-render |
 | Edit automatic execution / amount / cap / quote (subscription) | Update bounded user-authored values; ask only for missing values → re-render |
-| Change provider | Update `--provider` / `--provider-agent-id` to the new agentId → **re-run `asp-match`** (may switch branch) → re-render |
+| Change provider | Update `--asp-agent-id` to the new agentId → **re-run `task-service-select`** (may switch branch) → re-render |
 
 **Branch-switch rule (FR-2.5)**: when an edited Description changes the matched service type (subscription ↔ regular), **clear the previous branch's type-specific fields** (regular: Budget / Maximum Budget / Payment Currency / payment mode; subscription: Trial / Auto-Renew), collect the new fields, then render A1 or A2. If re-match is empty, use §5 Flow step 1 recovery.
 
@@ -109,21 +109,24 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `S
 ### Path A — ServiceTitle is missing (e.g. "buy service from ASP #1960" without naming a service) → service discovery:
 1. `onchainos agent service-list --agent-id <agentId>` — list all services the ASP offers. Empty result → provider does not exist or has no services; inform the user and stop.
 2. Display the service list to the user and ask them to pick one.
-3. Fill `ServiceTitle`, `ServiceType`, `ServiceDescription`, `Price`, `symbol`, `serviceId`, `endpoint` from the chosen service. For services chosen from `service-list`, derive subscription status and billing details from that service's `subscription` / `freeTrial` fields. For services chosen from `asp-match`, use `supportSubscription` for branch selection and `subscriptionInfo` for billing interval / trial details.
-4. Branch by serviceType directly (skip asp-match — service-list already provides all needed fields):
+3. Fill `ServiceTitle`, `ServiceType`, `ServiceDescription`, `Price`, `symbol`, `serviceId`, `endpoint` from the chosen service. For services chosen from `service-list`, derive subscription status and billing details from that service's `subscription` / `freeTrial` fields. For services chosen from `task-service-select`, use `supportSubscription` for branch selection and `subscriptionInfo` for billing interval / trial details.
+4. Branch by serviceType directly (skip task-service-select — service-list already provides all needed fields):
    - A2MCP + endpoint present → enter §6 (x402 flow).
    - Otherwise → A2A: enter step 2 of the Flow below.
 
 ### Path B — ServiceTitle is present → go to **Flow** below directly. 🛑 Do NOT call `service-list`.
 
 **Flow** (run step 1 and gate-check in **parallel** — they are independent):
-1. **Provider validation + service-type determination** (single call replaces the old profile + asp-match two-step):
-   `onchainos agent asp-match --task-desc "<ServiceTitle>" --provider-agent-id <agentId> --agent-id <buyerAgentId> --format json`
-   - Empty `recommendations` → **no matching service found**. Present the following recovery option to the user:
-     - **Revise description**: ask the user to rephrase or adjust the task description. Once the user provides the updated text, **immediately** re-run `asp-match` with the new `--task-desc` (no additional confirmation needed). Loop until a match is found or the user gives up.
-     - If revising does not help, the user may **specify a different provider** (re-run `asp-match` with another `--provider-agent-id`) **or stop**.
-   - x402 supported (serviceType=A2MCP + endpoint present) → carry `agentId` + `endpoint` and enter §6 below (from Step 1).
-   - Otherwise → A2A (step 2 below).
+1. **Provider validation + service-type determination**:
+   Pass the user's original utterance verbatim to [`intent-keyword-extraction.md`](intent-keyword-extraction.md), then use its output unchanged as `<args>` in:
+   `onchainos agent task-service-select <args> --agentic-id <buyerAgentId> --limit 1 --format json`
+   Serialize `keywords` exactly like `service-match`: emit `--keywords` once, followed by all extracted keyword values in order. Do not preprocess or enrich the input or output.
+   - `matchStatus=no_match` → the specified ASP has no matching service. Ask the user to revise the description or specify a different provider, then **end this turn**. After the user responds, re-parse the search intent and re-run `task-service-select`.
+   - `matchStatus=no_online_service` → matching services exist but are offline. Ask the user whether to view alternatives or revise the description/provider, then **end this turn**. Offer alternatives only when `hasMore == true` and `searchAfter` is a non-empty string.
+   - `matchStatus=matched` → read `data.services[0]`. Only in this branch inspect the selected service's `serviceType` and `endpoint`:
+     - A2MCP + endpoint present → carry `agentId` + `endpoint` and enter §6 below (from Step 1).
+     - Otherwise → A2A (step 2 below).
+   - Any unrecognized `matchStatus` or missing `data.services[0]` → stop; do not continue to either service-type branch.
    - ⚠️ **Do NOT call `okx-a2a session create` directly.**
 2. **A2A path**: map fields as follows, then cache `designatedProvider = { agentId, serviceType }` → enter §1 above to publish the task (🛑 must run the full publishing flow including confirmation form).
    - `description` ← **refined from `ServiceDescription`** (NOT ServiceTitle). Distill the service description into a clear task description: keep the concrete deliverables and scope; strip promotional language.

@@ -21,13 +21,13 @@
 
 | Intent | Trigger examples | Route to |
 |---|---|---|
-| Publish task | "publish / create a task" | [`task-user-actions-publish.md`](task-user-actions-publish.md) |
+| Publish task | "subscribe / subscription task / publish / create a task" | [`task-user-actions-publish.md`](task-user-actions-publish.md) |
 | Add attachment / image | "attach a file/image to a task" | [`task-user-actions.md`](task-user-actions.md) §2 |
 | Switch provider / stop task | "switch provider / stop task" | [`task-user-actions.md`](task-user-actions.md) §3 |
 | View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
 | Designated-provider A2A | "use/buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`task-user-actions-publish.md`](task-user-actions-publish.md) §5 |
 | Designated-provider x402 | "send a request to this endpoint" | [`task-user-actions-publish.md`](task-user-actions-publish.md) §6 |
-| Subscription task ops | "subscribe / subscription task / auto-renew / trial cancel / reject delivery / apply for refund / claim refund / my subscriptions / subscription charge / subscription cost" | §Subscription below |
+| Subscription task ops | "auto-renew / trial cancel / reject delivery / apply for refund / claim refund / my subscriptions / subscription charge / subscription cost" | §Subscription below |
 | Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
 | Re-submit / nudge | "re-submit / nudge" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
 | Task list / status / close / decision list | "my tasks / view decisions / close task" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
@@ -42,28 +42,16 @@
 
 ### Subscription branching (integrated into create_task playbook)
 
-The `create_task` playbook (returned by `next-action --message '{"event":"create_task"}'`) handles both subscription and regular tasks in a single unified flow. It collects Description (and optionally Provider) first, then runs `asp-match` to determine service type, and branches:
-
-```
-Step 1: Description, Provider (optional)
-  → Step 3: asp-match (auto-discover if no provider)
-    → [supportSubscription == true?]
-      → YES (subscription): Currency/Budget auto from service, auto-set useTrial, ask autoRenew → subscription confirmation form → create-subscribe
-      → NO  (regular): collect Currency, Budget, Max budget → regular confirmation form → create-task
-```
-
-If a single ASP returns both subscription and non-subscription services, display each with `[Subscription]` / `[One-time]` label and let the user choose. The chosen service determines the branch.
-
 ### Subscription-specific field rules
 
 | Field | Source | Notes |
 |---|---|---|
-| `serviceId` | from `asp-match` response | auto-filled |
-| `useTrial` | `subscriptionInfo.supportTrial == true` from `asp-match` → auto `true`; otherwise `false`. Display hours from `subscriptionInfo.freeTrial` field | **auto-filled, do NOT ask user** |
+| `serviceId` | from `task-service-select` response | auto-filled |
+| `useTrial` | `subscriptionInfo.supportTrial == true` from `task-service-select` → auto `true`; otherwise `false`. Display hours from `subscriptionInfo.freeTrial` field | **auto-filled, do NOT ask user** |
 | `autoRenew` | ask user explicitly before form — no default | 0=off, 1=on |
 | Automatic signal execution | Only from the user's own explicit request. Never infer from the service/ASP description. When requested, require mode=`auto`, a fixed per-signal amount, a per-signal cap, and quote currency (`USDT`/`USDC`); ask only for missing fields and do not use an A/B/C card. Pass all four `--autotrade-*` flags after they appear in the final confirmed subscription form. | **optional user authorization** |
-| Signal preflight | Retain the complete schema-v2 `autoTradePreflight` from `asp-match`. Surface `assetClasses`, each tool's five-state `readiness` plus stable `reason`, and non-blocking `reminders[]`. After selecting the service, obey `tradeKitProbe.mode`: probe once before confirmation only for explicit/sole-candidate Trade Kit; defer generic multi-venue services until a delivery actually selects Trade Kit; never probe a non-Trade-Kit route. A non-ready result opens a separate optional preparation card, but Later always continues subscription creation. Run OAuth, API-key setup, retry, install, or upgrade only after the user's explicit choice and always re-probe afterward. Never equate installed with ready, persist a readiness snapshot, select a venue, establish consent, or block creation. Missing preflight only hides these advisory rows. | **advisory; not a subscription input** |
-| `serviceTokenAmount` | from `asp-match` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
+| Signal preflight | Retain the complete schema-v2 `autoTradePreflight` from `task-service-select`. Surface `assetClasses`, each tool's five-state `readiness` plus stable `reason`, and non-blocking `reminders[]`. After selecting the service, obey `tradeKitProbe.mode`: probe once before confirmation only for explicit/sole-candidate Trade Kit; defer generic multi-venue services until a delivery actually selects Trade Kit; never probe a non-Trade-Kit route. A non-ready result opens a separate optional preparation card, but Later always continues subscription creation. Run OAuth, API-key setup, retry, install, or upgrade only after the user's explicit choice and always re-probe afterward. Never equate installed with ready, persist a readiness snapshot, select a venue, establish consent, or block creation. Missing preflight only hides these advisory rows. | **advisory; not a subscription input** |
+| `serviceTokenAmount` | from `task-service-select` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
 
 The `create-subscribe` CLI command handles the full flow internally: providerConfirmStatus → EIP-712 terms signing → create API → sign uopData → broadcast(bizType=101). When the complete optional `--autotrade-*` group is supplied, the CLI converts that final user-confirmed setup into local consent/grants after the returned jobId exists. Wait for `sub_created` event to confirm success.
 

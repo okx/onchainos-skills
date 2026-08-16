@@ -1,14 +1,16 @@
 //! ASP lifecycle operations (escrow simplified flow).
 //!
-//! - `asp-match`   — search matching ASPs (pre-publish or post-publish)
+//! - `asp-match`   — search matching ASPs for an existing task
 //! - `set-asp`     — set/replace ASP + service on an existing task
 //! - `reset-asp`   — clear ASP + service fields
 //! - `user-reject` — user rejects current ASP
 
 use anyhow::{bail, Result};
+use std::process::Command;
 use std::time::Duration;
 
 use crate::audit;
+use crate::commands::agent_commerce::identity::ServiceMatchArgs;
 use crate::commands::agent_commerce::task::common::autotrade::tooling;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::PaymentMode;
@@ -164,6 +166,193 @@ fn compact_asp_match_response(resp: serde_json::Value) -> serde_json::Value {
     serde_json::Value::Object(compact)
 }
 
+fn service_online(service: &serde_json::Value) -> bool {
+    service
+        .get("asp")
+        .and_then(|asp| asp.get("onlineStatus"))
+        .and_then(serde_json::Value::as_i64)
+        == Some(1)
+}
+
+fn compact_task_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
+    let subscription_info = build_subscription_info(service);
+    let support_subscription = !subscription_info.is_null();
+    let asp = service.get("asp").unwrap_or(&serde_json::Value::Null);
+    let mut compact = serde_json::Map::new();
+
+    if let Some(value) = asp
+        .get("aspAgentId")
+        .or_else(|| service.get("providerAgentId"))
+        .or_else(|| service.get("aspAgentId"))
+    {
+        compact.insert("providerAgentId".to_string(), value.clone());
+    }
+    if let Some(value) = asp
+        .get("aspName")
+        .or_else(|| service.get("providerAgentName"))
+        .or_else(|| service.get("aspName"))
+    {
+        compact.insert("providerAgentName".to_string(), value.clone());
+    }
+    for key in ["securityRate", "feedbackRate", "soldCount"] {
+        if let Some(value) = asp.get(key).or_else(|| service.get(key)) {
+            compact.insert(key.to_string(), value.clone());
+        }
+    }
+    for key in [
+        "serviceId",
+        "serviceName",
+        "serviceType",
+        "serviceDescription",
+        "feeToken",
+        "feeTokenSymbol",
+        "endpoint",
+    ] {
+        copy_field(&mut compact, service, key);
+    }
+    if !support_subscription {
+        copy_field(&mut compact, service, "feeAmount");
+    }
+    compact.insert(
+        "online".to_string(),
+        serde_json::Value::Bool(service_online(service)),
+    );
+    compact.insert(
+        "supportSubscription".to_string(),
+        serde_json::Value::Bool(support_subscription),
+    );
+    compact.insert("subscriptionInfo".to_string(), subscription_info);
+    compact.insert(
+        "autoTradePreflight".to_string(),
+        service
+            .get("autoTradePreflight")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+    );
+    serde_json::Value::Object(compact)
+}
+
+fn compact_task_service_select_response(resp: serde_json::Value) -> serde_json::Value {
+    let services = resp
+        .get("services")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let has_online_service = services
+        .iter()
+        .any(service_online);
+    let compact_services = services
+        .iter()
+        .map(compact_task_service_for_ai)
+        .collect::<Vec<_>>();
+    let match_status = if services.is_empty() {
+        "no_match"
+    } else if !has_online_service {
+        "no_online_service"
+    } else {
+        "matched"
+    };
+
+    let mut compact = serde_json::Map::new();
+    compact.insert(
+        "matchStatus".to_string(),
+        serde_json::Value::String(match_status.to_string()),
+    );
+    compact.insert("services".to_string(), serde_json::Value::Array(compact_services));
+    for key in ["searchAfter", "hasMore", "unmatchReason"] {
+        if let Some(value) = resp.get(key) {
+            compact.insert(key.to_string(), value.clone());
+        }
+    }
+    serde_json::Value::Object(compact)
+}
+
+fn service_match_data_from_stdout(stdout: &[u8]) -> Result<serde_json::Value> {
+    let value: serde_json::Value = serde_json::from_slice(stdout)?;
+    if value.get("ok").and_then(|v| v.as_bool()) == Some(true)
+        || value.get("code").and_then(|v| v.as_i64()) == Some(0)
+    {
+        return Ok(value
+            .get("data")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null));
+    }
+    Ok(value)
+}
+
+pub async fn handle_task_service_select(args: &ServiceMatchArgs, format: &str) -> Result<()> {
+    let mut cmd = Command::new(std::env::current_exe()?);
+    cmd.arg("agent").arg("service-match");
+
+    let keywords = args
+        .keywords
+        .iter()
+        .filter(|keyword| !keyword.trim().is_empty())
+        .collect::<Vec<_>>();
+    if !keywords.is_empty() {
+        cmd.arg("--keywords");
+        cmd.args(keywords);
+    }
+    if let Some(value) = args.asp_agent_id.as_deref().filter(|s| !s.is_empty()) {
+        cmd.arg("--asp-agent-id").arg(value);
+    }
+    if let Some(value) = args.asp_name.as_deref().filter(|s| !s.is_empty()) {
+        cmd.arg("--asp-name").arg(value);
+    }
+    if let Some(value) = args.service_name.as_deref().filter(|s| !s.is_empty()) {
+        cmd.arg("--service-name").arg(value);
+    }
+    if let Some(value) = args
+        .min_payment_token_amount
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
+        cmd.arg("--min-payment-token-amount").arg(value);
+    }
+    if let Some(value) = args
+        .max_payment_token_amount
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
+        cmd.arg("--max-payment-token-amount").arg(value);
+    }
+    if let Some(value) = args.search_after.as_deref().filter(|s| !s.is_empty()) {
+        cmd.arg("--search-after").arg(value);
+    }
+    if let Some(value) = args.agentic_id.as_deref().filter(|s| !s.is_empty()) {
+        cmd.arg("--agentic-id").arg(value);
+    }
+    cmd.arg("--limit").arg(args.limit.to_string());
+
+    let output = cmd.output()?;
+    if !output.status.success() {
+        bail!(
+            "service-match failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let mut data = service_match_data_from_stdout(&output.stdout)?;
+    let inv = tooling::ToolInventory::detect();
+    if let Some(services) = data.get_mut("services").and_then(|value| value.as_array_mut()) {
+        for svc in services {
+            let desc = svc["serviceDescription"].as_str().unwrap_or("");
+            let pf = tooling::build_preflight(desc, &inv);
+            svc["autoTradePreflight"] = serde_json::to_value(&pf).unwrap_or_else(|_| {
+                serde_json::to_value(tooling::degraded_preflight()).unwrap_or_default()
+            });
+        }
+    }
+
+    let compact = compact_task_service_select_response(data);
+    if format.eq_ignore_ascii_case("json") || format.is_empty() {
+        crate::output::success(compact);
+    } else {
+        println!("{}", compact["matchStatus"].as_str().unwrap_or("no_match"));
+    }
+    Ok(())
+}
+
 /// Render a service provider header as `Agent <pid>(<pname>)`, degrading to
 /// `Agent <pid>` (no parentheses) when the display name is empty or absent
 /// (WBW-14172 FR-3.2 / FR-3.3). `providerAgentName` is optional in the backend
@@ -177,23 +366,18 @@ fn format_provider(pid: &str, pname: &str) -> String {
 }
 
 /// POST /priapi/v1/aieco/task/asp/match
-///
-/// At least one of `job_id` or `task_desc` must be non-empty.
-/// When `job_id` is provided, backend uses the on-chain task context;
-/// when only `task_desc` is provided, it's a pre-publish search.
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_asp_match(
     client: &mut TaskApiClient,
-    job_id: Option<&str>,
-    task_desc: &str,
+    job_id: &str,
     provider_agent_id: Option<&str>,
     payment_token_amount: Option<f64>,
     page: usize,
     explicit_agent_id: Option<&str>,
     format: &str,
 ) -> Result<()> {
-    if job_id.is_none_or(|s| s.is_empty()) && task_desc.is_empty() {
-        anyhow::bail!("at least one of --job-id or --task-desc is required for asp-match");
+    if job_id.trim().is_empty() {
+        bail!("--job-id cannot be empty");
     }
 
     let json_mode = format.eq_ignore_ascii_case("json");
@@ -207,16 +391,9 @@ pub async fn handle_asp_match(
     };
 
     let mut body = serde_json::json!({
+        "jobId": job_id,
         "page": page,
     });
-    if let Some(jid) = job_id {
-        if !jid.is_empty() {
-            body["jobId"] = serde_json::Value::String(jid.to_string());
-        }
-    }
-    if !task_desc.is_empty() {
-        body["taskDesc"] = serde_json::Value::String(task_desc.to_string());
-    }
     if let Some(pid) = provider_agent_id {
         body["providerAgentId"] = serde_json::Value::String(pid.to_string());
     }
@@ -265,7 +442,7 @@ pub async fn handle_asp_match(
         Duration::default(),
         Some(vec![
             format!("agentId={agent_id}"),
-            format!("taskDesc={task_desc}"),
+            format!("jobId={job_id}"),
             format!("page={page}"),
             format!("results={}", recs.len()),
         ]),
@@ -278,7 +455,7 @@ pub async fn handle_asp_match(
     }
 
     if recs.is_empty() {
-        println!("No matching ASPs found for the given description.");
+        println!("No matching ASPs found for this task.");
         return Ok(());
     }
 
@@ -820,6 +997,192 @@ mod tests {
     }
 
     #[test]
+    fn compact_task_service_select_preserves_online_status_for_all_services() {
+        let resp = json!({
+            "services": [
+                {
+                    "serviceId": "offline",
+                    "feeAmount": "1",
+                    "asp": {
+                        "onlineStatus": 0
+                    }
+                },
+                {
+                    "serviceId": "svc-1",
+                    "serviceName": "A2A Task Collaboration",
+                    "serviceType": "A2A",
+                    "serviceDescription": "Coordinate task scope and acceptance.",
+                    "feeAmount": "99",
+                    "feeToken": "0xToken",
+                    "feeTokenSymbol": "USDT",
+                    "supportTrial": true,
+                    "freeTrial": 24,
+                    "subscription": [{"interval": "MONTH", "fee": "99"}],
+                    "autoTradePreflight": {
+                        "schemaVersion": 2,
+                        "isTradingSignal": true,
+                        "assetClasses": ["spot"],
+                        "explicitTools": ["trade_kit"],
+                        "selectionRequired": false,
+                        "advisoryOnly": true,
+                        "tools": [{
+                            "tool": "trade_kit",
+                            "displayName": "Trade Kit",
+                            "readiness": "verification_unknown",
+                            "reason": "authorization_not_checked",
+                            "checkedAt": null
+                        }],
+                        "reminders": [],
+                        "tradeKitProbe": {
+                            "mode": "probe_before_confirmation",
+                            "assetClasses": ["spot"]
+                        },
+                        "evidence": ["spot:description"]
+                    },
+                    "asp": {
+                        "aspAgentId": "2864",
+                        "aspName": "Onchain Task Copilot",
+                        "securityRate": 5,
+                        "feedbackRate": 100,
+                        "soldCount": 11,
+                        "onlineStatus": 1
+                    }
+                }
+            ],
+            "searchAfter": "cursor-1",
+            "hasMore": true
+        });
+
+        let compact = super::compact_task_service_select_response(resp);
+        let services = compact["services"].as_array().unwrap();
+        let offline_svc = &services[0];
+        let svc = &services[1];
+
+        assert_eq!(compact["matchStatus"], json!("matched"));
+        assert_eq!(services.len(), 2);
+        assert_eq!(offline_svc["serviceId"], json!("offline"));
+        assert_eq!(offline_svc["online"], json!(false));
+        assert_eq!(svc["providerAgentId"], json!("2864"));
+        assert_eq!(svc["providerAgentName"], json!("Onchain Task Copilot"));
+        assert_eq!(svc["serviceId"], json!("svc-1"));
+        assert_eq!(svc["online"], json!(true));
+        assert_eq!(svc["supportSubscription"], json!(true));
+        assert_eq!(svc["subscriptionInfo"]["interval"], json!("MONTH"));
+        assert_eq!(svc["subscriptionInfo"]["feeAmount"], json!("99"));
+        assert_eq!(svc["subscriptionInfo"]["supportTrial"], json!(true));
+        assert_eq!(svc["subscriptionInfo"]["freeTrial"], json!(24));
+        assert_eq!(svc["securityRate"], json!(5));
+        assert_eq!(svc["feedbackRate"], json!(100));
+        assert_eq!(svc["soldCount"], json!(11));
+        assert_eq!(svc["autoTradePreflight"]["schemaVersion"], json!(2));
+        assert_eq!(
+            svc["autoTradePreflight"]["tools"][0]["reason"],
+            json!("authorization_not_checked")
+        );
+        assert!(svc["autoTradePreflight"]["tools"][0]["checkedAt"].is_null());
+        assert_eq!(
+            svc["autoTradePreflight"]["tradeKitProbe"]["mode"],
+            json!("probe_before_confirmation")
+        );
+        assert_eq!(
+            svc["autoTradePreflight"]["tradeKitProbe"]["assetClasses"],
+            json!(["spot"])
+        );
+        assert!(svc.get("subscription").is_none());
+        assert!(svc.get("asp").is_none());
+    }
+
+    #[test]
+    fn compact_task_service_select_reports_no_online_service() {
+        let resp = json!({
+            "services": [{
+                "serviceId": "svc-offline",
+                "asp": {
+                    "onlineStatus": 0
+                }
+            }]
+        });
+
+        let compact = super::compact_task_service_select_response(resp);
+
+        assert_eq!(compact["matchStatus"], json!("no_online_service"));
+        assert_eq!(compact["services"].as_array().unwrap().len(), 1);
+        assert_eq!(compact["services"][0]["online"], json!(false));
+    }
+
+    #[test]
+    fn cli_task_service_select_accepts_first_search_args() {
+        let cli = TestCli::try_parse_from([
+            "test",
+            "task-service-select",
+            "--keywords",
+            "requirements",
+            "budget",
+            "delivery",
+            "--asp-agent-id",
+            "2864",
+            "--service-name",
+            "A2A Task Collaboration",
+            "--agentic-id",
+            "1695",
+            "--limit",
+            "1",
+            "--format",
+            "json",
+        ])
+        .expect("task-service-select should accept service-match keyword syntax");
+        match cli.cmd {
+            super::super::TaskCommand::TaskServiceSelect(args) => {
+                assert_eq!(
+                    args.service_match.keywords,
+                    vec!["requirements", "budget", "delivery"]
+                );
+                assert_eq!(args.service_match.asp_agent_id.as_deref(), Some("2864"));
+                assert_eq!(
+                    args.service_match.service_name.as_deref(),
+                    Some("A2A Task Collaboration")
+                );
+                assert_eq!(args.service_match.agentic_id.as_deref(), Some("1695"));
+                assert_eq!(args.service_match.limit, 1);
+                assert_eq!(args.format, "json");
+            }
+            _ => panic!("expected TaskServiceSelect"),
+        }
+    }
+
+    #[test]
+    fn cli_task_service_select_accepts_cursor_args() {
+        let cli = TestCli::parse_from([
+            "test",
+            "task-service-select",
+            "--search-after",
+            "cursor-1",
+            "--limit",
+            "3",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::TaskServiceSelect(args) => {
+                assert_eq!(args.service_match.search_after.as_deref(), Some("cursor-1"));
+                assert_eq!(args.service_match.limit, 3);
+            }
+            _ => panic!("expected TaskServiceSelect"),
+        }
+    }
+
+    #[test]
+    fn cli_task_service_select_reuses_service_match_limit_validation() {
+        assert!(TestCli::try_parse_from([
+            "test",
+            "task-service-select",
+            "--keywords",
+            "audit",
+            "--limit",
+            "11",
+        ])
+        .is_err());
+    }
+
+    #[test]
     fn format_provider_with_name() {
         // FR-3.2: name present → `Agent <id>(<name>)`.
         assert_eq!(super::format_provider("1506", "AlphaBot"), "Agent 1506(AlphaBot)");
@@ -832,25 +1195,6 @@ mod tests {
     }
 
     #[test]
-    fn cli_asp_match_task_desc_only() {
-        let cli = TestCli::parse_from([
-            "test", "asp-match", "--task-desc", "build a trading bot",
-        ]);
-        match cli.cmd {
-            super::super::TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } => {
-                assert_eq!(task_desc, "build a trading bot");
-                assert!(job_id.is_none());
-                assert!(provider_agent_id.is_none());
-                assert!(payment_token_amount.is_none());
-                assert_eq!(page, 1);
-                assert!(agent_id.is_none());
-                assert_eq!(format, "");
-            }
-            _ => panic!("expected AspMatch"),
-        }
-    }
-
-    #[test]
     fn cli_asp_match_with_job_id_and_provider() {
         let cli = TestCli::parse_from([
             "test", "asp-match",
@@ -860,7 +1204,7 @@ mod tests {
         ]);
         match cli.cmd {
             super::super::TaskCommand::AspMatch { job_id, provider_agent_id, page, .. } => {
-                assert_eq!(job_id.as_deref(), Some("job-123"));
+                assert_eq!(job_id, "job-123");
                 assert_eq!(provider_agent_id.as_deref(), Some("agent-456"));
                 assert_eq!(page, 2);
             }
@@ -872,12 +1216,12 @@ mod tests {
     fn cli_asp_match_with_payment_token_amount() {
         let cli = TestCli::parse_from([
             "test", "asp-match",
-            "--task-desc", "audit service",
+            "--job-id", "job-123",
             "--payment-token-amount", "0.7",
         ]);
         match cli.cmd {
-            super::super::TaskCommand::AspMatch { task_desc, payment_token_amount, .. } => {
-                assert_eq!(task_desc, "audit service");
+            super::super::TaskCommand::AspMatch { job_id, payment_token_amount, .. } => {
+                assert_eq!(job_id, "job-123");
                 assert_eq!(payment_token_amount, Some(0.7));
             }
             _ => panic!("expected AspMatch"),

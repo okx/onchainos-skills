@@ -1299,7 +1299,7 @@ fn build_search_table_row(map: &serde_json::Map<String, Value>) -> Value {
 /// Format a converted search rating (0–5 float) for display: up to 2 decimals,
 /// trailing zeros (and bare trailing dot) trimmed (`4.60` → "4.6", `5.0` →
 /// "5", `4.45` → "4.45").
-fn format_search_rate(rate: f64) -> String {
+pub(super) fn format_search_rate(rate: f64) -> String {
     let mut s = format!("{rate:.2}");
     if s.contains('.') {
         s = s.trim_end_matches('0').trim_end_matches('.').to_string();

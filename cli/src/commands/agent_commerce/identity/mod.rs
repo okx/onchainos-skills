@@ -31,6 +31,7 @@ mod args;
 mod models;
 mod mutations;
 mod queries;
+mod service_match;
 mod signing;
 mod socket;
 mod utils;
@@ -40,7 +41,8 @@ mod validate;
 pub use args::{
     ActivateArgs, AgentStatusArgs, CreateArgs, FeedbackListArgs, FeedbackSubmitArgs,
     GetAgentsArgs, GetArgs, GetByAddressArgs, GetMyAgentsArgs, PrecheckArgs, SearchArgs,
-    ServiceListArgs, TaskFeedbackArgs, UpdateArgs, UploadArgs, ValidateListingArgs, XmtpSignArgs,
+    ServiceListArgs, ServiceMatchArgs, TaskFeedbackArgs, UpdateArgs, UploadArgs, ValidateListingArgs,
+    XmtpSignArgs,
 };
 
 // Pure-local validator — hidden CLI entry point used by the skill during QA.
@@ -51,6 +53,7 @@ pub use queries::{
     feedback_list, get, get_agents, get_by_address, get_my_agents, search, service_list,
     task_feedback,
 };
+pub use service_match::service_match;
 
 // Write-side commands.
 pub use mutations::{

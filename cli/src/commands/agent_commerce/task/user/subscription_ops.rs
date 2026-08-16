@@ -156,7 +156,16 @@ pub async fn handle_subscribe_cancel(client: &mut TaskApiClient, sub_id: &str) -
     println!("  subId:  {sub_id}");
     println!("  txHash: {tx_hash}");
 
-    print_watch_after_subscription_mutation(SubscriptionMutation::Cancel, sub_id);
+    if super::content::is_cli_mode() {
+        println!();
+        println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
+        println!();
+        println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
+        println!();
+        println!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{sub_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read watch-core.md first.)");
+        println!();
+        println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
+    }
 
     Ok(())
 }
@@ -304,7 +313,16 @@ pub(crate) async fn handle_subscribe_reject_inner(
     println!("  subId:  {sub_id}");
     println!("  txHash: {tx_hash}");
 
-    print_watch_after_subscription_mutation(SubscriptionMutation::Reject, sub_id);
+    if super::content::is_cli_mode() {
+        println!();
+        println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
+        println!();
+        println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
+        println!();
+        println!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{sub_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read watch-core.md first.)");
+        println!();
+        println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
+    }
 
     Ok(())
 }

@@ -19,59 +19,58 @@ fn create_task_common() -> String {
 [Role] User Agent
 [Session Type] user session (talking directly to the user)
 
-Collect Description (+ optional Provider) → ASP match → determine branch → load branch-specific playbook.
+Collect Description → parse search intent → task-service-select → confirm service → load branch-specific playbook.
 
 ================================================
 Step 1 -- Field collection (common fields only)
 ================================================
 
-Description: MUST come from user's explicit input — no guessing/auto-fill. Title: agent-generated. Currency, Budget, Max budget: do NOT collect here — they are branch-dependent and will be collected after asp-match determines subscription vs regular.
+Description: MUST come from user's explicit input — no guessing/auto-fill. Title: agent-generated. Currency, Budget, Max budget: do NOT collect here — they are branch-dependent and will be collected after task-service-select determines subscription vs regular.
 
 | Field | CLI flag | Constraint | How to collect |
 |---|---|---|---|
 | Description | --description | 20-2000 chars | Consolidate user's words. If <20 → ask to expand |
 | Title | --title | <=30 chars | Agent-generated; count chars, shorten if >30 |
-| Designated provider | --provider | Optional; provider agentId | Extract the provider the user names. If not given, leave blank — Step 3 will auto-discover |
-
-**Draft-description confirmation gate**: This gate applies only to publish/create-task `asp-match`. It does not apply to identity discovery or `onchainos agent search`. If the Description is a consolidation, summary, or reuse of the user's prior/current message rather than an exact explicitly-confirmed task description, show the draft Description and ask whether to use it for ASP matching. **End this turn. Do NOT run `asp-match` until the user explicitly confirms.** If the user edits it, use the edited text and then proceed.
 
 ================================================
 Step 2 -- Basic validation
 ================================================
 
 1. Description < 20 chars → ask to expand
-2. Draft Description not explicitly confirmed → ask for confirmation (per gate above), then end turn
 
 ================================================
-Step 3 -- ASP matching
+Step 3 -- Search-intent parsing and service selection
 ================================================
 
-**Path A — Provider specified** (`--provider` is set). Match its registered services:
+For the initial search, pass the user's original utterance verbatim to [`intent-keyword-extraction.md`], then use its output unchanged as `<args>` in:
 
 ```bash
-onchainos agent asp-match --task-desc \"<description>\" --provider-agent-id <agentId> --format json
+onchainos agent task-service-select <args> --agentic-id <buyerAgentId> --limit 1 --format json
 ```
 
-- Empty → \"This ASP has no matching services. Ask the user to designate another provider or adjust the description.\"
-- Non-empty → extract top service (see field list below).
+Serialize `keywords` exactly like `service-match`: emit `--keywords` once, followed by all extracted
+keyword values in order. Do not preprocess or enrich the input or output.
 
-**Path B — No provider specified**. Auto-discover matching ASPs by description:
+- `matchStatus=no_match` → if `asp-agent-id` was supplied, say that the specified ASP has no matching service; otherwise say that no matching service was found. Ask the user to adjust the description or specify/change the provider.
+- `matchStatus=no_online_service` → matching services exist but are offline. Ask whether to view alternatives or adjust the description/provider.
+- `matchStatus=matched` → render the service confirmation card from `data.services[0]`.
 
-```bash
-onchainos agent asp-match --task-desc \"<description>\" --format json
-```
+**Service confirmation gate**:
+- Show Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
+- Ask the user to confirm using this service. Offer \"show 3 alternatives\" only when `hasMore == true` and `searchAfter` is a non-empty string; otherwise state that no more alternatives are available.
+- If the user chooses alternatives, call:
+  ```bash
+  onchainos agent task-service-select --search-after \"<searchAfter>\" --limit 3 --agentic-id <buyerAgentId> --format json
+  ```
+  Do not include first-search conditions with `--search-after`. Render returned services and let the user choose one.
 
-- Empty → no matching ASP found. Ask the user to: (a) specify a provider agentId manually, or (b) adjust the description, then re-run asp-match. Loop until a match is found or the user gives up.
-- Non-empty → auto-select the top-ranked recommendation's provider and service. Proceed as if the user had designated that provider.
-
-**Field extraction** (both paths): from the selected recommendation/service retain `providerAgentId`, `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount` (non-subscription service fee only), `feeToken`→serviceTokenAddress, `feeTokenSymbol`, `endpoint` (if A2MCP), **`supportSubscription`** (branch flag), **`subscriptionInfo`** (billing interval, subscription fee from `subscription[].fee`, and normalized trial snapshot: `supportTrial` + `freeTrial`), and the complete **`autoTradePreflight` object verbatim**. Do not retain only the compact text summary: the subscription branch needs the structured `reminders[]`, `tools[]`, and `pluginId` values.
-- If the same ASP returns both subscription and non-subscription services, display each with `[Subscription]` / `[One-time]` label and let the user choose. The chosen service determines the branch.
+Retain the complete `task-service-select` JSON stdout. The CLI has already normalized the selected service fields, preserved each service's `online` status, and preserved the structured `autoTradePreflight` object for subscription preparation. Do not parse raw service-match fields yourself.
 
 ================================================
 Step 3.5 -- Load branch playbook
 ================================================
 
-Check the selected service's `supportSubscription` field and load the branch-specific playbook:
+After the user confirms a service, check the selected service's `supportSubscription` and load the branch-specific playbook. Retain the selected `task-service-select` JSON for later field extraction, but `next-action` branch routing still uses the explicit `branch` field.
 
 - `supportSubscription == true` → call:
   ```bash
@@ -160,14 +159,14 @@ Step 4 -- Subscription field collection
 ================================================
 
 For subscription tasks, Currency and Budget are derived from the service — do NOT ask the user:
-- **Currency** = `feeTokenSymbol` from asp-match (auto-filled)
-- **Budget** = `subscriptionInfo.feeAmount` from asp-match (auto-filled fixed subscription price)
+- **Currency** = `feeTokenSymbol` from task-service-select (auto-filled)
+- **Budget** = `subscriptionInfo.feeAmount` from task-service-select (auto-filled fixed subscription price)
 
 Collect/infer:
 
 1. **serviceParams inference** (same logic as §serviceParams inference below).
 
-2. **useTrial**: if `subscriptionInfo.supportTrial == true` from asp-match → automatically set to `true` (do NOT ask the user). Otherwise `false`. Display trial hours from `subscriptionInfo.freeTrial` in the confirmation form.
+2. **useTrial**: if `subscriptionInfo.supportTrial == true` from task-service-select → automatically set to `true` (do NOT ask the user). Otherwise `false`. Display trial hours from `subscriptionInfo.freeTrial` in the confirmation form.
 
 3. **autoRenew**: ask the user explicitly (0=off, 1=on). Do NOT pre-fill a default — collect the answer before Step 5.
 
@@ -177,8 +176,7 @@ Collect/infer:
    - If the user did not explicitly request automatic execution, collect no execution settings and continue normally. The first actionable delivery may ask for the missing configuration then; a service description alone never opts the user in.
    - Use only the retained schema-v2 `autoTradePreflight` object for the separate optional preparation gate below. Never block the subscription on a missing/unconfigured tool, never infer a venue from prose, and never run installation or configuration unless the user explicitly chooses that action.
 
-   The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the preparation card and continue creating the subscription. Do not retry `asp-match` solely to obtain preflight data. There is no standalone binary execution field to collect and no `--copy-trade` argument to pass.
-
+   The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the preparation card and continue creating the subscription. Do not retry `task-service-select` solely to obtain preflight data. There is no standalone binary execution field to collect and no `--copy-trade` argument to pass.
    **Deterministic Trade Kit probe decision:** inspect `autoTradePreflight.tradeKitProbe.mode` after the service has been selected:
    - `probe_before_confirmation` → build one command from every token in `tradeKitProbe.assetClasses`, preserving the array order:
      ```text
@@ -201,7 +199,7 @@ Collect/infer:
    On the user's next reply:
    - **Later / skip** → proceed to Step 5 using the retained selected-service fields. Later never upgrades readiness to ready.
    - **OAuth / API key / Retry / Trade Kit install or upgrade** → run only that explicit choice, then re-run the readiness command with the same retained `tradeKitProbe.assetClasses` and repeat this gate. Never continue from stale readiness.
-   - **One named plugin preparation action** → run only that user-approved plugin install. Then re-run the original `asp-match` command with the same task description, provider and user agent, locate the **same `serviceId`**, replace the retained `autoTradePreflight` with the fresh object, and repeat this gate. If the same service is no longer returned, stop and ask the user to choose a service again. Never silently switch to the new top service.
+   - **One named plugin preparation action** → run only that user-approved plugin install. Then re-run the original `task-service-select` command with the same search intent, provider and user agent, locate the **same `serviceId`**, replace the retained `autoTradePreflight` with the fresh object, and repeat this gate. If the same service is no longer returned, stop and ask the user to choose a service again. Never silently switch to the new top service.
    - **Ambiguous / multiple actions** → re-render the same bounded card; do not install anything.
 
    If there is no actionable reminder and no required Trade Kit probe, skip this gate and proceed to Step 5. Missing/invalid preflight also skips the gate and remains non-blocking. None of these states may block creation of the subscription.
@@ -237,13 +235,13 @@ Step 5.5 -- Route by user decision (separate turn)
 ================================================
 
 - Confirm / publish → Step 6
-- Edit description → update → **re-run asp-match** (may switch branch; if branch changes, load the other branch playbook via `next-action`) → Step 4 → Step 5
+- Edit description → update search intent → **re-run task-service-select** (may switch branch; if branch changes, load the other branch playbook via `next-action`) → Step 4 → Step 5
 - Edit serviceParams → update → Step 5
-- Change ASP → update `--provider` to the new agentId → **re-run asp-match** (may switch branch) → Step 4 → Step 5
+- Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → Step 4 → Step 5
 - Edit autoRenew → update → Step 5
 - Edit automatic signal execution / amount / cap / quote currency → update; ask only for any missing bounded field → Step 5
-- Prepare Trade Kit / Retry now → run only the explicit action, re-run the batch readiness command with the retained `tradeKitProbe.assetClasses`, and repeat the Step 4 gate; do not re-run `asp-match` or save a venue preference
-- Prepare a plugin now → run only the explicit plugin installation, re-run the original `asp-match`, re-select the same `serviceId`, and repeat the Step 4 gate; do not save a venue preference
+- Prepare Trade Kit / Retry now → run only the explicit action, re-run the batch readiness command with the retained `tradeKitProbe.assetClasses`, and repeat the Step 4 gate; do not re-run `task-service-select` or save a venue preference
+- Prepare a plugin now → run only the explicit plugin installation, re-run the original `task-service-select`, re-select the same `serviceId`, and repeat the Step 4 gate; do not save a venue preference
 - Later / skip tool preparation → Step 5 without blocking subscription
 
 ================================================
@@ -288,7 +286,7 @@ Step 4 -- Regular field collection
 For regular tasks, collect Currency, Budget, and Max budget from the user:
 
 1. **Payment token** (--currency): Only USDT / USDG. Fuzzy input (\"U\"/\"USD\") → ask \"USDT or USDG?\".
-   - Validate: must match `feeTokenSymbol` from asp-match. Mismatch → ask user to change token or designate another provider.
+   - Validate: must match `feeTokenSymbol` from task-service-select. Mismatch → ask user to change token or designate another provider.
 2. **Budget** (--budget): ask user explicitly. number; <=5 decimals; max 10M.
    - Budget < 0 → reject (zero is legal)
    - Budget > 10M or > 5 decimal places → reject
@@ -327,10 +325,10 @@ Step 5.5 -- Route by user decision (separate turn)
 ================================================
 
 - Confirm / publish → Step 6
-- Edit description → update → **re-run asp-match** (may switch branch; if branch changes, load the other branch playbook via `next-action`) → Step 4 → Step 5
+- Edit description → update search intent → **re-run task-service-select** (may switch branch; if branch changes, load the other branch playbook via `next-action`) → Step 4 → Step 5
 - Edit budget/max-budget/currency → update → re-validate → Step 5
 - Edit serviceParams → update → Step 5
-- Change ASP → update `--provider` to the new agentId → **re-run asp-match** (may switch branch) → Step 4 → Step 5
+- Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → Step 4 → Step 5
 
 ================================================
 Step 6 -- Publish regular (create-task)
@@ -494,19 +492,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn common_create_task_requires_draft_description_confirmation_before_matching() {
+    fn common_create_task_confirms_selected_service_after_matching() {
         let out = create_task_common();
         assert!(
-            out.contains("Draft-description confirmation gate"),
-            "common create_task playbook must include the confirmation gate: {out}"
+            !out.contains("Draft-description confirmation gate"),
+            "common create_task playbook must not confirm the description before matching: {out}"
         );
         assert!(
-            out.contains("Do NOT run `asp-match` until the user explicitly confirms"),
-            "draft descriptions must be confirmed before ASP matching: {out}"
-        );
-        assert!(
-            out.contains("This gate applies only to publish/create-task `asp-match`"),
-            "confirmation gate must be scoped away from identity search: {out}"
+            out.contains("Ask the user to confirm using this service"),
+            "common create_task playbook must confirm the selected service: {out}"
         );
     }
 
@@ -572,7 +566,7 @@ mod tests {
             "removed copy-trade argument must not appear: {out}"
         );
         assert!(
-            !out.contains("re-run `asp-match` exactly once"),
+            !out.contains("re-run `task-service-select` exactly once"),
             "preflight absence must not force an extra match: {out}"
         );
         assert!(
@@ -588,7 +582,7 @@ mod tests {
             "preparation must not become venue selection: {out}"
         );
         assert!(
-            common.contains("complete **`autoTradePreflight` object verbatim**"),
+            common.contains("structured `autoTradePreflight` object"),
             "common match step must retain structured preflight data: {common}"
         );
         assert!(

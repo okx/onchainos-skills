@@ -89,10 +89,10 @@ impl CreateTaskParams {
         let title = common::util::sanitize_title_for_shell(&title);
 
         if self.provider.trim().is_empty() {
-            bail!("A designated provider is required. Use asp-match to find a provider first.");
+            bail!("A designated provider is required. Use task-service-select to find a provider first.");
         }
         if self.service_id.trim().is_empty() {
-            bail!("A service id is required. Use asp-match to find a service first.");
+            bail!("A service id is required. Use task-service-select to find a service first.");
         }
 
         if let Some(ref files) = self.attachments {
