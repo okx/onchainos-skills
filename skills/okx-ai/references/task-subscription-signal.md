@@ -39,6 +39,32 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
    - If no compatible route exists, select the narrowest installed skill/tool capable of the action. A
      named third-party protocol must route through `okx-dapp-discovery`; an unnamed native swap may use
      `okx-agentic-wallet`; generic DeFi may use `okx-defi`. Read the selected skill in full before acting.
+   - If and only if the resolved tool is Trade Kit, run this mandatory gate now, before writing the route
+     cache, requesting consent, checking a grant, or invoking any `okx` order command:
+
+     ```bash
+     onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]
+     ```
+
+     Pass one flag for the current route's canonical class. If this one retained execution covers more
+     than one Trade Kit class, pass every class as a repeated flag; the command performs one discovery
+     and at most one private authorization check for the batch. Run it on **every delivery**, including a
+     reused cached route and both manual and automatic modes; never reuse or persist a prior readiness
+     result. Continue only when `ok:true` and `data.readiness == "ready"`; every requested
+     `assetChecks[]` row must also be ready. Non-Trade-Kit routes never run this command.
+
+     If readiness is not `ready`, preserve and display the deliverable, mark its execution as blocked,
+     and stop before route persistence, consent, grant, or order execution:
+     - `needs_configuration`: offer exactly OAuth (`okx auth login --manual`), API key
+       (`okx config init`), and Later. Run a setup command only after that explicit choice, then re-probe.
+     - `verification_unknown`: offer Retry and Later only. Never describe a timeout, network failure,
+       malformed private response, or other unknown result as logged out.
+     - `missing` or `incompatible`: offer the fixed install/upgrade action returned in
+       `data.remediation`, plus Later; re-probe after an explicit repair action.
+
+     Restoring readiness MUST NOT automatically replay the blocked delivery. Only an explicit user
+     request may reprocess that old `deliveryId`, and that attempt must run this fresh readiness gate
+     again. Future deliveries continue normally and each receives its own fresh probe.
 4. After resolving a valid route, cache identifiers only:
 
    ```bash
@@ -53,6 +79,7 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
 5. Apply the selected skill's setup and transaction safety rules. Plugin installation must remain visible;
    never silently install. Use the decision matrix below to decide whether this delivery may execute or
    which user decision is needed. The subscription itself and the route cache are not trading consent.
+   A Trade Kit grant or user consent never overrides a failed runtime-readiness result.
 6. Execute at most once for this `deliveryId`. Pass `jobId` to plugin/tool grant checks where supported.
    Let the target tool re-validate all dynamic fields. Report its success or exact failure to the user; do
    not auto-retry a money-moving call.
@@ -60,7 +87,8 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
 ## Consent and amount decision
 
 After extracting the quote amount for the current delivery, inspect `consentSnapshot` before deciding
-whether more user input is required. New flows never show the former first-time A/B/C card:
+whether more user input is required. The first actionable delivery may show one bounded A/B/C mode
+decision; later clarification remains natural-language and asks only for missing fields.
 
 - `status=unreadable`: fail closed. Notify that local execution authorization cannot be read and do not
   execute or replace the policy from inferred conversation.
@@ -76,16 +104,18 @@ whether more user input is required. New flows never show the former first-time 
   two-way `--source-event autotrade_over_cap` decision (execute this delivery visibly / skip). Any other
   denial is not authorization: explain the reason and request explicit re-authorization instead of
   bypassing it.
-- `status=active, mode=manual`: do not show the first-time A/B/C card. Request one localized two-way
-  `--source-event autotrade_manual_signal` decision (execute this delivery / skip). Show the stored amount
-  when available; if execution is chosen without an amount, re-request the same decision with an amount.
-  Execute through the normal visible/manual tool path without `--autotrade-job`.
+- `status=active, mode=manual`: this mode may have been selected during the post-login, pre-delivery
+  authorization precheck, so its stored amount may legitimately be absent. Do not show the first-time
+  A/B/C card. Request one localized two-way `--source-event autotrade_manual_signal` decision (execute
+  this delivery / skip). Show the stored amount when available; if execution is chosen without an amount,
+  re-request the same decision with an amount. Execute through the normal visible/manual tool path without
+  `--autotrade-job`.
 - `status=active, mode=decline` or `status=not_set`: first look only for exact user-authored automatic-
-  execution settings retained from the final confirmed subscription setup or this same pending
-  configuration. Never infer them from service/ASP/deliverable text. The required fields are `mode=auto`,
-  fixed per-signal quote amount, per-signal cap, and quote currency (`USDT` or `USDC`).
-  - When all four are explicit and amount is not greater than cap, persist them with
-    the fully-qualified command below, then continue this retained delivery:
+  execution settings retained from the final confirmed subscription setup. Never infer them from
+  service/ASP/deliverable text.
+  - When a complete confirmed automatic policy already exists (`mode=auto`, fixed per-signal quote amount,
+    per-signal cap, and quote currency), require amount <= cap, persist it with the fully-qualified command
+    below, and continue this retained delivery without another mode card:
 
     ```bash
     onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <agentId> \
@@ -95,16 +125,44 @@ whether more user input is required. New flows never show the former first-time 
     Replace every placeholder from the current runtime context and the user's explicit settings before
     execution. Never omit the `agent` command group, `--job-id`, or `--agent-id`, and never invoke the
     nonexistent top-level form `onchainos autotrade-consent-set`.
-  - Otherwise use `pending-decisions-v2 request --source-event autotrade_config_required` with one
-    localized, natural-language prompt listing only the missing fields. Do not render numbered or lettered
-    choices. The prompt must also allow the user to say they want to skip the current delivery.
-  - A clear skip executes nothing and writes no consent. Ambiguous text re-requests only the still-missing
-    fields; it never becomes authorization.
+  - Otherwise, first send one concise localized signal summary with `onchainos agent user-notify`. Include
+    the target, direction, important trade parameters, and that no order has been submitted. Do not include
+    choices or ask for a reply in this notification.
+  - After that notification succeeds, push the separate mode decision exactly once:
+
+    ```bash
+    onchainos agent autotrade-consent-request --job-id <jobId> --agent-id <agentId> \
+      --delivery-id <deliveryId> --signal-type <spot|perp|prediction|option|defi>
+    ```
+
+    The command owns the localized decision copy: A = execute this delivery and enable bounded automatic
+    execution; B = execute this delivery once; C = skip this delivery. Do not place signal analysis in the
+    decision's `userContent`, and do not send a second decision request for the same retained delivery.
 
 Keep the current `jobId`, `deliveryId`, `savedPath`, selected route, and decision type in this persistent
-sub session. Do not execute until a complete bounded policy has been persisted. `onchainos agent
-autotrade-consent-set` never parses, queues, or replays a signal. A legacy in-flight `autotrade_consent` relay from an older client
-may be consumed for compatibility, but it must not create another A/B/C card.
+sub session. Do not execute until the matching reply returns and all required values are present.
+`onchainos agent autotrade-consent-set` never parses, queues, or replays a signal.
+
+### Reply continuation after the A/B/C mode decision
+
+The decision uses `--source-event autotrade_consent`:
+
+- A with complete fixed amount, cap, and quote: persist `mode=auto` with the fully-qualified command above
+  and continue the retained delivery.
+- A with missing values: use `pending-decisions-v2 request --source-event autotrade_config_required` with
+  one localized natural-language prompt listing only the missing automatic-policy fields. Never show
+  A/B/C again for this delivery. Combine later replies only with explicit values retained in this same
+  pending configuration.
+- B with an amount: persist `mode=manual --trade-amount <amount>` with
+  `onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <agentId>`, then execute this delivery
+  through the visible/manual tool path.
+- B without an amount: use `autotrade_config_required` to ask only for this delivery's amount. Preserve the
+  selected manual mode; never ask for an automatic cap and never show A/B/C again.
+- C or a clear natural-language skip: execute nothing, write no new consent, and retain the saved artifact.
+- Ambiguous mode replies re-request the same A/B/C decision; parameter clarifications re-request only the
+  still-missing fields.
+
+A legacy in-flight `autotrade_consent` relay from an older client follows the same continuation rules.
 
 ## Cache behavior examples
 

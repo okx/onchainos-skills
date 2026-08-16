@@ -589,7 +589,7 @@ pub async fn handle_user_reject(
 // ── helpers ──────────────────────────────────────────────────────────────
 
 /// Render the compact per-service preflight summary line for text mode, e.g.
-/// `Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(ready) · 1 reminder`.
+/// `Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(verification_unknown) · 1 reminder`.
 /// Returns `None` when the preflight object is absent.
 ///
 /// NOTE: this line MUST NOT use `Copy-trade: on/off` wording — that reads as an
@@ -737,10 +737,20 @@ mod tests {
                         {"interval": "month", "fee": "0.1"}
                     ],
                     "autoTradePreflight": {
+                        "schemaVersion": 2,
                         "isTradingSignal": true,
                         "assetClasses": ["spot"],
-                        "tools": [{"displayName": "Trade Kit", "readiness": "ready"}],
-                        "reminders": []
+                        "tools": [{
+                            "displayName": "Trade Kit",
+                            "readiness": "verification_unknown",
+                            "reason": "authorization_not_checked",
+                            "checkedAt": null
+                        }],
+                        "reminders": [],
+                        "tradeKitProbe": {
+                            "mode": "deferred_until_venue_selection",
+                            "assetClasses": ["spot"]
+                        }
                     },
                     "rawServiceStatus": "ACTIVE"
                 }]
@@ -758,7 +768,16 @@ mod tests {
         assert!(compact.get("debug").is_none());
 
         assert_eq!(svc["serviceDescription"], json!("Please provide the target market before subscribing."));
+        assert_eq!(svc["autoTradePreflight"]["schemaVersion"], json!(2));
         assert_eq!(svc["autoTradePreflight"]["assetClasses"], json!(["spot"]));
+        assert_eq!(
+            svc["autoTradePreflight"]["tools"][0]["readiness"],
+            json!("verification_unknown")
+        );
+        assert_eq!(
+            svc["autoTradePreflight"]["tools"][0]["reason"],
+            json!("authorization_not_checked")
+        );
         assert!(svc.get("feeAmount").is_none());
         assert_eq!(svc["supportSubscription"], json!(true));
         assert_eq!(svc["subscriptionInfo"]["interval"], json!("month"));
@@ -1099,7 +1118,7 @@ mod tests {
     //
     // Asserts the neutral, non-authorizing format (oli-feedback P0): the line
     // renders `Trading-signal service: yes/no`, never `Copy-trade: on/off`.
-    //   `Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(ready) · 1 reminder`
+    //   `Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(verification_unknown) · 1 reminder`
 
     #[test]
     fn preflight_line_signal_singular_reminder() {
@@ -1110,14 +1129,14 @@ mod tests {
             "assetClasses": ["prediction"],
             "tools": [
                 {"displayName": "Polymarket", "readiness": "missing"},
-                {"displayName": "Trade Kit", "readiness": "ready"}
+                {"displayName": "Trade Kit", "readiness": "verification_unknown"}
             ],
             "reminders": [{"kind": "install_plugin"}]
         });
         let line = super::preflight_summary_line(&pf).unwrap();
         assert_eq!(
             line,
-            "Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(ready) · 1 reminder"
+            "Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(verification_unknown) · 1 reminder"
         );
         // The misleading on/off authorization wording must never appear.
         assert!(!line.contains("Copy-trade"));

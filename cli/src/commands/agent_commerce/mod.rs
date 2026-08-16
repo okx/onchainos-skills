@@ -578,6 +578,16 @@ pub enum AgentCommand {
         autotrade: String,
     },
 
+    /// Verify the selected Trade Kit runtime before any consent/grant/order
+    /// step. Returns a typed ready/not-ready result without exposing credentials
+    /// or child-process output.
+    #[command(name = "trade-kit-readiness")]
+    TradeKitReadiness {
+        /// Repeatable: spot | perp | prediction | option.
+        #[arg(long = "asset-class", required = true, action = clap::ArgAction::Append)]
+        asset_class: Vec<String>,
+    },
+
     /// Check a per-trade amount against the buyer's written authorization (bespoke
     /// `{ok,reason?}` process contract; NOT the standard `data` envelope).
     #[command(name = "autotrade-grant-check")]
@@ -650,6 +660,37 @@ pub enum AgentCommand {
         /// (or the default, USDT).
         #[arg(long)]
         quote: Option<String>,
+    },
+
+    /// Push the existing execution-mode decision. Normally this follows the
+    /// first actionable delivery; `--pre-delivery` reuses it before watch resume.
+    #[command(name = "autotrade-consent-request", hide = true)]
+    AutotradeConsentRequest {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        /// Real retained delivery id. Required unless `--pre-delivery` is set.
+        #[arg(long = "delivery-id")]
+        delivery_id: Option<String>,
+        #[arg(long = "signal-type")]
+        signal_type: String,
+        /// Reuse the consent card before a scoped watch resumes. This mode
+        /// configures future delivery handling and never executes a trade.
+        #[arg(long = "pre-delivery", default_value_t = false)]
+        pre_delivery: bool,
+        /// Visible-session language for a new device (`zh` | `en`). Accepted
+        /// only with `--pre-delivery`; also restores the local language marker.
+        #[arg(long)]
+        language: Option<String>,
+    },
+
+    /// Read-only first-entry gate for an explicitly scoped watch. Existing
+    /// executable subscriptions without local consent must reuse A/B/C first.
+    #[command(name = "autotrade-watch-precheck", hide = true)]
+    AutotradeWatchPrecheck {
+        #[arg(long = "job-id")]
+        job_id: String,
     },
 
     /// Persist a bounded model-selected route for an Active subscription.
@@ -1700,6 +1741,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             .await
         }
 
+        AgentCommand::TradeKitReadiness { asset_class } => {
+            let asset_classes =
+                task::common::autotrade::trade_kit::parse_runtime_asset_classes(&asset_class)
+                    .map_err(anyhow::Error::msg)?;
+            let result = task::common::autotrade::trade_kit::probe_runtime(&asset_classes).await;
+            crate::output::success(result);
+            Ok(())
+        }
+
         // ── Auto copy-trade (grant-check public; grant-write debug-only) ─────
         AgentCommand::AutotradeGrantCheck {
             job_id,
@@ -1776,6 +1826,101 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SubscriptionRouteClear { job_id } => {
             task::common::autotrade::profile::clear_model_routes(&job_id)?;
             crate::output::success_empty();
+            Ok(())
+        }
+
+        AgentCommand::AutotradeWatchPrecheck { job_id } => {
+            let result = task::user::scoped_watch_autotrade_precheck(&job_id).await?;
+            crate::output::success(result);
+            Ok(())
+        }
+
+        AgentCommand::AutotradeConsentRequest {
+            job_id,
+            agent_id,
+            delivery_id,
+            signal_type,
+            pre_delivery,
+            language,
+        } => {
+            use task::common::autotrade::card;
+            let signal_type = signal_type
+                .parse::<crate::asset_class::AssetClass>()
+                .map_err(anyhow::Error::msg)?;
+            let (decision, llm_content) = if pre_delivery {
+                if delivery_id.is_some() {
+                    anyhow::bail!("--delivery-id cannot be used with --pre-delivery");
+                }
+                if let Some(language) = language.as_deref() {
+                    let language = match language.to_ascii_lowercase().as_str() {
+                        "zh" => task::common::user_lang::Lang::Zh,
+                        "en" => task::common::user_lang::Lang::En,
+                        _ => anyhow::bail!("--language must be one of: zh | en"),
+                    };
+                    task::common::user_lang::record(&job_id, language);
+                }
+                let decision = card::make_pre_delivery_consent_decision(
+                    signal_type.as_str(),
+                    &job_id,
+                    &agent_id,
+                );
+                let llm_content = card::pre_delivery_consent_llm_content(
+                    signal_type.as_str(),
+                    &job_id,
+                    &agent_id,
+                );
+                (decision, Some(llm_content))
+            } else {
+                if language.is_some() {
+                    anyhow::bail!("--language is only valid with --pre-delivery");
+                }
+                let delivery_id = delivery_id
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("--delivery-id is required unless --pre-delivery is set")
+                    })?;
+                (
+                    card::make_first_time_decision(
+                        delivery_id,
+                        signal_type.as_str(),
+                        &job_id,
+                        &agent_id,
+                    ),
+                    None,
+                )
+            };
+            match task::common::pending_v2::push_decision_direct_with_llm_content(
+                &job_id,
+                "user",
+                &agent_id,
+                &decision.user_content,
+                &card::decision_list_label(&decision),
+                &decision.source_event,
+                llm_content.as_deref(),
+            ) {
+                Ok(()) if pre_delivery => crate::output::success(
+                    card::pre_delivery_visible_payload(
+                        &decision,
+                        llm_content
+                            .as_deref()
+                            .expect("pre-delivery consent always has continuation content"),
+                    ),
+                ),
+                Ok(()) => crate::output::success(serde_json::json!({
+                    "decision": true,
+                    "decisionPushed": true,
+                    "sourceEvent": decision.source_event,
+                    "deliveryId": decision.delivery_id,
+                    "preDelivery": false,
+                })),
+                Err(error) if pre_delivery => {
+                    anyhow::bail!(
+                        "pre-delivery consent card could not be pushed; scoped watch was not resumed: {error}"
+                    )
+                }
+                Err(_) => crate::output::success(decision),
+            }
             Ok(())
         }
 

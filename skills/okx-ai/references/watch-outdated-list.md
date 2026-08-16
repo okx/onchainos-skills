@@ -3,8 +3,8 @@
 > Loaded from `watch-core.md` when the user explicitly asks to see decision_request items they have **not yet replied to**. This is a user-initiated one-shot query, separate from the live watch loop — it does NOT long-poll and does NOT re-enter watch.
 
 ## Triggers
-- Chinese: `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理`
-- English: `outstanding decisions` / `pending decisions` / `unhandled decisions` / `what am I missing`
+
+`outstanding decisions` / `pending decisions` / `unhandled decisions` / `what am I missing`
 
 ## Action
 
@@ -23,7 +23,7 @@ Unlike watch's per-item flow, render **all returned items in a single assistant 
 1. Number each item (`1`, `2`, `3`, ...) so the user can disambiguate.
 2. For each item, paste its `userContent` as a markdown blockquote (same copy-not-rewrite rule as `watch-core.md` §Dispatch — no wrapper sentences, no summarization, no cross-item merging).
 3. After the last item, append this disambiguation hint **exactly once** (translate to the user's language per LOCALIZATION_PREFIX rules; keep the literal token `JobID` and the examples unchanged):
-   `💡 When replying, use either form to indicate which item you're answering: (1) list index + answer, e.g. "1 关闭" / "2: approve" / "3 — 956"; (2) JobID prefix + answer, e.g. "JobID 0x49fa — 1" (first 6 chars of jobId).`
+   `💡 When replying, identify the item with either (1) list index + answer, e.g. "1 close" / "2: approve" / "3 — 956"; or (2) JobID prefix + answer, e.g. "JobID 0x49fa — 1" (first 6 jobId characters).`
 4. End turn. Do **NOT** auto-re-enter `watch` or any other command — `outdated-list` is a one-shot query, not a loop.
 
 ## Handling the user's reply
@@ -33,7 +33,7 @@ Route in the following order:
 1. **Reply starts with a list index** (digit `1` / `2` / `3` / ..., followed by separator `:` / `—` / space / newline, or standing alone):
    - Map the index back to the Nth `decision_request` rendered.
    - The text after the index (if any) is the verbatim answer for that item.
-   - If the user sent only an index with no answer content (e.g. just `1`), **ask the user to supplement the answer** ("Please add your reply for decision 1, e.g. `1 关闭` / `1 956` / `1 自定义回复`") rather than guessing.
+   - If the user sent only an index with no answer (e.g. `1`), **ask them to add one**: "Please add your reply for decision 1, e.g. `1 close` / `1 956` / `1 custom reply`." Never guess.
 
 2. **Reply starts with `JobID <prefix>`** (or variants `JobID <prefix> — <answer>` / `<prefix>: <answer>`, etc.):
    - Match `<prefix>` against the listed items' jobIds (first 6 chars of jobId).

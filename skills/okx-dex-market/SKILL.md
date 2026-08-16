@@ -4,7 +4,7 @@ description: "HARD BLOCK — never use for prediction-market/Polymarket UpDown q
 license: MIT
 metadata:
   author: okx
-  version: "4.4.12-beta"
+  version: "4.4.13-beta"
   homepage: "https://web3.okx.com"
 ---
 

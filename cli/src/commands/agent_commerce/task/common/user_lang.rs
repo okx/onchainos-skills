@@ -87,6 +87,13 @@ pub fn detect(text: &str) -> Option<Lang> {
 /// fallback). Best-effort: a marker write must never fail the caller's flow.
 pub fn record_from_user_text(job_id: &str, text: &str) {
     let Some(lang) = detect(text) else { return };
+    record(job_id, lang);
+}
+
+/// Persist an already-known visible-session language. The post-login
+/// pre-delivery consent card uses this on a new device, where the ordinary
+/// per-job and machine-global markers are both expected to be absent.
+pub fn record(job_id: &str, lang: Lang) {
     let tag = match lang {
         Lang::Zh => "zh",
         Lang::En => "en",

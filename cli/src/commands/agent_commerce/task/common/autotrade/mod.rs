@@ -1,4 +1,4 @@
-//! Auto copy-trade (`copyTrade`) shared submodule.
+//! Automatic signal execution shared submodule.
 //!
 //! The model-driven subscription session reads each saved delivery, selects an
 //! appropriate Skill/tool, and applies that tool's safety checks. This module

@@ -393,6 +393,427 @@ fn compose_post_login_subscriptions(
     }))
 }
 
+/// Bounded execution hint derived from a subscription's service description.
+/// The classifier is fail-closed: no recognized executable asset class means no
+/// authorization prompt. The raw description is never treated as consent.
+struct PostLoginExecutableService {
+    description: String,
+    description_source: &'static str,
+    asset_classes: Vec<crate::asset_class::AssetClass>,
+}
+
+fn executable_service_from_description(
+    description: &str,
+    description_source: &'static str,
+) -> Option<PostLoginExecutableService> {
+    let description = description.trim();
+    if description.is_empty() {
+        return None;
+    }
+    let classified =
+        crate::commands::agent_commerce::task::common::autotrade::tooling::classify_description(
+            description,
+        );
+    if classified.classes.is_empty() {
+        return None;
+    }
+    Some(PostLoginExecutableService {
+        description: description.to_string(),
+        description_source,
+        asset_classes: classified.classes,
+    })
+}
+
+fn post_login_executable_service(
+    subscription: &serde_json::Value,
+) -> Option<PostLoginExecutableService> {
+    let description = subscription
+        .get("serviceDescription")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    executable_service_from_description(description, "service_description")
+}
+
+/// Resolve the ASP service description for a compact subscription row without
+/// ever treating that prose as authorization. The listing field is canonical
+/// when present. Older rows are enriched from subscription detail, with the
+/// provider's current service catalog as a final read-only fallback.
+async fn resolve_subscription_executable_service(
+    client: &mut TaskApiClient,
+    agent_id: &str,
+    subscription: &serde_json::Value,
+) -> Result<Option<PostLoginExecutableService>> {
+    let inline_description = subscription
+        .get("serviceDescription")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(description) = inline_description {
+        return Ok(executable_service_from_description(
+            description,
+            "service_description",
+        ));
+    }
+
+    let job_id = subscription
+        .get("jobId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !job_id.is_empty() {
+        match subscription_ops::fetch_subscribe_detail_for_agent(client, job_id, agent_id).await {
+            Ok(detail) => {
+                if let Some(description) = detail
+                    .get("serviceDescription")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    return Ok(executable_service_from_description(
+                        description,
+                        "subscription_detail",
+                    ));
+                }
+            }
+            Err(error) if cfg!(feature = "debug-log") => {
+                eprintln!(
+                    "[DEBUG][watch-precheck] subscription detail unavailable for {job_id}: {error:#}"
+                );
+            }
+            Err(_) => {}
+        }
+    }
+
+    let provider_agent_id = subscription
+        .get("providerAgentId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let service_id = subscription
+        .get("serviceId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if provider_agent_id.is_empty() || service_id.is_empty() {
+        return Ok(None);
+    }
+    let service = crate::commands::agent_commerce::task::common::find_service(
+        provider_agent_id,
+        service_id,
+    )
+    .await?;
+    Ok(service
+        .as_ref()
+        .and_then(|value| value.get("serviceDescription"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|description| {
+            executable_service_from_description(description, "provider_service_catalog")
+        }))
+}
+
+/// Restore bounded execution-profile hints on this device and surface only
+/// active, locally-unconfigured executable subscriptions. This runs before the
+/// login result is rendered, allowing the skill to obtain A/B/C authorization
+/// before a scoped A2A watch is resumed and a real delivery arrives.
+async fn add_post_login_autotrade_prechecks(
+    client: &mut TaskApiClient,
+    subscriptions: &mut serde_json::Value,
+    agent_id: &str,
+) {
+    use crate::commands::agent_commerce::task::common::autotrade::{consent, profile};
+
+    let Some(list) = subscriptions
+        .get("list")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return;
+    };
+    let mut prechecks = Vec::new();
+    for subscription in list {
+        if subscription
+            .get("status")
+            .and_then(serde_json::Value::as_i64)
+            != Some(
+                crate::commands::agent_commerce::task::common::state_machine::SubStatus::Active
+                    .code(),
+            )
+            || subscription
+                .get("thisDeviceReceives")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+        {
+            continue;
+        }
+        let job_id = subscription
+            .get("jobId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let service_id = subscription
+            .get("serviceId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let provider_agent_id = subscription
+            .get("providerAgentId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if job_id.is_empty() || service_id.is_empty() || provider_agent_id.is_empty() {
+            continue;
+        }
+        let executable = match resolve_subscription_executable_service(
+            client,
+            agent_id,
+            subscription,
+        )
+        .await
+        {
+            Ok(Some(executable)) => executable,
+            Ok(None) => continue,
+            Err(error) => {
+                if cfg!(feature = "debug-log") {
+                    eprintln!(
+                        "[DEBUG][post-login] service description restore skipped for {job_id}: {error:#}"
+                    );
+                }
+                continue;
+            }
+        };
+
+        // A new device has no local profile either. Rebuild only bounded routing
+        // hints; this write never creates consent or an executable command.
+        if let Err(error) = profile::save_from_description(
+            job_id,
+            service_id,
+            Some(provider_agent_id),
+            &executable.description,
+        ) {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] execution profile restore skipped: {error}");
+            }
+        }
+
+        let snapshot = consent::consent_snapshot(job_id);
+        if snapshot.status != consent::ConsentSnapshotStatus::NotSet {
+            continue;
+        }
+        prechecks.push(serde_json::json!({
+            "jobId": job_id,
+            "title": subscription.get("title").and_then(serde_json::Value::as_str).unwrap_or(""),
+            "agentId": agent_id,
+            "providerAgentId": provider_agent_id,
+            "serviceId": service_id,
+            "descriptionSource": executable.description_source,
+            "assetClasses": executable.asset_classes,
+            "consentStatus": snapshot.status,
+        }));
+    }
+    if !prechecks.is_empty() {
+        if let Some(envelope) = subscriptions.as_object_mut() {
+            envelope.insert(
+                "autoTradeAuthorizationPrechecks".to_string(),
+                serde_json::Value::Array(prechecks),
+            );
+        }
+    }
+}
+
+fn compose_scoped_watch_autotrade_precheck(
+    job_id: &str,
+    agent_id: &str,
+    subscription: Option<&serde_json::Value>,
+    consent_status: crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus,
+) -> serde_json::Value {
+    let executable = subscription.and_then(post_login_executable_service);
+    compose_scoped_watch_autotrade_precheck_with_executable(
+        job_id,
+        agent_id,
+        subscription,
+        executable.as_ref(),
+        consent_status,
+    )
+}
+
+fn compose_scoped_watch_autotrade_precheck_with_executable(
+    job_id: &str,
+    agent_id: &str,
+    subscription: Option<&serde_json::Value>,
+    executable: Option<&PostLoginExecutableService>,
+    consent_status: crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus,
+) -> serde_json::Value {
+    use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
+    use crate::commands::agent_commerce::task::common::state_machine::SubStatus;
+
+    let Some(subscription) = subscription else {
+        return serde_json::json!({
+            "jobId": job_id,
+            "agentId": agent_id,
+            "applicable": false,
+            "watchAllowed": true,
+            "shouldPromptAuthorization": false,
+            "reason": "not_subscription",
+        });
+    };
+    if subscription
+        .get("status")
+        .and_then(serde_json::Value::as_i64)
+        != Some(SubStatus::Active.code())
+    {
+        return serde_json::json!({
+            "jobId": job_id,
+            "agentId": agent_id,
+            "applicable": true,
+            "watchAllowed": true,
+            "shouldPromptAuthorization": false,
+            "reason": "subscription_not_active",
+        });
+    }
+    if subscription
+        .get("thisDeviceReceives")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return serde_json::json!({
+            "jobId": job_id,
+            "agentId": agent_id,
+            "applicable": true,
+            "watchAllowed": true,
+            "shouldPromptAuthorization": false,
+            "reason": "not_receiving_on_this_device",
+        });
+    }
+    let Some(executable) = executable else {
+        return serde_json::json!({
+            "jobId": job_id,
+            "agentId": agent_id,
+            "applicable": true,
+            "watchAllowed": true,
+            "shouldPromptAuthorization": false,
+            "reason": "non_executable_service",
+        });
+    };
+
+    match consent_status {
+        ConsentSnapshotStatus::Active => serde_json::json!({
+            "jobId": job_id,
+            "agentId": agent_id,
+            "applicable": true,
+            "watchAllowed": true,
+            "shouldPromptAuthorization": false,
+            "reason": "consent_active",
+            "consentStatus": consent_status,
+        }),
+        ConsentSnapshotStatus::NotSet => serde_json::json!({
+            "jobId": job_id,
+            "agentId": agent_id,
+            "title": subscription.get("title").and_then(serde_json::Value::as_str).unwrap_or(""),
+            "providerAgentId": subscription.get("providerAgentId").and_then(serde_json::Value::as_str).unwrap_or(""),
+            "serviceId": subscription.get("serviceId").and_then(serde_json::Value::as_str).unwrap_or(""),
+            "serviceDescription": executable.description,
+            "descriptionSource": executable.description_source,
+            "assetClasses": executable.asset_classes,
+            "applicable": true,
+            "watchAllowed": false,
+            "shouldPromptAuthorization": true,
+            "reason": "authorization_required",
+            "consentStatus": consent_status,
+        }),
+        ConsentSnapshotStatus::Unreadable => serde_json::json!({
+            "jobId": job_id,
+            "agentId": agent_id,
+            "applicable": true,
+            "watchAllowed": false,
+            "shouldPromptAuthorization": false,
+            "reason": "consent_unreadable",
+            "consentStatus": consent_status,
+            "repairCommand": format!(
+                "onchainos agent autotrade-consent-set --job-id {job_id} --mode pause"
+            ),
+        }),
+    }
+}
+
+/// First-entry gate for an explicitly scoped watch. Non-subscription jobs and
+/// subscriptions that do not need execution authorization pass through; an
+/// executable Active subscription with no local consent returns the exact data
+/// needed to reuse the existing pre-delivery A/B/C command before watch starts.
+pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serde_json::Value> {
+    use crate::commands::agent_commerce::task::common::autotrade::{consent, grants, profile};
+
+    if !grants::job_id_is_safe(job_id) {
+        anyhow::bail!("invalid job id");
+    }
+    crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
+    let agent_id = resolve_post_login_agentic_id().await?;
+    let mut client = TaskApiClient::new();
+    let snapshot = subscription_ops::fetch_my_subscriptions_snapshot_for_agent(
+        &mut client,
+        subscription_ops::SubscriptionRole::Buyer,
+        None,
+        agent_id.clone(),
+    )
+    .await?;
+    let list = snapshot
+        .data
+        .get("list")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("subscription list is malformed"))?;
+    let subscription = list.iter().find(|item| {
+        item.get("jobId").and_then(serde_json::Value::as_str) == Some(job_id)
+    });
+    let mut resolved_executable = None;
+
+    if let Some(subscription) = subscription {
+        let active = subscription
+            .get("status")
+            .and_then(serde_json::Value::as_i64)
+            == Some(
+                crate::commands::agent_commerce::task::common::state_machine::SubStatus::Active
+                    .code(),
+            );
+        let receives = subscription
+            .get("thisDeviceReceives")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        if active && receives {
+            resolved_executable = resolve_subscription_executable_service(
+                &mut client,
+                &snapshot.agent_id,
+                subscription,
+            )
+            .await?;
+            if let Some(executable) = resolved_executable.as_ref() {
+                let service_id = subscription
+                    .get("serviceId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let provider_agent_id = subscription
+                    .get("providerAgentId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if !service_id.is_empty() && !provider_agent_id.is_empty() {
+                    if let Err(error) = profile::save_from_description(
+                        job_id,
+                        service_id,
+                        Some(provider_agent_id),
+                        &executable.description,
+                    ) {
+                        if cfg!(feature = "debug-log") {
+                            eprintln!(
+                                "[DEBUG][watch-precheck] execution profile restore skipped: {error}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(compose_scoped_watch_autotrade_precheck_with_executable(
+        job_id,
+        &snapshot.agent_id,
+        subscription,
+        resolved_executable.as_ref(),
+        consent::consent_snapshot(job_id).status,
+    ))
+}
+
 /// State captured before the login heartbeat registers this machine. Comparing
 /// against the pre-heartbeat device table is what lets login distinguish a
 /// genuinely new device from an existing device whose receipt was deliberately
@@ -665,6 +1086,7 @@ pub(crate) async fn finalize_post_login_subscriptions(
         Some(prepared.pre_registration_devices)
     };
 
+    add_post_login_autotrade_prechecks(&mut client, &mut subscriptions, &prepared.agent_id).await;
     compose_post_login_subscriptions(subscriptions, false, devices)
 }
 
@@ -814,6 +1236,173 @@ mod post_login_tests {
             !device_needs_default_routing(true, false),
             "ordinary re-login must preserve this device's manual opt-outs"
         );
+    }
+
+    #[test]
+    fn post_login_precheck_prefers_canonical_service_description() {
+        let subscription = json!({
+            "serviceDescription": "Prediction market signals with BUY YES entries",
+            "description": "generic subscription text"
+        });
+        let executable = post_login_executable_service(&subscription).unwrap();
+        assert_eq!(executable.description_source, "service_description");
+        assert_eq!(
+            executable.asset_classes,
+            vec![crate::asset_class::AssetClass::Prediction]
+        );
+    }
+
+    #[test]
+    fn post_login_precheck_never_classifies_the_user_task_description() {
+        let subscription = json!({
+            "description": "Spot trading signals with executable buy entries"
+        });
+        assert!(post_login_executable_service(&subscription).is_none());
+    }
+
+    #[test]
+    fn post_login_precheck_fails_closed_for_non_executable_service() {
+        let subscription = json!({
+            "serviceDescription": "Read-only market news and risk reports"
+        });
+        assert!(post_login_executable_service(&subscription).is_none());
+    }
+
+    #[test]
+    fn post_login_precheck_classifies_the_live_cn_dex_spot_description() {
+        // Escaped CN: "Continuously pushes DEX spot buy/sell direction and position signals".
+        let subscription = json!({
+            "serviceDescription": "\u{6301}\u{7eed}\u{63a8}\u{9001} DEX \u{73b0}\u{8d27}\u{4e70}\u{5356}\u{65b9}\u{5411}\u{4e0e}\u{4ed3}\u{4f4d}\u{4fe1}\u{53f7}"
+        });
+        let executable = post_login_executable_service(&subscription).unwrap();
+        assert_eq!(
+            executable.asset_classes,
+            vec![crate::asset_class::AssetClass::Spot]
+        );
+    }
+
+    #[test]
+    fn scoped_watch_precheck_uses_a_recovered_service_description() {
+        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
+
+        let mut subscription = active_executable_subscription();
+        subscription
+            .as_object_mut()
+            .unwrap()
+            .remove("serviceDescription");
+        let executable = executable_service_from_description(
+            "Spot trading signals with BUY entries",
+            "subscription_detail",
+        )
+        .unwrap();
+        let result = compose_scoped_watch_autotrade_precheck_with_executable(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            Some(&executable),
+            ConsentSnapshotStatus::NotSet,
+        );
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["shouldPromptAuthorization"], true);
+        assert_eq!(result["descriptionSource"], "subscription_detail");
+        assert_eq!(result["assetClasses"], json!(["spot"]));
+    }
+
+    fn active_executable_subscription() -> serde_json::Value {
+        json!({
+            "jobId": "job-watch",
+            "status": crate::commands::agent_commerce::task::common::state_machine::SubStatus::Active.code(),
+            "thisDeviceReceives": true,
+            "title": "Spot signal subscription",
+            "providerAgentId": "provider-1",
+            "serviceId": "service-1",
+            "serviceDescription": "Spot trading signals with BUY entries; user must set a fixed amount, per-trade cap, and USDT or USDC"
+        })
+    }
+
+    #[test]
+    fn scoped_watch_precheck_requires_existing_consent_flow_before_watch() {
+        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
+
+        let subscription = active_executable_subscription();
+        let result = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            ConsentSnapshotStatus::NotSet,
+        );
+        assert_eq!(result["applicable"], true);
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["shouldPromptAuthorization"], true);
+        assert_eq!(result["reason"], "authorization_required");
+        assert_eq!(result["assetClasses"], json!(["spot"]));
+        assert!(result["serviceDescription"]
+            .as_str()
+            .unwrap()
+            .contains("fixed amount"));
+    }
+
+    #[test]
+    fn scoped_watch_precheck_allows_existing_live_consent() {
+        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
+
+        let subscription = active_executable_subscription();
+        let result = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            ConsentSnapshotStatus::Active,
+        );
+        assert_eq!(result["watchAllowed"], true);
+        assert_eq!(result["shouldPromptAuthorization"], false);
+        assert_eq!(result["reason"], "consent_active");
+        assert!(result.get("serviceDescription").is_none());
+    }
+
+    #[test]
+    fn scoped_watch_precheck_blocks_unreadable_consent() {
+        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
+
+        let subscription = active_executable_subscription();
+        let result = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            ConsentSnapshotStatus::Unreadable,
+        );
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["shouldPromptAuthorization"], false);
+        assert_eq!(result["reason"], "consent_unreadable");
+        assert!(result["repairCommand"].as_str().unwrap().contains("--mode pause"));
+    }
+
+    #[test]
+    fn scoped_watch_precheck_does_not_gate_non_subscription_or_read_only_jobs() {
+        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
+
+        let non_subscription = compose_scoped_watch_autotrade_precheck(
+            "job-regular",
+            "user-1",
+            None,
+            ConsentSnapshotStatus::NotSet,
+        );
+        assert_eq!(non_subscription["watchAllowed"], true);
+        assert_eq!(non_subscription["reason"], "not_subscription");
+
+        let read_only = json!({
+            "jobId": "job-news",
+            "status": crate::commands::agent_commerce::task::common::state_machine::SubStatus::Active.code(),
+            "thisDeviceReceives": true,
+            "serviceDescription": "Read-only market news and risk reports"
+        });
+        let read_only_result = compose_scoped_watch_autotrade_precheck(
+            "job-news",
+            "user-1",
+            Some(&read_only),
+            ConsentSnapshotStatus::NotSet,
+        );
+        assert_eq!(read_only_result["watchAllowed"], true);
+        assert_eq!(read_only_result["reason"], "non_executable_service");
     }
 
     #[tokio::test]

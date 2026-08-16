@@ -34,8 +34,7 @@ use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 // Subscription deliverables arrive as P2P `[intent:deliver]` XMTP messages, which the
 // buyer's a2a daemon holds at `consent=0` until the buyer has an established (allowed)
 // session with the provider. One-shot tasks open that session during negotiation; the
-// subscribe flow has no negotiation. Establish the session for every active subscription
-// so delivery transport is independent of the optional `copyTrade` capability marker.
+// subscribe flow has no negotiation. Establish the session for every active subscription.
 
 /// `<onchainos_home>/subscription/consent/<jobId>` — per-device "already established"
 /// marker. `None` if `job_id` fails the path-safety charset check.
@@ -87,8 +86,6 @@ pub(crate) fn ensure_subscription_session(
     }
 }
 
-// ── subscribe-cancel ────────────────────────────────────────────────────
-
 #[derive(Clone, Copy)]
 enum SubscriptionMutation {
     Cancel,
@@ -96,6 +93,9 @@ enum SubscriptionMutation {
 }
 
 fn should_watch_after_subscription_mutation(mutation: SubscriptionMutation) -> bool {
+    // Cancel-result events carry only the subscription job id, not an immutable
+    // operation id. Starting a new watch could mistake stale backlog for this
+    // cancellation. Rejection keeps its existing scoped watch behavior.
     matches!(mutation, SubscriptionMutation::Reject)
 }
 
@@ -112,6 +112,8 @@ fn print_watch_after_subscription_mutation(mutation: SubscriptionMutation, sub_i
     println!();
     println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
 }
+
+// ── subscribe-cancel ────────────────────────────────────────────────────
 
 pub async fn handle_subscribe_cancel(client: &mut TaskApiClient, sub_id: &str) -> Result<()> {
     ensure_tokens_refreshed().await?;
@@ -330,10 +332,7 @@ pub async fn handle_subscribe_detail(
 
     let json_mode = format.eq_ignore_ascii_case("json");
 
-    let resp = client
-        .get_with_identity(&format!("{SUBSCRIBE_API_PREFIX}/{sub_id}"), &agent_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("subscribe-detail failed: {e}"))?;
+    let resp = fetch_subscribe_detail_for_agent(client, sub_id, &agent_id).await?;
     let is_buyer =
         !agent_id.is_empty() && resp["buyerAgentId"].as_str() == Some(agent_id.as_str());
 
@@ -359,7 +358,6 @@ pub async fn handle_subscribe_detail(
     let status = resp["status"].as_i64().unwrap_or(-1);
     let trial_type = resp["trialType"].as_i64().unwrap_or(0);
     let auto_renew = resp["autoRenew"].as_i64().unwrap_or(0);
-    let copy_trade = resp["copyTrade"].as_i64().unwrap_or(0);
     let period_index = resp["periodIndex"].as_u64().unwrap_or(0);
     let buyer = resp["buyerAgentId"].as_str().unwrap_or("?");
     let provider = resp["providerAgentId"].as_str().unwrap_or("?");
@@ -383,7 +381,6 @@ pub async fn handle_subscribe_detail(
     println!("  fee:       {amount}/month");
     println!("  period:    {period_index}");
     println!("  autoRenew: {auto_renew}");
-    println!("  copyTrade: {copy_trade}");
     if let (Some(start), Some(end)) = (sub_start, sub_end) {
         println!("  current:   {start} ~ {end}");
     }
@@ -413,6 +410,22 @@ pub async fn handle_subscribe_detail(
     );
     println!("  devices:   {devices_line}");
     Ok(())
+}
+
+/// Fetch a subscription's canonical detail for an already-resolved agent.
+///
+/// `my-subscriptions` is a compact listing and older backend rows may omit
+/// `serviceDescription`. Watch authorization prechecks use this read-only
+/// detail query before deciding whether an existing subscription is executable.
+pub(crate) async fn fetch_subscribe_detail_for_agent(
+    client: &mut TaskApiClient,
+    sub_id: &str,
+    agent_id: &str,
+) -> Result<serde_json::Value> {
+    client
+        .get_with_identity(&format!("{SUBSCRIBE_API_PREFIX}/{sub_id}"), agent_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("subscribe-detail failed: {e}"))
 }
 
 /// Trial-window timestamps from a query-API response. trial* is the canonical
@@ -497,9 +510,14 @@ pub struct SubscriptionInfo {
     pub sub_end_time: Option<i64>,
     pub sub_buffer_end_time: Option<i64>,
     pub auto_renew: i64,
-    pub copy_trade: i64,
     pub period_index: Option<i64>,
     pub service_id: String,
+    /// Canonical ASP service description when the subscription API includes it.
+    /// Older compact-list rows may omit this field; authorization prechecks
+    /// recover it from subscription detail or the ASP service catalog instead
+    /// of guessing from the user's task description.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub service_description: String,
     pub service_params: String,
     pub service_token_address: String,
     pub service_token_amount: String,
@@ -897,6 +915,16 @@ mod tests {
     }
 
     #[test]
+    fn subscribe_cancel_does_not_rearm_scoped_watch() {
+        assert!(!should_watch_after_subscription_mutation(
+            SubscriptionMutation::Cancel
+        ));
+        assert!(should_watch_after_subscription_mutation(
+            SubscriptionMutation::Reject
+        ));
+    }
+
+    #[test]
     fn cli_subscribe_cancel() {
         let cli = TestCli::parse_from(["test", "subscribe-cancel", "sub-123"]);
         match cli.cmd {
@@ -905,16 +933,6 @@ mod tests {
             }
             _ => panic!("expected SubscribeCancel"),
         }
-    }
-
-    #[test]
-    fn subscribe_cancel_does_not_rearm_scoped_watch() {
-        assert!(!should_watch_after_subscription_mutation(
-            SubscriptionMutation::Cancel
-        ));
-        assert!(should_watch_after_subscription_mutation(
-            SubscriptionMutation::Reject
-        ));
     }
 
     #[test]
@@ -990,6 +1008,7 @@ mod tests {
             "copyTrade": 0,
             "periodIndex": 1,
             "serviceId": "svc-1",
+            "serviceDescription": "Spot trading signals with executable buy and sell entries",
             "serviceParams": "{\"k\":\"v\"}",
             "serviceTokenAddress": "0xservice",
             "serviceTokenAmount": "10.500000",
@@ -1014,10 +1033,23 @@ mod tests {
         assert_eq!(info.sub_end_time, Some(1703192000));
         assert_eq!(info.sub_buffer_end_time, Some(1703278400));
         assert_eq!(info.auto_renew, 1);
-        assert_eq!(info.copy_trade, 0);
         assert_eq!(info.period_index, Some(1));
         assert_eq!(info.service_id, "svc-1");
+        assert_eq!(
+            info.service_description,
+            "Spot trading signals with executable buy and sell entries"
+        );
         assert_eq!(info.service_params, "{\"k\":\"v\"}");
+    }
+
+    #[test]
+    fn subscription_info_ignores_retired_server_field() {
+        let wire = detail_fixture();
+        assert!(wire.get("copyTrade").is_some());
+
+        let info: SubscriptionInfo = serde_json::from_value(wire).unwrap();
+        let list_output = serde_json::to_value(info).unwrap();
+        assert!(list_output.get("copyTrade").is_none());
     }
 
     #[test]

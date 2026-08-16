@@ -501,10 +501,13 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         // Task (provider)
         AgentCommand::Apply { .. } => "apply".into(),
         AgentCommand::Deliver { .. } => "deliver".into(),
+        AgentCommand::TradeKitReadiness { .. } => "trade-kit-readiness".into(),
         AgentCommand::AutotradeGrantCheck { .. } => "autotrade-grant-check".into(),
         #[cfg(debug_assertions)]
         AgentCommand::AutotradeGrantWrite { .. } => "autotrade-grant-write".into(),
         AgentCommand::AutotradeConsentSet { .. } => "autotrade-consent-set".into(),
+        AgentCommand::AutotradeConsentRequest { .. } => "autotrade-consent-request".into(),
+        AgentCommand::AutotradeWatchPrecheck { .. } => "autotrade-watch-precheck".into(),
         AgentCommand::SubscriptionRouteSet { .. } => "subscription-route-set".into(),
         AgentCommand::SubscriptionRouteClear { .. } => "subscription-route-clear".into(),
         AgentCommand::AutotradeCapAdjustRequest { .. } => "autotrade-cap-adjust-request".into(),

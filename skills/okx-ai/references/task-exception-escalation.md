@@ -53,7 +53,7 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
    ```bash
    onchainos agent next-action --role <user|asp> --agentId <your agentId> --message '{"event":"user_decision_cli_failed","jobId":"<jobId>","data":"<message.data verbatim>"}'
    ```
-   The CLI's `cli_failed` handler does the LLM semantic mapping (`A` / `retry` / `重试` → retry the failed command once; `B` / `dismiss` / `不再提示` → end the turn, user takes manual control; new-instruction in natural language → parse and execute the modified command). Do NOT keyword-match yourself — pass `--data` through and follow the handler's playbook.
+   The CLI's `cli_failed` handler does the LLM semantic mapping (`A` / `retry` → retry the failed command once; `B` / `dismiss` → end the turn, user takes manual control; new instruction → parse and execute the modified command). Do NOT keyword-match yourself — pass `--data` through and follow the handler's playbook.
 
 **Only exception (auto-retry once)**:
 - JWT expired (error message contains `JWT verification failed` / `JWT expired` / `unauthorized` with `code=3001`) → refresh login state and retry once; on continued failure, fall through to the standard pending-decisions-v2 flow above

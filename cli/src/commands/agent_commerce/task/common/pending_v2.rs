@@ -14,6 +14,7 @@
 //! - `list`: query current queue (markdown / json), refreshes snapshot.
 
 pub use crate::commands::agent_commerce::task::common::config::is_cli_mode;
+use crate::commands::agent_commerce::task::common::okx_a2a;
 use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use clap::{Subcommand, ValueEnum};
@@ -29,15 +30,22 @@ const DEFAULT_TTL_DAYS: u64 = 7;
 const TTL_ENV_VAR: &str = "ONCHAINOS_PENDING_DECISIONS_TTL_DAYS";
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// `defer` keyword whitelist — user-session uses these to skip relay and just end the turn.
-/// CLI doesn't actually consume these (user-session matches on its own), but documented here
-/// so the LLM playbook can reference a consistent list.
+/// Defer vocabulary embedded in the generated user-session instructions.
+/// The CLI does not parse these values itself. A defer reply keeps the decision
+/// unclaimed; watch continuation depends only on the card's active-watch origin.
 pub const DEFER_KEYWORDS: &[&str] = &[
     // Chinese
     "等会儿", "等等", "等一下", "稍后", "晚点", "先放着", "先不管", "回头再看",
     // English
     "skip", "later", "wait", "hold on", "not now", "defer",
 ];
+
+/// Post-relay instruction shared by both direct CLI and queue-backed resolvers.
+/// Whether a decision resumes watch is a property of how the card was surfaced,
+/// never of reply text such as A/B/C, an amount, a cap, or a defer keyword.
+fn decision_relay_post_action() -> &'static str {
+    "Decision relayed. If this card was surfaced by a currently active `okx-a2a user watch`, immediately re-enter that exact originating watch command per `skills/okx-ai/references/watch-core.md` (preserve global vs sticky `--job-id`). If it was opened independently through a decision list / outdated-list, do not start watch; end the turn normally. Never infer watch origin from the user's reply text.\n"
+}
 
 // ─── Data model ─────────────────────────────────────────────────────────
 
@@ -615,6 +623,32 @@ pub(crate) fn push_decision_direct(
     list_label: &str,
     source_event: &str,
 ) -> Result<()> {
+    push_decision_direct_with_llm_content(
+        job_id,
+        role,
+        agent_id,
+        user_content,
+        list_label,
+        source_event,
+        None,
+    )
+}
+
+/// Direct-push variant with caller-owned reply handling. The ordinary delivery
+/// path uses [`push_decision_direct`] and keeps the canonical relay playbook;
+/// pre-delivery consent reuses the same card/queue machinery but handles the
+/// reply in the visible user session because no retained delivery sub-session
+/// exists yet.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn push_decision_direct_with_llm_content(
+    job_id: &str,
+    role: &str,
+    agent_id: &str,
+    user_content: &str,
+    list_label: &str,
+    source_event: &str,
+    llm_content: Option<&str>,
+) -> Result<()> {
     request_prompt_inner(
         job_id.to_string(),
         role.to_string(),
@@ -622,7 +656,7 @@ pub(crate) fn push_decision_direct(
         None,
         user_content.to_string(),
         list_label.to_string(),
-        None,
+        llm_content.map(str::to_string),
         Some(source_event.to_string()),
         false,
     )
@@ -659,6 +693,7 @@ fn request_prompt_inner(
     source_event: Option<String>,
     print_ok: bool,
 ) -> Result<()> {
+    okx_a2a::validate_decision_job_id(&job_id)?;
     let to_agent_id = sanitize_to_agent(to_agent_id, &agent_id);
     let user_content = user_content.replace("\\n", "\n");
     let cli_mode = is_cli_mode();
@@ -684,7 +719,6 @@ fn request_prompt_inner(
             updated_at: now,
         };
         let llm_content = resolve_llm_content_cli(&entry);
-        use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.job_id, &entry.user_content, &llm_content)?;
         if print_ok {
             println!("OK");
@@ -728,7 +762,6 @@ fn request_prompt_inner(
         // stays consistent across modes.
         let entry = q.entries.last().unwrap();
         let llm_content = resolve_llm_content_prompt_user(entry);
-        use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.job_id, &entry.user_content, &llm_content)?;
         if print_ok {
             println!("OK");
@@ -815,9 +848,7 @@ fn handle_resolve_with_sessionkey(
             agent_id, relay_event, user_reply, job_id, role,
         ));
     okx_a2a::session_send(&job_id, to_agent_id.as_deref(), &relay_content)?;
-    print!(
-        "▶️ **Resume watching** — re-enter the watch loop per `skills/okx-ai/references/watch-core.md` (preserve the session's sticky `--job-id` if it was started post-publish).\n"
-    );
+    print!("{}", decision_relay_post_action());
     Ok(())
 }
 
@@ -892,9 +923,7 @@ fn handle_resolve_prompt(
     }
 
     okx_a2a::session_send(&job_id, to_ref, &relay_content)?;
-    print!(
-        "🛑 User reply relayed and consumed — do NOT reuse it (no `resolve-prompt` retry, no future-card reference); wait for a fresh user message, then end the turn.\n"
-    );
+    print!("{}", decision_relay_post_action());
     Ok(())
 }
 
@@ -1454,8 +1483,8 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
         "[USER_DECISION_REQUEST][job: {}][role: {}][agent: {}]{}\n\n\
          Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
          Step 2 — When the user actually replies (next turn):\n\
-         \x20\x20\x20\x20· defer keyword ({}) → END TURN\n\
-         \x20\x20\x20\x20· else → follow `skills/okx-ai/references/watch-core.md` §kind == decision_request \"Handling the user reply\": **first claim the todo** per watch-core.md step 2: `okx-a2a user check --todo-ids <todo_id> --json` (read `<todo_id>` from this item's `id` field in the original watch / outdated-list JSON output). **Then** on `handled` run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\"{} --source-event \"{}\"` exactly once, then follow the relay playbook it returns. Skipping the `check` leaves a ghost todo in the outstanding-decisions queue.",
+         \x20\x20\x20\x20- defer keyword ({}) or any defer value defined in watch-core.md → do NOT claim or resolve; if this card came from a currently active watch, re-enter that exact originating watch command, otherwise END TURN\n\
+         \x20\x20\x20\x20- else → follow `skills/okx-ai/references/watch-core.md` §kind == decision_request \"Handling the user reply\": **first claim the todo** per watch-core.md step 2: `okx-a2a user check --todo-ids <todo_id> --json` (read `<todo_id>` from this item's `id` field in the original watch / outdated-list JSON output). **Then** on `handled` run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\"{} --source-event \"{}\"` exactly once, then follow the relay playbook it returns. Only a card surfaced by a currently active watch resumes that exact originating watch; an independently opened card never starts watch. Never infer watch origin from A/B/C, an amount, a cap, or any other reply text. Skipping the `check` leaves a ghost todo in the outstanding-decisions queue.",
         entry.job_id,
         entry.role,
         entry.agent_id,
@@ -1499,7 +1528,7 @@ fn resolve_llm_content_prompt_user(entry: &PendingEntry) -> String {
          Step 3 — **END THE TURN NOW with NO assistant text output** (unless Step 2 fired its multi-card warning, which is the ONLY allowed text this turn). No confirmation, no recap, no fabricated option list. Just stop. Wait for the user to reply in a future turn.\n\n\
          🛑 **The block below runs ONLY in a future turn**, AFTER the user has actually replied. Do NOT run anything in the current turn.\n\
          On the user's next reply, re-scan your context for [USER_DECISION_REQUEST] blocks (the count may have changed since Step 2), then walk this decision tree:\n\
-         \x20\x20· defer keyword ({defer}) → END TURN, do NOT run anything.\n\
+         \x20\x20- defer keyword ({defer}) or any defer value defined in watch-core.md → do NOT claim or resolve; if this card came from a currently active watch, re-enter that exact originating watch command, otherwise END TURN.\n\
          \x20\x20· Reply starts with `0x...:` prefix → strip the prefix + colon, use the prefix to match each block's `[job: 0x...]` header, locate THAT block, then run THAT block's command template with `--user-reply` set to the stripped wording (without the prefix).\n\
          \x20\x20· No prefix + only THIS block in context (single) → run THIS block's command template with the full reply.\n\
          \x20\x20· 🔁 No prefix + **multiple** [USER_DECISION_REQUEST] blocks in context → user forgot to add the jobId prefix. Ask them which jobId they're answering (number the candidates `1. Job 0x...`, `2. Job 0x...`, one per line — short_jobId only), **END THE TURN**, wait for the pick (hex prefix `0x7091` or list number `1`); locate THAT block via `[job: 0x...]` header (or list order), then run THAT block's command template. Never guess, never collapse.\n\n\
@@ -1713,7 +1742,28 @@ fn indent(s: &str, prefix: &str) -> String {
 }
 #[cfg(test)]
 mod sanitize_tests {
-    use super::sanitize_to_agent;
+    use super::{
+        decision_relay_post_action, resolve_llm_content_cli, resolve_llm_content_prompt_user,
+        sanitize_to_agent, PendingEntry, Status,
+    };
+    use chrono::Utc;
+
+    fn decision_entry() -> PendingEntry {
+        let now = Utc::now();
+        PendingEntry {
+            job_id: "job-123".to_string(),
+            role: "user".to_string(),
+            agent_id: "8315".to_string(),
+            to_agent_id: None,
+            user_content: "Choose A/B/C".to_string(),
+            list_label: "decision".to_string(),
+            llm_content_override: None,
+            source_event: Some("autotrade_consent".to_string()),
+            status: Status::Active,
+            created_at: now,
+            updated_at: now,
+        }
+    }
 
     #[test]
     fn self_addressed_target_normalizes_to_backup() {
@@ -1723,5 +1773,36 @@ mod sanitize_tests {
         // Real counterparty passes through; None stays None.
         assert_eq!(sanitize_to_agent(Some("4941".into()), "8315"), Some("4941".into()));
         assert_eq!(sanitize_to_agent(None, "8315"), None);
+    }
+
+    #[test]
+    fn defer_guidance_delegates_to_watch_core_contract() {
+        for content in [
+            resolve_llm_content_cli(&decision_entry()),
+            resolve_llm_content_prompt_user(&decision_entry()),
+        ] {
+            assert!(content.contains("any defer value defined in watch-core.md"));
+        }
+    }
+
+    #[test]
+    fn both_default_decision_modes_preserve_the_watch_origin_guard() {
+        for content in [
+            resolve_llm_content_cli(&decision_entry()),
+            resolve_llm_content_prompt_user(&decision_entry()),
+        ] {
+            assert!(content.contains("currently active watch"));
+            assert!(content.contains("exact originating watch command"));
+            assert!(content.contains("otherwise END TURN"));
+        }
+    }
+
+    #[test]
+    fn post_relay_guidance_uses_origin_not_reply_text() {
+        let guidance = decision_relay_post_action();
+        assert!(guidance.contains("currently active `okx-a2a user watch`"));
+        assert!(guidance.contains("preserve global vs sticky `--job-id`"));
+        assert!(guidance.contains("decision list / outdated-list"));
+        assert!(guidance.contains("Never infer watch origin from the user's reply text"));
     }
 }

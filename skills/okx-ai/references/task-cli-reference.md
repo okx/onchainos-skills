@@ -147,7 +147,7 @@ agent list-attachments <jobId>
 
 Publish a new task on-chain (params provided by `next-action` playbook; blocks on insufficient wallet balance)
 
-> **Insufficient-balance output (XLayer):** when under-funded, `create-task` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs`. If missing, show `balanceWarning`.
+> **Insufficient-balance output (XLayer):** when under-funded, `create-task` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs` and puts `markdownImage` under option 1. If missing, show `balanceWarning`.
 
 ```
 agent create-task --description <txt> --budget <num> --max-budget <num> --currency <USDT|USDG> \
@@ -219,17 +219,29 @@ service fee; for subscription services pass `subscriptionInfo.feeAmount` as
 Render the service provider as `Agent <providerAgentId>(<providerAgentName>)`; degrade to
 `Agent <providerAgentId>` when `providerAgentName` is empty or missing.
 
-**Output — per-service `autoTradePreflight` (local, deterministic):** each `data.recommendations[].services[]` carries an `autoTradePreflight` object computed locally at match time (no extra network call):
+**Output — per-service `autoTradePreflight` schema version 2 (local, deterministic):** each
+`data.recommendations[].services[]` carries an `autoTradePreflight` object computed locally at match
+time (no extra network call):
 
+- `schemaVersion:2`
 - `isTradingSignal` (bool; advisory classification, not an execution authorization)
 - `assetClasses` (⊆ `spot|perp|prediction|option|defi`; `[]` when undetermined)
-- `tools[]` = `{ tool, displayName, pluginId?, readiness ∈ ready|missing|needs_configuration }`
+- `explicitTools[]`, `selectionRequired`, and `advisoryOnly:true`
+- `tools[]` = `{ tool, displayName, pluginId?, readiness, reason, checkedAt }`, where readiness is one
+  of `ready|missing|verification_unknown|needs_configuration|incompatible`; a local snapshot has
+  `checkedAt:null`
 - `reminders[]` = bilingual (`messageEn`+`messageZh`), `blocking:false`, de-duplicated install/config hints
+- `tradeKitProbe` = `{mode, assetClasses}`; mode is
+  `probe_before_confirmation|deferred_until_venue_selection|not_applicable`
 - `evidence[]` = stable diagnostic codes only (never raw text/secrets)
 
-For Trade Kit, subscription-time `ready` means only that the local `okx` CLI exists. The
-preflight never reads configuration or credential state and never invokes the CLI; the first
-real signal re-checks authentication, account permissions, and runtime capabilities.
+The match-time preflight never reads configuration or credential state and never invokes Trade Kit.
+An installed `okx` CLI is therefore `verification_unknown` with reason `authorization_not_checked`,
+never `ready`. After service selection, `probe_before_confirmation` applies only when Trade Kit is an
+explicit or sole candidate; run one batch `agent trade-kit-readiness` probe before confirmation.
+Generic multi-venue services use `deferred_until_venue_selection`; their first real delivery probes only
+if Trade Kit is actually selected. `not_applicable` never probes. All outcomes remain advisory and
+subscription creation remains non-blocking.
 
 Undetermined descriptions yield `isTradingSignal:false`, `assetClasses:[]`, and `reminders:[]`. On an internal preflight error the object degrades to `evidence:["preflight:unavailable"]` and `asp-match` still returns `ok:true`. Preflight absence never blocks subscription creation.
 
@@ -447,11 +459,11 @@ agent create-subscribe \
 
 > **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
 
-> **Insufficient-balance output:** when under-funded, `create-subscribe` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs`. If missing, show `balanceWarning`.
+> **Insufficient-balance output:** when under-funded, `create-subscribe` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs` and puts `markdownImage` under option 1. If missing, show `balanceWarning`.
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
-The CLI always writes the current backend delivery-routing compatibility field as `copyTrade=1`. There is no old subscription-time binary copy-trade question or `--copy-trade` input. The inbound client no longer uses that field or a deterministic text parser for routing: it requires an exactly Active subscription, then the subscription-signal Skill interprets each saved delivery and applies consent, cap, freshness, and selected-tool checks. The optional `--autotrade-*` group is different: it persists a complete, explicit user-authored execution policy after the subscription jobId is created. Partial groups fail closed and report exactly which fields are missing. JSON success reports `autoTradeConfigRequested` and `autoTradeConfigured`; a persistence failure does not roll back the already-created subscription and leaves execution unconfigured.
+There is no subscription-time binary copy-trade question or `--copy-trade` input. The inbound client requires an exactly Active subscription, then the subscription-signal Skill interprets each saved delivery and applies consent, cap, freshness, and selected-tool checks. The optional `--autotrade-*` group persists a complete, explicit user-authored execution policy after the subscription jobId is created. Partial groups fail closed and report exactly which fields are missing. JSON success reports `autoTradeConfigRequested` and `autoTradeConfigured`; a persistence failure does not roll back the already-created subscription and leaves execution unconfigured.
 
 ### subscribe-detail
 
@@ -597,6 +609,36 @@ agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<
 | `--message` | No | `Task completed, please review` | Delivery message |
 | `--agent-id` | Yes | - | ASP agentId |
 | `--autotrade` | No | (none) | Deprecated compatibility argument. Accepted but ignored; malformed or valid JSON never changes, blocks, or augments the text/file deliverable. |
+
+### trade-kit-readiness
+
+Check the selected Trade Kit runtime before confirmation when directed by `autoTradePreflight`, and
+again before every Trade Kit delivery. The command runs one bounded machine-readable discovery,
+enforces the minimum OAuth-capable version and each requested class's capabilities, then runs at most
+one private read-only account check for the batch. It parses only the account `perm` field and requires
+the exact comma-separated token `trade`; all other private output is discarded. Trade Kit itself
+selects complete AK credentials first or OAuth otherwise. Partial/invalid AK configuration follows
+that upstream AK-first behavior and does not fall back to OnchainOS-managed OAuth. OnchainOS never
+reads, returns, logs, or persists credentials or private account output.
+
+```
+agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]
+```
+
+`--asset-class` is required and repeatable; accepted canonical values are `spot`, `perp`,
+`prediction`, and `option`. Repeated values are de-duplicated in caller order. The schema-version-2
+response includes `readiness`, compatibility `ready`, stable `reason`, `checkedAt`, `version`,
+`missingCapabilities`, `remediation`, and `assetChecks[]`. Branch on
+`data.readiness == "ready"`, not process status; all requested classes must be ready.
+
+The five states are `ready`, `missing`, `verification_unknown`, `needs_configuration`, and
+`incompatible`. Authentication absence or a valid account response without exact `trade` permission is
+`needs_configuration`; offer OAuth (`okx auth login --manual`), API key (`okx config init`), and Later.
+Timeouts, network failures, and malformed private responses are `verification_unknown`; offer Retry and
+Later only and never report them as logged out. Missing/incompatible results expose only fixed
+install/upgrade remediation. Subscription creation is never blocked. A delivery with any non-ready result
+must remain visible but execution stops before route persistence, consent, grant, or order; readiness
+recovery never auto-replays that delivery.
 
 ### autotrade-grant-check
 
@@ -967,6 +1009,21 @@ agent heartbeat --chain-index <196|...>
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--chain-index` | Yes | - | Chain index (e.g. `196`) |
+
+### autotrade-watch-precheck
+
+Read-only first-entry gate for a scoped watch. It checks whether `<jobId>` is an existing Active
+executable subscription received by this device and whether its local consent is ready. It never starts
+watch, pushes a card, or exposes persisted authorization amounts.
+
+```bash
+agent autotrade-watch-precheck --job-id <jobId>
+```
+
+Output `data` includes `watchAllowed`, `shouldPromptAuthorization`, and a stable `reason`. When authorization
+is required it also includes `agentId`, the canonical untrusted `serviceDescription`, and bounded
+`assetClasses[]` for the unchanged `autotrade-consent-request --pre-delivery` flow. An unreadable consent
+record returns `watchAllowed:false`, `reason:"consent_unreadable"`, and a user-confirmable `repairCommand`.
 
 ### autotrade-consent-set
 

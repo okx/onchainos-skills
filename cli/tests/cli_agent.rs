@@ -118,6 +118,7 @@ fn funding_notice_outputs_canonical_json_and_png() {
     assert_eq!(data["mustNotifyWithImagePath"], true);
     assert_eq!(data["mustRunNotifyCommand"], true);
     assert_eq!(data["mustRepeatInFinalResponse"], true);
+    assert_eq!(data["mustRenderMarkdownImageBelowFirstOption"], true);
     assert_eq!(data["displayMode"], "image-notify");
     assert!(data["terminalQr"].is_null());
     assert_eq!(data["endTurn"], true);
@@ -164,8 +165,12 @@ fn funding_notice_outputs_canonical_json_and_png() {
     let policy = data["displayPolicy"].as_str().expect("displayPolicy");
     assert!(policy.contains("Non-TTY"));
     assert!(policy.contains("run notifyCommandArgs"));
+    assert!(policy.contains("put markdownImage under option 1"));
 
     let image_path = data["imagePath"].as_str().expect("imagePath");
+    let markdown_image = data["markdownImage"].as_str().expect("markdownImage");
+    assert!(markdown_image.starts_with("![QR Code]("));
+    assert!(markdown_image.contains("onchainos-funding-qr-"));
     let bytes = fs::read(image_path).expect("read generated QR PNG");
     assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
     let _ = fs::remove_file(image_path);
