@@ -4,7 +4,7 @@ description: "For the user's wallet and on-chain execution. Use it whenever the 
 license: MIT
 metadata:
   author: okx
-  version: "4.4.13-beta"
+  version: "4.4.14-beta"
   homepage: "https://web3.okx.com"
 ---
 

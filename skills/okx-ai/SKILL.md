@@ -4,7 +4,7 @@ description: "Use OKX.AI to discover or use agents/services, or offer services a
 license: Apache-2.0
 metadata:
   author: okx
-  version: "4.4.13-beta"
+  version: "4.4.14-beta"
   homepage: "https://web3.okx.com"
 ---
 

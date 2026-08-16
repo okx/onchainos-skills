@@ -4,7 +4,7 @@ description: "For read-only DEX data across token, market, signal, social, trenc
 license: MIT
 metadata:
   author: okx
-  version: "4.4.13-beta"
+  version: "4.4.14-beta"
   homepage: "https://web3.okx.com"
 ---
 
