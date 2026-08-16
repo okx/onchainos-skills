@@ -29,35 +29,20 @@ Follow the returned script verbatim. The confirmation form format is in **Append
 
 Display as a single `| Field | Value |` table with exactly these **8** fields in order (drop `Summary`, `Service`, `Service desc`, `Payment mode`):
 
-| # | 字段 | 来源 | 展示规则 |
+| # | Field | Source | Render Rule |
 |---|---|---|---|
-| 1 | 任务名称 | Agent 生成的 Title | ≤30 字符 |
-| 2 | 任务描述 | 用户 Description | ≤200 字符内联；>200 字符 → "见下方" + 表下渲染全文 |
-| 3 | 服务方 | asp-match / designated-route | `Agent <providerAgentId>(<providerAgentName>)`；降级 `Agent <providerAgentId>` |
-| 4 | 服务参数 | Agent 推断 | 无参数时显示 `None` |
-| 5 | 服务价格 | asp-match `feeAmount` + `feeTokenSymbol` | `<feeAmount> <symbol>`；**`feeAmount` 无值时整行省略** |
-| 6 | 预算 | 用户输入 | ≤5 位小数，最大 10,000,000 |
-| 7 | 最高预算 | 用户输入 | 议价上限 |
-| 8 | 支付币种 | 用户输入，须匹配 `feeTokenSymbol` | `USDT` 或 `USDG` |
+| 1 | Task Name | Agent-generated Title | ≤30 characters |
+| 2 | Task Description | User Description | Inline when ≤200 characters; when >200, show `See below` and render the full text below the table |
+| 3 | Provider | asp-match / designated-route | `Agent <providerAgentId>(<providerAgentName>)`; fall back to `Agent <providerAgentId>` |
+| 4 | Service Parameters | Agent-inferred | `None` when empty |
+| 5 | Service Price | asp-match `feeAmount` + `feeTokenSymbol` | `<feeAmount> <symbol>`; **omit the row when `feeAmount` is absent** |
+| 6 | Budget | User input | ≤5 decimals; maximum 10,000,000 |
+| 7 | Maximum Budget | User input | Negotiation cap |
+| 8 | Payment Currency | User input; must match `feeTokenSymbol` | `USDT` or `USDG` |
 
 If attachments present, add an Attachments row.
 
-**Example**:
-
-| Field | Value |
-|---|---|
-| 任务名称 | Query Jiangsu Weather |
-| 任务描述 | Query current weather in Jiangsu province including temperature, humidity, and conditions; return results in a clear format. |
-| 服务方 | Agent 864(WeatherBot) |
-| 服务参数 | region: Jiangsu |
-| 服务价格 | 0.08 USDT |
-| 预算 | 0.1 |
-| 最高预算 | 0.15 |
-| 支付币种 | USDT |
-
-> Confirm? Once confirmed I will create the task on-chain immediately.
-
-Rules: description > 200 chars → `见下方` + prose below table; 服务方 shows `Agent <id>(<name>)`, degrade to `Agent <id>` when the name is empty/absent; 服务价格 row omitted when `feeAmount` has no value; footer = blockquote asking confirmation.
+End with a localized confirmation blockquote and wait for explicit confirmation.
 
 ---
 
@@ -65,45 +50,31 @@ Rules: description > 200 chars → `见下方` + prose below table; 服务方 sh
 
 Display as a single `| Field | Value |` table with these **7 base fields** in order (drop `Summary`, `Service`, `Service desc`, and the old binary execution switch):
 
-| # | 字段 | 来源 | 展示规则 |
+| # | Field | Source | Render Rule |
 |---|---|---|---|
-| 1 | 任务名称 | Agent 生成的 Title | ≤30 字符 |
-| 2 | 任务描述 | 用户 Description | ≤200 字符内联；>200 字符 → 表内写 "见下方"，完整文本渲染在表格下方 |
-| 3 | 服务方 | asp-match / designated-route | `Agent <providerAgentId>(<providerAgentName>)`；无名称时降级为 `Agent <providerAgentId>` |
-| 4 | 服务参数 | Agent 从 serviceDescription 推断 | 无参数时显示 `None` |
-| 5 | 服务价格 | asp-match `subscriptionInfo.feeAmount` + `feeTokenSymbol` | `<subscriptionInfo.feeAmount> <symbol> / month` |
-| 6 | 试用 | asp-match `subscriptionInfo.supportTrial/freeTrial` | `Yes (<subscriptionInfo.freeTrial> 小时免费)` 或 `No` |
-| 7 | 自动续费 | 用户明确选择；无默认值 | `On` 或 `Off` |
+| 1 | Task Name | Agent-generated Title | ≤30 characters |
+| 2 | Task Description | User Description | Inline when ≤200 characters; when >200, show `See below` and render the full text below the table |
+| 3 | Provider | asp-match / designated-route | `Agent <providerAgentId>(<providerAgentName>)`; fall back to `Agent <providerAgentId>` when unnamed |
+| 4 | Service Parameters | Agent-inferred from `serviceDescription` | `None` when empty |
+| 5 | Service Price | `asp-match`: `subscriptionInfo.feeAmount`; `service-list`: selected `subscription[].fee` | `<fee> <symbol> / month`; never use the one-time `fee` / `feeAmount` field |
+| 6 | Trial | `asp-match`: `subscriptionInfo.supportTrial/freeTrial`; `service-list`: selected service `freeTrial` | A positive `freeTrial` → `Yes (<freeTrial> hours free)`; otherwise `No` |
+| 7 | Auto-Renew | Explicit user choice; no default | `On` or `Off` |
 
 When the user's own request explicitly asks for automatic signal execution, append exactly these three
 rows. Ask only for a missing amount/cap/quote before rendering the table; do not show A/B/C choices. Omit
 all three rows when the user did not explicitly opt in, and never infer them from service/ASP text.
 
-| 字段 | 来源 | 展示规则 |
+| Field | Source | Render Rule |
 |---|---|---|
-| 信号执行 | 用户明确请求 | `Automatic` |
-| 每笔金额 | 用户明确给出的固定计价金额与币种 | `<amount> USDT/USDC` |
-| 每笔上限 | 用户明确给出的单笔上限与同一币种 | `<cap> USDT/USDC`；必须 ≥ 每笔金额 |
+| Signal Execution | Explicit user request | `Automatic` |
+| Per-Signal Amount | User-provided fixed quote amount and currency | `<amount> USDT/USDC` |
+| Per-Signal Cap | User-provided cap in the same currency | `<cap> USDT/USDC`; must be ≥ Per-Signal Amount |
 
 If attachments present, add an Attachments row.
 
 Before displaying this confirmation table, apply the subscription playbook's **Tool preparation (optional)** gate. If actionable `install_plugin` / `configure_tool` reminders exist, display that choice as a separate card and end the turn; do not add tool rows to this seven-field confirmation card. A preparation action must be followed by a fresh `asp-match` for the same provider and the same `serviceId`. Choosing Later proceeds to confirmation and does not affect later delivery visibility/storage or manual execution with another available tool.
 
-**Example**:
-
-| Field | Value |
-|---|---|
-| 任务名称 | Smart Money Signal |
-| 任务描述 | Real-time alerts for whale wallet movements on Ethereum, including token transfers, DEX swaps, and liquidity events. |
-| 服务方 | Agent 1506(WhaleWatch) |
-| 服务参数 | chain: Ethereum |
-| 服务价格 | 5 USDT / month |
-| 试用 | Yes (48 小时免费) |
-| 自动续费 | On |
-
-> Confirm? Once confirmed, the subscription will be created on-chain.
-
-Rules: description rendering same as A1. 服务价格 row uses `subscriptionInfo.feeAmount` because backend `services.feeAmount` is the non-subscription service fee while `subscription[].fee` is the subscription fee. 试用 row: `subscriptionInfo.supportTrial == true` → `Yes (<subscriptionInfo.freeTrial> 小时免费)`, otherwise `No`. 自动续费: `On` 或 `Off`. 服务方 shows `Agent <id>(<name>)`, degrade to `Agent <id>` when the name is empty/absent.
+End with a localized confirmation blockquote and wait for explicit confirmation.
 
 ---
 
@@ -121,21 +92,21 @@ Every modification is confirmed individually (Universal confirmation rule). Afte
 | Edit automatic execution / amount / cap / quote (subscription) | Update bounded user-authored values; ask only for missing values → re-render |
 | Change provider | Update `--provider` / `--provider-agent-id` to the new agentId → **re-run `asp-match`** (may switch branch) → re-render |
 
-**Branch-switch rule (FR-2.5)**: when an edited Description changes the matched service type (subscription ↔ regular), **clear the previous branch's type-specific fields** (regular: 预算 / 最高预算 / 支付币种 / payment mode; subscription: 试用 / 自动续费), collect the new branch's fields, then render the corresponding template (A1 or A2). If the re-match returns empty, enter the recovery fallback (see §5 Flow step 1).
+**Branch-switch rule (FR-2.5)**: when an edited Description changes the matched service type (subscription ↔ regular), **clear the previous branch's type-specific fields** (regular: Budget / Maximum Budget / Payment Currency / payment mode; subscription: Trial / Auto-Renew), collect the new fields, then render A1 or A2. If re-match is empty, use §5 Flow step 1 recovery.
 
-**服务方 render**: every card renders the provider as `Agent <providerAgentId>(<providerAgentName>)`, degrading to `Agent <providerAgentId>` when `providerAgentName` is empty or absent.
+**Provider render**: use `Agent <providerAgentId>(<providerAgentName>)`, falling back to `Agent <providerAgentId>` when the name is empty/absent.
 
 ---
 
 ## 5. Designated-Provider A2A flow
 
-**Trigger**: user message contains "Please initiate a direct conversation with this provider to discuss the task details." OR user mentions buying/using a specific Agent/ASP's service (e.g. "购买Agent#1960的服务", "购买ASP#1960的服务", "buy service from ASP #1960", "使用ASP#1960的服务"). "ASP" = Agent Service Provider, treat identically to "Agent" for provider identification — extract the numeric ID after `#`.
+**Trigger**: "Please initiate a direct conversation with this provider to discuss the task details," or a request to buy/use a specific Agent/ASP service (e.g. "buy service from ASP #1960" / "use Agent #1960's service"). Treat ASP and Agent identically; extract the numeric ID after `#`.
 
 > ⚠️ **A2MCP with known endpoint → NOT this skill** — concrete URL + A2MCP serviceType → `okx-agent-payments-protocol`. "Please send a request to this endpoint" without "use onchainos" → also NOT this skill. "Please use onchainos to send a request to this endpoint" + non-A2MCP → **§6** below.
 
 Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `ServiceDescription`, `Price` / `symbol` (mutable).
 
-### Path A — ServiceTitle is missing (e.g. "购买ASP#1960的服务" without specifying which service) → service discovery:
+### Path A — ServiceTitle is missing (e.g. "buy service from ASP #1960" without naming a service) → service discovery:
 1. `onchainos agent service-list --agent-id <agentId>` — list all services the ASP offers. Empty result → provider does not exist or has no services; inform the user and stop.
 2. Display the service list to the user and ask them to pick one.
 3. Fill `ServiceTitle`, `ServiceType`, `ServiceDescription`, `Price`, `symbol`, `serviceId`, `endpoint` from the chosen service. For services chosen from `service-list`, derive subscription status and billing details from that service's `subscription` / `freeTrial` fields. For services chosen from `asp-match`, use `supportSubscription` for branch selection and `subscriptionInfo` for billing interval / trial details.

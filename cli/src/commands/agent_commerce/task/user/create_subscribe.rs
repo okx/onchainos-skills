@@ -19,10 +19,6 @@ use crate::commands::agent_commerce::task::common::{self, DEBUG_LOG};
 use crate::commands::agent_commerce::task::signing;
 
 pub(crate) const SUBSCRIBE_API_PREFIX: &str = "/priapi/v1/aieco/task/subscribe";
-/// Compatibility marker required by the current subscription API. It enables
-/// delivery routing only; runtime parsing, consent, cap and tool checks remain
-/// authoritative for whether a delivery can execute.
-const SUBSCRIPTION_DELIVERY_ENABLED: i32 = 1;
 
 pub struct CreateSubscribeParams {
     pub service_id: String,
@@ -187,7 +183,6 @@ fn build_create_body(
         "serviceTokenAmount": params.service_token_amount,
         "serviceTokenAddress": params.service_token_address,
         "autoRenew": params.auto_renew,
-        "copyTrade": SUBSCRIPTION_DELIVERY_ENABLED,
         "title": params.title,
         "description": params.description,
         "serviceInterval": params.service_interval,
@@ -392,7 +387,6 @@ pub async fn handle_create_subscribe(
             format!("serviceId={}", params.service_id),
             format!("useTrial={effective_use_trial}"),
             format!("autoRenew={}", params.auto_renew),
-            format!("copyTrade={SUBSCRIPTION_DELIVERY_ENABLED}"),
             format!("autoTradeConfigRequested={autotrade_requested}"),
             format!("autoTradeConfigured={autotrade_configured}"),
             format!("txHash={tx_hash}"),
@@ -786,7 +780,7 @@ mod tests {
     }
 
     #[test]
-    fn create_body_always_enables_subscription_delivery() {
+    fn create_body_omits_retired_delivery_marker() {
         let params = CreateSubscribeParams {
             service_id: "svc_report_only".to_string(),
             use_trial: false,
@@ -814,7 +808,7 @@ mod tests {
             "0xsignature",
         );
 
-        assert_eq!(body["copyTrade"], serde_json::json!(1));
+        assert!(body.get("copyTrade").is_none());
         assert_eq!(body["providerAgentId"], serde_json::json!("agent-99"));
         assert_eq!(body["description"], params.description);
         assert!(body.get("descriptionSummary").is_none());

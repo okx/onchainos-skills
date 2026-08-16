@@ -7,10 +7,10 @@
 > - **Stake principal**: the stake amount itself is OKB (XLayer's native token); the user's wallet **must** hold enough OKB.
 >
 > 🚫 **Forbidden tokens** (scoped to the **gas / network-fee context only**; any one appearing in user-visible text = hard violation, regardless of UI shape):
-> - `gas` / `gas fee` / `network fee` / `手续费` / `网络费`
+> - `gas` / `gas fee` / `network fee`
 > - Describing `ETH` as the gas medium on XLayer (XLayer does not use ETH for gas at all)
 > - Phrases like "wallet balance is not enough to pay gas / network fee"
-> - Telling the user to `top up ETH` / `top up gas` / `top up native for gas` / `向钱包充值少量 ETH`
+> - Telling the user to `top up ETH` / `top up gas` / `top up native for gas`
 > - "preflight gas check"–style framing
 >
 > ❌ Anti-pattern: any phrasing of "prepare gas / top up ETH / wallet balance insufficient for gas / network fee" — whether dressed up as a preflight check, a status card, or a next-step prompt, it is a violation. The platform sponsors gas; there is no such step.

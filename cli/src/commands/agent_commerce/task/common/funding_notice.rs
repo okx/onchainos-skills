@@ -71,6 +71,7 @@ struct FundingNoticeOutput {
     content_canonical: String,
     fallback_content_canonical: String,
     image_path: Option<String>,
+    markdown_image: Option<String>,
     terminal_qr: Option<String>,
     display_mode: String,
     deposit_address: String,
@@ -84,6 +85,7 @@ struct FundingNoticeOutput {
     must_localize: bool,
     must_notify_with_image_path: bool,
     must_run_notify_command: bool,
+    must_render_markdown_image_below_first_option: bool,
     must_repeat_in_final_response: bool,
     forbid_funding_summary: bool,
     display_policy: String,
@@ -170,13 +172,14 @@ pub fn funding_blocked_envelope(
         "fundingNoticeCommand": funding_notice_command,
         "fundingDisplayMode": funding_display_mode,
         "mustRunNotifyCommand": image_notify,
+        "mustRenderMarkdownImageBelowFirstOption": image_notify,
         "mustRepeatInFinalResponse": true,
         "forbidFundingSummary": true,
-        "finalResponsePolicy": "Final response must repeat the full localized funding notice with all four funding options; never summarize.",
+        "finalResponsePolicy": "Final response must repeat the full localized funding notice with all four funding options; put markdownImage under option 1 when present; never summarize.",
         "platformPolicy": if !must_run_funding_notice {
             "Funding notice unavailable: show balanceWarning, explain deposit address is missing, then end turn."
         } else if image_notify {
-            "Non-TTY: run fundingNoticeCommand, then notifyCommandArgs for PNG QR, then full final notice."
+            "Non-TTY: run fundingNoticeCommand, then notifyCommandArgs for PNG QR, then put markdownImage under option 1 in final."
         } else {
             "TTY: run fundingNoticeCommand, show terminalQr and full notice; do not claim PNG was sent."
         },
@@ -400,12 +403,16 @@ fn build_funding_notice_with_mode(
             shell_quote(&path.display().to_string())
         )
     });
+    let markdown_image = image_path
+        .as_ref()
+        .map(|path| markdown_image_for_path(path));
     let image_notify = display_mode.is_image_notify();
 
     let notice = FundingNoticeOutput {
         content_canonical,
         fallback_content_canonical,
         image_path: image_path.as_ref().map(|path| path.display().to_string()),
+        markdown_image,
         terminal_qr,
         display_mode: display_mode.as_str().to_string(),
         deposit_address: input.deposit_address,
@@ -419,10 +426,11 @@ fn build_funding_notice_with_mode(
         must_localize: true,
         must_notify_with_image_path: image_notify,
         must_run_notify_command: image_notify,
+        must_render_markdown_image_below_first_option: image_notify,
         must_repeat_in_final_response: true,
         forbid_funding_summary: true,
         display_policy: if image_notify {
-            "Non-TTY: run notifyCommandArgs for PNG QR, then repeat the full localized notice in final; never summarize."
+            "Non-TTY: run notifyCommandArgs for PNG QR, put markdownImage under option 1, then repeat the full localized notice in final; never summarize."
         } else {
             "TTY: show terminalQr and the full localized notice; never summarize or claim PNG was sent."
         }
@@ -436,6 +444,25 @@ fn build_funding_notice_with_mode(
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn markdown_image_for_path(path: &std::path::Path) -> String {
+    let target = if path.is_absolute() {
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| {
+                path.strip_prefix(cwd)
+                    .ok()
+                    .map(|rel| PathBuf::from(".").join(rel))
+            })
+            .unwrap_or_else(|| path.to_path_buf())
+    } else {
+        PathBuf::from(".").join(path)
+    };
+    format!(
+        "![QR Code](<{}>)",
+        target.to_string_lossy().replace('>', "%3E")
+    )
 }
 
 impl TryFrom<FundingNoticeArgs> for FundingNoticeInput {
@@ -569,7 +596,7 @@ fn write_qr_png(address: &str, image_dir: Option<&std::path::Path>) -> Result<Pa
         dirs.push(PathBuf::from(dir));
     }
     if let Ok(cwd) = std::env::current_dir() {
-        dirs.push(cwd.join(".onchainos").join("tmp"));
+        dirs.push(cwd.join(".onchainos").join("tmp").join("funding-qr"));
     }
     dirs.extend([std::env::temp_dir(), PathBuf::from("/tmp")]);
     for dir in dirs {
@@ -642,6 +669,7 @@ mod tests {
         assert!(image_path.is_none());
         assert_eq!(notice.display_mode, "terminal-unicode");
         assert!(notice.image_path.is_none());
+        assert!(notice.markdown_image.is_none());
         assert!(
             notice
                 .terminal_qr
@@ -671,12 +699,17 @@ mod tests {
         assert!(image_path.as_ref().is_some_and(|path| path.exists()));
         assert!(notice.terminal_qr.is_none());
         assert!(notice.must_run_notify_command);
+        assert!(notice.must_render_markdown_image_below_first_option);
         assert!(notice.must_repeat_in_final_response);
         assert!(notice.forbid_funding_summary);
+        assert!(notice
+            .markdown_image
+            .as_deref()
+            .is_some_and(|value| value.contains("onchainos-funding-qr-")));
         assert!(
             notice
                 .display_policy
-                .contains("repeat the full localized notice")
+                .contains("put markdownImage under option 1")
         );
         assert!(
             notice
@@ -688,6 +721,15 @@ mod tests {
         if let Some(path) = image_path {
             let _ = std::fs::remove_file(path);
         }
+    }
+
+    #[test]
+    fn default_image_dir_uses_funding_qr_subdir() {
+        let path = write_qr_png(&test_input().deposit_address, None).expect("qr png");
+        assert!(path
+            .to_string_lossy()
+            .contains(".onchainos/tmp/funding-qr"));
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -715,6 +757,7 @@ mod tests {
             envelope["mustRepeatInFinalResponse"],
             serde_json::json!(true)
         );
+        assert!(envelope["mustRenderMarkdownImageBelowFirstOption"].is_boolean());
         assert_eq!(envelope["forbidFundingSummary"], serde_json::json!(true));
         assert!(
             envelope["finalResponsePolicy"]

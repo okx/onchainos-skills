@@ -17,11 +17,9 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 
 | Role | Role code | CLI value | Aliases (recognize these as the same role) | Sub-session playbook |
 |---|---|---|---|---|
-| **User Agent** | `1` | `--role user` | User / User Agent / Buyer / Client / 用户 / 买家 / 买方 | [`task-user-sub-playbook.md`](task-user-sub-playbook.md) |
-| **ASP** | `2` | `--role asp` | ASP / Provider / Provider Agent / Seller / Merchant / 提供者 / 商家 / 服务提供商 / 卖家 / 卖方 | [`task-asp.md`](task-asp.md) |
-| **Evaluator** | `3` | `--role evaluator` | Evaluator / 评审员（旧称 Arbitrator / 仲裁者 / 仲裁员，仅用于识别用户输入，不对外展示） | [`task-evaluator.md`](task-evaluator.md) |
-
-<!-- retention: the Evaluator alias cell keeps the legacy words (Arbitrator / 仲裁者 / 仲裁员) as input aliases for recognition only; do not delete them or reduce their occurrences. They are never surfaced to the user — presentation uses Evaluator / 评审员. -->
+| **User Agent** | `1` | `--role user` | User / User Agent / Buyer / Client | [`task-user-sub-playbook.md`](task-user-sub-playbook.md) |
+| **ASP** | `2` | `--role asp` | ASP / Provider / Provider Agent / Seller / Merchant  | [`task-asp.md`](task-asp.md) |
+| **Evaluator** | `3` | `--role evaluator` | Evaluator / 评审员 | [`task-evaluator.md`](task-evaluator.md) |
 
 #### Multi-account agentId lookup
 

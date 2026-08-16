@@ -41,12 +41,26 @@ fn run_silently(program: &str, args: &[&str]) -> Option<std::process::Output> {
     npm_cli_command(program, args).output().ok()
 }
 
+fn version_probe_failure_hint(details: Option<&str>) -> String {
+    let mut hint = concat!(
+        "okx-a2a may not be installed, or the active Node environment may differ from the one ",
+        "used to install it. Switch to the correct Node environment and retry. If it is not ",
+        "installed, run `npm i -g @okxweb3/a2a-node` in a compatible Node environment."
+    )
+    .to_string();
+    if let Some(details) = details.map(str::trim).filter(|value| !value.is_empty()) {
+        hint.push_str(" Details: ");
+        hint.push_str(details);
+    }
+    hint
+}
+
 /// Result of the read-only A2A readiness probe.
 enum CommReadiness {
     /// A definitive positive verdict (or the probe was skipped via env).
     Ready,
-    /// A DEFINITIVE negative: okx-a2a not installed, or doctor returned a valid
-    /// report whose readiness verdict is false. Callers block with this hint.
+    /// A DEFINITIVE negative: the version probe failed (missing command or wrong
+    /// Node environment), or doctor returned a valid false readiness verdict.
     NotReady(String),
     /// No usable verdict could be obtained even though okx-a2a is installed
     /// (doctor crashed / produced no JSON / a build too old to have `doctor` /
@@ -60,7 +74,7 @@ enum CommReadiness {
 /// move via `okx-a2a doctor --fix`, which can do the interactive parts (plugin
 /// install, provider login) that a silent path cannot. Outcomes:
 /// - SKIP env set → Ready
-/// - `okx-a2a` not installed → NotReady (a definitive, knowable bad state)
+/// - version probe fails → NotReady with missing-install / Node-environment guidance
 /// - doctor returns a valid readiness verdict → Ready / NotReady accordingly
 /// - okx-a2a present but doctor yields no usable verdict (crash / non-JSON /
 ///   no `doctor` command / missing readiness field) → Unverifiable (proceed)
@@ -69,15 +83,21 @@ fn probe_communication_readiness() -> CommReadiness {
         return CommReadiness::Ready;
     }
 
-    let installed = run_silently("okx-a2a", &["--version"])
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if !installed {
-        return CommReadiness::NotReady(
-            "okx-a2a is not installed. Install and initialize it: \
-             run `npm i -g @okxweb3/a2a-node`, then `okx-a2a doctor --fix`."
-                .to_string(),
-        );
+    match npm_cli_command("okx-a2a", &["--version"]).output() {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let details = if stderr.trim().is_empty() {
+                stdout.as_ref()
+            } else {
+                stderr.as_ref()
+            };
+            return CommReadiness::NotReady(version_probe_failure_hint(Some(details)));
+        }
+        Err(error) => {
+            return CommReadiness::NotReady(version_probe_failure_hint(Some(&error.to_string())));
+        }
     }
 
     eprintln!("[onchainos] checking A2A communication readiness (okx-a2a doctor)...");
@@ -385,10 +405,15 @@ fn user_decision_request_args<'a>(
     ]
 }
 
-pub fn user_decision_request(job_id: &str, user_content: &str, llm_content: &str) -> Result<()> {
+pub(crate) fn validate_decision_job_id(job_id: &str) -> Result<()> {
     if job_id.trim().is_empty() {
         anyhow::bail!("job id is required for an atomic user decision request");
     }
+    Ok(())
+}
+
+pub fn user_decision_request(job_id: &str, user_content: &str, llm_content: &str) -> Result<()> {
+    validate_decision_job_id(job_id)?;
     let args = user_decision_request_args(job_id, user_content, llm_content);
     let out = Command::new("okx-a2a")
         .args(args)
@@ -755,6 +780,12 @@ mod tests {
     }
 
     #[test]
+    fn decision_request_rejects_an_empty_job_binding() {
+        let err = validate_decision_job_id("  ").unwrap_err();
+        assert!(err.to_string().contains("job id is required"));
+    }
+
+    #[test]
     fn user_notify_content_appends_media_path() {
         let content =
             compose_user_notify_content("line1\\nline2", Some(std::path::Path::new("/tmp/qr.png")))
@@ -784,9 +815,20 @@ mod tests {
     }
 
     #[test]
-    fn decision_request_rejects_an_empty_job_binding() {
-        let err = user_decision_request("  ", "prompt", "route").unwrap_err();
-        assert!(err.to_string().contains("job id is required"));
+    fn version_probe_hint_covers_missing_install_and_wrong_node_environment() {
+        let hint = version_probe_failure_hint(None);
+        assert!(hint.contains("may not be installed"));
+        assert!(hint.contains("active Node environment"));
+        assert!(hint.contains("npm i -g @okxweb3/a2a-node"));
+    }
+
+    #[test]
+    fn version_probe_hint_preserves_command_failure_details() {
+        let hint = version_probe_failure_hint(Some(
+            "Detected Node 20.14.0; okx-a2a requires Node >=22.14.0",
+        ));
+        assert!(hint.contains("Detected Node 20.14.0"));
+        assert!(hint.contains("requires Node >=22.14.0"));
     }
 
     // The verdict is exercised through the pure `interpret_capabilities_output` seam

@@ -88,3 +88,5 @@ skills/okx-agent-task-workspace/
 
 # codegraph local index (never committed)
 .codegraph/
+
+.agents/skills/onchainos-skills

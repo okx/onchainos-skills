@@ -4,13 +4,13 @@ User-session needs to forward free-form user instructions targeting a specific t
 
 **Trigger phrases** — when the user says any of the following AND no matching entry exists in `pending-decisions-v2`, **MUST** enter this flow:
 
-| Intent | Chinese phrases | English phrases |
-|---|---|---|
-| 重新提交 / 补充内容 | "重新提交 X / 再上传 / 重发 / 给我改 / 补充证据 / 改一下" | "re-submit / re-upload / resubmit / add more / append / change my X" |
-| 催促 / 让 sub 主动同步状态 | "提醒 / 催一下 / 让卖家知道一下 X / 跟买家说一下 X" | "remind / nudge / chase up / tell the ASP X" |
-| 变更条款 | "改 provider / 换服务商" | "use a different provider / switch provider" |
+| Intent | Trigger phrases |
+|---|---|
+| Re-submit / supplement | "re-submit / re-upload / resubmit / add more / append / supplement evidence / change my X" |
+| Nudge / request a sub-session update | "remind / nudge / chase up / tell the ASP X / tell the buyer X" |
+| Change terms | "use a different provider / switch provider" |
 
-🛑🛑🛑 **CRITICAL — do NOT make domain assumptions on behalf of the user**: when the queue is empty and the user issues a task-scoped instruction, your job is to **route**, not to **adjudicate**. **Do NOT** reply "the evidence phase is over" / "this state doesn't allow that". Only the sub session can query the chain and know for sure. Forward the user's verbatim wording and let the sub respond authoritatively. (🔴 I-15: user typed "重新提交证据" → user session refused with "证据阶段已结束"; correct path: route to sub.)
+🛑🛑🛑 **CRITICAL — do NOT make domain assumptions on behalf of the user**: when the queue is empty and the user issues a task-scoped instruction, your job is to **route**, not to **adjudicate**. **Do NOT** reply "the evidence phase is over" / "this state doesn't allow that". Only the sub session can query the chain and know for sure. Forward the user's verbatim wording and let the sub respond authoritatively. (🔴 I-15: the user requested "re-submit evidence," but the user session refused because it assumed the evidence phase had ended; the correct path was to route to the sub.)
 
 **Decision tree** (apply in order, stop at first hit):
 
@@ -43,9 +43,9 @@ User-session needs to forward free-form user instructions targeting a specific t
 
 ## Multi-task disambiguation
 
-When the user has multiple active tasks, every routing decision **must** anchor to a specific `jobId`:
+When the user has multiple active tasks, every **task-scoped** routing decision **MUST** anchor to a specific `jobId`. A fresh targetless generic task-monitor or backlog-drain action is current-provider global; defer its scope selection to `watch-core.md` instead of forcing a task pick. A recognized subscription signal-receipt action is not generic global Watch: route it through §Subscriptions and resolve exactly one ACTIVE buyer subscription first.
 
-- **Always confirm `jobId` before acting**. If ambiguous → ask which task or render an `active-tasks` numbered list. Never assume the most-recent task is the one they mean.
+- **Always confirm `jobId` before a task-scoped action**. If ambiguous → ask which task or render an `active-tasks` numbered list. Never assume the most-recent task is the one they mean.
 - **Track each task's state independently**. Don't apply task A's context to task B.
 - **Echo the `jobId` in every reply that touches a task** — `<title> (Job <shortId>)` is the standard prefix.
 
@@ -55,39 +55,35 @@ See [`entry-points.md`](./entry-points.md#multi-task-context-management) for the
 
 ## Task list / "what am I working on"
 
-When the user asks for **their tasks list without a specific jobId**, the user session answers directly (do NOT 6-step forward). Triggers:
-- Chinese: `我的任务` / `接了哪些任务` / `我接的活` / `有哪些任务` / `进行中的任务` / `还在跑的任务` / `所有任务` / `任务列表`
-- English: `my tasks` / `what am I working on` / `list my tasks` / `active tasks` / `show all tasks`
+When the user asks for **their tasks list without a specific jobId**, the user session answers directly (do NOT 6-step forward). Triggers: `my tasks` / `tasks I accepted` / `what am I working on` / `list my tasks` / `active tasks` / `show all my tasks` / `task list`.
 
 **Action — pick the right CLI by intent**:
-- **All non-terminal tasks across accounts**: `onchainos agent active-tasks` — use for "what am I working on / 还在跑的".
+- **All non-terminal tasks across accounts**: `onchainos agent active-tasks` — use for "what am I working on" / "active tasks".
 - **Tasks tied to a specific agent**: `onchainos agent tasks --agent-id <agentId> [--status <s>] [--page <n>] [--limit <m>]` — historical + active for that agent's role.
 
 Render as numbered list. ❌ Do NOT 6-step forward. ❌ Do NOT mix with "decision list".
 
-⚠️ **`我所有任务` / `所有任务`**: both map to the caller's own tasks (→ this section). There is no public marketplace pool to browse.
+⚠️ **"all my tasks" / "show all tasks"** map to the caller's own tasks (→ this section). There is no public marketplace pool to browse.
 
 ---
 
 ## Close a task (irreversible)
 
-Triggers (only when there's no active card the user might be answering):
-- Chinese: `关掉这个任务` / `不要这个任务了` / `取消任务` / `关闭这个 job` / `撤回任务`
-- English: `close this task` / `cancel the task` / `drop this job` / `withdraw the task`
+Triggers (only when there's no active card the user might be answering): `close this task` / `cancel the task` / `drop this job` / `withdraw the task`.
 
 **Preconditions**: clear jobId in context; status must be `created` (no provider accepted yet).
 
 **Action**: `onchainos agent close <jobId> --agent-id <agentId>` after explicit user confirmation.
 
 🛑 **CRITICAL ambiguity — `close` vs `resolve C`**:
-- `关闭` / `close` is overloaded:
-  1. **In "Waiting for user reply" state** on a `recommend_pick` card → run the block's pre-filled `resolve-prompt` command with `--user-reply "关闭"` (CLI maps to `close`).
+- `close` is overloaded:
+  1. **In "Waiting for user reply" state** on a `recommend_pick` card → run the block's pre-filled `resolve-prompt` command with the user's verbatim reply (CLI maps it to `close`).
   2. **Outside Waiting state** → `onchainos agent close <jobId>` directly.
 - 🔴 I-9: case (1) mistakenly mis-routed. **Default when in doubt**: prefer `resolve-prompt`.
 
 ## Funding completed (after balanceWarning)
 
-Trigger: `已充值` / `I topped up`, only with saved `balanceWarning`.
+Trigger: `I topped up`, only with saved `balanceWarning`.
 No saved warning → ask which payment/task; do not Watch.
 
 Action:
@@ -100,14 +96,13 @@ Action:
 
 | Intent                                                                        | Action | Detail |
 |-------------------------------------------------------------------------------|---|---|
-| Publish task — `发布任务` / `创建任务` / `帮我发任务` / `publish a task` / `create a task` | `onchainos agent next-action --role user --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | user publish flow |
-| Designate an ASP — `指定卖家` / `use the service of Agent X`                      | Gather params → designated-provider flow | [`task-user-actions-publish.md`](task-user-actions-publish.md) §5 |
-| Take specific task (ASP) — `接 {jobId}` / `contact the User Agent of {jobId}`  | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | task-asp-accept.md §1 |
+| Publish task — `publish a task` / `create a task` | `onchainos agent next-action --role user --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | user publish flow |
+| Designate an ASP — `use the service of Agent X` | Gather params → designated-provider flow | [`task-user-actions-publish.md`](task-user-actions-publish.md) §5 |
+| Take specific task (ASP) — `take {jobId}` / `contact the User Agent of {jobId}` | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | task-asp-accept.md §1 |
 | Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |
 
-⚠️ **`接单` / `找任务` / `start accepting jobs` with no jobId**: there is no discovery flow — the ASP is already online, and designated tasks arrive via system events. Reply "ASP is online; designated tasks targeted at it arrive via system events — provide a specific jobId to accept one" and STOP (passive readiness).
-🛑 **ASP constraint**: "take task X" → ASPs do NOT proactively contact users or discover tasks; reply with passive-readiness guidance and wait for the User Agent to designate this ASP on-chain. Do NOT directly `apply` — `apply` is `JobAspSelected`-system-event-triggered only.
+🛑 **ASP constraint**: `find tasks` / `start accepting jobs` / `take task {jobId}` → ASPs cannot discover or proactively accept tasks, with or without a `jobId`. Designated tasks arrive only through `JobAspSelected` system events. Reply with passive-readiness guidance and do not call `apply`.
 
 ---
 
@@ -115,10 +110,11 @@ Action:
 
 | Trigger | Action |
 |---|---|
-| **Chain-state snapshot** — `查询任务 {jobId}` / `what's the status of {jobId}` | `onchainos agent status <jobId> --agent-id <myAgentId>` (pass the user's own `agentId` from envelope context). User session answers directly. |
-| **Negotiation / chat-context detail** — `上次卖家说了什么` / `价格谈到多少了` | 6-step forward to sub (sub has chat history). |
-| `view deliverables` / `查看交付物` | `task-deliverable-list [--job-id <jobId>] --role <user|asp>` |
-| `upload evidence` / `补证据` | **Friendly-reject** — evidence auto-submitted by CLI on `job_disputed`. |
+| **Continuous monitor** — an explicit request to watch/monitor one job's ongoing progress | Route to **§Task Watch** (`watch-core.md`); do not run the snapshot command below. |
+| **One-time status snapshot** — ask for the task's current state once, without ongoing updates: `what's the status of {jobId}` / `query task {jobId}` | `onchainos agent status <jobId> --agent-id <myAgentId>` (pass the user's own `agentId` from envelope context). User session answers directly. |
+| **Negotiation / chat-context detail** — `what did the seller say last time` / `what price did we agree on` | 6-step forward to sub (sub has chat history). |
+| `view deliverables` | `task-deliverable-list [--job-id <jobId>] --role <user|asp>` |
+| `upload evidence` / `supplement evidence` | **Friendly-reject** — evidence auto-submitted by CLI on `job_disputed`. |
 
 ---
 
@@ -127,16 +123,14 @@ Action:
 If your context contains an active `[USER_DECISION_REQUEST]` block (you're in "Waiting for user reply" state from a recent push), the user's reply routes via the matching block's pre-filled `resolve-prompt` command:
 
 - **Single active card** (latest block below the stale-notice line): run its `resolve-prompt` with `--user-reply "<user's verbatim text>"`.
-- **Multiple blocks visible, user disambiguates with a jobId/label** (e.g. `Job 0x4652 选 1500`): scan context for the block whose `[job: <jobId>]` matches, then run THAT block's `resolve-prompt` with the user's verbatim text as `--user-reply`.
+- **Multiple blocks visible, user disambiguates with a jobId/label** (e.g. `Job 0x4652 select 1500`): scan context for the block whose `[job: <jobId>]` matches, then run THAT block's `resolve-prompt` with the user's verbatim text as `--user-reply`.
 - **Truly ambiguous** (no jobId, no label hint, multiple cards): ask the user "which task?" via plain text reply.
 
 ---
 
 ## Decision list
 
-Triggers (only when there's no active `[USER_DECISION_REQUEST]` block the user might be answering):
-- Chinese: `查看决策列表` / `决策列表` / `决策` / `决策项` / `决策卡` / `待办决策` / `我的决策` / `查看决策` / `看决策` / `有什么待办` / `有什么要处理的`
-- English: `decision list` / `show decision list` / `list decisions` / `pending decisions` / `what's pending`
+Triggers (only when there's no active `[USER_DECISION_REQUEST]` block the user might be answering): `decision list` / `show decision list` / `list decisions` / `pending decisions` / `what's pending`.
 
 **Action**: `onchainos agent pending-decisions-v2 list --format markdown` → **follow the CLI's returned playbook verbatim**. The playbook includes both the user-facing rendering instructions AND the routing rules for the user's subsequent reply. Do NOT improvise — only do what the playbook prints.
 
@@ -144,30 +138,38 @@ Triggers (only when there's no active `[USER_DECISION_REQUEST]` block the user m
 
 ## Task watch / history / outstanding decisions
 
-When the user wants to monitor task progress, drain unread/missed events, or list un-replied decision cards → route to **§Task Watch** (`watch-core.md`). Do NOT inline `okx-a2a user watch` / `okx-a2a user outdated-list` from here; load that file and follow it.
+Route an authorized continuous task-progress monitor, unread/missed-event drain, or un-replied decision request to **§Task Watch** (`watch-core.md`). A request for the current status/progress once, with no future-update request, uses the snapshot route above and MUST NOT enter Watch.
+
+Before routing subscription-related wording, distinguish lifecycle/progress Watch from subscription business-signal receipt. Route an action-authorized request to receive, start, verify, resume, or restore an existing subscription or its signals through §Subscriptions; with an ACTIVE buyer subscription in current focus, an affirmative bare resume/restore request remains receipt intent even when it omits “signals” or “watch”. Otherwise clarify once. ACTIVE and device-receipt gates apply only to receipt; `watch-core.md` owns the separate first-scoped-entry execution-consent precheck.
+
+Resolve explicit receipt and progress intents independently and complete finite receipt preparation before Watch. Receipt failure or ambiguity does not block an independently valid progress Watch unless the user made it conditional. A receipt action already includes scoped Watch: enter once for a shared scope; if the actions require different scopes, ask which one to retain.
+
+`watch-core.md` is the SSOT for Watch authorization, target cardinality, continuation, scope selection, and fallback. Load it and follow it; do not inline `okx-a2a user watch` or `okx-a2a user outdated-list` here.
 
 Triggers:
-- **Live monitor**: `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `继续监听` / `task watch` / `user watch` / `monitor task progress` / `watch tasks` / `keep me posted on tasks`
-- **History / backlog drain**: `历史消息` / `历史记录` / `过去消息` / `未读消息` / `show past messages` / `catch me up on tasks`
-- **Outstanding (un-replied) decisions**: `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `outstanding decisions` / `unhandled decisions` / `what am I missing`
+- **Live monitor**: `task watch` / `user watch` / `monitor task progress` / `watch tasks` / `keep me posted on tasks`
+- **Subscription signal receipt — route through §Subscriptions first**: `receive signals` / `start receiving signals` / `are you receiving signals` / `resume watching subscribed services` / `continue receiving signals` / `resume subscription` / `restore subscription`, plus semantically equivalent wording in any language and the prompted `listen to <subscription title>` form when the title resolves from the just-created or just-rendered buyer-subscription context. With an ACTIVE buyer subscription in current focus, an affirmative bare request to resume or restore that subscription means restore its receipt + scoped Watch even when it omits “signals” or “watch”; it is not a backlog-first generic Watch.
+- **History / backlog drain**: `history` / `past messages` / `unread messages` / `show past messages` / `catch me up on tasks`
+- **Outstanding (un-replied) decisions**: `outstanding decisions` / `unhandled decisions` / `unanswered decisions` / `what am I missing`
 
 **Platform gate**: only Claude Code (`CLAUDECODE=1`) and Codex (`CODEX_THREAD_ID`); other platforms push natively and the skill stops with an unsupported-platform message.
 
 🛑 Watch is itself a long-poll — the long-poll IS the wait. Do NOT wrap it in `/loop` / Cron / `sleep` / any scheduler.
 
-⚠️ **Disambig — "decision list" vs "outstanding decisions"**: `决策列表` / `decision list` → §Decision list above (`pending-decisions-v2 list`, the full queue). `未决策` / `outstanding decisions` → this section (`outdated-list`, only un-`check`ed `decision_request` items).
+⚠️ **Disambig — "decision list" vs "outstanding decisions"**: `decision list` → §Decision list above (`pending-decisions-v2 list`, the full queue). `outstanding decisions` → this section (`outdated-list`, only un-`check`ed `decision_request` items).
 
 ## Subscriptions (my subscriptions / detail)
 
 | Trigger | Action |
 |---|---|
-| `我的订阅` / `订阅列表` / `我订阅了哪些` / `my subscriptions` / `what am I subscribed to` | `onchainos agent my-subscriptions --role buyer` → render per [`task-user-playbook.md` §My Subscriptions](task-user-playbook.md). User session answers directly (do NOT 6-step forward). |
-| `订阅详情` / `这个订阅的详情` / `subscription detail` | `onchainos agent subscribe-detail <jobId>` (id = the row's `jobId`) → render per [`task-user-playbook.md` §Subscription Detail](task-user-playbook.md). |
-| 查看/列出我登录的设备、`设备列表`、`device list`、`哪些设备在线` | `onchainos agent device-list` → render per [`task-user-playbook.md` §Device List](task-user-playbook.md). |
-| `让这个设备开始接收 X 订阅的消息`、`在本机接收 X`、`start receiving X on this device` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — fresh-read; `deviceList:null` already means default-all, so report already receiving without a write; otherwise union → overwrite → re-read. |
-| `让 X 也收`、`同时给 X 和 Y 推`、`start receiving Y on device X` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — resolve device names→ids via `device-list` (never fabricate an unresolvable name); `deviceList:null` already includes every logged-in device (no write), otherwise UNION with the fresh-read list → overwrite → re-read → confirm the complete receiving set. |
-| `不要再把 X 推送到这个/某台设备`、`停止向 X 设备推送 Y`、`stop pushing Y to device` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — fresh-read; for `null`, fetch the complete `device-list` and materialize all-minus-target before overwrite; for an explicit array, subtract normally; read back remaining. |
-| `离线消息别清了`、`改成补推`、`改成清理`、`离线消息帮我清理`、`change how offline deliverables are handled` | [`task-user-playbook.md` §Subscription management → 改离线交付物处理方式](task-user-playbook.md) — fresh-read `subscribe-detail` current `offlineReceiveFlag` → if already the target, say no change needed (do NOT re-write) → else `subscribe-offline-update --job-id <id> --flag <0/1>` → re-read to confirm. |
-| `监听任务` / `监听消息` 未指定具体任务 | [`task-user-playbook.md` §Listen entry](task-user-playbook.md) — confirm exactly one task (“一次只能监听一个”) → turn on this-device receipt → enter watch flow. |
+| `my subscriptions` / `subscription list` / `what am I subscribed to` | `onchainos agent my-subscriptions --role buyer` → render per [`task-user-playbook.md` §My Subscriptions](task-user-playbook.md). User session answers directly (do NOT 6-step forward). |
+| `subscription detail` / `show this subscription` | `onchainos agent subscribe-detail <jobId>` (id = the row's `jobId`) → render per [`task-user-playbook.md` §Subscription Detail](task-user-playbook.md). |
+| `device list` / `list my logged-in devices` / `which devices are online` | `onchainos agent device-list` → render per [`task-user-playbook.md` §Device List](task-user-playbook.md). |
+| `start receiving X on this device` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — fresh-read; `deviceList:null` already means default-all, so report already receiving without a write; otherwise union → overwrite → re-read. |
+| `start receiving Y on device X` / `also send Y to devices X and Z` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — resolve device names→ids via `device-list` (never fabricate an unresolvable name); `deviceList:null` already includes every logged-in device (no write), otherwise UNION with the fresh-read list → overwrite → re-read → confirm the complete receiving set. |
+| `stop pushing Y to device X` / `stop this device from receiving subscription Y` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — fresh-read; for `null`, fetch the complete `device-list` and materialize all-minus-target before overwrite; for an explicit array, subtract normally; read back remaining. |
+| `replay missed deliverables` / `discard offline deliverables` / `change how offline deliverables are handled` | [`task-user-playbook.md` §Subscription management → Change Offline-Deliverables Handling](task-user-playbook.md) — fresh-read `subscribe-detail` current `offlineReceiveFlag` → if already the target, say no change needed (do NOT re-write) → else `subscribe-offline-update --job-id <id> --flag <0/1>` → re-read to confirm. |
+| `receive signals` / `start receiving signals` / `are you receiving signals` / `resume watching subscribed services` / `continue receiving signals` / `resume subscription` / `restore subscription`, plus semantically equivalent wording in any language and the prompted `listen to <subscription title>` form from a just-created/rendered buyer-subscription context | [`task-user-playbook.md` §Signal-receipt watch entry](task-user-playbook.md) — when an ACTIVE buyer subscription is in current focus, treat an affirmative bare restore/resume-subscription request as receipt + Watch; resolve one subscription, ensure this device can receive, run the scoped-entry authorization precheck before reading backlog, then enter sticky scoped Watch. Multiple ACTIVE subscriptions require a choice; none stops without global fallback. |
+| Ambiguous `watch messages` / `monitor the subscription` without a recognized signal-receipt phrase or lifecycle-progress object | Ask which object they mean; do not enable device receipt or start Task Watch before clarification. |
 
-⚠️ Disambig — `我的订阅` (subscriptions) vs `我的任务` (tasks): subscriptions → `my-subscriptions`; tasks → `active-tasks` / `tasks` (§Task list). Do NOT mix. **Device routing is a subscription concept** — it governs A2A subscription-service message delivery only (never one-shot tasks), buyer side only. Do NOT route these to `task-asp.md` or any ASP/provider rendering.
+⚠️ Disambig — `my subscriptions` vs `my tasks`: subscriptions → `my-subscriptions`; tasks → `active-tasks` / `tasks` (§Task list). Do NOT mix. **Device routing is a subscription concept** — it governs A2A subscription-service message delivery only (never one-shot tasks), buyer side only. Do NOT route these to `task-asp.md` or any ASP/provider rendering.

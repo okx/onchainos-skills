@@ -17,7 +17,7 @@
 
 ## 2. Mid-task attachment (user session)
 
-**Trigger**: 补充附件/补充图片/给任务加文件/add file to task/attach this to job/upload file to task, or user directly sends a file during an active task conversation (confirm intent first).
+**Trigger**: add a file/image to a task / attach this to a job / upload a file to a task, or the user sends a file during an active task conversation (confirm intent first).
 
 **Flow**:
 
@@ -74,7 +74,7 @@
 
 ### 3.2 Stop task
 
-**Trigger**: "stop task" / "close task" / "关闭任务" / "remove provider" (there is no separate un-designate action — dropping the provider means closing the task)
+**Trigger**: "stop task" / "close task" / "remove provider" (there is no separate un-designate action — dropping the provider means closing the task)
 
 1. Confirm: "Confirm closing task <jobId>? Funds will be refunded after closing; the operation is irreversible."
 2. User confirms → `onchainos agent close <jobId>`
@@ -91,11 +91,11 @@ The user wants to see saved deliverables from completed or in-progress tasks.
 
 > This section applies to both user and ASP roles. Use `--role user` or `--role asp` based on the current role.
 
-**Trigger**: "view deliverables", "my deliverables", "查看交付物", "交付物列表", "show deliverable for job X"
+**Trigger**: "view deliverables", "my deliverables", "list deliverables", "show deliverable for job X"
 
 **Step 1 — Determine scope**:
 - If the user specifies a jobId → single job query
-- If the user says "all" / "列表" / no specific job → list all
+- If the user says "all" / "list" / no specific job → list all
 
 **Step 2 — Run the CLI** (substitute `<role>` with `user` or `asp`):
 
@@ -108,4 +108,3 @@ The user wants to see saved deliverables from completed or in-progress tasks.
 - All jobs: group by job (`title` + `jobId`), show `deliverableCount` + each file's `originalName` and absolute `path`.
 - Empty → "No saved deliverables found."
 - ⚠️ File paths MUST be absolute.
-

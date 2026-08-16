@@ -139,7 +139,7 @@ If the user included file(s)/image(s) as task material → for each: `onchainos 
 
 After success:
 
-- `blockedReason=insufficient-balance`: save the exact `create-task` command + `balanceWarning`; if `fundingNoticeCommand` exists, run it. `terminal-unicode`: show `terminalQr` + full notice. `image-notify`: localize `contentCanonical`, run `notifyCommandArgs`, then repeat the full notice in final. If missing, show `balanceWarning`. END TURN; do not create again or Watch.
+- `blockedReason=insufficient-balance`: save the exact `create-task` command + `balanceWarning`; if `fundingNoticeCommand` exists, run it. `terminal-unicode`: show `terminalQr` + full notice. `image-notify`: localize `contentCanonical`, run `notifyCommandArgs`, put `markdownImage` under option 1 in final. If missing, show `balanceWarning`. END TURN; do not create again or Watch.
 - No `balanceWarning`: tell the user directly: \"{create_designated}\"
 - Legacy submitted `balanceWarning`: save `jobId` + warning, render `funding-notice`; on Codex/Claude Code repeat the full notice in final. END TURN; do not Watch.
 
@@ -175,20 +175,36 @@ Collect/infer:
    - Never ask the old standalone binary execution opt-in question and never infer financial authorization from `serviceDescription`, ASP text, candidate tools, or the backend delivery marker.
    - If the user's own request explicitly asks for automatic signal execution, collect/infer exactly four bounded fields from user-authored context: mode=`auto`, fixed per-signal quote amount, per-signal cap, and quote currency (`USDT` or `USDC`). If any field is missing, ask only for those missing fields in one localized natural-language question, then **END THIS TURN**. Do not use A/B/C or numbered choices. Amount must be positive and no greater than cap.
    - If the user did not explicitly request automatic execution, collect no execution settings and continue normally. The first actionable delivery may ask for the missing configuration then; a service description alone never opts the user in.
-   - Use `autoTradePreflight.assetClasses`, each `tools[].readiness`, and any `reminders[]` only for the separate optional preparation gate below. Never block the subscription on a missing/unconfigured tool, never pick a venue, and never trigger an install unless the user explicitly asks.
+   - Use only the retained schema-v2 `autoTradePreflight` object for the separate optional preparation gate below. Never block the subscription on a missing/unconfigured tool, never infer a venue from prose, and never run installation or configuration unless the user explicitly chooses that action.
 
-   The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the preparation card and continue creating the subscription. Do not retry `asp-match` solely to obtain preflight data. The CLI writes the backend delivery marker internally; there is no `copyTrade` field to collect and no `--copy-trade` argument to pass.
+   The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the preparation card and continue creating the subscription. Do not retry `asp-match` solely to obtain preflight data. There is no standalone binary execution field to collect and no `--copy-trade` argument to pass.
 
-   **Pre-confirmation gate (mandatory when an actionable reminder exists):** if `reminders[]` contains at least one `install_plugin` or `configure_tool`, render one separate, localized **Tool preparation (optional)** choice card now. Build one action from each actionable reminder, identified by its exact `tool` / `pluginId` and using its localized message; de-duplicate by tool. Append a final `Later — continue subscribing` action. The card footer must say that skipping preparation does not affect subscription, delivery visibility/storage, or the user's ability to ask their agent later to execute the delivered signal manually with any available tool. Do not invent actions from `serviceDescription`, DApp names, `choose_at_first_signal`, or `readiness_advisory`.
+   **Deterministic Trade Kit probe decision:** inspect `autoTradePreflight.tradeKitProbe.mode` after the service has been selected:
+   - `probe_before_confirmation` → build one command from every token in `tradeKitProbe.assetClasses`, preserving the array order:
+     ```text
+     onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]
+     ```
+     Run it now. Do not persist its result. Continue without a card only when `ok:true` and `data.readiness == \"ready\"`.
+   - `deferred_until_venue_selection` → Do not run a Trade Kit probe for `deferred_until_venue_selection`; the user has not selected that venue. Keep Trade Kit as `verification_unknown/authorization_not_checked` and continue the non-blocking subscription flow.
+   - `not_applicable` → do not run the command.
+
+   **Pre-confirmation gate (mandatory for a non-ready probe result or actionable local reminder):** render one separate, localized **Tool preparation (optional)** choice card:
+   - `needs_configuration` → offer exactly OAuth — run `okx auth login --manual`; API key — run `okx config init`; and Later — continue subscribing.
+   - `verification_unknown` → exactly `Retry` and `Later — continue subscribing`. Never present an unknown/network/timeout result as logged out.
+   - `missing` or `incompatible` → one fixed install/upgrade action from `data.remediation`, plus `Later — continue subscribing`.
+   - Local plugin `install_plugin` reminders remain one de-duplicated action per exact `pluginId`, plus `Later — continue subscribing`.
+
+   The card footer must say that Later does not affect subscription creation, delivery visibility/storage, or the user's ability to ask their agent later to execute the delivered signal manually with any available tool. Do not invent actions from `serviceDescription`, DApp names, `choose_at_first_signal`, or `readiness_advisory`.
 
    After rendering that card, **END THIS TURN**. Do NOT render Step 5, do NOT call `create-subscribe`, and do NOT treat an install action as subscription confirmation in the same turn. This is preparation only: do NOT call it venue selection, do NOT set a default, and do NOT persist a venue preference or consent.
 
    On the user's next reply:
-   - **Later / skip** → proceed to Step 5 using the retained selected-service fields.
-   - **One named preparation action** → run only that user-approved plugin install or Trade Kit install/configuration flow. After it returns (success or failure), re-run the original `asp-match` command with the same task description, provider and user agent, locate the **same `serviceId`**, replace the retained `autoTradePreflight` with the fresh object, and repeat this pre-confirmation gate. If the same service is no longer returned, stop and ask the user to choose a service again. Never continue from stale readiness and never silently switch to the new top service.
+   - **Later / skip** → proceed to Step 5 using the retained selected-service fields. Later never upgrades readiness to ready.
+   - **OAuth / API key / Retry / Trade Kit install or upgrade** → run only that explicit choice, then re-run the readiness command with the same retained `tradeKitProbe.assetClasses` and repeat this gate. Never continue from stale readiness.
+   - **One named plugin preparation action** → run only that user-approved plugin install. Then re-run the original `asp-match` command with the same task description, provider and user agent, locate the **same `serviceId`**, replace the retained `autoTradePreflight` with the fresh object, and repeat this gate. If the same service is no longer returned, stop and ask the user to choose a service again. Never silently switch to the new top service.
    - **Ambiguous / multiple actions** → re-render the same bounded card; do not install anything.
 
-   If there is no actionable reminder, skip this gate and proceed to Step 5. Missing/invalid preflight also skips the gate and remains non-blocking.
+   If there is no actionable reminder and no required Trade Kit probe, skip this gate and proceed to Step 5. Missing/invalid preflight also skips the gate and remains non-blocking. None of these states may block creation of the subscription.
 
 **Max budget is NOT collected** for subscription tasks — the price is fixed at `subscriptionInfo.feeAmount`.
 
@@ -226,7 +242,8 @@ Step 5.5 -- Route by user decision (separate turn)
 - Change ASP → update `--provider` to the new agentId → **re-run asp-match** (may switch branch) → Step 4 → Step 5
 - Edit autoRenew → update → Step 5
 - Edit automatic signal execution / amount / cap / quote currency → update; ask only for any missing bounded field → Step 5
-- Prepare a tool now → run only the explicitly selected install/configuration flow, re-run the original `asp-match`, re-select the same `serviceId`, and repeat the Step 4 pre-confirmation gate; do not save a venue preference
+- Prepare Trade Kit / Retry now → run only the explicit action, re-run the batch readiness command with the retained `tradeKitProbe.assetClasses`, and repeat the Step 4 gate; do not re-run `asp-match` or save a venue preference
+- Prepare a plugin now → run only the explicit plugin installation, re-run the original `asp-match`, re-select the same `serviceId`, and repeat the Step 4 gate; do not save a venue preference
 - Later / skip tool preparation → Step 5 without blocking subscription
 
 ================================================
@@ -590,6 +607,18 @@ mod tests {
             out.contains("execute the delivered signal manually with any available tool"),
             "skipping preparation must preserve the independent manual path: {out}"
         );
+        assert!(out.contains("tradeKitProbe.mode"));
+        assert!(out.contains("probe_before_confirmation"));
+        assert!(out.contains("deferred_until_venue_selection"));
+        assert!(out.contains(
+            "onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]"
+        ));
+        assert!(out.contains("OAuth — run `okx auth login --manual`"));
+        assert!(out.contains("API key — run `okx config init`"));
+        assert!(out.contains("Retry"));
+        assert!(out.contains("Later — continue subscribing"));
+        assert!(out.contains("Do not run a Trade Kit probe for `deferred_until_venue_selection`"));
+        assert!(out.contains("re-run the readiness command"));
     }
 
     #[test]

@@ -406,16 +406,22 @@ pub fn make_notify_only(saved_path: &str, reason: &str) -> NotifyOnly {
 // ── Consent flow (product revision 2026-07-17) ───────────────────────────────
 //
 // The client-side consent gate (after the backend Active gate) pushes a `DecisionRequest`
-// on the first-time / manual (ask-every-time) / over-cap paths: a decision card via
+// on the first-time / manual / over-cap paths: a decision card via
 // `pending-decisions-v2 request` (enqueue to the shared queue so the user session's
 // watch surfaces it — the deliverable pipeline runs in a sub session, where the
 // `request-prompt` direct-push would land invisibly), executing nothing until the user answers.
-// (There is no silent "manual command" outcome — B = "execute once, then ask every time"
-// re-shows the three-way card on every subsequent signal, per PRD ③.)
+// The first-time A/B/C card chooses a mode once. Missing values after A/B are
+// collected by a separate natural-language prompt that never repeats A/B/C.
 
 /// The `--source-event` value carried by the first-time consent decision; becomes
 /// the `user_decision_autotrade_consent` relay event handled in `user/flow.rs`.
 pub const CONSENT_SOURCE_EVENT: &str = "autotrade_consent";
+/// The same authorization card machinery, invoked before a scoped watch when a
+/// new device has no local consent file. Its reply stays in the visible user
+/// session because there is no retained delivery sub-session to continue.
+pub const PRE_DELIVERY_CONSENT_SOURCE_EVENT: &str = "autotrade_consent_pre_delivery";
+/// Natural-language follow-up after A/B selected a mode but omitted values.
+pub const CONFIG_REQUIRED_SOURCE_EVENT: &str = "autotrade_config_required";
 /// `--source-event` for the over-cap re-ask (2-way: raise cap / skip); relayed as
 /// `user_decision_autotrade_over_cap`.
 pub const OVER_CAP_SOURCE_EVENT: &str = "autotrade_over_cap";
@@ -441,8 +447,6 @@ or any number. Then run the command to push the decision. Act on the trade only 
 // Key granularity is per-job, so the copy says "this subscription", not "this ASP".
 //
 fn consent_first_time_content(lang: Lang) -> String {
-    // OX2Hd Step 3③ (auto-execution not enabled → three-way). Used for both the first-time prompt
-    // AND the manual "ask every time" re-prompt, so the wording avoids "first time".
     match lang {
         Lang::En => "[Confirmation Needed] A trading signal has arrived, but auto-execution is not enabled for this subscription. Please choose:\n\
              \x20\x20A. Execute this trade and enable auto-execution for future signals (give a fixed amount and a per-trade limit in USDT; pays with USDT by default — say \"use USDC\" to switch)\n\
@@ -457,12 +461,27 @@ fn consent_first_time_content(lang: Lang) -> String {
     }
 }
 
+fn consent_pre_delivery_content(lang: Lang) -> String {
+    match lang {
+        Lang::En => "[Confirmation Needed] This device has no local execution authorization for an executable trading-signal subscription. Configure it before monitoring resumes:\n\
+             \x20\x20A. Enable bounded auto-execution for future signals (include a fixed amount, per-trade limit, and USDT or USDC)\n\
+             \x20\x20B. Keep automatic execution off and ask me before every trade\n\
+             \x20\x20C. Decide later; keep receiving and saving deliverables, then ask again at the first executable signal"
+            .to_string(),
+        Lang::Zh => "[请确认] 这台设备尚未保存该可执行跟单订阅的本地授权。请在恢复监听前选择:\n\
+             \x20\x20A. 为后续信号开启有上限的自动跟单(请同时提供固定每笔金额、每笔金额上限和 USDT 或 USDC)\n\
+             \x20\x20B. 不自动执行,每次交易前都向我确认\n\
+             \x20\x20C. 暂不设置,继续接收并保存交付物,第一条可执行信号到达时再确认"
+            .to_string(),
+    }
+}
+
 fn consent_input_required_content(mode: &str, lang: Lang) -> String {
     match (mode, lang) {
-        ("auto", Lang::En) => "[More information required] You chose A, but the amount/limit is missing. Reply with A and a fixed per-signal amount plus a per-trade limit in USDT. If you give one number, it will be used for both; optionally say use USDC. Example: A 10 USDT.".to_string(),
-        ("auto", Lang::Zh) => "[需要补充信息] 你选择了 A,但尚未提供跟单金额/每笔上限。请回复 A 和固定跟单金额、每笔上限(单位 USDT);只给一个数字时将同时作为两者,也可以注明用 USDC。例如:A 10 USDT。".to_string(),
-        ("manual", Lang::En) => "[More information required] You chose B, but the amount for this trade is missing. Reply with B and the amount in USDT; optionally say use USDC. Example: B 1 USDT.".to_string(),
-        ("manual", Lang::Zh) => "[需要补充信息] 你选择了 B,但尚未提供本次交易金额。请回复 B 和金额(单位 USDT),也可以注明用 USDC。例如:B 1 USDT。".to_string(),
+        ("auto", Lang::En) => "[More information required] Auto-execution was selected, but the fixed per-signal amount and/or per-trade limit is missing. Provide only the missing values in USDT; optionally say use USDC. If one number is supplied for both fields, state that explicitly.".to_string(),
+        ("auto", Lang::Zh) => "[需要补充信息] 已选择开启自动执行,但固定跟单金额和/或每笔上限尚不完整。请直接补充缺失值(单位 USDT);也可以注明使用 USDC。若同一个数字同时作为两项,请明确说明。".to_string(),
+        ("manual", Lang::En) => "[More information required] One-time execution was selected, but this trade's amount is missing. Provide the amount in USDT; optionally say use USDC.".to_string(),
+        ("manual", Lang::Zh) => "[需要补充信息] 已选择仅执行本次,但尚未提供本次交易金额。请直接提供金额(单位 USDT),也可以注明使用 USDC。".to_string(),
         _ => consent_first_time_content(lang),
     }
 }
@@ -509,6 +528,27 @@ pub struct DecisionRequest {
     /// decision so the user session knows which plugin to install. Omitted otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires_plugin: Option<String>,
+}
+
+/// Synchronous hand-off for a pre-delivery consent request. The regular direct
+/// push remains the source of truth for the pending-decision lifecycle, while
+/// this payload makes the same existing card visible before a scoped watch has
+/// started (and therefore before that watch can surface pushed messages).
+pub fn pre_delivery_visible_payload(
+    decision: &DecisionRequest,
+    llm_content: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "decision": true,
+        "decisionPushed": true,
+        "sourceEvent": &decision.source_event,
+        "deliveryId": &decision.delivery_id,
+        "preDelivery": true,
+        "renderNow": true,
+        "userContent": &decision.user_content,
+        "llmContent": llm_content,
+        "renderInstruction": "Render userContent verbatim as the visible authorization prompt now, then end the turn. Treat llmContent as the continuation for the user's next reply. Do not say the prompt was sent elsewhere, do not run watch yet, and do not run another consent-request."
+    })
 }
 
 /// The queue list-label for a consent-flow decision — one source of truth shared
@@ -681,9 +721,42 @@ pub fn make_first_time_decision(
     )
 }
 
-/// Deterministic clarification card for an otherwise valid A/B choice whose
-/// required amount/cap was omitted. The source event intentionally remains
-/// `autotrade_consent`, so the next reply re-enters the same bounded mapper.
+/// Pre-delivery variant of the existing first-time consent decision. It shares
+/// the same DecisionRequest, direct-push, list-label and consent persistence
+/// pipeline; only the copy and reply continuation differ because no trade has
+/// arrived yet.
+pub fn make_pre_delivery_consent_decision(
+    signal_type: &str,
+    job_id: &str,
+    agent_id: &str,
+) -> DecisionRequest {
+    make_decision(
+        "pre_delivery",
+        signal_type,
+        job_id,
+        agent_id,
+        PRE_DELIVERY_CONSENT_SOURCE_EVENT,
+        consent_pre_delivery_content(user_lang::resolve(job_id)),
+    )
+}
+
+/// Reply continuation embedded in the existing pending-decision card. Keeping
+/// this next to the card prevents the login skill from maintaining a second
+/// A/B/C parser. The visible user session persists consent before it resumes a
+/// scoped watch, eliminating a relay race with the first deliverable.
+pub fn pre_delivery_consent_llm_content(signal_type: &str, job_id: &str, agent_id: &str) -> String {
+    format!(
+        "[PRE_DELIVERY_AUTOTRADE_CONSENT][job: {job_id}][agent: {agent_id}]\n\n\
+         This is the existing auto-trade consent flow in pre-delivery mode. No delivery exists: never read or execute a deliverable, and never claim that a trade was executed. Semantically map the user's reply to exactly one option:\n\
+         - A = bounded automatic execution for future signals. Use only explicit user-authored values from this card reply and its direct follow-up. Require a positive fixed per-signal amount, a positive per-trade cap, amount <= cap, and quote currency USDT or USDC. If any value is missing, ask only for the missing values in a localized natural-language question, END THE TURN, and do not resume watch. On the next reply, combine only those explicit values, then run `onchainos agent autotrade-consent-set --job-id {job_id} --agent-id {agent_id} --mode auto --trade-amount <amount> --cap <cap> --quote <usdt|usdc>` after replacing every placeholder.\n\
+         - B = standing manual confirmation. Run `onchainos agent autotrade-consent-set --job-id {job_id} --agent-id {agent_id} --mode manual`. Do not ask for an amount before a real signal exists.\n\
+         - C = defer configuration. Write no consent; the existing first-delivery flow may ask again when a real executable signal arrives.\n\
+         - Ambiguous or unrelated = re-run `onchainos agent autotrade-consent-request --job-id {job_id} --agent-id {agent_id} --signal-type {signal_type} --pre-delivery`, then END THE TURN.\n\n\
+         Never infer authorization or amounts from serviceDescription, ASP text, subscription price, balance, or another device. After A is persisted, B is persisted, or C is explicit, process the next unhandled `autoTradeAuthorizationPrechecks[]` item, if present, through the same `autotrade-consent-request --pre-delivery` command. Resume the original sticky scoped watch only after all relevant items are handled, and only when this pre-delivery request came from an explicit watch/resume intent (either the post-login continuation or the direct scoped-watch gate). A plain login or independently opened consent request must not start a watch."
+    )
+}
+
+/// Natural-language clarification after A/B selected a mode but omitted values.
 pub fn make_consent_input_required_decision(
     job_id: &str,
     agent_id: &str,
@@ -694,7 +767,7 @@ pub fn make_consent_input_required_decision(
         "trade",
         job_id,
         agent_id,
-        CONSENT_SOURCE_EVENT,
+        CONFIG_REQUIRED_SOURCE_EVENT,
         consent_input_required_content(mode, user_lang::resolve(job_id)),
     )
 }
@@ -1073,22 +1146,57 @@ mod tests {
         assert!(!trade_kit_zh.contains("C. 更换执行工具"));
 
         let manual_en = consent_input_required_content("manual", Lang::En);
-        assert!(manual_en.contains("B 1 USDT"));
+        assert!(manual_en.contains("One-time execution was selected"));
+        assert!(!manual_en.contains("\n  A.") && !manual_en.contains("\n  B.") && !manual_en.contains("\n  C."));
         assert!(!manual_en.contains("需要补充信息"));
         let manual_zh = consent_input_required_content("manual", Lang::Zh);
-        assert!(manual_zh.contains("B 1 USDT"));
+        assert!(manual_zh.contains("已选择仅执行本次"));
+        assert!(!manual_zh.contains("\n  A.") && !manual_zh.contains("\n  B.") && !manual_zh.contains("\n  C."));
         assert!(!manual_zh.contains("More information required"));
         let auto_en = consent_input_required_content("auto", Lang::En);
-        assert!(auto_en.contains("A 10 USDT"));
+        assert!(auto_en.contains("Auto-execution was selected"));
+        assert!(!auto_en.contains("\n  A.") && !auto_en.contains("\n  B.") && !auto_en.contains("\n  C."));
     }
 
     #[test]
-    fn missing_consent_input_reuses_bounded_consent_route() {
+    fn missing_consent_input_uses_natural_language_configuration_route() {
         let d = make_consent_input_required_decision("job1", "7", "manual");
-        assert_eq!(d.source_event, CONSENT_SOURCE_EVENT);
+        assert_eq!(d.source_event, CONFIG_REQUIRED_SOURCE_EVENT);
         assert_eq!(d.delivery_id, "consent_input_required");
         assert!(d.command.contains("--role user --agent-id 7"));
-        assert!(d.command.contains("--source-event autotrade_consent"));
+        assert!(d.command.contains("--source-event autotrade_config_required"));
+        assert!(!d.user_content.contains("\n  A."));
+        assert!(!d.user_content.contains("\n  B."));
+        assert!(!d.user_content.contains("\n  C."));
+    }
+
+    #[test]
+    fn pre_delivery_consent_reuses_decision_contract_without_a_real_delivery() {
+        let d = make_pre_delivery_consent_decision("spot", "job1", "7");
+        assert_eq!(d.delivery_id, "pre_delivery");
+        assert_eq!(d.source_event, PRE_DELIVERY_CONSENT_SOURCE_EVENT);
+        assert_eq!(decision_list_label(&d), "[Auto Copy-Trade consent] spot");
+        assert!(d.user_content.contains("A."));
+        assert!(d.user_content.contains("B."));
+        assert!(d.user_content.contains("C."));
+
+        let llm = pre_delivery_consent_llm_content("spot", "job1", "7");
+        assert!(llm.contains("--mode auto"));
+        assert!(llm.contains("--mode manual"));
+        assert!(llm.contains("--pre-delivery"));
+        assert!(llm.contains("No delivery exists"));
+        assert!(llm.contains("only after all relevant items are handled"));
+        assert!(llm.contains("direct scoped-watch gate"));
+        assert!(llm.contains("A plain login or independently opened consent request"));
+
+        let visible = pre_delivery_visible_payload(&d, &llm);
+        assert_eq!(visible["renderNow"], true);
+        assert_eq!(visible["userContent"], d.user_content);
+        assert_eq!(visible["llmContent"], llm);
+        assert_eq!(visible["deliveryId"], "pre_delivery");
+        assert_eq!(visible["sourceEvent"], PRE_DELIVERY_CONSENT_SOURCE_EVENT);
+        assert!(visible.get("command").is_none());
+        assert!(visible.get("guidance").is_none());
     }
 
     #[test]

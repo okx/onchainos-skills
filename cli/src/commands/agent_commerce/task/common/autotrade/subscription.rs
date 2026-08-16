@@ -1,9 +1,8 @@
 //! Active-subscription determination for model-routed deliveries.
 //!
 //! Queries the subscription detail for `jobId` and decides whether a signal may
-//! enter model processing. `status` uses exact equality to `1`; legacy
-//! `copyTrade` is intentionally ignored. Lookup failure or non-Active state falls
-//! back to ordinary deliverable handling.
+//! enter model processing. `status` uses exact equality to `1`; lookup failure or
+//! non-Active state falls back to ordinary deliverable handling.
 
 use serde_json::Value;
 
@@ -13,7 +12,7 @@ use super::{AutoTradeError, DegradeReason};
 /// Confirmed "Active" subscription status code (Subscribe API doc §1.1: `1 = Active`).
 const AUTOTRADE_ACTIVE_STATUS: i64 = 1;
 
-/// A confirmed-active copy-trade subscription.
+/// A confirmed-active subscription.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveSubscription {
     pub provider_agent_id: String,
@@ -64,7 +63,7 @@ async fn determine(
 }
 
 /// Query + decide. A query error (incl. 404) degrades to `lookup_off`; a parsed
-/// non-Active / non-copy-trade subscription degrades to `subscription_not_active`.
+/// non-Active subscription degrades to `subscription_not_active`.
 pub async fn determine_active_delivery(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -79,21 +78,21 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn active_copy_trade_number_form() {
-        let data = json!({"copyTrade": 1, "status": 1, "providerAgentId": 1506});
+    fn active_status_number_form() {
+        let data = json!({"status": 1, "providerAgentId": 1506});
         let got = decide_active(&data).unwrap();
         assert_eq!(got.provider_agent_id, "1506");
     }
 
     #[test]
-    fn active_copy_trade_string_form() {
-        let data = json!({"copyTrade": "1", "status": "1", "providerAgentId": "1506"});
+    fn active_status_string_form() {
+        let data = json!({"status": "1", "providerAgentId": "1506"});
         assert!(decide_active(&data).is_ok());
     }
 
     #[test]
     fn non_active_status_degrades() {
-        let data = json!({"copyTrade": 1, "status": 3, "providerAgentId": "1"});
+        let data = json!({"status": 3, "providerAgentId": "1"});
         assert!(matches!(
             decide_active(&data),
             Err(AutoTradeError::Degrade(
@@ -103,20 +102,20 @@ mod tests {
     }
 
     #[test]
-    fn copy_trade_does_not_control_active_routing() {
+    fn server_compatibility_fields_do_not_control_active_routing() {
         let data = json!({"copyTrade": 0, "status": 1, "providerAgentId": "1"});
         assert!(decide_active(&data).is_ok());
     }
 
     #[test]
-    fn active_delivery_allows_copy_trade_zero() {
-        let data = json!({"copyTrade": 0, "status": 1, "providerAgentId": "1"});
+    fn active_delivery_uses_status_and_provider() {
+        let data = json!({"status": 1, "providerAgentId": "1"});
         let got = decide_active(&data).unwrap();
         assert_eq!(got.provider_agent_id, "1");
     }
 
     #[test]
-    fn active_delivery_allows_missing_copy_trade() {
+    fn active_delivery_allows_minimal_fields() {
         let data = json!({"status": "1", "providerAgentId": 1506});
         assert!(decide_active(&data).is_ok());
     }
@@ -124,7 +123,7 @@ mod tests {
     #[test]
     fn active_delivery_never_allows_non_active_subscription() {
         for status in [0, 2, 3, 100] {
-            let data = json!({"copyTrade": 1, "status": status, "providerAgentId": "1"});
+            let data = json!({"status": status, "providerAgentId": "1"});
             assert!(matches!(
                 decide_active(&data),
                 Err(AutoTradeError::Degrade(
@@ -136,7 +135,7 @@ mod tests {
 
     #[test]
     fn never_truthy_status_100_is_not_active() {
-        let data = json!({"copyTrade": 1, "status": 100, "providerAgentId": "1"});
+        let data = json!({"status": 100, "providerAgentId": "1"});
         assert!(matches!(
             decide_active(&data),
             Err(AutoTradeError::Degrade(
@@ -148,6 +147,6 @@ mod tests {
     #[test]
     fn missing_fields_degrade() {
         assert!(decide_active(&json!({})).is_err());
-        assert!(decide_active(&json!({"copyTrade": 1})).is_err());
+        assert!(decide_active(&json!({"providerAgentId": "1"})).is_err());
     }
 }

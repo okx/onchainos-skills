@@ -710,7 +710,7 @@ pub fn sub_close_notify_user_notify(
         out.push_str(&format!("'s current period ({s}–{e})"));
     }
     out.push_str(&format!(
-        " has ended. Job {job_id} status: Closed. The system will automatically complete the rating for this job."
+        " has ended. Job {job_id} status: Closed."
     ));
     out
 }
@@ -764,9 +764,8 @@ pub fn sub_expire_warn_user_notify(job_id: &str) -> String {
 
 /// `sub_expire_warn` (autoRenew=false variant, FR-9) — the subscription will
 /// expire and close because auto-renew is off. EN template, verbatim from BRD.
-/// The en-dash (`\u{2013}`) is lint-safe (not CJK); the byte-exact ZH copy lives
-/// in `skills/okx-ai/references/task-sub-copy-reference.md` (source stays
-/// English-only per the no-Chinese-in-source lint — the agent renders ZH).
+/// The en-dash (`\u{2013}`) is lint-safe (not CJK). This English template is
+/// canonical and localized faithfully at render time.
 pub fn sub_expire_warn_no_autorenew_notify(
     job_id: &str,
     period_start: &str,
@@ -1305,7 +1304,7 @@ mod tests {
     }
 
     #[test]
-    fn sub_close_notify_renders_closed_and_rating_note() {
+    fn sub_close_notify_renders_closed_without_rating_note() {
         let out = sub_close_notify_user_notify(
             "My Sub",
             "job-1",
@@ -1319,7 +1318,10 @@ mod tests {
         );
         assert!(out.contains("has ended"));
         assert!(out.contains("Job job-1 status: Closed"));
-        assert!(out.contains("automatically complete the rating"));
+        assert!(
+            !out.to_ascii_lowercase().contains("rating"),
+            "closed subscriptions do not trigger a rating: {out}"
+        );
         // period absent → degrade, no period clause.
         let bare = sub_close_notify_user_notify("My Sub", "job-1", None, None);
         assert!(

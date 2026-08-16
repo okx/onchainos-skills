@@ -2,8 +2,8 @@
 //!
 //! One file per `jobId` at `<onchainos_home>/autotrade/consent/<jobId>.json`,
 //! written **whole** in one shot. The consent record is the client-side gate that
-//! sits AFTER the exact-Active backend subscription gate. `copyTrade` is ignored;
-//! the model-driven session uses this policy when handling an inbound signal:
+//! sits AFTER the exact-Active backend subscription gate. The model-driven session
+//! uses this policy when handling an inbound signal:
 //!
 //! - no record (first time) ⇒ ask the user a three-way decision, then remember it
 //! - `Auto` + amount ≤ `capU` ⇒ auto-execute (execution card)
