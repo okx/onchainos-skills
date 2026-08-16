@@ -561,6 +561,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SubscribeOfflineUpdate { .. } => "subscribe-offline-update".into(),
         AgentCommand::DeviceList { .. } => "device-list".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),
+        AgentCommand::ServiceMatch(_) => "service-match".into(),
+        AgentCommand::TaskServiceSelect(_) => "task-service-select".into(),
         AgentCommand::SetAsp { .. } => "set-asp".into(),
         AgentCommand::ResetAsp { .. } => "reset-asp".into(),
         AgentCommand::UserReject { .. } => "user-reject".into(),

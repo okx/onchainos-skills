@@ -199,7 +199,8 @@ pub struct Reminder {
     pub message_zh: String,
 }
 
-/// The object attached to each `asp-match` service. STABILITY CONTRACT.
+/// The object attached to each service returned by `asp-match` or
+/// `task-service-select`. STABILITY CONTRACT.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoTradePreflight {

@@ -1,52 +1,51 @@
-# Discover — search · list my agents · detail · service-list
-
-Render per identity-invariants.md (§Lexicon, §Card skeleton, §Verbatim-render contract). The CLI computes the
-labels/stars; you render its output and never re-divide a score or hand-map an enum. One intent = one
-CLI call (SKILL §Gates One-call rule); never grep/jq/parse the JSON or read your own tool-result files —
-re-issue the CLI instead (SKILL §Gates One-call rule).
+# Discover — service-match · list my agents · detail · service-list
 
 ## Routing nuances (decide before calling)
 - "my <descriptor> agents" / any ownership word → **list** = `agent get-my-agents` + client-side group/filter,
-  NOT `search`. Explicit `#ids` ("detail #42", "#42 #58") → **detail** = `agent get-agents --agent-ids`, NOT search.
-- Free-text "find agents doing X" → **search**.
+  NOT `service-match`. Explicit `#ids` ("detail #42", "#42 #58") → **detail** = `agent get-agents --agent-ids`, NOT service-match.
+- Free-text "find agents/services doing X" → **service-match**.
 
 ---
 
-## search — `agent search`
+## service-match — `agent service-match`
 
-**Request** — no keywords → ask before calling. Otherwise run exactly ONE search:
+For the initial search, pass the user's original utterance verbatim to
+`intent-keyword-extraction.md`, then use its output unchanged in
+`onchainos agent service-match <args> --limit 5`. Do not preprocess or enrich the input or output.
 
-- `--query` = the user's FULL sentence verbatim; strip only `#id` tokens. Never translate, paraphrase,
-  split, or canonicalize it.
-- Pass filter wording verbatim via `--feedback` (rating), `--agent-info` (domain/keywords), `--status`,
-  and `--service` (closed interface-token list). Never default `--status`.
-- Never make a second call to rerank or "improve" the same intent.
+### Initial-search argument example
 
-**Render (BLOCKING)** — use `table.columns[]` in returned order as the schema and render every
-`table.rows[]` value verbatim. Never rename, reorder, add, remove, recompute, select, rerank,
-deduplicate, or omit anything (identity-invariants.md §Verbatim-render contract). For a
-recommendation request, show the complete returned table first, then advise separately.
+The extraction object is internal; convert non-null fields to CLI flags, emit `--keywords` once,
+and preserve keyword order. For example:
 
-```
-> Search: `"<user's original utterance, verbatim>"`
-> Read as: <natural-language: surviving buckets + keyword tokens — never paste raw flags>
+```text
+# Extraction:
+{"asp-agent-id":null,"asp-name":null,"service-name":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["analyze this wallet","generate a report"]}
 
-<render table.columns + table.rows verbatim>
-
-> Service types: API service = pay-per-call, fixed price; agent to agent = per-call or monthly-subscription pricing (one or the other).
-> <N=total> results total[; showing first <K=table.rows.length> of N when K<N]. Say "detail #42" for details; "what services does #42 offer" for services; "reviews #42" for its reputation.
+# CLI:
+onchainos agent service-match --keywords "analyze this wallet" "generate a report" --limit 5
 ```
 
-- "Read as" omitted if no filter survived. Gloss footnote once; omit if already shown this conversation.
-- Pagination: backend `--page <prev+1> --query "<same>"` for a new page (render that response, not memory),
-  or render the in-context remainder if all rows already returned. Never stitch two pages into one table.
-  Page size is capped at 100 — fetch more with `--page N+1`, never a bigger page.
-- **No sort knob on search.** `agent search` has no sort option. If the user asks to sort results ("by
-  review count / newest / highest rating"), say it isn't directly supported — narrow via `--query`, or
-  pick an agent and sort *their* reviews instead. Never promise or paste a sort flag (SKILL §UX Red Lines).
-- **Confirm an `inactive` / `delisted` filter** before sending — that's usually a debug request, not
-  discovery. On confirm, pass the user's verbatim wording (don't remap to another term).
-- Agents ≠ skills — if you have no `agent search` response yet, you may not name candidates. Run the search.
+For continuation pages, use only `--search-after <searchAfter>` with pagination options; do not
+repeat initial-search filters.
+
+Group `services[]` by `asp.aspAgentId` and render one section per Agent:
+
+```
+### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>
+```
+
+Use the §service-list 8-column table and localized presentation rules. Populate it from each
+Service's `serviceName`, `serviceType`, `feeAmount`, `feeTokenSymbol`, `subscription[]`,
+`freeTrial`, `endpoint`, and `serviceDescription`.
+
+Render the CLI-normalized `rating` directly.
+
+### Pagination
+
+After each page with `hasMore == true`, append a "more" prompt. On "more", run exactly
+`onchainos agent service-match --search-after <returned searchAfter> --limit 5`; do not repeat
+initial-search filters. Apply this rule to every continuation page.
 
 ---
 
@@ -120,6 +119,7 @@ Single 8-column table; values verbatim. Service-type gloss once per table (wordi
 ```
 
 - `#` numbered from 1. Type per Lexicon (API service / agent to agent), never raw A2MCP/A2A.
+- Omit any column whose values are all `—`; otherwise keep it and render missing values as `—`.
 - **Fee / Subscription / Free trial:** render per identity-invariants.md §Lexicon (Fee / Subscription / Free trial rows) — the CLI does the mapping; render `cells` verbatim, never recompute.
   **Endpoint:** A2A always `—` (CLI clears it); wrap URLs in backticks so the table doesn't break.
 - Values verbatim — don't normalize odd shapes; truncate long descriptions with `…`, keep first sentence.

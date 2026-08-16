@@ -56,6 +56,14 @@ pub enum AgentCommand {
     #[command(name = "service-list")]
     ServiceList(identity::ServiceListArgs),
 
+    /// Search marketplace Services for task matching
+    #[command(
+        name = "service-match",
+        long_about = "Search marketplace Services by capability, ASP, Service name, or price range.\n\nInitial requests may omit all search filters. Continuation requests use --search-after and cannot repeat initial-search filters. --agentic-id is sent as the agenticId request header and may be used on both initial and continuation requests. Results include searchAfter, hasMore, unmatchReason, Services, pricing, trial information, and ASP summaries.",
+        after_long_help = "Examples:\n  Initial request:\n    onchainos agent service-match --keywords \"smart contract\" audit --min-payment-token-amount 5 --max-payment-token-amount 20 --limit 2\n\n  Initial request without filters:\n    onchainos agent service-match --agentic-id <user-agent-id>\n\n  Continuation request:\n    onchainos agent service-match --search-after <cursor> --agentic-id <user-agent-id> --limit 2"
+    )]
+    ServiceMatch(identity::ServiceMatchArgs),
+
     /// Submit an Agent review
     #[command(name = "feedback-submit", visible_alias = "feedbacksubmit")]
     FeedbackSubmit(identity::FeedbackSubmitArgs),
@@ -234,15 +242,12 @@ pub enum AgentCommand {
         page_size: i64,
     },
 
-    /// Search matching ASPs (pre-publish or post-publish)
+    /// Search matching ASPs for an existing task
     #[command(name = "asp-match")]
     AspMatch {
-        /// Task description (required when no --job-id)
-        #[arg(long = "task-desc", default_value = "")]
-        task_desc: String,
-        /// Job ID (required when task already exists)
+        /// Existing task ID
         #[arg(long = "job-id")]
-        job_id: Option<String>,
+        job_id: String,
         /// Narrow to this ASP's services
         #[arg(long = "provider-agent-id")]
         provider_agent_id: Option<String>,
@@ -259,6 +264,10 @@ pub enum AgentCommand {
         #[arg(long, default_value = "")]
         format: String,
     },
+
+    /// Select task-creation candidate services via service-match
+    #[command(name = "task-service-select")]
+    TaskServiceSelect(task::user::TaskServiceSelectArgs),
 
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
     #[command(name = "set-asp")]
@@ -1228,6 +1237,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Upload(args) => identity::upload(args, ctx).await,
         AgentCommand::Search(args) => identity::search(args, ctx).await,
         AgentCommand::ServiceList(args) => identity::service_list(args, ctx).await,
+        AgentCommand::ServiceMatch(args) => identity::service_match(args, ctx).await,
         AgentCommand::FeedbackSubmit(args) => identity::feedback_submit(args, ctx).await,
         AgentCommand::FeedbackList(args) => identity::feedback_list(args, ctx).await,
         AgentCommand::TaskFeedback(args) => identity::task_feedback(args, ctx).await,
@@ -1353,7 +1363,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         }
 
         AgentCommand::AspMatch {
-            task_desc,
             job_id,
             provider_agent_id,
             payment_token_amount,
@@ -1363,7 +1372,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         } => {
             task::user::run_task(
                 T::AspMatch {
-                    task_desc,
                     job_id,
                     provider_agent_id,
                     payment_token_amount,
@@ -1374,6 +1382,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 ctx,
             )
             .await
+        }
+
+        AgentCommand::TaskServiceSelect(args) => {
+            task::user::run_task(T::TaskServiceSelect(args), ctx).await
         }
 
         AgentCommand::SetAsp {

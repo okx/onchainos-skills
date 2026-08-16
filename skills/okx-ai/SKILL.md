@@ -47,7 +47,8 @@ At the start of each thread, complete the checks in [`../okx-agentic-wallet/_sha
 |---|---|
 | register / create agent (any role) · passive need-requester | [`references/identity-register.md`](references/identity-register.md) |
 | update #N · fix rejected listing | [`references/identity-update.md`](references/identity-update.md) |
-| search / find agents · list my agents · detail #N · what services does #N offer | [`references/identity-discover.md`](references/identity-discover.md) |
+| search / find agents or services by capability | [`references/identity-discover.md`](references/identity-discover.md) + [`references/intent-keyword-extraction.md`](references/intent-keyword-extraction.md) + [`references/identity-invariants.md`](references/identity-invariants.md) |
+| list my agents · detail #N · what services does #N offer | [`references/identity-discover.md`](references/identity-discover.md) |
 | view reviews / reputation #N | [`references/identity-reputation.md`](references/identity-reputation.md) |
 | publish (activate) · unpublish (deactivate) #N | [`references/identity-manage.md`](references/identity-manage.md) |
 | a CLI call returns an error / non-success (identity ops) | [`references/identity-errors.md`](references/identity-errors.md) (on demand) |
@@ -69,7 +70,7 @@ At the start of each thread, complete the checks in [`../okx-agentic-wallet/_sha
 
 | User outcome | Load |
 |---|---|
-| Search, browse, inspect, compare, or recommend agents/services without commissioning work | [`references/identity-discover.md`](references/identity-discover.md) + [`references/identity-invariants.md`](references/identity-invariants.md) |
+| Search, browse, inspect, compare, or recommend agents/services without commissioning work | [`references/identity-discover.md`](references/identity-discover.md) + [`references/intent-keyword-extraction.md`](references/intent-keyword-extraction.md) + [`references/identity-invariants.md`](references/identity-invariants.md) |
 | Commission a concrete outcome or deliverable; hire, buy, subscribe, publish, assign, or switch a task's provider | [`references/task-user-playbook.md`](references/task-user-playbook.md) |
 
 - A bare "find/recommend an agent for X" with no commissioning intent is discovery.
@@ -78,7 +79,7 @@ At the start of each thread, complete the checks in [`../okx-agentic-wallet/_sha
 - For a known `#N`, profile details, service listings, and reviews are discovery; buying or using its
   service, assigning work, or switching an existing task's provider is task execution.
 - After loading the selected reference, follow its command-selection rules. Do not choose `agent search`,
-  `service-list`, or `asp-match` directly from this section.
+  `service-list`, or `task-service-select` directly from this section.
 
 Rendering rules (card skeleton / Lexicon / #id ladder / CLI labels / commands) for identity ops → **always load `references/identity-invariants.md`** alongside the selected identity reference.
 
@@ -108,7 +109,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 
 ## Gates (non-overridable, identity ops)
 
-- **Pre-flight** — before the FIRST `onchainos` command this session (read **or** write — `get-my-agents` / `search`), §Pre-flight must have run. A prior session does not count. No exception. This gate precedes every other gate below.
+- **Pre-flight** — before the FIRST `onchainos` command this session (read **or** write — `get-my-agents` / `service-match`), §Pre-flight must have run. A prior session does not count. No exception. This gate precedes every other gate below.
 - **Chain-fixed** — agent identities live on XLayer only. Never pass `--chain` to any `agent` identity command. If the user asks about ETH / BSC / another chain, tell them identities are created on XLayer only.
 - **Pre-check** — resolve role first (`--role` required; canonical values `user` / `asp` / `evaluator`).
   - Before any `create`: run `agent pre-check --role <role>` ONCE — folds first-time consent + per-wallet uniqueness, returns `{ canCreate, role, reason?, consent?, existingSameRole, aspCount }` (render per register §2).
@@ -144,14 +145,14 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 - [ ] Reply is entirely in the §Language-Lock language — no English template text leaked (except verbatim-keep tokens)
 - [ ] No `onchainos` literal / skill name / raw A2MCP·A2A enum
 - [ ] `*Label` fields translated to conversation language
-- [ ] Search: render every `table.rows[]` entry in returned order; no model-side filtering or reordering
+- [ ] Service match: render every returned Agent and Service in order; no model-side filtering or reordering
 - [ ] Write ops (create/update) showed card and awaited confirm
 - [ ] Success output from reference template, not self-summarized JSON
 - [ ] `#<id>` from CLI output (`identity-invariants.md` §id ladder), not inferred or reused from pre-check
 
-## Cost (answer INLINE — never enter the register flow)
+## Cost
 
-On-chain actions (create / update / activate / deactivate) cost the user **nothing** — OKX covers network fees. Never say "not specified / check the docs". Never fabricate fee categories. For "example at X USDT", run `agent search --query "<X> USDT ..."` and cite a **real** agent's fee.
+Creating, updating, activating, or deactivating an agent costs the user nothing; OKX covers the network fees.
 
 ## Post-mutation continuation (same response, after the post-success line, identity ops)
 
@@ -162,7 +163,7 @@ Targets below are internal routing — never name a skill path or "staking" hand
 | create user / asp · update · activate · deactivate | Continue with the post-success line. |
 | create evaluator | → §Task Marketplace's evaluator-staking flow. Do NOT end on a question or a detail card. |
 | passive need-user | hand back to §Task Marketplace with ONE line. |
-| search / get / service-list / feedback-list | Stop. |
+| service-match / get / service-list / feedback-list | Stop. |
 
 ## Task Marketplace
 

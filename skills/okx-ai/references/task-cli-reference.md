@@ -9,7 +9,7 @@
 ## Contents
 
 - **Common (any role)**: `common context` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
-- **User**: `create-task` · `asp-match` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `complete` · `reject` · `close` · `claim-auto-refund` · `set-asp` · `task-attach`
+- **User**: `create-task` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `complete` · `reject` · `close` · `claim-auto-refund` · `set-asp` · `task-attach`
 - **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
 - **ASP**: `apply` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
@@ -166,10 +166,10 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
 | `--currency` | Yes | - | `USDT` or `USDG`                            |
 | `--title` | Yes | - | Task title (max 30 chars)                   |
 | `--provider` | Yes | - | Provider agentId; always required |
-| `--service-id` | No | - | Service ID from `asp-match` response        |
+| `--service-id` | No | - | Service ID from `task-service-select` response        |
 | `--service-params` | No | - | Service input parameters (natural language) |
 | `--service-token-address` | No | - | Service token contract address              |
-| `--service-token-amount` | No | - | Service price (from `asp-match` feeAmount)  |
+| `--service-token-amount` | No | - | Service price (from `task-service-select` `feeAmount`)  |
 | `--endpoint` | No | - | Designated service endpoint URL             |
 | `--file` | No | - | Local file paths to attach (repeatable)     |
 | `--payment-mode` | No | unset | `escrow` or `x402`                          |
@@ -184,18 +184,67 @@ agent funding-notice --chain <chain> --currency <symbol> --shortfall <amount> --
 
 Optional: `--available <amount>`, `--required <amount>`, `--deposit-chain <chain>`, `--reason <task-payment|payment-402|dispute-bond|subscription>`.
 
-### asp-match
+### task-service-select
 
-Search matching ASPs (at least one of `--job-id` or `--task-desc` required)
+Task-creation service selection wrapper. It calls `service-match`, preserves each service's online status,
+normalizes fields for the create-task / create-subscribe playbooks, and preserves
+`autoTradePreflight`.
+
+First search:
 
 ```
-agent asp-match [--job-id <jobId>] [--task-desc <text>] [--provider-agent-id <id>] [--page <n>] [--agent-id <id>]
+agent task-service-select [--keywords <kw>...] [--asp-agent-id <id>] [--asp-name <name>] [--service-name <name>] [--min-payment-token-amount <amount>] [--max-payment-token-amount <amount>] [--agentic-id <buyerAgentId>] --limit 1 --format json
+```
+
+For the initial search, pass the user's original utterance verbatim to
+[`intent-keyword-extraction.md`](intent-keyword-extraction.md), then use its output unchanged as the
+`task-service-select` arguments. Do not preprocess or enrich the input or output. Use the canonical
+`service-match` argument shape: emit `--keywords` at most once, followed by all extracted keyword
+values in their original order. Always use `--limit 1` for this initial recommendation; do not
+proactively fetch multiple services.
+
+Next page / alternatives:
+
+```
+agent task-service-select --search-after <cursor> [--agentic-id <buyerAgentId>] --limit 3 --format json
+```
+
+Run the alternatives command only after the user explicitly asks to view multiple services, compare
+candidates, or change the current recommendation. Do not combine `--search-after` with first-search
+conditions.
+
+**Response (`data`):**
+
+| Field | Type | Notes |
+|---|---|---|
+| `matchStatus` | string | `matched` / `no_match` / `no_online_service` |
+| `searchAfter` | string | Cursor for alternatives / next page |
+| `hasMore` | bool | Whether more services are available |
+| `unmatchReason` | string/null | Backend no-match reason when present |
+| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, serviceId, serviceName, serviceDescription, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, autoTradePreflight}` |
+
+Use `services[0]` as the recommended service for the confirmation card. Offer alternatives only when
+`hasMore == true` and `searchAfter` is a non-empty string. If the user then asks to change, call
+`task-service-select --search-after <searchAfter> --limit 3`; otherwise state that no more alternatives
+are available.
+
+Use `supportSubscription` for subscription branch selection. Use `subscriptionInfo.interval`,
+`subscriptionInfo.feeAmount`, and `subscriptionInfo.supportTrial/freeTrial`
+for subscription billing and trial details. `feeAmount` is the non-subscription
+service fee; for subscription services pass `subscriptionInfo.feeAmount` as
+`--service-token-amount`.
+
+### asp-match
+
+Search matching ASPs for an existing task.
+
+```
+agent asp-match --job-id <jobId> [--provider-agent-id <id>] [--page <n>] [--agent-id <id>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--job-id` | Conditional | - | Task ID (required when task exists on-chain) |
-| `--task-desc` | Conditional | `""` | Task description (required when no `--job-id`) |
+| `--job-id` | Yes | - | Existing task ID |
 | `--provider-agent-id` | No | - | Narrow result to a single ASP's services |
 | `--page` | No | `1` | Page number |
 | `--agent-id` | No | auto-resolved | User agentId (pass explicitly to skip slow auto-resolve) |
@@ -401,8 +450,8 @@ agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service
 | `--service-id` | Yes | - | Service ID from `asp-match` |
 | `--service-type` | Yes | - | `A2A` or `A2MCP` (A2A -> escrow, A2MCP -> x402) |
 | `--service-params` | Yes | - | Service input parameters (natural language string) |
-| `--service-token-address` | Yes | - | Service token contract address (from `asp-match` feeToken) |
-| `--service-token-amount` | Yes | - | Service price (from `asp-match` feeAmount) |
+| `--service-token-address` | Yes | - | Service token contract address (from `asp-match` `feeToken`) |
+| `--service-token-amount` | Yes | - | Service price (from `asp-match` `feeAmount`) |
 | `--payment-token-symbol` | No | - | Payment token symbol (e.g. USDT) |
 | `--payment-token-amount` | No | - | Payment amount |
 | `--payment-most-token-amount` | No | - | Max budget amount |
@@ -443,15 +492,15 @@ agent create-subscribe \
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--service-id` | Yes | - | Service ID from `asp-match` |
+| `--service-id` | Yes | - | Service ID from `task-service-select` |
 | `--use-trial` | No | false | Start with trial period |
-| `--service-token-amount` | Yes | - | Monthly fee (from `asp-match` `subscriptionInfo.feeAmount`) |
-| `--service-token-address` | Yes | - | Fee token contract address (from `asp-match` feeToken) |
+| `--service-token-amount` | Yes | - | Monthly fee (from `task-service-select` `subscriptionInfo.feeAmount`) |
+| `--service-token-address` | Yes | - | Fee token contract address (from `task-service-select` `feeToken`) |
 | `--auto-renew` | Yes | - | 0=off, 1=on |
 | `--title` | Yes | - | Max 64 chars |
 | `--description` | Yes | - | Max 4096 chars |
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
-| `--service-description` | No | `""` | Exact service description from `asp-match`; persisted only as bounded routing hints |
+| `--service-description` | No | `""` | Exact service description from `task-service-select`; persisted only as bounded routing hints |
 | `--autotrade-mode` | No | - | Explicit user-confirmed automatic signal execution; currently only `auto`. When supplied, all other `--autotrade-*` fields are required |
 | `--autotrade-amount` | With mode | - | Positive human-readable quote amount for each signal; decimal number only (for example `10` or `20.5`), never minimal units or a currency suffix; currency is selected by `--autotrade-quote`; must be ≤ cap |
 | `--autotrade-cap` | With mode | - | Positive human-readable per-signal quote cap; decimal number only, never minimal units or a currency suffix; currency is selected by `--autotrade-quote` |

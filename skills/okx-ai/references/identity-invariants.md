@@ -6,7 +6,7 @@
 
 - **Roles:** `user` → **User** / 用户 · `asp` → **ASP** / 服务提供商 · `evaluator` → **Evaluator** / 评审员 — each rendered as its localized label in the conversation language. Never show the raw enum token, never legacy nouns (buyer/seller/arbitrator/仲裁者/仲裁员 or their localized equivalents), never a bilingual parenthetical. Legacy "arbitrator"-family words (in any language) are input aliases — recognize them on input, but always render the localized **Evaluator** label on output (`评审员` in Chinese, `Evaluator` in English).
 - **Service type:** A2MCP → **API service** · A2A → **agent to agent**. Gloss once per table: "API service = pay-per-call, fixed price; agent to agent = per-call or monthly-subscription pricing (one or the other)." Never raw A2MCP/A2A.
-- **Stars:** render the CLI's `ratingStars` / search-table `rating` / feedback-list `average` **directly** — never divide by 20 skill-side, never show raw 0–100. The CLI converts search's backend `feedbackRate` to stars before building `table.rows[]`. Null/0 context-split: **search** rows → `null`=`—`, `0`=`No rating yet`; **list / detail / feedback** → no rating = `No rating yet` (never `—`).
+- **Stars:** render the CLI's `ratingStars` / search-table `rating` / service-match `asp.rating` / feedback-list `average` **directly** — never divide by 20 skill-side, never show raw 0–100. Null/0 context-split: **search / service-match** rows → `null`=`—`, `0`=`No rating yet`; **list / detail / feedback** → no rating = `No rating yet` (never `—`).
 - **Fee:** stored/sent as a plain numeric string (`"10"`); **displayed** as `N USDT` (USDT is implicit — the renderer appends it). Both API service (A2MCP) and agent to agent (A2A) support a `0` fee → an explicit `0` displays as `0 USDT` (a free service). An empty single-purchase `fee` (`""`) means "no per-call price" (a subscription-priced A2A service) → display the Fee row as `—`, with the price in the Subscription row. A2MCP with no fee → `—` (missing required fee — not `free`, since A2MCP requires a fee at create/update). An A2A service with **neither** a fee nor a subscription set (a legacy/backend-anomalous state — current registration always requires exactly one) → `free`.
 - **Subscription (A2A only):** the `subscription[]` array carries monthly pricing tiers `{interval:"month", fee:"N"}`. **Displayed** as `N USDT / month` per tier; an empty `[]` displays as `—` (no subscription). A2MCP never has one. Fee and Subscription are **mutually exclusive** on A2A — a service shows **exactly one** of them as a real price and the other as `—` (never both real, never both `—`).
 - **Free trial (A2A subscription only):** `freeTrial` is a duration in **hours**; the skill only ever sets the fixed 3-day value `"72"`. **Displayed** as its duration — `3 days` (whole days collapse to a day count; otherwise `<N> hours`) — in the Free trial column/row; absent, single-fee A2A, or A2MCP → `—`. **Address:** lowercase `0x…1234`. **Reviewer** slot = "reviewer", never "creator".
@@ -63,9 +63,9 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
 
 **Confirmation requirement for any reformat/draft (non-overridable):** reformatting or drafting is a *draft*, never an authorization to commit silently. Whenever you reshape the user's words into the multi-line description, you MUST (1) flag every affected row on the confirmation card / diff card with an explicit marker — e.g. ` ✏️ drafted from your words — please review` — so the user can tell Claude-rewritten content from their own verbatim input, and (2) wait for the normal card confirm (Reply **1**) before the write. Never let reformatted/drafted content reach the chain presented as the user's literal input. If the user flags any drafted row as wrong, re-collect that field from their own words and redraw — do not argue or keep your draft.
 
-## Commands (11 `onchainos agent` subcommands — you invoke them, never show them)
+## Commands (12 `onchainos agent` subcommands — you invoke them, never show them)
 
-`create · pre-check · update · get-my-agents · get-agents · activate · deactivate · upload · search · service-list · feedback-list`.
+`create · pre-check · update · get-my-agents · get-agents · activate · deactivate · upload · search · service-match · service-list · feedback-list`.
 (`get` is a hidden dual-mode read alias — prefer `get-my-agents` for list and `get-agents --agent-ids` for detail.) `feedback-submit` is a task-marketplace command (post-task rating) — not invoked by any identity flow.
 
 - `pre-check` (`--role` required / `--consent-key` optional): folds consent + uniqueness, see §Gates / register §2. Auto/internal — never shown; outputs (`canCreate` etc.) rendered inline.
@@ -74,7 +74,9 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
 - `consent` has no public subcommand — driven by `pre-check`.
 - Never suggest `xmtp-sign`; no `--address` (signs with current wallet).
 
-Array fields: create/update/get-agents/get-my-agents → `list`; search → `table.rows`; feedback-list → `items` or `list` (backend inconsistent; CLI normalizes both); service-list → nested `services`.
+Array fields: create/update/get-agents/get-my-agents → `list`; search → `table.rows`; service-match → raw
+Agent/Service match payload plus ready-to-render `asp.rating`; feedback-list → `items` or `list` (backend inconsistent; CLI normalizes both);
+service-list → nested `services`.
 
 ## Input contract — `--service` JSON + flag gotchas (single source of truth)
 

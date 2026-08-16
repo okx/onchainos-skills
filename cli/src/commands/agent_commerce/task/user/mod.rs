@@ -36,8 +36,9 @@ pub(crate) mod subscription_ops;
 mod x402_flow;
 
 use anyhow::Result;
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 
+use crate::commands::agent_commerce::identity::ServiceMatchArgs;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::subscription_identity::{
     select_subscription_agent_id,
@@ -45,6 +46,16 @@ use crate::commands::agent_commerce::task::common::subscription_identity::{
 use crate::commands::Context;
 
 // ─── task subcommands ──────────────────────────────────────────────────────
+
+/// Task-flow wrapper around the canonical marketplace service search arguments.
+#[derive(Args, Clone, Debug)]
+pub struct TaskServiceSelectArgs {
+    #[command(flatten)]
+    pub service_match: ServiceMatchArgs,
+    /// Output format: json
+    #[arg(long, default_value = "json")]
+    pub format: String,
+}
 
 #[derive(Subcommand)]
 pub enum TaskCommand {
@@ -139,14 +150,11 @@ pub enum TaskCommand {
         #[arg(long = "exclude-device", hide = true)]
         exclude_device: Option<Vec<String>>,
     },
-    /// Search matching ASPs (pre-publish or post-publish)
+    /// Search matching ASPs for an existing task
     AspMatch {
-        /// Task description (required when no --job-id)
-        #[arg(long = "task-desc", default_value = "")]
-        task_desc: String,
-        /// Job ID (required when task already exists)
+        /// Existing task ID
         #[arg(long = "job-id")]
-        job_id: Option<String>,
+        job_id: String,
         /// Narrow to this ASP's services
         #[arg(long = "provider-agent-id")]
         provider_agent_id: Option<String>,
@@ -163,6 +171,9 @@ pub enum TaskCommand {
         #[arg(long, default_value = "")]
         format: String,
     },
+    /// Select task-creation candidate services via service-match
+    #[command(name = "task-service-select")]
+    TaskServiceSelect(TaskServiceSelectArgs),
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
     SetAsp {
         job_id: String,
@@ -1109,8 +1120,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device,
             }).await
         }
-        TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
-            asp_ops::handle_asp_match(&mut client, job_id.as_deref(), &task_desc, provider_agent_id.as_deref(), payment_token_amount, page, agent_id.as_deref(), &format).await,
+        TaskCommand::AspMatch { job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
+            asp_ops::handle_asp_match(&mut client, &job_id, provider_agent_id.as_deref(), payment_token_amount, page, agent_id.as_deref(), &format).await,
+        TaskCommand::TaskServiceSelect(args) =>
+            asp_ops::handle_task_service_select(&args.service_match, &args.format).await,
         TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
             asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), payment_token_amount.as_deref(), payment_most_token_amount.as_deref(), agent_id.as_deref()).await,
         TaskCommand::ResetAsp { job_id, agent_id } =>

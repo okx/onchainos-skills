@@ -344,6 +344,90 @@ pub struct ServiceListArgs {
     pub agent_id: Option<String>,
 }
 
+/// `onchainos agent service-match`: search marketplace services directly.
+#[derive(Args, Clone, Debug)]
+pub struct ServiceMatchArgs {
+    /// Initial-search Service capability keywords; accepts at most 10 values.
+    #[arg(long, num_args = 1..)]
+    pub keywords: Vec<String>,
+    /// Initial-search filter: match Services belonging to this ASP Agent ID.
+    #[arg(long = "asp-agent-id")]
+    pub asp_agent_id: Option<String>,
+    /// Initial-search filter: match Services by ASP name.
+    #[arg(long = "asp-name")]
+    pub asp_name: Option<String>,
+    /// Initial-search filter: match Services by Service name.
+    #[arg(long = "service-name")]
+    pub service_name: Option<String>,
+    /// Optional User Agent ID sent as the `agenticId` request header to exclude already-subscribed Services; valid for initial and continuation requests.
+    #[arg(long = "agentic-id")]
+    pub agentic_id: Option<String>,
+    /// Initial-search minimum acceptable Service price; maps to `minPaymentTokenAmount` and must be >= 0.
+    #[arg(long = "min-payment-token-amount")]
+    pub min_payment_token_amount: Option<String>,
+    /// Initial-search maximum acceptable Service price; maps to `maxPaymentTokenAmount` and must be >= 0.
+    #[arg(long = "max-payment-token-amount")]
+    pub max_payment_token_amount: Option<String>,
+    /// Cursor returned by the previous response; cannot be combined with initial-search filters.
+    #[arg(long = "search-after")]
+    pub search_after: Option<String>,
+    /// Requested number of Services, from 1 through 10.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=10))]
+    pub limit: u8,
+}
+
+#[cfg(test)]
+mod service_match_args_tests {
+    use super::ServiceMatchArgs;
+    use clap::Parser;
+
+    #[derive(Debug, Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        service_match: ServiceMatchArgs,
+    }
+
+    #[test]
+    fn accepts_multiple_keywords_and_agentic_id() {
+        let cli = TestCli::parse_from([
+            "test",
+            "--keywords",
+            "smart contract",
+            "audit",
+            "--agentic-id",
+            "user-agent-001",
+            "--min-payment-token-amount",
+            "5",
+            "--max-payment-token-amount",
+            "10",
+        ]);
+        assert_eq!(cli.service_match.keywords, ["smart contract", "audit"]);
+        assert_eq!(
+            cli.service_match.agentic_id.as_deref(),
+            Some("user-agent-001")
+        );
+        assert_eq!(
+            cli.service_match.min_payment_token_amount.as_deref(),
+            Some("5")
+        );
+        assert_eq!(
+            cli.service_match.max_payment_token_amount.as_deref(),
+            Some("10")
+        );
+        assert_eq!(cli.service_match.limit, 1);
+    }
+
+    #[test]
+    fn rejects_limit_outside_documented_range() {
+        for limit in ["0", "11"] {
+            assert!(
+                TestCli::try_parse_from(["test", "--keywords", "audit", "--limit", limit,])
+                    .is_err()
+            );
+        }
+    }
+}
+
 /// `onchainos agent get-by-address`: reverse-lookup an agent by communication
 /// address + chain. Hidden (hide=true); only used by sub-agent / xmtp flows.
 #[derive(Args, Clone, Debug)]

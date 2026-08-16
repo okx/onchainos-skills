@@ -594,6 +594,34 @@ fn user_notify_rejects_local_image_links_in_content() {
     assert_error_contains(&output, &["use --image-path <file>"]);
 }
 
+#[test]
+fn service_match_help_describes_pagination_headers_and_price_range() {
+    let (_home, dir) = fresh_home("cli_agent_service_match_help");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args(["agent", "service-match", "--help"])
+        .output()
+        .expect("run service-match help");
+
+    assert_eq!(output.status.code(), Some(0));
+    let help = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "Search marketplace Services by capability, ASP, Service name, or price range.",
+        "Results include searchAfter, hasMore, unmatchReason",
+        "--agentic-id <AGENTIC_ID>",
+        "--min-payment-token-amount <MIN_PAYMENT_TOKEN_AMOUNT>",
+        "--max-payment-token-amount <MAX_PAYMENT_TOKEN_AMOUNT>",
+        "--search-after <SEARCH_AFTER>",
+        "Initial request without filters",
+        "Continuation request",
+    ] {
+        assert!(help.contains(expected), "missing {expected:?} in help:\n{help}");
+    }
+    assert!(!help.contains("      --format "));
+    assert!(!help.contains("backend raw data payload"));
+}
+
 // ════════════════════════════════════════════════════════════════════════
 //  agent create / update — §2.2 normalize_service seam (live, wallet-gated)
 // ════════════════════════════════════════════════════════════════════════════
