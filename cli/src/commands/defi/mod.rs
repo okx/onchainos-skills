@@ -322,6 +322,15 @@ pub enum DefiCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
+    let requires_login = !matches!(
+        &cmd,
+        DefiCommand::SupportChains | DefiCommand::SupportPlatforms
+    );
+    if requires_login {
+        // Keep DeFi commands aligned with wallet modules: validate the session
+        // and refresh the access token before ApiClient resolves auth headers.
+        crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
+    }
     let mut client = ctx.client_async().await?;
     match cmd {
         DefiCommand::SupportChains => {

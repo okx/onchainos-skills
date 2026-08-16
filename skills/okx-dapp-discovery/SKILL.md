@@ -1,9 +1,6 @@
 ---
 name: okx-dapp-discovery
-description: |
-  Plugin router for 20 third-party DeFi protocols (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Lido, ether.fi, GMX, Kamino, Orca, Meteora, Clanker, pump.fun, Uniswap) and their protocol-native tokens (HYPE, HLP, eETH, weETH, stETH, wstETH, LDO, GHO, CAKE, CRV, COMP, RAY, ETHFI, GLP, kToken, PT-* / YT-*, $CLANKER). Resolves DApp/token → plugin → confirm-install → re-apply request. Routing only — never signs or broadcasts; every on-chain write needs explicit user approval.
-
-  Fires on: (1) named DApp + action verb (swap/deposit/stake/long/borrow/buy/sell/snipe/farm/claim, EN or ZH 买/卖/换/存/质押/借/做多/做空/狙击); (2) 2+ DApp comparison ("Aave vs Compound", "Lido vs ether.fi"); (3) Polymarket UpDown (`<COIN> 5min updown`, `5 分钟涨跌`, `预测市场`); (4) protocol-native token + action verb ("deposit USDC into HLP", "PT-stETH on Pendle"); (5) pump.fun WRITE verbs (buy/sell/snipe/ape/swap or 买/卖/狙击/梭哈/帮我买). See body for full rules.
+description: "For discovering DApps and routing protocol requests to OKX plugins; it never signs or broadcasts. Use it for DApp discovery; supported DApp + action; multi-DApp comparison; Polymarket UpDown/prediction markets; protocol-native phrase + action; pump.fun writes; or unsupported-DApp alternatives. Trigger phrases: supported DApp names such as Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Lido, ether.fi, GMX, Kamino, Orca, Meteora, Clanker, and pump.fun; protocol-native phrases such as HYPE/HLP, stETH/wstETH, CAKE, CRV, COMP, RAY, GHO, and PT-*/YT-*; paired with protocol actions or comparison intent. Never install without explicit approval or authorize a transaction. Generic yield routes to okx-defi; unnamed/market-side swaps to okx-agentic-wallet; prices, charts, and pump.fun reads to okx-dex-market; raw Agent Commerce signals to okx-ai. Unsupported DApps are never guessed or auto-installed."
 
 license: MIT
 metadata:
