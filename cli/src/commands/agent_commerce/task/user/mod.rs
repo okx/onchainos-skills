@@ -131,13 +131,13 @@ pub enum TaskCommand {
         /// Service billing interval (from asp-match subscription.interval, e.g. "month")
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
-        /// Explicit user-confirmed automatic signal execution (`auto`).
+        /// Signal execution mode (`auto` by default; `manual` after explicit opt-out).
         #[arg(long = "autotrade-mode")]
         autotrade_mode: Option<String>,
         /// Fixed quote-currency amount used for every delivered signal.
         #[arg(long = "autotrade-amount")]
         autotrade_amount: Option<String>,
-        /// Per-delivery automatic-execution cap.
+        /// Optional per-delivery cap metadata (not enforced).
         #[arg(long = "autotrade-cap")]
         autotrade_cap: Option<String>,
         /// Quote currency for amount/cap (`usdt` or `usdc`).
@@ -520,16 +520,15 @@ async fn resolve_subscription_executable_service(
         }))
 }
 
-/// Restore bounded execution-profile hints on this device and surface only
-/// active, locally-unconfigured executable subscriptions. This runs before the
-/// login result is rendered, allowing the skill to obtain A/B/C authorization
-/// before a scoped A2A watch is resumed and a real delivery arrives.
+/// Restore bounded execution-profile hints for active executable subscriptions
+/// on this device. Consent remains untouched so an explicit restore can collect
+/// ASP-requested user configuration before scoped watch begins.
 async fn add_post_login_autotrade_prechecks(
     client: &mut TaskApiClient,
     subscriptions: &mut serde_json::Value,
     agent_id: &str,
 ) {
-    use crate::commands::agent_commerce::task::common::autotrade::{consent, profile};
+    use crate::commands::agent_commerce::task::common::autotrade::profile;
 
     let Some(list) = subscriptions
         .get("list")
@@ -537,7 +536,6 @@ async fn add_post_login_autotrade_prechecks(
     else {
         return;
     };
-    let mut prechecks = Vec::new();
     for subscription in list {
         if subscription
             .get("status")
@@ -598,29 +596,6 @@ async fn add_post_login_autotrade_prechecks(
             if cfg!(feature = "debug-log") {
                 eprintln!("[DEBUG][post-login] execution profile restore skipped: {error}");
             }
-        }
-
-        let snapshot = consent::consent_snapshot(job_id);
-        if snapshot.status != consent::ConsentSnapshotStatus::NotSet {
-            continue;
-        }
-        prechecks.push(serde_json::json!({
-            "jobId": job_id,
-            "title": subscription.get("title").and_then(serde_json::Value::as_str).unwrap_or(""),
-            "agentId": agent_id,
-            "providerAgentId": provider_agent_id,
-            "serviceId": service_id,
-            "descriptionSource": executable.description_source,
-            "assetClasses": executable.asset_classes,
-            "consentStatus": snapshot.status,
-        }));
-    }
-    if !prechecks.is_empty() {
-        if let Some(envelope) = subscriptions.as_object_mut() {
-            envelope.insert(
-                "autoTradeAuthorizationPrechecks".to_string(),
-                serde_json::Value::Array(prechecks),
-            );
         }
     }
 }
@@ -713,17 +688,19 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
         ConsentSnapshotStatus::NotSet => serde_json::json!({
             "jobId": job_id,
             "agentId": agent_id,
-            "title": subscription.get("title").and_then(serde_json::Value::as_str).unwrap_or(""),
-            "providerAgentId": subscription.get("providerAgentId").and_then(serde_json::Value::as_str).unwrap_or(""),
-            "serviceId": subscription.get("serviceId").and_then(serde_json::Value::as_str).unwrap_or(""),
-            "serviceDescription": executable.description,
-            "descriptionSource": executable.description_source,
-            "assetClasses": executable.asset_classes,
             "applicable": true,
             "watchAllowed": false,
-            "shouldPromptAuthorization": true,
-            "reason": "authorization_required",
+            "shouldPromptAuthorization": false,
+            "shouldPromptConfiguration": true,
+            "reason": "configuration_required",
             "consentStatus": consent_status,
+            "title": subscription
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+            "serviceDescription": executable.description.chars().take(4096).collect::<String>(),
+            "descriptionSource": executable.description_source,
+            "assetClasses": executable.asset_classes,
         }),
         ConsentSnapshotStatus::Unreadable => serde_json::json!({
             "jobId": job_id,
@@ -740,12 +717,170 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PreDeliveryConsentContext {
+    pub agent_id: String,
+    pub asset_class: crate::asset_class::AssetClass,
+    pub title: String,
+}
+
+/// Bind a restore-configuration continuation to the canonical authenticated
+/// subscription. ASP prose may select which fields to ask for, but it never
+/// supplies an authorization value.
+pub(crate) fn bind_subscription_restore_consent_context(
+    precheck: &serde_json::Value,
+    requested_job_id: &str,
+    requested_agent_id: &str,
+    requested_asset_class: crate::asset_class::AssetClass,
+) -> Result<PreDeliveryConsentContext> {
+    let reason = precheck
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("missing_reason");
+    if precheck
+        .get("watchAllowed")
+        .and_then(serde_json::Value::as_bool)
+        != Some(false)
+        || precheck
+            .get("shouldPromptConfiguration")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        || reason != "configuration_required"
+        || precheck
+            .get("consentStatus")
+            .and_then(serde_json::Value::as_str)
+            != Some("not_set")
+    {
+        anyhow::bail!(
+            "subscription restore configuration is not allowed for this subscription (reason: {reason})"
+        );
+    }
+
+    let canonical_job_id = precheck
+        .get("jobId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("restore precheck returned no jobId"))?;
+    if canonical_job_id != requested_job_id {
+        anyhow::bail!("restore jobId does not match the canonical precheck");
+    }
+
+    let canonical_agent_id = precheck
+        .get("agentId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("restore precheck returned no buyer agentId"))?;
+    if canonical_agent_id != requested_agent_id {
+        anyhow::bail!("restore agentId does not match the authenticated buyer");
+    }
+
+    let canonical_asset_classes = precheck
+        .get("assetClasses")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("restore precheck returned no asset classes"))?;
+    if !canonical_asset_classes
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter_map(|value| value.parse::<crate::asset_class::AssetClass>().ok())
+        .any(|value| value == requested_asset_class)
+    {
+        anyhow::bail!("restore signal type does not match the canonical precheck");
+    }
+
+    Ok(PreDeliveryConsentContext {
+        agent_id: canonical_agent_id.to_string(),
+        asset_class: requested_asset_class,
+        title: precheck
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
+/// Bind a pre-delivery authorization card to the canonical scoped-watch
+/// precheck result. Caller-provided fields are retained for CLI compatibility,
+/// but none of them are trusted: every value must match the authenticated
+/// buyer subscription before a consent prompt can be rendered.
+pub(crate) fn bind_pre_delivery_consent_context(
+    precheck: &serde_json::Value,
+    requested_job_id: &str,
+    requested_agent_id: &str,
+    requested_asset_class: crate::asset_class::AssetClass,
+) -> Result<PreDeliveryConsentContext> {
+    let reason = precheck
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("missing_reason");
+    if precheck
+        .get("watchAllowed")
+        .and_then(serde_json::Value::as_bool)
+        != Some(false)
+        || precheck
+            .get("shouldPromptAuthorization")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        || reason != "authorization_required"
+        || precheck
+            .get("consentStatus")
+            .and_then(serde_json::Value::as_str)
+            != Some("not_set")
+    {
+        anyhow::bail!(
+            "pre-delivery authorization is not allowed for this subscription (reason: {reason})"
+        );
+    }
+
+    let canonical_job_id = precheck
+        .get("jobId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("pre-delivery precheck returned no jobId"))?;
+    if canonical_job_id != requested_job_id {
+        anyhow::bail!("pre-delivery jobId does not match the canonical precheck");
+    }
+
+    let canonical_agent_id = precheck
+        .get("agentId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("pre-delivery precheck returned no buyer agentId"))?;
+    if canonical_agent_id != requested_agent_id {
+        anyhow::bail!("pre-delivery agentId does not match the authenticated buyer");
+    }
+
+    let canonical_asset_classes = precheck
+        .get("assetClasses")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("pre-delivery precheck returned no asset classes"))?;
+    let asset_class_matches = canonical_asset_classes
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter_map(|value| value.parse::<crate::asset_class::AssetClass>().ok())
+        .any(|value| value == requested_asset_class);
+    if !asset_class_matches {
+        anyhow::bail!("pre-delivery signal type does not match the canonical precheck");
+    }
+
+    Ok(PreDeliveryConsentContext {
+        agent_id: canonical_agent_id.to_string(),
+        asset_class: requested_asset_class,
+        title: precheck
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
 /// First-entry gate for an explicitly scoped watch. Non-subscription jobs and
 /// subscriptions that do not need execution authorization pass through; an
-/// executable Active subscription with no local consent returns the exact data
-/// needed to reuse the existing pre-delivery A/B/C command before watch starts.
+/// executable Active subscription with no local consent returns the ASP
+/// description and any live bounded configuration continuation before watch.
 pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serde_json::Value> {
-    use crate::commands::agent_commerce::task::common::autotrade::{consent, grants, profile};
+    use crate::commands::agent_commerce::task::common::autotrade::{
+        self, consent, grants, profile,
+    };
 
     if !grants::job_id_is_safe(job_id) {
         anyhow::bail!("invalid job id");
@@ -816,13 +951,66 @@ pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serd
         }
     }
 
-    Ok(compose_scoped_watch_autotrade_precheck_with_executable(
+    let consent_status = consent::consent_snapshot(job_id).status;
+
+    // A scoped watch must not surface authorization cards left pending by the
+    // retired delivery-time flow after an executable policy is already active.
+    // This changes only those exact control decisions to handled; notification
+    // history and unrelated decisions remain untouched.
+    if resolved_executable.is_some()
+        && consent_status == consent::ConsentSnapshotStatus::Active
+    {
+        crate::commands::agent_commerce::task::common::okx_a2a::mark_retired_autotrade_decisions_handled(
+            job_id,
+        )?;
+    }
+
+    let mut result = compose_scoped_watch_autotrade_precheck_with_executable(
         job_id,
         &snapshot.agent_id,
         subscription,
         resolved_executable.as_ref(),
-        consent::consent_snapshot(job_id).status,
-    ))
+        consent_status,
+    );
+    if result.get("reason").and_then(serde_json::Value::as_str)
+        == Some("configuration_required")
+    {
+        if let Some(file) = autotrade::continuation::load_live_for_job(
+            job_id,
+            &snapshot.agent_id,
+        )? {
+            if file.origin == autotrade::continuation::Origin::SubscriptionRestore {
+                let missing_fields = file.missing_fields();
+                if let Some(object) = result.as_object_mut() {
+                    object.insert(
+                        "continuationId".to_string(),
+                        serde_json::Value::String(file.continuation_id),
+                    );
+                    object.insert(
+                        "selectedMode".to_string(),
+                        serde_json::to_value(file.selected_mode)?,
+                    );
+                    object.insert(
+                        "modeConfirmed".to_string(),
+                        serde_json::Value::Bool(file.mode_confirmed),
+                    );
+                    object.insert(
+                        "requiredFields".to_string(),
+                        serde_json::to_value(file.required_fields)?,
+                    );
+                    object.insert(
+                        "missingFields".to_string(),
+                        serde_json::to_value(missing_fields)?,
+                    );
+                }
+            } else {
+                anyhow::bail!(
+                    "a different live auto-trade configuration is already bound to this job"
+                );
+            }
+        }
+    }
+    Ok(result)
 }
 
 /// State captured before the login heartbeat registers this machine. Comparing
@@ -1195,6 +1383,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 #[cfg(test)]
 mod post_login_tests {
     use super::*;
+    use crate::asset_class::AssetClass;
+    use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
     use serde_json::json;
 
     #[test]
@@ -1282,10 +1472,9 @@ mod post_login_tests {
     }
 
     #[test]
-    fn post_login_precheck_classifies_the_live_cn_dex_spot_description() {
-        // Escaped CN: "Continuously pushes DEX spot buy/sell direction and position signals".
+    fn post_login_precheck_classifies_a_dex_spot_description() {
         let subscription = json!({
-            "serviceDescription": "\u{6301}\u{7eed}\u{63a8}\u{9001} DEX \u{73b0}\u{8d27}\u{4e70}\u{5356}\u{65b9}\u{5411}\u{4e0e}\u{4ed3}\u{4f4d}\u{4fe1}\u{53f7}"
+            "serviceDescription": "Continuously pushes DEX spot buy/sell direction and position signals"
         });
         let executable = post_login_executable_service(&subscription).unwrap();
         assert_eq!(
@@ -1316,9 +1505,10 @@ mod post_login_tests {
             ConsentSnapshotStatus::NotSet,
         );
         assert_eq!(result["watchAllowed"], false);
-        assert_eq!(result["shouldPromptAuthorization"], true);
+        assert_eq!(result["shouldPromptAuthorization"], false);
+        assert_eq!(result["shouldPromptConfiguration"], true);
+        assert_eq!(result["reason"], "configuration_required");
         assert_eq!(result["descriptionSource"], "subscription_detail");
-        assert_eq!(result["assetClasses"], json!(["spot"]));
     }
 
     fn active_executable_subscription() -> serde_json::Value {
@@ -1334,7 +1524,7 @@ mod post_login_tests {
     }
 
     #[test]
-    fn scoped_watch_precheck_requires_existing_consent_flow_before_watch() {
+    fn scoped_watch_precheck_returns_bounded_restore_configuration() {
         use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
 
         let subscription = active_executable_subscription();
@@ -1346,13 +1536,99 @@ mod post_login_tests {
         );
         assert_eq!(result["applicable"], true);
         assert_eq!(result["watchAllowed"], false);
-        assert_eq!(result["shouldPromptAuthorization"], true);
-        assert_eq!(result["reason"], "authorization_required");
+        assert_eq!(result["shouldPromptAuthorization"], false);
+        assert_eq!(result["shouldPromptConfiguration"], true);
+        assert_eq!(result["reason"], "configuration_required");
         assert_eq!(result["assetClasses"], json!(["spot"]));
-        assert!(result["serviceDescription"]
-            .as_str()
-            .unwrap()
-            .contains("fixed amount"));
+        assert_eq!(
+            result["serviceDescription"],
+            active_executable_subscription()["serviceDescription"]
+        );
+    }
+
+    #[test]
+    fn restore_binding_accepts_only_the_canonical_configuration_precheck() {
+        let precheck = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&active_executable_subscription()),
+            ConsentSnapshotStatus::NotSet,
+        );
+        let bound = bind_subscription_restore_consent_context(
+            &precheck,
+            "job-watch",
+            "user-1",
+            AssetClass::Spot,
+        )
+        .unwrap();
+        assert_eq!(bound.agent_id, "user-1");
+        assert_eq!(bound.asset_class, AssetClass::Spot);
+        assert_eq!(bound.title, "Spot signal subscription");
+
+        assert!(bind_subscription_restore_consent_context(
+            &precheck,
+            "job-other",
+            "user-1",
+            AssetClass::Spot,
+        )
+        .is_err());
+        assert!(bind_subscription_restore_consent_context(
+            &precheck,
+            "job-watch",
+            "user-1",
+            AssetClass::Perp,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn pre_delivery_binding_rejects_cardless_prechecks() {
+        let precheck = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&active_executable_subscription()),
+            ConsentSnapshotStatus::NotSet,
+        );
+        assert!(
+            bind_pre_delivery_consent_context(
+                &precheck,
+                "job-watch",
+                "user-1",
+                AssetClass::Spot
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn pre_delivery_binding_rejects_cross_job_agent_or_asset_mixups() {
+        let precheck = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&active_executable_subscription()),
+            ConsentSnapshotStatus::NotSet,
+        );
+        for result in [
+            bind_pre_delivery_consent_context(&precheck, "job-other", "user-1", AssetClass::Spot),
+            bind_pre_delivery_consent_context(&precheck, "job-watch", "user-2", AssetClass::Spot),
+            bind_pre_delivery_consent_context(&precheck, "job-watch", "user-1", AssetClass::Perp),
+        ] {
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn pre_delivery_binding_rejects_stale_or_already_authorized_prechecks() {
+        let precheck = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&active_executable_subscription()),
+            ConsentSnapshotStatus::Active,
+        );
+        let error =
+            bind_pre_delivery_consent_context(&precheck, "job-watch", "user-1", AssetClass::Spot)
+                .expect_err("live consent must suppress a stale pre-delivery card");
+        assert!(error.to_string().contains("consent_active"));
     }
 
     #[test]

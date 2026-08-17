@@ -42,12 +42,11 @@ pub struct CreateSubscribeParams {
 
 const MAX_TITLE_CHARS: usize = 64;
 const MAX_DESCRIPTION_CHARS: usize = 4096;
-const SUBSCRIPTION_AUTOTRADE_TTL_SEC: u64 = 31_536_000;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SubscriptionAutoTradeConfig {
-    amount: String,
-    cap: String,
+    mode: consent::ConsentMode,
+    amount: Option<String>,
+    cap: Option<String>,
     quote: String,
 }
 
@@ -84,67 +83,47 @@ impl CreateSubscribeParams {
         Ok(())
     }
 
-    fn autotrade_config(&self) -> Result<Option<SubscriptionAutoTradeConfig>> {
-        let has_policy_field = self.autotrade_amount.is_some()
-            || self.autotrade_cap.is_some()
-            || self.autotrade_quote.is_some();
-        let Some(mode) = self.autotrade_mode.as_deref() else {
-            if has_policy_field {
-                bail!("--autotrade-mode auto is required when automatic execution fields are supplied");
-            }
-            return Ok(None);
+    fn autotrade_config(&self) -> Result<SubscriptionAutoTradeConfig> {
+        let mode = match self.autotrade_mode.as_deref() {
+            None => consent::ConsentMode::Auto,
+            Some(mode) if mode.eq_ignore_ascii_case("auto") => consent::ConsentMode::Auto,
+            Some(mode) if mode.eq_ignore_ascii_case("manual") => consent::ConsentMode::Manual,
+            Some(_) => bail!("--autotrade-mode must be one of: auto | manual"),
         };
-        if !mode.eq_ignore_ascii_case("auto") {
-            bail!("--autotrade-mode currently supports only: auto");
-        }
-
-        let mut missing = Vec::new();
-        if self.autotrade_amount.as_deref().map_or(true, str::is_empty) {
-            missing.push("--autotrade-amount");
-        }
-        if self.autotrade_cap.as_deref().map_or(true, str::is_empty) {
-            missing.push("--autotrade-cap");
-        }
-        if self.autotrade_quote.as_deref().map_or(true, str::is_empty) {
-            missing.push("--autotrade-quote");
-        }
-        if !missing.is_empty() {
-            bail!(
-                "automatic signal execution is missing required fields: {}",
-                missing.join(", ")
-            );
-        }
-
-        let amount = self.autotrade_amount.as_deref().unwrap_or_default();
-        let cap = self.autotrade_cap.as_deref().unwrap_or_default();
-        let parsed_amount = Decimal::parse(amount)
-            .map_err(|_| anyhow::anyhow!("--autotrade-amount must be a positive decimal"))?;
-        let parsed_cap = Decimal::parse(cap)
-            .map_err(|_| anyhow::anyhow!("--autotrade-cap must be a positive decimal"))?;
-        if parsed_amount.is_zero() {
-            bail!("--autotrade-amount must be greater than 0");
-        }
-        if parsed_cap.is_zero() {
-            bail!("--autotrade-cap must be greater than 0");
-        }
-        if !parsed_amount.le(&parsed_cap) {
-            bail!("--autotrade-amount must not exceed --autotrade-cap");
-        }
+        let amount = parse_optional_positive_decimal(
+            self.autotrade_amount.as_deref(),
+            "--autotrade-amount",
+        )?;
+        let cap =
+            parse_optional_positive_decimal(self.autotrade_cap.as_deref(), "--autotrade-cap")?;
         let quote = self
             .autotrade_quote
             .as_deref()
-            .unwrap_or_default()
+            .unwrap_or(consent::DEFAULT_QUOTE)
             .to_ascii_lowercase();
         if !consent::QUOTE_WHITELIST.contains(&quote.as_str()) {
             bail!("--autotrade-quote must be one of: usdt | usdc");
         }
 
-        Ok(Some(SubscriptionAutoTradeConfig {
-            amount: parsed_amount.to_plain_string(),
-            cap: parsed_cap.to_plain_string(),
+        Ok(SubscriptionAutoTradeConfig {
+            mode,
+            amount,
+            cap,
             quote,
-        }))
+        })
     }
+}
+
+fn parse_optional_positive_decimal(value: Option<&str>, flag: &str) -> Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let parsed =
+        Decimal::parse(value).map_err(|_| anyhow::anyhow!("{flag} must be a positive decimal"))?;
+    if parsed.is_zero() {
+        bail!("{flag} must be greater than 0");
+    }
+    Ok(Some(parsed.to_plain_string()))
 }
 
 fn persist_subscription_autotrade(
@@ -153,13 +132,23 @@ fn persist_subscription_autotrade(
 ) -> Result<()> {
     consent::write_consent_with_trade_amount(
         job_id,
-        consent::ConsentMode::Auto,
-        Some(&config.cap),
-        Some(&config.amount),
+        config.mode,
+        config.cap.as_deref(),
+        config.amount.as_deref(),
         Some(&config.quote),
-        SUBSCRIPTION_AUTOTRADE_TTL_SEC,
+        super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
     )?;
-    if let Err(err) = grants::write_cap_grant(job_id, &config.cap, SUBSCRIPTION_AUTOTRADE_TTL_SEC) {
+    let grant_result = match config.mode {
+        consent::ConsentMode::Auto => grants::write_auto_grant(
+            job_id,
+            super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
+        ),
+        consent::ConsentMode::Manual | consent::ConsentMode::Decline => {
+            grants::clear_grant(job_id);
+            Ok(())
+        }
+    };
+    if let Err(err) = grant_result {
         consent::clear_consent(job_id);
         grants::clear_grant(job_id);
         return Err(err);
@@ -230,6 +219,10 @@ pub async fn handle_create_subscribe(
     params: CreateSubscribeParams,
 ) -> Result<()> {
     params.validate()?;
+    let autotrade_requested = params.autotrade_mode.is_some()
+        || params.autotrade_amount.is_some()
+        || params.autotrade_cap.is_some()
+        || params.autotrade_quote.is_some();
     let autotrade_config = params.autotrade_config()?;
 
     let json_mode = params.format.eq_ignore_ascii_case("json");
@@ -346,19 +339,16 @@ pub async fn handle_create_subscribe(
         client, uop_data, &account_id, &address, &sub_id, biz_type, &user_agent_id, None,
     ).await?;
 
-    // The jobId exists only after create + broadcast. Persist the user's final,
-    // explicit subscription setup into the same fail-closed policy files used
-    // by runtime execution. A write failure cannot roll back the subscription.
-    let autotrade_requested = autotrade_config.is_some();
-    let autotrade_configured = match autotrade_config.as_ref() {
-        Some(config) => match persist_subscription_autotrade(&sub_id, config) {
-            Ok(()) => true,
-            Err(err) => {
-                eprintln!("[autotrade] subscription created, but automatic execution configuration could not be persisted: {err}");
-                false
-            }
-        },
-        None => false,
+    // The jobId exists only after create + broadcast. Persist the MVP default
+    // policy together with any final user-authored setup into the same local
+    // files used by runtime execution. A write failure cannot roll back the
+    // subscription.
+    let autotrade_configured = match persist_subscription_autotrade(&sub_id, &autotrade_config) {
+        Ok(()) => true,
+        Err(err) => {
+            eprintln!("[autotrade] subscription created, but execution configuration could not be persisted: {err}");
+            false
+        }
     };
 
     // Persist only bounded classifier output. Failure is advisory: the
@@ -416,13 +406,7 @@ pub async fn handle_create_subscribe(
         // via the blocked funding-notice envelope.
         if super::content::is_cli_mode() {
             println!();
-            println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
-            println!();
-            println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
-            println!();
-            println!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{sub_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read watch-core.md first.)");
-            println!();
-            println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
+            println!("{}", super::content::scoped_watch_handoff(&sub_id));
         }
         return Ok(());
     }
@@ -432,7 +416,7 @@ pub async fn handle_create_subscribe(
     println!("  txHash: {tx_hash}");
     if autotrade_requested {
         println!(
-            "  Automatic signal execution: {}",
+            "  Signal execution policy: {}",
             if autotrade_configured { "configured" } else { "configuration pending" }
         );
     }
@@ -444,13 +428,7 @@ pub async fn handle_create_subscribe(
     }
     if super::content::is_cli_mode() {
         println!();
-        println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
-        println!();
-        println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
-        println!();
-        println!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{sub_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read watch-core.md first.)");
-        println!();
-        println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
+        println!("{}", super::content::scoped_watch_handoff(&sub_id));
     }
 
     Ok(())
@@ -841,30 +819,49 @@ mod tests {
     }
 
     #[test]
-    fn autotrade_config_reports_only_missing_fields() {
+    fn autotrade_config_accepts_partial_fields_and_defaults_auto_usdt() {
         let mut params = params_fixture(None);
-        params.autotrade_mode = Some("auto".to_string());
         params.autotrade_amount = Some("20".to_string());
-        let error = params.validate().unwrap_err().to_string();
-        assert!(error.contains("--autotrade-cap"));
-        assert!(error.contains("--autotrade-quote"));
-        assert!(!error.contains("--autotrade-amount,"));
+        let config = params.autotrade_config().unwrap();
+        assert_eq!(config.mode, consent::ConsentMode::Auto);
+        assert_eq!(config.amount.as_deref(), Some("20"));
+        assert_eq!(config.cap, None);
+        assert_eq!(config.quote, "usdt");
     }
 
     #[test]
-    fn autotrade_config_normalizes_and_rejects_amount_above_cap() {
+    fn autotrade_config_normalizes_and_does_not_enforce_cap() {
         let mut params = params_fixture(None);
         params.autotrade_mode = Some("auto".to_string());
         params.autotrade_amount = Some("20.00".to_string());
         params.autotrade_cap = Some("50.0".to_string());
         params.autotrade_quote = Some("USDT".to_string());
-        let config = params.autotrade_config().unwrap().unwrap();
-        assert_eq!(config.amount, "20");
-        assert_eq!(config.cap, "50");
+        let config = params.autotrade_config().unwrap();
+        assert_eq!(config.amount.as_deref(), Some("20"));
+        assert_eq!(config.cap.as_deref(), Some("50"));
         assert_eq!(config.quote, "usdt");
 
         params.autotrade_amount = Some("51".to_string());
-        assert!(params.validate().unwrap_err().to_string().contains("must not exceed"));
+        assert!(params.validate().is_ok());
+        assert_eq!(
+            params.autotrade_config().unwrap().amount.as_deref(),
+            Some("51")
+        );
+    }
+
+    #[test]
+    fn autotrade_config_preserves_explicit_manual_and_user_values() {
+        let mut params = params_fixture(None);
+        params.autotrade_mode = Some("manual".to_string());
+        params.autotrade_amount = Some("25.00".to_string());
+        params.autotrade_cap = Some("10".to_string());
+        params.autotrade_quote = Some("USDC".to_string());
+
+        let config = params.autotrade_config().unwrap();
+        assert_eq!(config.mode, consent::ConsentMode::Manual);
+        assert_eq!(config.amount.as_deref(), Some("25"));
+        assert_eq!(config.cap.as_deref(), Some("10"));
+        assert_eq!(config.quote, "usdc");
     }
 
     #[test]
@@ -883,8 +880,9 @@ mod tests {
         std::env::set_var("ONCHAINOS_HOME", &home);
 
         let config = SubscriptionAutoTradeConfig {
-            amount: "20".to_string(),
-            cap: "50".to_string(),
+            mode: consent::ConsentMode::Auto,
+            amount: Some("20".to_string()),
+            cap: Some("50".to_string()),
             quote: "usdt".to_string(),
         };
         persist_subscription_autotrade("job-subscribe-auto", &config).unwrap();
@@ -898,7 +896,7 @@ mod tests {
         assert_eq!(stored.quote_token.as_deref(), Some("usdt"));
         assert!(grants::check_grant("job-subscribe-auto", "dex", "buy", "50").is_ok());
         assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "50").is_ok());
-        assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "51").is_err());
+        assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "51").is_ok());
 
         std::env::remove_var("ONCHAINOS_HOME");
         std::fs::remove_dir_all(home).ok();

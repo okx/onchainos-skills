@@ -57,6 +57,8 @@ keyword values in order. Do not preprocess or enrich the input or output.
 
 **Service confirmation gate**:
 - Show Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
+- Render `serviceType` verbatim (for example, `A2A` or `A2MCP`); never translate or localize it.
+- For a non-subscription Service, render `feeAmount` with `feeTokenSymbol`. If `feeAmount` is zero (number or numeric string), render localized `Free` instead of `0 <symbol>`.
 - Ask the user to confirm using this service. Offer \"show 3 alternatives\" only when `hasMore == true` and `searchAfter` is a non-empty string; otherwise state that no more alternatives are available.
 - If the user chooses alternatives, call:
   ```bash
@@ -96,7 +98,7 @@ Using the selected service's `serviceDescription` + `serviceName` + the user's t
 **Identify required user input** from `serviceDescription` (strict / fail closed):
 Create a service parameter ONLY when the listing explicitly addresses the subscriber and says a concrete value is required, for example \"you must provide ...\", \"please input ...\", \"required parameter: ...\", or an explicit subscriber-fillable placeholder. A capability description, output schema, signal example, risk disclosure, execution precondition, or phrase such as \"check X before execution\" is NOT a request for subscriber input.
 
-For trading-signal subscriptions, NEVER invent service parameters for an account, wallet, balance/collateral, per-trade amount, authorization limit/cap, venue/tool choice, plugin installation, API credentials, signal fields, or runtime consent. Those belong to tool readiness and the first-signal runtime decision flow, not `serviceParams`.
+For trading-signal subscriptions, keep account, wallet, balance/collateral, per-trade amount, authorization limit/cap, venue/tool choice, plugin installation, API credentials, signal fields, and execution mode out of `serviceParams`. Parse user-authored execution settings into the separate `--autotrade-*` fields described below.
 
 If explicit subscriber-input language is absent or ambiguous → `serviceParams` MUST be empty. Do not create `<to be provided>` rows from inference alone.
 
@@ -121,7 +123,7 @@ fn attachments_and_stop() -> String {
         "\
 **After create-task/create-subscribe + task-attach (if any), check CLI output for a `[Watch]` block:**
 0. If balanceWarning exists, stop here; do not Watch.
-1. `[Watch]` block present → follow its instructions: read `skills/okx-ai/references/watch-core.md`, execute watch, then **end this turn**.
+1. `[Watch]` block present → follow its instructions: read `skills/okx-ai/references/watch-core.md` and enter its Watch generation. A returned notification, deliverable, or empty poll does **not** end the turn; dispatch and re-enter until `watch-core.md` says to stop or a decision requires the user's reply.
 2. No `[Watch]` block → **end this turn immediately**."
     } else {
         "**End this turn immediately.** Do NOT mention or ask about monitoring/watching task progress."
@@ -171,38 +173,23 @@ Collect/infer:
 3. **autoRenew**: ask the user explicitly (0=off, 1=on). Do NOT pre-fill a default — collect the answer before Step 5.
 
 4. **Signal execution setup and capability preflight**:
-   - Never ask the old standalone binary execution opt-in question and never infer financial authorization from `serviceDescription`, ASP text, candidate tools, or the backend delivery marker.
-   - If the user's own request explicitly asks for automatic signal execution, collect/infer exactly four bounded fields from user-authored context: mode=`auto`, fixed per-signal quote amount, per-signal cap, and quote currency (`USDT` or `USDC`). If any field is missing, ask only for those missing fields in one localized natural-language question, then **END THIS TURN**. Do not use A/B/C or numbered choices. Amount must be positive and no greater than cap.
-   - If the user did not explicitly request automatic execution, collect no execution settings and continue normally. The first actionable delivery may ask for the missing configuration then; a service description alone never opts the user in.
-   - Use only the retained schema-v2 `autoTradePreflight` object for the separate optional preparation gate below. Never block the subscription on a missing/unconfigured tool, never infer a venue from prose, and never run installation or configuration unless the user explicitly chooses that action.
+   - Automatic signal execution is the MVP default. Set mode=`auto` unless the user explicitly says not to execute automatically; an explicit opt-out sets mode=`manual`.
+   - Inspect `serviceDescription` only to identify which execution settings the ASP asks the subscriber to provide and any values presented as suggestions. ASP text is not the user's answer and must never be persisted by itself.
+   - Parse mode, fixed per-signal quote amount, per-signal cap, and quote currency (`USDT` or `USDC`) only from user-authored context. When the ASP explicitly asks for a field and the user has not answered it, ask for only the missing fields in one localized natural-language question, then **END THIS TURN**. Never use A/B/C, numbered choices, or a decision card.
+   - Amount and cap are optional unless the ASP explicitly asks the user to configure them. Each supplied value must be a positive decimal. Do not compare amount with cap. Quote defaults to `USDT`.
+   - Retain `autoTradePreflight` only as advisory runtime information. Never block subscription creation on a missing/unconfigured tool and never run installation or configuration during this flow.
 
-   The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the preparation card and continue creating the subscription. Do not retry `task-service-select` solely to obtain preflight data. There is no standalone binary execution field to collect and no `--copy-trade` argument to pass.
+   The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the advisory notice and continue creating the subscription. Do not retry `task-service-select` solely to obtain preflight data. There is no standalone binary execution field to collect and no `--copy-trade` argument to pass.
    **Deterministic Trade Kit probe decision:** inspect `autoTradePreflight.tradeKitProbe.mode` after the service has been selected:
    - `probe_before_confirmation` → build one command from every token in `tradeKitProbe.assetClasses`, preserving the array order:
      ```text
      onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]
      ```
-     Run it now. Do not persist its result. Continue without a card only when `ok:true` and `data.readiness == \"ready\"`.
+     Run it now. Do not persist its result. A non-ready result is an advisory notice only.
    - `deferred_until_venue_selection` → Do not run a Trade Kit probe for `deferred_until_venue_selection`; the user has not selected that venue. Keep Trade Kit as `verification_unknown/authorization_not_checked` and continue the non-blocking subscription flow.
    - `not_applicable` → do not run the command.
 
-   **Pre-confirmation gate (mandatory for a non-ready probe result or actionable local reminder):** render one separate, localized **Tool preparation (optional)** choice card:
-   - `needs_configuration` → offer exactly OAuth — run `okx auth login --manual`; API key — run `okx config init`; and Later — continue subscribing.
-   - `verification_unknown` → exactly `Retry` and `Later — continue subscribing`. Never present an unknown/network/timeout result as logged out.
-   - `missing` or `incompatible` → one fixed install/upgrade action from `data.remediation`, plus `Later — continue subscribing`.
-   - Local plugin `install_plugin` reminders remain one de-duplicated action per exact `pluginId`, plus `Later — continue subscribing`.
-
-   The card footer must say that Later does not affect subscription creation, delivery visibility/storage, or the user's ability to ask their agent later to execute the delivered signal manually with any available tool. Do not invent actions from `serviceDescription`, DApp names, `choose_at_first_signal`, or `readiness_advisory`.
-
-   After rendering that card, **END THIS TURN**. Do NOT render Step 5, do NOT call `create-subscribe`, and do NOT treat an install action as subscription confirmation in the same turn. This is preparation only: do NOT call it venue selection, do NOT set a default, and do NOT persist a venue preference or consent.
-
-   On the user's next reply:
-   - **Later / skip** → proceed to Step 5 using the retained selected-service fields. Later never upgrades readiness to ready.
-   - **OAuth / API key / Retry / Trade Kit install or upgrade** → run only that explicit choice, then re-run the readiness command with the same retained `tradeKitProbe.assetClasses` and repeat this gate. Never continue from stale readiness.
-   - **One named plugin preparation action** → run only that user-approved plugin install. Then re-run the original `task-service-select` command with the same search intent, provider and user agent, locate the **same `serviceId`**, replace the retained `autoTradePreflight` with the fresh object, and repeat this gate. If the same service is no longer returned, stop and ask the user to choose a service again. Never silently switch to the new top service.
-   - **Ambiguous / multiple actions** → re-render the same bounded card; do not install anything.
-
-   If there is no actionable reminder and no required Trade Kit probe, skip this gate and proceed to Step 5. Missing/invalid preflight also skips the gate and remains non-blocking. None of these states may block creation of the subscription.
+   When readiness is not ready or a preparation reminder exists, show one concise natural-language advisory without choices and continue to Step 5 in the same turn. Do not install, configure, retry, select a venue, persist readiness, or end the turn for this advisory. Delivery later saves and reports an execution failure when its selected tool is unavailable; it never opens a choice card.
 
 **Max budget is NOT collected** for subscription tasks — the price is fixed at `subscriptionInfo.feeAmount`.
 
@@ -222,9 +209,9 @@ Step 5 -- Subscription confirmation form
 | Service price | <subscriptionInfo.feeAmount> <feeTokenSymbol> / month |
 | Trial | Yes (<subscriptionInfo.freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial`) |
 | Auto-renew | On / Off |
-| Signal execution | Automatic (only when explicitly requested; otherwise omit this row) |
-| Per-signal amount | <amount> <USDT/USDC> (only with Signal execution) |
-| Per-signal cap | <cap> <USDT/USDC> (only with Signal execution) |
+| Signal execution | Automatic (default) / Manual (only after an explicit opt-out) |
+| Per-signal amount | <amount> <USDT/USDC> / Not set |
+| Per-signal cap | <cap> <USDT/USDC> / Not set (stored only; not enforced) |
 
 > Confirm? Once confirmed, the subscription will be created on-chain.
 
@@ -239,10 +226,7 @@ Step 5.5 -- Route by user decision (separate turn)
 - Edit serviceParams → update → Step 5
 - Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → Step 4 → Step 5
 - Edit autoRenew → update → Step 5
-- Edit automatic signal execution / amount / cap / quote currency → update; ask only for any missing bounded field → Step 5
-- Prepare Trade Kit / Retry now → run only the explicit action, re-run the batch readiness command with the retained `tradeKitProbe.assetClasses`, and repeat the Step 4 gate; do not re-run `task-service-select` or save a venue preference
-- Prepare a plugin now → run only the explicit plugin installation, re-run the original `task-service-select`, re-select the same `serviceId`, and repeat the Step 4 gate; do not save a venue preference
-- Later / skip tool preparation → Step 5 without blocking subscription
+- Edit automatic signal execution / amount / cap / quote currency → update the user-authored value; cap remains informational → Step 5
 
 ================================================
 Step 6 -- Publish subscription (create-subscribe)
@@ -259,13 +243,14 @@ onchainos agent create-subscribe \\
   --description \"<description>\" \\
   --service-description \"<serviceDescription>\" \\
   --provider-agent-id <agentId> \\
-  [--autotrade-mode auto \\
-   --autotrade-amount \"<decimal-number>\" \\
-   --autotrade-cap \"<decimal-number>\" \\
-   --autotrade-quote <usdt|usdc>]
+  --autotrade-mode <auto|manual> \\
+  [--autotrade-amount \"<decimal-number>\"] \\
+  [--autotrade-cap \"<decimal-number>\"] \\
+  [--autotrade-quote <usdt|usdc>]
 ```
-- Pass the four `--autotrade-*` flags together only when the final subscription confirmation contained the user's explicit automatic-execution setup. Never synthesize them from service or deliverable content.
+- Always pass the confirmed mode; it defaults to `auto`. Pass amount, cap, and quote only when present in user-authored context. ASP suggestions alone are never values.
 - `--autotrade-amount` and `--autotrade-cap` are human-readable quote amounts selected by `--autotrade-quote`: pass a decimal number only (for example `10` or `20.5`), never minimal units and never a `USDT`/`USDC` suffix.
+- Do not compare `--autotrade-amount` with `--autotrade-cap`. A stored cap is informational in this MVP.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
 
 {attachments_stop}",
@@ -309,7 +294,7 @@ Step 5 -- Regular confirmation form
 | Description | <full content> (if <=200 chars in table; if >200 write `see below` and render below) |
 | ASP | Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent |
 | Service params | <serviceParams readable display, or \"None\"> |
-| Service price | <feeAmount> <feeTokenSymbol> (only show this row if feeAmount has a value) |
+| Service price | <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this row if feeAmount has a value) |
 | Budget | <number> |
 | Max budget | <number> (negotiation price cap) |
 | Payment token | <USDT or USDG> |
@@ -527,14 +512,13 @@ mod tests {
             !out.contains("| Auto copy-trade |"),
             "confirmation form must not contain an Auto copy-trade row: {out}"
         );
-        // Explicit user-authored automatic execution is shown as bounded fields;
-        // these rows are omitted entirely when the user did not opt in.
-        assert!(out.contains("| Signal execution | Automatic"));
+        // Automatic execution is the default; optional user values stay visible.
+        assert!(out.contains("| Signal execution | Automatic (default)"));
         assert!(out.contains("| Per-signal amount |"));
         assert!(out.contains("| Per-signal cap |"));
-        assert!(out.contains("otherwise omit this row"));
-        assert!(out.contains("Do not use A/B/C or numbered choices"));
-        // Preflight readiness belongs only to the separate optional preparation card.
+        assert!(out.contains("Do not compare amount with cap"));
+        assert!(out.contains("Never use A/B/C, numbered choices, or a decision card"));
+        // Preflight readiness stays advisory and never becomes confirmation fields.
         assert!(
             !out.contains("| Signal types |"),
             "confirmation form must not add a Signal types row: {out}"
@@ -557,10 +541,7 @@ mod tests {
             out.contains("advisory only and does not control delivery routing"),
             "playbook must keep preflight advisory: {out}"
         );
-        assert!(
-            out.contains("omit the preparation card and continue"),
-            "missing preflight must not block creation: {out}"
-        );
+        assert!(out.contains("continue creating the subscription"));
         assert!(
             !out.contains("  --copy-trade"),
             "removed copy-trade argument must not appear: {out}"
@@ -569,50 +550,21 @@ mod tests {
             !out.contains("re-run `task-service-select` exactly once"),
             "preflight absence must not force an extra match: {out}"
         );
-        assert!(
-            out.contains("Do NOT parse `serviceDescription` yourself"),
-            "playbook must forbid agent-side description parsing: {out}"
-        );
-        assert!(
-            out.contains("Tool preparation (optional)"),
-            "unready tools must expose an optional preparation action: {out}"
-        );
-        assert!(
-            out.contains("do NOT persist a venue preference or consent"),
-            "preparation must not become venue selection: {out}"
-        );
+        assert!(out.contains("ASP text is not the user's answer"));
+        assert!(out.contains("show one concise natural-language advisory without choices"));
         assert!(
             common.contains("structured `autoTradePreflight` object"),
             "common match step must retain structured preflight data: {common}"
         );
-        assert!(
-            out.contains("**END THIS TURN**"),
-            "tool preparation must be a separate user turn: {out}"
-        );
-        assert!(
-            out.contains("locate the **same `serviceId`**"),
-            "readiness refresh must not silently switch services: {out}"
-        );
-        assert!(
-            out.contains("Never continue from stale readiness"),
-            "installation result must be refreshed deterministically: {out}"
-        );
-        assert!(
-            out.contains("execute the delivered signal manually with any available tool"),
-            "skipping preparation must preserve the independent manual path: {out}"
-        );
+        assert!(out.contains("continue to Step 5 in the same turn"));
         assert!(out.contains("tradeKitProbe.mode"));
         assert!(out.contains("probe_before_confirmation"));
         assert!(out.contains("deferred_until_venue_selection"));
         assert!(out.contains(
             "onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]"
         ));
-        assert!(out.contains("OAuth — run `okx auth login --manual`"));
-        assert!(out.contains("API key — run `okx config init`"));
-        assert!(out.contains("Retry"));
-        assert!(out.contains("Later — continue subscribing"));
         assert!(out.contains("Do not run a Trade Kit probe for `deferred_until_venue_selection`"));
-        assert!(out.contains("re-run the readiness command"));
+        assert!(out.contains("never opens a choice card"));
     }
 
     #[test]

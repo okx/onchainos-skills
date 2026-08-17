@@ -14,6 +14,10 @@
 pub(crate) mod amount;
 pub(crate) mod card;
 pub(crate) mod consent;
+pub(crate) mod consent_reply;
+pub(crate) mod continuation;
+pub(crate) mod delivery_queue;
+pub(crate) mod executor;
 pub(crate) mod grants;
 pub(crate) mod notify;
 pub(crate) mod profile;
@@ -21,6 +25,55 @@ pub(crate) mod schema;
 pub(crate) mod subscription;
 pub(crate) mod tooling;
 pub(crate) mod trade_kit;
+
+pub const DEFAULT_AUTOTRADE_TTL_SEC: u64 = 31_536_000;
+
+pub const RETIRED_DELIVERY_DECISION_EVENTS: &[&str] = &[
+    "autotrade_consent",
+    "autotrade_consent_pre_delivery",
+    "autotrade_config_required",
+    "autotrade_manual_signal",
+    "autotrade_over_cap",
+    "autotrade_cap_adjust",
+    "autotrade_tool_select",
+    "autotrade_plugin_install",
+];
+
+pub fn is_retired_delivery_decision(source_event: Option<&str>) -> bool {
+    source_event.is_some_and(|event| RETIRED_DELIVERY_DECISION_EVENTS.contains(&event))
+}
+
+pub fn ensure_default_auto(job_id: &str, ttl_sec: u64) -> anyhow::Result<bool> {
+    if let Some(existing) = consent::load_consent(job_id)? {
+        match existing.mode {
+            consent::ConsentMode::Auto => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_secs())
+                    .unwrap_or(0);
+                grants::write_auto_grant(job_id, existing.expires_at.saturating_sub(now).max(1))?;
+            }
+            consent::ConsentMode::Manual | consent::ConsentMode::Decline => {
+                grants::clear_grant(job_id);
+            }
+        }
+        return Ok(false);
+    }
+    consent::write_consent_with_trade_amount(
+        job_id,
+        consent::ConsentMode::Auto,
+        None,
+        None,
+        Some(consent::DEFAULT_QUOTE),
+        ttl_sec,
+    )?;
+    if let Err(error) = grants::write_auto_grant(job_id, ttl_sec) {
+        consent::clear_consent(job_id);
+        grants::clear_grant(job_id);
+        return Err(error);
+    }
+    Ok(true)
+}
 
 // ── Stable audit action names ────────────────────────────────────────────
 //
@@ -52,8 +105,6 @@ pub enum DegradeReason {
     ReplaySkip,
     LatchWriteFail,
     LookupOff,
-    /// A parsed-text signal is waiting for an earlier user decision for this job.
-    DecisionPending,
     /// Parsed-text auto consent predates the fixed per-signal amount field.
     MissingTradeAmount,
     /// The selected execution tool is not installed locally.
@@ -92,7 +143,6 @@ impl DegradeReason {
             DegradeReason::ReplaySkip => "replay_skip",
             DegradeReason::LatchWriteFail => "latch_write_fail",
             DegradeReason::LookupOff => "lookup_off",
-            DegradeReason::DecisionPending => "decision_pending",
             DegradeReason::MissingTradeAmount => "missing_trade_amount",
             DegradeReason::ToolMissing => "tool_missing",
             DegradeReason::ToolNeedsConfiguration => "tool_needs_configuration",

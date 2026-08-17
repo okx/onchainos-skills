@@ -502,7 +502,17 @@ fn autotrade_pause_needs_only_job_id_and_keeps_existing_output() {
         serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id})
     );
 
-    for store in ["consent", "grants", "pending"] {
+    let consent_path = dir
+        .join("autotrade")
+        .join("consent")
+        .join(format!("{job_id}.json"));
+    let consent: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&consent_path).expect("pause must persist manual policy"),
+    )
+    .expect("parse paused policy");
+    assert_eq!(consent["mode"], "manual");
+
+    for store in ["grants", "pending"] {
         assert!(
             !dir.join("autotrade")
                 .join(store)
@@ -554,6 +564,107 @@ fn autotrade_non_pause_modes_still_require_agent_id() {
         .expect("run autotrade manual without agent id");
 
     assert_error_contains(&output, &["--agent-id is required unless --mode pause"]);
+}
+
+#[test]
+fn autotrade_auto_accepts_missing_cap_and_authorizes_any_positive_amount() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_unbounded_auto");
+    let mut set = onchainos();
+    scrubbed(&mut set, &dir);
+    let set_output = set
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job_unbounded_auto",
+            "--agent-id",
+            "8315",
+            "--mode",
+            "auto",
+        ])
+        .output()
+        .expect("persist default auto policy");
+    common::assert_ok_and_extract_data(&set_output);
+
+    let mut check = onchainos();
+    scrubbed(&mut check, &dir);
+    let check_output = check
+        .args([
+            "agent",
+            "autotrade-grant-check",
+            "--job-id",
+            "job_unbounded_auto",
+            "--venue",
+            "dex",
+            "--action",
+            "buy",
+            "--amount",
+            "999999",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("check unbounded auto grant");
+    assert!(check_output.status.success());
+    let result: serde_json::Value =
+        serde_json::from_slice(&check_output.stdout).expect("parse grant-check result");
+    assert_eq!(result, serde_json::json!({"ok": true}));
+}
+
+#[test]
+fn autotrade_consent_request_suppresses_first_time_card_for_existing_policy() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_consent_request_existing_policy");
+
+    for (job_id, mode, extra_args) in [
+        (
+            "job_auto",
+            "auto",
+            vec!["--cap", "10", "--trade-amount", "1"],
+        ),
+        ("job_manual", "manual", Vec::new()),
+    ] {
+        let mut set = onchainos();
+        scrubbed(&mut set, &dir);
+        let mut set_args = vec![
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            job_id,
+            "--agent-id",
+            "8315",
+            "--mode",
+            mode,
+        ];
+        set_args.extend(extra_args);
+        let set_output = set.args(set_args).output().expect("persist consent policy");
+        common::assert_ok_and_extract_data(&set_output);
+
+        let mut request = onchainos();
+        scrubbed(&mut request, &dir);
+        let output = request
+            .args([
+                "agent",
+                "autotrade-consent-request",
+                "--job-id",
+                job_id,
+                "--agent-id",
+                "8315",
+                "--delivery-id",
+                "msg:delivery-1",
+                "--signal-type",
+                "spot",
+            ])
+            .output()
+            .expect("request first-time consent with an existing policy");
+        let data = common::assert_ok_and_extract_data(&output);
+
+        assert_eq!(data["decision"], false);
+        assert_eq!(data["decisionPushed"], false);
+        assert_eq!(data["reason"], "consent_already_configured");
+        assert_eq!(data["jobId"], job_id);
+        assert_eq!(data["deliveryId"], "msg:delivery-1");
+        assert_eq!(data["consentMode"], mode);
+    }
 }
 
 #[test]

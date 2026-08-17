@@ -26,8 +26,8 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
 
 1. Read `savedPath` and decide whether the complete deliverable is an actionable trading signal. The
    model may understand natural-language, reordered, or mixed Chinese/English fields. Do not guess a
-   missing target, direction, amount/position, or validity. If it is not actionable, notify the user that
-   the deliverable was saved and why no trade was attempted, then stop.
+   missing target, direction, amount/position, or validity. If it is not actionable, do not leave the
+   result only in Job Session text. Run the terminal reporter below with `--status skipped`, then stop.
 2. Classify the signal into exactly one route for this execution: `spot`, `perp`, `prediction`, `option`,
    or `defi`. A multi-asset subscription may use a different cached route for each class.
 3. Use `subscriptionProfile.serviceDescription`, `assetClasses`, and `explicitTools` only as routing hints;
@@ -39,32 +39,6 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
    - If no compatible route exists, select the narrowest installed skill/tool capable of the action. A
      named third-party protocol must route through `okx-dapp-discovery`; an unnamed native swap may use
      `okx-agentic-wallet`; generic DeFi may use `okx-defi`. Read the selected skill in full before acting.
-   - If and only if the resolved tool is Trade Kit, run this mandatory gate now, before writing the route
-     cache, requesting consent, checking a grant, or invoking any `okx` order command:
-
-     ```bash
-     onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]
-     ```
-
-     Pass one flag for the current route's canonical class. If this one retained execution covers more
-     than one Trade Kit class, pass every class as a repeated flag; the command performs one discovery
-     and at most one private authorization check for the batch. Run it on **every delivery**, including a
-     reused cached route and both manual and automatic modes; never reuse or persist a prior readiness
-     result. Continue only when `ok:true` and `data.readiness == "ready"`; every requested
-     `assetChecks[]` row must also be ready. Non-Trade-Kit routes never run this command.
-
-     If readiness is not `ready`, preserve and display the deliverable, mark its execution as blocked,
-     and stop before route persistence, consent, grant, or order execution:
-     - `needs_configuration`: offer exactly OAuth (`okx auth login --manual`), API key
-       (`okx config init`), and Later. Run a setup command only after that explicit choice, then re-probe.
-     - `verification_unknown`: offer Retry and Later only. Never describe a timeout, network failure,
-       malformed private response, or other unknown result as logged out.
-     - `missing` or `incompatible`: offer the fixed install/upgrade action returned in
-       `data.remediation`, plus Later; re-probe after an explicit repair action.
-
-     Restoring readiness MUST NOT automatically replay the blocked delivery. Only an explicit user
-     request may reprocess that old `deliveryId`, and that attempt must run this fresh readiness gate
-     again. Future deliveries continue normally and each receives its own fresh probe.
 4. After resolving a valid route, cache identifiers only:
 
    ```bash
@@ -79,10 +53,81 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
 5. Apply the selected skill's setup and transaction safety rules. Plugin installation must remain visible;
    never silently install. Use the decision matrix below to decide whether this delivery may execute or
    which user decision is needed. The subscription itself and the route cache are not trading consent.
-   A Trade Kit grant or user consent never overrides a failed runtime-readiness result.
 6. Execute at most once for this `deliveryId`. Pass `jobId` to plugin/tool grant checks where supported.
-   Let the target tool re-validate all dynamic fields. Report its success or exact failure to the user; do
-   not auto-retry a money-moving call.
+   Let the target tool re-validate all dynamic fields. Every automatic execution MUST run through the
+   CLI-owned execution bridge below. The bridge persists and
+   reports success/failure/unknown state directly to the job UI; do not run a second `user-notify` after it.
+   Never auto-retry a money-moving call.
+
+Every admitted delivery must end in exactly one of these durable states: a visible pending decision,
+`autotrade-execute`, or the pre-execution terminal reporter. Inspection, route selection, plugin readiness,
+account readiness, and command-preparation failures use `failed_before_execution`:
+
+```bash
+onchainos agent autotrade-delivery-report \
+  --job-id <jobId> --delivery-id <deliveryId> \
+  --status <skipped|failed_before_execution> --reason '<concise user-safe reason>'
+```
+
+The reporter persists the result, reserves the delivery against later execution, and sends one idempotent
+job-scoped UI notification. Never include credentials, raw command output, or the full deliverable in
+`--reason`.
+
+### Deterministic execution-result bridge
+
+After the normal Skill/plugin has produced its final money-moving command, pass that command's argv (not a
+shell string and not the executable name) to:
+
+```bash
+onchainos agent autotrade-execute \
+  --job-id <jobId> --delivery-id <deliveryId> \
+  --venue <dex|defi|trade_kit|polymarket|hyperliquid> \
+  --action <buy|sell> --amount <persistedPolicyAmount> \
+  [--execution-mode <auto|manual|one_time>] \
+  --command-json '<JSON string array of the target command argv>'
+```
+
+Examples: a DEX command uses argv beginning with `["swap","execute",...]`; DeFi uses
+`["defi","deposit",...]`, `["defi","redeem",...]`, or `["defi","collect",...]`; Trade Kit passes
+the arguments that normally follow `okx`; Polymarket passes the arguments following `polymarket-plugin`;
+Hyperliquid passes the arguments following `hyperliquid` (or `hyperliquid-plugin` for supported outcome
+trades), and the bridge selects the fixed executable from the operation. Do not include `--notify-job-id`
+in a wrapped DEX command: the bridge owns the
+single idempotent result notification.
+
+The bridge re-loads the trusted `jobId + deliveryId` context, verifies the persisted amount and policy,
+reserves the delivery before spawning the command, stores only a redacted outcome/receipt, and pushes an
+idempotent `--job-id`-scoped UI notice. A timeout is an unknown submission state and is never retried.
+The reservation records `reserved`, `prepared`, and `spawned` phases. Recovery may classify an interruption
+before `spawned` as failed-before-submit; an interruption at or after `spawned`, an unreadable legacy latch,
+or a started command with no conclusive receipt is always unknown-after-submit and is never auto-retried.
+Process exit code zero alone is not submission proof: `submitted` additionally requires a venue-specific
+order/transaction identifier. Generic `status` or `state` fields are not receipts, and nested failure fields
+override a nominally successful outer envelope.
+Notification delivery is separate from transaction retry: a failed UI push is persisted with bounded
+backoff and retried by later Agent startup/heartbeat, new-delivery handling, or explicit outcome flush;
+the money-moving command itself is never reconstructed or retried.
+The foreground terminal path performs only one short notification attempt; it persists failure immediately
+instead of blocking the interaction with repeated transport calls.
+A small terminal journal makes outcome persistence, pending-decision cleanup, notification indexing, and
+FIFO advancement recoverable across process interruption. Reconciliation may repair those records and wake
+the next Job Session, but it never invokes a trading command.
+If journal creation fails but the terminal outcome is durable, startup queue-head reconciliation uses that
+outcome as the fallback fact source and repairs pending/FIFO state without invoking a trading command.
+Auto mode additionally requires the auto-trade grant. Manual mode is accepted only when the persisted
+policy is manual and must be used after the user's one-time/manual confirmation; it never uses an auto grant.
+`one_time` is reserved for the over-cap A option and additionally requires a short-lived permit bound to the
+exact `jobId + deliveryId + amount`, created with `autotrade-once-authorize`; it never changes the future cap.
+The outer CLI envelope's `ok:true` means the outcome was handled and persisted; it does not mean the trade
+succeeded. Inspect `data.status`, and treat only `submitted` as submitted. `failed_before_submit` and
+`unknown_after_submit` are not successful trades.
+Once a delivery has a trusted context, gateway validation failures (authorization, amount binding, venue,
+or command shape) are also persisted and notified as failed-before-submit outcomes. A process exit code of
+zero is not sufficient for success when its JSON explicitly reports `ok:false`, a failure business code,
+an error code, a failure status, or a rejected order result.
+If a previous notification failed, run
+`onchainos agent autotrade-outcome-flush --job-id <jobId>`; this retries notifications only and never
+executes a transaction.
 
 ## Consent and amount decision
 
@@ -96,20 +141,25 @@ decision; later clarification remains natural-language and asks only for missing
   `autotrade-grant-check` for the selected venue/action/amount. Allow means execute without another card.
   For tools that support `--autotrade-job`, pass the current `jobId`. For Trade Kit, use
   `--venue trade_kit` and check the configured quote/notional amount. An allow result explicitly authorizes
-  automatic Trade Kit execution: invoke the selected `okx` trading command immediately, without another
-  consent card and without the unsupported `--autotrade-job` flag. Do not describe this as manual execution
+  automatic Trade Kit execution: wrap the selected `okx` trading command's argv with
+  `onchainos agent autotrade-execute`, without another consent card and without adding the unsupported
+  `--autotrade-job` flag to the inner command. Do not describe this as manual execution
   or claim that CEX contracts are unsupported. Trade Kit caps both `buy` and `sell`, because a derivative
   sell may increase short exposure. The selected Skill
   must still validate all market, account, instrument, and order parameters. `over_cap` uses one localized
-  two-way `--source-event autotrade_over_cap` decision (execute this delivery visibly / skip). Any other
+  two-way `--source-event autotrade_over_cap` decision (execute this delivery once / skip). On execute, create
+  the exact one-time permit and invoke the bridge with `--execution-mode one_time`; on skip, report terminal
+  status with `autotrade-delivery-report`. Any other
   denial is not authorization: explain the reason and request explicit re-authorization instead of
   bypassing it.
-- `status=active, mode=manual`: this mode may have been selected during the post-login, pre-delivery
-  authorization precheck, so its stored amount may legitimately be absent. Do not show the first-time
-  A/B/C card. Request one localized two-way `--source-event autotrade_manual_signal` decision (execute
-  this delivery / skip). Show the stored amount when available; if execution is chosen without an amount,
-  re-request the same decision with an amount. Execute through the normal visible/manual tool path without
-  `--autotrade-job`.
+- `status=active, mode=manual`: do not show the first-time A/B/C card. Call the same CLI-owned decision
+  gate shown below (`autotrade-consent-request`). It detects the persisted manual policy and renders the
+  existing localized two-way `--source-event autotrade_manual_signal` decision (execute this delivery /
+  skip), including the stored amount and corresponding deliverable summary. The gate serializes concurrent
+  decision-requiring deliveries in FIFO order. If execution is chosen without an amount, re-request the
+  same decision with an amount.
+  Build the normal manual argv without `--autotrade-job`, then execute it through the same bridge with
+  `--execution-mode manual`; the bridge reports the terminal result to the UI session.
 - `status=active, mode=decline` or `status=not_set`: first look only for exact user-authored automatic-
   execution settings retained from the final confirmed subscription setup. Never infer them from
   service/ASP/deliverable text.
@@ -125,10 +175,8 @@ decision; later clarification remains natural-language and asks only for missing
     Replace every placeholder from the current runtime context and the user's explicit settings before
     execution. Never omit the `agent` command group, `--job-id`, or `--agent-id`, and never invoke the
     nonexistent top-level form `onchainos autotrade-consent-set`.
-  - Otherwise, first send one concise localized signal summary with `onchainos agent user-notify`. Include
-    the target, direction, important trade parameters, and that no order has been submitted. Do not include
-    choices or ask for a reply in this notification.
-  - After that notification succeeds, push the separate mode decision exactly once:
+  - Otherwise, push the mode decision exactly once. The CLI deterministically adds a bounded canonical
+    deliverable summary to the decision card, followed by a blank line and the unchanged A/B/C copy:
 
     ```bash
     onchainos agent autotrade-consent-request --job-id <jobId> --agent-id <agentId> \
@@ -136,16 +184,50 @@ decision; later clarification remains natural-language and asks only for missing
     ```
 
     The command owns the localized decision copy: A = execute this delivery and enable bounded automatic
-    execution; B = execute this delivery once; C = skip this delivery. Do not place signal analysis in the
-    decision's `userContent`, and do not send a second decision request for the same retained delivery.
+    execution; B = execute this delivery once; C = skip this delivery. Do not send a separate signal-summary
+    notification or place raw deliverable prose in `userContent`, and do not send a second decision request
+    for the same retained delivery.
 
-Keep the current `jobId`, `deliveryId`, `savedPath`, selected route, and decision type in this persistent
-sub session. Do not execute until the matching reply returns and all required values are present.
+If another decision-requiring signal arrives while one delivery is awaiting a reply or terminal handling,
+the command returns `status=queued` and does not create a skipped outcome or execution latch. End that turn.
+After the active delivery reaches a durable success/failure/skip result, the CLI resumes exactly the next
+delivery in its original Job Session. The resumed delivery must re-check artifact validity, subscription
+Active state, consent, route readiness, and all dynamic trade fields. Auto-authorized deliveries that do
+not require a decision continue normally.
+
+Queued resume messages carry a protocol version and an exact non-zero attempt number, and are acknowledged
+durably before model work. New envelopes must match both persisted values. An unversioned envelope is
+accepted only for a persisted pre-version queue entry. A missing ACK retries only the Job Session wake-up
+message; it never retries a transaction. Duplicate, stale, or future-attempt resume messages are absorbed.
+`awaiting_decision` is a distinct durable state with no processing watchdog, so user think-time cannot be
+mistaken for a crashed worker. Replaying the same consent request while that card is open returns
+`status=decision_pending` and must not push another A/B/C card. A legacy `processing` entry with no timestamp
+is migrated from durable facts: an execution latch/outcome takes priority; otherwise a matching pending
+pointer becomes `awaiting_decision`, and an unowned entry becomes `resume_pending`.
+
+The CLI binds the decision to the current `jobId`, `deliveryId`, and `savedPath` before pushing it. A
+matching reply's `next-action` output includes a `[Persisted delivery context]` block, so continuation does
+not depend on the original model session remaining alive. Use that exact context, re-read `savedPath`, and
+re-validate the signal before execution. If the block says the context is unavailable, fail closed, notify
+the user, and do not submit an order. Do not execute until the matching reply returns and all required
+values are present.
+The decision relay is routed back to the trusted provider Job Session recorded with that delivery; the
+`backup:<jobId>` session is compatibility fallback only when no trusted context exists.
 `onchainos agent autotrade-consent-set` never parses, queues, or replays a signal.
 
 ### Reply continuation after the A/B/C mode decision
 
 The decision uses `--source-event autotrade_consent`:
+
+Current clients handle the user's free-form reply in the foreground decision resolver. The foreground
+model extracts only a candidate JSON object; the CLI strictly validates it. Incomplete values are saved
+synchronously under the local `autotrade/pending-config` store and trigger the same existing localized
+missing-field prompt. A complete unambiguous policy is written synchronously to consent + grants before
+the resolver returns, while the pending delivery context remains available for the subscription session.
+Ambiguous candidates receive one canonical confirmation before any authorization is written. The
+resolver then relays a normalized A/B/C reply so the subscription session can re-read and re-validate the
+saved delivery. Never parse arbitrary user language inside the CLI, infer a cap from a lone amount, or
+report a successfully persisted policy as “still processing.”
 
 - A with complete fixed amount, cap, and quote: persist `mode=auto` with the fully-qualified command above
   and continue the retained delivery.
@@ -155,7 +237,7 @@ The decision uses `--source-event autotrade_consent`:
   pending configuration.
 - B with an amount: persist `mode=manual --trade-amount <amount>` with
   `onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <agentId>`, then execute this delivery
-  through the visible/manual tool path.
+  through `autotrade-execute --execution-mode manual`.
 - B without an amount: use `autotrade_config_required` to ask only for this delivery's amount. Preserve the
   selected manual mode; never ask for an automatic cap and never show A/B/C again.
 - C or a clear natural-language skip: execute nothing, write no new consent, and retain the saved artifact.

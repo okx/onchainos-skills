@@ -43,9 +43,9 @@ User-session needs to forward free-form user instructions targeting a specific t
 
 ## Multi-task disambiguation
 
-When the user has multiple active tasks, every **task-scoped** routing decision **MUST** anchor to a specific `jobId`. A fresh targetless generic task-monitor or backlog-drain action is current-provider global; defer its scope selection to `watch-core.md` instead of forcing a task pick. A recognized subscription signal-receipt action is not generic global Watch: route it through §Subscriptions and resolve exactly one ACTIVE buyer subscription first.
+When the user has multiple active tasks, every routing decision **must** anchor to a specific `jobId`:
 
-- **Always confirm `jobId` before a task-scoped action**. If ambiguous → ask which task or render an `active-tasks` numbered list. Never assume the most-recent task is the one they mean.
+- **Always confirm `jobId` before acting**. If ambiguous → ask which task or render an `active-tasks` numbered list. Never assume the most-recent task is the one they mean.
 - **Track each task's state independently**. Don't apply task A's context to task B.
 - **Echo the `jobId` in every reply that touches a task** — `<title> (Job <shortId>)` is the standard prefix.
 
@@ -110,8 +110,7 @@ Action:
 
 | Trigger | Action |
 |---|---|
-| **Continuous monitor** — an explicit request to watch/monitor one job's ongoing progress | Route to **§Task Watch** (`watch-core.md`); do not run the snapshot command below. |
-| **One-time status snapshot** — ask for the task's current state once, without ongoing updates: `what's the status of {jobId}` / `query task {jobId}` | `onchainos agent status <jobId> --agent-id <myAgentId>` (pass the user's own `agentId` from envelope context). User session answers directly. |
+| **Chain-state snapshot** — `what's the status of {jobId}` / `query task {jobId}` | `onchainos agent status <jobId> --agent-id <myAgentId>` (pass the user's own `agentId` from envelope context). User session answers directly. |
 | **Negotiation / chat-context detail** — `what did the seller say last time` / `what price did we agree on` | 6-step forward to sub (sub has chat history). |
 | `view deliverables` | `task-deliverable-list [--job-id <jobId>] --role <user|asp>` |
 | `upload evidence` / `supplement evidence` | **Friendly-reject** — evidence auto-submitted by CLI on `job_disputed`. |
@@ -138,17 +137,11 @@ Triggers (only when there's no active `[USER_DECISION_REQUEST]` block the user m
 
 ## Task watch / history / outstanding decisions
 
-Route an authorized continuous task-progress monitor, unread/missed-event drain, or un-replied decision request to **§Task Watch** (`watch-core.md`). A request for the current status/progress once, with no future-update request, uses the snapshot route above and MUST NOT enter Watch.
-
-Before routing subscription-related wording, distinguish lifecycle/progress Watch from subscription business-signal receipt. Route an action-authorized request to receive, start, verify, resume, or restore an existing subscription or its signals through §Subscriptions; with an ACTIVE buyer subscription in current focus, an affirmative bare resume/restore request remains receipt intent even when it omits “signals” or “watch”. Otherwise clarify once. ACTIVE and device-receipt gates apply only to receipt; `watch-core.md` owns the separate first-scoped-entry execution-consent precheck.
-
-Resolve explicit receipt and progress intents independently and complete finite receipt preparation before Watch. Receipt failure or ambiguity does not block an independently valid progress Watch unless the user made it conditional. A receipt action already includes scoped Watch: enter once for a shared scope; if the actions require different scopes, ask which one to retain.
-
-`watch-core.md` is the SSOT for Watch authorization, target cardinality, continuation, scope selection, and fallback. Load it and follow it; do not inline `okx-a2a user watch` or `okx-a2a user outdated-list` here.
+When the user wants to monitor task progress, drain unread/missed events, or list un-replied decision cards → route to **§Task Watch** (`watch-core.md`). Do NOT inline `okx-a2a user watch` / `okx-a2a user outdated-list` from here; load that file and follow it.
 
 Triggers:
 - **Live monitor**: `task watch` / `user watch` / `monitor task progress` / `watch tasks` / `keep me posted on tasks`
-- **Subscription signal receipt — route through §Subscriptions first**: `receive signals` / `start receiving signals` / `are you receiving signals` / `resume watching subscribed services` / `continue receiving signals` / `resume subscription` / `restore subscription`, plus semantically equivalent wording in any language and the prompted `listen to <subscription title>` form when the title resolves from the just-created or just-rendered buyer-subscription context. With an ACTIVE buyer subscription in current focus, an affirmative bare request to resume or restore that subscription means restore its receipt + scoped Watch even when it omits “signals” or “watch”; it is not a backlog-first generic Watch.
+- **Subscription signal receipt**: `receive signals` / `start receiving signals` / `are you receiving signals` / `resume watching subscribed services` / `continue receiving signals` / `resume subscription` / `restore subscription`, plus semantically equivalent wording in any language and the prompted `listen to <subscription title>` form when the title resolves from the just-created or just-rendered buyer-subscription context. With an ACTIVE buyer subscription in current focus, a bare request to resume or restore that subscription means restore its receipt + scoped watch even when it omits “signals” or “watch”; it is not a backlog-first generic watch.
 - **History / backlog drain**: `history` / `past messages` / `unread messages` / `show past messages` / `catch me up on tasks`
 - **Outstanding (un-replied) decisions**: `outstanding decisions` / `unhandled decisions` / `unanswered decisions` / `what am I missing`
 
@@ -169,7 +162,7 @@ Triggers:
 | `start receiving Y on device X` / `also send Y to devices X and Z` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — resolve device names→ids via `device-list` (never fabricate an unresolvable name); `deviceList:null` already includes every logged-in device (no write), otherwise UNION with the fresh-read list → overwrite → re-read → confirm the complete receiving set. |
 | `stop pushing Y to device X` / `stop this device from receiving subscription Y` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — fresh-read; for `null`, fetch the complete `device-list` and materialize all-minus-target before overwrite; for an explicit array, subtract normally; read back remaining. |
 | `replay missed deliverables` / `discard offline deliverables` / `change how offline deliverables are handled` | [`task-user-playbook.md` §Subscription management → Change Offline-Deliverables Handling](task-user-playbook.md) — fresh-read `subscribe-detail` current `offlineReceiveFlag` → if already the target, say no change needed (do NOT re-write) → else `subscribe-offline-update --job-id <id> --flag <0/1>` → re-read to confirm. |
-| `receive signals` / `start receiving signals` / `are you receiving signals` / `resume watching subscribed services` / `continue receiving signals` / `resume subscription` / `restore subscription`, plus semantically equivalent wording in any language and the prompted `listen to <subscription title>` form from a just-created/rendered buyer-subscription context | [`task-user-playbook.md` §Signal-receipt watch entry](task-user-playbook.md) — when an ACTIVE buyer subscription is in current focus, treat an affirmative bare restore/resume-subscription request as receipt + Watch; resolve one subscription, ensure this device can receive, run the scoped-entry authorization precheck before reading backlog, then enter sticky scoped Watch. Multiple ACTIVE subscriptions require a choice; none stops without global fallback. |
-| Ambiguous `watch messages` / `monitor the subscription` without a recognized signal-receipt phrase or lifecycle-progress object | Ask which object they mean; do not enable device receipt or start Task Watch before clarification. |
+| `receive signals` / `start receiving signals` / `are you receiving signals` / `resume watching subscribed services` / `continue receiving signals` / `resume subscription` / `restore subscription`, plus semantically equivalent wording in any language and the prompted `listen to <subscription title>` form from a just-created/rendered buyer-subscription context | [`task-user-playbook.md` §Signal-receipt watch entry](task-user-playbook.md) — when an ACTIVE buyer subscription is in current focus, treat even a bare restore/resume-subscription request as receipt + watch; resolve one subscription, ensure this device can receive, run authorization precheck before reading backlog, then enter sticky scoped watch. Multiple ACTIVE subscriptions require a choice; none stops without global fallback. |
+| `listen for task messages` / `watch task` with no specific task | [`task-user-playbook.md` §Listen entry](task-user-playbook.md) — confirm exactly one task ("Only one task can be watched at a time") → turn on this-device receipt → enter watch flow through the existing-subscription scoped-watch authorization gate. |
 
 ⚠️ Disambig — `my subscriptions` vs `my tasks`: subscriptions → `my-subscriptions`; tasks → `active-tasks` / `tasks` (§Task list). Do NOT mix. **Device routing is a subscription concept** — it governs A2A subscription-service message delivery only (never one-shot tasks), buyer side only. Do NOT route these to `task-asp.md` or any ASP/provider rendering.
