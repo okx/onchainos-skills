@@ -40,8 +40,6 @@
 
 ## Subscription
 
-### Subscription branching (integrated into create_task playbook)
-
 ### Subscription-specific field rules
 
 | Field | Source | Notes |
@@ -52,8 +50,6 @@
 | Automatic signal execution | Defaults to `auto`. Inspect the ASP description only to learn which settings to ask about; persist mode/amount/cap/quote only from the user's reply. An explicit opt-out becomes `manual`. Amount and cap are optional positive decimals, quote defaults to `USDT`, and cap is stored but not enforced. Ask missing ASP-required fields in one natural-language question without choices. | **local execution configuration** |
 | Signal preflight | Retain schema-v2 `autoTradePreflight` as advisory information. A non-ready tool produces a concise notice and never a choice card, installation/configuration action, or subscription block. | **advisory; not a subscription input** |
 | `serviceTokenAmount` | from `task-service-select` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
-
-The `create-subscribe` CLI command handles the full flow internally: providerConfirmStatus → EIP-712 terms signing → create API → sign uopData → broadcast(bizType=101). It always persists a local execution policy after the returned jobId exists: `auto` by default, or the user's explicit `manual` choice, with any user-authored amount/cap/quote values. Wait for `sub_created` event to confirm success.
 
 Read `autoTradeConfigured` from the JSON success envelope. When it is `true`, no additional execution-
 consent question is needed. When it is `false`, the subscription itself still succeeded but local execution

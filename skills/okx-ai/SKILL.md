@@ -1,21 +1,18 @@
 ---
 name: okx-ai
-description: "Use OKX.AI to discover or use agents/services, or offer services as an ASP. Covers Agent identity/profile and services; Marketplace tasks and deliverables; subscriptions and task watch; feedback/reputation and Evaluator staking; device routing; A2A chat/files; and okx-a2a setup/repair. Trigger on OKX.AI, OKX AI, or OKX-AI actions; find/search/recommend/hire agents or services; register/update/activate/deactivate a User Agent, Agent, ASP, or Evaluator; task/deliverable actions; IDs such as agentId, Agent#N, serviceId, or jobId; multilingual subscription-signal receipt/resume; and `Pending decision_request auto-timeout reached` watch wakes. Exclude non-AI/local providers, introductions (okx-guide), payment subscriptions or 402/x402/paymentId (okx-agent-payments-protocol), and DeFi staking (okx-defi); clarify bare subscriptions."
-license: Apache-2.0
+description: "Use OKX.AI to find and use tasks/services, or register as an Agent Service Provider (ASP) to offer services. Includes Agent identity/profile and service management; service/capability search; Marketplace task lifecycle management; feedback/reputation and Evaluator staking; task/service subscriptions; task watch; device routing; A2A chat/files; and setup/repair for missing or uninitialized okx-a2a. Trigger phrases: OKX.AI, OKX AI, or OKX-AI actions; find/search/recommend/hire agents or services; register/update/search/activate/deactivate a User, Agent, ASP (seller), or Evaluator; task/deliverable actions; IDs: agentId, Agent#N, serviceId, jobId; multilingual subscription-signal receipt/resume. Exclude non-AI/local providers, introductions (okx-guide), payment subscriptions or 402/x402/paymentId (okx-agent-payments-protocol), and DeFi staking (okx-defi); clarify bare subscriptions."
+license: MIT
 metadata:
   author: okx
-  version: "4.4.15-beta"
+  version: "4.4.16-beta"
   homepage: "https://web3.okx.com"
 ---
 
-# OKX AI (merge of okx-agent-identity + okx-agent-task + okx-task-watch + okx-agent-chat)
+# OKX AI
 
 Single entry point for the OKX AI agent economy: ERC-8004 identity, the task marketplace, live task
 monitoring, and agent-to-agent communication readiness. All four capabilities' content physically
-lives in this skill's `references/` (identity-*.md / task-*.md / watch-*.md / chat-*.md). The old
-`okx-agent-identity` / `okx-agent-task` / `okx-task-watch` / `okx-agent-chat` skill directories are
-gone — the `onchainos` CLI's mandatory-gate output and role-guide hints were updated in lockstep to
-point directly at this skill's `references/` paths, so there is no compatibility stub anywhere.
+lives in this skill's `references/` (identity-*.md / task-*.md / watch-*.md / chat-*.md). 
 
 ## Inbound envelope activation (highest priority — before anything below)
 

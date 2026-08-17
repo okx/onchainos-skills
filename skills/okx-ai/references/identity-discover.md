@@ -31,24 +31,34 @@ repeat initial-search filters.
 
 ### Rendering (blocking)
 
-Group `services[]` by `asp.aspAgentId` and render one section per Agent in returned order. Every
-section MUST use the following heading-plus-Markdown-table structure, matching the visual layout of
-the service-match result example. Do not replace a table with bullets, cards, or prose, and do not
-combine services from different Agents into one table.
+Group `services[]` by `asp.aspAgentId`, preserving the returned Agent and Service order. Render a
+full Markdown table for the **first returned Agent only**. After that table, render every remaining
+Agent as one compact bullet under an "Other results" heading. The first Agent is determined solely
+by returned order — never score, recommend, filter, or reorder Agents model-side.
 
 ```markdown
 ### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>
 
 | # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description |
 |---|---|---|---|---|---|---|---|
-| 1 | <name> | <localized type> | <fee> | <subscription> | <free trial> | <endpoint> | <description> |
+| 1 | <name> | <A2MCP or A2A> | <fee> | <subscription> | <free trial> | <endpoint> | <description> |
+
+### Other results
+
+- **<asp.aspName> (Agent ID: <asp.aspAgentId>):** Rating <asp.rating>, Sold Count <asp.soldCount>; <service 1 name> — <service 1 description>, <service 1 price>[, Free trial <service 1 freeTrial>]; <service 2 name> — <service 2 description>, <service 2 price>[, Free trial <service 2 freeTrial>]
 ```
 
-Keep the existing §service-list 8-column contents and localized presentation rules unchanged.
-Populate them from each Service's `serviceName`, `serviceType`, `feeAmount`, `feeTokenSymbol`,
-`subscription[]`, `freeTrial`, `endpoint`, and `serviceDescription`; number rows from 1 within each
-Agent section. Apply the §service-list all-`—` column omission rule independently to each Agent's
-table. Render every returned Service in order.
+- **First Agent table:** keep the existing §service-list 8-column contents and presentation rules.
+  Populate them from each Service's `serviceName`, `serviceType`, `feeAmount`, `feeTokenSymbol`,
+  `subscription[]`, `freeTrial`, `endpoint`, and `serviceDescription`; number rows from 1. Apply the
+  §service-list all-`—` column omission rule to this table.
+- **Other results:** emit one bullet per remaining Agent, in returned order. Within each bullet,
+  append every returned Service in order as `name — description, price`, separated by semicolons.
+  `price` is the populated Fee or Subscription value rendered per §service-list; append the localized
+  Free-trial label and value only when present. Do not show Type, Endpoint, or `—` placeholders in
+  these compact bullets.
+- Never display a Service's raw `serviceId` or `id` in either the first table or Other-results bullets.
+  The table's `#` column is only a display row number starting from 1.
 
 Render the CLI-normalized `rating` directly.
 

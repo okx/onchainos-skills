@@ -56,6 +56,14 @@ pub enum AgentCommand {
     #[command(name = "service-list")]
     ServiceList(identity::ServiceListArgs),
 
+    /// Search marketplace Services for task matching
+    #[command(
+        name = "service-match",
+        long_about = "Search marketplace Services by capability, ASP, Service name, or price range.\n\nInitial requests may omit all search filters. Continuation requests use --search-after and cannot repeat initial-search filters. --agentic-id is sent as the agenticId request header and may be used on both initial and continuation requests. Results include searchAfter, hasMore, unmatchReason, Services, pricing, trial information, and ASP summaries.",
+        after_long_help = "Examples:\n  Initial request:\n    onchainos agent service-match --keywords \"smart contract\" audit --min-payment-token-amount 5 --max-payment-token-amount 20 --limit 2\n\n  Initial request without filters:\n    onchainos agent service-match --agentic-id <user-agent-id>\n\n  Continuation request:\n    onchainos agent service-match --search-after <cursor> --agentic-id <user-agent-id> --limit 2"
+    )]
+    ServiceMatch(identity::ServiceMatchArgs),
+
     /// Submit an Agent review
     #[command(name = "feedback-submit", visible_alias = "feedbacksubmit")]
     FeedbackSubmit(identity::FeedbackSubmitArgs),
@@ -1275,6 +1283,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Upload(args) => identity::upload(args, ctx).await,
         AgentCommand::Search(args) => identity::search(args, ctx).await,
         AgentCommand::ServiceList(args) => identity::service_list(args, ctx).await,
+        AgentCommand::ServiceMatch(args) => identity::service_match(args, ctx).await,
         AgentCommand::FeedbackSubmit(args) => identity::feedback_submit(args, ctx).await,
         AgentCommand::FeedbackList(args) => identity::feedback_list(args, ctx).await,
         AgentCommand::TaskFeedback(args) => identity::task_feedback(args, ctx).await,
