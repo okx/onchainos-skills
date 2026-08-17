@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "For the user's wallet, onchainos wallet or on-chain execution. Use it whenever the user wants to operate their wallet or execute an on-chain action, including: login & accounts, balance / holdings, wallet address / deposit / receive, send / transfer, contract calls (approve / deposit / withdraw), transaction history & status, message signing, wallet export & policy; pay gas with a stablecoin (Gas Station, Solana); swap / trade / buy / sell / convert, get a quote; cross-chain bridge & track arrival; limit orders (buy dip / take profit / stop loss / buy above) plus cancel / list / resume them; broadcast / gas / simulate / track a transaction; look up any public address's holdings; security scanning (token / honeypot 蜜罐 / 貔貅, DApp phishing, tx & signature checks, approvals); audit log."
+description: "Use this skill whenever the user wants to use OKX Onchain OS / onchainos CLI / agentic wallet for wallet state or on-chain actions. Triggers: onchainos, Onchain OS wallet, agentic wallet; wallet login/status/account/address/balance/holdings/deposit/receive/send/transfer; on-chain swap/DEX trade/buy/sell/convert; bridge; Gas Station; contract calls; transaction history/status; signing; approvals; wallet export/policy; token or DApp security checks; or audit log."
 license: MIT
 metadata:
   author: okx
