@@ -31,6 +31,25 @@
 
 pub use crate::commands::agent_commerce::task::common::config::is_cli_mode;
 
+// ── Watch handoff ──────────────────────────────────────────────
+
+/// Canonical CLI-only handoff into a sticky scoped Watch generation.
+///
+/// Keep this text centralized: a previous duplicated heading said to end the
+/// turn after Step 2, which could override the re-entry rule later in the same
+/// block and make an agent stop after the first delivered notification.
+pub fn scoped_watch_handoff(job_id: &str) -> String {
+    format!(
+        "[Watch] 🛑 Mandatory continuous monitor. Do NOT end the turn merely because one watch call returned. Do NOT ask the user whether to watch — it is required to receive the next event.\n\
+         \n\
+         **Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.\n\
+         \n\
+         **Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{job_id}`.** Then dispatch every returned item per §Dispatch by `kind` and re-enter the same scoped command per §Re-enter after processing. A notification, deliverable, or empty poll does not end this Watch generation. Keep the same `--job-id` on every re-entry; stop or pause only when `watch-core.md`'s literal §Stop condition applies or a `decision_request` requires the user's reply. (Do NOT guess the bash invocation — read `watch-core.md` first.)\n\
+         \n\
+         ⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms."
+    )
+}
+
 // ── Event::JobCreated ──────────────────────────────────────────────
 
 /// `Event::JobCreated` Step 0 — user notification (with designated provider).
@@ -809,6 +828,15 @@ pub fn sub_reject_refund_notify_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scoped_watch_handoff_requires_nonterminal_reentry() {
+        let out = scoped_watch_handoff("job-123");
+        assert!(out.contains("Do NOT end the turn merely because one watch call returned"));
+        assert!(out.contains("re-enter the same scoped command"));
+        assert!(out.contains("job-id `job-123`"));
+        assert!(!out.contains("End the turn after Step 2"));
+    }
 
     // ── FR-9: sub_expire_warn template split ──────────────────────────
 

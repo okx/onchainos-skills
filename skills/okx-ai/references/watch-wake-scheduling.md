@@ -8,8 +8,8 @@
 
 Remember the exact command that produced the decision:
 
-- global: `okx-a2a user watch --once --json --timeout 300`
-- scoped: `okx-a2a user watch --once --json --job-id <X> --timeout 300`
+- global: `okx-a2a user watch --json`
+- scoped: `okx-a2a user watch --json --job-id <X>`
 
 The wake must carry that exact scope. Never infer a jobId from the decision body, the user's later
 reply, or history; never drop a remembered `--job-id` and fall back to global watch.
@@ -19,8 +19,8 @@ reply, or history; never drop a remembered `--job-id` and fall back to global wa
 After rendering `userContent`, but before ending the turn, schedule a 2-minute **one-shot** wake.
 The prompt is one of these exact English strings:
 
-- global: `Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --timeout 300`
-- scoped: `Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --once --json --job-id <X> --timeout 300`
+- global: `Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --json`
+- scoped: `Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --json --job-id <X>`
 
 Do not localize, paraphrase, or replace `<X>` with anything except the originating scoped jobId.
 The handle returned by either platform tool is the **wake id**.

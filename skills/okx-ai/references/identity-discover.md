@@ -29,15 +29,26 @@ onchainos agent service-match --keywords "analyze this wallet" "generate a repor
 For continuation pages, use only `--search-after <searchAfter>` with pagination options; do not
 repeat initial-search filters.
 
-Group `services[]` by `asp.aspAgentId` and render one section per Agent:
+### Rendering (blocking)
 
-```
+Group `services[]` by `asp.aspAgentId` and render one section per Agent in returned order. Every
+section MUST use the following heading-plus-Markdown-table structure, matching the visual layout of
+the service-match result example. Do not replace a table with bullets, cards, or prose, and do not
+combine services from different Agents into one table.
+
+```markdown
 ### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>
+
+| # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description |
+|---|---|---|---|---|---|---|---|
+| 1 | <name> | <localized type> | <fee> | <subscription> | <free trial> | <endpoint> | <description> |
 ```
 
-Use the §service-list 8-column table and localized presentation rules. Populate it from each
-Service's `serviceName`, `serviceType`, `feeAmount`, `feeTokenSymbol`, `subscription[]`,
-`freeTrial`, `endpoint`, and `serviceDescription`.
+Keep the existing §service-list 8-column contents and localized presentation rules unchanged.
+Populate them from each Service's `serviceName`, `serviceType`, `feeAmount`, `feeTokenSymbol`,
+`subscription[]`, `freeTrial`, `endpoint`, and `serviceDescription`; number rows from 1 within each
+Agent section. Apply the §service-list all-`—` column omission rule independently to each Agent's
+table. Render every returned Service in order.
 
 Render the CLI-normalized `rating` directly.
 
@@ -106,22 +117,24 @@ contract). The agent-list card does **not** inline services or rating. **ASP →
 
 ## service-list — `agent service-list --agent-id N`
 
-Single 8-column table; values verbatim. Service-type gloss once per table (wording per identity-invariants.md §Lexicon).
+Single 8-column table; values verbatim. Do not add a service-type gloss: display `A2MCP` / `A2A` exactly per identity-invariants.md §Lexicon.
+**Never display the raw `serviceId` or `id` fields, even when they are present in the CLI response.**
 
 ```
 > Agent #<id> — <name> (<role label>) services:
 
 | # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description |
 |---|---|---|---|---|---|---|---|
-| 1 | <name> | <localized type> | <fee> | <subscription> | <free trial> | <endpoint> | <description> |
+| 1 | <name> | <A2MCP or A2A> | <fee> | <subscription> | <free trial> | <endpoint> | <description> |
 
-> Service types: API service = pay-per-call, fixed price; agent to agent = per-call or monthly-subscription pricing (one or the other).
+Do not append a service-type explanation or alias.
 ```
 
-- `#` numbered from 1. Type per Lexicon (API service / agent to agent), never raw A2MCP/A2A.
+- `#` is a display-only row number starting from 1; it is never `serviceId` or `id`. Type per Lexicon:
+  render only the exact raw value `A2MCP` or `A2A`; never translate or rewrite it.
 - Omit any column whose values are all `—`; otherwise keep it and render missing values as `—`.
-- **Fee / Subscription / Free trial:** render per identity-invariants.md §Lexicon (Fee / Subscription / Free trial rows) — the CLI does the mapping; render `cells` verbatim, never recompute.
+- **Fee / Subscription / Free trial:** render per identity-invariants.md §Lexicon (Fee / Subscription / Free trial rows). Zero-price normalization is the sole price-value exception to verbatim rendering: if a returned Fee or Subscription value is numeric zero, or a ready cell formats that zero as `0 USDT` / `0 USDT / month`, show the localized `Free` label instead. Do not treat empty, missing, or `—` as zero; otherwise render `cells` verbatim and never recompute prices.
   **Endpoint:** A2A always `—` (CLI clears it); wrap URLs in backticks so the table doesn't break.
-- Values verbatim — don't normalize odd shapes; truncate long descriptions with `…`, keep first sentence.
+- Values verbatim except the zero-price normalization above — don't normalize other odd shapes; truncate long descriptions with `…`, keep first sentence.
   If a value's shape diverges from the local schema (e.g. `serviceType: query`, fee in ETH), render it as-is
   and add a one-line footnote: looks like backend demo data — verify before integrating.

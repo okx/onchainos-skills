@@ -14,7 +14,6 @@
 //! - `list`: query current queue (markdown / json), refreshes snapshot.
 
 pub use crate::commands::agent_commerce::task::common::config::is_cli_mode;
-use crate::commands::agent_commerce::task::common::okx_a2a;
 use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use clap::{Subcommand, ValueEnum};
@@ -35,9 +34,21 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 /// unclaimed; watch continuation depends only on the card's active-watch origin.
 pub const DEFER_KEYWORDS: &[&str] = &[
     // Chinese
-    "等会儿", "等等", "等一下", "稍后", "晚点", "先放着", "先不管", "回头再看",
+    "等会儿",
+    "等等",
+    "等一下",
+    "稍后",
+    "晚点",
+    "先放着",
+    "先不管",
+    "回头再看",
     // English
-    "skip", "later", "wait", "hold on", "not now", "defer",
+    "skip",
+    "later",
+    "wait",
+    "hold on",
+    "not now",
+    "defer",
 ];
 
 /// Post-relay instruction shared by both direct CLI and queue-backed resolvers.
@@ -139,7 +150,8 @@ fn task_dir() -> Result<PathBuf> {
     let base = match std::env::var("ONCHAINOS_HOME") {
         Ok(p) if !p.is_empty() => PathBuf::from(p),
         _ => {
-            let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("unable to determine HOME directory"))?;
+            let home = dirs::home_dir()
+                .ok_or_else(|| anyhow::anyhow!("unable to determine HOME directory"))?;
             home.join(".onchainos")
         }
     };
@@ -266,7 +278,9 @@ pub fn cancel_all_for_job(job_id: &str) -> Result<usize> {
 
 fn write_queue_atomic(queue: &Queue) -> Result<()> {
     let path = queue_path()?;
-    let dir = path.parent().ok_or_else(|| anyhow::anyhow!("no parent dir"))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("no parent dir"))?;
     let mut tmp = NamedTempFile::new_in(dir)?;
     let serialized = serde_json::to_string_pretty(queue)?;
     tmp.write_all(serialized.as_bytes())?;
@@ -293,7 +307,9 @@ fn read_snapshot() -> DisplaySnapshot {
 
 fn write_snapshot_atomic(snap: &DisplaySnapshot) -> Result<()> {
     let path = snapshot_path()?;
-    let dir = path.parent().ok_or_else(|| anyhow::anyhow!("no parent dir"))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("no parent dir"))?;
     let mut tmp = NamedTempFile::new_in(dir)?;
     let serialized = serde_json::to_string_pretty(snap)?;
     tmp.write_all(serialized.as_bytes())?;
@@ -469,6 +485,11 @@ pub enum PendingDecisionsV2Command {
         to_agent_id: Option<String>,
         #[arg(long = "source-event")]
         source_event: String,
+        /// Strict candidate JSON extracted by the foreground model for the
+        /// auto-trade consent/config decision. The CLI validates this object;
+        /// it never parses the user's natural-language reply.
+        #[arg(long = "autotrade-candidate-json")]
+        autotrade_candidate_json: Option<String>,
     },
 
     /// (user-session, queue-backed variant of resolve-with-sessionkey) Same envelope
@@ -492,6 +513,10 @@ pub enum PendingDecisionsV2Command {
         to_agent_id: Option<String>,
         #[arg(long = "source-event")]
         source_event: String,
+        /// Queue-mode equivalent of `--autotrade-candidate-json` on
+        /// `resolve-with-sessionkey`.
+        #[arg(long = "autotrade-candidate-json")]
+        autotrade_candidate_json: Option<String>,
     },
 
     /// (user-session) Pick entry by 1-based index from the displayed list.
@@ -537,13 +562,21 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
         } => {
             let resolved_content = match (user_content, user_content_file) {
                 (Some(c), _) => c,
-                (None, Some(path)) => {
-                    std::fs::read_to_string(&path)
-                        .map_err(|e| anyhow::anyhow!("failed to read --user-content-file {path}: {e}"))?
-                }
+                (None, Some(path)) => std::fs::read_to_string(&path).map_err(|e| {
+                    anyhow::anyhow!("failed to read --user-content-file {path}: {e}")
+                })?,
                 (None, None) => bail!("either --user-content or --user-content-file is required"),
             };
-            handle_request(job_id, role, agent_id, to_agent_id, resolved_content, list_label, llm_content, source_event)
+            handle_request(
+                job_id,
+                role,
+                agent_id,
+                to_agent_id,
+                resolved_content,
+                list_label,
+                llm_content,
+                source_event,
+            )
         }
         PendingDecisionsV2Command::RequestPrompt {
             job_id,
@@ -558,21 +591,57 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
         } => {
             let resolved_content = match (user_content, user_content_file) {
                 (Some(c), _) => c,
-                (None, Some(path)) => {
-                    std::fs::read_to_string(&path)
-                        .map_err(|e| anyhow::anyhow!("failed to read --user-content-file {path}: {e}"))?
-                }
+                (None, Some(path)) => std::fs::read_to_string(&path).map_err(|e| {
+                    anyhow::anyhow!("failed to read --user-content-file {path}: {e}")
+                })?,
                 (None, None) => bail!("either --user-content or --user-content-file is required"),
             };
-            handle_request_prompt(job_id, role, agent_id, to_agent_id, resolved_content, list_label, llm_content, source_event)
+            handle_request_prompt(
+                job_id,
+                role,
+                agent_id,
+                to_agent_id,
+                resolved_content,
+                list_label,
+                llm_content,
+                source_event,
+            )
         }
         PendingDecisionsV2Command::Resolve { user_reply } => handle_resolve(user_reply),
         PendingDecisionsV2Command::ResolveWithSessionkey {
-            user_reply, job_id, role, agent_id, to_agent_id, source_event,
-        } => handle_resolve_with_sessionkey(user_reply, job_id, role, agent_id, to_agent_id, source_event),
+            user_reply,
+            job_id,
+            role,
+            agent_id,
+            to_agent_id,
+            source_event,
+            autotrade_candidate_json,
+        } => handle_resolve_with_sessionkey(
+            user_reply,
+            job_id,
+            role,
+            agent_id,
+            to_agent_id,
+            source_event,
+            autotrade_candidate_json,
+        ),
         PendingDecisionsV2Command::ResolvePrompt {
-            user_reply, job_id, role, agent_id, to_agent_id, source_event,
-        } => handle_resolve_prompt(user_reply, job_id, role, agent_id, to_agent_id, source_event),
+            user_reply,
+            job_id,
+            role,
+            agent_id,
+            to_agent_id,
+            source_event,
+            autotrade_candidate_json,
+        } => handle_resolve_prompt(
+            user_reply,
+            job_id,
+            role,
+            agent_id,
+            to_agent_id,
+            source_event,
+            autotrade_candidate_json,
+        ),
         PendingDecisionsV2Command::Pick { index } => handle_pick(index),
         PendingDecisionsV2Command::List { format } => handle_list(format),
         PendingDecisionsV2Command::Cancel { index } => handle_cancel(index),
@@ -603,8 +672,15 @@ fn handle_request_prompt(
     source_event: Option<String>,
 ) -> Result<()> {
     request_prompt_inner(
-        job_id, role, agent_id, to_agent_id, user_content, list_label, llm_content,
-        source_event, true,
+        job_id,
+        role,
+        agent_id,
+        to_agent_id,
+        user_content,
+        list_label,
+        llm_content,
+        source_event,
+        true,
     )
 }
 
@@ -619,44 +695,19 @@ pub(crate) fn push_decision_direct(
     job_id: &str,
     role: &str,
     agent_id: &str,
+    to_agent_id: Option<&str>,
     user_content: &str,
     list_label: &str,
     source_event: &str,
-) -> Result<()> {
-    push_decision_direct_with_llm_content(
-        job_id,
-        role,
-        agent_id,
-        user_content,
-        list_label,
-        source_event,
-        None,
-    )
-}
-
-/// Direct-push variant with caller-owned reply handling. The ordinary delivery
-/// path uses [`push_decision_direct`] and keeps the canonical relay playbook;
-/// pre-delivery consent reuses the same card/queue machinery but handles the
-/// reply in the visible user session because no retained delivery sub-session
-/// exists yet.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn push_decision_direct_with_llm_content(
-    job_id: &str,
-    role: &str,
-    agent_id: &str,
-    user_content: &str,
-    list_label: &str,
-    source_event: &str,
-    llm_content: Option<&str>,
 ) -> Result<()> {
     request_prompt_inner(
         job_id.to_string(),
         role.to_string(),
         agent_id.to_string(),
-        None,
+        to_agent_id.map(str::to_string),
         user_content.to_string(),
         list_label.to_string(),
-        llm_content.map(str::to_string),
+        None,
         Some(source_event.to_string()),
         false,
     )
@@ -681,6 +732,73 @@ fn sanitize_to_agent(to_agent_id: Option<String>, agent_id: &str) -> Option<Stri
     }
 }
 
+/// Auto-trade decisions must resume in the session that received the admitted
+/// delivery. The provider id comes from CLI-persisted delivery context, not
+/// from model output. `None` remains a compatibility fallback only for
+/// old/missing contexts.
+fn trusted_autotrade_target(
+    job_id: &str,
+    agent_id: &str,
+    source_event: &str,
+    supplied: Option<String>,
+) -> Option<String> {
+    let supplied = sanitize_to_agent(supplied, agent_id);
+    if !source_event.starts_with("autotrade_") {
+        return supplied;
+    }
+    crate::commands::agent_commerce::task::common::autotrade::consent::load_pending_delivery_context(job_id)
+        .ok()
+        .flatten()
+        .map(|context| context.provider_agent_id)
+        .filter(|provider| !provider.is_empty() && provider != agent_id)
+}
+
+fn trusted_autotrade_session_key(job_id: &str, source_event: &str) -> Option<String> {
+    if !source_event.starts_with("autotrade_") {
+        return None;
+    }
+    crate::commands::agent_commerce::task::common::autotrade::consent::load_pending_delivery_context(job_id)
+        .ok()
+        .flatten()
+        .and_then(|context| context.origin_session_key)
+        .filter(|key| !key.is_empty())
+}
+
+fn trusted_autotrade_delivery_id(job_id: &str, source_event: &str) -> Option<String> {
+    if !source_event.starts_with("autotrade_") {
+        return None;
+    }
+    crate::commands::agent_commerce::task::common::autotrade::consent::load_pending_delivery_context(job_id)
+        .ok()
+        .flatten()
+        .map(|context| context.delivery_id)
+        .filter(|delivery_id| !delivery_id.is_empty())
+}
+
+fn send_decision_relay(
+    job_id: &str,
+    source_event: &str,
+    to_agent_id: Option<&str>,
+    content: &str,
+) -> Result<()> {
+    use sha2::{Digest, Sha256};
+
+    if let Some(session_key) = trusted_autotrade_session_key(job_id, source_event) {
+        let message_id = format!(
+            "autotrade-relay:{}",
+            hex::encode(Sha256::digest(format!(
+                "{job_id}\0{source_event}\0{content}"
+            )))
+        );
+        // A known origin is authoritative. Falling back to a job/provider
+        // lookup can wake a backup session, splitting processing and its UI
+        // result across two sessions. Keep the pending decision intact and let
+        // the caller retry when the exact delivery session cannot be reached.
+        return super::okx_a2a::session_send_exact(&session_key, content, &message_id);
+    }
+    super::okx_a2a::session_send(job_id, to_agent_id, content)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn request_prompt_inner(
     job_id: String,
@@ -693,14 +811,16 @@ fn request_prompt_inner(
     source_event: Option<String>,
     print_ok: bool,
 ) -> Result<()> {
-    okx_a2a::validate_decision_job_id(&job_id)?;
     let to_agent_id = sanitize_to_agent(to_agent_id, &agent_id);
     let user_content = user_content.replace("\\n", "\n");
     let cli_mode = is_cli_mode();
     trace_log(&format!(
         "handle_request_prompt {}: job_id={} role={} agent_id={} to_agent_id={:?}",
         if cli_mode { "CLI_MODE" } else { "QUEUE_MODE" },
-        job_id, role, agent_id, to_agent_id,
+        job_id,
+        role,
+        agent_id,
+        to_agent_id,
     ));
 
     if cli_mode {
@@ -719,7 +839,8 @@ fn request_prompt_inner(
             updated_at: now,
         };
         let llm_content = resolve_llm_content_cli(&entry);
-        okx_a2a::user_decision_request(&entry.job_id, &entry.user_content, &llm_content)?;
+        use crate::commands::agent_commerce::task::common::okx_a2a;
+        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
         if print_ok {
             println!("OK");
         }
@@ -751,7 +872,8 @@ fn request_prompt_inner(
             .find(|e| entry_matches(e, &job_id, &role, &agent_id, to_ref))
             .map(|e| e.created_at)
             .unwrap_or(now);
-        q.entries.retain(|e| !entry_matches(e, &job_id, &role, &agent_id, to_ref));
+        q.entries
+            .retain(|e| !entry_matches(e, &job_id, &role, &agent_id, to_ref));
         q.entries.push(PendingEntry {
             created_at: original_created_at,
             ..new_entry_template
@@ -762,7 +884,8 @@ fn request_prompt_inner(
         // stays consistent across modes.
         let entry = q.entries.last().unwrap();
         let llm_content = resolve_llm_content_prompt_user(entry);
-        okx_a2a::user_decision_request(&entry.job_id, &entry.user_content, &llm_content)?;
+        use crate::commands::agent_commerce::task::common::okx_a2a;
+        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
         if print_ok {
             println!("OK");
         }
@@ -806,28 +929,60 @@ fn handle_resolve_with_sessionkey(
     agent_id: String,
     to_agent_id: Option<String>,
     source_event: String,
+    autotrade_candidate_json: Option<String>,
 ) -> Result<()> {
-    use crate::commands::agent_commerce::task::common::okx_a2a;
     trace_log(&format!(
         "handle_resolve_with_sessionkey: job_id={} role={} agent_id={} to_agent_id={:?} source_event={} user_reply={:?}",
         job_id, role, agent_id, to_agent_id, source_event, user_reply,
     ));
     // Rescue path for cards already issued with a poisoned self-addressed target:
     // normalizing here means answering such a card again still relays correctly.
-    let to_agent_id = sanitize_to_agent(to_agent_id, &agent_id);
+    let to_agent_id = trusted_autotrade_target(&job_id, &agent_id, &source_event, to_agent_id);
+    let relay_delivery_id = trusted_autotrade_delivery_id(&job_id, &source_event);
     // Deterministic language capture: the verbatim reply is the one place the
     // CLI reliably sees the user's own words — CLI-rendered copy downstream
     // (direct-pushed decision cards, swap self-notify) renders in this language.
     super::user_lang::record_from_user_text(&job_id, &user_reply);
-    let relay_event = format!("user_decision_{}", source_event);
+    let (user_reply, autotrade_outcome) = match prepare_foreground_autotrade(
+        &job_id,
+        &agent_id,
+        &source_event,
+        autotrade_candidate_json.as_deref(),
+    )? {
+        Some(ForegroundAutotrade::Awaiting) => return Ok(()),
+        Some(ForegroundAutotrade::Relay {
+            normalized_reply,
+            outcome,
+        }) => (normalized_reply, Some(outcome)),
+        None => (user_reply, None),
+    };
+    let relay_source_event = if autotrade_outcome.is_some() {
+        crate::commands::agent_commerce::task::common::autotrade::card::CONSENT_SOURCE_EVENT
+    } else {
+        source_event.as_str()
+    };
+    let relay_event = format!("user_decision_{relay_source_event}");
+    let relay_data_contract = if autotrade_outcome.is_some() {
+        "<foreground-validated normalized A/B/C policy>"
+    } else {
+        "<message.data verbatim>"
+    };
+    let delivery_contract = relay_delivery_id
+        .as_deref()
+        .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
+        .unwrap_or_default();
     let description = format!(
         "User-decision relay envelope (CLI mode). Call `onchainos agent next-action \
          --role {role} --agentId {agent} \
-         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"<message.data verbatim>\"}}'` \
+         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"{data_contract}\"{delivery_contract}}}'` \
          to fetch the routing playbook; follow it. \
          ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
          user-session-only; the user-session already issued this relay envelope.",
-        jid = job_id, evt = relay_event, role = role, agent = agent_id,
+        jid = job_id,
+        evt = relay_event,
+        role = role,
+        agent = agent_id,
+        data_contract = relay_data_contract,
     );
     let relay_envelope = serde_json::json!({
         "agentId": agent_id,
@@ -838,6 +993,7 @@ fn handle_resolve_with_sessionkey(
             "description": description,
             "source": "system",
             "jobId": job_id,
+            "deliveryId": relay_delivery_id,
             "role": role,
             "timestamp": Utc::now().timestamp(),
         }
@@ -847,7 +1003,23 @@ fn handle_resolve_with_sessionkey(
             "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":{:?},\"source\":\"system\",\"jobId\":\"{}\",\"role\":\"{}\"}}}}",
             agent_id, relay_event, user_reply, job_id, role,
         ));
-    okx_a2a::session_send(&job_id, to_agent_id.as_deref(), &relay_content)?;
+    send_decision_relay(
+        &job_id,
+        &source_event,
+        to_agent_id.as_deref(),
+        &relay_content,
+    )?;
+    if let Some(mut outcome) = autotrade_outcome {
+        crate::commands::agent_commerce::task::common::autotrade::consent_reply::clear_candidate_draft(
+            &job_id,
+        );
+        crate::commands::agent_commerce::task::common::autotrade::consent::clear_pending_signal(
+            &job_id,
+        );
+        outcome["deliveryResumeQueued"] = serde_json::Value::Bool(true);
+        print_foreground_outcome(&outcome);
+        print_foreground_persist_guidance(&outcome);
+    }
     print!("{}", decision_relay_post_action());
     Ok(())
 }
@@ -864,24 +1036,57 @@ fn handle_resolve_prompt(
     agent_id: String,
     to_agent_id: Option<String>,
     source_event: String,
+    autotrade_candidate_json: Option<String>,
 ) -> Result<()> {
-    use crate::commands::agent_commerce::task::common::okx_a2a;
     trace_log(&format!(
         "handle_resolve_prompt: job_id={} role={} agent_id={} to_agent_id={:?} source_event={} user_reply={:?}",
         job_id, role, agent_id, to_agent_id, source_event, user_reply,
     ));
     // Same self-addressed-target rescue as `handle_resolve_with_sessionkey`.
-    let to_agent_id = sanitize_to_agent(to_agent_id, &agent_id);
+    let to_agent_id = trusted_autotrade_target(&job_id, &agent_id, &source_event, to_agent_id);
+    let relay_delivery_id = trusted_autotrade_delivery_id(&job_id, &source_event);
     // Same deterministic language capture as `handle_resolve_with_sessionkey`.
     super::user_lang::record_from_user_text(&job_id, &user_reply);
-    let relay_event = format!("user_decision_{}", source_event);
+    // Remove the current queue entry before applying the candidate. A missing-
+    // field or confirmation result pushes its replacement under the same key;
+    // removing after that push would delete the new card.
+    remove_prompt_entry(&job_id, &role, &agent_id, to_agent_id.as_deref());
+    let (user_reply, autotrade_outcome) = match prepare_foreground_autotrade(
+        &job_id,
+        &agent_id,
+        &source_event,
+        autotrade_candidate_json.as_deref(),
+    )? {
+        Some(ForegroundAutotrade::Awaiting) => return Ok(()),
+        Some(ForegroundAutotrade::Relay {
+            normalized_reply,
+            outcome,
+        }) => (normalized_reply, Some(outcome)),
+        None => (user_reply, None),
+    };
+    let relay_source_event = if autotrade_outcome.is_some() {
+        crate::commands::agent_commerce::task::common::autotrade::card::CONSENT_SOURCE_EVENT
+    } else {
+        source_event.as_str()
+    };
+    let relay_event = format!("user_decision_{relay_source_event}");
+    let relay_data_contract = if autotrade_outcome.is_some() {
+        "<foreground-validated normalized A/B/C policy>"
+    } else {
+        "<message.data verbatim>"
+    };
+    let delivery_contract = relay_delivery_id
+        .as_deref()
+        .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
+        .unwrap_or_default();
     let description = format!(
         "User-decision relay envelope (queue-backed prompt mode). Call `onchainos agent next-action \
          --role {role} --agentId {agent} \
-         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"<message.data verbatim>\"}}'` \
+         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"{data_contract}\"{delivery_contract}}}'` \
          to fetch the routing playbook; follow it. \
          ❌ Do NOT call `pending-decisions-v2 resolve` / `resolve-with-sessionkey` / `resolve-prompt` / `pick` / `cancel` — those are user-session-only; the user-session already issued this relay envelope.",
         jid = job_id, evt = relay_event, role = role, agent = agent_id,
+        data_contract = relay_data_contract,
     );
     let relay_envelope = serde_json::json!({
         "agentId": agent_id,
@@ -892,6 +1097,7 @@ fn handle_resolve_prompt(
             "description": description,
             "source": "system",
             "jobId": job_id,
+            "deliveryId": relay_delivery_id,
             "role": role,
             "timestamp": Utc::now().timestamp(),
         }
@@ -902,18 +1108,105 @@ fn handle_resolve_prompt(
             agent_id, relay_event, user_reply, job_id, role,
         ));
 
-    // Best-effort remove the matching entry from the queue (paired with the
-    // `handle_request` non-CLI write path). If lock / IO fails, log + continue —
-    // the in-process relay below is the critical path and must still happen.
     let to_ref = to_agent_id.as_deref();
+    send_decision_relay(&job_id, &source_event, to_ref, &relay_content)?;
+    if let Some(mut outcome) = autotrade_outcome {
+        crate::commands::agent_commerce::task::common::autotrade::consent_reply::clear_candidate_draft(
+            &job_id,
+        );
+        crate::commands::agent_commerce::task::common::autotrade::consent::clear_pending_signal(
+            &job_id,
+        );
+        outcome["deliveryResumeQueued"] = serde_json::Value::Bool(true);
+        print_foreground_outcome(&outcome);
+        print_foreground_persist_guidance(&outcome);
+    }
+    print!("{}", decision_relay_post_action());
+    Ok(())
+}
+
+enum ForegroundAutotrade {
+    Awaiting,
+    Relay {
+        normalized_reply: String,
+        outcome: serde_json::Value,
+    },
+}
+
+fn prepare_foreground_autotrade(
+    job_id: &str,
+    agent_id: &str,
+    source_event: &str,
+    candidate_json: Option<&str>,
+) -> Result<Option<ForegroundAutotrade>> {
+    use crate::commands::agent_commerce::task::common::autotrade::consent_reply;
+    if !consent_reply::is_candidate_source(source_event) {
+        if candidate_json.is_some() {
+            bail!("--autotrade-candidate-json is only valid for auto-trade consent decisions");
+        }
+        return Ok(None);
+    }
+    let Some(candidate_json) = candidate_json else {
+        // Backward compatibility for cards created by older binaries: retain
+        // the original background relay when no structured candidate exists.
+        return Ok(None);
+    };
+    match consent_reply::apply_candidate_json(job_id, agent_id, source_event, candidate_json)? {
+        consent_reply::ApplyResult::FallbackRelay => Ok(None),
+        consent_reply::ApplyResult::Awaiting(outcome) => {
+            print_foreground_outcome(&outcome);
+            println!(
+                "The auto-trade draft was processed synchronously. A follow-up decision is already available; end this turn and wait for the user's reply."
+            );
+            Ok(Some(ForegroundAutotrade::Awaiting))
+        }
+        consent_reply::ApplyResult::Relay {
+            normalized_reply,
+            outcome,
+        } => Ok(Some(ForegroundAutotrade::Relay {
+            normalized_reply,
+            outcome,
+        })),
+    }
+}
+
+fn print_foreground_outcome(outcome: &serde_json::Value) {
+    println!(
+        "{}",
+        serde_json::to_string(outcome).unwrap_or_else(|_| "{}".to_string())
+    );
+}
+
+fn print_foreground_persist_guidance(outcome: &serde_json::Value) {
+    if outcome
+        .get("authorizationPersisted")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        println!(
+            "Authorization was written synchronously before delivery resume. Do not describe it as still processing."
+        );
+    } else {
+        println!(
+            "The skip decision was applied synchronously and no authorization was written. Do not describe it as still processing."
+        );
+    }
+}
+
+fn remove_prompt_entry(job_id: &str, role: &str, agent_id: &str, to_agent_id: Option<&str>) {
+    // Best-effort queue cleanup. The in-process candidate handling / relay is
+    // the critical path and must still run when this local cleanup fails.
     match acquire_lock() {
         Ok(_lock) => match read_queue() {
             Ok(mut q) => {
                 let before = q.entries.len();
-                q.entries.retain(|e| !entry_matches(e, &job_id, &role, &agent_id, to_ref));
+                q.entries
+                    .retain(|e| !entry_matches(e, job_id, role, agent_id, to_agent_id));
                 if q.entries.len() != before {
                     if let Err(e) = write_queue_atomic(&q) {
-                        trace_log(&format!("handle_resolve_prompt: write_queue_atomic failed: {e}"));
+                        trace_log(&format!(
+                            "handle_resolve_prompt: write_queue_atomic failed: {e}"
+                        ));
                     }
                 }
             }
@@ -921,14 +1214,9 @@ fn handle_resolve_prompt(
         },
         Err(e) => trace_log(&format!("handle_resolve_prompt: acquire_lock failed: {e}")),
     }
-
-    okx_a2a::session_send(&job_id, to_ref, &relay_content)?;
-    print!("{}", decision_relay_post_action());
-    Ok(())
 }
 
 fn handle_resolve(user_reply: String) -> Result<()> {
-    use crate::commands::agent_commerce::task::common::okx_a2a;
     let _lock = acquire_lock()?;
     let mut q = read_queue()?;
     ensure_invariant_and_evict(&mut q);
@@ -960,6 +1248,10 @@ fn handle_resolve(user_reply: String) -> Result<()> {
     };
 
     let active = q.entries.remove(active_idx);
+    let source_event = active.source_event.as_deref().unwrap_or("");
+    let relay_delivery_id =
+        trusted_autotrade_delivery_id(&active.job_id, source_event);
+    let clear_pending_after_relay = source_event.starts_with("autotrade_");
     // Same deterministic language capture as the sessionkey/prompt resolve variants.
     super::user_lang::record_from_user_text(&active.job_id, &user_reply);
     // Relay content is a system-shaped envelope: same JSON skeleton the chain
@@ -979,10 +1271,14 @@ fn handle_resolve(user_reply: String) -> Result<()> {
     // common mis-routing pattern where the sub pattern-matches "I see user_decision_*"
     // → "this is from resolve flow" → "I should call resolve too" (which is wrong; resolve
     // is user-session-only — user-session ALREADY called it to produce THIS envelope).
+    let delivery_contract = relay_delivery_id
+        .as_deref()
+        .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
+        .unwrap_or_default();
     let description = format!(
         "User-decision relay envelope (sub session). Call `onchainos agent next-action \
          --role {role} --agentId {agent} \
-         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"<message.data verbatim>\"}}'` \
+         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"<message.data verbatim>\"{delivery_contract}}}'` \
          to fetch the routing playbook; follow it. \
          ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
          user-session-only; the user-session already called `resolve` to produce this \
@@ -1002,6 +1298,7 @@ fn handle_resolve(user_reply: String) -> Result<()> {
             "description": description,
             "source": "system",
             "jobId": active.job_id,
+            "deliveryId": relay_delivery_id,
             "role": active.role,
             "timestamp": Utc::now().timestamp(),
         }
@@ -1020,7 +1317,17 @@ fn handle_resolve(user_reply: String) -> Result<()> {
 
     if queued.is_empty() {
         // Nothing left to advance to — just relay and end the turn.
-        okx_a2a::session_send(&active.job_id, active.to_agent_id.as_deref(), &relay_content)?;
+        send_decision_relay(
+            &active.job_id,
+            source_event,
+            active.to_agent_id.as_deref(),
+            &relay_content,
+        )?;
+        if clear_pending_after_relay {
+            crate::commands::agent_commerce::task::common::autotrade::consent::clear_pending_signal(
+                &active.job_id,
+            );
+        }
         write_queue_atomic(&q)?;
         print!(
             "🛑 User reply relayed and consumed — do NOT reuse it for future cards; wait for a fresh user message, then end the turn.\n"
@@ -1037,18 +1344,38 @@ fn handle_resolve(user_reply: String) -> Result<()> {
         let promote_idx = q
             .entries
             .iter()
-            .position(|e| entry_matches(e, &promote.job_id, &promote.role, &promote.agent_id, promote_to_ref))
+            .position(|e| {
+                entry_matches(
+                    e,
+                    &promote.job_id,
+                    &promote.role,
+                    &promote.agent_id,
+                    promote_to_ref,
+                )
+            })
             .unwrap();
         q.entries[promote_idx].status = Status::Active;
         // Re-sort so the newly-promoted active sits at index 0 (the sort honors the
         // "active first, then LIFO" invariant).
         ensure_invariant_and_evict(&mut q);
 
+        // Relay before consuming the active queue entry on disk. If exact
+        // delivery-session delivery fails, the user's decision remains
+        // recoverable and can be retried.
+        send_decision_relay(
+            &active.job_id,
+            source_event,
+            active.to_agent_id.as_deref(),
+            &relay_content,
+        )?;
+        if clear_pending_after_relay {
+            crate::commands::agent_commerce::task::common::autotrade::consent::clear_pending_signal(
+                &active.job_id,
+            );
+        }
         let snap = build_snapshot(&q);
         write_snapshot_atomic(&snap)?;
         write_queue_atomic(&q)?;
-
-        okx_a2a::session_send(&active.job_id, active.to_agent_id.as_deref(), &relay_content)?;
         print!("{}", playbook_advance_only(&q));
     }
     Ok(())
@@ -1063,7 +1390,10 @@ fn handle_pick(index: usize) -> Result<()> {
     if index == 0 || index > snapshot.items.len() {
         let new_snap = build_snapshot(&q);
         write_snapshot_atomic(&new_snap)?;
-        print!("{}", playbook_stale_relist(&new_snap, "selection index out of range"));
+        print!(
+            "{}",
+            playbook_stale_relist(&new_snap, "selection index out of range")
+        );
         return Ok(());
     }
 
@@ -1071,13 +1401,19 @@ fn handle_pick(index: usize) -> Result<()> {
     let target_to = target.to_agent_id.as_deref();
     let snap_displayed_at = snapshot.displayed_at;
 
-    let entry_idx = q.entries.iter().position(|e| entry_matches(e, &target.job_id, &target.role, &target.agent_id, target_to));
+    let entry_idx = q
+        .entries
+        .iter()
+        .position(|e| entry_matches(e, &target.job_id, &target.role, &target.agent_id, target_to));
     let Some(entry_idx) = entry_idx else {
         let new_snap = build_snapshot(&q);
         write_snapshot_atomic(&new_snap)?;
         print!(
             "{}",
-            playbook_stale_relist(&new_snap, "selected entry no longer exists (auto-cleaned or resolved)")
+            playbook_stale_relist(
+                &new_snap,
+                "selected entry no longer exists (auto-cleaned or resolved)"
+            )
         );
         return Ok(());
     };
@@ -1089,7 +1425,10 @@ fn handle_pick(index: usize) -> Result<()> {
             write_snapshot_atomic(&new_snap)?;
             print!(
                 "{}",
-                playbook_stale_relist(&new_snap, "selected entry's content was updated since display")
+                playbook_stale_relist(
+                    &new_snap,
+                    "selected entry's content was updated since display"
+                )
             );
             return Ok(());
         }
@@ -1123,7 +1462,11 @@ fn handle_cancel(index: usize) -> Result<()> {
     let target_to = target.to_agent_id.as_deref();
 
     // Locate + remove
-    let Some(entry_idx) = q.entries.iter().position(|e| entry_matches(e, &target.job_id, &target.role, &target.agent_id, target_to)) else {
+    let Some(entry_idx) = q
+        .entries
+        .iter()
+        .position(|e| entry_matches(e, &target.job_id, &target.role, &target.agent_id, target_to))
+    else {
         print!(
             "{}",
             playbook_error(&format!(
@@ -1145,9 +1488,20 @@ fn handle_cancel(index: usize) -> Result<()> {
             .iter()
             .filter(|e| e.status == Status::Queued)
             .max_by_key(|e| e.created_at)
-            .map(|e| (e.job_id.clone(), e.role.clone(), e.agent_id.clone(), e.to_agent_id.clone()));
+            .map(|e| {
+                (
+                    e.job_id.clone(),
+                    e.role.clone(),
+                    e.agent_id.clone(),
+                    e.to_agent_id.clone(),
+                )
+            });
         if let Some((j, r, a, t)) = newest_queued_key {
-            if let Some(promote_idx) = q.entries.iter().position(|e| entry_matches(e, &j, &r, &a, t.as_deref())) {
+            if let Some(promote_idx) = q
+                .entries
+                .iter()
+                .position(|e| entry_matches(e, &j, &r, &a, t.as_deref()))
+            {
                 q.entries[promote_idx].status = Status::Active;
                 ensure_invariant_and_evict(&mut q);
             }
@@ -1426,9 +1780,7 @@ pub fn request_command_block(
     source_event: &str,
 ) -> String {
     // Bash `--user-content "..."` uses double quotes; escape `\` and `"` inside.
-    let user_content_escaped = user_content
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"");
+    let user_content_escaped = user_content.replace('\\', "\\\\").replace('"', "\\\"");
     let to_flag = match to_agent_id {
         Some(t) => format!(" --to-agent-id \"{t}\""),
         None => String::new(),
@@ -1466,6 +1818,25 @@ fn role_short_label(role: &str) -> &str {
 /// CLI mode, so the future `resolve` call cannot reverse-lookup routing fields
 /// from a queue entry — embed all of them up front so the LLM passes them
 /// verbatim to `resolve-with-sessionkey`.
+fn foreground_autotrade_candidate_guidance(source_event: &str) -> &'static str {
+    if !crate::commands::agent_commerce::task::common::autotrade::consent_reply::is_candidate_source(
+        source_event,
+    ) {
+        return "";
+    }
+    "\n         Auto-trade structured extraction (foreground only): before running the command, extract a strict compact JSON object from THIS new user reply. The only allowed keys are `mode`, `tradeAmount`, `cap`, `quote`, `ambiguousFields`, and `confirm`. `mode` is `auto`, `manual`, or `decline`; map A/B/C and clear natural-language equivalents to those values. Monetary values MUST be unsigned decimal strings without currency symbols. `quote` is `usdt` or `usdc`. For an `autotrade_config_required` follow-up, omit `mode` unless the user explicitly changes the prior choice; a clear confirmation sets `confirm:true`. Never invent a mode, amount, cap, or quote. In auto mode, one number is `tradeAmount` only unless the user explicitly says it is also the cap. Omit absent fields; the CLI applies the documented USDT default. Put every uncertain field name (`mode`, `trade_amount`, `cap`, or `quote`) in `ambiguousFields` instead of guessing. Examples: `A 1USDT` → `{\"mode\":\"auto\",\"tradeAmount\":\"1\",\"quote\":\"usdt\"}`; `确认` on a confirmation follow-up → `{\"confirm\":true}`. The CLI, not the model, validates, merges, confirms ambiguity, and writes authorization. Append `--autotrade-candidate-json '<JSON>'` to the pre-filled command. Do not call `autotrade-consent-set` directly.\n"
+}
+
+fn foreground_autotrade_candidate_flag(source_event: &str) -> &'static str {
+    if crate::commands::agent_commerce::task::common::autotrade::consent_reply::is_candidate_source(
+        source_event,
+    ) {
+        " --autotrade-candidate-json '<strict candidate JSON>'"
+    } else {
+        ""
+    }
+}
+
 fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
     if let Some(ref custom) = entry.llm_content_override {
         return custom.clone();
@@ -1479,22 +1850,26 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
         Some(t) => format!("[to: {t}]"),
         None => "[to: backup]".to_string(),
     };
+    let candidate_guidance = foreground_autotrade_candidate_guidance(&source_event_str);
+    let candidate_flag = foreground_autotrade_candidate_flag(&source_event_str);
     format!(
         "[USER_DECISION_REQUEST][job: {}][role: {}][agent: {}]{}\n\n\
          Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
-         Step 2 — When the user actually replies (next turn):\n\
+         Step 2 — When the user actually replies (next turn):{}\n\
          \x20\x20\x20\x20- defer keyword ({}) or any defer value defined in watch-core.md → do NOT claim or resolve; if this card came from a currently active watch, re-enter that exact originating watch command, otherwise END TURN\n\
-         \x20\x20\x20\x20- else → follow `skills/okx-ai/references/watch-core.md` §kind == decision_request \"Handling the user reply\": **first claim the todo** per watch-core.md step 2: `okx-a2a user check --todo-ids <todo_id> --json` (read `<todo_id>` from this item's `id` field in the original watch / outdated-list JSON output). **Then** on `handled` run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\"{} --source-event \"{}\"` exactly once, then follow the relay playbook it returns. Only a card surfaced by a currently active watch resumes that exact originating watch; an independently opened card never starts watch. Never infer watch origin from A/B/C, an amount, a cap, or any other reply text. Skipping the `check` leaves a ghost todo in the outstanding-decisions queue.",
+         \x20\x20\x20\x20- else → follow `skills/okx-ai/references/watch-core.md` §kind == decision_request \"Handling the user reply\": **first claim the todo** per watch-core.md step 2: `okx-a2a user check --todo-ids <todo_id> --json` (read `<todo_id>` from this item's `id` field in the original watch / outdated-list JSON output). **Then** on `handled` run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\"{} --source-event \"{}\"{}` exactly once, then follow the relay playbook it returns. Only a card surfaced by a currently active watch resumes that exact originating watch; an independently opened card never starts watch. Never infer watch origin from A/B/C, an amount, a cap, or any other reply text. Skipping the `check` leaves a ghost todo in the outstanding-decisions queue.",
         entry.job_id,
         entry.role,
         entry.agent_id,
         to_header,
+        candidate_guidance,
         DEFER_KEYWORDS.join(" / "),
         entry.job_id,
         entry.role,
         entry.agent_id,
         to_flag,
         source_event_str,
+        candidate_flag,
     )
 }
 
@@ -1516,6 +1891,8 @@ fn resolve_llm_content_prompt_user(entry: &PendingEntry) -> String {
         Some(t) => format!("[to: {t}]"),
         None => "[to: backup]".to_string(),
     };
+    let candidate_guidance = foreground_autotrade_candidate_guidance(&source_event_str);
+    let candidate_flag = foreground_autotrade_candidate_flag(&source_event_str);
     format!(
         "[USER_DECISION_REQUEST]\n\
          [job: {job}][role: {role}][agent: {agent}]{to_header}\n\
@@ -1527,13 +1904,13 @@ fn resolve_llm_content_prompt_user(entry: &PendingEntry) -> String {
          If no other blocks → skip this step.\n\n\
          Step 3 — **END THE TURN NOW with NO assistant text output** (unless Step 2 fired its multi-card warning, which is the ONLY allowed text this turn). No confirmation, no recap, no fabricated option list. Just stop. Wait for the user to reply in a future turn.\n\n\
          🛑 **The block below runs ONLY in a future turn**, AFTER the user has actually replied. Do NOT run anything in the current turn.\n\
-         On the user's next reply, re-scan your context for [USER_DECISION_REQUEST] blocks (the count may have changed since Step 2), then walk this decision tree:\n\
+         On the user's next reply, re-scan your context for [USER_DECISION_REQUEST] blocks (the count may have changed since Step 2), then walk this decision tree:{candidate_guidance}\n\
          \x20\x20- defer keyword ({defer}) or any defer value defined in watch-core.md → do NOT claim or resolve; if this card came from a currently active watch, re-enter that exact originating watch command, otherwise END TURN.\n\
          \x20\x20· Reply starts with `0x...:` prefix → strip the prefix + colon, use the prefix to match each block's `[job: 0x...]` header, locate THAT block, then run THAT block's command template with `--user-reply` set to the stripped wording (without the prefix).\n\
          \x20\x20· No prefix + only THIS block in context (single) → run THIS block's command template with the full reply.\n\
          \x20\x20· 🔁 No prefix + **multiple** [USER_DECISION_REQUEST] blocks in context → user forgot to add the jobId prefix. Ask them which jobId they're answering (number the candidates `1. Job 0x...`, `2. Job 0x...`, one per line — short_jobId only), **END THE TURN**, wait for the pick (hex prefix `0x7091` or list number `1`); locate THAT block via `[job: 0x...]` header (or list order), then run THAT block's command template. Never guess, never collapse.\n\n\
          **Command template** (pre-filled for THIS block; only run AFTER the user has replied):\n\
-         \x20\x20`onchainos agent pending-decisions-v2 resolve-prompt --user-reply \"<user wording, without any jobId prefix>\" --job-id \"{job}\" --role \"{role}\" --agent-id \"{agent}\"{to_flag} --source-event \"{src}\"`\n\n\
+         \x20\x20`onchainos agent pending-decisions-v2 resolve-prompt --user-reply \"<user wording, without any jobId prefix>\" --job-id \"{job}\" --role \"{role}\" --agent-id \"{agent}\"{to_flag} --source-event \"{src}\"{candidate_flag}`\n\n\
          After running, follow the relay playbook the command returns.",
         job = entry.job_id,
         role = entry.role,
@@ -1542,6 +1919,8 @@ fn resolve_llm_content_prompt_user(entry: &PendingEntry) -> String {
         to_flag = to_flag,
         src = source_event_str,
         defer = DEFER_KEYWORDS.join(" / "),
+        candidate_guidance = candidate_guidance,
+        candidate_flag = candidate_flag,
     )
 }
 
@@ -1724,7 +2103,10 @@ fn playbook_stale_relist(snap: &DisplaySnapshot, reason: &str) -> String {
         for it in &snap.items {
             list.push_str(&format!("{}. {}\n", it.index, it.list_label));
         }
-        list.push_str(&format!("\nReply with a number 1-{} to re-select.\n", snap.items.len()));
+        list.push_str(&format!(
+            "\nReply with a number 1-{} to re-select.\n",
+            snap.items.len()
+        ));
     }
     format!(
         "The previous selection is stale. **Translate the content below into the user's language**, then render as your assistant response:\n\n\
@@ -1744,7 +2126,7 @@ fn indent(s: &str, prefix: &str) -> String {
 mod sanitize_tests {
     use super::{
         decision_relay_post_action, resolve_llm_content_cli, resolve_llm_content_prompt_user,
-        sanitize_to_agent, PendingEntry, Status,
+        sanitize_to_agent, trusted_autotrade_session_key, PendingEntry, Status,
     };
     use chrono::Utc;
 
@@ -1771,7 +2153,10 @@ mod sanitize_tests {
         // agentId as the counterparty. Self must normalize to None (backup).
         assert_eq!(sanitize_to_agent(Some("8315".into()), "8315"), None);
         // Real counterparty passes through; None stays None.
-        assert_eq!(sanitize_to_agent(Some("4941".into()), "8315"), Some("4941".into()));
+        assert_eq!(
+            sanitize_to_agent(Some("4941".into()), "8315"),
+            Some("4941".into())
+        );
         assert_eq!(sanitize_to_agent(None, "8315"), None);
     }
 
@@ -1804,5 +2189,67 @@ mod sanitize_tests {
         assert!(guidance.contains("preserve global vs sticky `--job-id`"));
         assert!(guidance.contains("decision list / outdated-list"));
         assert!(guidance.contains("Never infer watch origin from the user's reply text"));
+    }
+
+    #[test]
+    fn autotrade_decisions_use_foreground_candidate_json_without_direct_consent_set() {
+        for content in [
+            resolve_llm_content_cli(&decision_entry()),
+            resolve_llm_content_prompt_user(&decision_entry()),
+        ] {
+            assert!(content.contains("--autotrade-candidate-json"));
+            assert!(content.contains("strict compact JSON"));
+            assert!(content.contains("Do not call `autotrade-consent-set` directly"));
+            assert!(content.contains("one number is `tradeAmount` only"));
+        }
+    }
+
+    #[test]
+    fn non_autotrade_decisions_keep_the_generic_resolver_contract() {
+        let mut entry = decision_entry();
+        entry.source_event = Some("job_submitted".to_string());
+        for content in [
+            resolve_llm_content_cli(&entry),
+            resolve_llm_content_prompt_user(&entry),
+        ] {
+            assert!(!content.contains("--autotrade-candidate-json"));
+            assert!(!content.contains("strict compact JSON"));
+        }
+    }
+
+    #[test]
+    fn autotrade_route_prefers_persisted_origin_session_key() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("pending-v2-origin-session-test");
+        std::fs::create_dir_all(&root).unwrap();
+        let home = tempfile::tempdir_in(root).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+        let context = crate::commands::agent_commerce::task::common::autotrade::consent::register_delivery_context(
+            "job1",
+            "8315",
+            "8779",
+            Some("job:job1:my:8315:to:8779"),
+            "delivery-1",
+            "/tmp/signal.txt",
+            "text",
+            1,
+        )
+        .unwrap();
+        crate::commands::agent_commerce::task::common::autotrade::consent::activate_delivery_context(
+            &context.job_id,
+            &context.delivery_id,
+        )
+        .unwrap();
+        assert_eq!(
+            trusted_autotrade_session_key("job1", "autotrade_consent").as_deref(),
+            Some("job:job1:my:8315:to:8779")
+        );
+        assert_eq!(trusted_autotrade_session_key("job1", "job_submitted"), None);
+        std::env::remove_var("ONCHAINOS_HOME");
     }
 }

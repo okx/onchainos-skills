@@ -45,7 +45,7 @@ Pending-decisions queue with four subcommands. Same `(jobId, role, agentId, toAg
 Push a decision to the user
 
 ```
-agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --user-content "<text>" --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>]
+agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --user-content "<text>" --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>] [--continuation-id <id>]
 ```
 
 | Param | Required | Default | Description |
@@ -58,13 +58,14 @@ agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> 
 | `--list-label` | Yes | - | Short label for multi-decision list view |
 | `--llm-content` | No | - | Custom llmContent override |
 | `--source-event` | No | - | Chain event name; used to build `user_decision_<source_event>` on resolve |
+| `--continuation-id` | No | - | Opaque state binding persisted with the pending entry and relayed as `message.continuationId`; cannot be combined with `--llm-content` |
 
 #### resolve-prompt
 
 Relay the user's reply back to the sub session
 
 ```
-agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <event>
+agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <event> [--continuation-id <id>]
 ```
 
 | Param | Required | Default | Description |
@@ -75,6 +76,7 @@ agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jo
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--to-agent-id` | No | - | Must match the original request |
 | `--source-event` | Yes | - | Chain event name from the original request |
+| `--continuation-id` | No | - | Exact binding embedded by the original request's default resolver; relayed unchanged |
 
 #### cancel
 
@@ -227,6 +229,10 @@ Use `services[0]` as the recommended service for the confirmation card. Offer al
 `hasMore == true` and `searchAfter` is a non-empty string. If the user then asks to change, call
 `task-service-select --search-after <searchAfter> --limit 3`; otherwise state that no more alternatives
 are available.
+
+Render `serviceType` verbatim (for example, `A2A` or `A2MCP`) without translation. For a
+non-subscription Service, render a zero `feeAmount` (number or numeric string) as localized `Free`
+rather than `0 <feeTokenSymbol>`.
 
 Use `supportSubscription` for subscription branch selection. Use `subscriptionInfo.interval`,
 `subscriptionInfo.feeAmount`, and `subscriptionInfo.supportTrial/freeTrial`
@@ -485,8 +491,8 @@ agent create-subscribe \
   --auto-renew <0|1> \
   --title <txt> --description <txt> \
   [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
-  [--autotrade-mode auto --autotrade-amount <decimal-number> --autotrade-cap <decimal-number> \
-   --autotrade-quote <usdt|usdc>] \
+  [--autotrade-mode <auto|manual>] [--autotrade-amount <decimal-number>] \
+  [--autotrade-cap <decimal-number>] [--autotrade-quote <usdt|usdc>] \
   [--format json]
 ```
 
@@ -501,10 +507,10 @@ agent create-subscribe \
 | `--description` | Yes | - | Max 4096 chars |
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
 | `--service-description` | No | `""` | Exact service description from `task-service-select`; persisted only as bounded routing hints |
-| `--autotrade-mode` | No | - | Explicit user-confirmed automatic signal execution; currently only `auto`. When supplied, all other `--autotrade-*` fields are required |
-| `--autotrade-amount` | With mode | - | Positive human-readable quote amount for each signal; decimal number only (for example `10` or `20.5`), never minimal units or a currency suffix; currency is selected by `--autotrade-quote`; must be ≤ cap |
-| `--autotrade-cap` | With mode | - | Positive human-readable per-signal quote cap; decimal number only, never minimal units or a currency suffix; currency is selected by `--autotrade-quote` |
-| `--autotrade-quote` | With mode | - | `usdt` or `usdc` |
+| `--autotrade-mode` | No | `auto` | `auto` or `manual`; an explicit user opt-out uses `manual` |
+| `--autotrade-amount` | No | - | Optional positive human-readable quote amount for each signal |
+| `--autotrade-cap` | No | - | Optional positive per-signal cap metadata; stored but not enforced |
+| `--autotrade-quote` | No | `usdt` | `usdt` or `usdc` |
 
 > **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
 
@@ -512,7 +518,11 @@ agent create-subscribe \
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
-There is no subscription-time binary copy-trade question or `--copy-trade` input. The inbound client requires an exactly Active subscription, then the subscription-signal Skill interprets each saved delivery and applies consent, cap, freshness, and selected-tool checks. The optional `--autotrade-*` group persists a complete, explicit user-authored execution policy after the subscription jobId is created. Partial groups fail closed and report exactly which fields are missing. JSON success reports `autoTradeConfigRequested` and `autoTradeConfigured`; a persistence failure does not roll back the already-created subscription and leaves execution unconfigured.
+There is no subscription-time binary copy-trade question or `--copy-trade` input. After creation, the CLI
+persists `auto` by default or the user's explicit `manual` choice. Amount, cap, and quote flags are
+independent optional user-authored values; cap is not enforced. JSON success reports
+`autoTradeConfigRequested` (whether any explicit flag was supplied) and `autoTradeConfigured` (whether the
+local default or explicit policy was persisted). A persistence failure does not roll back the subscription.
 
 ### subscribe-detail
 
@@ -682,16 +692,16 @@ response includes `readiness`, compatibility `ready`, stable `reason`, `checkedA
 
 The five states are `ready`, `missing`, `verification_unknown`, `needs_configuration`, and
 `incompatible`. Authentication absence or a valid account response without exact `trade` permission is
-`needs_configuration`; offer OAuth (`okx auth login --manual`), API key (`okx config init`), and Later.
-Timeouts, network failures, and malformed private responses are `verification_unknown`; offer Retry and
-Later only and never report them as logged out. Missing/incompatible results expose only fixed
+`needs_configuration`. Timeouts, network failures, and malformed private responses are
+`verification_unknown` and must never be reported as logged out. Missing/incompatible results expose fixed
 install/upgrade remediation. Subscription creation is never blocked. A delivery with any non-ready result
-must remain visible but execution stops before route persistence, consent, grant, or order; readiness
-recovery never auto-replays that delivery.
+must remain visible and receive one concise advisory, but it opens no choice card and starts no install,
+configuration, retry, or re-probe; execution stops before route persistence, consent, grant, or order, and
+readiness recovery never auto-replays that delivery.
 
 ### autotrade-grant-check
 
-Check a per-trade amount against the buyer's written authorization for a venue/action. Bespoke process
+Check a positive execution amount against the buyer's written authorization for a venue/action. Bespoke process
 contract — output is a top-level `{"ok":true}` / `{"ok":false,"reason":"…"}` (NOT the standard `data` envelope);
 exit code equals `ok`.
 
@@ -704,7 +714,7 @@ agent autotrade-grant-check --job-id <id> --venue <dex|hyperliquid|defi|polymark
 | `--job-id` | Yes | — | Job id (charset-checked before use as grant filename). |
 | `--venue` | Yes | — | `dex` \| `hyperliquid` (canonicalized to `dex`) \| `defi` \| `polymarket` \| `trade_kit`. Trade Kit has an independent grant and does not alias to `dex`. |
 | `--action` | Yes | — | `buy` \| `sell`. |
-| `--amount` | Yes | — | Decimal string; the per-trade amount to check against the written cap. For Trade Kit, pass the configured quote/notional amount for both buy and sell. |
+| `--amount` | Yes | — | Positive decimal execution amount. It is validated but not compared with the stored cap. |
 | `--format` | Yes | — | Only `json` is accepted. |
 
 ### task-deliverable-list
@@ -1061,22 +1071,55 @@ agent heartbeat --chain-index <196|...>
 
 ### autotrade-watch-precheck
 
-Read-only first-entry gate for a scoped watch. It checks whether `<jobId>` is an existing Active
-executable subscription received by this device and whether its local consent is ready. It never starts
-watch, pushes a card, or exposes persisted authorization amounts.
+First-entry gate for a scoped watch. It checks whether `<jobId>` is an existing Active executable
+subscription received by this device. When its local policy is missing, it returns the bounded ASP
+description and any live restore continuation needed to collect user-authored configuration. It never
+starts watch, pushes a card, or converts ASP prose into authorization.
 
 ```bash
 agent autotrade-watch-precheck --job-id <jobId>
 ```
 
-Output `data` includes `watchAllowed`, `shouldPromptAuthorization`, and a stable `reason`. When authorization
-is required it also includes `agentId`, the canonical untrusted `serviceDescription`, and bounded
-`assetClasses[]` for the unchanged `autotrade-consent-request --pre-delivery` flow. An unreadable consent
-record returns `watchAllowed:false`, `reason:"consent_unreadable"`, and a user-confirmable `repairCommand`.
+Output `data` includes `watchAllowed`, `shouldPromptAuthorization:false`, and a stable `reason`. Missing
+policy returns `watchAllowed:false`, `reason:"configuration_required"`,
+`shouldPromptConfiguration:true`, the canonical job/agent/asset binding, and untrusted
+`serviceDescription`. A live restore attempt also returns its `continuationId`, `requiredFields`, and
+`missingFields`. An unreadable consent record returns `watchAllowed:false`,
+`reason:"consent_unreadable"`, and a user-confirmable `repairCommand`.
+
+### autotrade-consent-continue (internal)
+
+Short-lived configuration command used by subscription restoration and retained for older in-flight
+delivery decisions. The record binds `continuationId`, job, buyer agent, selected mode, signal type,
+original delivery ID, required fields, and explicit values. It is separate from consent and pending/A2A
+state: it cannot authorize or execute a trade. Start/resume revalidates the canonical Active subscription;
+successful `autotrade-consent-set`, `pause`, or explicit `--cancel` consumes the record.
+The first call may return `validationErrors` while still persisting the safe mode/job/origin binding;
+invalid supplied values are not persisted. Every later resume or cancel requires the exact returned
+`continuationId`. A repeated start also requires that exact ID when a live record already exists.
+
+```bash
+agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
+  --mode <auto|manual> --origin <pre-delivery|delivery|subscription-restore> --signal-type <class> \
+  [--delivery-id <deliveryId>] [--trade-amount <amount>] [--cap <amount>] \
+  [--quote <usdt|usdc>] [--required-field <tradeAmount|cap|quote>]... [--confirm-mode]
+
+agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
+  --continuation-id <id> [--mode <auto|manual>] [--trade-amount <amount>] [--cap <amount>] \
+  [--quote <usdt|usdc>]
+
+agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
+  --continuation-id <id> --cancel
+```
+
+For `subscription-restore`, the starting mode is a display default until the current user explicitly
+selects it. `--confirm-mode` marks an explicitly selected starting mode; on resume, supplying `--mode`
+records that confirmation. Until then, `missingFields` includes `mode` and no consent command is returned.
 
 ### autotrade-consent-set
 
-Persist the buyer's per-subscription execution policy. This command never parses or replays a delivery;
+Persist the buyer's per-subscription execution policy. Amount and cap are optional; cap is informational
+in this MVP. This command never parses or replays a delivery;
 the active subscription signal skill owns the current execution turn.
 
 ```
@@ -1088,7 +1131,7 @@ agent autotrade-consent-set --job-id <jobId> --mode <mode> [--agent-id <agentId>
 | `--job-id` | Yes | - | Subscription job ID |
 | `--mode` | Yes | - | `auto`, `manual`, `decline`, `pause`, `cap-adjust`, or `plugin-ready-check` (`plugin-approved` compatibility alias) |
 | `--agent-id` | Except `pause` | - | Buyer agent ID; omitted for `pause`, required for every other mode |
-| `--cap` | For `auto` | - | Per-trade cap in quote-stablecoin units |
+| `--cap` | No | - | Optional per-trade cap metadata in quote-stablecoin units |
 | `--trade-amount` | No | - | Optional policy amount; the model/tool must still read and validate each delivery |
 | `--ttl-sec` | No | 31536000 | Consent lifetime in seconds (default 365 days) |
 | `--plugin` | For plugin readiness | - | Plugin-store ID for `plugin-ready-check` or its compatibility alias |

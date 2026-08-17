@@ -1,4 +1,4 @@
-//! FR-8 per-trade authorization grants.
+//! Automatic-execution authorization grants.
 //!
 //! One file per `jobId` at `<onchainos_home>/autotrade/grants/<jobId>.json`,
 //! written **whole** in one shot (a per-venue partial write would clobber other
@@ -136,8 +136,9 @@ fn now_secs() -> u64 {
 /// order; any failure ⇒ `GrantDeny(reason)`.
 ///
 /// `venue` ∈ {dex,hyperliquid,defi,polymarket,trade_kit}, where `hyperliquid`
-/// is an alias of `dex`; `action` ∈ {buy,sell}. `buy` checks against `maxBuy`,
-/// `sell` against `maxSell`.
+/// is an alias of `dex`; `action` ∈ {buy,sell}. The amount remains mandatory and
+/// must be a positive decimal because the selected execution tool needs a valid
+/// size, but version 2 no longer compares it with stored caps.
 pub fn check_grant(job_id: &str, venue: &str, action: &str, amount: &str) -> Result<(), GrantDeny> {
     // 1. jobId charset (path-traversal defense) — before any filesystem use.
     if !job_id_is_safe(job_id) {
@@ -151,11 +152,13 @@ pub fn check_grant(job_id: &str, venue: &str, action: &str, amount: &str) -> Res
     }
     // 4. amount parseable (overflow / non-decimal ⇒ deny).
     let amount = Decimal::parse(amount).map_err(|_| GrantDeny(DENY_INVALID_AMOUNT))?;
-    // 5. grant file. DENY-BY-DEFAULT (consent flow, product 2026-07-17): a MISSING grant
-    // file ⇒ DENY. The client-side per-trade cap now lives in the consent record and is
-    // mirrored to the grant file by `autotrade-consent-set` ONLY for `Auto` mode. A
-    // missing file therefore means "not consented to auto-execute" (first-time / manual /
-    // declined), which must not silently pass this out-of-process (plugin) check. In the
+    if amount.is_zero() {
+        return Err(GrantDeny(DENY_INVALID_AMOUNT));
+    }
+    // 5. grant file. DENY-BY-DEFAULT: a MISSING grant file ⇒ DENY. The grant is
+    // written only for Auto mode; a missing file therefore means "not authorized
+    // to auto-execute" (manual / declined / local write failure), which must not
+    // silently pass this out-of-process (plugin) check. In the
     // in-process pipeline the consent gate already decided this before we reach here; this
     // is defense-in-depth + the plugin's only enforcement point. (Was permissive-by-
     // default under WBW-13715, when there was no consent record.)
@@ -180,23 +183,11 @@ pub fn check_grant(job_id: &str, venue: &str, action: &str, amount: &str) -> Res
         return Err(GrantDeny(DENY_EXPIRED));
     }
     // 10. venue authorized.
-    let venue_grant = grant
+    grant
         .grants
         .get(venue)
         .ok_or(GrantDeny(DENY_VENUE_NOT_AUTHORIZED))?;
-    // 11. that action has a cap.
-    let cap_str = match action {
-        "buy" => venue_grant.max_buy.as_deref(),
-        _ => venue_grant.max_sell.as_deref(),
-    }
-    .ok_or(GrantDeny(DENY_NO_CAP))?;
-    let cap = Decimal::parse(cap_str).map_err(|_| GrantDeny(DENY_OVER_CAP))?;
-    // 12. amount <= cap (exact decimal compare; overflow already ⇒ deny above).
-    if amount.le(&cap) {
-        Ok(())
-    } else {
-        Err(GrantDeny(DENY_OVER_CAP))
-    }
+    Ok(())
 }
 
 /// Write a whole grant file for one venue's caps (`version = 1`). Dev-seeding only
@@ -303,7 +294,35 @@ pub fn write_cap_grant(job_id: &str, cap_u: &str, ttl_sec: u64) -> anyhow::Resul
     Ok(())
 }
 
-/// Remove the grant file (Manual / Decline — there is no auto-execute cap to enforce).
+/// Write an unbounded automatic-execution authorization for all supported
+/// venues. The optional amount/cap in the consent record remains available to
+/// the model, while this file only answers whether the job is authorized.
+pub fn write_auto_grant(job_id: &str, ttl_sec: u64) -> anyhow::Result<()> {
+    if !job_id_is_safe(job_id) {
+        anyhow::bail!("invalid job id");
+    }
+    if ttl_sec == 0 {
+        anyhow::bail!("ttl must be > 0");
+    }
+
+    let created_at = now_secs();
+    let grants = VENUES
+        .iter()
+        .map(|venue| ((*venue).to_string(), VenueGrant::default()))
+        .collect();
+    let grant = GrantFile {
+        version: GRANT_VERSION,
+        job_id: job_id.to_string(),
+        grants,
+        created_at,
+        expires_at: created_at + ttl_sec,
+    };
+    let path = grant_path(job_id).map_err(|d| anyhow::anyhow!("{}", d.0))?;
+    crate::home::write_secure(&path, serde_json::to_string_pretty(&grant)?.as_bytes())?;
+    Ok(())
+}
+
+/// Remove the grant file (Manual / Decline — automatic execution is disabled).
 pub fn clear_grant(job_id: &str) {
     if let Ok(path) = grant_path(job_id) {
         let _ = std::fs::remove_file(path);
@@ -316,8 +335,15 @@ mod tests {
 
     /// Set ONCHAINOS_HOME to an isolated temp dir for the duration of a test.
     fn with_home<F: FnOnce()>(f: F) {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
-        let tmp = tempfile::tempdir().unwrap();
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp_root = std::env::current_dir()
+            .expect("current working directory")
+            .join("target")
+            .join("grant-test-home");
+        std::fs::create_dir_all(&temp_root).expect("create grant test temp root");
+        let tmp = tempfile::tempdir_in(temp_root).expect("create grant test home");
         std::env::set_var("ONCHAINOS_HOME", tmp.path());
         f();
         std::env::remove_var("ONCHAINOS_HOME");
@@ -337,41 +363,19 @@ mod tests {
     }
 
     #[test]
-    fn write_cap_grant_mirrors_cap_for_all_venues() {
+    fn legacy_cap_grant_authorizes_all_positive_amounts() {
         with_home(|| {
             write_cap_grant("job1", "100", 3600).unwrap();
-            // within cap on every venue's buy
             assert!(check_grant("job1", "dex", "buy", "100").is_ok());
             assert!(check_grant("job1", "hyperliquid", "buy", "100").is_ok());
             assert!(check_grant("job1", "defi", "buy", "50").is_ok());
             assert!(check_grant("job1", "polymarket", "buy", "99.99").is_ok());
             assert!(check_grant("job1", "trade_kit", "buy", "100").is_ok());
             assert!(check_grant("job1", "trade_kit", "sell", "100").is_ok());
-            // over cap denies
-            assert_eq!(
-                check_grant("job1", "dex", "buy", "100.01").unwrap_err().0,
-                DENY_OVER_CAP
-            );
-            assert_eq!(
-                check_grant("job1", "hyperliquid", "buy", "100.01")
-                    .unwrap_err()
-                    .0,
-                DENY_OVER_CAP
-            );
-            assert_eq!(
-                check_grant("job1", "trade_kit", "buy", "100.01")
-                    .unwrap_err()
-                    .0,
-                DENY_OVER_CAP
-            );
-            assert_eq!(
-                check_grant("job1", "trade_kit", "sell", "100.01")
-                    .unwrap_err()
-                    .0,
-                DENY_OVER_CAP
-            );
-            // sells are NOT cap-gated under consent — any sell passes (regression fix:
-            // maxSell was unset → DENY_NO_CAP blocked auto-mode polymarket sells).
+            assert!(check_grant("job1", "dex", "buy", "100.01").is_ok());
+            assert!(check_grant("job1", "hyperliquid", "buy", "100.01").is_ok());
+            assert!(check_grant("job1", "trade_kit", "buy", "100.01").is_ok());
+            assert!(check_grant("job1", "trade_kit", "sell", "100.01").is_ok());
             assert!(check_grant("job1", "polymarket", "sell", "5").is_ok());
             assert!(check_grant("job1", "polymarket", "sell", "999999999").is_ok());
             assert!(check_grant("job1", "dex", "sell", "12345").is_ok());
@@ -402,21 +406,29 @@ mod tests {
     }
 
     #[test]
-    fn ac9_over_cap_denies() {
+    fn stored_cap_does_not_deny_execution() {
         with_home(|| {
             write_grant("job1", "dex", Some("100"), None, 3600).unwrap();
-            let err = check_grant("job1", "dex", "buy", "100.01").unwrap_err();
-            assert_eq!(err.0, DENY_OVER_CAP);
+            assert!(check_grant("job1", "dex", "buy", "100.01").is_ok());
         });
     }
 
     #[test]
-    fn ac9_no_cap_for_action_denies() {
+    fn authorized_venue_does_not_require_action_cap() {
         with_home(|| {
-            // maxBuy set but maxSell absent → sell denied.
             write_grant("job1", "dex", Some("100"), None, 3600).unwrap();
-            let err = check_grant("job1", "dex", "sell", "1").unwrap_err();
-            assert_eq!(err.0, DENY_NO_CAP);
+            assert!(check_grant("job1", "dex", "sell", "1").is_ok());
+        });
+    }
+
+    #[test]
+    fn zero_amount_is_rejected() {
+        with_home(|| {
+            write_auto_grant("job1", 3600).unwrap();
+            assert_eq!(
+                check_grant("job1", "dex", "buy", "0").unwrap_err().0,
+                DENY_INVALID_AMOUNT
+            );
         });
     }
 

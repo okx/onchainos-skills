@@ -56,14 +56,6 @@ pub enum AgentCommand {
     #[command(name = "service-list")]
     ServiceList(identity::ServiceListArgs),
 
-    /// Search marketplace Services for task matching
-    #[command(
-        name = "service-match",
-        long_about = "Search marketplace Services by capability, ASP, Service name, or price range.\n\nInitial requests may omit all search filters. Continuation requests use --search-after and cannot repeat initial-search filters. --agentic-id is sent as the agenticId request header and may be used on both initial and continuation requests. Results include searchAfter, hasMore, unmatchReason, Services, pricing, trial information, and ASP summaries.",
-        after_long_help = "Examples:\n  Initial request:\n    onchainos agent service-match --keywords \"smart contract\" audit --min-payment-token-amount 5 --max-payment-token-amount 20 --limit 2\n\n  Initial request without filters:\n    onchainos agent service-match --agentic-id <user-agent-id>\n\n  Continuation request:\n    onchainos agent service-match --search-after <cursor> --agentic-id <user-agent-id> --limit 2"
-    )]
-    ServiceMatch(identity::ServiceMatchArgs),
-
     /// Submit an Agent review
     #[command(name = "feedback-submit", visible_alias = "feedbacksubmit")]
     FeedbackSubmit(identity::FeedbackSubmitArgs),
@@ -264,10 +256,6 @@ pub enum AgentCommand {
         #[arg(long, default_value = "")]
         format: String,
     },
-
-    /// Select task-creation candidate services via service-match
-    #[command(name = "task-service-select")]
-    TaskServiceSelect(task::user::TaskServiceSelectArgs),
 
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
     #[command(name = "set-asp")]
@@ -587,16 +575,6 @@ pub enum AgentCommand {
         autotrade: String,
     },
 
-    /// Verify the selected Trade Kit runtime before any consent/grant/order
-    /// step. Returns a typed ready/not-ready result without exposing credentials
-    /// or child-process output.
-    #[command(name = "trade-kit-readiness")]
-    TradeKitReadiness {
-        /// Repeatable: spot | perp | prediction | option.
-        #[arg(long = "asset-class", required = true, action = clap::ArgAction::Append)]
-        asset_class: Vec<String>,
-    },
-
     /// Check a per-trade amount against the buyer's written authorization (bespoke
     /// `{ok,reason?}` process contract; NOT the standard `data` envelope).
     #[command(name = "autotrade-grant-check")]
@@ -671,35 +649,81 @@ pub enum AgentCommand {
         quote: Option<String>,
     },
 
-    /// Push the existing execution-mode decision. Normally this follows the
-    /// first actionable delivery; `--pre-delivery` reuses it before watch resume.
+    /// Queue and push a delivery's consent/manual decision. The CLI adds a
+    /// bounded canonical delivery summary before the unchanged choices.
     #[command(name = "autotrade-consent-request", hide = true)]
     AutotradeConsentRequest {
         #[arg(long = "job-id")]
         job_id: String,
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Real retained delivery id. Required unless `--pre-delivery` is set.
         #[arg(long = "delivery-id")]
-        delivery_id: Option<String>,
+        delivery_id: String,
         #[arg(long = "signal-type")]
         signal_type: String,
-        /// Reuse the consent card before a scoped watch resumes. This mode
-        /// configures future delivery handling and never executes a trade.
-        #[arg(long = "pre-delivery", default_value_t = false)]
-        pre_delivery: bool,
-        /// Visible-session language for a new device (`zh` | `en`). Accepted
-        /// only with `--pre-delivery`; also restores the local language marker.
-        #[arg(long)]
-        language: Option<String>,
     },
 
-    /// Read-only first-entry gate for an explicitly scoped watch. Existing
-    /// executable subscriptions without local consent must reuse A/B/C first.
-    #[command(name = "autotrade-watch-precheck", hide = true)]
-    AutotradeWatchPrecheck {
+    /// Persist a short-lived, exact-delivery permit after the user chooses the
+    /// over-cap card's one-time execution option.
+    #[command(name = "autotrade-once-authorize", hide = true)]
+    AutotradeOnceAuthorize {
         #[arg(long = "job-id")]
         job_id: String,
+        #[arg(long = "delivery-id")]
+        delivery_id: String,
+        #[arg(long)]
+        amount: String,
+    },
+
+    /// Execute one admitted delivery through a venue-specific CLI and
+    /// deterministically report its terminal result to the job UI.
+    #[command(name = "autotrade-execute", hide = true)]
+    AutotradeExecute {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long = "delivery-id")]
+        delivery_id: String,
+        /// dex | defi | trade_kit | polymarket | hyperliquid
+        #[arg(long)]
+        venue: String,
+        /// buy | sell
+        #[arg(long)]
+        action: String,
+        /// Exact persisted policy amount.
+        #[arg(long)]
+        amount: String,
+        /// `auto` for persisted grant execution; `manual` for the persisted
+        /// manual policy; `one_time` for an exact over-cap permit.
+        #[arg(long = "execution-mode", default_value = "auto")]
+        execution_mode: String,
+        /// JSON array containing only the target CLI's argv (no program/shell).
+        #[arg(long = "command-json")]
+        command_json: String,
+        #[arg(long = "timeout-sec", default_value_t = 120)]
+        timeout_sec: u64,
+    },
+
+    /// Retry only pending UI notifications; never retries a trade command.
+    #[command(name = "autotrade-outcome-flush", hide = true)]
+    AutotradeOutcomeFlush {
+        #[arg(long = "job-id")]
+        job_id: String,
+    },
+
+    /// Persist and notify a terminal delivery result reached before a trade
+    /// command exists. This closes headless Job Session processing paths.
+    #[command(name = "autotrade-delivery-report", hide = true)]
+    AutotradeDeliveryReport {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long = "delivery-id")]
+        delivery_id: String,
+        /// skipped | failed_before_execution
+        #[arg(long)]
+        status: String,
+        /// Concise user-safe reason; command output and credentials are forbidden.
+        #[arg(long)]
+        reason: String,
     },
 
     /// Persist a bounded model-selected route for an Active subscription.
@@ -1223,6 +1247,20 @@ pub enum AgentCommand {
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     use task::user::TaskCommand as T;
 
+    // Opportunistic notification worker: every Agent invocation (including
+    // heartbeat/watch-driven commands) retries only due persisted notices.
+    // This never retries or reconstructs a transaction command.
+    let _ = task::common::autotrade::executor::reconcile_terminal_journals(
+        4,
+        std::time::Duration::from_millis(100),
+    );
+    let _ = task::common::autotrade::executor::flush_all_due(4);
+    let _ = task::common::autotrade::executor::cleanup_expired_tickets(8);
+    let _ = task::common::autotrade::delivery_queue::flush_due(
+        1,
+        std::time::Duration::from_millis(100),
+    );
+
     match cmd {
         // ── Identity ────────────────────────────────────────────────
         AgentCommand::Create(args) => identity::create(args, ctx).await,
@@ -1237,7 +1275,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Upload(args) => identity::upload(args, ctx).await,
         AgentCommand::Search(args) => identity::search(args, ctx).await,
         AgentCommand::ServiceList(args) => identity::service_list(args, ctx).await,
-        AgentCommand::ServiceMatch(args) => identity::service_match(args, ctx).await,
         AgentCommand::FeedbackSubmit(args) => identity::feedback_submit(args, ctx).await,
         AgentCommand::FeedbackList(args) => identity::feedback_list(args, ctx).await,
         AgentCommand::TaskFeedback(args) => identity::task_feedback(args, ctx).await,
@@ -1382,10 +1419,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 ctx,
             )
             .await
-        }
-
-        AgentCommand::TaskServiceSelect(args) => {
-            task::user::run_task(T::TaskServiceSelect(args), ctx).await
         }
 
         AgentCommand::SetAsp {
@@ -1753,15 +1786,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             .await
         }
 
-        AgentCommand::TradeKitReadiness { asset_class } => {
-            let asset_classes =
-                task::common::autotrade::trade_kit::parse_runtime_asset_classes(&asset_class)
-                    .map_err(anyhow::Error::msg)?;
-            let result = task::common::autotrade::trade_kit::probe_runtime(&asset_classes).await;
-            crate::output::success(result);
-            Ok(())
-        }
-
         // ── Auto copy-trade (grant-check public; grant-write debug-only) ─────
         AgentCommand::AutotradeGrantCheck {
             job_id,
@@ -1841,98 +1865,185 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::AutotradeWatchPrecheck { job_id } => {
-            let result = task::user::scoped_watch_autotrade_precheck(&job_id).await?;
-            crate::output::success(result);
-            Ok(())
-        }
-
         AgentCommand::AutotradeConsentRequest {
             job_id,
             agent_id,
             delivery_id,
             signal_type,
-            pre_delivery,
-            language,
         } => {
-            use task::common::autotrade::card;
+            use task::common::autotrade::{card, consent, delivery_queue};
             let signal_type = signal_type
                 .parse::<crate::asset_class::AssetClass>()
                 .map_err(anyhow::Error::msg)?;
-            let (decision, llm_content) = if pre_delivery {
-                if delivery_id.is_some() {
-                    anyhow::bail!("--delivery-id cannot be used with --pre-delivery");
+            if consent::load_consent(&job_id)?
+                .is_some_and(|policy| policy.mode == consent::ConsentMode::Auto)
+            {
+                crate::output::success(serde_json::json!({
+                    "decision": false,
+                    "decisionPushed": false,
+                    "status": "policy_ready",
+                    "reason": "auto_authorization_already_persisted",
+                    "deliveryId": delivery_id,
+                    "terminal": false,
+                    "guidance": "Do not ask A/B/C again. Re-read this delivery, run the normal grant/readiness checks, and execute only through autotrade-execute if eligible.",
+                }));
+                return Ok(());
+            }
+            // Bind the user decision to a CLI-admitted delivery before pushing
+            // the card. The reply may arrive in a fresh model session, so relying
+            // on conversational memory alone is unsafe and loses savedPath.
+            let delivery_context = match delivery_queue::enqueue(&job_id, &delivery_id)
+                .map_err(|e| anyhow::anyhow!("delivery decision queue unavailable: {e}"))?
+            {
+                delivery_queue::EnqueueResult::Active {
+                    context,
+                    already_present: false,
+                } => context,
+                delivery_queue::EnqueueResult::Active {
+                    already_present: true,
+                    ..
+                } => {
+                    crate::output::success(serde_json::json!({
+                        "decision": false,
+                        "decisionPushed": false,
+                        "status": "decision_pending",
+                        "reason": "delivery_already_processing_or_awaiting_decision",
+                        "deliveryId": delivery_id,
+                        "terminal": false,
+                        "guidance": "Do not push another A/B/C card and do not submit an order. The durable delivery queue already owns this delivery.",
+                    }));
+                    return Ok(());
                 }
-                if let Some(language) = language.as_deref() {
-                    let language = match language.to_ascii_lowercase().as_str() {
-                        "zh" => task::common::user_lang::Lang::Zh,
-                        "en" => task::common::user_lang::Lang::En,
-                        _ => anyhow::bail!("--language must be one of: zh | en"),
-                    };
-                    task::common::user_lang::record(&job_id, language);
+                delivery_queue::EnqueueResult::Queued {
+                    active_delivery_id,
+                    position,
+                } => {
+                    crate::output::success(serde_json::json!({
+                        "decision": false,
+                        "decisionPushed": false,
+                        "status": "queued",
+                        "reason": "awaiting_prior_user_decision",
+                        "deliveryId": delivery_id,
+                        "activeDeliveryId": active_delivery_id,
+                        "queuePosition": position,
+                        "terminal": false,
+                    }));
+                    return Ok(());
                 }
-                let decision = card::make_pre_delivery_consent_decision(
-                    signal_type.as_str(),
-                    &job_id,
-                    &agent_id,
-                );
-                let llm_content = card::pre_delivery_consent_llm_content(
-                    signal_type.as_str(),
-                    &job_id,
-                    &agent_id,
-                );
-                (decision, Some(llm_content))
-            } else {
-                if language.is_some() {
-                    anyhow::bail!("--language is only valid with --pre-delivery");
+            };
+            // The queue serializes deliveries; the pending pointer binds the
+            // visible card/reply to the active one only.
+            match consent::activate_delivery_context_exclusive(&job_id, &delivery_id)
+                .map_err(|e| anyhow::anyhow!("delivery context unavailable: {e}"))?
+            {
+                consent::DeliveryActivation::Activated(_)
+                | consent::DeliveryActivation::AlreadyPending(_) => {}
+                consent::DeliveryActivation::Conflict(pending) => {
+                    anyhow::bail!(
+                        "delivery queue/pending pointer mismatch: active {}",
+                        pending.delivery_id
+                    );
                 }
-                let delivery_id = delivery_id
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("--delivery-id is required unless --pre-delivery is set")
-                    })?;
-                (
-                    card::make_first_time_decision(
-                        delivery_id,
+            }
+            let decision = match consent::load_consent(&job_id)? {
+                Some(policy) if policy.mode == consent::ConsentMode::Manual => {
+                    card::make_manual_signal_decision(
+                        &delivery_id,
                         signal_type.as_str(),
                         &job_id,
                         &agent_id,
-                    ),
-                    None,
-                )
+                        policy.trade_amount_u.as_deref(),
+                    )
+                }
+                _ => card::make_first_time_decision(
+                    &delivery_id,
+                    signal_type.as_str(),
+                    &job_id,
+                    &agent_id,
+                ),
             };
-            match task::common::pending_v2::push_decision_direct_with_llm_content(
+            delivery_queue::mark_awaiting_decision(&job_id, &delivery_id)
+                .map_err(|e| anyhow::anyhow!("delivery decision queue update failed: {e}"))?;
+            match task::common::pending_v2::push_decision_direct(
                 &job_id,
                 "user",
                 &agent_id,
+                Some(&delivery_context.provider_agent_id),
                 &decision.user_content,
                 &card::decision_list_label(&decision),
                 &decision.source_event,
-                llm_content.as_deref(),
             ) {
-                Ok(()) if pre_delivery => crate::output::success(
-                    card::pre_delivery_visible_payload(
-                        &decision,
-                        llm_content
-                            .as_deref()
-                            .expect("pre-delivery consent always has continuation content"),
-                    ),
-                ),
                 Ok(()) => crate::output::success(serde_json::json!({
                     "decision": true,
                     "decisionPushed": true,
                     "sourceEvent": decision.source_event,
-                    "deliveryId": decision.delivery_id,
-                    "preDelivery": false,
+                    "deliveryId": delivery_id,
                 })),
-                Err(error) if pre_delivery => {
-                    anyhow::bail!(
-                        "pre-delivery consent card could not be pushed; scoped watch was not resumed: {error}"
-                    )
-                }
                 Err(_) => crate::output::success(decision),
             }
+            Ok(())
+        }
+
+        AgentCommand::AutotradeExecute {
+            job_id,
+            delivery_id,
+            venue,
+            action,
+            amount,
+            execution_mode,
+            command_json,
+            timeout_sec,
+        } => {
+            let outcome = task::common::autotrade::executor::execute(
+                task::common::autotrade::executor::ExecuteRequest {
+                    job_id: &job_id,
+                    delivery_id: &delivery_id,
+                    venue: &venue,
+                    action: &action,
+                    amount: &amount,
+                    execution_mode:
+                        task::common::autotrade::executor::ExecutionMode::parse(&execution_mode)?,
+                    command_json: &command_json,
+                    timeout_sec,
+                },
+            )
+            .await?;
+            crate::output::success(outcome);
+            Ok(())
+        }
+
+        AgentCommand::AutotradeOnceAuthorize {
+            job_id,
+            delivery_id,
+            amount,
+        } => {
+            crate::output::success(
+                task::common::autotrade::executor::authorize_one_time(
+                    &job_id,
+                    &delivery_id,
+                    &amount,
+                )?,
+            );
+            Ok(())
+        }
+
+        AgentCommand::AutotradeOutcomeFlush { job_id } => {
+            crate::output::success(task::common::autotrade::executor::flush(&job_id)?);
+            Ok(())
+        }
+
+        AgentCommand::AutotradeDeliveryReport {
+            job_id,
+            delivery_id,
+            status,
+            reason,
+        } => {
+            crate::output::success(task::common::autotrade::executor::report_delivery(
+                &job_id,
+                &delivery_id,
+                &status,
+                &reason,
+            )?);
             Ok(())
         }
 
@@ -1951,10 +2062,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 Ok(consent::ConsentDecision::AutoOverCap)
             ) {
                 let d = card::make_cap_adjust_decision("trade", &job_id, &agent_id, amount, cap);
+                let target = consent::load_pending_delivery_context(&job_id)?
+                    .map(|context| context.provider_agent_id);
                 match task::common::pending_v2::push_decision_direct(
                     &job_id,
                     "user",
                     &agent_id,
+                    target.as_deref(),
                     &d.user_content,
                     &card::decision_list_label(&d),
                     &d.source_event,
@@ -3226,29 +3340,15 @@ async fn check_status_freshness(
     };
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
 
-    // For job_submitted: check local deliverable to avoid an extra CLI round-trip.
-    //   ① manifest present  → populate ctx.deliverable (normal path)
-    //   ② temp file present → recover: download + save → populate ctx.deliverable
-    //   ③ neither           → leave ctx.deliverable=None; prompt will output "wait"
+    // For job_submitted: prefer an unprocessed spool delivery over an existing
+    // manifest. Subscription manifests are append-only, so checking the
+    // manifest first could keep selecting an old delivery forever while a new
+    // inbound signal remained stranded in the spool.
+    //   ① temp file present → recover + save the oldest unprocessed delivery
+    //   ② manifest present  → populate the newest saved delivery
+    //   ③ neither           → leave ctx.deliverable=None; prompt outputs "wait"
     if job_status_or_event == "job_submitted" {
-        if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("user", job_id) {
-            if let Some(entry) = manifest.entries.first() {
-                let dir = task::common::deliverables::deliverables_dir("user", job_id)
-                    .map(|d| d.join(&entry.filename).display().to_string())
-                    .unwrap_or_default();
-                let text_content = if entry.deliverable_type == "text" {
-                    std::fs::read_to_string(&dir).ok()
-                } else {
-                    None
-                };
-                ctx.deliverable = Some(task::common::PreFetchedDeliverable {
-                    path: dir,
-                    deliverable_type: entry.deliverable_type.clone(),
-                    original_name: entry.original_name.clone(),
-                    text_content,
-                });
-            }
-        } else if let Some(recovered) = {
+        if let Some(recovered) = {
             let short_id_fallback = &job_id[..job_id.len().min(10)];
             task::user::try_recover_from_temp_file(
                 job_id,
@@ -3282,6 +3382,25 @@ async fn check_status_freshness(
             .await
             {
                 return (Some(prompt), Some(ctx));
+            }
+        } else if let Ok(Some(manifest)) =
+            task::common::deliverables::read_manifest("user", job_id)
+        {
+            if let Some(entry) = manifest.entries.last() {
+                let dir = task::common::deliverables::deliverables_dir("user", job_id)
+                    .map(|d| d.join(&entry.filename).display().to_string())
+                    .unwrap_or_default();
+                let text_content = if entry.deliverable_type == "text" {
+                    std::fs::read_to_string(&dir).ok()
+                } else {
+                    None
+                };
+                ctx.deliverable = Some(task::common::PreFetchedDeliverable {
+                    path: dir,
+                    deliverable_type: entry.deliverable_type.clone(),
+                    original_name: entry.original_name.clone(),
+                    text_content,
+                });
             }
         } else if DEBUG_LOG {
             eprintln!("[check-freshness] job_submitted: no deliverable found — waiting for deliverable_received");

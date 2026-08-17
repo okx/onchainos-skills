@@ -50,8 +50,9 @@ then, push a brief localized outcome yourself via `onchainos agent user-notify`.
 /// "within limit" clause + the "Pause auto copy-trading" line appear ONLY for a cap-gated auto
 /// trade (`cap` present); manual one-shots (B) and sells (no cap) get the plain form.
 fn card_notification_template(amount: Option<&str>, cap: Option<&str>) -> String {
-    let mut s =
-        String::from("[Auto Copy-Trade] Executed the provider's <signalType> signal for job <jobId>.");
+    let mut s = String::from(
+        "[Auto Copy-Trade] Executed the provider's <signalType> signal for job <jobId>.",
+    );
     if let Some(a) = amount {
         s.push_str(&format!(" Amount: {a} U"));
         if let Some(c) = cap {
@@ -62,7 +63,9 @@ fn card_notification_template(amount: Option<&str>, cap: Option<&str>) -> String
     s.push_str(" Result: <tx/order id or failure reason>.");
     if cap.is_some() {
         // Pause line — backed by `autotrade-consent-set --mode pause` (clears this job's consent).
-        s.push_str(" Reply \"Pause auto copy-trading\" (回复「暂停自动跟单」) to turn it off anytime.");
+        s.push_str(
+            " Reply \"Pause auto copy-trading\" (回复「暂停自动跟单」) to turn it off anytime.",
+        );
     }
     s
 }
@@ -416,12 +419,10 @@ pub fn make_notify_only(saved_path: &str, reason: &str) -> NotifyOnly {
 /// The `--source-event` value carried by the first-time consent decision; becomes
 /// the `user_decision_autotrade_consent` relay event handled in `user/flow.rs`.
 pub const CONSENT_SOURCE_EVENT: &str = "autotrade_consent";
-/// The same authorization card machinery, invoked before a scoped watch when a
-/// new device has no local consent file. Its reply stays in the visible user
-/// session because there is no retained delivery sub-session to continue.
-pub const PRE_DELIVERY_CONSENT_SOURCE_EVENT: &str = "autotrade_consent_pre_delivery";
 /// Natural-language follow-up after A/B selected a mode but omitted values.
 pub const CONFIG_REQUIRED_SOURCE_EVENT: &str = "autotrade_config_required";
+/// Per-delivery execute/skip decision while the subscription is in Manual mode.
+pub const MANUAL_SOURCE_EVENT: &str = "autotrade_manual_signal";
 /// `--source-event` for the over-cap re-ask (2-way: raise cap / skip); relayed as
 /// `user_decision_autotrade_over_cap`.
 pub const OVER_CAP_SOURCE_EVENT: &str = "autotrade_over_cap";
@@ -457,21 +458,6 @@ fn consent_first_time_content(lang: Lang) -> String {
              \x20\x20A. 执行本次交易,并为后续信号开启自动执行(需设置固定跟单金额和每笔金额上限,单位 USDT;默认用 USDT 支付,可注明「用 USDC」)\n\
              \x20\x20B. 仅执行本次 — 请给出本次金额,之后每次都手动确认\n\
              \x20\x20C. 跳过本次自动执行(交付物仍会保存,可稍后使用任意可用工具手动处理)"
-            .to_string(),
-    }
-}
-
-fn consent_pre_delivery_content(lang: Lang) -> String {
-    match lang {
-        Lang::En => "[Confirmation Needed] This device has no local execution authorization for an executable trading-signal subscription. Configure it before monitoring resumes:\n\
-             \x20\x20A. Enable bounded auto-execution for future signals (include a fixed amount, per-trade limit, and USDT or USDC)\n\
-             \x20\x20B. Keep automatic execution off and ask me before every trade\n\
-             \x20\x20C. Decide later; keep receiving and saving deliverables, then ask again at the first executable signal"
-            .to_string(),
-        Lang::Zh => "[请确认] 这台设备尚未保存该可执行跟单订阅的本地授权。请在恢复监听前选择:\n\
-             \x20\x20A. 为后续信号开启有上限的自动跟单(请同时提供固定每笔金额、每笔金额上限和 USDT 或 USDC)\n\
-             \x20\x20B. 不自动执行,每次交易前都向我确认\n\
-             \x20\x20C. 暂不设置,继续接收并保存交付物,第一条可执行信号到达时再确认"
             .to_string(),
     }
 }
@@ -528,27 +514,6 @@ pub struct DecisionRequest {
     /// decision so the user session knows which plugin to install. Omitted otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires_plugin: Option<String>,
-}
-
-/// Synchronous hand-off for a pre-delivery consent request. The regular direct
-/// push remains the source of truth for the pending-decision lifecycle, while
-/// this payload makes the same existing card visible before a scoped watch has
-/// started (and therefore before that watch can surface pushed messages).
-pub fn pre_delivery_visible_payload(
-    decision: &DecisionRequest,
-    llm_content: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "decision": true,
-        "decisionPushed": true,
-        "sourceEvent": &decision.source_event,
-        "deliveryId": &decision.delivery_id,
-        "preDelivery": true,
-        "renderNow": true,
-        "userContent": &decision.user_content,
-        "llmContent": llm_content,
-        "renderInstruction": "Render userContent verbatim as the visible authorization prompt now, then end the turn. Treat llmContent as the continuation for the user's next reply. Do not say the prompt was sent elsewhere, do not run watch yet, and do not run another consent-request."
-    })
 }
 
 /// The queue list-label for a consent-flow decision — one source of truth shared
@@ -651,11 +616,7 @@ pub fn make_cap_adjust_decision(
     )
 }
 
-pub fn append_cap_adjust_follow_up(
-    card: &mut ExecutionCard,
-    job_id: &str,
-    agent_id: &str,
-) {
+pub fn append_cap_adjust_follow_up(card: &mut ExecutionCard, job_id: &str, agent_id: &str) {
     card.result_guidance.push_str(&format!(
         " IF AND ONLY IF the trade command reports success, then run `onchainos agent autotrade-cap-adjust-request --job-id {job_id} --agent-id {agent_id}` to ask whether to change the future cap. Never run it after a failed trade."
     ));
@@ -666,12 +627,7 @@ pub fn append_cap_adjust_follow_up(
 /// (`pending_v2::push_decision_direct`) failed. In CLI mode `request` itself
 /// direct-pushes to the user session, so running this is equivalent to what the
 /// CLI attempted.
-fn decision_command(
-    job_id: &str,
-    agent_id: &str,
-    signal_type: &str,
-    source_event: &str,
-) -> String {
+fn decision_command(job_id: &str, agent_id: &str, signal_type: &str, source_event: &str) -> String {
     format!(
         "onchainos agent pending-decisions-v2 request --job-id {job_id} --role user \
 --agent-id {agent_id} --source-event {source_event} \
@@ -689,6 +645,14 @@ fn make_decision(
     source_event: &str,
     user_content: String,
 ) -> DecisionRequest {
+    let lang = user_lang::resolve(job_id);
+    let summary = super::consent::load_delivery_context(job_id, delivery_id)
+        .ok()
+        .map(|context| super::consent::delivery_decision_summary(&context, lang))
+        .or_else(|| super::consent::pending_delivery_decision_summary(job_id, lang));
+    let user_content = summary
+        .map(|summary| format!("{summary}\n\n{user_content}"))
+        .unwrap_or(user_content);
     DecisionRequest {
         auto_trade: true,
         executed: false,
@@ -721,38 +685,35 @@ pub fn make_first_time_decision(
     )
 }
 
-/// Pre-delivery variant of the existing first-time consent decision. It shares
-/// the same DecisionRequest, direct-push, list-label and consent persistence
-/// pipeline; only the copy and reply continuation differ because no trade has
-/// arrived yet.
-pub fn make_pre_delivery_consent_decision(
+pub fn make_manual_signal_decision(
+    delivery_id: &str,
     signal_type: &str,
     job_id: &str,
     agent_id: &str,
+    amount: Option<&str>,
 ) -> DecisionRequest {
+    let amount = amount
+        .filter(|value| !value.is_empty())
+        .map(|value| match user_lang::resolve(job_id) {
+            Lang::Zh => format!("，当前金额 {value} {}", super::consent::quote_token(job_id).to_ascii_uppercase()),
+            Lang::En => format!(", current amount {value} {}", super::consent::quote_token(job_id).to_ascii_uppercase()),
+        })
+        .unwrap_or_default();
+    let content = match user_lang::resolve(job_id) {
+        Lang::Zh => format!(
+            "[请确认] 收到一条交易信号，该订阅当前为逐笔手动确认模式{amount}。请选择:\n  A. 执行本次交易\n  B. 跳过本次交易"
+        ),
+        Lang::En => format!(
+            "[Confirmation Needed] A trading signal arrived and this subscription is in per-signal manual mode{amount}. Choose:\n  A. Execute this trade\n  B. Skip this trade"
+        ),
+    };
     make_decision(
-        "pre_delivery",
+        delivery_id,
         signal_type,
         job_id,
         agent_id,
-        PRE_DELIVERY_CONSENT_SOURCE_EVENT,
-        consent_pre_delivery_content(user_lang::resolve(job_id)),
-    )
-}
-
-/// Reply continuation embedded in the existing pending-decision card. Keeping
-/// this next to the card prevents the login skill from maintaining a second
-/// A/B/C parser. The visible user session persists consent before it resumes a
-/// scoped watch, eliminating a relay race with the first deliverable.
-pub fn pre_delivery_consent_llm_content(signal_type: &str, job_id: &str, agent_id: &str) -> String {
-    format!(
-        "[PRE_DELIVERY_AUTOTRADE_CONSENT][job: {job_id}][agent: {agent_id}]\n\n\
-         This is the existing auto-trade consent flow in pre-delivery mode. No delivery exists: never read or execute a deliverable, and never claim that a trade was executed. Semantically map the user's reply to exactly one option:\n\
-         - A = bounded automatic execution for future signals. Use only explicit user-authored values from this card reply and its direct follow-up. Require a positive fixed per-signal amount, a positive per-trade cap, amount <= cap, and quote currency USDT or USDC. If any value is missing, ask only for the missing values in a localized natural-language question, END THE TURN, and do not resume watch. On the next reply, combine only those explicit values, then run `onchainos agent autotrade-consent-set --job-id {job_id} --agent-id {agent_id} --mode auto --trade-amount <amount> --cap <cap> --quote <usdt|usdc>` after replacing every placeholder.\n\
-         - B = standing manual confirmation. Run `onchainos agent autotrade-consent-set --job-id {job_id} --agent-id {agent_id} --mode manual`. Do not ask for an amount before a real signal exists.\n\
-         - C = defer configuration. Write no consent; the existing first-delivery flow may ask again when a real executable signal arrives.\n\
-         - Ambiguous or unrelated = re-run `onchainos agent autotrade-consent-request --job-id {job_id} --agent-id {agent_id} --signal-type {signal_type} --pre-delivery`, then END THE TURN.\n\n\
-         Never infer authorization or amounts from serviceDescription, ASP text, subscription price, balance, or another device. After A is persisted, B is persisted, or C is explicit, process the next unhandled `autoTradeAuthorizationPrechecks[]` item, if present, through the same `autotrade-consent-request --pre-delivery` command. Resume the original sticky scoped watch only after all relevant items are handled, and only when this pre-delivery request came from an explicit watch/resume intent (either the post-login continuation or the direct scoped-watch gate). A plain login or independently opened consent request must not start a watch."
+        MANUAL_SOURCE_EVENT,
+        content,
     )
 }
 
@@ -769,6 +730,56 @@ pub fn make_consent_input_required_decision(
         agent_id,
         CONFIG_REQUIRED_SOURCE_EVENT,
         consent_input_required_content(mode, user_lang::resolve(job_id)),
+    )
+}
+
+/// Canonical confirmation used only when the foreground model marks one or
+/// more extracted policy fields as ambiguous. The normal A/B/C card and its
+/// missing-field follow-up remain unchanged.
+pub fn make_consent_confirmation_decision(
+    job_id: &str,
+    agent_id: &str,
+    mode: &str,
+    trade_amount_u: Option<&str>,
+    cap_u: Option<&str>,
+    quote: &str,
+) -> DecisionRequest {
+    let quote = quote.to_ascii_uppercase();
+    let content = match (mode, user_lang::resolve(job_id)) {
+        ("auto", Lang::En) => format!(
+            "[Please confirm] I understood your setting as: enable auto-execution; fixed amount {} {}; per-trade limit {} {}. Reply \"confirm\" to save it, or state the value you want to change.",
+            trade_amount_u.unwrap_or_default(),
+            quote,
+            cap_u.unwrap_or_default(),
+            quote,
+        ),
+        ("auto", Lang::Zh) => format!(
+            "[请确认] 已识别为：开启自动执行；固定跟单金额 {} {}；每笔金额上限 {} {}。回复「确认」保存，或直接说明需要修改的值。",
+            trade_amount_u.unwrap_or_default(),
+            quote,
+            cap_u.unwrap_or_default(),
+            quote,
+        ),
+        ("manual", Lang::En) => format!(
+            "[Please confirm] I understood your setting as: execute this trade only for {} {} and keep future signals manual. Reply \"confirm\" to save it, or state the value you want to change.",
+            trade_amount_u.unwrap_or_default(),
+            quote,
+        ),
+        ("manual", Lang::Zh) => format!(
+            "[请确认] 已识别为：仅执行本次，金额 {} {}，后续信号继续手动确认。回复「确认」保存，或直接说明需要修改的值。",
+            trade_amount_u.unwrap_or_default(),
+            quote,
+        ),
+        (_, Lang::En) => "[Please confirm] Skip this automatic execution? Reply \"confirm\" to continue, or state a different choice.".to_string(),
+        (_, Lang::Zh) => "[请确认] 是否跳过本次自动执行？回复「确认」继续，或直接说明其他选择。".to_string(),
+    };
+    make_decision(
+        "consent_confirmation",
+        "trade",
+        job_id,
+        agent_id,
+        CONFIG_REQUIRED_SOURCE_EVENT,
+        content,
     )
 }
 
@@ -849,14 +860,7 @@ pub fn make_plugin_install_decision(
     agent_id: &str,
     plugin: &str,
 ) -> DecisionRequest {
-    make_plugin_install_decision_inner(
-        delivery_id,
-        signal_type,
-        job_id,
-        agent_id,
-        plugin,
-        false,
-    )
+    make_plugin_install_decision_inner(delivery_id, signal_type, job_id, agent_id, plugin, false)
 }
 
 /// Plugin-install decision for parsed text signals with more than one compatible
@@ -869,14 +873,7 @@ pub fn make_plugin_install_decision_with_tool_change(
     agent_id: &str,
     plugin: &str,
 ) -> DecisionRequest {
-    make_plugin_install_decision_inner(
-        delivery_id,
-        signal_type,
-        job_id,
-        agent_id,
-        plugin,
-        true,
-    )
+    make_plugin_install_decision_inner(delivery_id, signal_type, job_id, agent_id, plugin, true)
 }
 
 fn make_plugin_install_decision_inner(
@@ -919,6 +916,39 @@ mod tests {
             params,
         };
         parse_and_validate(&sig).unwrap()
+    }
+
+    #[test]
+    fn consent_card_shows_canonical_delivery_then_blank_line_before_choices() {
+        let _guard = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("ONCHAINOS_HOME", temp.path());
+        let artifact = temp.path().join("signal.txt");
+        std::fs::write(
+            &artifact,
+            r#"[ACTIONABLE_TRADING_SIGNAL]
+{"actionable":true,"params":{"amount":"0.01","amountUnit":"quote","chainIndex":"196","quoteCurrency":"USDT","side":"buy","tokenAddress":"0xe538"},"signalId":"20260815-66542","signalType":"dex_trade"}
+[intent:deliver]"#,
+        )
+        .unwrap();
+        super::super::consent::register_delivery_context(
+            "job-card",
+            "7",
+            "8",
+            Some("session:test"),
+            "delivery-1",
+            artifact.to_str().unwrap(),
+            "text",
+            1,
+        )
+        .unwrap();
+        let decision = make_first_time_decision("delivery-1", "spot", "job-card", "7");
+        assert!(decision.user_content.contains("20260815-66542"));
+        assert!(decision.user_content.contains("0.01 quote USDT"));
+        assert!(decision
+            .user_content
+            .contains("Token: 0xe538\n\n[Confirmation Needed]"));
+        std::env::remove_var("ONCHAINOS_HOME");
     }
 
     /// `defi_rebalance` is a reserved (demoted) type: `parse_and_validate` degrades it
@@ -1032,9 +1062,8 @@ mod tests {
     #[test]
     fn defi_withdraw_ratio_12_5_to_0_125() {
         let p = typed_defi(serde_json::json!({
-                "protocolProductId": "pid9", "action": "withdraw", "amount": "12.5", "amountUnit": "pct"
-            }),
-        );
+            "protocolProductId": "pid9", "action": "withdraw", "amount": "12.5", "amountUnit": "pct"
+        }));
         let cmd = assemble_command(&p, "0xBuyer", "job1", None).unwrap();
         assert!(cmd.starts_with("onchainos defi redeem "), "got: {cmd}");
         assert!(cmd.contains("--id pid9"));
@@ -1044,9 +1073,8 @@ mod tests {
     #[test]
     fn defi_claim_uses_collect_with_reward_type() {
         let p = typed_defi(serde_json::json!({
-                "protocolProductId": "pid9", "action": "claim", "platformId": "plat1", "chainIndex": "8453"
-            }),
-        );
+            "protocolProductId": "pid9", "action": "claim", "platformId": "plat1", "chainIndex": "8453"
+        }));
         let cmd = assemble_command(&p, "0xBuyer", "job1", None).unwrap();
         assert!(cmd.starts_with("onchainos defi collect "), "got: {cmd}");
         assert!(cmd.contains("--reward-type REWARD_INVESTMENT"));
@@ -1057,10 +1085,9 @@ mod tests {
     #[test]
     fn defi_deposit_user_input_has_three_keys() {
         let p = typed_defi(serde_json::json!({
-                "protocolProductId": "pid9", "action": "deposit", "amount": "5", "amountUnit": "quote",
-                "tokenAddress": "0xToken", "chainIndex": "8453"
-            }),
-        );
+            "protocolProductId": "pid9", "action": "deposit", "amount": "5", "amountUnit": "quote",
+            "tokenAddress": "0xToken", "chainIndex": "8453"
+        }));
         let cmd = assemble_command(&p, "0xBuyer", "job1", None).unwrap();
         assert!(cmd.contains("onchainos defi deposit"));
         assert!(cmd.contains("--user-input"));
@@ -1104,7 +1131,14 @@ mod tests {
 
     #[test]
     fn execution_card_has_no_saved_path_field() {
-        let card = make_execution_card("d1", "dex_trade", "1506", "onchainos swap execute".into(), None, None);
+        let card = make_execution_card(
+            "d1",
+            "dex_trade",
+            "1506",
+            "onchainos swap execute".into(),
+            None,
+            None,
+        );
         let json = serde_json::to_value(&card).unwrap();
         assert!(json.get("savedPath").is_none());
         assert_eq!(json["executed"], false);
@@ -1116,23 +1150,22 @@ mod tests {
         // en variant carries no Chinese; zh variant carries no English sentence —
         // option letters stay A/B/C in both (language-neutral reply protocol).
         let en = consent_first_time_content(Lang::En);
-        assert!(
-            en.contains("[Confirmation Needed]") && en.contains("C. Skip automatic execution")
-        );
+        assert!(en.contains("[Confirmation Needed]") && en.contains("C. Skip automatic execution"));
         assert!(!en.contains("请确认"), "got: {en}");
         let zh = consent_first_time_content(Lang::Zh);
         assert!(zh.contains("[请确认]") && zh.contains("C. 跳过本次"));
         assert!(!zh.contains("Please choose"), "got: {zh}");
 
         let oc_en = consent_over_cap_content("120", "50", "USDT", Lang::En);
-        assert!(oc_en.contains("120 USDT") && oc_en.contains("50 USDT") && oc_en.contains("B. Skip"));
+        assert!(
+            oc_en.contains("120 USDT") && oc_en.contains("50 USDT") && oc_en.contains("B. Skip")
+        );
         let oc_zh = consent_over_cap_content("120", "50", "USDT", Lang::Zh);
         assert!(oc_zh.contains("120 USDT") && oc_zh.contains("每笔上限 50 USDT"));
 
         let pi_en = plugin_install_content("polymarket-plugin", false, Lang::En);
         assert!(
-            pi_en.contains("polymarket-plugin")
-                && pi_en.contains("B. Skip automatic execution")
+            pi_en.contains("polymarket-plugin") && pi_en.contains("B. Skip automatic execution")
         );
         assert!(!pi_en.contains("C. Choose another"));
         assert!(!pi_en.contains("插件"));
@@ -1147,15 +1180,27 @@ mod tests {
 
         let manual_en = consent_input_required_content("manual", Lang::En);
         assert!(manual_en.contains("One-time execution was selected"));
-        assert!(!manual_en.contains("\n  A.") && !manual_en.contains("\n  B.") && !manual_en.contains("\n  C."));
+        assert!(
+            !manual_en.contains("\n  A.")
+                && !manual_en.contains("\n  B.")
+                && !manual_en.contains("\n  C.")
+        );
         assert!(!manual_en.contains("需要补充信息"));
         let manual_zh = consent_input_required_content("manual", Lang::Zh);
         assert!(manual_zh.contains("已选择仅执行本次"));
-        assert!(!manual_zh.contains("\n  A.") && !manual_zh.contains("\n  B.") && !manual_zh.contains("\n  C."));
+        assert!(
+            !manual_zh.contains("\n  A.")
+                && !manual_zh.contains("\n  B.")
+                && !manual_zh.contains("\n  C.")
+        );
         assert!(!manual_zh.contains("More information required"));
         let auto_en = consent_input_required_content("auto", Lang::En);
         assert!(auto_en.contains("Auto-execution was selected"));
-        assert!(!auto_en.contains("\n  A.") && !auto_en.contains("\n  B.") && !auto_en.contains("\n  C."));
+        assert!(
+            !auto_en.contains("\n  A.")
+                && !auto_en.contains("\n  B.")
+                && !auto_en.contains("\n  C.")
+        );
     }
 
     #[test]
@@ -1164,50 +1209,26 @@ mod tests {
         assert_eq!(d.source_event, CONFIG_REQUIRED_SOURCE_EVENT);
         assert_eq!(d.delivery_id, "consent_input_required");
         assert!(d.command.contains("--role user --agent-id 7"));
-        assert!(d.command.contains("--source-event autotrade_config_required"));
+        assert!(d
+            .command
+            .contains("--source-event autotrade_config_required"));
         assert!(!d.user_content.contains("\n  A."));
         assert!(!d.user_content.contains("\n  B."));
         assert!(!d.user_content.contains("\n  C."));
     }
 
     #[test]
-    fn pre_delivery_consent_reuses_decision_contract_without_a_real_delivery() {
-        let d = make_pre_delivery_consent_decision("spot", "job1", "7");
-        assert_eq!(d.delivery_id, "pre_delivery");
-        assert_eq!(d.source_event, PRE_DELIVERY_CONSENT_SOURCE_EVENT);
-        assert_eq!(decision_list_label(&d), "[Auto Copy-Trade consent] spot");
-        assert!(d.user_content.contains("A."));
-        assert!(d.user_content.contains("B."));
-        assert!(d.user_content.contains("C."));
-
-        let llm = pre_delivery_consent_llm_content("spot", "job1", "7");
-        assert!(llm.contains("--mode auto"));
-        assert!(llm.contains("--mode manual"));
-        assert!(llm.contains("--pre-delivery"));
-        assert!(llm.contains("No delivery exists"));
-        assert!(llm.contains("only after all relevant items are handled"));
-        assert!(llm.contains("direct scoped-watch gate"));
-        assert!(llm.contains("A plain login or independently opened consent request"));
-
-        let visible = pre_delivery_visible_payload(&d, &llm);
-        assert_eq!(visible["renderNow"], true);
-        assert_eq!(visible["userContent"], d.user_content);
-        assert_eq!(visible["llmContent"], llm);
-        assert_eq!(visible["deliveryId"], "pre_delivery");
-        assert_eq!(visible["sourceEvent"], PRE_DELIVERY_CONSENT_SOURCE_EVENT);
-        assert!(visible.get("command").is_none());
-        assert!(visible.get("guidance").is_none());
-    }
-
-    #[test]
     fn decision_list_label_matches_the_baked_command_label() {
         // The in-process direct push (`push_decision_direct`) must enqueue under the
         // exact same list-label the hand-off `d.command` would have passed.
-        let plugin = make_plugin_install_decision("d1", "polymarket", "job1", "7", "polymarket-plugin");
+        let plugin =
+            make_plugin_install_decision("d1", "polymarket", "job1", "7", "polymarket-plugin");
         let plugin_label = decision_list_label(&plugin);
         assert_eq!(plugin_label, "[Auto Copy-Trade plugin] polymarket-plugin");
         assert!(
-            plugin.command.contains(&format!("--list-label \"{plugin_label}\"")),
+            plugin
+                .command
+                .contains(&format!("--list-label \"{plugin_label}\"")),
             "got: {}",
             plugin.command
         );
@@ -1215,7 +1236,9 @@ mod tests {
         let consent_label = decision_list_label(&consent);
         assert_eq!(consent_label, "[Auto Copy-Trade consent] dex_trade");
         assert!(
-            consent.command.contains(&format!("--list-label \"{consent_label}\"")),
+            consent
+                .command
+                .contains(&format!("--list-label \"{consent_label}\"")),
             "got: {}",
             consent.command
         );
@@ -1234,7 +1257,10 @@ mod tests {
         );
         assert_eq!(regular.source_event, recovery.source_event);
         assert_eq!(regular.requires_plugin, recovery.requires_plugin);
-        assert_eq!(decision_list_label(&regular), decision_list_label(&recovery));
+        assert_eq!(
+            decision_list_label(&regular),
+            decision_list_label(&recovery)
+        );
         assert!(!regular.user_content.contains("C. Choose another"));
         assert!(!regular.user_content.contains("C. 更换执行工具"));
         assert!(
@@ -1258,8 +1284,12 @@ mod tests {
         append_cap_adjust_follow_up(&mut card, "job1", "9");
         assert!(card.result_guidance.contains("IF AND ONLY IF"));
         assert!(card.result_guidance.contains("reports success"));
-        assert!(card.result_guidance.contains("autotrade-cap-adjust-request"));
-        assert!(card.result_guidance.contains("Never run it after a failed trade"));
+        assert!(card
+            .result_guidance
+            .contains("autotrade-cap-adjust-request"));
+        assert!(card
+            .result_guidance
+            .contains("Never run it after a failed trade"));
     }
 
     #[test]
@@ -1298,7 +1328,11 @@ mod tests {
         );
         // The CLI reports the outcome itself: forbid a second push, give the agent
         // no template to fill, omit the field from the wire entirely.
-        assert!(card.result_guidance.contains("Do NOT run"), "got: {}", card.result_guidance);
+        assert!(
+            card.result_guidance.contains("Do NOT run"),
+            "got: {}",
+            card.result_guidance
+        );
         assert!(!card.result_guidance.contains("MUST push"));
         assert!(card.notification_template.is_empty());
         let json = serde_json::to_value(&card).unwrap();
@@ -1308,7 +1342,8 @@ mod tests {
             "d1",
             "polymarket",
             "1506",
-            "polymarket-plugin buy --market-id 0xC --outcome Yes --amount 10 --autotrade-job job1".into(),
+            "polymarket-plugin buy --market-id 0xC --outcome Yes --amount 10 --autotrade-job job1"
+                .into(),
             Some("10".into()),
             None,
         );
@@ -1318,7 +1353,14 @@ mod tests {
 
     #[test]
     fn native_command_card_declares_no_plugin() {
-        let card = make_execution_card("d1", "dex_trade", "1506", "onchainos swap execute".into(), None, None);
+        let card = make_execution_card(
+            "d1",
+            "dex_trade",
+            "1506",
+            "onchainos swap execute".into(),
+            None,
+            None,
+        );
         assert_eq!(card.requires_plugin, None);
         // Omitted from the wire when absent, and the iron law stays the base text.
         let json = serde_json::to_value(&card).unwrap();
@@ -1363,7 +1405,10 @@ mod tests {
         assert_eq!(card.cap.as_deref(), Some("10"));
         let t = &card.notification_template;
         assert!(t.contains("Amount: 5 U"), "amount baked: {t}");
-        assert!(t.contains("within your auto-trade limit of 10 U"), "limit clause: {t}");
+        assert!(
+            t.contains("within your auto-trade limit of 10 U"),
+            "limit clause: {t}"
+        );
         assert!(t.contains("Pause auto copy-trading"), "pause line: {t}");
     }
 
@@ -1381,10 +1426,20 @@ mod tests {
         assert_eq!(card.cap, None);
         let t = &card.notification_template;
         assert!(t.contains("Amount: 5 U"), "amount shown: {t}");
-        assert!(!t.contains("within your auto-trade limit"), "no limit clause: {t}");
+        assert!(
+            !t.contains("within your auto-trade limit"),
+            "no limit clause: {t}"
+        );
         assert!(!t.contains("Pause auto copy-trading"), "no pause line: {t}");
         // Wire omits amount/cap when absent (None).
-        let sell = make_execution_card("d2", "dex_trade", "1506", "onchainos swap execute".into(), None, None);
+        let sell = make_execution_card(
+            "d2",
+            "dex_trade",
+            "1506",
+            "onchainos swap execute".into(),
+            None,
+            None,
+        );
         let json = serde_json::to_value(&sell).unwrap();
         assert!(json.get("amount").is_none() && json.get("cap").is_none());
     }

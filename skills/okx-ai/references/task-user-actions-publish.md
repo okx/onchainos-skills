@@ -35,7 +35,7 @@ Display as a single `| Field | Value |` table with exactly these **8** fields in
 | 2 | Task Description | User Description | Inline when ≤200 characters; when >200, show `See below` and render the full text below the table |
 | 3 | Provider | task-service-select / designated-route | `Agent <providerAgentId>(<providerAgentName>)`; fall back to `Agent <providerAgentId>` |
 | 4 | Service Parameters | Agent-inferred | `None` when empty |
-| 5 | Service Price | task-service-select `feeAmount` + `feeTokenSymbol` | `<feeAmount> <symbol>`; **omit the row when `feeAmount` is absent** |
+| 5 | Service Price | task-service-select `feeAmount` + `feeTokenSymbol` | Zero (number or numeric string) → localized `Free`; otherwise `<feeAmount> <symbol>`; **omit the row when `feeAmount` is absent** |
 | 6 | Budget | User input | ≤5 decimals; maximum 10,000,000 |
 | 7 | Maximum Budget | User input | Negotiation cap |
 | 8 | Payment Currency | User input; must match `feeTokenSymbol` | `USDT` or `USDG` |
@@ -60,19 +60,21 @@ Display as a single `| Field | Value |` table with these **7 base fields** in or
 | 6 | Trial | `task-service-select`: `subscriptionInfo.supportTrial/freeTrial`; `service-list`: selected service `freeTrial` | A positive `freeTrial` → `Yes (<freeTrial> hours free)`; otherwise `No` |
 | 7 | Auto-Renew | Explicit user choice; no default | `On` or `Off` |
 
-When the user's own request explicitly asks for automatic signal execution, append exactly these three
-rows. Ask only for a missing amount/cap/quote before rendering the table; do not show A/B/C choices. Omit
-all three rows when the user did not explicitly opt in, and never infer them from service/ASP text.
+Append these execution rows for a trading-signal subscription. Automatic execution is the default. The ASP
+description may define which fields to ask about, but only user-authored replies supply persisted values.
+Ask any ASP-required missing fields in one natural-language question without a choice card.
 
 | Field | Source | Render Rule |
 |---|---|---|
-| Signal Execution | Explicit user request | `Automatic` |
-| Per-Signal Amount | User-provided fixed quote amount and currency | `<amount> USDT/USDC` |
-| Per-Signal Cap | User-provided cap in the same currency | `<cap> USDT/USDC`; must be ≥ Per-Signal Amount |
+| Signal Execution | Default or explicit user choice | `Automatic` by default; `Manual` after explicit opt-out |
+| Per-Signal Amount | Optional user-provided fixed quote amount and currency | `<amount> USDT/USDC` or `Not set` |
+| Per-Signal Cap | Optional user-provided cap in the same currency | `<cap> USDT/USDC` or `Not set`; stored only |
 
 If attachments present, add an Attachments row.
 
-Before displaying this confirmation table, apply the subscription playbook's **Tool preparation (optional)** gate. If actionable `install_plugin` / `configure_tool` reminders exist, display that choice as a separate card and end the turn; do not add tool rows to this seven-field confirmation card. A preparation action must be followed by a fresh `task-service-select` for the same search intent/provider and the same `serviceId`. Choosing Later proceeds to confirmation and does not affect later delivery visibility/storage or manual execution with another available tool.
+Before displaying this confirmation table, inspect advisory readiness. If actionable `install_plugin` /
+`configure_tool` reminders exist, show a concise notice without choices and continue to confirmation. Do
+not install, configure, retry, or block the subscription in this flow.
 
 End with a localized confirmation blockquote and wait for explicit confirmation.
 
@@ -89,7 +91,7 @@ Every modification is confirmed individually (Universal confirmation rule). Afte
 | Edit service params | Update in place → re-render |
 | Edit budget / max-budget / payment token (regular) | Update in place → re-validate → re-render |
 | Edit auto-renew (subscription) | Update in place → re-render |
-| Edit automatic execution / amount / cap / quote (subscription) | Update bounded user-authored values; ask only for missing values → re-render |
+| Edit automatic execution / amount / cap / quote (subscription) | Update user-authored values; cap remains informational → re-render |
 | Change provider | Update `--asp-agent-id` to the new agentId → **re-run `task-service-select`** (may switch branch) → re-render |
 
 **Branch-switch rule (FR-2.5)**: when an edited Description changes the matched service type (subscription ↔ regular), **clear the previous branch's type-specific fields** (regular: Budget / Maximum Budget / Payment Currency / payment mode; subscription: Trial / Auto-Renew), collect the new fields, then render A1 or A2. If re-match is empty, use §5 Flow step 1 recovery.

@@ -1,10 +1,10 @@
 ---
 name: okx-dex-market
-description: "For read-only DEX data across token, market, signal, social, trenches, and WebSocket. Use it for token search, rankings, liquidity, holders, risk metadata, clusters, trades, prices, K-lines, indexes, wallet PnL, smart-money/KOL/whale signals, news, sentiment, token vibe, meme-launch and dev research, bundle/sniper/co-investor analysis, or DEX WebSocket clients. Trigger phrases: hot tokens, liquidity, holders, whale, 持仓集中度, trade history, price, K-line/OHLC, wallet PnL/胜率, smart money, KOL, signal, 牛人榜, news, sentiment, token vibe, pump.fun, 新盘, 扫链, dev reputation, 捆绑狙击者, co-investor, WebSocket. Prediction markets, Polymarket or supported-asset UpDown, named-DApp writes, Polymarket/Aave/Hyperliquid/PancakeSwap/Morpho timeframes, and pump.fun write verbs route to okx-dapp-discovery. Generic swaps and wallet execution plus token/honeypot, DApp, transaction, or signature safety checks route to okx-agentic-wallet. Market quota/payment notices use the shared payment flow."
+description: "For read-only DEX data across token, market, signal, social, trenches, and WebSocket. Use it for token search, rankings, liquidity, holders, risk metadata, clusters, trades, prices, K-lines, indexes, wallet PnL, smart-money/KOL/whale signals, news, sentiment, token vibe, meme-launch and dev research, bundle/sniper/co-investor analysis, or DEX WebSocket clients. Trigger phrases: hot tokens, liquidity, holders, whale, 持仓集中度, trade history, price, K-line/OHLC, wallet PnL, smart money, KOL, signal, 牛人榜, news, sentiment, token vibe, pump.fun, 新盘, 扫链, dev reputation, 捆绑狙击者, co-investor, WebSocket. Prediction markets, Polymarket or supported-asset UpDown, named-DApp writes, Aave/Hyperliquid/PancakeSwap/Morpho timeframes, and pump.fun write verbs route to okx-dapp-discovery. Swaps, wallet execution, and token/honeypot, transaction, or signature safety checks route to okx-agentic-wallet. Agent ID + service route to okx-ai. Market quota/payment notices use the shared payment flow."
 license: MIT
 metadata:
   author: okx
-  version: "4.4.14-beta"
+  version: "4.4.15-beta"
   homepage: "https://web3.okx.com"
 ---
 

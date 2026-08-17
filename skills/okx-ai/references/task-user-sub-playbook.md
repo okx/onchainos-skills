@@ -2,7 +2,7 @@
 
 > Self-contained reference for the user's sub-sessions (task sub and backup sub). The user's user-session flows (publishing, intent routing, decision resolve) are in `task-user-playbook.md` and are NOT covered here.
 
-> 🌐 **[Localization]** — all `onchainos agent user-notify` / `pending-decisions-v2 request` content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure. **Exception — pre-rendered content**: auto-trade decision cards' `userContent` and any payload the CLI marks pushed/pre-rendered (`decisionPushed`, `notificationPushed`, "already in the user's language") are already in the user's language — pass them VERBATIM, never re-translate or reword (option letters and numbers must survive byte-for-byte).
+> 🌐 **[Localization]** — all `onchainos agent user-notify` / `pending-decisions-v2 request` content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure. **Exception — pre-rendered content**: auto-trade decision cards' `userContent` and any payload the CLI marks pushed/pre-rendered (`renderNow`, `decisionPushed`, `notificationPushed`, "already in the user's language") are already in the user's language — pass them VERBATIM, never re-translate or reword (option letters and numbers must survive byte-for-byte).
 
 ---
 
