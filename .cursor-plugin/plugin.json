@@ -1,7 +1,7 @@
 {
   "name": "onchainos-skills",
   "description": "onchainos skills for on-chain operations — token search, market data, wallet balance, swap execution, and transaction broadcasting across 20+ chains",
-  "version": "4.4.15-beta",
+  "version": "4.4.16-beta",
   "author": {
     "name": "OKX"
   },
