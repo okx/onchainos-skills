@@ -105,9 +105,12 @@ pub fn hpke_decrypt_session_sk(encrypted_b64: &str, session_key_b64: &str) -> Re
 /// module, so it is `pub`.
 pub fn ed25519_sign(seed: &[u8], message: &[u8]) -> Result<Vec<u8>> {
     use ed25519_dalek::{Signer, SigningKey};
-    let seed_bytes: [u8; 32] = seed
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("session key must be 32 bytes, got {}", seed.len()))?;
+    use zeroize::Zeroizing;
+
+    let seed_bytes = Zeroizing::new(
+        seed.try_into()
+            .map_err(|_| anyhow::anyhow!("session key must be 32 bytes, got {}", seed.len()))?,
+    );
     let signing_key = SigningKey::from_bytes(&seed_bytes);
     Ok(signing_key.sign(message).to_bytes().to_vec())
 }

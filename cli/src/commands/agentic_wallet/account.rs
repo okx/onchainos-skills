@@ -194,6 +194,10 @@ pub(super) async fn cmd_addresses(chain: Option<&str>) -> Result<()> {
         .unwrap_or("");
 
     let chain_filter = match chain {
+        Some(input) if super::is_btc_or_sui_chain_input(input) => {
+            let profile = super::chain_profile::resolve(input).await?;
+            Some(profile.chain_index)
+        }
         Some(input) => {
             let entry = super::chain::get_chain_by_real_chain_index(input)
                 .await?
@@ -211,6 +215,8 @@ pub(super) async fn cmd_addresses(chain: Option<&str>) -> Result<()> {
     let mut xlayer = Vec::new();
     let mut evm = Vec::new();
     let mut solana = Vec::new();
+    let mut bitcoin = Vec::new();
+    let mut sui = Vec::new();
 
     for addr in &entry.address_list {
         if let Some(ref filter) = chain_filter {
@@ -224,6 +230,8 @@ pub(super) async fn cmd_addresses(chain: Option<&str>) -> Result<()> {
             "chainName": addr.chain_name,
         });
         match addr.chain_index.as_str() {
+            "0" => bitcoin.push(item),
+            "784" => sui.push(item),
             "196" => xlayer.push(item),
             "501" => solana.push(item),
             _ => evm.push(item),
@@ -236,6 +244,8 @@ pub(super) async fn cmd_addresses(chain: Option<&str>) -> Result<()> {
         "xlayer": xlayer,
         "evm": evm,
         "solana": solana,
+        "bitcoin": bitcoin,
+        "sui": sui,
     }));
     Ok(())
 }

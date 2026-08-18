@@ -268,40 +268,52 @@ async fn run() {
     );
 
     if let Err(e) = result {
-        match e.downcast::<output::CliConfirming>() {
+        match e.downcast::<commands::agentic_wallet::common::WalletPreviewConfirming>() {
             Ok(c) => {
-                output::confirming_scene(&c.message, &c.next, c.scene.as_deref());
+                output::agentic_wallet_confirming(&c.message, &c.next, &c.scene, &c.preview);
                 std::process::exit(2);
             }
-            Err(e) => match e.downcast::<output::CliSetupRequired>() {
-                Ok(s) => {
-                    output::setup_required(&s.error_code, &s.message, &s.data);
-                    std::process::exit(3);
+            Err(e) => match e.downcast::<output::CliConfirming>() {
+                Ok(c) => {
+                    output::confirming_scene(&c.message, &c.next, c.scene.as_deref());
+                    std::process::exit(2);
                 }
-                Err(e) => match e
-                    .downcast::<commands::agent_commerce::task::common::autotrade::CliBespokeExit>()
-                {
-                    // Handler already printed its bespoke JSON (e.g. autotrade-grant-check
-                    // {ok,reason?}); just exit with its code, no standard error envelope.
-                    // audit::log already fired above for both allow and deny.
-                    Ok(b) => std::process::exit(b.0),
-                    Err(e) => match e.downcast::<commands::sink::CodedError>() {
-                        Ok(c) => {
-                            output::error_coded(&c.code, c.field.as_deref(), &c.message);
-                            std::process::exit(1);
+                Err(e) => match e.downcast::<output::CliSetupRequired>() {
+                    Ok(s) => {
+                        output::setup_required(&s.error_code, &s.message, &s.data);
+                        std::process::exit(3);
+                    }
+                    Err(e) => match e.downcast::<
+                        commands::agent_commerce::task::common::autotrade::CliBespokeExit,
+                    >() {
+                        // Handler already printed its bespoke JSON (e.g. autotrade-grant-check
+                        // {ok,reason?}); just exit with its code, no standard error envelope.
+                        // audit::log already fired above for both allow and deny.
+                        Ok(b) => std::process::exit(b.0),
+                        Err(e) => match e.downcast::<commands::sink::CodedError>() {
+                            Ok(c) => {
+                                output::error_coded_details(
+                                    &c.code,
+                                    c.field.as_deref(),
+                                    &c.message,
+                                    c.data.as_ref(),
+                                    c.next_steps.as_ref(),
+                                );
+                                std::process::exit(1);
+                            }
+                            Err(e) => match e.downcast::<
+                                commands::agent_commerce::task::common::deposit_qr::InsufficientBalanceError,
+                            >() {
+                                Ok(ib) => {
+                                    output::error_insufficient_balance(&ib);
+                                    std::process::exit(1);
+                                }
+                                Err(e) => {
+                                    output::error(&format!("{e:#}"));
+                                    std::process::exit(1);
+                                }
+                            },
                         }
-                        Err(e) => match e
-                            .downcast::<commands::agent_commerce::task::common::deposit_qr::InsufficientBalanceError>()
-                        {
-                            Ok(ib) => {
-                                output::error_insufficient_balance(&ib);
-                                std::process::exit(1);
-                            }
-                            Err(e) => {
-                                output::error(&format!("{e:#}"));
-                                std::process::exit(1);
-                            }
-                        },
                     },
                 },
             },

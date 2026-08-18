@@ -41,15 +41,11 @@ use predicates::prelude::*;
 //   agentic_wallet (spec §1 / Appendix C).
 #[test]
 fn top_level_help_lists_wallet_strategy_swap() {
-    onchainos()
-        .arg("--help")
-        .assert()
-        .success()
-        .stdout(
-            predicate::str::contains("wallet")
-                .and(predicate::str::contains("strategy"))
-                .and(predicate::str::contains("swap")),
-        );
+    onchainos().arg("--help").assert().success().stdout(
+        predicate::str::contains("wallet")
+            .and(predicate::str::contains("strategy"))
+            .and(predicate::str::contains("swap")),
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -70,10 +66,106 @@ fn wallet_help_lists_all_actions() {
         .stdout(
             predicate::str::contains("gas-station")
                 .and(predicate::str::contains("send"))
+                .and(predicate::str::contains("inscription"))
+                .and(predicate::str::contains("utxo"))
                 .and(predicate::str::contains("login"))
                 .and(predicate::str::contains("contract-call"))
                 .and(predicate::str::contains("sign-message")),
         );
+}
+
+#[test]
+fn wallet_bitcoin_command_groups_show_their_actions() {
+    onchainos()
+        .args(["wallet", "inscription", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("create").and(predicate::str::contains("status")));
+    onchainos()
+        .args(["wallet", "utxo", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("list")
+                .and(predicate::str::contains("unavailable"))
+                .and(predicate::str::contains("available"))
+                .and(predicate::str::contains("brc20-transferable"))
+                .and(predicate::str::contains("unlock"))
+                .and(predicate::str::contains("lock"))
+                .and(predicate::str::contains("reclaim")),
+        );
+}
+
+#[test]
+fn wallet_utxo_available_and_brc20_transferable_expose_documented_inputs() {
+    onchainos()
+        .args(["wallet", "utxo", "available", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--chain"));
+
+    onchainos()
+        .args(["wallet", "utxo", "brc20-transferable", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("--chain").and(predicate::str::contains("--token-address")),
+        );
+}
+
+#[test]
+fn wallet_utxo_list_exposes_unavailable_override() {
+    onchainos()
+        .args(["wallet", "utxo", "list", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("--unavailable")
+                .and(predicate::str::contains(
+                    "asset occupancy was explicitly removed by the user",
+                ))
+                .and(predicate::str::contains("available for selection").not())
+                .and(predicate::str::contains("--detail").not())
+                .and(predicate::str::contains("--chain")),
+        );
+}
+
+#[test]
+fn wallet_utxo_manage_exposes_only_required_confirmation_fields() {
+    for action in ["lock", "unlock"] {
+        onchainos()
+            .args(["wallet", "utxo", action, "--help"])
+            .assert()
+            .success()
+            .stdout(
+                predicate::str::contains("--outpoint")
+                    .and(predicate::str::contains("--all"))
+                    .and(predicate::str::contains("--operation-token"))
+                    .and(predicate::str::contains("--preview-version").not()),
+            );
+    }
+}
+
+#[test]
+fn wallet_send_does_not_expose_chain_specific_continuation_flags() {
+    onchainos()
+        .args(["wallet", "send", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("--operation-token")
+                .not()
+                .and(predicate::str::contains("--preview-version").not()),
+        );
+}
+
+#[test]
+fn wallet_does_not_expose_undocumented_available_balance() {
+    onchainos()
+        .args(["wallet", "available-balance", "--help"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand"));
 }
 
 // ── IT-003: `wallet gas-station --help` still shows its management actions ─────
@@ -108,6 +200,7 @@ fn wallet_send_help_shows_flag_surface() {
                 .and(predicate::str::contains("--amt"))
                 .and(predicate::str::contains("--readable-amount"))
                 .and(predicate::str::contains("--contract-token"))
+                .and(predicate::str::contains("--brc20-outpoint"))
                 .and(predicate::str::contains("--enable-gas-station")),
         );
 }

@@ -3,14 +3,19 @@ pub mod auth;
 pub mod balance;
 pub mod broadcast;
 pub mod chain;
+mod chain_adapters;
+pub mod chain_profile;
 pub mod common;
 pub mod gas_station;
 pub mod geoblock;
 pub mod history;
+mod inscription;
 pub mod plugin;
 pub mod sign;
 pub mod strategy;
+mod support;
 pub mod transfer;
+mod utxo;
 
 use anyhow::{bail, Result};
 use clap::{Subcommand, ValueEnum};
@@ -122,6 +127,9 @@ pub enum WalletCommand {
         /// Contract token address (optional — for ERC-20 / SPL token transfers)
         #[arg(long)]
         contract_token: Option<String>,
+        /// Selected transferable BRC-20 inscription UTXO (`txHash:voutIndex`)
+        #[arg(long, requires = "contract_token")]
+        brc20_outpoint: Option<String>,
         /// Force execution: skip confirmation prompts from the backend
         #[arg(long, default_value_t = false)]
         force: bool,
@@ -168,6 +176,16 @@ pub enum WalletCommand {
         /// User operation hash — when present, queries /order/detail by uopHash
         #[arg(long)]
         uop_hash: Option<String>,
+    },
+    /// Create or query a Bitcoin inscription
+    Inscription {
+        #[command(subcommand)]
+        command: InscriptionCommand,
+    },
+    /// Query and manage Bitcoin UTXOs
+    Utxo {
+        #[command(subcommand)]
+        command: UtxoCommand,
     },
     /// Sign a message (personalSign for EVM & Solana, EIP-712 for EVM only)
     SignMessage {
@@ -255,6 +273,105 @@ pub enum WalletCommand {
     GasStation {
         #[command(subcommand)]
         command: GasStationCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum InscriptionCommand {
+    /// Create an asynchronous BRC-20 transfer inscription
+    Create {
+        #[arg(long)]
+        chain: String,
+        #[arg(long)]
+        token_address: String,
+        #[arg(long)]
+        readable_amount: String,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        operation_token: Option<String>,
+        #[arg(long)]
+        preview_version: Option<String>,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
+    /// Query inscription status by transaction hash or order ID
+    Status {
+        #[arg(long)]
+        chain: String,
+        #[arg(
+            long,
+            conflicts_with = "order_id",
+            required_unless_present = "order_id"
+        )]
+        tx_hash: Option<String>,
+        #[arg(long, conflicts_with = "tx_hash", required_unless_present = "tx_hash")]
+        order_id: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum UtxoCommand {
+    /// Query Bitcoin UTXOs; defaults to UTXOs whose asset occupancy was explicitly removed by the user
+    List {
+        #[arg(long)]
+        chain: String,
+        /// Query unavailable UTXO details instead of UTXOs whose asset occupancy was removed by the user
+        #[arg(long, default_value_t = false)]
+        unavailable: bool,
+    },
+    /// Query unavailable Bitcoin UTXOs (legacy shortcut for list --unavailable)
+    Unavailable {
+        #[arg(long)]
+        chain: String,
+    },
+    /// Query currently available Bitcoin UTXOs and their total spendable sats
+    Available {
+        #[arg(long)]
+        chain: String,
+    },
+    /// Query transferable inscription UTXOs for one BRC-20 token
+    Brc20Transferable {
+        #[arg(long)]
+        chain: String,
+        /// Synthetic BRC-20 token address (`btc-brc20-<ticker>`)
+        #[arg(long)]
+        token_address: String,
+    },
+    /// Remove asset protection from one or all currently protected UTXOs
+    Unlock {
+        #[arg(long)]
+        chain: String,
+        #[arg(long, conflicts_with = "all", required_unless_present = "all")]
+        outpoint: Vec<String>,
+        #[arg(long, conflicts_with = "outpoint")]
+        all: bool,
+        #[arg(long)]
+        operation_token: Option<String>,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
+    /// Restore asset protection for one or all previously unlocked UTXOs
+    Lock {
+        #[arg(long)]
+        chain: String,
+        #[arg(long, conflicts_with = "all", required_unless_present = "all")]
+        outpoint: Vec<String>,
+        #[arg(long, conflicts_with = "outpoint")]
+        all: bool,
+        #[arg(long)]
+        operation_token: Option<String>,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
+    /// Close mempool-removed transactions and reclaim their still-unspent inputs
+    Reclaim {
+        #[arg(long)]
+        chain: String,
+        #[arg(long, required = true)]
+        tx_hash: Vec<String>,
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
 }
 
@@ -436,6 +553,34 @@ fn cmd_qrcode(address: &str) -> Result<()> {
     Ok(())
 }
 
+/// Resolves `chain` and accepts it only when the UTXO command can use Bitcoin.
+async fn ensure_bitcoin_command_chain(chain: &str) -> Result<()> {
+    let profile = chain_profile::resolve(chain).await?;
+    if !profile.is_bitcoin() {
+        bail!("this UTXO command is only supported for Bitcoin");
+    }
+    Ok(())
+}
+
+/// Returns whether a literal chain input should use the BTC/SUI-specific resolver.
+pub(super) fn is_btc_or_sui_chain_input(chain: &str) -> bool {
+    matches!(
+        chain.trim().to_ascii_lowercase().as_str(),
+        "bitcoin" | "btc" | "0" | "5" | "sui" | "784"
+    )
+}
+
+/// Resolves BTC/SUI inputs to a profile and leaves all other chains on the legacy path.
+async fn resolve_btc_or_sui_profile(
+    chain: &str,
+) -> Result<Option<chain_profile::ResolvedChainProfile>> {
+    if is_btc_or_sui_chain_input(chain) {
+        Ok(Some(chain_profile::resolve(chain).await?))
+    } else {
+        Ok(None)
+    }
+}
+
 pub async fn execute(command: WalletCommand) -> Result<()> {
     match command {
         WalletCommand::Login {
@@ -467,7 +612,34 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             chain,
             token_address,
             force,
-        } => balance::cmd_balance(all, chain.as_deref(), token_address.as_deref(), force).await,
+        } => {
+            let normalized_chain_token = if let (Some(raw_chain), Some(token_address)) =
+                (chain.as_deref(), token_address.as_deref())
+            {
+                match resolve_btc_or_sui_profile(raw_chain).await? {
+                    Some(profile) if profile.kind == chain_profile::ChainKind::Bitcoin => Some(
+                        chain_adapters::bitcoin::validation::normalize_brc20_token_address(
+                            token_address,
+                        )?,
+                    ),
+                    Some(profile) if profile.kind == chain_profile::ChainKind::Sui => Some(
+                        chain_adapters::sui::identifiers::normalize_coin_type(token_address)?,
+                    ),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            balance::cmd_balance(
+                all,
+                chain.as_deref(),
+                normalized_chain_token
+                    .as_deref()
+                    .or(token_address.as_deref()),
+                force,
+            )
+            .await
+        }
         WalletCommand::Send {
             amt,
             readable_amount,
@@ -475,11 +647,56 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             chain,
             from,
             contract_token,
+            brc20_outpoint,
             force,
             gas_token_address,
             relayer_id,
             enable_gas_station,
         } => {
+            if let Some(profile) = resolve_btc_or_sui_profile(&chain).await? {
+                if profile.capabilities.transfer == chain_profile::TransferDriver::Bitcoin {
+                    if amt.is_some() {
+                        bail!("Bitcoin transfers require --readable-amount");
+                    }
+                    if gas_token_address.is_some() || relayer_id.is_some() || enable_gas_station {
+                        bail!("Gas Station is not supported for Bitcoin transfers");
+                    }
+                    return transfer::bitcoin::cmd_send(
+                        readable_amount.as_deref(),
+                        &recipient,
+                        from.as_deref(),
+                        contract_token.as_deref(),
+                        brc20_outpoint.as_deref(),
+                        force,
+                    )
+                    .await;
+                }
+                if profile.capabilities.transfer == chain_profile::TransferDriver::Sui {
+                    if brc20_outpoint.is_some() {
+                        bail!("--brc20-outpoint is only supported for Bitcoin BRC-20 transfers");
+                    }
+                    if amt.is_some() {
+                        bail!("SUI transfers require --readable-amount");
+                    }
+                    if gas_token_address.is_some() || relayer_id.is_some() || enable_gas_station {
+                        bail!("Gas Station is not supported for SUI transfers");
+                    }
+                    let readable_amount = readable_amount
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("--readable-amount is required"))?;
+                    return transfer::sui::cmd_send(
+                        readable_amount,
+                        &recipient,
+                        from.as_deref(),
+                        contract_token.as_deref(),
+                        force,
+                    )
+                    .await;
+                }
+            }
+            if brc20_outpoint.is_some() {
+                bail!("--brc20-outpoint is only supported for Bitcoin BRC-20 transfers");
+            }
             let chain = crate::chains::resolve_chain(&chain);
             // Resolve `--contract-token` alias (`usdc`, `usdt`, ...) → CA and
             // run the same chain-aware format check that swap uses, so a
@@ -525,7 +742,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             tx_hash,
             uop_hash,
         } => {
-            history::cmd_history(
+            history::cmd_query_history(
                 account_id.as_deref(),
                 chain.as_deref(),
                 address.as_deref(),
@@ -539,6 +756,98 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             )
             .await
         }
+        WalletCommand::Inscription { command } => match command {
+            InscriptionCommand::Create {
+                chain,
+                token_address,
+                readable_amount,
+                from,
+                operation_token,
+                preview_version,
+                force,
+            } => {
+                let profile = chain_profile::resolve(&chain).await?;
+                if profile.capabilities.inscription != chain_profile::InscriptionDriver::Bitcoin {
+                    bail!(
+                        "wallet inscription is not supported for chain '{}'",
+                        profile.chain_name
+                    );
+                }
+                inscription::bitcoin::cmd_create(
+                    &token_address,
+                    &readable_amount,
+                    from.as_deref(),
+                    operation_token.as_deref(),
+                    preview_version.as_deref(),
+                    force,
+                )
+                .await
+            }
+            InscriptionCommand::Status {
+                chain,
+                tx_hash,
+                order_id,
+            } => {
+                let profile = chain_profile::resolve(&chain).await?;
+                if profile.capabilities.inscription != chain_profile::InscriptionDriver::Bitcoin {
+                    bail!(
+                        "wallet inscription is not supported for chain '{}'",
+                        profile.chain_name
+                    );
+                }
+                inscription::bitcoin::cmd_query_status(tx_hash.as_deref(), order_id.as_deref())
+                    .await
+            }
+        },
+        WalletCommand::Utxo { command } => match command {
+            UtxoCommand::List { chain, unavailable } => {
+                ensure_bitcoin_command_chain(&chain).await?;
+                utxo::cmd_list(unavailable).await
+            }
+            UtxoCommand::Unavailable { chain } => {
+                ensure_bitcoin_command_chain(&chain).await?;
+                utxo::cmd_unavailable().await
+            }
+            UtxoCommand::Available { chain } => {
+                ensure_bitcoin_command_chain(&chain).await?;
+                utxo::cmd_available().await
+            }
+            UtxoCommand::Brc20Transferable {
+                chain,
+                token_address,
+            } => {
+                ensure_bitcoin_command_chain(&chain).await?;
+                utxo::cmd_brc20_transferable(&token_address).await
+            }
+            UtxoCommand::Unlock {
+                chain,
+                outpoint,
+                all,
+                operation_token,
+                force,
+            } => {
+                ensure_bitcoin_command_chain(&chain).await?;
+                utxo::cmd_unlock(&outpoint, all, operation_token.as_deref(), force).await
+            }
+            UtxoCommand::Lock {
+                chain,
+                outpoint,
+                all,
+                operation_token,
+                force,
+            } => {
+                ensure_bitcoin_command_chain(&chain).await?;
+                utxo::cmd_lock(&outpoint, all, operation_token.as_deref(), force).await
+            }
+            UtxoCommand::Reclaim {
+                chain,
+                tx_hash,
+                force,
+            } => {
+                ensure_bitcoin_command_chain(&chain).await?;
+                utxo::cmd_reclaim(&tx_hash, force).await
+            }
+        },
         WalletCommand::ReportPluginInfo { plugin_parameter } => {
             plugin::cmd_report_plugin_info(&plugin_parameter).await
         }
@@ -548,7 +857,20 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             chain,
             from,
             force,
-        } => sign::cmd_sign_message(&r#type, &message, &chain, &from, force).await,
+        } => {
+            if let Some(profile) = resolve_btc_or_sui_profile(&chain).await? {
+                match profile.capabilities.message_sign {
+                    chain_profile::MessageSignDriver::Unsupported => {
+                        bail!(
+                            "wallet sign-message is not supported for chain '{}'",
+                            profile.chain_name
+                        );
+                    }
+                    chain_profile::MessageSignDriver::LegacyAccount => {}
+                }
+            }
+            sign::cmd_sign_message(&r#type, &message, &chain, &from, force).await
+        }
         WalletCommand::ContractCall {
             to,
             chain,
@@ -568,6 +890,14 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             biz_type,
             strategy,
         } => {
+            if let Some(profile) = resolve_btc_or_sui_profile(&chain).await? {
+                if !profile.capabilities.contract_call {
+                    bail!(
+                        "wallet contract-call is not supported for chain '{}'",
+                        profile.chain_name
+                    );
+                }
+            }
             transfer::cmd_contract_call(
                 &to,
                 &chain,

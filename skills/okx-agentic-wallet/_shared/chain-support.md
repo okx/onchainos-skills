@@ -4,9 +4,9 @@
 
 The CLI accepts human-readable chain names and resolves them automatically.
 
-## Wallet address creation (7 chains)
+## Wallet address creation (9 chains)
 
-The following 7 chains support **wallet address creation** (i.e., you can generate a wallet address on these chains):
+The following 9 chains support **wallet address creation** (i.e., you can generate a wallet address on these chains):
 
 | Chain | Name | chainIndex |
 |---|---|---|
@@ -17,6 +17,12 @@ The following 7 chains support **wallet address creation** (i.e., you can genera
 | Base | `base` | `8453` |
 | BSC | `bsc` | `56` |
 | Arbitrum | `arbitrum` | `42161` |
+| Bitcoin | `bitcoin` (`btc`, `0`) | runtime mapping from `wallet chains` |
+| SUI | `sui` (`784`) | runtime mapping from `wallet chains` |
+
+Bitcoin uses one Taproot address for the current Agentic Wallet account. The CLI resolves the runtime `chainIndex` from the chain list and keeps UTXO, inscription, and transfer semantics in the Bitcoin driver.
+
+SUI uses one SUI address for the current Agentic Wallet account. The SUI driver owns address and Coin Type normalization, amount handling, transaction signing, and history. The service remains authoritative for Coin Object selection, Gas, and pre-execution. SUI contract calls become available when the Agent contract declares that capability.
 
 > **Note**: The wallet supports interacting with 17+ chains beyond this list (e.g., Polygon, Avalanche, Optimism).
 > Run `onchainos wallet chains` for the full list of supported chains.
@@ -30,4 +36,3 @@ Authoritative matrix for Gas Station. Use this when the Agent needs chain displa
 | `501` | Solana | SOL | ✓ | ✓ | ✓ |
 
 > **Always derive the per-tx token set from the response's `gasStationTokenList`** — it's backend-authoritative. The table above is for reference only (FAQ answers, unsupported-chain detection).
-

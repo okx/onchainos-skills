@@ -1,5 +1,22 @@
 pub const ERR_NOT_LOGGED_IN: &str = "not logged in";
 
+/// Agentic Wallet confirmation carrying a structured preview of one pending write.
+#[derive(Debug)]
+pub(crate) struct WalletPreviewConfirming {
+    pub(crate) message: String,
+    pub(crate) next: String,
+    pub(crate) scene: String,
+    pub(crate) preview: serde_json::Value,
+}
+
+impl std::fmt::Display for WalletPreviewConfirming {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "confirming: {}", self.message)
+    }
+}
+
+impl std::error::Error for WalletPreviewConfirming {}
+
 /// Mask an email address for display in user-facing prompts and audit logs.
 /// Keeps the first and last char of the local part, full domain. Local parts
 /// of length ≤ 2 collapse to first-char-plus-stars. UTF-8 safe via char iter.
@@ -25,7 +42,6 @@ pub(super) fn mask_email(email: &str) -> String {
         None => "***".to_string(),
     }
 }
-
 
 /// Check whether `value` is a hex string (starts with "0x" followed by only hex digits).
 /// Mirrors the JS `isHexString(value, length?)` helper exactly.
@@ -69,6 +85,21 @@ pub(crate) fn handle_confirming_error(e: anyhow::Error, force: bool) -> anyhow::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wallet_preview_confirming_keeps_agentic_wallet_payload() {
+        let error: anyhow::Error = WalletPreviewConfirming {
+            message: "review".to_string(),
+            next: "onchainos wallet utxo lock --force".to_string(),
+            scene: "btc_utxo_manage".to_string(),
+            preview: serde_json::json!({"outpoints": ["tx:0"]}),
+        }
+        .into();
+
+        let confirming = error.downcast_ref::<WalletPreviewConfirming>().unwrap();
+        assert_eq!(confirming.scene, "btc_utxo_manage");
+        assert_eq!(confirming.preview["outpoints"][0], "tx:0");
+    }
 
     // ── mask_email ───────────────────────────────────────────────────
 

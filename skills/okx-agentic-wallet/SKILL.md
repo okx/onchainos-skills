@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "OKX Agentic Wallet — the single skill for the user's wallet and on-chain execution. Use it whenever the user wants to operate their wallet or execute an on-chain action, including: login & accounts, balance / holdings, wallet address / deposit / receive, send / transfer, contract calls (approve / deposit / withdraw), transaction history & status, message signing, wallet export & policy; pay gas with a stablecoin (Gas Station, Solana); swap / trade / buy / sell / convert, get a quote; cross-chain bridge & track arrival; limit orders (buy dip / take profit / stop loss / buy above) plus cancel / list / resume them; broadcast / gas / simulate / track a transaction; look up any public address's holdings; security scanning (token / honeypot 蜜罐 / 貔貅, DApp phishing, tx & signature checks, approvals); audit log. Once matched, follow this skill's Intent Routing to dispatch to the exact action."
+description: "Use this skill whenever the user wants to use OKX Onchain OS / onchainos CLI / Agentic Wallet for wallet state or on-chain actions. Triggers: wallet login/status/account/address/balance/holdings/deposit/receive/send/transfer; BTC available balance, UTXOs, protection and reclaim; BRC-20 transferable inscriptions, transfer, inscription and status; SUI native or custom-token transfer; contract calls; Gas Station; swap/DEX trade/buy/sell/convert/quote; bridge; limit orders; transaction broadcast/gas/simulation/tracking; public-address holdings; wallet export/policy; token, DApp, transaction, signature or approval security checks; audit log."
 license: MIT
 metadata:
   author: okx
@@ -14,15 +14,22 @@ Unified wallet skill driving the `onchainos` CLI: wallet lifecycle, Gas Station,
 
 ## Intent Routing
 
-Match the user intent to a row, then **read that row's linked file first** — it holds the flow. Read only the matched file; do not load other rows' files. Each file links its own deeper files (cli-reference, troubleshooting) at the bottom via explicit links — open those when the flow needs them; never construct a file path yourself.
+Match the user intent to a row, then read its flow file first. Load an exact-command reference only when flags or return fields are needed, and load troubleshooting only for a relevant failure. Do not load files from unmatched rows or construct paths yourself.
+
+When a Bitcoin, BRC-20, or SUI row overlaps a generic wallet row, choose the chain-specific row.
+
+For these three routes, render user-facing text in the user's current language. Preserve protocol names, symbols, Coin Types, addresses, hashes, outpoints, signatures, field/status values, error codes, and CLI commands verbatim. English output templates define structure and meaning, not output language.
 
 | User Intent | Reference |
 | --- | --- |
+| Bitcoin/BTC address, native BTC total or available balance, available UTXOs, native BTC transfer, native BTC history/status; UTXOs whose asset occupancy the user removed, unavailable UTXO details, unlock/re-lock/reclaim, mempool-removed transaction recovery | Flow: [bitcoin.md](references/bitcoin.md). Exact commands/fields: [bitcoin-cli-reference.md](references/bitcoin-cli-reference.md). Failures: [bitcoin-troubleshooting.md](references/bitcoin-troubleshooting.md). |
+| BRC-20 ticker balance, transferable BRC-20 inscription UTXOs, selected BRC-20 transfer or transfer status, transfer inscription or inscription status | Flow: [brc20.md](references/brc20.md). Exact commands/fields: [brc20-cli-reference.md](references/brc20-cli-reference.md). Failures: [brc20-troubleshooting.md](references/brc20-troubleshooting.md). |
+| SUI address and assets; native SUI or Coin<T> transfer; SUI history/status | Flow: [sui.md](references/sui.md). Exact commands/fields: [sui-cli-reference.md](references/sui-cli-reference.md). Failures: [sui-troubleshooting.md](references/sui-troubleshooting.md). |
 | Sign in / connect / social login (Google / Apple / Email) / logout; add / switch account; login status | [wallet](references/wallet.md) |
 | My wallet address / QR code; check my (logged-in) balance / holdings | [wallet](references/wallet.md) |
 | Send / transfer native or ERC-20 / SPL tokens | [wallet](references/wallet.md) |
 | Call a contract (approve / deposit / withdraw / custom function) | [wallet](references/wallet.md) |
-| Transaction history / tx detail / order status; sign a message (personalSign / EIP-712) | [wallet](references/wallet.md) |
+| Transaction history / tx detail / order status for chains other than Bitcoin, BRC-20, or SUI; sign a message (personalSign / EIP-712) | [wallet](references/wallet.md) |
 | Policy / spending limit / whitelist; export wallet / mnemonic; MEV protection for a contract-call; third-party Solana plugin write pre-flight | [wallet](references/wallet.md) |
 | Apple-login wallet differs from the OKX Wallet App / "missing" balance; rename a wallet or account; how transaction signing works (TEE) | [account-faq](references/account-faq.md) |
 | Pay gas with a stablecoin on Solana; enable / disable / change default gas token / status; a `send` / `contract-call` returns `gasStationUsed` or a Gas Station Confirming; Gas Station FAQ / "check order" | [gas-station](references/gas-station.md) |
@@ -42,8 +49,8 @@ Before the first `onchainos` command this session, read and follow [_shared/pref
 
 ## Build the Command
 
-1. **Read the matched row's linked file first** (per the Intent Routing table) — it carries the flow and the commands you need. Never guess subcommand, flag, or file names.
-2. **When you need exact flags, defaults, or return-field schemas** that the domain file doesn't spell out, run `onchainos <group> <subcommand> --help` (the CLI is the source of truth), or load that domain's `-cli-reference.md` when the flow needs it (each domain file lists its own deeper files at the bottom). Don't load it up front.
+1. **Read the matched flow first** (per the Intent Routing table). Never guess subcommand, flag, or file names.
+2. **When you need exact flags, defaults, or return-field schemas** that the flow doesn't spell out, run `onchainos <group> <subcommand> --help` (the CLI is the source of truth), or load the directly linked command reference. Don't load it up front.
 3. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below.
 
 ## Chain Name Support
@@ -52,9 +59,9 @@ Before the first `onchainos` command this session, read and follow [_shared/pref
 
 ## Confirming Response
 
-Some state-changing commands return **confirming** (exit code **2**) when the backend needs user confirmation. The response carries `message` (prompt to show) and `next` (what to do after they confirm).
+Some state-changing commands return **confirming** (exit code **2**) when the backend needs user confirmation. The response carries `message`, optional `preview`, and `next`.
 
-1. **Display** `message` and ask for confirmation.
+1. **Display** `message` and the complete `preview` when present, then ask for confirmation.
 2. **Confirms** → follow `next` (usually: re-run the same command with `--force` appended).
 3. **Declines** → do NOT proceed; tell the user it was cancelled.
 
