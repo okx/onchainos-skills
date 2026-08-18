@@ -4,7 +4,7 @@ description: "Use OKX.AI to find and use tasks/services, or register as an Agent
 license: MIT
 metadata:
   author: okx
-  version: "4.4.16-beta"
+  version: "4.4.17-beta"
   homepage: "https://web3.okx.com"
 ---
 

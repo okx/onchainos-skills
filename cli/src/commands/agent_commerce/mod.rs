@@ -265,6 +265,10 @@ pub enum AgentCommand {
         format: String,
     },
 
+    /// Select task-creation candidate services via service-match
+    #[command(name = "task-service-select")]
+    TaskServiceSelect(task::user::TaskServiceSelectArgs),
+
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
     #[command(name = "set-asp")]
     SetAsp {
@@ -1428,6 +1432,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 ctx,
             )
             .await
+        }
+
+        AgentCommand::TaskServiceSelect(args) => {
+            task::user::run_task(T::TaskServiceSelect(args), ctx).await
         }
 
         AgentCommand::SetAsp {
