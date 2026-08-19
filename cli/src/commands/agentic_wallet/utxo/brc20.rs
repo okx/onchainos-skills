@@ -1,7 +1,9 @@
 //! Queries and selects transferable BRC-20 carrier UTXOs.
 
 use anyhow::Result;
+use num_bigint::BigUint;
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::commands::agentic_wallet::chain_adapters::bitcoin::{
     api::{self, BtcApi},
@@ -10,9 +12,12 @@ use crate::commands::agentic_wallet::chain_adapters::bitcoin::{
     validation,
 };
 use crate::commands::agentic_wallet::support::amount::{
-    minimal_to_readable, value_as_decimal_string,
+    minimal_to_readable, parse_minimal, readable_to_minimal, value_as_decimal_string,
 };
 use crate::output;
+
+const MAX_COMBINATION_STATES: usize = 100_000;
+const MAX_COMBINATION_RESULTS: usize = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Brc20TransferableUtxo {
@@ -50,8 +55,11 @@ impl Brc20TransferableUtxo {
     }
 }
 
-/// Queries and emits the transferable inscription UTXOs for one BRC-20 token.
-pub async fn cmd_brc20_transferable(token_address: &str) -> Result<()> {
+/// Queries transferable inscription UTXOs and optionally finds an exact amount combination.
+pub async fn cmd_brc20_transferable(
+    token_address: &str,
+    readable_amount: Option<&str>,
+) -> Result<()> {
     let token_address = validation::normalize_brc20_token_address(token_address)?;
     let context = BtcContext::load(None).await?;
     let mut api = BtcApi::new()?;
@@ -65,6 +73,9 @@ pub async fn cmd_brc20_transferable(token_address: &str) -> Result<()> {
         .iter()
         .map(|utxo| utxo.build_choice(&token_address, decimals))
         .collect::<Result<Vec<_>>>()?;
+    let selection_plan = readable_amount
+        .map(|amount| build_brc20_selection_plan(&transferable, &choices, amount, decimals))
+        .transpose()?;
     let sum_value_raw = snapshot
         .pointer("/brc20TransferableUtxoList/sumValueRaw")
         .and_then(value_as_decimal_string);
@@ -73,7 +84,7 @@ pub async fn cmd_brc20_transferable(token_address: &str) -> Result<()> {
         .map(|value| minimal_to_readable(value, decimals))
         .transpose()?;
     output::success(json!({
-        "message": "Queried transferable BRC-20 inscription UTXOs. Ask the user to select exactly one returned selection before transferring.",
+        "message": "Queried transferable BRC-20 inscription UTXOs. A transfer may use one or more returned selections whose token amounts exactly match the requested amount.",
         "queryType": "BRC20_TRANSFERABLE_UTXO_LIST",
         "accountId": context.account_id,
         "address": context.address.address,
@@ -82,21 +93,171 @@ pub async fn cmd_brc20_transferable(token_address: &str) -> Result<()> {
         "sumValue": sum_value,
         "sumValueRaw": sum_value_raw,
         "choices": choices,
+        "selectionPlan": selection_plan,
         "brc20Transferable": snapshot,
     }));
     Ok(())
 }
 
-/// Finds a still-transferable outpoint in the latest BRC-20 snapshot.
-pub fn select_brc20_transferable_utxo(
+/// Resolves unique user-selected outpoints against the latest transferable snapshot.
+pub fn select_brc20_transferable_utxos(
     snapshot: &Value,
-    selection: &str,
-) -> Result<Brc20TransferableUtxo> {
-    let selected = BtcOutPoint::parse(selection)?;
-    parse_brc20_transferable_utxos(snapshot)?
+    selections: &[String],
+) -> Result<Vec<Brc20TransferableUtxo>> {
+    if selections.is_empty() {
+        anyhow::bail!(
+            "BRC-20 transfers require at least one --brc20-outpoint selected from wallet utxo brc20-transferable"
+        );
+    }
+
+    let mut available = parse_brc20_transferable_utxos(snapshot)?
         .into_iter()
-        .find(|utxo| utxo.outpoint == selected)
-        .ok_or_else(|| anyhow::anyhow!("selected BRC-20 UTXO is no longer transferable"))
+        .map(|utxo| (utxo.outpoint.clone(), utxo))
+        .collect::<BTreeMap<_, _>>();
+    let mut seen = BTreeSet::new();
+    let mut selected = Vec::with_capacity(selections.len());
+    for selection in selections {
+        let outpoint = BtcOutPoint::parse(selection)?;
+        let canonical = outpoint.canonical();
+        if !seen.insert(outpoint.clone()) {
+            anyhow::bail!("BRC-20 UTXO {canonical} was selected more than once");
+        }
+        let utxo = available.remove(&outpoint).ok_or_else(|| {
+            anyhow::anyhow!("selected BRC-20 UTXO is no longer transferable: {canonical}")
+        })?;
+        selected.push(utxo);
+    }
+    Ok(selected)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CombinationSearch {
+    Exact(Vec<Vec<usize>>),
+    NoExactMatch,
+    SearchLimitExceeded,
+}
+
+/// Finds up to three exact subsets, ordered by the fewest selected UTXOs.
+fn find_exact_combination(
+    transferable: &[Brc20TransferableUtxo],
+    target: &BigUint,
+) -> Result<CombinationSearch> {
+    let amounts = transferable
+        .iter()
+        .enumerate()
+        .map(|(index, utxo)| {
+            parse_minimal(
+                &utxo.value_raw,
+                &format!("transferable UTXO {index} valueRaw"),
+                false,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let exact_single_inputs = amounts
+        .iter()
+        .enumerate()
+        .filter(|(_, amount)| *amount == target)
+        .take(MAX_COMBINATION_RESULTS)
+        .map(|(index, _)| vec![index])
+        .collect::<Vec<_>>();
+    if !exact_single_inputs.is_empty() {
+        return Ok(CombinationSearch::Exact(exact_single_inputs));
+    }
+
+    let mut states = BTreeMap::from([(BigUint::default(), vec![Vec::<usize>::new()])]);
+    for (index, amount) in amounts.iter().enumerate() {
+        if amount > target {
+            continue;
+        }
+        let additions = states
+            .iter()
+            .filter_map(|(sum, combinations)| {
+                let next = sum + amount;
+                (next <= *target).then(|| {
+                    let candidates = combinations
+                        .iter()
+                        .map(|indexes| {
+                            let mut candidate = indexes.clone();
+                            candidate.push(index);
+                            candidate
+                        })
+                        .collect::<Vec<_>>();
+                    (next, candidates)
+                })
+            })
+            .collect::<Vec<_>>();
+        for (sum, candidates) in additions {
+            if let Some(existing) = states.get_mut(&sum) {
+                existing.extend(candidates);
+                existing.sort_by(|left, right| {
+                    left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+                });
+                existing.dedup();
+                existing.truncate(MAX_COMBINATION_RESULTS);
+            } else {
+                if states.len() >= MAX_COMBINATION_STATES {
+                    return Ok(states
+                        .get(target)
+                        .cloned()
+                        .map(CombinationSearch::Exact)
+                        .unwrap_or(CombinationSearch::SearchLimitExceeded));
+                }
+                states.insert(sum, candidates);
+            }
+        }
+    }
+
+    Ok(states
+        .get(target)
+        .cloned()
+        .map(CombinationSearch::Exact)
+        .unwrap_or(CombinationSearch::NoExactMatch))
+}
+
+/// Builds the amount-aware selection plan returned by the transferable query.
+fn build_brc20_selection_plan(
+    transferable: &[Brc20TransferableUtxo],
+    choices: &[Value],
+    readable_amount: &str,
+    decimals: u32,
+) -> Result<Value> {
+    let requested_amount_raw = readable_to_minimal(readable_amount, decimals)?;
+    let target = parse_minimal(&requested_amount_raw, "requested BRC-20 amount", false)?;
+    let (status, combinations) = match find_exact_combination(transferable, &target)? {
+        CombinationSearch::Exact(combinations) => {
+            let combinations = combinations
+                .iter()
+                .map(|indexes| {
+                    let selected_choices = indexes
+                        .iter()
+                        .map(|index| choices[*index].clone())
+                        .collect::<Vec<_>>();
+                    let selected_outpoints = indexes
+                        .iter()
+                        .map(|index| transferable[*index].outpoint.canonical())
+                        .collect::<Vec<_>>();
+                    json!({
+                        "selectedCount": indexes.len(),
+                        "selectedOutpoints": selected_outpoints,
+                        "selectedChoices": selected_choices,
+                    })
+                })
+                .collect::<Vec<_>>();
+            ("EXACT_MATCH", combinations)
+        }
+        CombinationSearch::NoExactMatch => ("NO_EXACT_MATCH", Vec::new()),
+        CombinationSearch::SearchLimitExceeded => ("SEARCH_LIMIT_EXCEEDED", Vec::new()),
+    };
+    Ok(json!({
+        "status": status,
+        "requestedAmount": readable_amount,
+        "requestedAmountRaw": requested_amount_raw,
+        "maxCombinations": MAX_COMBINATION_RESULTS,
+        "searchStateLimit": MAX_COMBINATION_STATES,
+        "combinationCount": combinations.len(),
+        "combinations": combinations,
+    }))
 }
 
 /// Parses transferable BRC-20 response items into validated carrier UTXOs.
@@ -155,26 +316,40 @@ fn read_required_raw_field(item: &Value, field: &str, index: usize) -> Result<St
 mod tests {
     use super::*;
 
-    #[test]
-    fn brc20_transferable_choice_keeps_token_and_btc_amounts_distinct() {
-        let tx_hash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-        let snapshot = json!({
+    fn transferable_snapshot() -> Value {
+        json!({
             "brc20TransferableUtxoList": {
-                "sumValueRaw": "1000000000000000000",
-                "count": 1,
+                "sumValueRaw": "3000000000000000000",
+                "count": 2,
                 "utxos": [{
-                    "txHash": tx_hash,
+                    "txHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                     "voutIndex": 2,
                     "utxoId": "utxo-1",
                     "utxoAmountRaw": "546",
                     "valueRaw": "1000000000000000000",
                     "offset": "0",
                     "inscriptionId": "inscription-1"
+                }, {
+                    "txHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "voutIndex": 3,
+                    "utxoId": "utxo-2",
+                    "utxoAmountRaw": "600",
+                    "valueRaw": "2000000000000000000",
+                    "offset": "1",
+                    "inscriptionId": "inscription-2"
                 }]
             }
-        });
+        })
+    }
 
-        let selected = select_brc20_transferable_utxo(&snapshot, &format!("{tx_hash}:2")).unwrap();
+    #[test]
+    fn brc20_transferable_choice_keeps_token_and_btc_amounts_distinct() {
+        let tx_hash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        let snapshot = transferable_snapshot();
+
+        let selected = select_brc20_transferable_utxos(&snapshot, &[format!("{tx_hash}:2")])
+            .unwrap()
+            .remove(0);
         assert_eq!(selected.value_raw, "1000000000000000000");
         assert_eq!(selected.utxo_amount_raw, "546");
         assert_eq!(selected.build_tx_param_input("bc1pfrom")["amount"], "546");
@@ -183,5 +358,141 @@ mod tests {
         assert_eq!(choice["tokenAmount"], "1");
         assert_eq!(choice["utxoAmountSats"], "546");
         assert_eq!(choice["selection"], format!("{tx_hash}:2"));
+    }
+
+    #[test]
+    fn selects_multiple_transferable_utxos_in_requested_order() {
+        let selections = vec![
+            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd:3".to_string(),
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:2".to_string(),
+        ];
+
+        let selected =
+            select_brc20_transferable_utxos(&transferable_snapshot(), &selections).unwrap();
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].value_raw, "2000000000000000000");
+        assert_eq!(selected[1].value_raw, "1000000000000000000");
+    }
+
+    #[test]
+    fn rejects_duplicate_transferable_utxo_selections() {
+        let outpoint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:2";
+        let error = select_brc20_transferable_utxos(
+            &transferable_snapshot(),
+            &[outpoint.to_string(), outpoint.to_string()],
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("selected more than once"));
+    }
+
+    #[test]
+    fn rejects_selection_missing_from_refreshed_snapshot() {
+        let error = select_brc20_transferable_utxos(
+            &transferable_snapshot(),
+            &["eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0".to_string()],
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("no longer transferable"));
+    }
+
+    #[test]
+    fn selection_plan_combines_multiple_utxos_for_an_exact_amount() {
+        let snapshot = transferable_snapshot();
+        let transferable = parse_brc20_transferable_utxos(&snapshot).unwrap();
+        let choices = transferable
+            .iter()
+            .map(|utxo| utxo.build_choice("btc-brc20-pizza", 18).unwrap())
+            .collect::<Vec<_>>();
+
+        let plan = build_brc20_selection_plan(&transferable, &choices, "3", 18).unwrap();
+
+        assert_eq!(plan["status"], "EXACT_MATCH");
+        assert_eq!(plan["combinationCount"], 1);
+        assert_eq!(plan["combinations"][0]["selectedCount"], 2);
+        assert_eq!(
+            plan["combinations"][0]["selectedOutpoints"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn selection_plan_reports_when_no_exact_combination_exists() {
+        let snapshot = transferable_snapshot();
+        let transferable = parse_brc20_transferable_utxos(&snapshot).unwrap();
+        let choices = transferable
+            .iter()
+            .map(|utxo| utxo.build_choice("btc-brc20-pizza", 18).unwrap())
+            .collect::<Vec<_>>();
+
+        let plan = build_brc20_selection_plan(&transferable, &choices, "4", 18).unwrap();
+
+        assert_eq!(plan["status"], "NO_EXACT_MATCH");
+        assert_eq!(plan["combinations"], json!([]));
+    }
+
+    #[test]
+    fn selection_plan_returns_at_most_three_single_input_options() {
+        let transferable = ["a", "b", "c", "d"]
+            .iter()
+            .enumerate()
+            .map(|(index, digit)| Brc20TransferableUtxo {
+                outpoint: BtcOutPoint::parse(&format!("{}:{index}", digit.repeat(64))).unwrap(),
+                utxo_id: format!("utxo-{index}"),
+                utxo_amount_raw: "546".to_string(),
+                value_raw: "1000000000000000000".to_string(),
+                offset: Some("0".to_string()),
+                inscription_id: format!("inscription-{index}"),
+            })
+            .collect::<Vec<_>>();
+        let choices = transferable
+            .iter()
+            .map(|utxo| utxo.build_choice("btc-brc20-pizza", 18).unwrap())
+            .collect::<Vec<_>>();
+
+        let plan = build_brc20_selection_plan(&transferable, &choices, "1", 18).unwrap();
+
+        assert_eq!(plan["status"], "EXACT_MATCH");
+        assert_eq!(plan["maxCombinations"], 3);
+        assert_eq!(plan["combinationCount"], 3);
+        assert!(plan["combinations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|combination| combination["selectedCount"] == 1));
+    }
+
+    #[test]
+    fn selection_plan_caps_multi_input_combinations_at_three() {
+        let transferable = ["a", "b", "c", "d"]
+            .iter()
+            .enumerate()
+            .map(|(index, digit)| Brc20TransferableUtxo {
+                outpoint: BtcOutPoint::parse(&format!("{}:{index}", digit.repeat(64))).unwrap(),
+                utxo_id: format!("utxo-{index}"),
+                utxo_amount_raw: "546".to_string(),
+                value_raw: "1".to_string(),
+                offset: Some("0".to_string()),
+                inscription_id: format!("inscription-{index}"),
+            })
+            .collect::<Vec<_>>();
+        let choices = transferable
+            .iter()
+            .map(|utxo| utxo.build_choice("btc-brc20-pizza", 0).unwrap())
+            .collect::<Vec<_>>();
+
+        let plan = build_brc20_selection_plan(&transferable, &choices, "2", 0).unwrap();
+
+        assert_eq!(plan["combinationCount"], 3);
+        assert!(plan["combinations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|combination| combination["selectedCount"] == 2));
     }
 }

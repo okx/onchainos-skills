@@ -64,8 +64,9 @@ The CLI wraps the selected service branch without synthesizing asset metadata:
 | Default list | `USER_IGNORED_LIST` | `data.userIgnored.userIgnoredList` |
 | `--unavailable` | `UNAVAILABLE_BREAKDOWN` | `data.unavailable.unavailableBreakdown` |
 | `available` | `AVAILABLE_UTXO_LIST` | `data.available.availableUtxoList` |
+| `brc20-transferable` | `BRC20_TRANSFERABLE_UTXO_LIST` | `data.brc20Transferable.brc20TransferableUtxoList` |
 
-`USER_IGNORED_LIST` contains only UTXOs whose asset occupancy the user explicitly removed; never rename this result as the complete available or spendable UTXO list. `AVAILABLE_UTXO_LIST` is the service's authoritative currently available UTXO view.
+`UNAVAILABLE_BREAKDOWN` and `AVAILABLE_UTXO_LIST` are native BTC views. `USER_IGNORED_LIST` is the address-level user-removed asset-occupancy view shared by native BTC and BRC-20 flows. `BRC20_TRANSFERABLE_UTXO_LIST` is the ticker-specific BRC-20 transferable-inscription view. `USER_IGNORED_LIST` contains only UTXOs whose asset occupancy the user explicitly removed; never rename this result as the complete available or spendable UTXO list.
 
 Inactive response branches being `null` are expected. Do not treat them as missing data. The CLI does not call another asset-detail endpoint or return a detail continuation.
 
@@ -79,13 +80,13 @@ Inactive response branches being `null` are expected. Do not treat them as missi
 | `data.available.availableUtxoList.count` / `sumSats` | Count and sat total of currently available UTXOs. `sumSats` is the available BTC balance. |
 | `data.available.availableUtxoList.utxos[].pending` | Service-returned pending flag. |
 | `data.available.availableUtxoList.utxos[].userIgnoreAsset` | Whether the user removed asset occupancy for that available UTXO. |
-| Category `count` / `sumSats` / `utxos[]` | Count, sat total, and outpoints for `assetLocked`, `assetUncertain`, `feeUneconomic`, or `mempoolRemovedSpending`. |
+| Category `count` / `sumSats` / `utxos[]` | Count, sat total, and outpoints for `assetLocked`, `assetUncertain`, `feeUneconomic`, or `mempoolRemovedSpending`. Membership in the parent category is each UTXO's service-returned unavailable reason. |
 | `utxos[].txHash` + `voutIndex` | Canonical outpoint `<txHash>:<voutIndex>`. |
 | `utxos[].valueRaw` | Exact UTXO value in sats. |
 | `utxos[].utxoId` | Optional service identifier; `null` is valid. |
 | `utxos[].source` | Service-returned source. Preserve its spelling/case verbatim. |
 
-Treat `sumSats` and `valueRaw` as decimal strings and convert to BTC exactly only for display. Do not infer an asset protocol or name from a UTXO category.
+Treat `sumSats` and `valueRaw` as decimal strings and convert to BTC exactly only for display. For unavailable-list output, include the raw parent category and its user-language meaning for every UTXO. Do not infer an asset protocol or name from a UTXO category.
 
 ## History And Status
 

@@ -109,7 +109,9 @@ fn wallet_utxo_available_and_brc20_transferable_expose_documented_inputs() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("--chain").and(predicate::str::contains("--token-address")),
+            predicate::str::contains("--chain")
+                .and(predicate::str::contains("--token-address"))
+                .and(predicate::str::contains("--readable-amount")),
         );
 }
 
@@ -201,6 +203,7 @@ fn wallet_send_help_shows_flag_surface() {
                 .and(predicate::str::contains("--readable-amount"))
                 .and(predicate::str::contains("--contract-token"))
                 .and(predicate::str::contains("--brc20-outpoint"))
+                .and(predicate::str::contains("repeat to combine inputs"))
                 .and(predicate::str::contains("--enable-gas-station")),
         );
 }

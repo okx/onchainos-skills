@@ -1,6 +1,6 @@
 # BRC-20 CLI Reference
 
-Use a synthetic BRC-20 token address: `btc-brc20-<ticker>`. The CLI normalizes its ticker to lowercase. Transfer-inscription amounts use `--readable-amount` and exact token-decimal conversion. A direct BRC-20 transfer instead uses one user-selected transferable inscription UTXO and takes its exact token amount from the service response.
+Use a synthetic BRC-20 token address: `btc-brc20-<ticker>`. The CLI normalizes its ticker to lowercase. Transfer-inscription and direct-transfer target amounts use `--readable-amount` with exact token-decimal conversion. A direct BRC-20 transfer uses one or more complete service-returned inscription UTXOs whose token amounts sum to the requested amount.
 
 ## Balance
 
@@ -8,29 +8,49 @@ Use a synthetic BRC-20 token address: `btc-brc20-<ticker>`. The CLI normalizes i
 onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker> [--force]
 ```
 
-This reports total holdings only. For a user-facing BRC-20 balance composition, also run the transferable-UTXO query below and report its exact whole-inscription denominations separately. Do not derive an uninscribed amount by subtraction unless the CLI/service explicitly returns that semantic.
+For a holdings query, also run the transferable-UTXO command below, then follow the flow's paired-read amount/USD calculation and three-line balance template.
 
 ## Transferable BRC-20 UTXOs
 
 ```bash
-onchainos wallet utxo brc20-transferable --chain bitcoin --token-address <btc-brc20-ticker>
+onchainos wallet utxo brc20-transferable --chain bitcoin --token-address <btc-brc20-ticker> [--readable-amount <amount>]
 ```
 
 For this query, the user only needs to provide the BRC-20 ticker/token address. The CLI derives the active Bitcoin address and chain from the logged-in wallet and returns the current transferable choices.
 
-The response exposes `choices[]`. Preserve each `selection` (`<txHash>:<voutIndex>`) verbatim for the user's choice. `tokenAmount` / `tokenAmountRaw` is the BRC-20 quantity; `utxoAmountSats` is the carrier UTXO's BTC value in sats. Do not interchange them. Each choice is one whole, indivisible transfer inscription. A requested user amount may filter exact `tokenAmount` matches, but it never changes the amount represented by a choice.
+The command calls `POST /priapi/v5/wallet/agentic/utxo/availability-details` with the current Bitcoin `address`, `chainIndex=0`, `queryType=BRC20_TRANSFERABLE_UTXO_LIST`, and normalized `tokenAddress`. The CLI exposes the service total as `sumValue` and the individual transferable inscriptions as `choices[]`.
+
+The response exposes `choices[]`. Preserve each `selection` (`<txHash>:<voutIndex>`) verbatim. `tokenAmount` / `tokenAmountRaw` is the BRC-20 quantity; `utxoAmountSats` is the carrier UTXO's BTC value in sats. Each choice is one whole, indivisible transfer inscription; multiple choices may be combined in one transaction.
+
+With `--readable-amount`, read `selectionPlan`:
+
+- `EXACT_MATCH`: `combinations[]` contains at most three exact options, ordered by fewer inputs. Each option provides `selectedCount`, `selectedOutpoints[]`, and `selectedChoices[]`.
+- `NO_EXACT_MATCH`: the complete bounded search found no exact subset for the requested amount.
+- `SEARCH_LIMIT_EXCEEDED`: the search reached 100,000 distinct amount states; present the current choices without claiming that no exact subset exists.
+
+The CLI returns at most three combinations so the user can make one clear selection. It performs all arithmetic in token minimal units.
+
+## Shared UTXO Availability Views
+
+The same `availability-details` endpoint also serves this BRC-20-context UTXO request:
+
+| Intent | Command | Request `queryType` |
+| --- | --- | --- |
+| UTXOs whose asset occupancy the user removed | `onchainos wallet utxo list --chain bitcoin` | `USER_IGNORED_LIST` |
+
+`USER_IGNORED_LIST` is the address-level user-removed asset-occupancy view shared by native BTC and BRC-20 flows. `BRC20_TRANSFERABLE_UTXO_LIST` is the ticker-specific BRC-20 transferable-inscription view documented above. Render protocol or ticker attribution only when the response explicitly supplies it.
 
 ## BRC-20 Transfer
 
 ```bash
-onchainos wallet send --chain bitcoin --contract-token <btc-brc20-ticker> --recipient <address> --brc20-outpoint <txHash:voutIndex>
+onchainos wallet send --chain bitcoin --contract-token <btc-brc20-ticker> --readable-amount <amount> --recipient <address> --brc20-outpoint <txHash:voutIndex> [--brc20-outpoint <txHash:voutIndex> ...]
 ```
 
-BRC-20 transfer uses the same external CLI interaction as ordinary `wallet send`. The CLI refreshes the transferable list and resolves the selected outpoint before preparing the transaction, so stale choices are not silently used. It owns minimal-unit conversion, request construction, signing, and ordinary single-transaction broadcast; do not reproduce those steps in the Skill or persist intermediate transaction state in Keyring. It does not add a BRC-20-specific preview or preparation stage.
+BRC-20 transfer uses the same external CLI interaction as ordinary `wallet send`. Repeat `--brc20-outpoint` for every item in the confirmed combination. The CLI refreshes the transferable list, resolves every selected outpoint, rejects duplicates, and verifies that their token amount sum equals `--readable-amount` before preparing one transaction. It places every selected carrier in `txParam.inputs`, then owns signing and ordinary single-transaction broadcast. Intermediate transaction state is consumed directly and is not persisted in Keyring.
 
 If broadcast returns the shared backend confirmation code, the CLI returns the ordinary `confirming` response with the service `message`; after explicit confirmation, re-run the same command with `--force`. Otherwise, success returns `state=PENDING`, `txHash`, and `orderId`.
 
-Do not start a direct transfer until the transferable list has been shown and exactly one current choice is fixed. If a requested amount has one exact match, the confirmation may fix that choice without a redundant selection question; if several choices match, ask the user to select one outpoint. If the refreshed list no longer contains that choice, show the new list and ask the user to select again. A later explicit inscription request remains the separate flow below.
+Start a direct transfer after the amount-aware query has been shown and one current combination is fixed. A single returned combination can proceed to the normal transfer confirmation; several returned combinations require the user to choose one. If the refreshed list no longer contains every outpoint, show the new plan and ask the user to select again. A later explicit inscription request remains the separate flow below.
 
 Query a submitted direct transfer through the shared wallet history flow, not inscription status:
 
@@ -45,6 +65,6 @@ onchainos wallet inscription create --chain bitcoin --token-address <btc-brc20-t
 onchainos wallet inscription status --chain bitcoin (--tx-hash <hash> | --order-id <id>)
 ```
 
-Creation returns the same confirmation shape, with `scene="btc_inscription"`; the preview's `feeReadable` is nullable. After confirmation, success returns `state=INSCRIBING` plus the Reveal transaction's top-level `txHash` and `orderId`; `broadcasts` preserves every ordered Commit/Reveal result. Query status with the returned Reveal `orderId` through `nextSteps.checkInscriptionStatus`, never with the Commit transaction hash. Always display that complete continuation command after submission so it can be copied into another session, and also tell the user they can later say “查询铭刻结果” in the current conversation. Creation is a standalone asynchronous transfer inscription to the current Bitcoin address; the CLI owns its preparation, signing, and broadcast.
+Creation returns ordinary `confirming` with `scene="btc_inscription"`; `preview.feeReadable` is nullable. Submitted output contains `state=INSCRIBING`, top-level `txHash` and `orderId`, ordered `broadcasts`, and `nextSteps.checkInscriptionStatus`. Show those identifiers and the complete continuation command; creation is a standalone asynchronous transfer inscription to the current Bitcoin address.
 
 Status can be `INSCRIBING`, `WAITING_CONFIRMATION`, `WAITING_INDEXER`, `READY_TO_TRANSFER`, `FAILED`, or `UNKNOWN`. `READY_TO_TRANSFER` supplies read-only `nextSteps.queryBrc20TransferableUtxos`, which refreshes the transferable list for the returned token address.

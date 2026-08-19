@@ -127,9 +127,9 @@ pub enum WalletCommand {
         /// Contract token address (optional — for ERC-20 / SPL token transfers)
         #[arg(long)]
         contract_token: Option<String>,
-        /// Selected transferable BRC-20 inscription UTXO (`txHash:voutIndex`)
-        #[arg(long, requires = "contract_token")]
-        brc20_outpoint: Option<String>,
+        /// Transferable BRC-20 inscription UTXO (`txHash:voutIndex`); repeat to combine inputs
+        #[arg(long = "brc20-outpoint", requires = "contract_token")]
+        brc20_outpoint: Vec<String>,
         /// Force execution: skip confirmation prompts from the backend
         #[arg(long, default_value_t = false)]
         force: bool,
@@ -337,6 +337,9 @@ pub enum UtxoCommand {
         /// Synthetic BRC-20 token address (`btc-brc20-<ticker>`)
         #[arg(long)]
         token_address: String,
+        /// Human-readable target amount used to find up to three exact UTXO combinations
+        #[arg(long)]
+        readable_amount: Option<String>,
     },
     /// Remove asset protection from one or all currently protected UTXOs
     Unlock {
@@ -666,13 +669,13 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                         &recipient,
                         from.as_deref(),
                         contract_token.as_deref(),
-                        brc20_outpoint.as_deref(),
+                        &brc20_outpoint,
                         force,
                     )
                     .await;
                 }
                 if profile.capabilities.transfer == chain_profile::TransferDriver::Sui {
-                    if brc20_outpoint.is_some() {
+                    if !brc20_outpoint.is_empty() {
                         bail!("--brc20-outpoint is only supported for Bitcoin BRC-20 transfers");
                     }
                     if amt.is_some() {
@@ -694,7 +697,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                     .await;
                 }
             }
-            if brc20_outpoint.is_some() {
+            if !brc20_outpoint.is_empty() {
                 bail!("--brc20-outpoint is only supported for Bitcoin BRC-20 transfers");
             }
             let chain = crate::chains::resolve_chain(&chain);
@@ -815,9 +818,10 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             UtxoCommand::Brc20Transferable {
                 chain,
                 token_address,
+                readable_amount,
             } => {
                 ensure_bitcoin_command_chain(&chain).await?;
-                utxo::cmd_brc20_transferable(&token_address).await
+                utxo::cmd_brc20_transferable(&token_address, readable_amount.as_deref()).await
             }
             UtxoCommand::Unlock {
                 chain,

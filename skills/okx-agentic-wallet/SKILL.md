@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill whenever the user wants to use OKX Onchain OS / onchainos CLI / Agentic Wallet for wallet state or on-chain actions. Triggers: wallet login/status/account/address/balance/holdings/deposit/receive/send/transfer; BTC available balance, UTXOs, protection and reclaim; BRC-20 transferable inscriptions, transfer, inscription and status; SUI native or custom-token transfer; contract calls; Gas Station; swap/DEX trade/buy/sell/convert/quote; bridge; limit orders; transaction broadcast/gas/simulation/tracking; public-address holdings; wallet export/policy; token, DApp, transaction, signature or approval security checks; audit log."
+description: "Use for OKX Onchain OS / onchainos Agentic Wallet actions: Bitcoin/BTC balance, available UTXOs, protection unlock/re-lock/reclaim, transfers and status; BRC-20 ticker balance, transferable inscription UTXOs, transfer inscriptions, transfers and status; SUI assets, native or custom-token transfers, and status; wallet login/account/address/holdings/deposit/receive/send; contract calls, Gas Station, DEX swap/trade/quote, bridge, limit orders, transaction broadcast/gas/simulation/tracking, public-address holdings, wallet export/policy, security checks, and audit logs."
 license: MIT
 metadata:
   author: okx
@@ -22,9 +22,9 @@ For these three routes, render user-facing text in the user's current language. 
 
 | User Intent | Reference |
 | --- | --- |
-| Bitcoin/BTC address, native BTC total or available balance, available UTXOs, native BTC transfer, native BTC history/status; UTXOs whose asset occupancy the user removed, unavailable UTXO details, unlock/re-lock/reclaim, mempool-removed transaction recovery | Flow: [bitcoin.md](references/bitcoin.md). Exact commands/fields: [bitcoin-cli-reference.md](references/bitcoin-cli-reference.md). Failures: [bitcoin-troubleshooting.md](references/bitcoin-troubleshooting.md). |
-| BRC-20 ticker balance, transferable BRC-20 inscription UTXOs, selected BRC-20 transfer or transfer status, transfer inscription or inscription status | Flow: [brc20.md](references/brc20.md). Exact commands/fields: [brc20-cli-reference.md](references/brc20-cli-reference.md). Failures: [brc20-troubleshooting.md](references/brc20-troubleshooting.md). |
-| SUI address and assets; native SUI or Coin<T> transfer; SUI history/status | Flow: [sui.md](references/sui.md). Exact commands/fields: [sui-cli-reference.md](references/sui-cli-reference.md). Failures: [sui-troubleshooting.md](references/sui-troubleshooting.md). |
+| Bitcoin/BTC address, native BTC total or available balance, available UTXOs, native BTC transfer, native BTC history/status; UTXOs whose asset occupancy the user removed, unavailable UTXO details, unlock/re-lock/reclaim, mempool-removed transaction recovery | Flow: [bitcoin.md](references/bitcoin.md). Exact commands/fields: [bitcoin-cli-reference.md](references/bitcoin-cli-reference.md). Shared history: [wallet-cli-reference.md#history](references/wallet-cli-reference.md#history). Failures: [bitcoin-troubleshooting.md](references/bitcoin-troubleshooting.md). |
+| BRC-20 ticker balance, transferable BRC-20 inscription UTXOs, UTXOs whose asset occupancy the user removed in a BRC-20 context, selected BRC-20 transfer or transfer status, transfer inscription or inscription status | Flow: [brc20.md](references/brc20.md). Exact commands/fields: [brc20-cli-reference.md](references/brc20-cli-reference.md). Shared history: [wallet-cli-reference.md#history](references/wallet-cli-reference.md#history). Failures: [brc20-troubleshooting.md](references/brc20-troubleshooting.md). |
+| SUI address and assets; native SUI or Coin<T> transfer; SUI history/status | Flow: [sui.md](references/sui.md). Exact commands/fields: [sui-cli-reference.md](references/sui-cli-reference.md). Shared history: [wallet-cli-reference.md#history](references/wallet-cli-reference.md#history). Failures: [sui-troubleshooting.md](references/sui-troubleshooting.md). |
 | Sign in / connect / social login (Google / Apple / Email) / logout; add / switch account; login status | [wallet](references/wallet.md) |
 | My wallet address / QR code; check my (logged-in) balance / holdings | [wallet](references/wallet.md) |
 | Send / transfer native or ERC-20 / SPL tokens | [wallet](references/wallet.md) |
@@ -50,7 +50,7 @@ Before the first `onchainos` command this session, read and follow [_shared/pref
 ## Build the Command
 
 1. **Read the matched flow first** (per the Intent Routing table). Never guess subcommand, flag, or file names.
-2. **When you need exact flags, defaults, or return-field schemas** that the flow doesn't spell out, run `onchainos <group> <subcommand> --help` (the CLI is the source of truth), or load the directly linked command reference. Don't load it up front.
+2. **When you need exact CLI syntax**, run `onchainos <group> --help` to discover subcommands, then `onchainos <group> <subcommand> --help` for flags; load the direct reference for fields. The CLI is the source of truth.
 3. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below.
 
 ## Chain Name Support

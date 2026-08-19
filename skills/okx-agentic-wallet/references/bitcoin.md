@@ -30,7 +30,7 @@ Use this flow for native BTC, Bitcoin transaction status, and UTXO protection. B
 
 **MUST**: For a BTC-only balance query, select only the native BTC item (`symbol=BTC` and empty `tokenAddress`) and return exactly this two-sentence structure in the user's current language, without a heading, bullets, chain total, other assets, address, refresh note, or environment note:
 
-`Your current balance is {balance} BTC, worth approximately ${usdValue}. This balance includes unlocked and locked BTC and does not represent the currently spendable balance.`
+`Your current balance is {balance} BTC, worth approximately ${usdValue}. This balance includes transferable and locked BTC and does not represent the currently spendable balance.`
 
 Use the returned UI-unit `balance` and round `usdValue` to two decimal places. Do not use chain-level `totalValueUsd` as the BTC valuation.
 
@@ -40,13 +40,20 @@ If the user asks how much BTC is available/spendable, asks for available UTXOs, 
 
 ## UTXO Query Output
 
+- `availability-details` serves these views:
+
+  | View | Scope | User-facing meaning |
+  | --- | --- | --- |
+  | `AVAILABLE_UTXO_LIST` | Native BTC | Currently available UTXOs |
+  | `USER_IGNORED_LIST` | BTC and BRC-20 | UTXOs whose asset occupancy the user removed |
+  | `UNAVAILABLE_BREAKDOWN` | Native BTC | Unavailable UTXO details |
+  | `BRC20_TRANSFERABLE_UTXO_LIST` | BRC-20 ticker | Transferable inscription UTXOs |
+
 - For a broad request such as "query my/all UTXOs", run all three BTC views. Report `AVAILABLE_UTXO_LIST`, `USER_IGNORED_LIST`, and `UNAVAILABLE_BREAKDOWN` separately; do not combine their totals.
-- State their meanings precisely: `AVAILABLE_UTXO_LIST` is the currently available UTXO view; `USER_IGNORED_LIST` contains only UTXOs whose asset occupancy the user removed; `UNAVAILABLE_BREAKDOWN` contains unavailable UTXO details.
-- In Chinese output, name them exactly `当前可用 UTXO`, `用户解除资产占用的 UTXO`, and `不可用 UTXO 详情`.
 - Never rename `USER_IGNORED_LIST` as the complete available, spendable, or ordinary UTXO list.
 - Before rendering UTXO amounts, run `wallet balance --chain bitcoin --force`, select the native BTC item (`symbol=BTC` with an empty `tokenAddress`), and use its returned `tokenPrice` for USD conversion. This read is only for display; it does not change UTXO availability or selection.
 - Render every individual and aggregate UTXO amount as `{sats} sats ({btcAmount} BTC, worth approximately ${usdValue})`, including query results, protection previews, and post-action results. Compute `btcAmount = sats / 100000000` and `usdValue = btcAmount * tokenPrice` with exact decimal arithmetic, then apply the shared USD display rules. If the native BTC price is missing or the balance query fails, retain the sats/BTC amount and state that the USD value is unavailable; never invent a price.
-- When the user asks for the list or details, render each returned item as `<txHash>:<voutIndex>`, `{valueRaw} sats ({btcAmount} BTC, worth approximately ${usdValue})`, and service-returned `source`; include `utxoId` only when non-null. Copy identifiers verbatim.
+- When the user asks for the list or details, render each returned item as `<txHash>:<voutIndex>`, `{valueRaw} sats ({btcAmount} BTC, worth approximately ${usdValue})`, and service-returned `source`; include `utxoId` only when non-null. For every item from `UNAVAILABLE_BREAKDOWN`, also show its parent category as `Reason: {category} — {localizedMeaning}` using the category meanings under Locked BTC Output. Copy identifiers and the raw category verbatim.
 - For an available-balance question, report `availableUtxoList.sumSats`, exact BTC conversion, and approximate USD value. For an available-list question, also enumerate `availableUtxoList.utxos` and preserve `pending` and `userIgnoreAsset` exactly as returned.
 - Treat inactive response branches being `null` as expected for the selected `queryType`. Preserve `source` exactly as returned, without normalizing `onchain` / `ON_CHAIN` / `MEMORY_POOL`.
 - Do not derive an exact spendable balance by subtracting categories.
@@ -72,7 +79,7 @@ Build `{breakdown}` from every non-empty unavailable category:
 | `assetUncertain` | `{sats} sats ({btcAmount} BTC, worth approximately ${usdValue}) carries assets that the service could not classify with certainty` |
 | `mempoolRemovedSpending` | `{sats} sats ({btcAmount} BTC, worth approximately ${usdValue}) remains occupied by a transaction removed from the mempool` |
 
-Convert sats to BTC exactly and omit empty categories. **NEVER** infer an asset protocol or name from the category.
+Each UTXO inside one of these category arrays inherits that category as its service-returned unavailable reason. Convert sats to BTC exactly and omit empty categories. **NEVER** infer an asset protocol or name from the category.
 
 ## UTXO Protection Changes
 
