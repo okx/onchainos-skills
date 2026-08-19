@@ -289,11 +289,7 @@ fn is_token_expired_at(token: &str, now: i64) -> bool {
 }
 
 fn should_refresh_tokens(access_token: &str, refresh_token: &str) -> bool {
-    should_refresh_tokens_at(
-        access_token,
-        refresh_token,
-        chrono::Utc::now().timestamp(),
-    )
+    should_refresh_tokens_at(access_token, refresh_token, chrono::Utc::now().timestamp())
 }
 
 fn should_refresh_tokens_at(access_token: &str, refresh_token: &str, now: i64) -> bool {
