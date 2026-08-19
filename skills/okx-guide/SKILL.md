@@ -4,7 +4,7 @@ description: "Guide users through Onchain OS onboarding, OKX.AI introduction and
 license: MIT
 metadata:
   author: okx
-  version: "4.4.10"
+  version: "4.5.0"
   homepage: "https://web3.okx.com"
 ---
 
