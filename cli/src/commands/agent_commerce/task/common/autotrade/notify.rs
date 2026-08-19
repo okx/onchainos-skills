@@ -240,6 +240,16 @@ pub(crate) fn push_degrade_notice(n: &mut super::card::NotifyOnly, job_id: &str)
 /// (freshness_expired / subscription_inactive / …) embedded verbatim.
 fn degrade_message(job_id: &str, reason: &str, lang: Lang) -> String {
     let job = short_id(job_id);
+    if reason == super::DegradeReason::MultipleTakeProfitUnsupported.as_str() {
+        return match lang {
+            Lang::En => format!(
+                "[Auto Copy-Trade] The provider's signal for job {job} contains multiple take-profit levels. The current version supports only one, so this trade was not executed. The deliverable is saved for manual review."
+            ),
+            Lang::Zh => format!(
+                "[自动跟单] 任务 {job}:服务商信号包含多个止盈目标,当前版本仅支持单个止盈目标,因此本次未自动执行。交付物已保存,可手动查看处理。"
+            ),
+        };
+    }
     match lang {
         Lang::En => format!(
             "[Auto Copy-Trade] The provider's signal for job {job} was not executed ({reason}). \
@@ -379,6 +389,24 @@ mod tests {
         let zh = degrade_message("0xb5b8b2b800000000000000000000000000000000000000000000000000009b35", "freshness_expired", Lang::Zh);
         assert!(zh.contains("[自动跟单]") && zh.contains("freshness_expired"));
         assert!(!zh.contains("[Auto Copy-Trade]"));
+    }
+
+    #[test]
+    fn multiple_take_profit_notice_explains_the_product_limit() {
+        let en = degrade_message(
+            "job1",
+            super::super::DegradeReason::MultipleTakeProfitUnsupported.as_str(),
+            Lang::En,
+        );
+        assert!(en.contains("multiple take-profit levels"));
+        assert!(en.contains("supports only one"));
+        let zh = degrade_message(
+            "job1",
+            super::super::DegradeReason::MultipleTakeProfitUnsupported.as_str(),
+            Lang::Zh,
+        );
+        assert!(zh.contains("多个止盈目标"));
+        assert!(zh.contains("仅支持单个止盈目标"));
     }
 
     #[test]

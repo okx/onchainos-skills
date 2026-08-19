@@ -391,7 +391,7 @@ pub fn escalation_cli_failed_notify(job_id: &str) -> String {
 /// Format an epoch-seconds timestamp (`subStartTime` / `subEndTime` / trial window / buffer) as
 /// `YYYY-MM-DD HH:MM UTC`. Returns `None` for an absent (`0` / negative) or unrepresentable value
 /// so callers omit the clause.
-fn fmt_epoch(ts: Option<i64>) -> Option<String> {
+pub(crate) fn fmt_epoch(ts: Option<i64>) -> Option<String> {
     let ts = ts.filter(|t| *t > 0)?;
     // Backend timestamps are contract-seconds; tolerate a millisecond-scale value
     // (>= 1e12 could only be year 33658+ as seconds) so a unit drift upstream
@@ -762,6 +762,21 @@ pub fn sub_expire_warn_user_notify(job_id: &str) -> String {
     )
 }
 
+/// `sub_expire_warn` (autoRenew=false variant, FR-9) — the subscription will
+/// expire and close because auto-renew is off. EN template, verbatim from BRD.
+/// The en-dash (`\u{2013}`) is lint-safe (not CJK); the byte-exact ZH copy lives
+/// in `skills/okx-ai/references/task-sub-copy-reference.md` (source stays
+/// English-only per the no-Chinese-in-source lint — the agent renders ZH).
+pub fn sub_expire_warn_no_autorenew_notify(
+    job_id: &str,
+    period_start: &str,
+    period_end: &str,
+) -> String {
+    format!(
+        "[Subscription Ending Soon] Subscription job {job_id} (period {period_start}\u{2013}{period_end}) will expire and close on {period_end}. To continue using it, please enable auto-renew in time."
+    )
+}
+
 /// `sub_reject_refund_notify` — ASP missed rejection response window; user can claim refund.
 pub fn sub_reject_refund_notify_user(
     service_name: &str,
@@ -795,6 +810,37 @@ pub fn sub_reject_refund_notify_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── FR-9: sub_expire_warn template split ──────────────────────────
+
+    // The existing autoRenew=true template is byte-for-byte unchanged (snapshot).
+    #[test]
+    fn sub_expire_warn_user_notify_unchanged_snapshot() {
+        assert_eq!(
+            sub_expire_warn_user_notify("JOB-999"),
+            "[Renewal Reminder] Job `JOB-999` — your subscription's current period \
+             is ending soon. It will auto-renew on expiry. \
+             Cancel in advance via subscription management if you don't want this."
+        );
+    }
+
+    // The new autoRenew=false template substitutes all placeholders with no
+    // residual `{…}` (BRD test: JOB-999 / 2026-07-01 / 2026-07-31).
+    #[test]
+    fn sub_expire_warn_no_autorenew_notify_substitutes_all_placeholders() {
+        let out = sub_expire_warn_no_autorenew_notify("JOB-999", "2026-07-01", "2026-07-31");
+        assert!(out.contains("JOB-999"), "job_id: {out}");
+        assert!(out.contains("2026-07-01"), "periodStart: {out}");
+        assert!(out.contains("2026-07-31"), "periodEnd: {out}");
+        assert!(
+            !out.contains('{') && !out.contains('}'),
+            "no residual placeholders: {out}"
+        );
+        assert_eq!(
+            out,
+            "[Subscription Ending Soon] Subscription job JOB-999 (period 2026-07-01\u{2013}2026-07-31) will expire and close on 2026-07-31. To continue using it, please enable auto-renew in time."
+        );
+    }
 
     // Non-ASCII fixtures are written as unicode escapes so the source file stays free of CJK
     // bytes (the "no Chinese in source" gate scans the whole file, tests included) while still

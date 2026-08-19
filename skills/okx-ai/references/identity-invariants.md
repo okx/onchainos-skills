@@ -6,7 +6,7 @@ Load this file when: rendering a card / diff / detail view, resolving `#<id>`, t
 
 ## Lexicon (prose / Q&A / post-success rows when CLI label is absent)
 
-- **Roles:** `user` → **User** · `asp` → **ASP** · `evaluator` → **Evaluator** — each rendered as its localized label in the conversation language. Never show the raw enum token, never legacy nouns (buyer/seller/arbitrator or their localized equivalents), never a bilingual parenthetical. Legacy "arbitrator"-family words (in any language) are input aliases — recognize them on input, but always render the localized **Evaluator** label on output.
+- **Roles:** `user` → **User** / 用户 · `asp` → **ASP** / 服务提供商 · `evaluator` → **Evaluator** / 评审员 — each rendered as its localized label in the conversation language. Never show the raw enum token, never legacy nouns (buyer/seller/arbitrator/仲裁者/仲裁员 or their localized equivalents), never a bilingual parenthetical. Legacy "arbitrator"-family words (in any language) are input aliases — recognize them on input, but always render the localized **Evaluator** label on output (`评审员` in Chinese, `Evaluator` in English).
 - **Service type:** A2MCP → **API service** · A2A → **agent to agent**. Gloss once per table: "API service = pay-per-call, fixed price; agent to agent = per-call or monthly-subscription pricing (one or the other)." Never raw A2MCP/A2A.
 - **Stars:** render `★ <value>` from CLI's `ratingStars` / `feedbackRate` / `average` **directly** — never divide by 20, never show raw 0–100. Null/0 context-split: **search** rows → `null`=`—`, `0`=`No rating yet`; **list / detail / feedback** → no rating = `No rating yet` (never `—`).
 - **Fee:** stored/sent as a plain numeric string (`"10"`); **displayed** as `N USDT` (USDT is implicit — the renderer appends it). Both API service (A2MCP) and agent to agent (A2A) support a `0` fee → an explicit `0` displays as `0 USDT` (a free service). An empty single-purchase `fee` (`""`) means "no per-call price" (a subscription-priced A2A service) → display the Fee row as `—`, with the price in the Subscription row. A2MCP with no fee → `—` (missing required fee — not `free`, since A2MCP requires a fee at create/update). An A2A service with **neither** a fee nor a subscription set (a legacy/backend-anomalous state — current registration always requires exactly one) → `free`.
@@ -15,15 +15,16 @@ Load this file when: rendering a card / diff / detail view, resolving `#<id>`, t
 
 ## Legacy role words — rename prompt (Evaluator)
 
-The Evaluator role was previously surfaced with legacy words. When the user's **own input** names it with any legacy role word — **arbiter / arbitrator / assessor**, or the equivalent pre-rename terms in the user's language — recognize it as the **Evaluator** role and, **once per session**, emit the rename prompt (matched to the conversation language) before proceeding, then carry out the request directly without asking for confirmation:
+The Evaluator role was previously surfaced with legacy words. When the user's **own input** names it with any legacy role word — **仲裁者 / 仲裁员 / 评估者 / arbiter / arbitrator / assessor**, or the equivalent pre-rename terms in the user's language — recognize it as the **Evaluator** role and, **once per session**, emit the rename prompt (matched to the conversation language) before proceeding, then carry out the request directly without asking for confirmation:
 
+- Chinese: 你说的角色现在叫「评审员」，已按此为你处理。
 - English: That role is now called Evaluator — proceeding.
 - Other languages: translate the English line, naming the localized new role label (never echoing the legacy word).
 
 Rules:
 - Fire **once per session** — do not repeat the prompt on later turns.
 - After prompting, **execute directly** — do not wait for the user to re-confirm the rename.
-- **Never restate the old role word** in your own output afterward; use the localized **Evaluator** label from then on.
+- **Never restate the old role word** in your own output afterward; use the localized **Evaluator** label from then on (`评审员` in Chinese, `Evaluator` in English).
 <!-- intent: the trigger list intentionally keeps the legacy role words; they are input aliases and must be recognized. This rule normalizes presentation to the new term without dropping recognition of old input. -->
 
 ## Card skeleton (every confirmation / diff / detail card uses THIS)

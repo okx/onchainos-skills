@@ -1,10 +1,10 @@
 ---
 name: okx-activity
-description: "OKX.AI Trading Hackathon (交易黑客松 / OKX.AI 交易黑客松 / 报名黑客松 / 黑客马拉松) registration. Use when the user wants to register for / sign up for / enter / join / 报名 / 参加 / 参赛 the OKX.AI trading hackathon — e.g. 'Register me for the OKX.AI Trading Hackathon', '我要参加黑客松', '帮我报名 OKX.AI 的交易黑客松' — or asks about its entry requirements / eligibility / 报名条件 / 参赛资格 / how to enter. The object is always the hackathon itself: it enters a Trading ASP the user already has and never creates one. Each activity carries its own flow, gates, and CLI reference under this skill's references/, picked by the Intent Routing table."
+description: "Register for the OKX.AI Trading Hackathon or explain its entry requirements and eligibility. Trigger on requests in any language to register, sign up, join, enter, or participate in the hackathon. Registers an existing Trading ASP; never creates one."
 license: MIT
 metadata:
   author: okx
-  version: "4.4.6"
+  version: "4.4.10"
   homepage: "https://web3.okx.com"
 ---
 
@@ -25,8 +25,8 @@ read-only listing call included.
 
 | User Intent | Activity | Reference |
 |---|---|---|
-| "register / sign up my ASP for the hackathon" · 报名黑客松 · 参加交易黑客松 · 黑客马拉松 | OKX.AI Trading Hackathon | [hackathon-core.md](references/hackathon-core.md), then [hackathon-registration.md](references/hackathon-registration.md) |
-| hackathon entry requirements / eligibility / 报名条件 / 参赛资格 — not mid-registration | OKX.AI Trading Hackathon | [hackathon-core.md](references/hackathon-core.md), then [hackathon-faq.md](references/hackathon-faq.md) |
+| Register, sign up, join, enter, or participate in the hackathon, in any language | OKX.AI Trading Hackathon | [hackathon-core.md](references/hackathon-core.md), then [hackathon-registration.md](references/hackathon-registration.md) |
+| Hackathon entry requirements or eligibility, in any language — not mid-registration | OKX.AI Trading Hackathon | [hackathon-core.md](references/hackathon-core.md), then [hackathon-faq.md](references/hackathon-faq.md) |
 
 **Before producing ANY user-facing message about an activity, that activity's `*-core.md` must be
 loaded** (**BLOCKING**). It carries that activity's gates, output rules, and send-gate — the flow and
@@ -53,8 +53,8 @@ agent). `competition join` (`okx-growth-competition`) signs the **wallet account
 trading competition. Different systems, different subjects — **NEVER**: substitute one for the other,
 because the two register different things and neither call can be undone.
 
-If one request carries signals for **both** (e.g. names "hackathon"/"黑客松" *and*
-"competition"/"大赛"/"cup"), ask which the user means before running any command.
+If one request carries signals for **both** (e.g. names "hackathon" *and* "competition" or "cup"),
+ask which the user means before running any command.
 
 ## Security
 

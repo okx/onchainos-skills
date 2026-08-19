@@ -11,6 +11,8 @@
 
 `preflight` already updates the binary + skill checkouts, verifies integrity, and reports version + drift. That is the whole check — **do NOT run any other onchainos command** (`--version`, `upgrade`, `which`, ...) on your own initiative; then proceed to the user's request.
 
+For an explicitly pinned feature/E2E binary, the test launcher sets `ONCHAINOS_NO_SELF_UPDATE=1` (or adds `--no-self-update`) so preflight records the running binary identity without replacing it. Never enable this for an ordinary production session.
+
 ## Fallbacks — ignore this whole section unless its exact trigger fires
 
 - **The `onchainos preflight` command above errored with "command not found"** (onchainos not installed) → open the README "Install CLI" section (`https://github.com/okx/onchainos-skills?tab=readme-ov-file#install-cli`), identify the current OS, and run the install command from that section matching it (macOS/Linux: the shell command; Windows: the PowerShell command); use the `-beta` install variant if this skill's frontmatter version contains `-beta`. Then re-run preflight (`onchainos preflight --skill-version <this skill's frontmatter version>`) and continue the user's original request. Stop only if the install itself fails.

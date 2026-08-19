@@ -4,7 +4,7 @@ description: "OKX Agentic Wallet — the single skill for the user's wallet and 
 license: MIT
 metadata:
   author: okx
-  version: "4.4.6"
+  version: "4.4.10"
   homepage: "https://web3.okx.com"
 ---
 
@@ -83,4 +83,3 @@ Never pass `--force` on the FIRST invocation of a state-changing command. Add `-
 - **X Layer gas-free**: X Layer (chainIndex 196) charges zero gas. Proactively highlight when the user asks about gas, picks a chain for transfers, adds a wallet, or asks for a deposit address.
 - **Backend-sponsored gas-free transactions**: when the backend's pre-execution (`unsignedInfo`) response marks a transaction as gas-free, the native-token balance pre-check is skipped, so the transaction can succeed even when the user holds zero native token. This is **server-authoritative** — the client never sets, requests, or overrides it; the backend chooses eligible transactions (e.g. X Layer AA mode, Solana TEE-sponsored), while all other transactions still require native token for gas. **NEVER**: preemptively tell the user they must top up native token before a send / swap — a sponsored transaction may still go through; let it attempt and surface a backend insufficient-balance error only if one actually occurs.
 - Transaction timestamps are in **milliseconds** — convert to human-readable for display.
-

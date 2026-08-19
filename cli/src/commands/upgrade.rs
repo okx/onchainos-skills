@@ -583,6 +583,25 @@ pub(super) fn discover_skill_paths_in(home: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Whether a skill/plugin directory named `skill_id` is installed under an
+/// explicit `home` directory.
+///
+/// Reuses the canonical [`discover_skill_paths_in`] / `SKILL_HOME_DIRS` topology
+/// (single source of truth) so callers such as the subscription execution-tool
+/// preflight can detect installed plugins (`polymarket-plugin`,
+/// `hyperliquid-plugin`) without duplicating the install-path list.
+///
+/// A directory whose name matches `skill_id` counts as installed ONLY when it
+/// actually contains a `SKILL.md` file — an empty/leftover directory or a
+/// same-named plain file is not a usable plugin and must not read as `Ready`
+/// (otherwise the subscription preflight would miss an install reminder and the
+/// first real signal would fail). No recursion / no content parsing.
+pub(crate) fn is_skill_installed_in(home: &Path, skill_id: &str) -> bool {
+    discover_skill_paths_in(home).iter().any(|p| {
+        p.file_name().and_then(|n| n.to_str()) == Some(skill_id) && p.join("SKILL.md").is_file()
+    })
+}
+
 /// Current branch name of a checkout (`HEAD` when detached).
 fn current_branch(path: &Path) -> Option<String> {
     let out = run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()?;
@@ -1005,6 +1024,16 @@ pub struct PreflightArgs {
     /// Safe to pass verbatim — a stable value or beta CLI ignores it.
     #[arg(long, value_name = "VERSION")]
     pub skill_version: Option<String>,
+
+    /// Keep the currently running binary unchanged (feature/E2E test mode).
+    #[arg(long)]
+    pub no_self_update: bool,
+}
+
+fn env_disables_self_update() -> bool {
+    std::env::var("ONCHAINOS_NO_SELF_UPDATE")
+        .ok()
+        .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
 }
 
 #[derive(PartialEq)]
@@ -1106,6 +1135,18 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
     let current = CURRENT_VERSION;
     let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
     let skill_version = args.skill_version.as_deref();
+    let no_self_update = args.no_self_update || env_disables_self_update();
+    let binary_identity = crate::audit::binary_identity();
+    if let Some(identity) = &binary_identity {
+        crate::audit::log(
+            "cli",
+            "preflight/binary_identity",
+            true,
+            Duration::default(),
+            Some(identity.audit_args()),
+            None,
+        );
+    }
 
     // Channel resolution — identical policy to `execute()`.
     let use_beta = skill_requests_beta(current, skill_version);
@@ -1139,28 +1180,42 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
     ) = match resolution {
         Ok(target) => {
             if semver_gt(&target.version, current) {
-                eprintln!("Updating onchainos: {} → {}", current, target.version);
-                match download_and_install(&client, &target.version).await {
-                    Ok(()) => (
-                        "updated",
-                        Some(target.version.clone()),
-                        true,
-                        target.graduated,
-                        target.version,
-                    ),
-                    Err(e) => {
-                        eprintln!("Warning: update failed: {}", e.root_cause());
-                        actions.push(format!(
-                            "CLI update to v{} failed; kept v{}. Retry: onchainos upgrade --force",
-                            target.version, current
-                        ));
-                        (
-                            "update_failed",
-                            Some(target.version),
-                            false,
-                            false,
-                            current.to_string(),
-                        )
+                if no_self_update {
+                    actions.push(format!(
+                        "A newer CLI v{} is available; self-update was disabled for this session.",
+                        target.version
+                    ));
+                    (
+                        "update_skipped",
+                        Some(target.version),
+                        false,
+                        false,
+                        current.to_string(),
+                    )
+                } else {
+                    eprintln!("Updating onchainos: {} → {}", current, target.version);
+                    match download_and_install(&client, &target.version).await {
+                        Ok(()) => (
+                            "updated",
+                            Some(target.version.clone()),
+                            true,
+                            target.graduated,
+                            target.version,
+                        ),
+                        Err(e) => {
+                            eprintln!("Warning: update failed: {}", e.root_cause());
+                            actions.push(format!(
+                                "CLI update to v{} failed; kept v{}. Retry: onchainos upgrade --force",
+                                target.version, current
+                            ));
+                            (
+                                "update_failed",
+                                Some(target.version),
+                                false,
+                                false,
+                                current.to_string(),
+                            )
+                        }
                     }
                 }
             } else {
@@ -1213,7 +1268,9 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
     // 3. integrity. Skip right after an install (this process still reports the
     //    OLD version, so a re-hash would false-mismatch) and when offline (GitHub
     //    is unreachable — re-fetching the checksum would only fail again).
-    let integrity = if updated {
+    let integrity = if no_self_update {
+        "skipped-frozen-binary".to_string()
+    } else if updated {
         "verified-on-install".to_string()
     } else if status == "offline" {
         "skipped".to_string()
@@ -1241,6 +1298,8 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
         "status": status,
         "currentVersion": current,
         "updated": updated,
+        "selfUpdateDisabled": no_self_update,
+        "binaryIdentity": binary_identity,
         "integrity": integrity,
         "drift": drift_json,
         "action": if actions.is_empty() { Value::Null } else { json!(actions.join("\n")) },
@@ -1267,11 +1326,22 @@ mod tests {
         discover_skill_paths_in, highest_version, is_dev_build_path, is_throttled,
         parse_ls_remote_versions, parse_release_tag_url, record_check, remote_is_trusted_okx,
         removal_action, reportable_skills, semver_gt, skill_requests_beta, update_one_checkout,
+        env_disables_self_update,
     };
     use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use tempfile::TempDir;
+
+    #[test]
+    fn no_self_update_env_accepts_only_explicit_truthy_values() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        std::env::set_var("ONCHAINOS_NO_SELF_UPDATE", "true");
+        assert!(env_disables_self_update());
+        std::env::set_var("ONCHAINOS_NO_SELF_UPDATE", "0");
+        assert!(!env_disables_self_update());
+        std::env::remove_var("ONCHAINOS_NO_SELF_UPDATE");
+    }
 
     // ── artifact_name (WBW-13629): release-artifact filename derivation ──
 
@@ -1468,6 +1538,39 @@ mod tests {
         let paths = discover_skill_paths_in(tmp.path());
         assert!(paths.iter().any(|p| p.ends_with("okx-dex-swap")));
         assert!(paths.iter().any(|p| p.ends_with("onchainos-dapp-scaffold")));
+    }
+
+    #[test]
+    fn is_skill_installed_detects_present_and_absent() {
+        let tmp = TempDir::new().unwrap();
+        // A fully-installed plugin has a SKILL.md file inside its directory.
+        let poly = tmp.path().join(".agents/skills/polymarket-plugin");
+        std::fs::create_dir_all(&poly).unwrap();
+        std::fs::write(poly.join("SKILL.md"), b"# polymarket").unwrap();
+        let hyper = tmp.path().join(".claude/skills/hyperliquid-plugin");
+        std::fs::create_dir_all(&hyper).unwrap();
+        std::fs::write(hyper.join("SKILL.md"), b"# hyperliquid").unwrap();
+
+        assert!(super::is_skill_installed_in(
+            tmp.path(),
+            "polymarket-plugin"
+        ));
+        assert!(super::is_skill_installed_in(
+            tmp.path(),
+            "hyperliquid-plugin"
+        ));
+        assert!(!super::is_skill_installed_in(
+            tmp.path(),
+            "not-installed-plugin"
+        ));
+
+        // A same-named but EMPTY directory (no SKILL.md) is not a usable install.
+        std::fs::create_dir_all(tmp.path().join(".agents/skills/empty-plugin")).unwrap();
+        assert!(!super::is_skill_installed_in(tmp.path(), "empty-plugin"));
+
+        // A same-named PLAIN FILE (not a directory with SKILL.md) is not an install.
+        std::fs::write(tmp.path().join(".agents/skills/file-plugin"), b"x").unwrap();
+        assert!(!super::is_skill_installed_in(tmp.path(), "file-plugin"));
     }
 
     #[test]

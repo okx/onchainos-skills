@@ -69,7 +69,7 @@ fn card_notification_template(amount: Option<&str>, cap: Option<&str>) -> String
 
 const NOTIFY_TEMPLATE: &str =
     "[Auto Copy-Trade] The provider's signal for job <jobId> was not executed (<reason>). \
-The deliverable is saved for manual review.";
+The deliverable is saved for manual review and may still be executed manually with any available tool.";
 
 /// Emitted by `output::success(...)` when ALL checks pass.
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
@@ -419,7 +419,10 @@ pub const CONSENT_SOURCE_EVENT: &str = "autotrade_consent";
 /// `--source-event` for the over-cap re-ask (2-way: raise cap / skip); relayed as
 /// `user_decision_autotrade_over_cap`.
 pub const OVER_CAP_SOURCE_EVENT: &str = "autotrade_over_cap";
-/// `--source-event` for the plugin-install approval (2-way: install & execute / skip);
+pub const TOOL_SELECT_SOURCE_EVENT: &str = "autotrade_tool_select";
+pub const CAP_ADJUST_SOURCE_EVENT: &str = "autotrade_cap_adjust";
+/// `--source-event` for the plugin-install approval (install & execute / skip /
+/// optionally choose another compatible tool);
 /// relayed as `user_decision_autotrade_plugin_install`.
 pub const PLUGIN_INSTALL_SOURCE_EVENT: &str = "autotrade_plugin_install";
 
@@ -437,39 +440,43 @@ or any number. Then run the command to push the decision. Act on the trade only 
 // and passes it verbatim (DECISION_GUIDANCE).
 // Key granularity is per-job, so the copy says "this subscription", not "this ASP".
 //
-// NOTE: `consent_over_cap_content` below is NOT yet PRD-aligned. PRD Step 3② is a plain
-// "1 execute this trade / 2 skip" prompt with a SEPARATE follow-up (3②-续) that asks whether to
-// raise the cap; the current one-stage "raise cap + execute / skip" merges those. Swapping its
-// wording verbatim would misdescribe the behavior — it needs the two-stage restructure first.
 fn consent_first_time_content(lang: Lang) -> String {
     // OX2Hd Step 3③ (auto-execution not enabled → three-way). Used for both the first-time prompt
     // AND the manual "ask every time" re-prompt, so the wording avoids "first time".
     match lang {
         Lang::En => "[Confirmation Needed] A trading signal has arrived, but auto-execution is not enabled for this subscription. Please choose:\n\
-             \x20\x20A. Execute this trade and enable auto-execution for future signals (requires setting a per-trade limit in USDT; pays with USDT by default — say \"use USDC\" to switch)\n\
-             \x20\x20B. Execute this trade only — confirm manually each time going forward\n\
-             \x20\x20C. Skip this trade"
+             \x20\x20A. Execute this trade and enable auto-execution for future signals (give a fixed amount and a per-trade limit in USDT; pays with USDT by default — say \"use USDC\" to switch)\n\
+             \x20\x20B. Execute this trade only — give the amount, then confirm manually each time going forward\n\
+             \x20\x20C. Skip automatic execution (the saved deliverable remains available for manual handling with any tool)"
             .to_string(),
         Lang::Zh => "[请确认] 收到一条交易信号,但该订阅尚未开启自动执行。请选择:\n\
-             \x20\x20A. 执行本次交易,并为后续信号开启自动执行(需设置每笔金额上限,单位 USDT;默认用 USDT 支付,可注明「用 USDC」)\n\
-             \x20\x20B. 仅执行本次 — 之后每次都手动确认\n\
-             \x20\x20C. 跳过本次"
+             \x20\x20A. 执行本次交易,并为后续信号开启自动执行(需设置固定跟单金额和每笔金额上限,单位 USDT;默认用 USDT 支付,可注明「用 USDC」)\n\
+             \x20\x20B. 仅执行本次 — 请给出本次金额,之后每次都手动确认\n\
+             \x20\x20C. 跳过本次自动执行(交付物仍会保存,可稍后使用任意可用工具手动处理)"
             .to_string(),
     }
 }
 
+fn consent_input_required_content(mode: &str, lang: Lang) -> String {
+    match (mode, lang) {
+        ("auto", Lang::En) => "[More information required] You chose A, but the amount/limit is missing. Reply with A and a fixed per-signal amount plus a per-trade limit in USDT. If you give one number, it will be used for both; optionally say use USDC. Example: A 10 USDT.".to_string(),
+        ("auto", Lang::Zh) => "[需要补充信息] 你选择了 A,但尚未提供跟单金额/每笔上限。请回复 A 和固定跟单金额、每笔上限(单位 USDT);只给一个数字时将同时作为两者,也可以注明用 USDC。例如:A 10 USDT。".to_string(),
+        ("manual", Lang::En) => "[More information required] You chose B, but the amount for this trade is missing. Reply with B and the amount in USDT; optionally say use USDC. Example: B 1 USDT.".to_string(),
+        ("manual", Lang::Zh) => "[需要补充信息] 你选择了 B,但尚未提供本次交易金额。请回复 B 和金额(单位 USDT),也可以注明用 USDC。例如:B 1 USDT。".to_string(),
+        _ => consent_first_time_content(lang),
+    }
+}
+
 fn consent_over_cap_content(amount_u: &str, cap_u: &str, quote_sym: &str, lang: Lang) -> String {
-    // Current one-stage form (raise cap + execute / skip). Diverges from PRD 3② (execute-once
-    // + separate 3②-续 adjust-cap) — see NOTE above; pending the two-stage restructure.
     match lang {
         Lang::En => format!(
             "[Decision] This subscription's auto copy-trade is about {amount_u} {quote_sym}, above your per-trade limit of {cap_u} {quote_sym}. Please choose:\n\
-             \x20\x20A. Raise the per-trade limit to at least {amount_u} {quote_sym} and execute this trade\n\
+             \x20\x20A. Execute this trade once without changing the limit\n\
              \x20\x20B. Skip this trade (keep the current limit)"
         ),
         Lang::Zh => format!(
             "[Decision] 这个订阅的这笔自动跟单金额约 {amount_u} {quote_sym},超过你设的每笔上限 {cap_u} {quote_sym}。请选择:\n\
-             \x20\x20A. 把每笔上限调高到至少 {amount_u} {quote_sym} 并执行本次\n\
+             \x20\x20A. 仅执行本次,不修改每笔上限\n\
              \x20\x20B. 跳过本次(保持原上限不变)"
         ),
     }
@@ -520,10 +527,98 @@ fn plugin_list_label(plugin: &str) -> String {
 /// (`pending_v2::push_decision_direct`) — matches exactly what running
 /// `d.command` by hand would have passed as `--list-label`.
 pub fn decision_list_label(d: &DecisionRequest) -> String {
+    if d.source_event == TOOL_SELECT_SOURCE_EVENT {
+        return format!("[Auto Copy-Trade venue] {}", d.signal_type);
+    }
+    if d.source_event == CAP_ADJUST_SOURCE_EVENT {
+        return format!("[Auto Copy-Trade cap] {}", d.signal_type);
+    }
     match &d.requires_plugin {
         Some(plugin) => plugin_list_label(plugin),
         None => consent_list_label(&d.signal_type),
     }
+}
+
+fn non_plugin_list_label(source_event: &str, signal_type: &str) -> String {
+    match source_event {
+        TOOL_SELECT_SOURCE_EVENT => format!("[Auto Copy-Trade venue] {signal_type}"),
+        CAP_ADJUST_SOURCE_EVENT => format!("[Auto Copy-Trade cap] {signal_type}"),
+        _ => consent_list_label(signal_type),
+    }
+}
+
+pub fn make_tool_select_decision(
+    delivery_id: &str,
+    signal_type: &str,
+    job_id: &str,
+    agent_id: &str,
+    tools: &[super::tooling::ExecutionTool],
+) -> DecisionRequest {
+    let mut choices = tools
+        .iter()
+        .enumerate()
+        .map(|(index, tool)| {
+            format!(
+                "  {}. {} (`{}`)",
+                (b'A' + index as u8) as char,
+                tool.display_name(),
+                tool.token()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let skip_key = (b'A' + tools.len() as u8) as char;
+    match user_lang::resolve(job_id) {
+        Lang::En => choices.push_str(&format!(
+            "\n  {skip_key}. Skip automatic execution; keep the saved deliverable for manual handling with any available tool"
+        )),
+        Lang::Zh => choices.push_str(&format!(
+            "\n  {skip_key}. 跳过自动执行;保留已保存的交付物,稍后可用任意可用工具手动处理"
+        )),
+    }
+    let lead = match user_lang::resolve(job_id) {
+        Lang::En => "[Confirmation Needed] More than one compatible execution tool is available. Choose once for this subscription:",
+        Lang::Zh => "[请确认] 当前信号有多个可用执行工具,请选择一次,后续该订阅沿用:",
+    };
+    make_decision(
+        delivery_id,
+        signal_type,
+        job_id,
+        agent_id,
+        TOOL_SELECT_SOURCE_EVENT,
+        format!("{lead}\n{choices}"),
+    )
+}
+
+pub fn make_cap_adjust_decision(
+    signal_type: &str,
+    job_id: &str,
+    agent_id: &str,
+    amount_u: &str,
+    cap_u: &str,
+) -> DecisionRequest {
+    let content = match user_lang::resolve(job_id) {
+        Lang::En => format!("[Decision] This {amount_u} U trade succeeded. Raise the future per-trade limit from {cap_u} U to {amount_u} U?\n  A. Raise it\n  B. Keep the current limit"),
+        Lang::Zh => format!("[请确认] 本次 {amount_u} U 交易已成功。是否把后续每笔上限从 {cap_u} U 调整为 {amount_u} U?\n  A. 调高\n  B. 保持原上限"),
+    };
+    make_decision(
+        "cap_adjust",
+        signal_type,
+        job_id,
+        agent_id,
+        CAP_ADJUST_SOURCE_EVENT,
+        content,
+    )
+}
+
+pub fn append_cap_adjust_follow_up(
+    card: &mut ExecutionCard,
+    job_id: &str,
+    agent_id: &str,
+) {
+    card.result_guidance.push_str(&format!(
+        " IF AND ONLY IF the trade command reports success, then run `onchainos agent autotrade-cap-adjust-request --job-id {job_id} --agent-id {agent_id}` to ask whether to change the future cap. Never run it after a failed trade."
+    ));
 }
 
 /// The `pending-decisions-v2 request` command for the consent decision — the LLM
@@ -542,7 +637,7 @@ fn decision_command(
 --agent-id {agent_id} --source-event {source_event} \
 --list-label \"{label}\" \
 --user-content \"<userContent verbatim — already in the user's language>\"",
-        label = consent_list_label(signal_type),
+        label = non_plugin_list_label(source_event, signal_type),
     )
 }
 
@@ -586,6 +681,24 @@ pub fn make_first_time_decision(
     )
 }
 
+/// Deterministic clarification card for an otherwise valid A/B choice whose
+/// required amount/cap was omitted. The source event intentionally remains
+/// `autotrade_consent`, so the next reply re-enters the same bounded mapper.
+pub fn make_consent_input_required_decision(
+    job_id: &str,
+    agent_id: &str,
+    mode: &str,
+) -> DecisionRequest {
+    make_decision(
+        "consent_input_required",
+        "trade",
+        job_id,
+        agent_id,
+        CONSENT_SOURCE_EVENT,
+        consent_input_required_content(mode, user_lang::resolve(job_id)),
+    )
+}
+
 /// Over-cap re-ask — an `Auto` buy exceeded the per-trade cap.
 pub fn make_over_cap_decision(
     delivery_id: &str,
@@ -610,17 +723,33 @@ pub fn make_over_cap_decision(
     )
 }
 
-fn plugin_install_content(plugin: &str, lang: Lang) -> String {
+fn plugin_install_content(plugin: &str, can_change_tool: bool, lang: Lang) -> String {
+    let change_en = if can_change_tool {
+        "\n  C. Choose another execution tool"
+    } else {
+        ""
+    };
+    let change_zh = if can_change_tool {
+        "\n  C. 更换执行工具"
+    } else {
+        ""
+    };
+    if plugin == "trade-kit" {
+        return match lang {
+            Lang::En => format!("[Confirmation Needed] This copy-trade needs OKX Trade Kit, but its local CLI is missing or not configured. Install/configure it now?\n  A. Install or configure Trade Kit and execute this trade\n  B. Skip automatic execution (the deliverable stays saved for manual handling with any tool){change_en}"),
+            Lang::Zh => format!("[请确认] 自动执行本次跟单需要 OKX Trade Kit,但本地 CLI 尚未安装或配置。现在处理吗?\n  A. 安装或配置 Trade Kit 并执行本次交易\n  B. 跳过本次自动执行(交付物仍会保存,可稍后用任意工具手动处理){change_zh}"),
+        };
+    }
     match lang {
         Lang::En => format!(
             "[Confirmation Needed] Auto-executing this copy-trade needs the {plugin} plugin, which isn't installed yet. Install it now?\n\
              \x20\x20A. Install the plugin and execute this trade (future signals then run automatically)\n\
-             \x20\x20B. Skip this trade (don't install)"
+             \x20\x20B. Skip automatic execution (don't install; the deliverable stays saved for manual handling with any tool){change_en}"
         ),
         Lang::Zh => format!(
             "[请确认] 自动执行本次跟单需要 {plugin} 插件,当前尚未安装。现在安装吗?\n\
              \x20\x20A. 安装插件并执行本次交易(后续信号将自动执行)\n\
-             \x20\x20B. 跳过本次(不安装)"
+             \x20\x20B. 跳过本次自动执行(不安装;交付物仍会保存,可稍后用任意工具手动处理){change_zh}"
         ),
     }
 }
@@ -647,6 +776,44 @@ pub fn make_plugin_install_decision(
     agent_id: &str,
     plugin: &str,
 ) -> DecisionRequest {
+    make_plugin_install_decision_inner(
+        delivery_id,
+        signal_type,
+        job_id,
+        agent_id,
+        plugin,
+        false,
+    )
+}
+
+/// Plugin-install decision for parsed text signals with more than one compatible
+/// execution tool. The extra option is an explicit recovery path; a failed
+/// install never silently changes the user's stored venue preference.
+pub fn make_plugin_install_decision_with_tool_change(
+    delivery_id: &str,
+    signal_type: &str,
+    job_id: &str,
+    agent_id: &str,
+    plugin: &str,
+) -> DecisionRequest {
+    make_plugin_install_decision_inner(
+        delivery_id,
+        signal_type,
+        job_id,
+        agent_id,
+        plugin,
+        true,
+    )
+}
+
+fn make_plugin_install_decision_inner(
+    delivery_id: &str,
+    signal_type: &str,
+    job_id: &str,
+    agent_id: &str,
+    plugin: &str,
+    can_change_tool: bool,
+) -> DecisionRequest {
     DecisionRequest {
         auto_trade: true,
         executed: false,
@@ -655,7 +822,7 @@ pub fn make_plugin_install_decision(
         signal_type: signal_type.to_string(),
         job_id: job_id.to_string(),
         source_event: PLUGIN_INSTALL_SOURCE_EVENT.to_string(),
-        user_content: plugin_install_content(plugin, user_lang::resolve(job_id)),
+        user_content: plugin_install_content(plugin, can_change_tool, user_lang::resolve(job_id)),
         command: plugin_decision_command(job_id, agent_id, plugin),
         guidance: DECISION_GUIDANCE.to_string(),
         requires_plugin: Some(plugin.to_string()),
@@ -666,6 +833,7 @@ pub fn make_plugin_install_decision(
 mod tests {
     use super::super::schema::AutoTradeSignal;
     use super::super::schema::{parse_and_validate, SignalType};
+    use super::super::tooling::ExecutionTool;
     use super::*;
 
     fn typed(signal_type: SignalType, params: serde_json::Value) -> TypedParams {
@@ -875,7 +1043,9 @@ mod tests {
         // en variant carries no Chinese; zh variant carries no English sentence —
         // option letters stay A/B/C in both (language-neutral reply protocol).
         let en = consent_first_time_content(Lang::En);
-        assert!(en.contains("[Confirmation Needed]") && en.contains("C. Skip this trade"));
+        assert!(
+            en.contains("[Confirmation Needed]") && en.contains("C. Skip automatic execution")
+        );
         assert!(!en.contains("请确认"), "got: {en}");
         let zh = consent_first_time_content(Lang::Zh);
         assert!(zh.contains("[请确认]") && zh.contains("C. 跳过本次"));
@@ -886,11 +1056,39 @@ mod tests {
         let oc_zh = consent_over_cap_content("120", "50", "USDT", Lang::Zh);
         assert!(oc_zh.contains("120 USDT") && oc_zh.contains("每笔上限 50 USDT"));
 
-        let pi_en = plugin_install_content("polymarket-plugin", Lang::En);
-        assert!(pi_en.contains("polymarket-plugin") && pi_en.contains("B. Skip this trade"));
+        let pi_en = plugin_install_content("polymarket-plugin", false, Lang::En);
+        assert!(
+            pi_en.contains("polymarket-plugin")
+                && pi_en.contains("B. Skip automatic execution")
+        );
+        assert!(!pi_en.contains("C. Choose another"));
         assert!(!pi_en.contains("插件"));
-        let pi_zh = plugin_install_content("polymarket-plugin", Lang::Zh);
+        let pi_zh = plugin_install_content("polymarket-plugin", true, Lang::Zh);
         assert!(pi_zh.contains("polymarket-plugin 插件") && pi_zh.contains("B. 跳过本次"));
+        assert!(pi_zh.contains("C. 更换执行工具"));
+
+        let trade_kit_en = plugin_install_content("trade-kit", true, Lang::En);
+        assert!(trade_kit_en.contains("C. Choose another execution tool"));
+        let trade_kit_zh = plugin_install_content("trade-kit", false, Lang::Zh);
+        assert!(!trade_kit_zh.contains("C. 更换执行工具"));
+
+        let manual_en = consent_input_required_content("manual", Lang::En);
+        assert!(manual_en.contains("B 1 USDT"));
+        assert!(!manual_en.contains("需要补充信息"));
+        let manual_zh = consent_input_required_content("manual", Lang::Zh);
+        assert!(manual_zh.contains("B 1 USDT"));
+        assert!(!manual_zh.contains("More information required"));
+        let auto_en = consent_input_required_content("auto", Lang::En);
+        assert!(auto_en.contains("A 10 USDT"));
+    }
+
+    #[test]
+    fn missing_consent_input_reuses_bounded_consent_route() {
+        let d = make_consent_input_required_decision("job1", "7", "manual");
+        assert_eq!(d.source_event, CONSENT_SOURCE_EVENT);
+        assert_eq!(d.delivery_id, "consent_input_required");
+        assert!(d.command.contains("--role user --agent-id 7"));
+        assert!(d.command.contains("--source-event autotrade_consent"));
     }
 
     #[test]
@@ -913,6 +1111,71 @@ mod tests {
             "got: {}",
             consent.command
         );
+    }
+
+    #[test]
+    fn plugin_recovery_card_preserves_label_and_adds_only_the_change_option() {
+        let regular =
+            make_plugin_install_decision("d1", "prediction", "job1", "7", "polymarket-plugin");
+        let recovery = make_plugin_install_decision_with_tool_change(
+            "d1",
+            "prediction",
+            "job1",
+            "7",
+            "polymarket-plugin",
+        );
+        assert_eq!(regular.source_event, recovery.source_event);
+        assert_eq!(regular.requires_plugin, recovery.requires_plugin);
+        assert_eq!(decision_list_label(&regular), decision_list_label(&recovery));
+        assert!(!regular.user_content.contains("C. Choose another"));
+        assert!(!regular.user_content.contains("C. 更换执行工具"));
+        assert!(
+            recovery
+                .user_content
+                .contains("C. Choose another execution tool")
+                || recovery.user_content.contains("C. 更换执行工具")
+        );
+    }
+
+    #[test]
+    fn over_cap_follow_up_is_strictly_conditional_on_success() {
+        let mut card = make_execution_card(
+            "d1",
+            "perp",
+            "7",
+            "hyperliquid-plugin order".into(),
+            Some("100".into()),
+            None,
+        );
+        append_cap_adjust_follow_up(&mut card, "job1", "9");
+        assert!(card.result_guidance.contains("IF AND ONLY IF"));
+        assert!(card.result_guidance.contains("reports success"));
+        assert!(card.result_guidance.contains("autotrade-cap-adjust-request"));
+        assert!(card.result_guidance.contains("Never run it after a failed trade"));
+    }
+
+    #[test]
+    fn tool_choice_card_exposes_only_bounded_tokens() {
+        let d = make_tool_select_decision(
+            "d1",
+            "prediction",
+            "job1",
+            "7",
+            &[ExecutionTool::PolymarketPlugin, ExecutionTool::TradeKit],
+        );
+        assert_eq!(d.source_event, TOOL_SELECT_SOURCE_EVENT);
+        assert!(d.user_content.contains("`polymarket_plugin`"));
+        assert!(d.user_content.contains("`trade_kit`"));
+        assert!(
+            d.user_content.contains("saved deliverable")
+                || d.user_content.contains("已保存的交付物")
+        );
+        assert!(
+            d.user_content.contains("C. Skip automatic execution")
+                || d.user_content.contains("C. 跳过自动执行")
+        );
+        let label = decision_list_label(&d);
+        assert!(d.command.contains(&format!("--list-label \"{label}\"")));
     }
 
     #[test]

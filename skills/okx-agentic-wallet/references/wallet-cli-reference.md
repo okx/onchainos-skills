@@ -21,7 +21,7 @@ onchainos wallet login [--phase init|open|poll] [--url <url>] [--session-id <id>
 | `--session-id` | No | Auth session id to poll (`--phase poll`). Defaults to the most recent `init` session when omitted. |
 
 - `--phase init` → returns `loginUrl`, `authSessionId`, `opened`, and `nextSteps`. `nextSteps` always carries `completeLogin` (the exact `onchainos wallet login --phase poll --session-id <authSessionId>` command) and, only when `opened == false`, `openLoginUrl` (equal to `loginUrl`).
-- `--phase poll` → returns `accountId`, `accountName`, `loginType`, `isNew`, addresses, `totalValueUsd` (true `isNew` → new user; trigger Policy + Export templates, see [portal-actions.md](wallet-portal-actions.md)).
+- `--phase poll` → persists the authenticated session, sends one best-effort device-registration heartbeat (`chainIndex=196`), then returns `accountId`, `accountName`, `loginType`, `isNew`, addresses, `totalValueUsd` (true `isNew` → new user; trigger Policy + Export templates, see [portal-actions.md](wallet-portal-actions.md)). When the buyer has subscriptions, it also returns the best-effort `postLoginSubscriptions: { subscriptions, devices }` snapshot; the field is omitted on an empty/error/timeout subscription lookup, and `devices` is null when only the device lookup fails. A heartbeat failure never turns a successful login into a failed login.
 
 ### `wallet add`
 

@@ -2,15 +2,14 @@
 //!
 //! One file per `jobId` at `<onchainos_home>/autotrade/consent/<jobId>.json`,
 //! written **whole** in one shot. The consent record is the client-side gate that
-//! sits AFTER the backend subscription gate (`subscription::determine_copy_trade`,
-//! `copyTrade==1 && status==1` — Active) and decides how an inbound Active signal is
-//! handled:
+//! sits AFTER the exact-Active backend subscription gate. `copyTrade` is ignored;
+//! the model-driven session uses this policy when handling an inbound signal:
 //!
 //! - no record (first time) ⇒ ask the user a three-way decision, then remember it
 //! - `Auto` + amount ≤ `capU` ⇒ auto-execute (execution card)
 //! - `Auto` + amount > `capU` ⇒ re-ask (over-cap)
-//! - `Manual` ⇒ do not auto-execute; surface the command for the user to run
-//! - `Decline` ⇒ notify only
+//! - `Manual` ⇒ do not auto-execute; ask a bounded one-shot execute/skip decision
+//! - `Decline` ⇒ the previous delivery was skipped; a later signal has no authorization
 //!
 //! Key granularity is **per-job** (product call, 2026-07-17): consent authorizes
 //! THIS subscription, not the ASP as a whole (a subscription's `jobId` is stable
@@ -19,9 +18,8 @@
 //! WBW-13715 — a sell is naturally bounded by the position held).
 //!
 //! Supersedes the per-venue `grants.rs` cap model: the consent record is now the
-//! single source of truth read by BOTH the in-process pipeline and the
-//! out-of-process `autotrade-grant-check` subcommand (invoked by the polymarket
-//! plugin), so both ends enforce the same client-side cap.
+//! single source of truth exposed through `autotrade-grant-check`, so the
+//! Skill-selected execution tool enforces the same client-side cap.
 
 use std::path::PathBuf;
 
@@ -57,6 +55,12 @@ pub struct ConsentFile {
     /// `Manual` / `Decline`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cap_u: Option<String>,
+    /// Fixed quote-currency amount used for each parsed-text copy trade. This is
+    /// deliberately separate from `capU`: the amount says what to trade, while
+    /// the cap remains the maximum the auto-consent permits. Older consent files
+    /// predate this field and deserialize it as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trade_amount_u: Option<String>,
     /// The stablecoin the buyer pays dex buys with / receives on sells
     /// (`usdc` | `usdt`, lowercase alias). Captured from the consent reply
     /// ("A 每笔100 用USDC"); absent ⇒ the default, USDT (PRD denomination).
@@ -66,6 +70,69 @@ pub struct ConsentFile {
     pub created_at: u64,
     /// seconds since epoch.
     pub expires_at: u64,
+}
+
+/// Read-only consent context exposed to the model-driven subscription session.
+///
+/// This deliberately contains only previously persisted policy. Conversation
+/// text and `serviceDescription` are never converted into authorization here.
+/// A missing/expired record is `NotSet`; a corrupt record is `Unreadable` so the
+/// model can fail closed instead of treating it as a first-time prompt.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsentSnapshotStatus {
+    NotSet,
+    Active,
+    Unreadable,
+}
+
+impl ConsentSnapshotStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotSet => "not_set",
+            Self::Active => "active",
+            Self::Unreadable => "unreadable",
+        }
+    }
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsentSnapshot {
+    pub status: ConsentSnapshotStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ConsentMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cap_u: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trade_amount_u: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quote_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
+}
+
+impl ConsentSnapshot {
+    fn not_set() -> Self {
+        Self {
+            status: ConsentSnapshotStatus::NotSet,
+            mode: None,
+            cap_u: None,
+            trade_amount_u: None,
+            quote_token: None,
+            created_at: None,
+            expires_at: None,
+        }
+    }
+
+    fn unreadable() -> Self {
+        Self {
+            status: ConsentSnapshotStatus::Unreadable,
+            ..Self::not_set()
+        }
+    }
 }
 
 /// The default quote stablecoin (PRD denominates the whole flow in USDT).
@@ -169,6 +236,24 @@ pub fn load_consent(job_id: &str) -> Result<Option<ConsentFile>, ConsentError> {
     Ok(Some(file))
 }
 
+/// Return a bounded, serialization-safe view of the current local policy.
+/// Errors are represented explicitly and never expose file content or paths.
+pub fn consent_snapshot(job_id: &str) -> ConsentSnapshot {
+    match load_consent(job_id) {
+        Ok(Some(file)) => ConsentSnapshot {
+            status: ConsentSnapshotStatus::Active,
+            mode: Some(file.mode),
+            cap_u: file.cap_u,
+            trade_amount_u: file.trade_amount_u,
+            quote_token: file.quote_token,
+            created_at: Some(file.created_at),
+            expires_at: Some(file.expires_at),
+        },
+        Ok(None) => ConsentSnapshot::not_set(),
+        Err(_) => ConsentSnapshot::unreadable(),
+    }
+}
+
 /// The client-side consent verdict for one inbound Active signal.
 ///
 /// `buy_amount` is `Some` only for a cap-relevant **buy** (dex buy / defi deposit /
@@ -217,6 +302,24 @@ pub fn write_consent(
     quote: Option<&str>,
     ttl_sec: u64,
 ) -> anyhow::Result<()> {
+    write_consent_with_trade_amount(job_id, mode, cap_u, None, quote, ttl_sec)
+}
+
+/// Persist consent together with an optional fixed per-trade amount.
+///
+/// `trade_amount_u = None` preserves an existing configured amount, matching
+/// the existing `quote = None` behavior. This is important for cap-only rewrites
+/// after an over-cap decision: raising the cap must not silently erase the
+/// subscription's configured execution amount. An explicitly supplied amount
+/// must be a positive decimal.
+pub fn write_consent_with_trade_amount(
+    job_id: &str,
+    mode: ConsentMode,
+    cap_u: Option<&str>,
+    trade_amount_u: Option<&str>,
+    quote: Option<&str>,
+    ttl_sec: u64,
+) -> anyhow::Result<()> {
     if !job_id_is_safe(job_id) {
         anyhow::bail!("invalid job id");
     }
@@ -240,6 +343,20 @@ pub fn write_consent(
             None
         }
     };
+    // Best-effort compatibility read. This intentionally retains the historical
+    // behavior of allowing a valid new write to replace a broken old record.
+    let existing = load_consent(job_id).ok().flatten();
+    let trade_amount_u = match trade_amount_u {
+        Some(amount) => {
+            let parsed = Decimal::parse(amount)
+                .map_err(|_| anyhow::anyhow!("--trade-amount is not a valid decimal"))?;
+            if parsed.is_zero() {
+                anyhow::bail!("--trade-amount must be greater than 0");
+            }
+            Some(amount.to_string())
+        }
+        None => existing.as_ref().and_then(|c| c.trade_amount_u.clone()),
+    };
     // Quote preference: explicit value must be whitelisted; absent ⇒ KEEP the
     // existing record's choice (an over-cap raise re-writes the record and must
     // not silently reset a stored preference back to the default).
@@ -251,7 +368,7 @@ pub fn write_consent(
             }
             Some(q)
         }
-        None => load_consent(job_id).ok().flatten().and_then(|c| c.quote_token),
+        None => existing.as_ref().and_then(|c| c.quote_token.clone()),
     };
 
     let created_at = now_secs();
@@ -260,6 +377,7 @@ pub fn write_consent(
         job_id: job_id.to_string(),
         mode,
         cap_u,
+        trade_amount_u,
         quote_token,
         created_at,
         expires_at: created_at + ttl_sec,
@@ -271,78 +389,17 @@ pub fn write_consent(
     Ok(())
 }
 
-// ── Held-signal stash (for the "execute this one" options after a decision) ──
-//
-// When the pipeline emits a `Decision` (first-time / over-cap), the inbound A2A
-// spool file has already been consumed (single-shot; `core.rs` deletes it on
-// recovery). To honor the three-way options that execute the current signal
-// (A = auto, B = manual), the current signal JSON + its ORIGINAL receive time are
-// stashed here, then replayed by `autotrade-consent-set` after the user answers.
-// Persisting the original `received_at_ms` keeps freshness honest: if the user
-// deliberates past the signal's TTL, the replay degrades to a safe skip
-// (`freshness_expired`) rather than firing a stale trade.
-
-/// A signal held pending a first-time / over-cap consent decision.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PendingSignal {
-    pub signal_json: String,
-    pub received_at_ms: u64,
-}
-
-/// `<onchainos_home>/autotrade/pending/<jobId>.json`.
-fn pending_path(job_id: &str) -> Result<PathBuf, ConsentError> {
-    let home = crate::home::onchainos_home().map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
-    Ok(home
-        .join("autotrade")
-        .join("pending")
-        .join(format!("{job_id}.json")))
-}
-
-/// Stash the current signal awaiting a decision. Overwrites any prior stash for the
-/// job — the newest signal supersedes (we only ever replay the most recent one).
-pub fn stash_pending_signal(
-    job_id: &str,
-    signal_json: &str,
-    received_at_ms: u64,
-) -> Result<(), ConsentError> {
-    if !job_id_is_safe(job_id) {
-        return Err(ConsentError(CONSENT_UNREADABLE));
-    }
-    let path = pending_path(job_id)?;
-    let body = serde_json::to_string(&PendingSignal {
-        signal_json: signal_json.to_string(),
-        received_at_ms,
-    })
-    .map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
-    crate::home::write_secure(&path, body.as_bytes())
-        .map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
-    Ok(())
-}
-
-/// Read **and remove** the stashed signal (single-shot). `Ok(None)` when none.
-pub fn take_pending_signal(job_id: &str) -> Result<Option<PendingSignal>, ConsentError> {
-    if !job_id_is_safe(job_id) {
-        return Err(ConsentError(CONSENT_UNREADABLE));
-    }
-    let path = pending_path(job_id)?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let raw = std::fs::read_to_string(&path).map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
-    let ps: PendingSignal =
-        serde_json::from_str(&raw).map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
-    let _ = std::fs::remove_file(&path); // best-effort; the read already succeeded
-    Ok(Some(ps))
-}
-
-/// Discard any stashed signal for this job (e.g. on Decline, or after replay).
+/// Remove a pending file written by a pre-model-routing client. New deliveries
+/// stay in their persistent subscription session and are never serialized here.
 pub fn clear_pending_signal(job_id: &str) {
-    if let Ok(path) = pending_path(job_id) {
+    if !job_id_is_safe(job_id) {
+        return;
+    }
+    if let Ok(home) = crate::home::onchainos_home() {
+        let path = home.join("autotrade").join("pending").join(format!("{job_id}.json"));
         let _ = std::fs::remove_file(path);
     }
 }
-
 /// Pause auto copy-trade for this job: delete the consent record so `evaluate_consent`
 /// falls back to `FirstTime` — the next signal re-shows the three-way prompt. Best-effort
 /// (already-absent is fine). Grant file + pending signal are cleared by the caller.
@@ -405,8 +462,20 @@ mod tests {
 
     /// Set ONCHAINOS_HOME to an isolated temp dir for the duration of a test.
     fn with_home<F: FnOnce()>(f: F) {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
-        let tmp = tempfile::tempdir().unwrap();
+        // macOS may deny access to the process-wide temporary directory in
+        // hardened test environments. Keep these fixtures under Cargo's local
+        // target directory instead, which is already known to be writable.
+        // Recover a poisoned mutex too, so one failed fixture does not turn all
+        // subsequent tests into unrelated `PoisonError` failures.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp_root = std::env::current_dir()
+            .expect("current working directory")
+            .join("target")
+            .join("consent-test-home");
+        std::fs::create_dir_all(&temp_root).expect("create consent test temp root");
+        let tmp = tempfile::tempdir_in(temp_root).expect("create consent test home");
         std::env::set_var("ONCHAINOS_HOME", tmp.path());
         f();
         std::env::remove_var("ONCHAINOS_HOME");
@@ -418,6 +487,54 @@ mod tests {
             assert_eq!(
                 evaluate_consent("job1", Some(&dec("10"))).unwrap(),
                 ConsentDecision::FirstTime
+            );
+            assert_eq!(
+                consent_snapshot("job1"),
+                ConsentSnapshot {
+                    status: ConsentSnapshotStatus::NotSet,
+                    mode: None,
+                    cap_u: None,
+                    trade_amount_u: None,
+                    quote_token: None,
+                    created_at: None,
+                    expires_at: None,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn snapshot_exposes_only_persisted_policy() {
+        with_home(|| {
+            write_consent_with_trade_amount(
+                "job1",
+                ConsentMode::Auto,
+                Some("50"),
+                Some("12.5"),
+                Some("USDC"),
+                3600,
+            )
+            .unwrap();
+
+            let snapshot = consent_snapshot("job1");
+            assert_eq!(snapshot.status, ConsentSnapshotStatus::Active);
+            assert_eq!(snapshot.mode, Some(ConsentMode::Auto));
+            assert_eq!(snapshot.cap_u.as_deref(), Some("50"));
+            assert_eq!(snapshot.trade_amount_u.as_deref(), Some("12.5"));
+            assert_eq!(snapshot.quote_token.as_deref(), Some("usdc"));
+            assert!(snapshot.created_at.is_some());
+            assert!(snapshot.expires_at.is_some());
+        });
+    }
+
+    #[test]
+    fn snapshot_marks_broken_policy_unreadable() {
+        with_home(|| {
+            let path = consent_path("job1").unwrap();
+            crate::home::write_secure(&path, b"not-json").unwrap();
+            assert_eq!(
+                consent_snapshot("job1").status,
+                ConsentSnapshotStatus::Unreadable
             );
         });
     }
@@ -438,6 +555,76 @@ mod tests {
             // Manual (B) can carry a preference too.
             write_consent("job1", ConsentMode::Manual, None, Some("usdt"), 3600).unwrap();
             assert_eq!(quote_token("job1"), "usdt");
+        });
+    }
+
+    #[test]
+    fn trade_amount_is_optional_backward_compatible_and_survives_legacy_rewrite() {
+        with_home(|| {
+            // A v1 file written before tradeAmountU existed remains readable.
+            let created_at = now_secs();
+            let legacy = serde_json::json!({
+                "version": CONSENT_VERSION,
+                "jobId": "job1",
+                "mode": "auto",
+                "capU": "50",
+                "createdAt": created_at,
+                "expiresAt": created_at + 3600
+            });
+            let path = consent_path("job1").unwrap();
+            crate::home::write_secure(&path, legacy.to_string().as_bytes()).unwrap();
+            assert_eq!(load_consent("job1").unwrap().unwrap().trade_amount_u, None);
+
+            write_consent_with_trade_amount(
+                "job1",
+                ConsentMode::Auto,
+                Some("50"),
+                Some("12.5"),
+                None,
+                3600,
+            )
+            .unwrap();
+            assert_eq!(
+                load_consent("job1")
+                    .unwrap()
+                    .unwrap()
+                    .trade_amount_u
+                    .as_deref(),
+                Some("12.5")
+            );
+
+            // Existing callers use write_consent (no amount argument). A cap-only
+            // rewrite must preserve the fixed amount rather than erasing it.
+            write_consent("job1", ConsentMode::Auto, Some("100"), None, 3600).unwrap();
+            let saved = load_consent("job1").unwrap().unwrap();
+            assert_eq!(saved.cap_u.as_deref(), Some("100"));
+            assert_eq!(saved.trade_amount_u.as_deref(), Some("12.5"));
+        });
+    }
+
+    #[test]
+    fn write_consent_validates_fixed_trade_amount() {
+        with_home(|| {
+            for invalid in ["", "abc", "0"] {
+                assert!(write_consent_with_trade_amount(
+                    "job1",
+                    ConsentMode::Auto,
+                    Some("50"),
+                    Some(invalid),
+                    None,
+                    3600,
+                )
+                .is_err());
+            }
+            assert!(write_consent_with_trade_amount(
+                "job1",
+                ConsentMode::Auto,
+                Some("50"),
+                Some("0.01"),
+                None,
+                3600,
+            )
+            .is_ok());
         });
     }
 

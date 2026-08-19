@@ -9,17 +9,73 @@ use anyhow::{bail, Result};
 use std::time::Duration;
 
 use crate::audit;
+use crate::commands::agent_commerce::task::common::autotrade::tooling;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::PaymentMode;
 use crate::commands::agent_commerce::task::signing;
 
 // ── asp-match ────────────────────────────────────────────────────────────
 
+/// Older ASP-match responses may expose a subscription price only as
+/// `subscription[].fee` while leaving the canonical `feeAmount` null. Normalize
+/// that response shape once so JSON consumers and the text renderer see the
+/// same fixed subscription price. An explicit `feeAmount` always wins.
+fn normalize_subscription_fee(service: &mut serde_json::Value) {
+    let fee_amount_missing = service
+        .get("feeAmount")
+        .is_none_or(|value| value.is_null() || value.as_str().is_some_and(|s| s.trim().is_empty()));
+    if !fee_amount_missing {
+        return;
+    }
+
+    let Some(subscriptions) = service.get("subscription").and_then(|v| v.as_array()) else {
+        return;
+    };
+    let fee = subscriptions
+        .iter()
+        .find(|entry| entry.get("interval").and_then(|v| v.as_str()) == Some("month"))
+        .or_else(|| subscriptions.first())
+        .and_then(|entry| entry.get("fee"))
+        .filter(|value| !value.is_null() && !value.as_str().is_some_and(|s| s.trim().is_empty()))
+        .cloned();
+    if let Some(fee) = fee {
+        service["feeAmount"] = fee;
+    }
+}
+
+fn scalar_display(value: &serde_json::Value) -> Option<String> {
+    if let Some(value) = value.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        return Some(value.to_string());
+    }
+    if value.is_number() {
+        return Some(value.to_string());
+    }
+    None
+}
+
+fn supports_trial(service: &serde_json::Value) -> bool {
+    service["supportTrial"].as_bool().unwrap_or(false)
+        || service["supportTrail"].as_bool().unwrap_or(false)
+}
+
+/// Render a service provider header as `Agent <pid>(<pname>)`, degrading to
+/// `Agent <pid>` (no parentheses) when the display name is empty or absent
+/// (WBW-14172 FR-3.2 / FR-3.3). `providerAgentName` is optional in the backend
+/// contract, so consumers MUST tolerate its absence.
+fn format_provider(pid: &str, pname: &str) -> String {
+    if pname.is_empty() {
+        format!("Agent {pid}")
+    } else {
+        format!("Agent {pid}({pname})")
+    }
+}
+
 /// POST /priapi/v1/aieco/task/asp/match
 ///
 /// At least one of `job_id` or `task_desc` must be non-empty.
 /// When `job_id` is provided, backend uses the on-chain task context;
 /// when only `task_desc` is provided, it's a pre-publish search.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_asp_match(
     client: &mut TaskApiClient,
     job_id: Option<&str>,
@@ -65,6 +121,30 @@ pub async fn handle_asp_match(
     let resp = client
         .post_with_identity("/priapi/v1/aieco/task/asp/match", &body, &agent_id)
         .await?;
+    let mut resp = resp;
+
+    // Attach a per-service `autoTradePreflight` (FR-1/2): deterministic, local,
+    // non-networked. One inventory snapshot is shared across every service so all
+    // rows see a consistent readiness view. Any per-service internal error degrades
+    // to the sentinel preflight rather than failing the match.
+    let inv = tooling::ToolInventory::detect();
+    if let Some(recs_mut) = resp["recommendations"].as_array_mut() {
+        for rec in recs_mut.iter_mut() {
+            if let Some(services) = rec["services"].as_array_mut() {
+                for svc in services.iter_mut() {
+                    normalize_subscription_fee(svc);
+                    let desc = svc["serviceDescription"].as_str().unwrap_or("");
+                    // Build the (infallible) preflight, then serialize once here —
+                    // the sole genuinely fallible boundary. Only a serialization
+                    // failure degrades to the sentinel; classification never errors.
+                    let pf = tooling::build_preflight(desc, &inv);
+                    svc["autoTradePreflight"] = serde_json::to_value(&pf).unwrap_or_else(|_| {
+                        serde_json::to_value(tooling::degraded_preflight()).unwrap_or_default()
+                    });
+                }
+            }
+        }
+    }
 
     let recs = resp["recommendations"]
         .as_array()
@@ -99,12 +179,17 @@ pub async fn handle_asp_match(
     println!("Matched ASPs (page {page}, {} results):\n", recs.len());
     for (i, rec) in recs.iter().enumerate() {
         let pid = rec["providerAgentId"].as_str().unwrap_or("?");
+        let pname = rec["providerAgentName"].as_str().unwrap_or("");
         let sec = rec["securityRate"].as_f64().unwrap_or(0.0);
         let fb = rec["feedbackRate"].as_f64().unwrap_or(0.0);
         let sold = rec["soldCount"].as_u64().unwrap_or(0);
         let a2mcp = rec["supportA2MCP"].as_bool().unwrap_or(false);
 
-        println!("━━━ {}. #{pid} ━━━", i + 1);
+        println!(
+            "━━━ {}. {} ━━━",
+            i + 1,
+            format_provider(pid, pname)
+        );
         println!(
             "  security: {sec:.2} | feedback: {fb:.2} | sold: {sold} | A2MCP: {a2mcp}"
         );
@@ -115,9 +200,9 @@ pub async fn handle_asp_match(
                 let sname = svc["serviceName"].as_str().unwrap_or("");
                 let sdesc = svc["serviceDescription"].as_str().unwrap_or("");
                 let stype = svc["serviceType"].as_str().unwrap_or("");
-                let fee_amt = svc["feeAmount"].as_f64();
+                let fee_amt = scalar_display(&svc["feeAmount"]);
                 let fee_sym = svc["feeTokenSymbol"].as_str().unwrap_or("");
-                let support_trial = svc["supportTrail"].as_bool().unwrap_or(false);
+                let support_trial = supports_trial(svc);
 
                 print!("  Service: {sid}");
                 if !sname.is_empty() {
@@ -127,7 +212,7 @@ pub async fn handle_asp_match(
                 if !sdesc.is_empty() {
                     println!("    {sdesc}");
                 }
-                if let Some(amt) = fee_amt {
+                if let Some(amt) = fee_amt.as_deref() {
                     println!("    Fee: {amt} {fee_sym}");
                 } else {
                     println!("    Fee: (no price — negotiation required)");
@@ -137,7 +222,7 @@ pub async fn handle_asp_match(
                     if !subs.is_empty() {
                         for sub in subs {
                             let interval = sub["interval"].as_str().unwrap_or("month");
-                            let fee = sub["fee"].as_str().unwrap_or("?");
+                            let fee = scalar_display(&sub["fee"]).unwrap_or_else(|| "?".to_string());
                             print!("    Subscription: {fee} {fee_sym}/{interval}");
                             if support_trial {
                                 print!(" (trial available)");
@@ -145,6 +230,11 @@ pub async fn handle_asp_match(
                             println!();
                         }
                     }
+                }
+
+                if let Some(line) = preflight_summary_line(&svc["autoTradePreflight"]) {
+                    print!("    {line}");
+                    println!();
                 }
             }
         }
@@ -276,7 +366,19 @@ pub async fn handle_set_asp(
         }
     }
 
-    super::negotiate::save_designated_provider(job_id, provider_agent_id)?;
+    // FR-8.3/AC-9: resolve and persist the correct multi-service endpoint from the
+    // provider's service catalog (previously persisted endpoint-less). A2A /
+    // no-endpoint services resolve to None → unchanged routing (FR-8.5/AC-11).
+    let resolved_endpoint: Option<String> =
+        crate::commands::agent_commerce::task::common::find_service(provider_agent_id, service_id)
+            .await?
+            .and_then(|svc| svc.get("endpoint").and_then(|v| v.as_str()).map(str::to_string))
+            .filter(|s| !s.is_empty());
+    super::negotiate::save_designated_provider_with_endpoint(
+        job_id,
+        provider_agent_id,
+        resolved_endpoint.as_deref(),
+    )?;
 
     audit::log(
         "cli",
@@ -380,6 +482,64 @@ pub async fn handle_user_reject(
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
+/// Render the compact per-service preflight summary line for text mode, e.g.
+/// `Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(ready) · 1 reminder`.
+/// Returns `None` when the preflight object is absent.
+///
+/// NOTE: this line MUST NOT use `Copy-trade: on/off` wording — that reads as an
+/// "auto-trading already authorized" switch, which is misleading. Service
+/// classification is advisory; the saved delivery is interpreted later by the
+/// subscription-signal Skill, and real execution still requires consent,
+/// per-trade cap, tool readiness and any required account confirmation.
+/// We therefore surface a neutral `Trading-signal service: yes/no` instead.
+fn preflight_summary_line(pf: &serde_json::Value) -> Option<String> {
+    if !pf.is_object() {
+        return None;
+    }
+    // Neutral, non-authorizing phrasing. Missing/wrong-type values fail closed.
+    let is_signal = pf["isTradingSignal"].as_bool().unwrap_or(false);
+    let service = if is_signal { "yes" } else { "no" };
+    let classes: Vec<String> = pf["assetClasses"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let classes_str = if classes.is_empty() {
+        "—".to_string()
+    } else {
+        classes.join(", ")
+    };
+    let tools: Vec<String> = pf["tools"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|t| {
+                    let name = t["displayName"].as_str().unwrap_or("?");
+                    let readiness = t["readiness"].as_str().unwrap_or("?");
+                    format!("{name}({readiness})")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let tools_str = if tools.is_empty() {
+        "none".to_string()
+    } else {
+        tools.join(", ")
+    };
+    let n = pf["reminders"].as_array().map(|a| a.len()).unwrap_or(0);
+    let reminders_str = if n == 1 {
+        "1 reminder".to_string()
+    } else {
+        format!("{n} reminders")
+    };
+    Some(format!(
+        "Trading-signal service: {service} · classes: {classes_str} · tools: {tools_str} · {reminders_str}"
+    ))
+}
+
 async fn resolve_agent(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -398,6 +558,7 @@ async fn resolve_agent(
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use serde_json::json;
 
     #[derive(Parser)]
     struct TestCli {
@@ -406,6 +567,55 @@ mod tests {
     }
 
     // ── asp-match ───────────────────────────────────────────────────
+
+    #[test]
+    fn normalizes_numeric_subscription_fee_when_fee_amount_is_null() {
+        let mut service = json!({
+            "feeAmount": null,
+            "subscription": [{"fee": 0.1, "interval": "month"}],
+        });
+        super::normalize_subscription_fee(&mut service);
+        assert_eq!(service["feeAmount"], json!(0.1));
+        assert_eq!(super::scalar_display(&service["feeAmount"]).as_deref(), Some("0.1"));
+    }
+
+    #[test]
+    fn explicit_fee_amount_wins_and_monthly_fallback_is_preferred() {
+        let mut explicit = json!({
+            "feeAmount": "2.5",
+            "subscription": [{"fee": 0.1, "interval": "month"}],
+        });
+        super::normalize_subscription_fee(&mut explicit);
+        assert_eq!(explicit["feeAmount"], json!("2.5"));
+
+        let mut fallback = json!({
+            "subscription": [
+                {"fee": 0.02, "interval": "day"},
+                {"fee": "0.6", "interval": "month"}
+            ],
+        });
+        super::normalize_subscription_fee(&mut fallback);
+        assert_eq!(fallback["feeAmount"], json!("0.6"));
+    }
+
+    #[test]
+    fn trial_support_accepts_current_and_legacy_spellings() {
+        assert!(super::supports_trial(&json!({"supportTrial": true})));
+        assert!(super::supports_trial(&json!({"supportTrail": true})));
+        assert!(!super::supports_trial(&json!({})));
+    }
+
+    #[test]
+    fn format_provider_with_name() {
+        // FR-3.2: name present → `Agent <id>(<name>)`.
+        assert_eq!(super::format_provider("1506", "AlphaBot"), "Agent 1506(AlphaBot)");
+    }
+
+    #[test]
+    fn format_provider_empty_name_degrades() {
+        // FR-3.3: name empty/absent → degrade to `Agent <id>` (no parentheses).
+        assert_eq!(super::format_provider("1506", ""), "Agent 1506");
+    }
 
     #[test]
     fn cli_asp_match_task_desc_only() {
@@ -688,5 +898,76 @@ mod tests {
             "--service-id", "svc-1",
             "--payment-mode", "escrow",
         ]).is_ok());
+    }
+
+    // ── preflight_summary_line — text-mode compact line (FR-1) ──────────
+    //
+    // Asserts the neutral, non-authorizing format (oli-feedback P0): the line
+    // renders `Trading-signal service: yes/no`, never `Copy-trade: on/off`.
+    //   `Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(ready) · 1 reminder`
+
+    #[test]
+    fn preflight_line_signal_singular_reminder() {
+        // isTradingSignal=true → "yes"; classes joined by ", "; tools "Name(readiness)"
+        // joined by ", "; a single reminder renders the singular "1 reminder".
+        let pf = serde_json::json!({
+            "isTradingSignal": true,
+            "assetClasses": ["prediction"],
+            "tools": [
+                {"displayName": "Polymarket", "readiness": "missing"},
+                {"displayName": "Trade Kit", "readiness": "ready"}
+            ],
+            "reminders": [{"kind": "install_plugin"}]
+        });
+        let line = super::preflight_summary_line(&pf).unwrap();
+        assert_eq!(
+            line,
+            "Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(ready) · 1 reminder"
+        );
+        // The misleading on/off authorization wording must never appear.
+        assert!(!line.contains("Copy-trade"));
+    }
+
+    #[test]
+    fn preflight_line_non_signal_empty_classes_and_tools() {
+        // isTradingSignal=false → "no"; empty assetClasses → em-dash placeholder;
+        // empty tools → "none"; zero reminders → plural "0 reminders".
+        let pf = serde_json::json!({
+            "isTradingSignal": false,
+            "assetClasses": [],
+            "tools": [],
+            "reminders": []
+        });
+        let line = super::preflight_summary_line(&pf).unwrap();
+        assert_eq!(
+            line,
+            "Trading-signal service: no · classes: — · tools: none · 0 reminders"
+        );
+        assert!(!line.contains("Copy-trade"));
+    }
+
+    #[test]
+    fn preflight_line_plural_reminders_multi_class() {
+        // Multiple classes join with ", "; N (≠1) reminders render the plural form.
+        let pf = serde_json::json!({
+            "isTradingSignal": true,
+            "assetClasses": ["spot", "perp"],
+            "tools": [{"displayName": "OnchainOS", "readiness": "ready"}],
+            "reminders": [{"kind": "choose_at_first_signal"}, {"kind": "configure_tool"}]
+        });
+        let line = super::preflight_summary_line(&pf).unwrap();
+        assert_eq!(
+            line,
+            "Trading-signal service: yes · classes: spot, perp · tools: OnchainOS(ready) · 2 reminders"
+        );
+        assert!(!line.contains("Copy-trade"));
+    }
+
+    #[test]
+    fn preflight_line_non_object_returns_none() {
+        // A non-object preflight (absent / wrong type) yields no summary line.
+        assert!(super::preflight_summary_line(&serde_json::Value::Null).is_none());
+        assert!(super::preflight_summary_line(&serde_json::json!("x")).is_none());
+        assert!(super::preflight_summary_line(&serde_json::json!([1, 2])).is_none());
     }
 }

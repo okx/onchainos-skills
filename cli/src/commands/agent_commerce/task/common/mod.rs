@@ -15,6 +15,7 @@ pub mod autotrade;
 pub mod config;
 pub mod deadline;
 pub mod deliverables;
+pub mod deposit_qr;
 pub mod dispute_upload;
 pub mod in_progress;
 pub mod network;
@@ -56,7 +57,7 @@ pub const AGENT_ROLE_EVALUATOR: i64 = 3;
 
 pub use payment_mode::PaymentMode;
 
-pub use util::{ensure_sufficient_balance, ensure_sufficient_balance_at};
+pub use util::{ensure_sufficient_balance, ensure_sufficient_balance_at, query_xlayer_balance};
 
 /// Master switch for diagnostic `eprintln!` output across the task system.
 /// Enabled by `cargo build --features debug-log`; default off (zero runtime cost).
@@ -554,8 +555,9 @@ pub(crate) async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Val
 ///                        backend rejected, JSON parse failed). Callers usually
 ///                        want to treat this as "no match" — use `.ok().flatten()`.
 ///
-/// Response navigation: `data[0].list[*]` (flattened by the same logic that
-/// `designated_route_inner` uses). Empty `service_id` returns `Ok(None)`.
+/// Response navigation: scans every group's `list` (`data[*].list[*]`, flattened
+/// by the same logic that `designated_route_inner` uses); the first `serviceId`
+/// (or numeric `id`) match wins. Empty `service_id` returns `Ok(None)`.
 pub(crate) async fn find_service(
     agent_id: &str,
     service_id: &str,
@@ -573,16 +575,29 @@ pub(crate) async fn find_service(
             .or_else(|| v.as_i64().map(|n| n.to_string()))
             .or_else(|| v.as_u64().map(|n| n.to_string()))
     };
-    let matched = data
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|item| item.get("list"))
-        .and_then(|list| list.as_array())
-        .and_then(|list| list.iter().find(|s| {
-            s.get("id").and_then(&to_str).as_deref() == Some(service_id)
-                || s.get("serviceId").and_then(&to_str).as_deref() == Some(service_id)
-        }).cloned());
+    let matched = find_service_in_data(&data, service_id, &to_str);
     Ok(matched)
+}
+
+/// Pure helper: scan every `data[*].list[*]` group for the first entry whose
+/// `serviceId` or numeric `id` equals `service_id`, returning the cloned entry.
+/// Split out of `find_service` so the multi-group scan (FR-8.1) is unit-testable
+/// without a live service-list fetch.
+fn find_service_in_data(
+    data: &serde_json::Value,
+    service_id: &str,
+    to_str: &dyn Fn(&serde_json::Value) -> Option<String>,
+) -> Option<serde_json::Value> {
+    data.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|group| group.get("list").and_then(|l| l.as_array()))
+        .flatten()
+        .find(|s| {
+            s.get("id").and_then(to_str).as_deref() == Some(service_id)
+                || s.get("serviceId").and_then(to_str).as_deref() == Some(service_id)
+        })
+        .cloned()
 }
 
 /// `onchainos agent designated-route --provider <agentId>` — runs service-list
@@ -1492,5 +1507,57 @@ mod expire_time_tests {
         let v = json!({ "title": "x", "testFlag": "true" });
         let ctx = PreFetchedTaskContext::from_api_response(&v);
         assert!(!ctx.test_flag);
+    }
+}
+
+#[cfg(test)]
+mod find_service_tests {
+    use super::find_service_in_data;
+    use serde_json::json;
+
+    fn to_str(v: &serde_json::Value) -> Option<String> {
+        v.as_str()
+            .map(String::from)
+            .or_else(|| v.as_i64().map(|n| n.to_string()))
+            .or_else(|| v.as_u64().map(|n| n.to_string()))
+    }
+
+    // FR-8.1 / AC-10: the target serviceId lives in the SECOND group's list
+    // (`data[1].list[*]`). The old first-group-only scan missed it; the
+    // all-groups scan must resolve it.
+    #[test]
+    fn resolves_service_in_second_group() {
+        let data = json!([
+            { "list": [ { "serviceId": "svc-a", "endpoint": "https://a" } ] },
+            { "list": [
+                { "serviceId": "svc-b", "endpoint": "https://b" },
+                { "serviceId": "svc-target", "endpoint": "https://target" }
+            ] }
+        ]);
+        let matched = find_service_in_data(&data, "svc-target", &to_str)
+            .expect("serviceId in data[1] must resolve");
+        assert_eq!(matched["endpoint"], "https://target");
+    }
+
+    // Numeric `id` field also matches (identity update/delete path).
+    #[test]
+    fn resolves_by_numeric_id_across_groups() {
+        let data = json!([
+            { "list": [ { "id": 100, "endpoint": "https://a" } ] },
+            { "list": [ { "id": 2301, "endpoint": "https://target" } ] }
+        ]);
+        let matched = find_service_in_data(&data, "2301", &to_str)
+            .expect("numeric id in data[1] must resolve");
+        assert_eq!(matched["endpoint"], "https://target");
+    }
+
+    // No match anywhere → None.
+    #[test]
+    fn no_match_returns_none() {
+        let data = json!([
+            { "list": [ { "serviceId": "svc-a" } ] },
+            { "list": [ { "serviceId": "svc-b" } ] }
+        ]);
+        assert!(find_service_in_data(&data, "svc-missing", &to_str).is_none());
     }
 }

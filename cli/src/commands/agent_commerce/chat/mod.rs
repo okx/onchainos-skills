@@ -46,6 +46,7 @@ pub enum ChatCommand {
         provider_security_rate: Option<String>,
         client_communication_address: String,
         provider_communication_address: String,
+        is_offline_replay: Option<bool>,
     },
     SystemConfig,
     Heartbeat {
@@ -84,6 +85,7 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
             provider_security_rate,
             client_communication_address,
             provider_communication_address,
+            is_offline_replay,
         } => {
             let access_token = ensure_tokens_refreshed().await?;
             let mut client = wallet_client(ctx)?;
@@ -100,6 +102,7 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
                     provider_security_rate.as_deref(),
                     &client_communication_address,
                     &provider_communication_address,
+                    is_offline_replay,
                 )
                 .await?,
             );
@@ -272,6 +275,7 @@ pub async fn fetch_message_eligible(
     provider_security_rate: Option<&str>,
     client_communication_address: &str,
     provider_communication_address: &str,
+    is_offline_replay: Option<bool>,
 ) -> Result<Value> {
     let headers = agent_commerce_headers(agent_id);
     let mut query: Vec<(&str, &str)> = vec![
@@ -288,6 +292,9 @@ pub async fn fetch_message_eligible(
     ];
     if let Some(rate) = provider_security_rate {
         query.push(("providerSecurityRate", rate));
+    }
+    if let Some(value) = offline_replay_query_value(is_offline_replay) {
+        query.push(("isOfflineReplay", value));
     }
     let result = client
         .get_authed_with_headers(MESSAGE_ELIGIBLE_PATH, access_token, &query, Some(&headers))
@@ -306,6 +313,28 @@ pub async fn fetch_message_eligible(
             }
             Err(err)
         }
+    }
+}
+
+fn offline_replay_query_value(value: Option<bool>) -> Option<&'static str> {
+    value.map(|is_offline_replay| {
+        if is_offline_replay {
+            "true"
+        } else {
+            "false"
+        }
+    })
+}
+
+#[cfg(test)]
+mod offline_replay_tests {
+    use super::offline_replay_query_value;
+
+    #[test]
+    fn maps_optional_replay_flag_to_backend_query_value() {
+        assert_eq!(offline_replay_query_value(Some(true)), Some("true"));
+        assert_eq!(offline_replay_query_value(Some(false)), Some("false"));
+        assert_eq!(offline_replay_query_value(None), None);
     }
 }
 

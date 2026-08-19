@@ -1,9 +1,9 @@
-//! FR-3 copy-trade determination.
+//! Active-subscription determination for model-routed deliveries.
 //!
-//! Queries the subscription detail for `jobId` and decides whether auto-trade is
-//! authorized. **Anti-fail-open:** `copyTrade` and `status` decisions use *exact
-//! equality* to a confirmed integer — never a truthy / `as_bool` conversion. Any
-//! query failure / 404 / non-Active state degrades to notify-only.
+//! Queries the subscription detail for `jobId` and decides whether a signal may
+//! enter model processing. `status` uses exact equality to `1`; legacy
+//! `copyTrade` is intentionally ignored. Lookup failure or non-Active state falls
+//! back to ordinary deliverable handling.
 
 use serde_json::Value;
 
@@ -12,9 +12,6 @@ use super::{AutoTradeError, DegradeReason};
 
 /// Confirmed "Active" subscription status code (Subscribe API doc §1.1: `1 = Active`).
 const AUTOTRADE_ACTIVE_STATUS: i64 = 1;
-
-/// The `copyTrade` flag value that means "copy-trade enabled".
-const COPY_TRADE_ENABLED: i64 = 1;
 
 /// A confirmed-active copy-trade subscription.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,17 +38,7 @@ fn as_string(v: Option<&Value>) -> Option<String> {
 }
 
 /// Pure decision over the subscription `data` object. Exact-equality only.
-pub fn decide(data: &Value) -> Result<ActiveSubscription, AutoTradeError> {
-    // copyTrade must be exactly the enabled value.
-    match as_int(data.get("copyTrade")) {
-        Some(v) if v == COPY_TRADE_ENABLED => {}
-        _ => {
-            return Err(AutoTradeError::Degrade(
-                DegradeReason::SubscriptionNotActive,
-            ))
-        }
-    }
-    // status must be exactly the Active code.
+pub fn decide_active(data: &Value) -> Result<ActiveSubscription, AutoTradeError> {
     match as_int(data.get("status")) {
         Some(v) if v == AUTOTRADE_ACTIVE_STATUS => {}
         _ => {
@@ -60,21 +47,30 @@ pub fn decide(data: &Value) -> Result<ActiveSubscription, AutoTradeError> {
             ))
         }
     }
+
     let provider_agent_id = as_string(data.get("providerAgentId")).unwrap_or_default();
     Ok(ActiveSubscription { provider_agent_id })
 }
 
-/// Query + decide. A query error (incl. 404) degrades to `lookup_off`; a parsed
-/// non-Active / non-copy-trade subscription degrades to `subscription_not_active`.
-pub async fn determine_copy_trade(
+async fn determine(
     client: &mut TaskApiClient,
     job_id: &str,
     agent_id: &str,
 ) -> Result<ActiveSubscription, AutoTradeError> {
     match client.fetch_subscription(job_id, agent_id).await {
-        Ok(data) => decide(&data),
+        Ok(data) => decide_active(&data),
         Err(_) => Err(AutoTradeError::Degrade(DegradeReason::LookupOff)),
     }
+}
+
+/// Query + decide. A query error (incl. 404) degrades to `lookup_off`; a parsed
+/// non-Active / non-copy-trade subscription degrades to `subscription_not_active`.
+pub async fn determine_active_delivery(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    agent_id: &str,
+) -> Result<ActiveSubscription, AutoTradeError> {
+    determine(client, job_id, agent_id).await
 }
 
 #[cfg(test)]
@@ -85,21 +81,21 @@ mod tests {
     #[test]
     fn active_copy_trade_number_form() {
         let data = json!({"copyTrade": 1, "status": 1, "providerAgentId": 1506});
-        let got = decide(&data).unwrap();
+        let got = decide_active(&data).unwrap();
         assert_eq!(got.provider_agent_id, "1506");
     }
 
     #[test]
     fn active_copy_trade_string_form() {
         let data = json!({"copyTrade": "1", "status": "1", "providerAgentId": "1506"});
-        assert!(decide(&data).is_ok());
+        assert!(decide_active(&data).is_ok());
     }
 
     #[test]
     fn non_active_status_degrades() {
         let data = json!({"copyTrade": 1, "status": 3, "providerAgentId": "1"});
         assert!(matches!(
-            decide(&data),
+            decide_active(&data),
             Err(AutoTradeError::Degrade(
                 DegradeReason::SubscriptionNotActive
             ))
@@ -107,21 +103,42 @@ mod tests {
     }
 
     #[test]
-    fn copy_trade_not_one_degrades() {
+    fn copy_trade_does_not_control_active_routing() {
         let data = json!({"copyTrade": 0, "status": 1, "providerAgentId": "1"});
-        assert!(matches!(
-            decide(&data),
-            Err(AutoTradeError::Degrade(
-                DegradeReason::SubscriptionNotActive
-            ))
-        ));
+        assert!(decide_active(&data).is_ok());
+    }
+
+    #[test]
+    fn active_delivery_allows_copy_trade_zero() {
+        let data = json!({"copyTrade": 0, "status": 1, "providerAgentId": "1"});
+        let got = decide_active(&data).unwrap();
+        assert_eq!(got.provider_agent_id, "1");
+    }
+
+    #[test]
+    fn active_delivery_allows_missing_copy_trade() {
+        let data = json!({"status": "1", "providerAgentId": 1506});
+        assert!(decide_active(&data).is_ok());
+    }
+
+    #[test]
+    fn active_delivery_never_allows_non_active_subscription() {
+        for status in [0, 2, 3, 100] {
+            let data = json!({"copyTrade": 1, "status": status, "providerAgentId": "1"});
+            assert!(matches!(
+                decide_active(&data),
+                Err(AutoTradeError::Degrade(
+                    DegradeReason::SubscriptionNotActive
+                ))
+            ));
+        }
     }
 
     #[test]
     fn never_truthy_status_100_is_not_active() {
         let data = json!({"copyTrade": 1, "status": 100, "providerAgentId": "1"});
         assert!(matches!(
-            decide(&data),
+            decide_active(&data),
             Err(AutoTradeError::Degrade(
                 DegradeReason::SubscriptionNotActive
             ))
@@ -130,7 +147,7 @@ mod tests {
 
     #[test]
     fn missing_fields_degrade() {
-        assert!(decide(&json!({})).is_err());
-        assert!(decide(&json!({"copyTrade": 1})).is_err());
+        assert!(decide_active(&json!({})).is_err());
+        assert!(decide_active(&json!({"copyTrade": 1})).is_err());
     }
 }

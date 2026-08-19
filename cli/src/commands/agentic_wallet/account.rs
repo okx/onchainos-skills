@@ -58,8 +58,8 @@ pub(super) async fn cmd_switch(account_id: &str) -> Result<()> {
 
 // ── status ───────────────────────────────────────────────────────────
 
-/// onchainos wallet status
-pub(super) async fn cmd_status() -> Result<()> {
+/// onchainos wallet status [--include-subscriptions]
+pub(super) async fn cmd_status(include_subscriptions: bool) -> Result<()> {
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG] cmd_status: start");
     }
@@ -154,7 +154,7 @@ pub(super) async fn cmd_status() -> Result<()> {
         serde_json::Value::Null
     };
 
-    output::success(json!({
+    let mut summary = json!({
         "email": wallets.email,
         "loggedIn": logged_in,
         "loginType": login_type,
@@ -162,7 +162,12 @@ pub(super) async fn cmd_status() -> Result<()> {
         "currentAccountName": current_account_name,
         "accountCount": wallets.accounts.len(),
         "policy": policy,
-    }));
+    });
+    if logged_in && include_subscriptions {
+        let post_login = super::auth::fetch_post_login_subscriptions_bounded().await;
+        super::auth::attach_post_login_subscriptions(&mut summary, post_login);
+    }
+    output::success(summary);
     Ok(())
 }
 

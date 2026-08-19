@@ -1,6 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::commands::agent_commerce::task::common::deposit_qr::InsufficientBalanceError;
 use crate::payment_notify;
 
 /// Serialize agent-facing JSON. **Compact by default** — this JSON is consumed
@@ -103,6 +104,47 @@ pub fn error_coded(code: &str, field: Option<&str>, message: &str) {
         v["notifications"] = Value::Array(events);
     }
     println!("{}", to_agent_json(&v).unwrap());
+}
+
+// ── Insufficient balance (deposit-address siblings) ───────────────────
+
+/// Build the JSON envelope for an insufficient-balance error. Pure — the actual
+/// print/notification handling lives in [`error_insufficient_balance`].
+///
+/// - `deposit_address == None`  -> `{"ok":false,"error":<message>}` (verbatim degrade, FR-6)
+/// - `deposit_address == Some`  -> the base error plus the machine-readable
+///   siblings `depositAddress` / `depositChain` / `currency` / `shortfall`.
+fn insufficient_balance_json(ib: &InsufficientBalanceError) -> Value {
+    match ib.deposit_address.as_deref() {
+        None => serde_json::json!({ "ok": false, "error": ib.message }),
+        Some(addr) => serde_json::json!({
+            "ok": false,
+            "error": ib.message,
+            "depositAddress": addr,
+            "depositChain": ib.deposit_chain,
+            "currency": ib.currency,
+            "shortfall": ib.shortfall,
+        }),
+    }
+}
+
+/// Print an insufficient-balance error to stdout. When no deposit address was
+/// resolved, degrades to plain `error(&message)` — byte-for-byte today's output
+/// (FR-6). With an address, emits the base error plus the four deposit siblings,
+/// honoring pending notifications like `error_coded`/`setup_required`. Does NOT
+/// call `process::exit` — exit stays centralized in `main.rs`.
+pub fn error_insufficient_balance(ib: &InsufficientBalanceError) {
+    match ib.deposit_address.as_ref() {
+        None => error(&ib.message),
+        Some(_) => {
+            let mut v = insufficient_balance_json(ib);
+            let events = payment_notify::drain_events();
+            if !events.is_empty() {
+                v["notifications"] = Value::Array(events);
+            }
+            println!("{}", to_agent_json(&v).unwrap());
+        }
+    }
 }
 
 // ── Confirming ───────────────────────────────────────────────────────
@@ -263,5 +305,47 @@ mod tests {
         assert_eq!(s.message, "msg");
         assert_eq!(s.data["chainId"], "42161");
         assert_eq!(s.data["scene"], "A");
+    }
+
+    // ── error_insufficient_balance JSON shape ─────────────────────────
+    use crate::commands::agent_commerce::task::common::deposit_qr::InsufficientBalanceError;
+
+    // None (address unresolved) -> exactly {"ok":false,"error":…}, no siblings (FR-6).
+    #[test]
+    fn insufficient_balance_json_none_degrades_verbatim() {
+        let ib = InsufficientBalanceError::new(
+            "Insufficient USDT balance".to_string(),
+            "USDT",
+            50.0,
+            0.0,
+        );
+        let v = insufficient_balance_json(&ib);
+        assert_eq!(
+            v,
+            serde_json::json!({ "ok": false, "error": "Insufficient USDT balance" })
+        );
+        assert!(v.get("depositAddress").is_none());
+        assert!(v.get("depositChain").is_none());
+        assert!(v.get("currency").is_none());
+        assert!(v.get("shortfall").is_none());
+    }
+
+    // Some(addr) -> base error + all four deposit siblings, depositChain=="XLayer".
+    #[test]
+    fn insufficient_balance_json_some_emits_siblings() {
+        let mut ib = InsufficientBalanceError::new(
+            "Insufficient USDT balance".to_string(),
+            "USDT",
+            50.0,
+            0.0,
+        );
+        ib.deposit_address = Some("0xDEADBEEF".to_string());
+        let v = insufficient_balance_json(&ib);
+        assert_eq!(v["ok"], serde_json::json!(false));
+        assert_eq!(v["error"], "Insufficient USDT balance");
+        assert_eq!(v["depositAddress"], "0xDEADBEEF");
+        assert_eq!(v["depositChain"], "XLayer");
+        assert_eq!(v["currency"], "USDT");
+        assert_eq!(v["shortfall"], "50");
     }
 }

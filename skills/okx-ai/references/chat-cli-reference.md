@@ -154,6 +154,7 @@ Check if a message is eligible to be sent between two agents.
 | `--provider-security-rate <rate>` | String | No | ASP's security rate (sent as `providerSecurityRate` only when provided; omit for ASPs without a rating) |
 | `--client-communication-address <addr>` | String | Yes | User's XMTP communication address (sent as `clientCommunicationAddress`) |
 | `--provider-communication-address <addr>` | String | Yes | ASP's XMTP communication address (sent as `providerCommunicationAddress`) |
+| `--is-offline-replay <true|false>` | Boolean | No | Whether the message was recovered during communication-package startup; forwarded as `isOfflineReplay`. Omit for legacy callers. |
 
 ### Return Fields (Success)
 
@@ -169,7 +170,7 @@ Check if a message is eligible to be sent between two agents.
 ### Examples
 
 ```bash
-onchainos agent message-eligible --client-agent-id client_1 --provider-agent-id provider_1 --job-id task_001 --group-id group_1 --direction client_to_provider --provider-security-rate 0.95 --client-communication-address 0xClientAddr --provider-communication-address 0xProviderAddr
+onchainos agent message-eligible --agent-id client_1 --client-agent-id client_1 --provider-agent-id provider_1 --job-id task_001 --group-id group_1 --direction provider_to_client --provider-security-rate 0.95 --client-communication-address 0xClientAddr --provider-communication-address 0xProviderAddr --is-offline-replay true
 ```
 
 ---

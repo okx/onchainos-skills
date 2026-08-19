@@ -8,6 +8,14 @@ The task state machine has moved into the CLI (`onchainos agent next-action`) �
 
 ---
 
+## Deposit-address QR (insufficient-balance — MANDATORY)
+
+🛑 **Rule:** when any ASP command (`dispute raise`, `subscribe-dispute`, etc.) returns a JSON error containing a non-empty `depositAddress` field:
+1. **Render QR**: run `onchainos wallet qrcode --address <depositAddress>` and display the QR under option 1 of the funding list. Do NOT rewrite or drop the 4-option list.
+2. **Relay** (sub-session): if relaying to the user session via `user-notify --content`, translate freely but keep all 4 options and the wallet address intact. The user session's playbook will extract the address and render QR on its side.
+
+---
+
 ## 🛑 `deliver` is gated by `job_accepted`
 
 `apply` going on-chain does NOT advance the task status — it stays `created`. The User Agent then has to run `confirm-accept`, which triggers the `job_accepted` system event. **Only after `job_accepted` arrives** may the ASP run `onchainos agent deliver` / `okx-a2a xmtp-send` the deliverable.
@@ -16,11 +24,9 @@ Never run `deliver` (or send a "delivered / here is the result" P2P message) bef
 
 Real work execution (calling external tools / generating output / etc.) ALSO waits for `job_accepted`. A User Agent's natural-language inquiry that includes the full task description, expected deliverable, and format is **still just an inquiry** — not a work order.
 
-> **Auto-trade deliveries (`--autotrade`):** an ASP script may embed a single-line auto-trade signal via
-> `agent deliver … --autotrade '<json>'`. The CLI stamps `signalTime` and structure-validates the signal
-> **before** sending; an invalid signal aborts the delivery (`signal rejected: <reason>`) and nothing is sent.
-> Provide the signal JSON **without** `signalTime` (CLI-stamped) and respect the per-type unit rules
-> (buy=quote, sell=base|pct; deposit=quote; withdraw=pct; polymarket buy=quote/sell=base).
+> **Deprecated `--autotrade`:** the CLI still accepts this argument so older ASP scripts do not fail,
+> but ignores its value completely. It is never parsed, validated, appended to the XMTP message, or used
+> to drive User-side execution. Put the complete signal in `--deliverable-text` (or the delivered file).
 
 ---
 
