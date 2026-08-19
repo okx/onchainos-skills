@@ -5,14 +5,94 @@
 //!
 //! The log is automatically rotated when it exceeds `MAX_LINES` (keeps the most recent half).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::time::Duration;
 
 const AUDIT_FILE: &str = "audit.jsonl";
 const MAX_LINES: usize = 10_000;
 const KEEP_LINES: usize = 5_000;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinaryIdentity {
+    pub version: String,
+    pub executable_path: String,
+    pub executable_sha256: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BinaryIdentityCache {
+    identity: BinaryIdentity,
+    file_len: u64,
+    modified_ns: u128,
+}
+
+pub fn binary_identity() -> Option<BinaryIdentity> {
+    use sha2::{Digest, Sha256};
+
+    let path = std::env::current_exe().ok()?;
+    let canonical = path.canonicalize().unwrap_or(path);
+    let metadata = canonical.metadata().ok()?;
+    let modified_ns = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    let cache_path = crate::home::onchainos_home()
+        .ok()
+        .map(|home| home.join("binary_identity.json"));
+    if let Some(cached) = cache_path
+        .as_ref()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|raw| serde_json::from_slice::<BinaryIdentityCache>(&raw).ok())
+        .filter(|cached| {
+            cached.file_len == metadata.len()
+                && cached.modified_ns == modified_ns
+                && cached.identity.executable_path == canonical.display().to_string()
+        })
+    {
+        return Some(cached.identity);
+    }
+    let mut file = std::fs::File::open(&canonical).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buf).ok()?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    let identity = BinaryIdentity {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        executable_path: canonical.display().to_string(),
+        executable_sha256: hex::encode(hasher.finalize()),
+    };
+    if let Some(path) = cache_path {
+        if let Ok(raw) = serde_json::to_vec(&BinaryIdentityCache {
+            identity: identity.clone(),
+            file_len: metadata.len(),
+            modified_ns,
+        }) {
+            let _ = crate::home::write_secure(&path, &raw);
+        }
+    }
+    Some(identity)
+}
+
+impl BinaryIdentity {
+    pub fn audit_args(&self) -> Vec<String> {
+        vec![
+            format!("binaryVersion={}", self.version),
+            format!("binaryPath={}", self.executable_path),
+            format!("binarySha256={}", self.executable_sha256),
+        ]
+    }
+}
 
 #[derive(Serialize)]
 struct Entry<'a> {
@@ -193,6 +273,12 @@ const REDACT_FULL: &[&str] = &[
     // business params can carry sensitive challenge / order data — never log them.
     "--payload",
     "--param",
+    // subscribe-device-update batch blob embeds jobIds; addr-prefix/suffix of the
+    // JSON is meaningless, so redact wholesale.
+    "--items",
+    // x402 task-402-pay replay business body: a free-form JSON blob POSTed to the
+    // ASP endpoint that can carry order / challenge data — never log it (SR-5).
+    "--body",
     // CeFi user identifier passed to `hackathon register`. Fully redacted rather
     // than prefix-masked: an OKX UID is ~10-11 digits, so prefix-6 + suffix-4
     // would leave all but one character of it readable in the log.
@@ -207,6 +293,8 @@ const REDACT_ADDR: &[&str] = &[
     "--address",
     "--sub-id",
     "--new-sub-id",
+    // Subscription/job identifier — mask prefix+suffix like --sub-id.
+    "--job-id",
     // MPP hash-mode broadcast tx identifier — mask prefix+suffix in the audit log.
     "--tx-hash",
 ];
@@ -394,7 +482,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Tasks { .. } => "tasks".into(),
         AgentCommand::SetPaymentMode { .. } => "set-payment-mode".into(),
         AgentCommand::ConfirmAccept { .. } => "confirm-accept".into(),
-        AgentCommand::DirectAccept { .. } => "direct-accept".into(),
         AgentCommand::Task402Pay { .. } => "task-402-pay".into(),
         AgentCommand::X402Check { .. } => "x402-check".into(),
         AgentCommand::DesignatedRoute { .. } => "designated-route".into(),
@@ -423,6 +510,9 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         #[cfg(debug_assertions)]
         AgentCommand::AutotradeGrantWrite { .. } => "autotrade-grant-write".into(),
         AgentCommand::AutotradeConsentSet { .. } => "autotrade-consent-set".into(),
+        AgentCommand::SubscriptionRouteSet { .. } => "subscription-route-set".into(),
+        AgentCommand::SubscriptionRouteClear { .. } => "subscription-route-clear".into(),
+        AgentCommand::AutotradeCapAdjustRequest { .. } => "autotrade-cap-adjust-request".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::AspReject { .. } => "asp-reject".into(),
         AgentCommand::SubscribeActive { .. } => "subscribe-active".into(),
@@ -469,6 +559,9 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::StartAutorenew { .. } => "start-autorenew".into(),
         AgentCommand::SubscribeReject { .. } => "subscribe-reject".into(),
         AgentCommand::SubscribeCost { .. } => "subscribe-cost".into(),
+        AgentCommand::SubscribeDeviceUpdate { .. } => "subscribe-device-update".into(),
+        AgentCommand::SubscribeOfflineUpdate { .. } => "subscribe-offline-update".into(),
+        AgentCommand::DeviceList { .. } => "device-list".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),
         AgentCommand::SetAsp { .. } => "set-asp".into(),
         AgentCommand::ResetAsp { .. } => "reset-asp".into(),
@@ -625,7 +718,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::Login { .. } => "login",
         WalletCommand::Add => "add",
         WalletCommand::Switch { .. } => "switch",
-        WalletCommand::Status => "status",
+        WalletCommand::Status { .. } => "status",
         WalletCommand::Addresses { .. } => "addresses",
         WalletCommand::Qrcode { .. } => "qrcode",
         WalletCommand::Logout => "logout",
@@ -974,11 +1067,25 @@ mod tests {
     fn grant_caps_not_redacted() {
         // Policy caps are not secrets — must survive verbatim for audit review.
         let args = vec_s(&[
-            "onchainos", "agent", "autotrade-grant-check", "--job-id", "j1", "--venue", "dex",
-            "--action", "buy", "--amount", "100.5", "--format", "json",
+            "onchainos",
+            "agent",
+            "autotrade-grant-check",
+            "--job-id",
+            "j1",
+            "--venue",
+            "dex",
+            "--action",
+            "buy",
+            "--amount",
+            "100.5",
+            "--format",
+            "json",
         ]);
         let out = redact_args(&args);
-        assert!(out.contains(&"100.5".to_string()), "amount cap must not be redacted");
+        assert!(
+            out.contains(&"100.5".to_string()),
+            "amount cap must not be redacted"
+        );
     }
 
     #[test]
@@ -1013,6 +1120,29 @@ mod tests {
         let out = redact_args(&args);
         assert_eq!(out[4], "--param");
         assert_eq!(out[5], "[REDACTED]");
+    }
+
+    #[test]
+    fn redact_body_full() {
+        // x402 task-402-pay --body carries a free-form business JSON blob and must
+        // be fully redacted (SR-5). Two-arg form.
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "task-402-pay",
+            "job_1",
+            "--provider-agent-id",
+            "1506",
+            "--body",
+            r#"{"orderId":"secret-42","challenge":"abc"}"#,
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[6], "--body");
+        assert_eq!(out[7], "[REDACTED]");
+        // Equals form.
+        let args = vec_s(&["onchainos", "agent", "task-402-pay", "--body={\"a\":1}"]);
+        let out = redact_args(&args);
+        assert_eq!(out[3], "--body=[REDACTED]");
     }
 
     #[test]
@@ -1135,6 +1265,60 @@ mod tests {
         let args = vec_s(&["onchainos", "wallet", "status"]);
         let out = redact_args(&args);
         assert_eq!(out, args);
+    }
+
+    // ── device-routing redaction ─────────────────────────────────────────
+
+    #[test]
+    fn redact_subscribe_device_update_job_id_and_items() {
+        // --items is a JSON blob embedding jobIds → REDACT_FULL.
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "subscribe-device-update",
+            "--items",
+            r#"[{"jobId":"0xabcdef0123456789abcdef","deviceList":["d1"]}]"#,
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[3], "--items");
+        assert_eq!(out[4], "[REDACTED]");
+    }
+
+    #[test]
+    fn redact_job_id_masks_prefix_suffix() {
+        // --job-id carries a subscription/job identifier → REDACT_ADDR (mask).
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "subscribe-device-update",
+            "--job-id",
+            "0xabcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--device-list",
+            "device-abc,device-def",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[4], "0xabcd***6789");
+        // --device-list holds machine-derived device ids, not credentials → stays visible.
+        assert_eq!(out[6], "device-abc,device-def");
+    }
+
+    #[test]
+    fn device_list_flags_stay_visible() {
+        // --device-list / --page / --page-size are never redacted (explicit).
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "device-list",
+            "--page",
+            "2",
+            "--page-size",
+            "50",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(
+            out, args,
+            "device-list read flags must survive verbatim for audit review"
+        );
     }
 
     fn vec_s(items: &[&str]) -> Vec<String> {

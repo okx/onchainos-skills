@@ -1,28 +1,26 @@
 //! Auto copy-trade (`copyTrade`) shared submodule.
 //!
-//! Core safety model: *the model executes; the CLI decides what to execute.*
-//! All parsing / validation / decision-making happens here in-process; the model
-//! only copies one verbatim command (an [`card::ExecutionCard`]) and narrates the
-//! result — it never reads the raw deliverable.
+//! The model-driven subscription session reads each saved delivery, selects an
+//! appropriate Skill/tool, and applies that tool's safety checks. This module
+//! retains local consent, grants, bounded route metadata, and compatibility
+//! helpers; it no longer parses or executes delivered signal text.
 //!
 //! This module is shared by:
-//! - the **ASP outbound** path (`agent deliver --autotrade`) — structure validation +
-//!   `signalTime` stamping (see [`schema::validate_structure`]).
-//! - the **buyer inbound** path (`deliverable_received_cli`) — the full fixed-order
-//!   runtime chain ([`pipeline`]) producing an [`card::ExecutionCard`] or
-//!   [`card::NotifyOnly`].
-//! - the **grant-check** subcommand (`agent autotrade-grant-check`) — the single shared
-//!   [`grants::check_grant`] core (also invoked by the polymarket plugin as a subprocess).
+//! - the retired ASP `agent deliver --autotrade` argument (accepted but ignored);
+//! - the Active-subscription route cache and consent/grant commands used by the
+//!   model-selected Skill/tool;
+//! - compatibility rendering for decisions produced by earlier releases.
 
 pub(crate) mod amount;
 pub(crate) mod card;
 pub(crate) mod consent;
 pub(crate) mod grants;
-pub(crate) mod holding;
 pub(crate) mod notify;
-pub(crate) mod pipeline;
+pub(crate) mod profile;
 pub(crate) mod schema;
 pub(crate) mod subscription;
+pub(crate) mod tooling;
+pub(crate) mod trade_kit;
 
 // ── Stable audit action names ────────────────────────────────────────────
 //
@@ -54,6 +52,18 @@ pub enum DegradeReason {
     ReplaySkip,
     LatchWriteFail,
     LookupOff,
+    /// A parsed-text signal is waiting for an earlier user decision for this job.
+    DecisionPending,
+    /// Parsed-text auto consent predates the fixed per-signal amount field.
+    MissingTradeAmount,
+    /// The selected execution tool is not installed locally.
+    ToolMissing,
+    /// The selected execution tool exists but is not configured/authenticated.
+    ToolNeedsConfiguration,
+    /// Current market price is outside the signal's entry interval.
+    EntryOutsideRange,
+    /// Parsed successfully, but the current runtime supports only one take-profit level.
+    MultipleTakeProfitUnsupported,
     SchemaVersionTooNew,
     /// `jobId` failed the entry charset check (path-traversal defense; FR-4).
     InvalidJobId,
@@ -82,6 +92,12 @@ impl DegradeReason {
             DegradeReason::ReplaySkip => "replay_skip",
             DegradeReason::LatchWriteFail => "latch_write_fail",
             DegradeReason::LookupOff => "lookup_off",
+            DegradeReason::DecisionPending => "decision_pending",
+            DegradeReason::MissingTradeAmount => "missing_trade_amount",
+            DegradeReason::ToolMissing => "tool_missing",
+            DegradeReason::ToolNeedsConfiguration => "tool_needs_configuration",
+            DegradeReason::EntryOutsideRange => "entry_outside_range",
+            DegradeReason::MultipleTakeProfitUnsupported => "multiple_take_profit_unsupported",
             DegradeReason::SchemaVersionTooNew => "schema_version_too_new",
             DegradeReason::InvalidJobId => "invalid_job_id",
             DegradeReason::ConsentInvalid(code) => code,
@@ -100,8 +116,8 @@ impl std::fmt::Display for DegradeReason {
 #[derive(Debug)]
 pub enum AutoTradeError {
     /// Structural / schema violation.
-    /// - Outbound (`deliver --autotrade`): `output::error("signal rejected: …")`, exit 1, nothing sent.
-    /// - Inbound: notify-only with this reason (a *reject*, not a silent ignore).
+    /// Retained for compatibility helpers and their tests; delivered text is no
+    /// longer parsed into this schema on either side.
     Reject(String),
 
     /// Runtime fail-safe (query fail, not-active, no wallet, over-cap, holding-fail,

@@ -80,7 +80,6 @@ pub enum AgentCommand {
     #[command(name = "create-task")]
     CreateTask {
         #[arg(long)] description: String,
-        #[arg(long = "description-summary")] description_summary: Option<String>,
         #[arg(long)] budget: f64,
         #[arg(long = "max-budget")] max_budget: f64,
         #[arg(long)] currency: String,
@@ -115,13 +114,29 @@ pub enum AgentCommand {
         #[arg(long = "service-token-amount")] service_token_amount: String,
         #[arg(long = "service-token-address")] service_token_address: String,
         #[arg(long = "auto-renew")] auto_renew: String,
-        #[arg(long = "copy-trade")] copy_trade: String,
         #[arg(long)] title: String,
         #[arg(long)] description: String,
-        #[arg(long = "description-summary")] description_summary: String,
         #[arg(long = "provider-agent-id")] provider_agent_id: Option<String>,
+        /// Exact service description returned by asp-match. Only bounded
+        /// asset/tool hints are persisted; the raw prose is never executed.
+        #[arg(long = "service-description", default_value = "")]
+        service_description: String,
         #[arg(long = "service-interval", default_value = "month")] service_interval: String,
+        /// Explicit user-confirmed automatic signal execution (`auto`).
+        #[arg(long = "autotrade-mode")] autotrade_mode: Option<String>,
+        /// Fixed quote amount used for every delivered signal.
+        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
+        /// e.g. 20.5; never minimal units; do not include a USDT/USDC suffix.]
+        #[arg(long = "autotrade-amount")] autotrade_amount: Option<String>,
+        /// Per-delivery automatic-execution quote cap.
+        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
+        /// e.g. 50; never minimal units; do not include a USDT/USDC suffix.]
+        #[arg(long = "autotrade-cap")] autotrade_cap: Option<String>,
+        /// Quote currency for amount/cap (`usdt` or `usdc`).
+        #[arg(long = "autotrade-quote")] autotrade_quote: Option<String>,
         #[arg(long, default_value = "")] format: String,
+        /// Device ids to omit from the default all-devices routing set (repeatable).
+        #[arg(long = "exclude-device")] exclude_device: Option<Vec<String>>,
     },
 
     /// Cancel a subscription (unified: trial cancel + close auto-renew)
@@ -149,6 +164,36 @@ pub enum AgentCommand {
     /// Show total monthly cost of active subscriptions
     #[command(name = "subscribe-cost")]
     SubscribeCost {},
+
+    /// Overwrite the receive-device list for one or more subscriptions (batch).
+    /// The passed list wholly replaces the stored list; empty/omitted clears it.
+    #[command(name = "subscribe-device-update")]
+    SubscribeDeviceUpdate {
+        /// Subscription jobId to overwrite (Form A, single subscription).
+        #[arg(long = "job-id")] job_id: Option<String>,
+        /// Comma-separated device ids (Form A); empty/omitted clears the list.
+        #[arg(long = "device-list")] device_list: Option<String>,
+        /// JSON array of {jobId, deviceList} (Form B, batch). Mutually exclusive with --job-id/--device-list.
+        #[arg(long, conflicts_with_all = ["job_id", "device_list"])] items: Option<String>,
+    },
+
+    /// Set a subscription's offline-receive flag (0 = keep backlog, 1 = discard backlog).
+    #[command(name = "subscribe-offline-update")]
+    SubscribeOfflineUpdate {
+        /// Subscription jobId whose offline-receive flag is being set.
+        #[arg(long = "job-id")] job_id: String,
+        /// Offline-receive flag: `0` keeps the backlog, `1` discards it.
+        #[arg(long)] flag: String,
+    },
+
+    /// List the devices this agent is logged in on (paginated to completion).
+    #[command(name = "device-list")]
+    DeviceList {
+        /// Starting page (`<1` normalized to 1).
+        #[arg(long, default_value = "1")] page: i64,
+        /// Page size (`<1` normalized to 20; `>100` → backend error 81001).
+        #[arg(long = "page-size", default_value = "20")] page_size: i64,
+    },
 
     /// Search matching ASPs (pre-publish or post-publish)
     #[command(name = "asp-match")]
@@ -268,15 +313,6 @@ pub enum AgentCommand {
         job_id: String,
     },
 
-    /// x402 Phase 2b: direct/accept after job_payment_mode_changed + x402 endpoint interaction
-    #[command(name = "direct-accept")]
-    DirectAccept {
-        job_id: String,
-        #[arg(long = "provider-agent-id")] provider_agent_id: String,
-        #[arg(long = "token-symbol")] token_symbol: Option<String>,
-        #[arg(long = "token-amount")] token_amount: Option<String>,
-    },
-
     /// x402 Phase 2: x402_pay signing + direct/accept + endpoint replay
     #[command(name = "task-402-pay")]
     Task402Pay {
@@ -292,6 +328,8 @@ pub enum AgentCommand {
         #[arg(long)] from: Option<String>,
         /// JSON business body to POST during replay (for endpoints that require business parameters)
         #[arg(long)] body: Option<String>,
+        /// Bypass the confirming gate and broadcast the on-chain accept immediately (FR-7.3)
+        #[arg(long, default_value_t = false)] force: bool,
     },
 
     /// Validate an x402 endpoint and extract pricing info
@@ -441,9 +479,8 @@ pub enum AgentCommand {
         #[arg(long = "deliverable-text", default_value = "")] deliverable_text: String,
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")] agent_id: String,
-        /// Single-line JSON auto-trade signal (omitting `signalTime`). When non-empty the CLI
-        /// stamps `signalTime`, structure-validates the signal, and appends an `autotrade:` line
-        /// to the delivery content. Invalid ⇒ `signal rejected: <reason>` (exit 1), nothing sent.
+        /// Deprecated compatibility argument. Accepted but ignored; only the
+        /// explicit text/file deliverable is sent and processed.
         #[arg(long, default_value = "")] autotrade: String,
     },
 
@@ -452,7 +489,7 @@ pub enum AgentCommand {
     #[command(name = "autotrade-grant-check")]
     AutotradeGrantCheck {
         #[arg(long = "job-id")] job_id: String,
-        /// `dex` | `defi` | `polymarket`.
+        /// `dex` | `hyperliquid` (alias of `dex`) | `defi` | `polymarket` | `trade_kit`.
         #[arg(long)] venue: String,
         /// `buy` | `sell`.
         #[arg(long)] action: String,
@@ -467,7 +504,7 @@ pub enum AgentCommand {
     #[command(name = "autotrade-grant-write", hide = true)]
     AutotradeGrantWrite {
         #[arg(long = "job-id")] job_id: String,
-        /// `dex` | `defi` | `polymarket`.
+        /// `dex` | `hyperliquid` (alias of `dex`) | `defi` | `polymarket` | `trade_kit`.
         #[arg(long)] venue: String,
         #[arg(long = "max-buy")] max_buy: Option<String>,
         #[arg(long = "max-sell")] max_sell: Option<String>,
@@ -475,25 +512,56 @@ pub enum AgentCommand {
     },
 
     /// [consent flow, 2026-07-17] Persist the buyer's auto-trade consent for a
-    /// subscription (auto/manual/decline + per-trade cap) and, unless declined, replay
-    /// the held signal so the "execute this one" options run. Release command.
+    /// subscription (auto/manual/decline + per-trade cap). This command persists
+    /// policy only; the model session retains and executes the current delivery.
     #[command(name = "autotrade-consent-set")]
     AutotradeConsentSet {
         #[arg(long = "job-id")] job_id: String,
-        /// `auto` | `manual` | `decline`.
+        /// `auto` | `manual` | `decline` | `pause` | `cap-adjust` | `plugin-ready-check`.
         #[arg(long)] mode: String,
         /// Per-trade cap in quote-stablecoin units (USDT by default); required for `auto`.
         #[arg(long)] cap: Option<String>,
-        /// Buyer agent id — needed to replay the held signal through the pipeline.
+        /// Fixed quote-stablecoin amount used by the model-driven subscription.
+        #[arg(long = "trade-amount")]
+        trade_amount: Option<String>,
+        /// Buyer agent id (retained for rolling CLI compatibility).
         #[arg(long = "agent-id")] agent_id: String,
         /// Consent lifetime in seconds (default 365 days).
         #[arg(long = "ttl-sec", default_value_t = 31_536_000)] ttl_sec: u64,
-        /// Plugin-store id to mark approved (required for, and only used by, `--mode plugin-approved`).
+        /// Plugin-store id checked by `plugin-ready-check` (the legacy
+        /// `plugin-approved` alias is retained for compatibility).
         #[arg(long)] plugin: Option<String>,
+        /// Deprecated. Model routes are persisted with `subscription-route-set`.
+        #[arg(long)] tool: Option<String>,
         /// Quote stablecoin dex trades pay with / settle into: `usdc` | `usdt`.
         /// Pass ONLY when the user named one; omitted keeps the stored choice
         /// (or the default, USDT).
         #[arg(long)] quote: Option<String>,
+    },
+
+    /// Persist a bounded model-selected route for an Active subscription.
+    #[command(name = "subscription-route-set", hide = true)]
+    SubscriptionRouteSet {
+        #[arg(long = "job-id")] job_id: String,
+        #[arg(long = "asset-class")] asset_class: String,
+        #[arg(long = "skill-id")] skill_id: String,
+        #[arg(long = "plugin-id")] plugin_id: Option<String>,
+        #[arg(long)] protocol: Option<String>,
+        #[arg(long = "requirement")] requirements: Vec<String>,
+        #[arg(long = "delivery-id")] delivery_id: String,
+    },
+
+    /// Clear cached model routes after an explicit incompatibility or reset.
+    #[command(name = "subscription-route-clear", hide = true)]
+    SubscriptionRouteClear {
+        #[arg(long = "job-id")] job_id: String,
+    },
+
+    /// Ask whether to raise the cap after a successful over-cap one-shot.
+    #[command(name = "autotrade-cap-adjust-request", hide = true)]
+    AutotradeCapAdjustRequest {
+        #[arg(long = "job-id")] job_id: String,
+        #[arg(long = "agent-id")] agent_id: String,
     },
 
     /// Provider agrees to refund (agreeRefund API → sign → broadcast)
@@ -899,6 +967,13 @@ pub enum AgentCommand {
         client_communication_address: String,
         #[arg(long)]
         provider_communication_address: String,
+        /// True only for messages recovered during communication-package startup.
+        #[arg(
+            long,
+            action = clap::ArgAction::Set,
+            value_parser = clap::builder::BoolishValueParser::new()
+        )]
+        is_offline_replay: Option<bool>,
     },
 
     /// Get XMTP system config (system account addresses)
@@ -972,20 +1047,20 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         // ── Client (user) task commands ────────────────────────────
         AgentCommand::CreateTask {
-            description, description_summary, budget, max_budget, currency,
+            description, budget, max_budget, currency,
             title, provider, endpoint, attachments, payment_mode,
             service_id, service_params, service_token_address, service_token_amount,
             _agent_id: _,
         } => task::user::run_task(
             T::Create {
-                description, description_summary, budget, max_budget, currency,
+                description, budget, max_budget, currency,
                 title, provider, endpoint, attachments, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount,
             }, ctx,
         ).await,
 
-        AgentCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format } =>
-            task::user::run_task(T::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format }, ctx).await,
+        AgentCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device } =>
+            task::user::run_task(T::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device }, ctx).await,
 
         AgentCommand::SubscribeCancel { sub_id } =>
             task::user::run_task(T::SubscribeCancel { sub_id }, ctx).await,
@@ -997,6 +1072,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::user::run_task(T::SubscribeDetail { sub_id, format }, ctx).await,
         AgentCommand::SubscribeCost {} =>
             task::user::run_task(T::SubscribeCost {}, ctx).await,
+
+        AgentCommand::SubscribeDeviceUpdate { job_id, device_list, items } =>
+            task::user::run_task(T::SubscribeDeviceUpdate { job_id, device_list, items }, ctx).await,
+        AgentCommand::SubscribeOfflineUpdate { job_id, flag } =>
+            task::user::run_task(T::SubscribeOfflineUpdate { job_id, flag }, ctx).await,
+        AgentCommand::DeviceList { page, page_size } =>
+            task::user::run_task(T::DeviceList { page, page_size }, ctx).await,
 
         AgentCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
             task::user::run_task(T::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format }, ctx).await,
@@ -1040,11 +1122,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::ConfirmAccept { job_id } =>
             task::user::run_task(T::ConfirmAccept { job_id }, ctx).await,
 
-        AgentCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
-            task::user::run_task(T::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
-
-        AgentCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body } =>
-            task::user::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body }, ctx).await,
+        AgentCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body, force } =>
+            task::user::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body, force }, ctx).await,
 
         AgentCommand::X402Check { endpoint, agent_id, body } =>
             task::user::run_task(T::X402Check { endpoint, agent_id, body }, ctx).await,
@@ -1200,188 +1279,110 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::AutotradeConsentSet { job_id, mode, cap, agent_id, ttl_sec, plugin, quote } => {
-            use task::common::autotrade::{consent, grants, pipeline};
+        AgentCommand::SubscriptionRouteSet { job_id, asset_class, skill_id, plugin_id, protocol, requirements, delivery_id } => {
+            let asset_class = asset_class.parse::<crate::asset_class::AssetClass>()
+                .map_err(anyhow::Error::msg)?;
+            let route = task::common::autotrade::profile::write_model_route(
+                &job_id, asset_class, &skill_id, plugin_id.as_deref(),
+                protocol.as_deref(), &requirements, &delivery_id,
+            )?;
+            crate::output::success(route);
+            Ok(())
+        }
 
-            // A replayed signal can come back as ANOTHER decision (plugin-install /
-            // over-cap). Push it in-process — deterministic, same cure as the swap
-            // self-notify: the relaying LLM's guidance historically didn't cover a
-            // decision outcome, so a hand-off `d.command` was silently skipped and
-            // the card never reached the user (bug: B → plugin-install card lost).
-            // On push failure fall back to the legacy print-only hand-off so the
-            // caller still has `command` to run.
-            fn push_replay_decision(
-                d: &task::common::autotrade::card::DecisionRequest,
-                agent_id: &str,
+        AgentCommand::SubscriptionRouteClear { job_id } => {
+            task::common::autotrade::profile::clear_model_routes(&job_id)?;
+            crate::output::success_empty();
+            Ok(())
+        }
+
+        AgentCommand::AutotradeCapAdjustRequest { job_id, agent_id } => {
+            use task::common::autotrade::{card, consent};
+            let file = consent::load_consent(&job_id)?
+                .ok_or_else(|| anyhow::anyhow!("no live auto-trade consent"))?;
+            if file.mode != consent::ConsentMode::Auto {
+                anyhow::bail!("cap adjustment is only valid for auto consent");
+            }
+            let amount = file.trade_amount_u.as_deref().unwrap_or_default();
+            let cap = file.cap_u.as_deref().unwrap_or_default();
+            let amount_decimal = task::common::autotrade::amount::Decimal::parse(amount)?;
+            if matches!(
+                consent::evaluate_consent(&job_id, Some(&amount_decimal)),
+                Ok(consent::ConsentDecision::AutoOverCap)
             ) {
+                let d = card::make_cap_adjust_decision("trade", &job_id, &agent_id, amount, cap);
                 match task::common::pending_v2::push_decision_direct(
-                    &d.job_id,
+                    &job_id,
                     "user",
-                    agent_id,
+                    &agent_id,
                     &d.user_content,
-                    &task::common::autotrade::card::decision_list_label(d),
+                    &card::decision_list_label(&d),
                     &d.source_event,
                 ) {
                     Ok(()) => crate::output::success(serde_json::json!({
-                        "decision": true,
-                        "decisionPushed": true,
-                        "sourceEvent": d.source_event,
-                        "requiresPlugin": d.requires_plugin,
-                        "guidance": "Decision card already pushed to the user by the CLI. \
-                                     Do NOT run the card command or any okx-a2a user command \
-                                     — just end the turn.",
+                        "decision": true, "decisionPushed": true,
+                        "sourceEvent": d.source_event
                     })),
-                    Err(e) => {
-                        eprintln!(
-                            "[autotrade] decision direct-push failed, falling back to command hand-off: {e}"
-                        );
-                        crate::output::success(d);
-                    }
+                    Err(_) => crate::output::success(d),
                 }
+            } else {
+                crate::output::success(serde_json::json!({"capAlreadySufficient": true}));
             }
-            // Pause: user replied "暂停自动跟单". Clear THIS subscription's auto-follow state
-            // (consent + grant + any held signal) so the next signal re-shows the three-way
-            // prompt (evaluate_consent falls back to FirstTime). Scope = this jobId only.
+            Ok(())
+        }
+
+        AgentCommand::AutotradeConsentSet { job_id, mode, cap, trade_amount, agent_id: _, ttl_sec, plugin, tool, quote } => {
+            use task::common::autotrade::{consent, grants};
+            if tool.is_some() { anyhow::bail!("--tool is deprecated; use subscription-route-set"); }
             if mode == "pause" {
-                if cap.is_some() {
-                    anyhow::bail!("--cap is not valid with --mode pause");
-                }
-                if quote.is_some() {
-                    anyhow::bail!("--quote is not valid with --mode pause");
-                }
-                consent::clear_consent(&job_id);
-                grants::clear_grant(&job_id);
-                consent::clear_pending_signal(&job_id);
-                crate::output::success(
-                    serde_json::json!({ "consentMode": "pause", "cleared": true, "jobId": job_id }),
-                );
+                if cap.is_some() || trade_amount.is_some() || plugin.is_some() || quote.is_some() { anyhow::bail!("pause does not accept policy arguments"); }
+                consent::clear_consent(&job_id); grants::clear_grant(&job_id); consent::clear_pending_signal(&job_id);
+                crate::output::success(serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id}));
                 return Ok(());
             }
-            // Plugin-approved: user confirmed installing the plugin (installed visibly by the
-            // user session). Mark it approved, then replay the held signal execute-once — the
-            // pipeline's plugin gate now passes and returns the execution card.
-            if mode == "plugin-approved" {
-                let plugin = plugin.ok_or_else(|| {
-                    anyhow::anyhow!("--plugin is required with --mode plugin-approved")
-                })?;
-                consent::write_plugin_approved(&job_id, &plugin)
-                    .map_err(|e| anyhow::anyhow!("{}", e.0))?;
-                match consent::take_pending_signal(&job_id).ok().flatten() {
-                    Some(ps) => {
-                        let outcome = pipeline::run(pipeline::PipelineInput {
-                            signal_json: &ps.signal_json,
-                            job_id: &job_id,
-                            agent_id: &agent_id,
-                            received_at_ms: ps.received_at_ms,
-                            saved_path: "",
-                            consent_override: true,
-                        })
-                        .await;
-                        match outcome {
-                            pipeline::PipelineOutcome::Card(card) => crate::output::success(&*card),
-                            pipeline::PipelineOutcome::Notify(mut n) => {
-                                // Deterministic degrade notice (e.g. reply came after the
-                                // signal's TTL) — same guarantee as the live path.
-                                task::common::autotrade::notify::push_degrade_notice(&mut n, &job_id);
-                                crate::output::success(&n)
-                            }
-                            pipeline::PipelineOutcome::Decision(d) => {
-                                // Re-stash BEFORE pushing the follow-up card:
-                                // take_pending_signal deleted the held signal, and the
-                                // user's answer to this card triggers another
-                                // consent-set replay that must find it again — without
-                                // the re-stash that replay dead-ends at replayed:false
-                                // and the trade silently vanishes.
-                                let _ = consent::stash_pending_signal(
-                                    &job_id,
-                                    &ps.signal_json,
-                                    ps.received_at_ms,
-                                );
-                                push_replay_decision(&d, &agent_id)
-                            }
-                        }
-                    }
-                    None => {
-                        crate::output::success(
-                            serde_json::json!({ "pluginApproved": plugin, "replayed": false }),
-                        );
-                    }
-                }
+            if mode == "plugin-ready-check" || mode == "plugin-approved" {
+                if cap.is_some() || trade_amount.is_some() || quote.is_some() { anyhow::bail!("plugin-ready-check accepts only --plugin"); }
+                let plugin = plugin.ok_or_else(|| anyhow::anyhow!("--plugin is required"))?;
+                let selected = match plugin.as_str() {
+                    "trade-kit" => task::common::autotrade::tooling::ExecutionTool::TradeKit,
+                    "polymarket-plugin" => task::common::autotrade::tooling::ExecutionTool::PolymarketPlugin,
+                    "hyperliquid-plugin" => task::common::autotrade::tooling::ExecutionTool::HyperliquidPlugin,
+                    _ => anyhow::bail!("unsupported execution plugin/tool"),
+                };
+                let inventory = task::common::autotrade::tooling::ToolInventory::detect();
+                if inventory.readiness_of(selected) != task::common::autotrade::tooling::Readiness::Ready { anyhow::bail!("plugin/tool is not ready"); }
+                consent::write_plugin_approved(&job_id, &plugin).map_err(|e| anyhow::anyhow!(e.0))?;
+                crate::output::success(serde_json::json!({"pluginApproved":plugin,"replayed":false}));
                 return Ok(());
             }
+            if mode == "cap-adjust" {
+                if trade_amount.is_some() || plugin.is_some() || quote.is_some() { anyhow::bail!("cap-adjust accepts only --cap"); }
+                let new_cap = cap.as_deref().ok_or_else(|| anyhow::anyhow!("--cap is required"))?;
+                let existing = consent::load_consent(&job_id)?.ok_or_else(|| anyhow::anyhow!("no live consent"))?;
+                if existing.mode != consent::ConsentMode::Auto { anyhow::bail!("cap adjustment requires auto consent"); }
+                let remaining = existing.expires_at.saturating_sub(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)).max(1);
+                consent::write_consent_with_trade_amount(&job_id, consent::ConsentMode::Auto, Some(new_cap), existing.trade_amount_u.as_deref(), existing.quote_token.as_deref(), remaining)?;
+                grants::write_cap_grant(&job_id, new_cap, remaining)?;
+                crate::output::success(serde_json::json!({"capAdjusted":true,"cap":new_cap}));
+                return Ok(());
+            }
+            if plugin.is_some() { anyhow::bail!("--plugin is only valid with plugin-ready-check"); }
             let mode_enum = match mode.as_str() {
                 "auto" => consent::ConsentMode::Auto,
                 "manual" => consent::ConsentMode::Manual,
                 "decline" => consent::ConsentMode::Decline,
-                _ => anyhow::bail!(
-                    "--mode must be one of: auto | manual | decline | pause | plugin-approved"
-                ),
+                _ => anyhow::bail!("unsupported --mode"),
             };
-            // Persist the consent record (validates cap for auto).
-            consent::write_consent(&job_id, mode_enum, cap.as_deref(), quote.as_deref(), ttl_sec)?;
-            // Mirror the cap into the grant file so the out-of-process plugin check
-            // agrees (auto only); clear it otherwise so a stale `--autotrade-job` can't pass.
+            let effective_amount = trade_amount.as_deref().or_else(|| if mode_enum == consent::ConsentMode::Auto { cap.as_deref() } else { None });
+            consent::write_consent_with_trade_amount(&job_id, mode_enum, cap.as_deref(), effective_amount, quote.as_deref(), ttl_sec)?;
             match mode_enum {
-                consent::ConsentMode::Auto => {
-                    grants::write_cap_grant(&job_id, cap.as_deref().unwrap_or_default(), ttl_sec)?;
-                }
-                consent::ConsentMode::Manual | consent::ConsentMode::Decline => {
-                    grants::clear_grant(&job_id);
-                }
+                consent::ConsentMode::Auto => grants::write_cap_grant(&job_id, cap.as_deref().unwrap_or_default(), ttl_sec)?,
+                consent::ConsentMode::Manual | consent::ConsentMode::Decline => grants::clear_grant(&job_id),
             }
-            // Decline ⇒ discard the held signal; nothing to execute.
-            if mode_enum == consent::ConsentMode::Decline {
-                consent::clear_pending_signal(&job_id);
-                crate::output::success(serde_json::json!({ "consentMode": "decline", "replayed": false }));
-                return Ok(());
-            }
-            // Auto / Manual ⇒ replay the held signal ("execute this one"), if any.
-            match consent::take_pending_signal(&job_id).ok().flatten() {
-                Some(ps) => {
-                    let outcome = pipeline::run(pipeline::PipelineInput {
-                        signal_json: &ps.signal_json,
-                        job_id: &job_id,
-                        agent_id: &agent_id,
-                        received_at_ms: ps.received_at_ms,
-                        saved_path: "",
-                        // Option B (manual): the user explicitly approved THIS trade —
-                        // execute it once, regardless of the just-stored manual mode
-                        // (which governs future signals). Auto (A) keeps the normal
-                        // cap-checked gate.
-                        consent_override: matches!(mode_enum, consent::ConsentMode::Manual),
-                    })
-                    .await;
-                    match outcome {
-                        pipeline::PipelineOutcome::Card(card) => crate::output::success(&*card),
-                        pipeline::PipelineOutcome::Notify(mut n) => {
-                            // Deterministic degrade notice (e.g. reply came after the
-                            // signal's TTL) — same guarantee as the live path.
-                            task::common::autotrade::notify::push_degrade_notice(&mut n, &job_id);
-                            crate::output::success(&n)
-                        }
-                        pipeline::PipelineOutcome::Decision(d) => {
-                            // Re-stash BEFORE pushing (see the plugin-approved branch above):
-                            // the answer to this follow-up card (over-cap raise / plugin
-                            // install) replays again and must find the held signal.
-                            let _ = consent::stash_pending_signal(
-                                &job_id,
-                                &ps.signal_json,
-                                ps.received_at_ms,
-                            );
-                            push_replay_decision(&d, &agent_id)
-                        }
-                    }
-                    Ok(())
-                }
-                None => {
-                    crate::output::success(
-                        serde_json::json!({ "consentMode": mode, "cap": cap, "replayed": false }),
-                    );
-                    Ok(())
-                }
-            }
+            consent::clear_pending_signal(&job_id);
+            crate::output::success(serde_json::json!({"consentMode":mode,"cap":cap,"replayed":false}));
+            Ok(())
         }
-
         AgentCommand::AgreeRefund { job_id, agent_id } =>
             task::asp::run_provider(
                 task::asp::ProviderCommand::AgreeRefund { job_id, agent_id }, ctx,
@@ -1841,6 +1842,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             provider_security_rate,
             client_communication_address,
             provider_communication_address,
+            is_offline_replay,
         } => chat::run(
             chat::ChatCommand::MessageEligible {
                 agent_id,
@@ -1852,6 +1854,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 provider_security_rate,
                 client_communication_address,
                 provider_communication_address,
+                is_offline_replay,
             },
             ctx,
         ).await,
@@ -2065,16 +2068,17 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
                 original_name: String::new(),
                 text_content: recovered.text_content.clone(),
             });
-            // FB3: recovery parity with the live deliverable_received_cli path — a
-            // recovered delivery carrying an `autotrade:` block must run the copy-trade
-            // pipeline (extract signal → pipeline::run), not just be archived into the
-            // review flow. Emit the execution card / notify as the response and stop
-            // (same early-return short-circuit as the freshness warning below).
-            if let Some(signal) = recovered.autotrade_signal.as_deref() {
-                let card = task::user::run_recovered_autotrade(
-                    signal, job_id, agent_id, &recovered.saved_path,
-                ).await;
-                return (Some(card), Some(ctx));
+            if let Some(prompt) = task::user::route_subscription_delivery_to_skill(
+                job_id,
+                agent_id,
+                &recovered.saved_path,
+                &recovered.deliverable_type,
+                "recover",
+                recovered.transport_identity.as_ref(),
+            )
+            .await
+            {
+                return (Some(prompt), Some(ctx));
             }
         } else if DEBUG_LOG {
             eprintln!("[check-freshness] job_submitted: no deliverable found — waiting for deliverable_received");

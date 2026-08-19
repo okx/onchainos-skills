@@ -7,7 +7,7 @@ mod manage;
 pub(super) mod subscription;
 
 pub(super) use self::core::{provider_applied, job_accepted, deliverable_received_cli, job_submitted, approve_review, reject_review, job_completed};
-pub(crate) use self::core::{persist_a2a_spool, try_recover_from_temp_file, run_recovered_autotrade};
+pub(crate) use self::core::{persist_a2a_spool, try_recover_from_temp_file, route_subscription_delivery_to_skill};
 pub(super) use dispute::{job_rejected, job_disputed, dispute_resolved};
 pub(super) use terminal::{job_refunded, job_auto_refunded, job_expired, job_closed, submit_expired, reject_expired, review_deadline_warn, close_task, reward_claimed, wakeup_notify, staked_and_unknown};
 pub(super) use manage::{create_task, attachment_added_cli, upload_and_forward_all_attachments};

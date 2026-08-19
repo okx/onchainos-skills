@@ -118,7 +118,7 @@ pub fn resolve_chain(name: &str) -> String {
         "polygon" | "matic" => "137".to_string(),
         "arbitrum" | "arb" => "42161".to_string(),
         "base" => "8453".to_string(),
-        "xlayer" | "okb" => "196".to_string(),
+        "xlayer" | "x layer" | "x-layer" | "okb" => "196".to_string(),
         "xlayer_test" => "1952".to_string(),
         "avalanche" | "avax" => "43114".to_string(),
         "optimism" | "op" => "10".to_string(),
@@ -453,6 +453,12 @@ mod tests {
         assert_eq!(resolve_chain("XLAYER_TEST"), "1952"); // case-insensitive
         // And the resolved index must pass the supported-chain gate offline.
         assert!(ensure_supported_chain(&resolve_chain("xlayer_test"), "xlayer_test").is_ok());
+    }
+
+    #[test]
+    fn resolve_chain_accepts_v11_x_layer_display_name_without_cache() {
+        assert_eq!(resolve_chain("X Layer"), "196");
+        assert_eq!(resolve_chain("x-layer"), "196");
     }
 
     #[test]

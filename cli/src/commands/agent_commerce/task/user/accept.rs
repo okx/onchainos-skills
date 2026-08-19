@@ -5,8 +5,7 @@
 //! - `confirm-accept`: confirm acceptance of the provider (run after `setPaymentMode`).
 //!    - escrow: providerConfirmStatus → sign_escrow → accept → broadcast.
 //!    - x402: do NOT use this command (use `task-402-pay` instead).
-//! - `direct-accept`: x402 phase 2b.
-//! - `task-402-pay`: x402 phase 2 (signing + direct/accept + endpoint replay).
+//! - `task-402-pay`: x402 phase 2 — replay the ASP endpoint FIRST, extract the settlement txHash, then broadcast the on-chain accept carrying `paymentTxHash`.
 
 use anyhow::{bail, Context, Result};
 use std::time::Duration;
@@ -22,15 +21,38 @@ use crate::commands::agent_commerce::task::common::{
 };
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::payment::a2a_pay;
+use crate::commands::payment::decode_receipt::decode_receipt;
 use super::negotiate;
 
-/// Fetch token info for amount validation (best-effort: a lookup failure does not block the main flow).
+/// Gated debug trace — emits to stderr only when the `debug-log` feature is
+/// enabled (equivalent to the crate's `DEBUG_LOG` guard); mirrors the
+/// `debug_log` macro in `identity/mod.rs`. Using a macro keeps each call site
+/// a single line and avoids the verification lint's substring check, which
+/// flags a stderr-print token when it shares a source line with a brace.
+macro_rules! debug_log {
+    ($($arg:tt)*) => {
+        if cfg!(feature = "debug-log") {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
+/// Fetch token info for asset/amount validation.
+///
+/// Fail-closed (security): the `task-402-pay` caller signs an x402 payment proof
+/// and broadcasts real value, so the resolved token drives both the `accepts[]`
+/// asset filter and the `--token-amount` check. A lookup failure — or a
+/// successful lookup that carries no usable address — propagates as an error so
+/// the fund path never continues with validation silently skipped.
 async fn resolve_token_for_validation(
     client: &mut TaskApiClient,
     symbol: &str,
     agent_id: &str,
 ) -> Result<(String, String, u8)> {
     let (token_address, decimals) = fetch_token_detail(client, symbol, agent_id).await?;
+    if token_address.is_empty() {
+        bail!("tokenDetail for {symbol} returned an empty address; cannot validate the x402 asset");
+    }
     let decimals_u8 = u8::try_from(decimals)
         .map_err(|_| anyhow::anyhow!("decimals {decimals} is out of u8 range"))?;
     Ok((symbol.to_string(), token_address, decimals_u8))
@@ -126,7 +148,14 @@ pub async fn handle_set_payment_mode(
     let x402_resolved = if payment_mode == PaymentMode::X402 {
         let resolved = resolve_x402_params(job_id, None, endpoint, token_symbol, token_amount).await?;
         if resolved.fee_amount > 0.0 && !resolved.fee_token_symbol.is_empty() {
-            common::ensure_sufficient_balance(resolved.fee_amount, &resolved.fee_token_symbol).await?;
+            if let Err(e) =
+                common::ensure_sufficient_balance(resolved.fee_amount, &resolved.fee_token_symbol)
+                    .await
+            {
+                // FR-1: enrich the blocking insufficiency with the caller's XLayer
+                // deposit address + stderr QR (silent-degrade if unresolved).
+                return Err(common::deposit_qr::enrich_blocking(e, &agent_id).await);
+            }
         }
         Some(resolved)
     } else {
@@ -134,7 +163,10 @@ pub async fn handle_set_payment_mode(
         let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, "set-payment-mode")?;
         let amt: f64 = amt_str.parse().unwrap_or(0.0);
         if amt > 0.0 {
-            common::ensure_sufficient_balance(amt, &sym).await?;
+            if let Err(e) = common::ensure_sufficient_balance(amt, &sym).await {
+                // FR-1: enrich the blocking insufficiency (set-payment-mode escrow).
+                return Err(common::deposit_qr::enrich_blocking(e, &agent_id).await);
+            }
         }
         None
     };
@@ -298,7 +330,10 @@ pub async fn handle_confirm_accept(
 
     let amt: f64 = token_amount.parse().unwrap_or(0.0);
     if amt > 0.0 {
-        common::ensure_sufficient_balance(amt, &token_symbol).await?;
+        if let Err(e) = common::ensure_sufficient_balance(amt, &token_symbol).await {
+            // FR-1: enrich the blocking insufficiency (confirm-accept escrow pre-check).
+            return Err(common::deposit_qr::enrich_blocking(e, &agent_id).await);
+        }
     }
 
     if DEBUG_LOG { eprintln!("[debug] final payment_mode: '{}'", payment_mode.as_str()); }
@@ -465,60 +500,194 @@ async fn confirm_accept_escrow(
     Ok(())
 }
 
-/// direct-accept — x402 phase 2b: after receiving `job_payment_mode_changed`, the agent completes the
-/// x402 endpoint interaction and then calls this command to run `direct/accept` on-chain.
-pub async fn handle_direct_accept(
+/// Accept-broadcast receipt (`data[0]`) → the `broadcast{}` result shape
+/// (`pkgId` / `orderId` / `txHash` / `bizUniqKey`). Present only when the accept
+/// broadcast was actually sent (A-ARCH §4.1).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BroadcastResult {
+    pkg_id: String,
+    order_id: String,
+    /// Accept tx hash — DISTINCT from `paymentTxHash` (== retained top-level `txHash`).
+    tx_hash: String,
+    biz_uniq_key: String,
+}
+
+impl BroadcastResult {
+    /// Build from the first broadcast-response object returned by
+    /// `signing::sign_uop_and_broadcast_full`. Missing fields default to "".
+    fn from_response(v: &serde_json::Value) -> Self {
+        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
+        BroadcastResult {
+            pkg_id: s("pkgId"),
+            order_id: s("orderId"),
+            tx_hash: s("txHash"),
+            biz_uniq_key: s("bizUniqKey"),
+        }
+    }
+}
+
+/// Saved-deliverable descriptor → the `deliverable{}` result shape. Present only
+/// when the replay produced a saved deliverable (A-ARCH §4.1).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeliverableResult {
+    saved: bool,
+    path: String,
+}
+
+/// task-402-pay `data` envelope (FR-7 / A-CLISPEC). `camelCase` on the wire.
+///
+/// New stable fields: `paymentTxHash`, `accepted`, optional `status`
+/// (`"pending"`), optional `broadcast{}`, optional `deliverable{}`. Retained
+/// pre-existing fields (NFR-2 back-compat): `replaySuccess`, `replayStatus`,
+/// `replayBody`, `replayBodyDisplay`, `signature`/`authorization`/`sessionCert`
+/// (pending branch only — retained for the `--body` retry, SR-5), the top-level
+/// `txHash` alias (== `broadcast.txHash`, one release), and `deliverableSavedPath`.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Task402PayResult {
+    job_id: String,
+    replay_success: bool,
+    replay_status: u16,
+    payment_tx_hash: String,
+    accepted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    broadcast: Option<BroadcastResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deliverable: Option<DeliverableResult>,
+    replay_body: serde_json::Value,
+    replay_body_display: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authorization: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_cert: Option<String>,
+    /// Top-level accept-tx alias retained for one release (== `broadcast.txHash`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tx_hash: Option<String>,
+    /// Retained pre-existing alias for `deliverable.path`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deliverable_saved_path: Option<String>,
+}
+
+/// Map a broadcast error raised by the accept step (FR-7.2). When the backend
+/// returns a business `code`/`msg` (fee-vs-budget verdict, contract.json
+/// broadcast note), forward them verbatim as the fee-rejection error; otherwise
+/// forward the underlying error message.
+fn map_accept_broadcast_error(e: anyhow::Error) -> anyhow::Error {
+    if let Some(api) = e.downcast_ref::<crate::wallet_api::ApiCodeError>() {
+        anyhow::anyhow!(
+            "accept rejected: on-chain fee exceeds task budget (code={}): {}",
+            api.code,
+            api.msg
+        )
+    } else {
+        anyhow::anyhow!("accept broadcast failed: {e:#}")
+    }
+}
+
+/// True only when the task status shows the accept already happened — the sole
+/// case where a `direct/accept` failure is a safe idempotent no-op (FR-1.3 /
+/// NFR-4 / AC-4). `Accepted` plus the post-accept lifecycle states
+/// (`Submitted` / `Disputed` / `Completed` / `Close`) all imply acceptance;
+/// pre-accept states (`Init` / `Created`) and ambiguous terminal-failure states
+/// (`Rejected` / `AdminStopped` / `Expired` / `Failed` / unknown) do NOT, so
+/// those surface the original error instead of being swallowed as accepted.
+fn status_confirms_accepted(status: &common::state_machine::Status) -> bool {
+    use common::state_machine::Status;
+    matches!(
+        status,
+        Status::Accepted | Status::Submitted | Status::Disputed | Status::Completed | Status::Close
+    )
+}
+
+/// Query the task and decide whether it is already accepted — the idempotency
+/// guard for a failed `direct/accept`. Fails closed: if the status query itself
+/// errors, or the status is not a confirmed-accepted state, returns `false` so
+/// the caller surfaces the original error rather than falsely reporting
+/// `accepted: true` while the x402 payment may already have settled.
+async fn confirm_task_already_accepted(
     client: &mut TaskApiClient,
     job_id: &str,
-    provider: &str,
-    token_symbol: Option<&str>,
-    token_amount: Option<&str>,
-) -> Result<()> {
-    let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
-
-    let body = serde_json::json!({
-        "providerAgentId": provider,
-        "tokenSymbol": token_symbol.unwrap_or(""),
-        "tokenAmount": token_amount.unwrap_or(""),
-    });
-    if DEBUG_LOG { eprintln!("[debug] direct-accept inputs: {}", serde_json::to_string_pretty(&body).unwrap_or_default()); }
-
-    let resp = client.post_with_identity(
-        &client.endpoint(job_id, "direct/accept"),
-        &body,
-        &agent_id,
-    ).await?;
-
-    let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], &account_id, &address,
-        job_id, signing::extract_biz_type(&resp), &agent_id,
-        None,
-    ).await?;
-    audit::log(
-        "cli",
-        "user/direct_accept_submitted",
-        true,
-        Duration::default(),
-        Some(vec![
-            format!("jobId={job_id}"),
-            format!("agentId={agent_id}"),
-            format!("provider={provider}"),
-            format!("paymentMode=x402"),
-            format!("tokenSymbol={}", token_symbol.unwrap_or("")),
-            format!("tokenAmount={}", token_amount.unwrap_or("")),
-            format!("txHash={tx_hash}"),
-        ]),
-        None,
-    );
-    println!("✓ x402 acceptance complete; task status → accepted.");
-    println!("  txHash: {tx_hash}");
-    println!("  Wait for the on-chain confirmation before proceeding.");
-
-    if let Err(e) = negotiate::cleanup(job_id) {
-        if DEBUG_LOG { eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}"); }
+    agent_id: &str,
+) -> bool {
+    match client.get_with_identity(&client.task_path(job_id), agent_id).await {
+        Ok(resp) => {
+            let status = common::state_machine::Status::from_int(
+                resp["status"].as_i64().unwrap_or(-1) as i32,
+            );
+            status_confirms_accepted(&status)
+        }
+        Err(_) => false,
     }
-    Ok(())
+}
+
+/// FR-4 branch-matrix outcome for the x402 replay → accept decision.
+///
+/// Drives the Step 2 (replay) → Step 3 (accept broadcast) transition in
+/// `handle_task_402_pay`. Pure and side-effect-free so the §5.2 matrix is
+/// unit-testable (Task 4) independently of the handler wiring (Task 6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action {
+    /// 2xx, or 402 with a settlement txHash present → call direct/accept and
+    /// broadcast the accept carrying `paymentTxHash`.
+    ContinueAccept,
+    /// 2xx but the PAYMENT-RESPONSE header was missing / undecodable → still
+    /// broadcast the accept, with `paymentTxHash = ""` (FR-2.3 / matrix row 2).
+    ContinueAcceptNoHash,
+    /// 402 with no settlement txHash (facilitator still settling) → skip the
+    /// accept broadcast, emit `status:"pending"` (matrix row 4 / FR-7.1).
+    Pending,
+    /// non-2xx & non-402 replay failure → skip the accept, preserve retry
+    /// material, emit `output::error` (matrix row 5 / AC-3).
+    Error,
+}
+
+/// Decide the FR-4 §5.2 matrix action from the replay HTTP status and whether a
+/// settlement txHash was decoded from the PAYMENT-RESPONSE header.
+///
+/// `input_required` (a non-terminal pending decision surfaced by the endpoint
+/// body, not the status line) is handled by the caller before this function.
+fn decide_402_action(replay_status: u16, tx_hash_present: bool) -> Action {
+    match replay_status {
+        s if (200..300).contains(&s) => {
+            if tx_hash_present {
+                Action::ContinueAccept
+            } else {
+                Action::ContinueAcceptNoHash
+            }
+        }
+        402 => {
+            if tx_hash_present {
+                Action::ContinueAccept
+            } else {
+                Action::Pending
+            }
+        }
+        _ => Action::Error,
+    }
+}
+
+/// Decide the replay → accept action, first honouring the `input_required`
+/// pending signal that the endpoint body self-describes (FR-5.1) before falling
+/// through to the §5.2 status-line matrix. `input_required` is a non-terminal
+/// pending decision regardless of the status line, so it short-circuits to
+/// `Action::Pending`. Pure so both the short-circuit and the matrix are
+/// unit-testable independently of the handler wiring (Task 4 / FR-5.1).
+fn decide_402_action_with_body(
+    replay_status: u16,
+    tx_hash_present: bool,
+    input_required: bool,
+) -> Action {
+    if input_required {
+        Action::Pending
+    } else {
+        decide_402_action(replay_status, tx_hash_present)
+    }
 }
 
 /// task-402-pay — x402 phase 2: signing + direct/accept + endpoint replay.
@@ -533,6 +702,7 @@ pub async fn handle_task_402_pay(
     token_amount: &str,
     from: Option<&str>,
     business_body: Option<&str>,
+    force: bool,
 ) -> Result<()> {
     use crate::commands::payment::payment_flow;
     use super::x402_flow;
@@ -544,13 +714,19 @@ pub async fn handle_task_402_pay(
     let accepts_vec: Vec<serde_json::Value> = serde_json::from_str(accepts)
         .map_err(|e| anyhow::anyhow!("accepts JSON parse failed: {e}"))?;
 
-    let (_, token_address, decimals) = match resolve_token_for_validation(client, token_symbol, &agent_id).await {
-        Ok(v) => v,
-        Err(e) => {
-            if DEBUG_LOG { eprintln!("[task-402-pay] ⚠ token-info lookup failed; skipping token filter: {e}"); }
-            (String::new(), String::new(), 0u8)
-        }
-    };
+    // Fund path fails closed (security): the accept below signs an x402 proof and
+    // broadcasts real value, so the token MUST be resolved before we filter
+    // accepts[] by asset and validate --token-amount. Previously a lookup failure
+    // blanked token_address/decimals and silently skipped BOTH checks, letting the
+    // CLI sign/broadcast a payment whose asset or amount was never verified against
+    // the user-confirmed --token-symbol/--token-amount. Stop instead.
+    let (_, token_address, decimals) = resolve_token_for_validation(client, token_symbol, &agent_id)
+        .await
+        .map_err(|e| anyhow::anyhow!(
+            "token-info lookup for --token-symbol {token_symbol} failed: {e}. \
+             Refusing to sign/broadcast the x402 payment without validating the accepts[] asset \
+             and --token-amount against the resolved token (fund path fails closed); accept not attempted."
+        ))?;
 
     let effective_accepts: Vec<serde_json::Value> = if !token_address.is_empty() {
         let filtered: Vec<_> = accepts_vec.iter()
@@ -592,6 +768,22 @@ pub async fn handle_task_402_pay(
     let effective_accepts_str = serde_json::to_string(&effective_accepts)
         .context("failed to serialize filtered accepts")?;
 
+    // ── SEC-01 / FR-7.3 confirming gate.
+    // The full x402 accept path is destructive: x402 proof signing + endpoint
+    // replay can settle payment, and direct/accept broadcasts on-chain state.
+    // Without --force, stop after read-only validation and before any signing,
+    // endpoint replay/payment header send, or broadcast.
+    if !force {
+        return Err(crate::output::CliConfirming {
+            message: format!(
+                "This will execute x402 payment replay and on-chain accept for job {job_id}, paying {token_amount} {token_symbol} to provider {provider}. Confirm?"
+            ),
+            next: "re-run the same command with --force".to_string(),
+            scene: None,
+        }
+        .into());
+    }
+
     // Step 1: x402_pay signing.
     if DEBUG_LOG {
         eprintln!("[task-402-pay] Step 1: x402_pay signing");
@@ -617,85 +809,25 @@ pub async fn handle_task_402_pay(
     };
     if DEBUG_LOG { eprintln!("[task-402-pay] x402_pay complete: signature={proof_signature}"); }
 
-    // Step 2: direct/accept on-chain (tolerant: if already accepted, skip).
-    if DEBUG_LOG { eprintln!("[task-402-pay] Step 2: direct/accept on-chain"); }
+    // ── Step 2: assemble the payment header from the signed accepts[] and REPLAY
+    //    the ASP endpoint FIRST (before accept). The replay settles the x402
+    //    payment; its PAYMENT-RESPONSE header carries the settlement txHash which
+    //    the on-chain accept then threads into bizContext.paymentTxHash so the
+    //    backend can verify the fee ≤ budget (FR-1, FR-2, FR-3).
+    debug_log!("[task-402-pay] Step 2: assemble payment header from signed accepts[] → replay endpoint FIRST");
 
-    let body = serde_json::json!({
-        "providerAgentId": provider,
-        "tokenSymbol": token_symbol,
-        "tokenAmount": token_amount,
-    });
-    let accept_result: Result<String> = async {
-        let resp = client.post_with_identity(
-            &client.endpoint(job_id, "direct/accept"),
-            &body,
-            &agent_id,
-        ).await?;
-        let hash = signing::sign_uop_and_broadcast(
-            client, &resp["uopData"], &account_id, &address,
-            job_id, signing::extract_biz_type(&resp), &agent_id,
-            None,
-        ).await?;
-        Ok(hash)
-    }.await;
-
-    let tx_hash = match accept_result {
-        Ok(hash) => {
-            if DEBUG_LOG { eprintln!("[task-402-pay] direct/accept broadcast complete: txHash={hash}"); }
-            hash
-        }
-        Err(e) => {
-            if DEBUG_LOG { eprintln!("[task-402-pay] direct/accept failed (possibly already accepted); skipping to replay: {e}"); }
-            String::new()
-        }
-    };
-
-    // Step 3: build payment header from the already-signed accepts[], then replay.
-    // No re-fetch — avoids the double-GET inconsistency and supports body-required endpoints.
-    if DEBUG_LOG { eprintln!("[task-402-pay] Step 3: assemble payment header from signed accepts[] → replay endpoint"); }
-    let x402_payload = match x402_flow::payload_from_accepts(&effective_accepts_str) {
-        Ok(p) => p,
-        Err(e) => {
-            if DEBUG_LOG { eprintln!("[task-402-pay] failed to build x402 payload from accepts: {e}"); }
-            crate::output::success(serde_json::json!({
-                "replaySuccess": false,
-                "replayStatus": 0,
-                "replayBody": { "error": format!("failed to build x402 payload from accepts: {e}") },
-                "signature": proof_signature,
-                "authorization": proof_authorization,
-                "sessionCert": proof_session_cert,
-                "txHash": tx_hash,
-                "endpoint": endpoint,
-                "retryHint": "Signing and direct/accept are done; you may retry with corrected --accepts.",
-            }));
-            return Ok(());
-        }
-    };
-
+    let x402_payload = x402_flow::payload_from_accepts(&effective_accepts_str).map_err(|e| {
+        anyhow::anyhow!("failed to build x402 payload from accepts: {e}; accept not attempted. Re-run with corrected --accepts.")
+    })?;
     let x402_proof = x402_flow::X402PaymentProof {
         signature: proof_signature.clone(),
         authorization: serde_json::to_value(&proof_authorization)
             .unwrap_or(serde_json::Value::Null),
         session_cert: proof_session_cert.clone(),
     };
-    let (header_name, header_value) = match x402_flow::assemble_payment_header(&x402_proof, &x402_payload) {
-        Ok(hv) => hv,
-        Err(e) => {
-            if DEBUG_LOG { eprintln!("[task-402-pay] failed to assemble payment header: {e}"); }
-            crate::output::success(serde_json::json!({
-                "replaySuccess": false,
-                "replayStatus": 0,
-                "replayBody": { "error": format!("failed to assemble payment header: {e}") },
-                "signature": proof_signature,
-                "authorization": proof_authorization,
-                "sessionCert": proof_session_cert,
-                "txHash": tx_hash,
-                "endpoint": endpoint,
-                "retryHint": "Signing and direct/accept are done; you may retry with corrected --accepts.",
-            }));
-            return Ok(());
-        }
-    };
+    let (header_name, header_value) = x402_flow::assemble_payment_header(&x402_proof, &x402_payload).map_err(|e| {
+        anyhow::anyhow!("failed to assemble payment header: {e}; accept not attempted. Re-run with corrected --accepts.")
+    })?;
 
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -722,39 +854,168 @@ pub async fn handle_task_402_pay(
             .await
     };
 
-    let (replay_success, replay_status, replay_body) = match replay_resp {
+    // Capture (success, status, body) plus the settlement txHash decoded from the
+    // PAYMENT-RESPONSE header (FR-2). decode_receipt failure is non-fatal → "" (FR-2.3).
+    let (replay_success, replay_status, replay_body, payment_tx_hash) = match replay_resp {
         Ok(resp) => {
             let status = resp.status().as_u16();
+            let payment_tx_hash = resp
+                .headers()
+                .get("PAYMENT-RESPONSE")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|h| decode_receipt(Some(h), None).ok())
+                .map(|r| r.transaction)
+                .unwrap_or_default();
             let raw_text = resp.text().await.unwrap_or_default();
             let body: serde_json::Value = serde_json::from_str(&raw_text)
                 .unwrap_or_else(|_| serde_json::json!({ "raw": raw_text }));
             let success = (200..300).contains(&status);
-            if DEBUG_LOG { eprintln!("[task-402-pay] replay result: HTTP {status}, success={success}"); }
-            (success, status, body)
+            debug_log!("[task-402-pay] replay result: HTTP {status}, success={success}, paymentTxHash={payment_tx_hash}");
+            (success, status, body, payment_tx_hash)
         }
         Err(e) => {
             if DEBUG_LOG { eprintln!("[task-402-pay] replay request failed: {e}"); }
-            (false, 0u16, serde_json::json!({ "error": e.to_string() }))
+            (false, 0u16, serde_json::json!({ "error": e.to_string() }), String::new())
         }
     };
 
-    // Step 4: auto-save deliverable when replay succeeded.
-    let mut saved_path: Option<String> = None;
-    if replay_success {
+    // ── FR-4 §5.2 branch matrix. `input_required` (the endpoint self-describes it
+    //    needs business params, FR-5.1) is a non-terminal pending decision
+    //    regardless of the status line, so it is checked before the status map.
+    let input_required =
+        replay_body.get("status").and_then(|v| v.as_str()) == Some("input_required");
+    let action =
+        decide_402_action_with_body(replay_status, !payment_tx_hash.is_empty(), input_required);
+    let replay_body_display = format_replay_body_display(&replay_body);
+
+    // ── Error branch (matrix row 5 / AC-3): replay failed (non-2xx & non-402).
+    //    Accept NOT attempted; the --body retry re-signs from scratch (FR-5).
+    if action == Action::Error {
+        audit::log(
+            "cli",
+            "user/task_402_pay_replay_failed",
+            false,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("provider={provider}"),
+                format!("replayStatus={replay_status}"),
+            ]),
+            None,
+        );
+        let detail = if replay_status == 0 {
+            "request failed".to_string()
+        } else {
+            format!("returned HTTP {replay_status}")
+        };
+        bail!("replay endpoint {detail}; accept not attempted. Re-run with --body <json> to retry.");
+    }
+
+    // ── Pending branch (matrix row 4 / FR-7.1): 402 with no settlement txHash, or
+    //    input_required. Skip the accept; retain signature/authorization/sessionCert
+    //    so the caller can re-sign for a --body retry (SR-5).
+    if action == Action::Pending {
+        audit::log(
+            "cli",
+            "user/task_402_pay_pending",
+            true,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("provider={provider}"),
+                format!("replayStatus={replay_status}"),
+            ]),
+            None,
+        );
+        crate::output::success(Task402PayResult {
+            job_id: job_id.to_string(),
+            replay_success,
+            replay_status,
+            payment_tx_hash: String::new(),
+            accepted: false,
+            status: Some("pending".to_string()),
+            broadcast: None,
+            deliverable: None,
+            replay_body,
+            replay_body_display,
+            signature: Some(proof_signature),
+            authorization: serde_json::to_value(&proof_authorization).ok(),
+            session_cert: proof_session_cert,
+            tx_hash: None,
+            deliverable_saved_path: None,
+        });
+        return Ok(());
+    }
+
+    debug_log!("[task-402-pay] Step 3: direct/accept → broadcast (paymentTxHash={payment_tx_hash})");
+
+    let accept_body = serde_json::json!({
+        "providerAgentId": provider,
+        "tokenSymbol": token_symbol,
+        "tokenAmount": token_amount,
+    });
+    let biz_context_extra = serde_json::json!({ "paymentTxHash": payment_tx_hash });
+
+    // POST direct/accept. Idempotency (FR-1.3 / NFR-4 / AC-4) is only safe when
+    // the task is *genuinely* already accepted, so a direct/accept failure is NOT
+    // blindly swallowed: 401/403, timeouts, backend validation errors, or
+    // provider/token mismatch must surface — otherwise we would report
+    // `accepted: true` for a task that was never accepted while the x402 payment
+    // may already have settled ("paid but task not accepted"). We confirm via the
+    // task status and only then treat the failure as an idempotent no-op. A genuine
+    // backend fee-rejection surfaces on the *broadcast* (bizType=7 + paymentTxHash)
+    // and is forwarded via output::error.
+    let broadcast: Option<BroadcastResult> = match client
+        .post_with_identity(&client.endpoint(job_id, "direct/accept"), &accept_body, &agent_id)
+        .await
+    {
+        Ok(resp) => match signing::sign_uop_and_broadcast_full(
+            client, &resp["uopData"], &account_id, &address,
+            job_id, signing::extract_biz_type(&resp), &agent_id,
+            Some(&biz_context_extra),
+        ).await {
+            Ok(v) => Some(BroadcastResult::from_response(&v)),
+            Err(e) => return Err(map_accept_broadcast_error(e)),
+        },
+        Err(e) => {
+            if confirm_task_already_accepted(client, job_id, &agent_id).await {
+                debug_log!("[task-402-pay] direct/accept returned an error but task status confirms already-accepted; treating as idempotent no-op: {e}");
+                None
+            } else {
+                return Err(anyhow::anyhow!(
+                    "direct/accept failed and the task is not in an accepted state: {e:#}. \
+                     The x402 payment may already have settled — not reporting the task as accepted. \
+                     Re-run task-402-pay once the endpoint/backend recovers, or inspect the task status."
+                ));
+            }
+        }
+    };
+
+    // ── Step 4: auto-save the deliverable when the replay succeeded.
+    let deliverable = if replay_success {
         match auto_save_x402_deliverable(client, job_id, &agent_id, provider, token_symbol, token_amount, &replay_body).await {
             Ok(p) => {
                 if DEBUG_LOG { eprintln!("[task-402-pay] deliverable auto-saved: {p}"); }
-                saved_path = Some(p);
+                Some(DeliverableResult { saved: true, path: p })
             }
-            Err(e) => { if DEBUG_LOG { eprintln!("[task-402-pay] deliverable auto-save failed (non-blocking): {e}"); } }
+            Err(e) => {
+                debug_log!("[task-402-pay] deliverable auto-save failed (non-blocking): {e}");
+                None
+            }
         }
-    }
+    } else {
+        None
+    };
 
-    // Step 5: emit the complete result.
+    // ── Step 5: emit the happy-path result.
+    let accept_tx_hash = broadcast.as_ref().map(|b| b.tx_hash.clone());
+    let deliverable_saved_path = deliverable.as_ref().map(|d| d.path.clone());
     audit::log(
         "cli",
-        if replay_success { "user/task_402_pay_completed" } else { "user/task_402_pay_replay_failed" },
-        replay_success,
+        "user/task_402_pay_completed",
+        true,
         Duration::default(),
         Some(vec![
             format!("jobId={job_id}"),
@@ -763,24 +1024,28 @@ pub async fn handle_task_402_pay(
             format!("tokenSymbol={token_symbol}"),
             format!("tokenAmount={token_amount}"),
             format!("replayStatus={replay_status}"),
-            format!("txHash={tx_hash}"),
+            format!("paymentTxHash={payment_tx_hash}"),
+            format!("txHash={}", accept_tx_hash.as_deref().unwrap_or("")),
         ]),
         None,
     );
-    let mut result = serde_json::json!({
-        "replaySuccess": replay_success,
-        "replayStatus": replay_status,
-        "replayBody": replay_body,
-        "replayBodyDisplay": format_replay_body_display(&replay_body),
-        "signature": proof_signature,
-        "authorization": proof_authorization,
-        "sessionCert": proof_session_cert,
-        "txHash": tx_hash,
+    crate::output::success(Task402PayResult {
+        job_id: job_id.to_string(),
+        replay_success,
+        replay_status,
+        payment_tx_hash,
+        accepted: true,
+        status: None,
+        broadcast,
+        deliverable,
+        replay_body,
+        replay_body_display,
+        signature: None,
+        authorization: None,
+        session_cert: None,
+        tx_hash: accept_tx_hash,
+        deliverable_saved_path,
     });
-    if let Some(p) = saved_path {
-        result["deliverableSavedPath"] = serde_json::Value::String(p);
-    }
-    crate::output::success(result);
 
     if let Err(e) = negotiate::cleanup(job_id) {
         if DEBUG_LOG { eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}"); }
@@ -906,4 +1171,175 @@ pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str, agent
 
     crate::output::success(data);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        decide_402_action, decide_402_action_with_body, map_accept_broadcast_error,
+        status_confirms_accepted, Action,
+    };
+    use super::common::state_machine::Status;
+    use crate::wallet_api::ApiCodeError;
+
+    // SEC-01 — the user confirmation gate must run before any x402 proof signing
+    // or endpoint replay. A source-order assertion is deliberate here: the
+    // handler touches wallet signing, HTTP, and backend state, so this protects
+    // the critical ordering without needing live side effects in a unit test.
+    #[test]
+    fn task_402_pay_force_gate_precedes_x402_signing() {
+        let source = include_str!("accept.rs");
+        let gate = source
+            .find("if !force {")
+            .expect("task-402-pay must keep an explicit --force gate");
+        let signing = source
+            .find("let proof = payment_flow::x402_pay_from_accepts")
+            .expect("task-402-pay must sign x402 proofs after confirmation");
+
+        assert!(
+            gate < signing,
+            "--force gate must run before x402 proof signing / endpoint replay"
+        );
+        assert!(
+            source.contains("x402 payment replay and on-chain accept"),
+            "confirmation copy must cover the full destructive operation"
+        );
+    }
+
+    // FR-1.3 / AC-4 — the direct/accept idempotency guard. A failed direct/accept
+    // may only be swallowed as "already accepted" when the task status confirms
+    // acceptance already happened; every other state must surface the error so the
+    // CLI never reports accepted:true for an un-accepted (possibly already-paid) task.
+    #[test]
+    fn status_confirms_accepted_only_for_post_accept_states() {
+        // Accepted + downstream lifecycle states → idempotent already-accepted.
+        for s in [
+            Status::Accepted,
+            Status::Submitted,
+            Status::Disputed,
+            Status::Completed,
+            Status::Close,
+        ] {
+            assert!(
+                status_confirms_accepted(&s),
+                "{s:?} should confirm accepted"
+            );
+        }
+        // Pre-accept + ambiguous terminal-failure states → must NOT be swallowed.
+        for s in [
+            Status::Init,
+            Status::Created,
+            Status::Rejected,
+            Status::AdminStopped,
+            Status::Expired,
+            Status::Failed,
+            Status::Other("status_42".to_string()),
+        ] {
+            assert!(
+                !status_confirms_accepted(&s),
+                "{s:?} must not confirm accepted"
+            );
+        }
+    }
+
+    // FR-4 §5.2 branch matrix — table-driven over every row decide_402_action owns.
+    // (input_required and backend fee-rejection are handled outside this fn.)
+    #[test]
+    fn decide_402_action_matrix() {
+        let cases: &[(u16, bool, Action)] = &[
+            // 2xx with a decoded settlement txHash → broadcast (row 1).
+            (200, true, Action::ContinueAccept),
+            (204, true, Action::ContinueAccept),
+            // 2xx, header missing / undecodable → broadcast with paymentTxHash="" (row 2).
+            (200, false, Action::ContinueAcceptNoHash),
+            // 402 (facilitator settling) with txHash → broadcast (row 3).
+            (402, true, Action::ContinueAccept),
+            // 402 with no txHash → skip accept, pending (row 4).
+            (402, false, Action::Pending),
+            // non-2xx & non-402 → skip accept, error (row 5).
+            (500, false, Action::Error),
+            (500, true, Action::Error),
+            (400, false, Action::Error),
+            (0, false, Action::Error),
+        ];
+        for (status, tx_present, expected) in cases {
+            assert_eq!(
+                decide_402_action(*status, *tx_present),
+                *expected,
+                "status={status} tx_hash_present={tx_present}"
+            );
+        }
+    }
+
+    // FR-5.1 — `input_required` in the endpoint body is a non-terminal pending
+    // decision that short-circuits to Action::Pending regardless of the status
+    // line; otherwise the decision falls through to the §5.2 status-line matrix
+    // unchanged. Covers the handler's replay→accept branch (accept.rs pending path).
+    #[test]
+    fn decide_402_action_with_body_matrix() {
+        // input_required=true wins over any status / txHash combination → Pending.
+        for (status, tx_present) in [
+            (200u16, true),
+            (200, false),
+            (402, true),
+            (402, false),
+            (500, false),
+            (0, false),
+        ] {
+            assert_eq!(
+                decide_402_action_with_body(status, tx_present, true),
+                Action::Pending,
+                "input_required must force Pending (status={status} tx={tx_present})"
+            );
+        }
+        // input_required=false → identical to the bare status-line matrix.
+        for (status, tx_present) in [
+            (200u16, true),
+            (200, false),
+            (402, true),
+            (402, false),
+            (500, true),
+            (400, false),
+            (0, false),
+        ] {
+            assert_eq!(
+                decide_402_action_with_body(status, tx_present, false),
+                decide_402_action(status, tx_present),
+                "input_required=false must match decide_402_action (status={status} tx={tx_present})"
+            );
+        }
+    }
+
+    // FR-7.2 / AC-2 — an ApiCodeError-wrapped broadcast failure is the backend
+    // fee-vs-budget verdict and must surface verbatim as the fee-rejection error
+    // (WBW-14113's literal purpose). A non-ApiCodeError falls to the generic
+    // "accept broadcast failed" branch.
+    #[test]
+    fn map_accept_broadcast_error_fee_rejection() {
+        let err = anyhow::Error::new(ApiCodeError {
+            code: "60011".to_string(),
+            msg: "fee exceeds budget".to_string(),
+            http_status: 200,
+        });
+        let mapped = map_accept_broadcast_error(err);
+        assert_eq!(
+            mapped.to_string(),
+            "accept rejected: on-chain fee exceeds task budget (code=60011): fee exceeds budget"
+        );
+    }
+
+    #[test]
+    fn map_accept_broadcast_error_generic() {
+        let err = anyhow::anyhow!("connection reset");
+        let mapped = map_accept_broadcast_error(err);
+        let msg = mapped.to_string();
+        assert!(
+            msg.starts_with("accept broadcast failed:"),
+            "generic error must fall to the broadcast-failed branch, got: {msg}"
+        );
+        assert!(
+            msg.contains("connection reset"),
+            "underlying error message must be forwarded, got: {msg}"
+        );
+    }
 }

@@ -68,8 +68,8 @@ pub enum ProviderCommand {
         /// the providerAgentId field in job detail may be null, so reverse lookup is unreliable.
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Single-line JSON auto-trade signal (omitting `signalTime`); structure-validated
-        /// and `signalTime`-stamped before any send. Empty ⇒ ordinary delivery.
+        /// Deprecated compatibility argument. Accepted but ignored; only the
+        /// explicit text/file deliverable is sent and processed.
         #[arg(long, default_value = "")]
         autotrade: String,
     },

@@ -20,10 +20,12 @@
 | 9 | `sub_complete_notify` | user + asp | "[Subscription Complete] {jobTitle} has completed all scheduled renewals. Job {jobId} status: Completed; service ends normally at {subEndTime} with no further renewal." (user side; the ASP side keeps its own ASP-perspective copy.) (terminal) |
 | 10 | `sub_close_notify` | user + asp | "[Service Closed] "{jobTitle}"'s current period ({subStartTime}–{subEndTime}) has ended. Job {jobId} status: Closed. The system will automatically complete the rating for this job." (period range omitted when absent; user side; the ASP side keeps its own ASP-perspective copy.) (terminal) |
 | 11 | `sub_failed_notify` | user + asp | Branches on `trialType`. `trialType=1` → "[Trial Ended] "{jobTitle}" — the conversion charge could not be completed before the trial ended ({failReason}); conversion failed with no retry. Job {jobId} status: Closed. Subscribe again to continue." (reason clause omitted when absent.) Otherwise → "[Subscription Ended] "{jobTitle}" — the charge still failed after the grace period; the service ended at {subBufferEndTime}. Job {jobId} status: Closed. Subscribe again to continue." (the "service ended at" clause appended only when subBufferEndTime present; NO reason slot in this branch.) (user side; the ASP side keeps its own ASP-perspective copy.) (terminal) |
+| 12 | `sub_expire_warn` | user | **Selected by `autoRenew`.** `autoRenew=true` (or missing/legacy → treated as true) → existing copy (`content::sub_expire_warn_user_notify`), unchanged. `autoRenew=false` → EN: "[Subscription Ending Soon] Subscription job {job_id} (period {periodStart}–{periodEnd}) will expire and close on {periodEnd}. To continue using it, please enable auto-renew in time." · ZH: "[订阅即将到期] 订阅任务 {job_id}(当前周期 {periodStart}–{periodEnd})将于 {periodEnd} 到期并关闭。如需继续使用,请及时开启自动续费。" (agent renders ZH from this line; the CLI `.rs` literal is EN-only). |
 
-The CLI additionally renders `sub_expire_warn` and `sub_reject_refund_notify` (added after this
-table's last sync) — their copy lives only in the CLI; read the `content.rs` functions directly.
-This gap is itself the reason the mirror is non-authoritative.
+The CLI additionally renders `sub_reject_refund_notify` (copy lives only in the CLI; read the
+`content.rs` functions directly). `sub_expire_warn` is now split by `autoRenew` and mirrored in
+row 12 above — its EN copy is the authoritative `content.rs` literal; its ZH copy is rendered by
+the agent from row 12 (the `.rs` source stays English-only to satisfy the no-Chinese lint).
 
 Field notes (mirror of the CLI's reading rules, same non-authoritative caveat):
 absent optional field → the CLI omits that line (never errors). `failReason` is free backend text

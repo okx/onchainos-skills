@@ -8,8 +8,9 @@
 use anyhow::{bail, Result};
 use chrono::{TimeZone, Utc};
 
+use super::deposit_qr::{InsufficientBalanceError, DEPOSIT_QR_MARKER, SCAN_TO_DEPOSIT_OPTION};
 use super::network::task_api_client::TaskApiClient;
-use super::{PaymentMode, XLAYER_CHAIN_INDEX, DEBUG_LOG};
+use super::{PaymentMode, DEBUG_LOG, XLAYER_CHAIN_INDEX};
 
 /// unix seconds -> display string. 0 / negative are treated as unset; positive values are converted to RFC 3339.
 pub fn fmt_unix_secs(secs: Option<i64>) -> String {
@@ -51,9 +52,15 @@ pub fn json_u64(obj: &serde_json::Value, key: &str) -> Result<u64> {
 /// Look up a token's contract address and decimals via the tokenDetail API.
 /// GET /priapi/v1/aieco/task/tokenDetail?symbol=<symbol>
 /// Returns (token_address, decimals).
-pub async fn fetch_token_detail(client: &mut TaskApiClient, symbol: &str, agent_id: &str) -> Result<(String, u32)> {
+pub async fn fetch_token_detail(
+    client: &mut TaskApiClient,
+    symbol: &str,
+    agent_id: &str,
+) -> Result<(String, u32)> {
     let path = format!("/priapi/v1/aieco/task/tokenDetail?symbol={symbol}");
-    let resp = client.get_with_agent_id(&path, agent_id).await
+    let resp = client
+        .get_with_agent_id(&path, agent_id)
+        .await
         .map_err(|e| anyhow::anyhow!("failed to query tokenDetail (symbol={symbol}): {e}"))?;
     let address = resp["address"]
         .as_str()
@@ -61,7 +68,8 @@ pub async fn fetch_token_detail(client: &mut TaskApiClient, symbol: &str, agent_
         .to_string();
     let decimals = resp["decimals"]
         .as_u64()
-        .ok_or_else(|| anyhow::anyhow!("tokenDetail response missing decimals field"))? as u32;
+        .ok_or_else(|| anyhow::anyhow!("tokenDetail response missing decimals field"))?
+        as u32;
     Ok((address, decimals))
 }
 
@@ -77,7 +85,9 @@ pub async fn resolve_payment_mode(
     match payment_mode {
         Some(m) => Ok(PaymentMode::from_str(m)),
         None => {
-            let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
+            let task_resp = client
+                .get_with_identity(&client.task_path(job_id), agent_id)
+                .await?;
             let payment_mode_int = task_resp["paymentMode"].as_i64().unwrap_or(0) as i32;
             let mode = PaymentMode::from_int(payment_mode_int);
             if mode == PaymentMode::None {
@@ -104,7 +114,8 @@ pub fn parse_composite_fee(fee: &str) -> Result<(f64, String)> {
     let parts: Vec<&str> = fee.split_whitespace().collect();
     match parts.len() {
         2 => {
-            let amt: f64 = parts[0].parse()
+            let amt: f64 = parts[0]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("x402: failed to parse fee amount: {}", parts[0]))?;
             Ok((amt, parts[1].to_string()))
         }
@@ -113,7 +124,8 @@ pub fn parse_composite_fee(fee: &str) -> Result<(f64, String)> {
             if numeric_end >= fee.len() {
                 bail!("x402: fee field contains only amount without token symbol: {fee}, unable to determine payment token");
             }
-            let amt: f64 = fee[..numeric_end].parse()
+            let amt: f64 = fee[..numeric_end]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("x402: failed to parse fee amount: {fee}"))?;
             let sym = fee[numeric_end..].to_string();
             Ok((amt, sym))
@@ -140,8 +152,10 @@ pub async fn resolve_x402_params(
     cli_token_amount: Option<&str>,
 ) -> Result<X402ServiceParams> {
     // Tier 1: all CLI flags provided.
-    if let (Some(ep), Some(sym), Some(amt_str)) = (cli_endpoint, cli_token_symbol, cli_token_amount) {
-        let amt: f64 = amt_str.parse()
+    if let (Some(ep), Some(sym), Some(amt_str)) = (cli_endpoint, cli_token_symbol, cli_token_amount)
+    {
+        let amt: f64 = amt_str
+            .parse()
             .map_err(|_| anyhow::anyhow!("--token-amount format error: {amt_str}"))?;
         if DEBUG_LOG {
             eprintln!("ℹ x402: using CLI params endpoint={ep}, token={sym}, amount={amt}");
@@ -159,10 +173,15 @@ pub async fn resolve_x402_params(
         Ok(Some(pi)) => {
             cached_provider_agent_id = pi.provider_agent_id.clone();
             if let Some(svc) = pi.services.first() {
-                if !svc.endpoint.is_empty() && svc.fee_amount > 0.0 && !svc.fee_token_symbol.is_empty() {
+                if !svc.endpoint.is_empty()
+                    && svc.fee_amount > 0.0
+                    && !svc.fee_token_symbol.is_empty()
+                {
                     if DEBUG_LOG {
-                        eprintln!("ℹ x402: using negotiate cache endpoint={}, token={}, amount={}",
-                            svc.endpoint, svc.fee_token_symbol, svc.fee_amount);
+                        eprintln!(
+                            "ℹ x402: using negotiate cache endpoint={}, token={}, amount={}",
+                            svc.endpoint, svc.fee_token_symbol, svc.fee_amount
+                        );
                     }
                     return Ok(X402ServiceParams {
                         endpoint: cli_endpoint.unwrap_or(&svc.endpoint).to_string(),
@@ -181,7 +200,9 @@ pub async fn resolve_x402_params(
         }
         Ok(None) => {
             if DEBUG_LOG {
-                eprintln!("⚠ x402: negotiate cache has no current asp, falling back to service-list API");
+                eprintln!(
+                    "⚠ x402: negotiate cache has no current asp, falling back to service-list API"
+                );
             }
         }
         Err(e) => {
@@ -213,13 +234,21 @@ pub async fn resolve_x402_params(
 
 /// Extract token symbol from a service entry's chainIndex + contractAddress via token basic-info API.
 pub(crate) async fn resolve_symbol_from_svc(svc: &serde_json::Value) -> Result<String> {
-    let chain = svc["chainIndex"].as_i64()
+    let chain = svc["chainIndex"]
+        .as_i64()
         .or_else(|| svc["chainIndex"].as_str().and_then(|s| s.parse().ok()))
         .map(|n| n.to_string())
-        .ok_or_else(|| anyhow::anyhow!("x402: service entry missing chainIndex, cannot resolve token symbol"))?;
-    let addr = svc["contractAddress"].as_str()
+        .ok_or_else(|| {
+            anyhow::anyhow!("x402: service entry missing chainIndex, cannot resolve token symbol")
+        })?;
+    let addr = svc["contractAddress"]
+        .as_str()
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("x402: service entry missing contractAddress, cannot resolve token symbol"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "x402: service entry missing contractAddress, cannot resolve token symbol"
+            )
+        })?;
     if DEBUG_LOG {
         eprintln!("ℹ x402: feeTokenSymbol missing, resolving from chain={chain} address={addr}");
     }
@@ -234,11 +263,16 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
         .args(["agent", "service-list", "--agent-id", provider_agent_id])
         .output()
         .await
-        .map_err(|e| anyhow::anyhow!("failed to call agent service-list --agent-id {provider_agent_id}: {e}"))?;
+        .map_err(|e| {
+            anyhow::anyhow!("failed to call agent service-list --agent-id {provider_agent_id}: {e}")
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("x402 service-list query failed (exit {}): {stderr}", output.status);
+        bail!(
+            "x402 service-list query failed (exit {}): {stderr}",
+            output.status
+        );
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -247,32 +281,36 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
 
     // CLI output: {ok: true, data: [{agentInfo: {...}, list: [{endpoint, fee, ...}]}, ...]}
     // Flatten data[*].list[*] to get individual service entries (same shape as handle_designated_route).
-    let data_arr = body["data"].as_array()
-        .ok_or_else(|| anyhow::anyhow!(
+    let data_arr = body["data"].as_array().ok_or_else(|| {
+        anyhow::anyhow!(
             "x402: data array not found in service-list response, ASP={provider_agent_id}"
-        ))?;
-    let services: Vec<&serde_json::Value> = data_arr.iter()
+        )
+    })?;
+    let services: Vec<&serde_json::Value> = data_arr
+        .iter()
         .flat_map(|item| item["list"].as_array().into_iter().flatten())
         .collect();
 
-    let svc = services.iter()
+    let svc = services
+        .iter()
         .find(|s| {
-            let stype = s["servicetype"].as_str()
+            let stype = s["servicetype"]
+                .as_str()
                 .or_else(|| s["serviceType"].as_str())
                 .unwrap_or("");
             stype.eq_ignore_ascii_case("A2MCP")
         })
-        .ok_or_else(|| anyhow::anyhow!(
-            "x402: ASP {provider_agent_id} has no A2MCP service"
-        ))?;
+        .ok_or_else(|| anyhow::anyhow!("x402: ASP {provider_agent_id} has no A2MCP service"))?;
 
-    let endpoint = svc["endpoint"].as_str()
+    let endpoint = svc["endpoint"]
+        .as_str()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow::anyhow!("x402: A2MCP service endpoint is empty in service-list"))?
         .to_string();
 
     let (fee_amount, fee_token_symbol) = if let Some(amt) = svc["feeAmount"].as_f64() {
-        let sym = svc["feeTokenSymbol"].as_str()
+        let sym = svc["feeTokenSymbol"]
+            .as_str()
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
         let sym = match sym {
@@ -285,7 +323,8 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
         match parse_composite_fee(fee_str) {
             Ok(pair) => pair,
             Err(_) => {
-                let amt: f64 = fee_str.parse()
+                let amt: f64 = fee_str
+                    .parse()
                     .map_err(|_| anyhow::anyhow!("x402: fee field is not a number: {fee_str}"))?;
                 let sym = resolve_symbol_from_svc(svc).await?;
                 (amt, sym)
@@ -296,22 +335,33 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
     if DEBUG_LOG {
         eprintln!("ℹ x402: retrieved from service-list API endpoint={endpoint}, token={fee_token_symbol}, amount={fee_amount}");
     }
-    Ok(X402ServiceParams { endpoint, fee_amount, fee_token_symbol })
+    Ok(X402ServiceParams {
+        endpoint,
+        fee_amount,
+        fee_token_symbol,
+    })
 }
 
 // ─── Token symbol resolution by contract address ──────────────────────
 
 /// Look up a token's symbol via the DEX basic-info API given chainIndex + contractAddress.
-pub(crate) async fn resolve_token_symbol_by_address(chain_index: &str, contract_address: &str) -> Result<String> {
+pub(crate) async fn resolve_token_symbol_by_address(
+    chain_index: &str,
+    contract_address: &str,
+) -> Result<String> {
     let mut client = crate::client::ApiClient::new(None)?;
-    let resp = crate::commands::token::fetch_info(&mut client, contract_address, chain_index).await?;
-    let sym = resp.as_array()
+    let resp =
+        crate::commands::token::fetch_info(&mut client, contract_address, chain_index).await?;
+    let sym = resp
+        .as_array()
         .and_then(|arr| arr.first())
         .and_then(|t| t["tokenSymbol"].as_str())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow::anyhow!(
+        .ok_or_else(|| {
+            anyhow::anyhow!(
             "token basic-info returned no symbol for chain={chain_index} address={contract_address}"
-        ))?;
+        )
+        })?;
     Ok(sym.to_string())
 }
 
@@ -347,7 +397,10 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
         .map_err(|e| anyhow::anyhow!("balance query failed: {e}"))?;
 
     if !output.status.success() {
-        bail!("balance query failed (exit {}), please check login status", output.status);
+        bail!(
+            "balance query failed (exit {}), please check login status",
+            output.status
+        );
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -376,16 +429,22 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
                             .unwrap_or(0.0);
                         if balance < required {
                             let shortfall = required - balance;
-                            bail!(
+                            let message = format!(
                                 "Insufficient {currency} balance on XLayer (current: {balance}, need: {required}, shortfall: {shortfall})\n\
                                  \n\
                                  Fund your wallet — pick one:\n\
-                                 1. Swap on XLayer — \"swap <token> to {shortfall} {currency} on xlayer\"\n\
-                                 2. Bridge from another chain — \"bridge {shortfall} {currency} from <chain> to xlayer\"\n\
-                                 3. Send from OKX exchange — withdraw {currency} to your wallet address on XLayer network\n\
+                                 1. {SCAN_TO_DEPOSIT_OPTION}\n\
+                                 {DEPOSIT_QR_MARKER}\n\
+                                 2. Swap on XLayer — \"swap <token> to {shortfall} {currency} on xlayer\"\n\
+                                 3. Bridge from another chain — \"bridge {shortfall} {currency} from <chain> to xlayer\"\n\
+                                 4. Send from OKX exchange — withdraw {currency} to your wallet address on XLayer network\n\
                                  \n\
                                  Note: gas is paid by the platform paymaster, no OKB / native required."
                             );
+                            return Err(InsufficientBalanceError::new(
+                                message, currency, required, balance,
+                            )
+                            .into());
                         }
                         return Ok(());
                     }
@@ -394,22 +453,69 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
         }
     }
 
-    bail!(
+    let message = format!(
         "{currency} balance not found on XLayer (need {required} {currency})\n\
          \n\
          Fund your wallet — pick one:\n\
-         1. Swap on XLayer — \"swap <token> to {required} {currency} on xlayer\"\n\
-         2. Bridge from another chain — \"bridge {required} {currency} from <chain> to xlayer\"\n\
-         3. Send from OKX exchange — withdraw {currency} to your wallet address on XLayer network\n\
+         1. {SCAN_TO_DEPOSIT_OPTION}\n\
+         {DEPOSIT_QR_MARKER}\n\
+         2. Swap on XLayer — \"swap <token> to {required} {currency} on xlayer\"\n\
+         3. Bridge from another chain — \"bridge {required} {currency} from <chain> to xlayer\"\n\
+         4. Send from OKX exchange — withdraw {currency} to your wallet address on XLayer network\n\
          \n\
          Note: gas is paid by the platform paymaster, no OKB / native required."
     );
+    Err(InsufficientBalanceError::new(message, currency, required, 0.0).into())
+}
+
+/// Query the XLayer balance of `currency` for a given on-chain `address`.
+/// Returns `Ok(balance)` on success, `Err` on any query/parse failure.
+pub async fn query_xlayer_balance(address: &str, currency: &str) -> Result<f64> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("unable to determine executable path: {e}"))?;
+    let output = tokio::process::Command::new(&exe)
+        .args(["portfolio", "all-balances", "--address", address, "--chains", XLAYER_CHAIN_INDEX])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("portfolio balance query failed: {e}"))?;
+    if !output.status.success() {
+        bail!("portfolio balance query failed (exit {})", output.status);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| anyhow::anyhow!("failed to parse portfolio balance result: {e}"))?;
+    let currency_norm = normalize_token_symbol(currency);
+    let token_assets = parsed["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|chain| chain["tokenAssets"].as_array().into_iter().flatten());
+    for asset in token_assets {
+        let symbol = asset["symbol"]
+            .as_str()
+            .or_else(|| asset["tokenSymbol"].as_str())
+            .unwrap_or("");
+        let sym_norm = normalize_token_symbol(symbol);
+        if sym_norm == currency_norm || sym_norm == format!("{currency_norm}0") {
+            let balance: f64 = asset["balance"]
+                .as_str()
+                .and_then(|s| s.parse().ok())
+                .or_else(|| asset["balance"].as_f64())
+                .unwrap_or(0.0);
+            return Ok(balance);
+        }
+    }
+    Ok(0.0)
 }
 
 /// Like [`ensure_sufficient_balance`] but queries a specific on-chain address
 /// via `onchainos portfolio all-balances` (public API, independent of selected_account_id).
 /// Used by provider-side flows where the signing account may differ from the active account.
-pub async fn ensure_sufficient_balance_at(required: f64, currency: &str, address: &str) -> Result<()> {
+pub async fn ensure_sufficient_balance_at(
+    required: f64,
+    currency: &str,
+    address: &str,
+) -> Result<()> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("unable to determine executable path: {e}"))?;
 
@@ -420,7 +526,10 @@ pub async fn ensure_sufficient_balance_at(required: f64, currency: &str, address
         .map_err(|e| anyhow::anyhow!("portfolio balance query failed: {e}"))?;
 
     if !output.status.success() {
-        bail!("portfolio balance query failed (exit {}), address={address}", output.status);
+        bail!(
+            "portfolio balance query failed (exit {}), address={address}",
+            output.status
+        );
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -433,12 +542,7 @@ pub async fn ensure_sufficient_balance_at(required: f64, currency: &str, address
         .as_array()
         .into_iter()
         .flatten()
-        .flat_map(|chain| {
-            chain["tokenAssets"]
-                .as_array()
-                .into_iter()
-                .flatten()
-        });
+        .flat_map(|chain| chain["tokenAssets"].as_array().into_iter().flatten());
 
     for asset in token_assets {
         let symbol = asset["symbol"]
@@ -453,21 +557,40 @@ pub async fn ensure_sufficient_balance_at(required: f64, currency: &str, address
                 .or_else(|| asset["balance"].as_f64())
                 .unwrap_or(0.0);
             if balance < required {
-                bail!(
-                    "Insufficient business token balance (USDT/USDG): current XLayer {symbol} balance is {balance} (address={address}), \
-                     need {required} {currency}. Please top up {currency} via okx-agentic-wallet swap. \
-                     Note: gas is paid by the platform paymaster, no OKB / native required"
+                let shortfall = required - balance;
+                let message = format!(
+                    "Insufficient {currency} balance on XLayer (current: {balance}, need: {required}, shortfall: {shortfall}, address: {address})\n\
+                     \n\
+                     Fund your wallet — pick one:\n\
+                     1. {SCAN_TO_DEPOSIT_OPTION}\n\
+                     {DEPOSIT_QR_MARKER}\n\
+                     2. Swap on XLayer — \"swap <token> to {shortfall} {currency} on xlayer\"\n\
+                     3. Bridge from another chain — \"bridge {shortfall} {currency} from <chain> to xlayer\"\n\
+                     4. Send from OKX exchange — withdraw {currency} to your wallet address on XLayer network\n\
+                     \n\
+                     Note: gas is paid by the platform paymaster, no OKB / native required."
+                );
+                return Err(
+                    InsufficientBalanceError::new(message, currency, required, balance).into(),
                 );
             }
             return Ok(());
         }
     }
 
-    bail!(
-        "Business token {currency} balance not found on XLayer for address={address}. \
-         Please confirm the account holds this token and top up via okx-agentic-wallet swap before retrying. \
-         Note: gas is paid by the platform paymaster, no OKB / native required"
+    let message = format!(
+        "{currency} balance not found on XLayer (need {required} {currency}, address: {address})\n\
+         \n\
+         Fund your wallet — pick one:\n\
+         1. {SCAN_TO_DEPOSIT_OPTION}\n\
+         {DEPOSIT_QR_MARKER}\n\
+         2. Swap on XLayer — \"swap <token> to {required} {currency} on xlayer\"\n\
+         3. Bridge from another chain — \"bridge {required} {currency} from <chain> to xlayer\"\n\
+         4. Send from OKX exchange — withdraw {currency} to your wallet address on XLayer network\n\
+         \n\
+         Note: gas is paid by the platform paymaster, no OKB / native required."
     );
+    Err(InsufficientBalanceError::new(message, currency, required, 0.0).into())
 }
 
 // ─── jobId formatting ───────────────────────────────────────────────────
@@ -509,7 +632,14 @@ pub fn short_job_id(job_id: &str) -> String {
     }
     let chars: Vec<char> = job_id.chars().collect();
     let head: String = chars.iter().take(6).collect();
-    let tail: String = chars.iter().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    let tail: String = chars
+        .iter()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     format!("{head}…{tail}")
 }
 
@@ -591,14 +721,19 @@ mod tests {
         // CJK-with-ampersand row: a 4-char + " & " + 4-char title collapses the separator
         // to a single space (the two CJK words are preserved unchanged).
         assert_eq!(
-            sanitize_title_for_shell("\u{94b1}\u{5305}\u{7a0e}\u{52a1} & \u{5408}\u{89c4}\u{62a5}\u{544a}"),
+            sanitize_title_for_shell(
+                "\u{94b1}\u{5305}\u{7a0e}\u{52a1} & \u{5408}\u{89c4}\u{62a5}\u{544a}"
+            ),
             "\u{94b1}\u{5305}\u{7a0e}\u{52a1} \u{5408}\u{89c4}\u{62a5}\u{544a}"
         );
     }
 
     #[test]
     fn sanitize_title_for_shell_safe_punctuation_unchanged() {
-        assert_eq!(sanitize_title_for_shell("Normal Title: Hello"), "Normal Title: Hello");
+        assert_eq!(
+            sanitize_title_for_shell("Normal Title: Hello"),
+            "Normal Title: Hello"
+        );
     }
 
     #[test]
@@ -619,5 +754,16 @@ mod tests {
     fn sanitize_title_for_shell_never_grows() {
         let input = "x & y | z ; w";
         assert!(sanitize_title_for_shell(input).chars().count() <= input.chars().count());
+    }
+
+    // Task 5 / FR-6: the structured InsufficientBalanceError's Display renders the
+    // legacy message string byte-for-byte (so a surfaced free-text `error` is
+    // unchanged when the deposit-address enrichment degrades).
+    #[test]
+    fn insufficient_balance_error_display_equals_legacy_message() {
+        let legacy = "Insufficient USDT balance on XLayer (current: 5, need: 100, shortfall: 95)\n\
+                      Note: gas is paid by the platform paymaster, no OKB / native required.";
+        let e = InsufficientBalanceError::new(legacy.to_string(), "USDT", 100.0, 5.0);
+        assert_eq!(format!("{e}"), legacy);
     }
 }

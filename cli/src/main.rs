@@ -18,13 +18,8 @@ mod output;
 pub mod payment;
 mod payment_cache;
 mod payment_notify;
+mod qr;
 pub mod token_alias;
-// Trade-signal parser core (Task 2). A pure, no-I/O library exercised by its own
-// unit tests; the runtime pipeline wiring is a separate task (Task 3), so nothing
-// in the shipped binary references it yet — allow dead_code / unused re-exports
-// until that lands.
-#[allow(dead_code, unused_imports)]
-mod trade_signal;
 pub mod validators;
 mod wallet_api;
 mod wallet_store;
@@ -295,10 +290,18 @@ async fn run() {
                             output::error_coded(&c.code, c.field.as_deref(), &c.message);
                             std::process::exit(1);
                         }
-                        Err(e) => {
-                            output::error(&format!("{e:#}"));
-                            std::process::exit(1);
-                        }
+                        Err(e) => match e
+                            .downcast::<commands::agent_commerce::task::common::deposit_qr::InsufficientBalanceError>()
+                        {
+                            Ok(ib) => {
+                                output::error_insufficient_balance(&ib);
+                                std::process::exit(1);
+                            }
+                            Err(e) => {
+                                output::error(&format!("{e:#}"));
+                                std::process::exit(1);
+                            }
+                        },
                     },
                 },
             },

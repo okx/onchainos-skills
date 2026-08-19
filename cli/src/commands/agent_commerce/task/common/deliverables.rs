@@ -13,9 +13,7 @@ use std::path::{Path, PathBuf};
 const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
 
 fn deliverables_root() -> Result<PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
-    Ok(home.join(".onchainos").join("deliverables"))
+    Ok(crate::home::onchainos_home()?.join("deliverables"))
 }
 
 fn sanitize_title(title: &str, job_id: &str) -> String {
@@ -393,4 +391,3 @@ mod tests {
         assert_eq!(sanitize_title("  hello world  ", "0xabc"), "helloworld");
     }
 }
-

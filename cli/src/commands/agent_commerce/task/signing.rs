@@ -7,7 +7,7 @@
 //! - [`task_dual_sign_and_broadcast`] — dual-sign for complete/reject
 //!   (pre-endpoint → sign typedData → main endpoint → sign uopHash → broadcast)
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use base64::engine::{general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::Value;
 use std::time::Duration;
@@ -245,14 +245,36 @@ pub async fn resolve_agent_id_by_role(role_code: i64) -> Result<String> {
         .unwrap_or_default())
 }
 
-/// Sign uopData + broadcast on-chain (pure sign-broadcast, no API request).
+/// Build the broadcast `bizContext` object: the base `{ jobId, bizType }` plus
+/// any `biz_context_extra` object fields merged in (e.g. `paymentTxHash` for the
+/// x402 accept, FR-3). Pure + side-effect-free so the merge is unit-testable.
+pub(crate) fn merge_biz_context(
+    job_id: &str,
+    biz_type: i64,
+    biz_context_extra: Option<&Value>,
+) -> Value {
+    let mut biz_ctx = serde_json::json!({
+        "jobId": job_id,
+        "bizType": biz_type,
+    });
+    if let Some(extra) = biz_context_extra {
+        if let (Some(ctx_obj), Some(extra_obj)) = (biz_ctx.as_object_mut(), extra.as_object()) {
+            for (k, v) in extra_obj {
+                ctx_obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    biz_ctx
+}
+
+/// Sign uopData + broadcast on-chain, returning the FULL first broadcast-response
+/// object (`data[0]`: `{ pkgId, orderId, orderType, txHash, bizUniqKey }`).
 ///
-/// Receives `uopData` from the backend, signs it, then broadcasts on-chain via `TaskApiClient` and returns txHash.
-/// The API request is performed by the caller via `TaskApiClient`.
-///
-/// `biz_context` marks the business scenario (TaskAccept / DisputeCreate etc.) and is sent with the broadcast request so the backend can distinguish them.
+/// Same flow as [`sign_uop_and_broadcast`]; used by callers that need the pkgId /
+/// orderId / bizUniqKey fields (e.g. task-402-pay's `broadcast{}` result shape),
+/// not just the txHash.
 #[allow(clippy::too_many_arguments)]
-pub async fn sign_uop_and_broadcast(
+pub async fn sign_uop_and_broadcast_full(
     client: &mut TaskApiClient,
     uop_data: &Value,
     account_id: &str,
@@ -261,7 +283,7 @@ pub async fn sign_uop_and_broadcast(
     biz_type: i64,
     agent_id: &str,
     biz_context_extra: Option<&Value>,
-) -> Result<String> {
+) -> Result<Value> {
     if uop_data.is_null() {
         bail!("backend did not return uopData; cannot sign and broadcast");
     }
@@ -297,23 +319,40 @@ pub async fn sign_uop_and_broadcast(
         false,
     )
     .await?;
-    let mut biz_ctx = serde_json::json!({
-        "jobId": job_id,
-        "bizType": biz_type,
-    });
-    if let Some(extra) = biz_context_extra {
-        if let (Some(ctx_obj), Some(extra_obj)) = (biz_ctx.as_object_mut(), extra.as_object()) {
-            for (k, v) in extra_obj {
-                ctx_obj.insert(k.clone(), v.clone());
-            }
-        }
-    }
-    broadcast_body["bizContext"] = biz_ctx;
+    broadcast_body["bizContext"] = merge_biz_context(job_id, biz_type, biz_context_extra);
 
+    // `.context` (not `anyhow!("...: {e}")`) so the underlying `ApiCodeError`
+    // survives in the chain — callers (task-402-pay fee-rejection) downcast to
+    // recover the backend `code` + `msg`. `{e:#}` still renders "broadcast failed: …".
     let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
-        .map_err(|e| anyhow::anyhow!("broadcast failed: {e}"))?;
+        .context("broadcast failed")?;
 
-    Ok(bc_resp[0]["txHash"]
+    Ok(bc_resp.get(0).cloned().unwrap_or(Value::Null))
+}
+
+/// Sign uopData + broadcast on-chain (pure sign-broadcast, no API request).
+///
+/// Receives `uopData` from the backend, signs it, then broadcasts on-chain via `TaskApiClient` and returns txHash.
+/// The API request is performed by the caller via `TaskApiClient`.
+///
+/// `biz_context` marks the business scenario (TaskAccept / DisputeCreate etc.) and is sent with the broadcast request so the backend can distinguish them.
+#[allow(clippy::too_many_arguments)]
+pub async fn sign_uop_and_broadcast(
+    client: &mut TaskApiClient,
+    uop_data: &Value,
+    account_id: &str,
+    address: &str,
+    job_id: &str,
+    biz_type: i64,
+    agent_id: &str,
+    biz_context_extra: Option<&Value>,
+) -> Result<String> {
+    let first = sign_uop_and_broadcast_full(
+        client, uop_data, account_id, address, job_id, biz_type, agent_id, biz_context_extra,
+    )
+    .await?;
+
+    Ok(first["txHash"]
         .as_str()
         .unwrap_or("pending")
         .to_string())
@@ -543,4 +582,39 @@ pub async fn task_dual_sign_and_broadcast(
     ).await?;
 
     Ok(BroadcastResult { api_response: main_resp, tx_hash })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_biz_context;
+    use serde_json::json;
+
+    // FR-3: for bizType=7, biz_context_extra = { paymentTxHash } must be merged
+    // into the broadcast bizContext alongside the base jobId / bizType.
+    #[test]
+    fn merge_biz_context_includes_payment_tx_hash() {
+        let extra = json!({ "paymentTxHash": "0xabc123" });
+        let ctx = merge_biz_context("job_1", 7, Some(&extra));
+        assert_eq!(ctx["jobId"], "job_1");
+        assert_eq!(ctx["bizType"], 7);
+        assert_eq!(ctx["paymentTxHash"], "0xabc123");
+    }
+
+    // FR-2.3: an empty paymentTxHash is still threaded verbatim ("" when unknown).
+    #[test]
+    fn merge_biz_context_preserves_empty_payment_tx_hash() {
+        let extra = json!({ "paymentTxHash": "" });
+        let ctx = merge_biz_context("job_2", 7, Some(&extra));
+        assert_eq!(ctx["paymentTxHash"], "");
+    }
+
+    // No extra → base bizContext only, no spurious keys (non-402 callers pass None).
+    #[test]
+    fn merge_biz_context_none_extra_is_base_only() {
+        let ctx = merge_biz_context("job_3", 1, None);
+        assert_eq!(ctx["jobId"], "job_3");
+        assert_eq!(ctx["bizType"], 1);
+        assert!(ctx.get("paymentTxHash").is_none());
+        assert_eq!(ctx.as_object().unwrap().len(), 2);
+    }
 }

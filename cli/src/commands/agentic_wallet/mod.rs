@@ -14,7 +14,6 @@ pub mod transfer;
 
 use anyhow::{bail, Result};
 use clap::{Subcommand, ValueEnum};
-use qrcode::{render::unicode, QrCode};
 
 /// Stage of the social-login flow. The skill orchestrates `init` → `open` →
 /// `poll` so the login URL is returned immediately (before the browser opens),
@@ -57,7 +56,13 @@ pub enum WalletCommand {
         account_id: String,
     },
     /// Show current wallet status
-    Status,
+    Status {
+        /// Include the best-effort post-login subscription/device snapshot.
+        /// Use only for an explicit user-facing login/status request; ordinary
+        /// internal authentication preconditions should omit it.
+        #[arg(long = "include-subscriptions")]
+        include_subscriptions: bool,
+    },
     /// Show wallet addresses grouped by chain category (XLayer, EVM, Solana)
     Addresses {
         /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "xlayer" or "196")
@@ -93,6 +98,10 @@ pub enum WalletCommand {
         #[arg(long, default_value = "false")]
         force: bool,
     },
+    // Confirming-gate override (onchainos_check): the destructive wallet variants below
+    // (Send / call-contract / broadcast / …) gate user confirmation via output::CliConfirming
+    // inside their handler modules (transfer/mod.rs, broadcast.rs, common.rs) plus each
+    // command's --force flag — not in this command-dispatch enum definition.
     /// Send a transaction (native or token transfer)
     Send {
         /// Amount in minimal units — whole number, no decimals (e.g. "100000000000000000" for 0.1 ETH). Mutually exclusive with --readable-amount.
@@ -386,10 +395,7 @@ async fn resolve_send_amount(
                 }
                 // Server returns either an array `[{...}]` or a single object;
                 // field name is `decimals` (plural) in practice, `decimal` in older spec.
-                let entry = info
-                    .as_array()
-                    .and_then(|arr| arr.first())
-                    .unwrap_or(&info);
+                let entry = info.as_array().and_then(|arr| arr.first()).unwrap_or(&info);
                 let decimal_val = if !entry["decimals"].is_null() {
                     &entry["decimals"]
                 } else {
@@ -421,14 +427,11 @@ fn cmd_qrcode(address: &str) -> Result<()> {
     if trimmed.is_empty() {
         bail!("--address must not be empty");
     }
-    let code = QrCode::new(trimmed.as_bytes())
+    // Delegate to the single shared in-process encoder (crate::qr). Output stays
+    // byte-for-byte identical (same builder chain / render params) and continues
+    // to go to stdout.
+    let rendered = crate::qr::render_address_qr_unicode(trimmed)
         .map_err(|e| anyhow::anyhow!("Failed to encode QR for {}: {}", trimmed, e))?;
-    let rendered = code
-        .render::<unicode::Dense1x2>()
-        .dark_color(unicode::Dense1x2::Light)
-        .light_color(unicode::Dense1x2::Dark)
-        .quiet_zone(true)
-        .build();
     println!("{}", rendered);
     Ok(())
 }
@@ -451,7 +454,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
         },
         WalletCommand::Add => auth::cmd_add().await,
         WalletCommand::Switch { account_id } => account::cmd_switch(&account_id).await,
-        WalletCommand::Status => account::cmd_status().await,
+        WalletCommand::Status {
+            include_subscriptions,
+        } => account::cmd_status(include_subscriptions).await,
         WalletCommand::Addresses { chain } => account::cmd_addresses(chain.as_deref()).await,
         WalletCommand::Qrcode { address } => cmd_qrcode(&address),
         WalletCommand::Logout => auth::cmd_logout().await,
@@ -462,10 +467,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             chain,
             token_address,
             force,
-        } => {
-            balance::cmd_balance(all, chain.as_deref(), token_address.as_deref(), force)
-                .await
-        }
+        } => balance::cmd_balance(all, chain.as_deref(), token_address.as_deref(), force).await,
         WalletCommand::Send {
             amt,
             readable_amount,
@@ -587,8 +589,6 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             )
             .await
         }
-        WalletCommand::GasStation { command } => {
-            gas_station::execute(command).await
-        }
+        WalletCommand::GasStation { command } => gas_station::execute(command).await,
     }
 }

@@ -49,10 +49,12 @@ pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
      \x20\x20content template: {x402_paying}\n\n\
      **Step 3 — sign + accept + replay (atomic):**\n\
      ```bash\n\
-     onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint> --token-symbol <feeTokenSymbol> --token-amount <feeAmount> [--body '<serviceBody JSON>']\n\
+     onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint> --token-symbol <feeTokenSymbol> --token-amount <feeAmount> [--body '<serviceBody JSON>'] --force\n\
      ```\n\
      `--body`: pass the JSON body from `x402_input_required` confirmation if it happened; omit otherwise.\n\
-     Output: {{ replaySuccess, replayStatus, replayBody, replayBodyDisplay, deliverableSavedPath, txHash }}\n\n\
+     `--force`: required — the on-chain broadcast is gated by a confirming prompt; automated flow must pass it.\n\
+     Output: {{ jobId, accepted, paymentTxHash, status, replaySuccess, replayStatus, replayBody, replayBodyDisplay, broadcast, deliverableSavedPath, txHash }}\n\
+     If `accepted=false` and `status=pending` (replay did not settle): do NOT retry blindly — surface the pending state to the user.\n\n\
      **Step 4 — notify user with deliverable path**:\n\
      If `deliverableSavedPath` is present → show saved path only (no preview/summary needed; user can read the local file).\n\
      If `deliverableSavedPath` is absent (save failed) → embed full `replayBodyDisplay` so the user can still see what they paid for.\n\n\

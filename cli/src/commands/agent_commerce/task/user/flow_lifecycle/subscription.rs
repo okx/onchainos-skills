@@ -62,9 +62,6 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
         None => String::new(),
     };
 
-    let svc = service_name(message, ctx);
-    let desc = ctx.prefetched.map(|p| p.description.as_str()).unwrap_or("");
-
     let mut out = format!(
         "**Localize first** — rewrite the content below in the user's language before sending. \
          Do NOT pass the English template verbatim to a non-English user.\n\
@@ -79,14 +76,10 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
         out.push('\n');
     }
 
-    out.push_str(&format!(
-        "**DApp plugin pre-install**: scan the subscription name \"{svc}\" and task description \
-         \"{desc}\" for references to third-party DApps/protocols (e.g. \"polymarket\", \
-         \"hyperliquid\"). For each detected DApp name, treat it as an `okx-dapp-discovery` \
-         trigger — read `skills/okx-dapp-discovery/SKILL.md` and follow its installation flow. \
-         If no DApp references are found or the plugin is already installed, skip this step.\n\n\
-         **End this turn** after notification + DApp check completes.\n"
-    ));
+    // FR-7 / AC-8: no post-`sub_created` DApp text re-scan or install. Tool readiness
+    // was already surfaced at `asp-match` time via `autoTradePreflight`; the runtime
+    // re-checks tool status when the first real signal arrives.
+    out.push_str("**End this turn** after the notification is sent.\n");
 
     out
 }
@@ -274,7 +267,7 @@ pub(crate) fn sub_trial_into_active(
     notify_and_end(&content)
 }
 
-pub(crate) fn sub_renew(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
+pub(crate) async fn sub_renew(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
     let renew_result = extract_str(message, "renewResult");
     let fail_reason =
         extract_str(message, "failReason").or_else(|| extract_str(message, "failReasopn"));
@@ -293,7 +286,68 @@ pub(crate) fn sub_renew(ctx: &FlowContext<'_>, message: Option<&serde_json::Valu
     // Never terminal — a failed renewal only enters the grace period (service continues,
     // backend keeps retrying); the subscription ends later via sub_close_notify /
     // sub_failed_notify, and those events own the session-cleanup hint.
+    if renew_result == Some("fail") {
+        if let (Some(symbol), Some(amount_str)) = (extract_str(message, "tokenSymbol"), extract_str(message, "tokenAmount")) {
+            if let Ok(required) = amount_str.parse::<f64>() {
+                if required > 0.0 {
+                    if let Ok((_account_id, address)) = crate::commands::agent_commerce::task::signing::resolve_wallet_by_agent_id(ctx.agent_id).await {
+                        if !address.is_empty() {
+                            let balance_low = crate::commands::agent_commerce::task::common::query_xlayer_balance(&address, symbol)
+                                .await
+                                .map_or(true, |b| b < required);
+                            if balance_low {
+                                return super::super::flow::notify_and_end_with_deposit(&content, &address);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     notify_and_end(&content)
+}
+
+/// FR-9: select the `sub_expire_warn` copy by the subscription's `autoRenew`.
+/// `Some(0)` (explicitly off) -> the new "ending soon" template with the current
+/// period range; `Some(nonzero)` (on) or `None` (missing/legacy → treat as on)
+/// -> the existing template, byte-for-byte unchanged. Pure/testable.
+pub(crate) fn select_sub_expire_warn_content(
+    auto_renew: Option<i64>,
+    job_id: &str,
+    period_start: &str,
+    period_end: &str,
+) -> String {
+    match auto_renew {
+        Some(0) => super::super::content::sub_expire_warn_no_autorenew_notify(
+            job_id,
+            period_start,
+            period_end,
+        ),
+        _ => super::super::content::sub_expire_warn_user_notify(job_id),
+    }
+}
+
+/// FR-9: keep the follow-up hint in the same state model as the selected
+/// content. Only an explicit `autoRenew=0` tells the user how to enable
+/// auto-renew; missing/legacy data follows the existing no-action path.
+pub(crate) fn sub_expire_warn_renewal_hint(auto_renew: Option<i64>, job_id: &str) -> String {
+    match auto_renew {
+        Some(0) => format!(
+            "Auto-renewal is **off**. To enable it before expiry:\n\
+             ```bash\n\
+             onchainos agent start-autorenew {job_id}\n\
+             ```"
+        ),
+        _ => "No action needed unless you want to cancel.".to_string(),
+    }
+}
+
+/// Extract an epoch-seconds field tolerating both number and string JSON forms.
+fn as_epoch_secs(v: &serde_json::Value, key: &str) -> Option<i64> {
+    v.get(key).and_then(|x| {
+        x.as_i64()
+            .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+    })
 }
 
 pub(crate) async fn sub_expire_warn(ctx: &FlowContext<'_>) -> String {
@@ -302,29 +356,32 @@ pub(crate) async fn sub_expire_warn(ctx: &FlowContext<'_>) -> String {
 
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-    let content = super::super::content::sub_expire_warn_user_notify(job_id);
 
     let mut client = TaskApiClient::new();
     let detail = client
         .get_with_identity(&format!("{SUBSCRIBE_API_PREFIX}/{job_id}"), agent_id)
         .await;
 
-    let auto_renew = detail
+    // FR-9: distinguish an explicit `autoRenew=0` (false → new template) from
+    // missing/legacy (None → treated as true → existing template).
+    let auto_renew_opt: Option<i64> = detail.as_ref().ok().and_then(|r| r["autoRenew"].as_i64());
+
+    // Current-period range for the autoRenew=false template (unused otherwise).
+    let period_start = detail
         .as_ref()
         .ok()
-        .and_then(|r| r["autoRenew"].as_i64())
-        .unwrap_or(0);
+        .and_then(|r| as_epoch_secs(r, "subStartTime"));
+    let period_end = detail
+        .as_ref()
+        .ok()
+        .and_then(|r| as_epoch_secs(r, "subEndTime"));
+    let period_start_str = super::super::content::fmt_epoch(period_start).unwrap_or_default();
+    let period_end_str = super::super::content::fmt_epoch(period_end).unwrap_or_default();
 
-    let renewal_hint = if auto_renew == 1 {
-        "No action needed unless you want to cancel.".to_string()
-    } else {
-        format!(
-            "Auto-renewal is **off**. To enable it before expiry:\n\
-             ```bash\n\
-             onchainos agent start-autorenew {job_id}\n\
-             ```"
-        )
-    };
+    let content =
+        select_sub_expire_warn_content(auto_renew_opt, job_id, &period_start_str, &period_end_str);
+
+    let renewal_hint = sub_expire_warn_renewal_hint(auto_renew_opt, job_id);
 
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending.\n\
@@ -565,8 +622,66 @@ mod tests {
         assert_eq!(extract_i64(Some(&msg), "missing"), None);
     }
 
-    const HINT_MARKER: &str = "SESSION_CLEANUP_HINT_MARKER";
+    #[test]
+    fn sub_created_has_no_dapp_rescan() {
+        // FR-7 / AC-8: the post-`sub_created` DApp text re-scan is removed.
+        let ctx = ctx_with_hint();
+        let out = sub_created(&ctx, None);
+        assert!(
+            !out.contains("DApp plugin pre-install"),
+            "sub_created must not re-scan for DApps: {out}"
+        );
+        assert!(
+            !out.contains("okx-dapp-discovery"),
+            "sub_created must not route to dapp-discovery: {out}"
+        );
+    }
 
+    // FR-9: sub_expire_warn template selection across all three autoRenew values.
+    #[test]
+    fn select_sub_expire_warn_content_by_autorenew() {
+        let s_true = select_sub_expire_warn_content(Some(1), "JOB-1", "2026-07-01", "2026-07-31");
+        let s_none = select_sub_expire_warn_content(None, "JOB-1", "2026-07-01", "2026-07-31");
+        let s_false = select_sub_expire_warn_content(Some(0), "JOB-1", "2026-07-01", "2026-07-31");
+        // autoRenew=true and missing/legacy both use the existing template (unchanged).
+        assert_eq!(s_true, s_none);
+        assert!(
+            s_true.contains("[Renewal Reminder]"),
+            "true → existing: {s_true}"
+        );
+        // explicit autoRenew=false uses the new "ending soon" template + period range.
+        assert_ne!(s_false, s_true);
+        assert!(
+            s_false.contains("[Subscription Ending Soon]"),
+            "false → new: {s_false}"
+        );
+        assert!(
+            s_false.contains("2026-07-01") && s_false.contains("2026-07-31"),
+            "period range substituted: {s_false}"
+        );
+    }
+
+    #[test]
+    fn sub_expire_warn_renewal_hint_matches_autorenew_state() {
+        let h_true = sub_expire_warn_renewal_hint(Some(1), "JOB-1");
+        let h_none = sub_expire_warn_renewal_hint(None, "JOB-1");
+        let h_false = sub_expire_warn_renewal_hint(Some(0), "JOB-1");
+
+        assert_eq!(
+            h_true, h_none,
+            "missing/legacy autoRenew must keep the legacy no-action hint"
+        );
+        assert!(
+            h_true.contains("No action needed"),
+            "autoRenew=true hint: {h_true}"
+        );
+        assert!(
+            h_false.contains("start-autorenew JOB-1"),
+            "autoRenew=false hint offers enable command: {h_false}"
+        );
+    }
+
+    const HINT_MARKER: &str = "SESSION_CLEANUP_HINT_MARKER";
     fn ctx_with_hint() -> FlowContext<'static> {
         FlowContext {
             job_id: "job1",
@@ -700,8 +815,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn sub_renew_fail_is_never_terminal_and_plumbs_reason() {
+    #[tokio::test]
+    async fn sub_renew_fail_is_never_terminal_and_plumbs_reason() {
         // Failed renewal enters the grace period — the subscription is still alive, so the
         // handler must NOT append the session-cleanup hint (close/failed events own that).
         let ctx = ctx_with_hint();
@@ -709,7 +824,7 @@ mod tests {
             "jobTitle": "My Sub", "renewResult": "fail",
             "failReasopn": "approve\u{4e0d}\u{8db3}", "subBufferEndTime": 1_700_700_000i64
         });
-        let out = sub_renew(&ctx, Some(&msg));
+        let out = sub_renew(&ctx, Some(&msg)).await;
         assert!(
             out.contains("[⚠️ Renewal Failed]"),
             "fail branch copy: {out}"
@@ -724,14 +839,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn sub_renew_success_is_non_terminal() {
+    #[tokio::test]
+    async fn sub_renew_success_is_non_terminal() {
         let ctx = ctx_with_hint();
         let msg = serde_json::json!({
             "jobTitle": "My Sub", "renewResult": "success",
             "tokenAmount": "5", "tokenSymbol": "USDT"
         });
-        let out = sub_renew(&ctx, Some(&msg));
+        let out = sub_renew(&ctx, Some(&msg)).await;
         assert!(out.contains("[Renewed]"), "success branch copy: {out}");
         assert!(
             !out.contains(HINT_MARKER),

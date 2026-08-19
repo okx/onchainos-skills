@@ -21,10 +21,12 @@ mod complete;
 mod content;
 mod create;
 mod create_subscribe;
+mod device_routing;
+mod offline_receive;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
-pub(crate) use flow_lifecycle::{persist_a2a_spool, try_recover_from_temp_file, run_recovered_autotrade};
+pub(crate) use flow_lifecycle::{persist_a2a_spool, try_recover_from_temp_file, route_subscription_delivery_to_skill};
 mod flow_negotiate;
 pub(crate) mod negotiate;
 mod query;
@@ -47,8 +49,6 @@ pub enum TaskCommand {
     Create {
         #[arg(long)]
         description: String,
-        #[arg(long = "description-summary")]
-        description_summary: Option<String>,
         #[arg(long)]
         budget: f64,
         #[arg(long = "max-budget")]
@@ -101,27 +101,40 @@ pub enum TaskCommand {
         /// Auto-renew: 0/false=off, 1/true=on
         #[arg(long = "auto-renew")]
         auto_renew: String,
-        /// Copy trade: 0/false=off, 1/true=on
-        #[arg(long = "copy-trade")]
-        copy_trade: String,
         /// Subscription title (max 64 chars)
         #[arg(long)]
         title: String,
         /// Subscription description (max 4096 chars)
         #[arg(long)]
         description: String,
-        /// Description summary (max 512 chars)
-        #[arg(long = "description-summary")]
-        description_summary: String,
         /// Designated provider agent ID
         #[arg(long = "provider-agent-id")]
         provider_agent_id: Option<String>,
+        /// Exact service description returned by asp-match. Used only to persist
+        /// bounded asset/tool hints; the raw prose is never executed.
+        #[arg(long = "service-description", default_value = "")]
+        service_description: String,
         /// Service billing interval (from asp-match subscription.interval, e.g. "month")
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
+        /// Explicit user-confirmed automatic signal execution (`auto`).
+        #[arg(long = "autotrade-mode")]
+        autotrade_mode: Option<String>,
+        /// Fixed quote-currency amount used for every delivered signal.
+        #[arg(long = "autotrade-amount")]
+        autotrade_amount: Option<String>,
+        /// Per-delivery automatic-execution cap.
+        #[arg(long = "autotrade-cap")]
+        autotrade_cap: Option<String>,
+        /// Quote currency for amount/cap (`usdt` or `usdc`).
+        #[arg(long = "autotrade-quote")]
+        autotrade_quote: Option<String>,
         /// Output format: "json" for raw JSON
         #[arg(long, default_value = "")]
         format: String,
+        /// Device ids to omit from the default all-devices routing set (repeatable).
+        #[arg(long = "exclude-device")]
+        exclude_device: Option<Vec<String>>,
     },
     /// Search matching ASPs (pre-publish or post-publish)
     AspMatch {
@@ -235,16 +248,6 @@ pub enum TaskCommand {
     ClaimAutoRefund {
         job_id: String,
     },
-    /// x402 Phase 2b: direct/accept after job_payment_mode_changed + x402 endpoint interaction
-    DirectAccept {
-        job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: Option<String>,
-        #[arg(long = "token-amount")]
-        token_amount: Option<String>,
-    },
     /// x402 Phase 2: x402_pay signing + direct/accept + endpoint replay.
     /// Returns replay result (deliverable) and Payment Credential.
     Task402Pay {
@@ -267,6 +270,10 @@ pub enum TaskCommand {
         /// JSON business body to POST during replay (for endpoints that require business parameters)
         #[arg(long)]
         body: Option<String>,
+        /// Bypass the confirming gate and broadcast the on-chain accept immediately (FR-7.3).
+        /// Automated playbooks pass this.
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
     /// Validate an x402 endpoint and extract pricing info
     X402Check {
@@ -329,6 +336,30 @@ pub enum TaskCommand {
     /// Show total monthly cost of active subscriptions.
     #[command(name = "subscribe-cost")]
     SubscribeCost {},
+    /// Overwrite the receive-device list for one or more subscriptions (batch).
+    #[command(name = "subscribe-device-update")]
+    SubscribeDeviceUpdate {
+        #[arg(long = "job-id")]
+        job_id: Option<String>,
+        #[arg(long = "device-list")]
+        device_list: Option<String>,
+        #[arg(long, conflicts_with_all = ["job_id", "device_list"])]
+        items: Option<String>,
+    },
+    /// Set a subscription's offline-receive flag (0 = keep backlog, 1 = discard backlog).
+    #[command(name = "subscribe-offline-update")]
+    SubscribeOfflineUpdate {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long)]
+        flag: String,
+    },
+    /// List the devices this agent is logged in on (paginated to completion).
+    #[command(name = "device-list")]
+    DeviceList {
+        page: i64,
+        page_size: i64,
+    },
 }
 
 // ─── Routing dispatch ──────────────────────────────────────────────────────
@@ -341,23 +372,355 @@ fn parse_bool_or_int(s: &str, flag: &str) -> Result<i32> {
     }
 }
 
+/// Build the optional post-login subscription block. An empty subscription
+/// list deliberately produces no block (the product's zero-disturb contract),
+/// while a missing device snapshot is kept as JSON null so the renderer uses
+/// the documented this-device-only degraded view.
+fn compose_post_login_subscriptions(
+    subscriptions: serde_json::Value,
+    subscriptions_empty: bool,
+    devices: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    if subscriptions_empty {
+        return None;
+    }
+    Some(serde_json::json!({
+        "subscriptions": subscriptions,
+        "devices": devices,
+    }))
+}
+
+/// State captured before the login heartbeat registers this machine. Comparing
+/// against the pre-heartbeat device table is what lets login distinguish a
+/// genuinely new device from an existing device whose receipt was deliberately
+/// disabled by the user.
+pub(crate) struct PostLoginSubscriptionsPreparation {
+    agent_id: String,
+    current_device_id: String,
+    routing_api_base_url: String,
+    current_device_was_registered: bool,
+    current_device_needs_default_routing: bool,
+    pre_registration_devices: serde_json::Value,
+}
+
+fn device_snapshot_contains(devices: &serde_json::Value, device_id: &str) -> Option<bool> {
+    let list = devices.get("list")?.as_array()?;
+    Some(list.iter().any(|row| {
+        row.get("deviceId").and_then(serde_json::Value::as_str) == Some(device_id)
+    }))
+}
+
+fn device_needs_default_routing(was_registered: bool, already_pending: bool) -> bool {
+    already_pending || !was_registered
+}
+
+/// Fetch the device table before the registration heartbeat. Device-query
+/// failure deliberately suppresses only automatic routing/the login table; the
+/// login orchestrator still sends the heartbeat so device registration is never
+/// coupled to this optional classification step.
+pub(crate) async fn prepare_post_login_subscriptions(
+) -> Option<PostLoginSubscriptionsPreparation> {
+    let mut client = TaskApiClient::new();
+    let (agent_id, _) = match create::resolve_user_agent().await {
+        Ok(identity) => identity,
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] buyer identity unavailable: {e:#}");
+            }
+            return None;
+        }
+    };
+
+    let Some(current_device_id) = crate::device::id::get_cached_device_id().map(str::to_string)
+    else {
+        if cfg!(feature = "debug-log") {
+            eprintln!("[DEBUG][post-login] current device id unavailable");
+        }
+        return None;
+    };
+    let devices = match device_routing::fetch_device_list_snapshot(
+        &mut client,
+        &agent_id,
+        1,
+        20,
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!(
+                    "[DEBUG][post-login] pre-registration device snapshot unavailable: {e:#}"
+                );
+            }
+            return None;
+        }
+    };
+    let Some(current_device_was_registered) =
+        device_snapshot_contains(&devices, &current_device_id)
+    else {
+        if cfg!(feature = "debug-log") {
+            eprintln!("[DEBUG][post-login] malformed pre-registration device snapshot");
+        }
+        return None;
+    };
+
+    let already_pending = match device_routing::new_device_routing_is_pending(
+        &client.base_url,
+        &agent_id,
+        &current_device_id,
+    ) {
+        Ok(pending) => pending,
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] pending routing marker unavailable: {e:#}");
+            }
+            return None;
+        }
+    };
+    let current_device_needs_default_routing =
+        device_needs_default_routing(current_device_was_registered, already_pending);
+    if !current_device_was_registered && !already_pending {
+        if let Err(e) = device_routing::mark_new_device_routing_pending(
+            &client.base_url,
+            &agent_id,
+            &current_device_id,
+        ) {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] cannot persist pending routing marker: {e:#}");
+            }
+            // Automatic routing cannot safely start without durable state. The
+            // login orchestrator still reports the device heartbeat.
+            return None;
+        }
+    } else if current_device_was_registered && !already_pending {
+        // A completed marker is not needed once this device is visible. Deletion
+        // is merely garbage collection: Completed never counts as pending.
+        let _ = device_routing::clear_new_device_routing_state(
+            &client.base_url,
+            &agent_id,
+            &current_device_id,
+        );
+    }
+
+    Some(PostLoginSubscriptionsPreparation {
+        agent_id,
+        current_device_id,
+        routing_api_base_url: client.base_url.clone(),
+        current_device_was_registered,
+        current_device_needs_default_routing,
+        pre_registration_devices: devices,
+    })
+}
+
+/// Complete new-device routing after the heartbeat. Existing devices are never
+/// rewritten, preserving any manual opt-out. A new device is merged into every
+/// explicit subscription list and only then is the login snapshot returned.
+pub(crate) async fn finalize_post_login_subscriptions(
+    prepared: PostLoginSubscriptionsPreparation,
+    device_registration_succeeded: bool,
+) -> Option<serde_json::Value> {
+    let mut client = TaskApiClient::new();
+    let snapshot = match subscription_ops::fetch_my_subscriptions_snapshot_for_agent(
+        &mut client,
+        subscription_ops::SubscriptionRole::Buyer,
+        None,
+        prepared.agent_id.clone(),
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] subscription snapshot unavailable: {e:#}");
+            }
+            // Keep a new device's pending marker. The next login retries from a
+            // fresh subscription list; wallet login itself still succeeds.
+            return None;
+        }
+    };
+    if snapshot.is_empty {
+        if prepared.current_device_needs_default_routing
+            && (prepared.current_device_was_registered || device_registration_succeeded)
+        {
+            if let Err(e) = device_routing::mark_new_device_routing_completed(
+                &prepared.routing_api_base_url,
+                &prepared.agent_id,
+                &prepared.current_device_id,
+            ) {
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[DEBUG][post-login] empty-list routing completion failed: {e:#}");
+                }
+                return None;
+            }
+            let _ = device_routing::clear_new_device_routing_state(
+                &prepared.routing_api_base_url,
+                &prepared.agent_id,
+                &prepared.current_device_id,
+            );
+        }
+        return None;
+    }
+    let mut subscriptions = snapshot.data;
+
+    if prepared.current_device_needs_default_routing
+        && !prepared.current_device_was_registered
+        && !device_registration_succeeded
+    {
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][post-login] new device registration failed; suppressing subscription table"
+            );
+        }
+        return None;
+    }
+
+    let devices = if prepared.current_device_needs_default_routing {
+        match device_routing::add_new_device_to_all_subscriptions(
+            &mut client,
+            &prepared.routing_api_base_url,
+            &prepared.agent_id,
+            &mut subscriptions,
+            &prepared.current_device_id,
+        )
+        .await
+        {
+            Ok(updated) => {
+                if cfg!(feature = "debug-log") {
+                    eprintln!(
+                        "[DEBUG][post-login] added new device to {updated} explicit subscription routes"
+                    );
+                }
+            }
+            Err(e) => {
+                if cfg!(feature = "debug-log") {
+                    eprintln!(
+                        "[DEBUG][post-login] new-device subscription routing unavailable: {e:#}"
+                    );
+                }
+                // The durable marker remains, so the next login retries only
+                // subscriptions whose fresh lists still lack this device.
+                return None;
+            }
+        }
+
+        if let Err(e) = device_routing::clear_new_device_routing_state(
+            &prepared.routing_api_base_url,
+            &prepared.agent_id,
+            &prepared.current_device_id,
+        ) {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] routing completed; state cleanup deferred: {e:#}");
+            }
+        }
+
+        if prepared.current_device_was_registered {
+            Some(prepared.pre_registration_devices)
+        } else {
+            match device_routing::fetch_device_list_snapshot(
+                &mut client,
+                &prepared.agent_id,
+                1,
+                20,
+            )
+            .await
+            {
+                Ok(snapshot)
+                    if device_snapshot_contains(&snapshot, &prepared.current_device_id)
+                        == Some(true) =>
+                {
+                    Some(snapshot)
+                }
+                Ok(_) => {
+                    if cfg!(feature = "debug-log") {
+                        eprintln!(
+                            "[DEBUG][post-login] registered device not visible yet; using degraded render"
+                        );
+                    }
+                    None
+                }
+                Err(e) => {
+                    if cfg!(feature = "debug-log") {
+                        eprintln!(
+                            "[DEBUG][post-login] post-registration device snapshot unavailable; degrading: {e:#}"
+                        );
+                    }
+                    None
+                }
+            }
+        }
+    } else {
+        // Existing device with no pending onboarding marker: never rewrite its
+        // subscriptions, preserving every manual per-task opt-out.
+        Some(prepared.pre_registration_devices)
+    };
+
+    compose_post_login_subscriptions(subscriptions, false, devices)
+}
+
+/// Best-effort login post-condition: fetch the buyer's subscriptions and, only
+/// when non-empty, the complete logged-in-device table. Subscription failures
+/// and empty lists are intentionally silent; device failures preserve the
+/// subscription data and select the documented degraded render.
+pub(crate) async fn fetch_post_login_subscriptions() -> Option<serde_json::Value> {
+    let mut client = TaskApiClient::new();
+    let subscriptions = match subscription_ops::fetch_my_subscriptions_snapshot(
+        &mut client,
+        subscription_ops::SubscriptionRole::Buyer,
+        None,
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] subscription snapshot unavailable: {e:#}");
+            }
+            return None;
+        }
+    };
+
+    if subscriptions.is_empty {
+        return None;
+    }
+
+    let devices = match device_routing::fetch_device_list_snapshot(
+        &mut client,
+        &subscriptions.agent_id,
+        1,
+        20,
+    )
+    .await
+    {
+        Ok(snapshot) => Some(snapshot),
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] device snapshot unavailable; degrading: {e:#}");
+            }
+            None
+        }
+    };
+
+    compose_post_login_subscriptions(subscriptions.data, false, devices)
+}
+
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     let mut client = TaskApiClient::new();
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount } =>
+        TaskCommand::Create { description, budget, max_budget, currency, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount } =>
             create::handle_create(&mut client, create::CreateTaskParams {
-                description, description_summary, budget, max_budget, currency,
+                description, budget, max_budget, currency,
                 title, provider, attachments, endpoint, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount,
             }).await,
-        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format } => {
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
-            let copy_trade = parse_bool_or_int(&copy_trade, "copy-trade")?;
             create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
                 service_id, use_trial, service_params, service_token_amount, service_token_address,
-                auto_renew, copy_trade, title, description, description_summary, provider_agent_id, service_interval, format,
+                auto_renew, title, description, provider_agent_id, service_description, service_interval,
+                autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device,
             }).await
         }
         TaskCommand::AspMatch { task_desc, job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
@@ -375,10 +738,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             accept::handle_set_payment_mode(&mut client, &job_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
         TaskCommand::ConfirmAccept { job_id } =>
             accept::handle_confirm_accept(&mut client, &job_id, None).await,
-        TaskCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
-            accept::handle_direct_accept(&mut client, &job_id, &provider_agent_id, token_symbol.as_deref(), token_amount.as_deref()).await,
-        TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body } =>
-            accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref(), body.as_deref()).await,
+        TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body, force } =>
+            accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref(), body.as_deref(), force).await,
         TaskCommand::X402Check { endpoint, agent_id, body } =>
             accept::handle_x402_check(&mut client, &endpoint, agent_id.as_deref(), body.as_deref()).await,
         TaskCommand::Complete { job_id } =>
@@ -413,6 +774,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             reject::handle_reject(&mut client, &sub_id, &reason).await,
         TaskCommand::SubscribeDetail { sub_id, format } =>
             subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await,
+        TaskCommand::SubscribeDeviceUpdate { job_id, device_list, items } =>
+            device_routing::handle_subscribe_device_update(&mut client, job_id.as_deref(), device_list.as_deref(), items.as_deref()).await,
+        TaskCommand::SubscribeOfflineUpdate { job_id, flag } =>
+            offline_receive::handle_subscribe_offline_update(&mut client, &job_id, &flag).await,
+        TaskCommand::DeviceList { page, page_size } =>
+            device_routing::handle_device_list(&mut client, page, page_size).await,
 
         // ── Read-only queries ────────────────────────────────────
         TaskCommand::Payment { job_id, agent_id } =>
@@ -426,3 +793,62 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     }
 }
 
+#[cfg(test)]
+mod post_login_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn empty_subscriptions_produce_no_post_login_block() {
+        let block = compose_post_login_subscriptions(
+            json!({ "list": [] }),
+            true,
+            Some(json!({ "list": [{ "deviceId": "d1" }] })),
+        );
+        assert!(block.is_none());
+    }
+
+    #[test]
+    fn non_empty_subscriptions_include_complete_device_snapshot() {
+        let subscriptions = json!({ "list": [{ "jobId": "j1" }] });
+        let devices = json!({ "list": [{ "deviceId": "d1" }], "total": 1 });
+        let block =
+            compose_post_login_subscriptions(subscriptions.clone(), false, Some(devices.clone()))
+                .expect("non-empty subscriptions must produce a block");
+        assert_eq!(block["subscriptions"], subscriptions);
+        assert_eq!(block["devices"], devices);
+    }
+
+    #[test]
+    fn device_failure_keeps_subscriptions_and_selects_degraded_render() {
+        let subscriptions = json!({ "list": [{ "jobId": "j1" }] });
+        let block = compose_post_login_subscriptions(subscriptions.clone(), false, None)
+            .expect("subscription data must survive a device-list failure");
+        assert_eq!(block["subscriptions"], subscriptions);
+        assert!(block["devices"].is_null());
+    }
+
+    #[test]
+    fn pre_heartbeat_device_snapshot_distinguishes_new_and_existing_devices() {
+        let devices = json!({
+            "list": [
+                { "deviceId": "d1", "deviceName": "Mac 1" },
+                { "deviceId": "d2", "deviceName": "Mac 2" }
+            ]
+        });
+        assert_eq!(device_snapshot_contains(&devices, "d1"), Some(true));
+        assert_eq!(device_snapshot_contains(&devices, "d-new"), Some(false));
+        assert_eq!(device_snapshot_contains(&json!({}), "d1"), None);
+    }
+
+    #[test]
+    fn only_new_or_interrupted_devices_need_default_routing() {
+        assert!(device_needs_default_routing(false, false));
+        assert!(device_needs_default_routing(false, true));
+        assert!(device_needs_default_routing(true, true));
+        assert!(
+            !device_needs_default_routing(true, false),
+            "ordinary re-login must preserve this device's manual opt-outs"
+        );
+    }
+}

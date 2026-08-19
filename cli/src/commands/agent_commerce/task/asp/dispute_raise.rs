@@ -14,7 +14,9 @@ use anyhow::{bail, Context, Result};
 use std::time::Duration;
 
 use crate::audit;
-use crate::commands::agent_commerce::task::common::{self, network::task_api_client::TaskApiClient};
+use crate::commands::agent_commerce::task::common::{
+    self, network::task_api_client::TaskApiClient,
+};
 use crate::commands::agent_commerce::task::signing;
 
 const MAX_REASON_CHARS: usize = 2000;
@@ -47,27 +49,39 @@ pub async fn handle_dispute_raise(
     let token_symbol = task_resp["tokenSymbol"].as_str().unwrap_or("?");
     if task_amount > 0.0 {
         let required = task_amount * 0.05;
-        common::ensure_sufficient_balance_at(required, token_symbol, &address)
-            .await
-            .context(format!(
+        if let Err(e) = common::ensure_sufficient_balance_at(required, token_symbol, &address).await
+        {
+            // Preserve the dispute-bond framing, then enrich with the ASP signing
+            // account's deposit address + stderr QR (FR-2 — explicit address, no
+            // agentId resolution). enrich_blocking_at folds the full `{:#}` chain
+            // (incl. this context) into the error message byte-for-byte.
+            let e = e.context(format!(
                 "Raising a dispute requires a deposit >= 5% of the task amount ({required} {token_symbol}; task amount {task_amount} {token_symbol})"
-            ))?;
+            ));
+            return Err(common::deposit_qr::enrich_blocking_at(e, &address));
+        }
     }
 
     let body = serde_json::json!({});
 
     // POST /dispute/approve → uopData → sign + broadcast
-    let approve_resp = client.post_with_identity(
-        &client.endpoint(job_id, "dispute/approve"), &body, agent_id,
-    ).await
+    let approve_resp = client
+        .post_with_identity(&client.endpoint(job_id, "dispute/approve"), &body, agent_id)
+        .await
         .context("dispute raise (stage 1): dispute/approve API request failed")?;
 
     let approve_tx = signing::sign_uop_and_broadcast(
-        client, &approve_resp["uopData"], &account_id, &address,
-        job_id, signing::extract_biz_type(&approve_resp), agent_id,
+        client,
+        &approve_resp["uopData"],
+        &account_id,
+        &address,
+        job_id,
+        signing::extract_biz_type(&approve_resp),
+        agent_id,
         None,
-    ).await
-        .context("dispute raise (stage 1): approve on-chain broadcast failed")?;
+    )
+    .await
+    .context("dispute raise (stage 1): approve on-chain broadcast failed")?;
 
     audit::log(
         "cli",
