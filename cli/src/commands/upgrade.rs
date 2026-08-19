@@ -1107,9 +1107,14 @@ async fn verify_installed_integrity(client: &Client, version: &str) -> Integrity
 fn compute_drift(effective_cli: &str, skill_version: Option<&str>) -> Option<String> {
     let skill = skill_version?;
     if semver_gt(effective_cli, skill) {
+        let install_command = if is_prerelease(effective_cli) {
+            "npx skills add okx/onchainos-skills#beta --yes -g"
+        } else {
+            "npx skills add okx/onchainos-skills --yes -g"
+        };
         Some(format!(
-            "Skill is behind the CLI (skill v{} < CLI v{}). If it was installed via a package manager, update it with `npx skills add okx/onchainos-skills --yes -g` (or your manager's equivalent); then re-read this skill's SKILL.md.",
-            skill, effective_cli
+            "Skill is behind the CLI (skill v{} < CLI v{}). If it was installed via a package manager, update it with `{}` (or your manager's equivalent); then re-read this skill's SKILL.md.",
+            skill, effective_cli, install_command
         ))
     } else {
         None
@@ -1810,6 +1815,7 @@ mod tests {
         assert_eq!(payload["graduated"], json!(true));
         let action = payload["action"].as_str().expect("action must be a string");
         assert!(action.contains("npx skills add okx/onchainos-skills --yes -g"));
+        assert!(!action.contains("onchainos-skills#beta"));
         assert!(action.contains("SKILL.md"));
     }
 
@@ -1884,6 +1890,21 @@ ccc333\trefs/heads/main
     fn compute_drift_flags_cli_ahead() {
         assert!(compute_drift("4.1.0", Some("4.0.0")).is_some());
         assert!(compute_drift("4.0.1", Some("4.0.0")).is_some());
+    }
+
+    #[test]
+    fn compute_drift_uses_beta_skill_source_for_beta_cli() {
+        let action = compute_drift("4.4.11-beta", Some("4.4.10-beta"))
+            .expect("beta CLI ahead of beta skill must report drift");
+        assert!(action.contains("npx skills add okx/onchainos-skills#beta --yes -g"));
+    }
+
+    #[test]
+    fn compute_drift_uses_stable_skill_source_for_stable_cli() {
+        let action = compute_drift("4.4.11", Some("4.4.10"))
+            .expect("stable CLI ahead of stable skill must report drift");
+        assert!(action.contains("npx skills add okx/onchainos-skills --yes -g"));
+        assert!(!action.contains("onchainos-skills#beta"));
     }
 
     #[test]
