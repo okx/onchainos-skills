@@ -1,6 +1,6 @@
 //! Queries and selects transferable BRC-20 carrier UTXOs.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use num_bigint::BigUint;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,6 +18,192 @@ use crate::output;
 
 const MAX_COMBINATION_STATES: usize = 100_000;
 const MAX_COMBINATION_RESULTS: usize = 3;
+
+/// Builds template-ready BRC-20 holdings fields from the two read-only API responses.
+fn build_brc20_template_values(
+    token_address: &str,
+    decimals: u32,
+    balance: &Value,
+    transferable_snapshot: &Value,
+) -> Result<Value> {
+    let asset = find_token_asset(balance, token_address).ok_or_else(|| {
+        anyhow::anyhow!("BRC-20 balance response did not contain {token_address}")
+    })?;
+    let total_amount = value_as_decimal_string(&asset["balance"])
+        .ok_or_else(|| anyhow::anyhow!("BRC-20 balance response is missing balance"))?;
+    let transferable = parse_brc20_transferable_utxos(transferable_snapshot)?;
+    let transferable_raw = transferable_snapshot
+        .pointer("/brc20TransferableUtxoList/sumValueRaw")
+        .and_then(value_as_decimal_string)
+        .unwrap_or_else(|| {
+            transferable
+                .iter()
+                .fold(BigUint::default(), |total, utxo| {
+                    total
+                        + parse_minimal(&utxo.value_raw, "transferable BRC-20 amount", true)
+                            .expect("parsed transferable UTXOs have valid minimal amounts")
+                })
+                .to_string()
+        });
+    let transferable_amount = minimal_to_readable(&transferable_raw, decimals)?;
+    let remaining_inscribable_amount = decimal_subtract(
+        &total_amount,
+        &transferable_amount,
+        "BRC-20 total amount",
+        "transferable BRC-20 amount",
+    )?;
+    let token_price = value_as_decimal_string(&asset["tokenPrice"])
+        .filter(|value| parse_decimal(value, "tokenPrice").is_ok());
+    let total_usd = value_as_decimal_string(&asset["usdValue"])
+        .filter(|value| parse_decimal(value, "usdValue").is_ok());
+    let transferable_usd = token_price
+        .as_deref()
+        .map(|price| {
+            decimal_multiply(
+                &transferable_amount,
+                price,
+                "transferable BRC-20 amount",
+                "tokenPrice",
+            )
+        })
+        .transpose()?;
+    let remaining_inscribable_usd = token_price
+        .as_deref()
+        .map(|price| {
+            decimal_multiply(
+                &remaining_inscribable_amount,
+                price,
+                "remaining inscribable BRC-20 amount",
+                "tokenPrice",
+            )
+        })
+        .transpose()?;
+    let ticker = token_address
+        .strip_prefix("btc-brc20-")
+        .unwrap_or(token_address);
+
+    Ok(json!({
+        "ticker": ticker,
+        "totalAmount": total_amount,
+        "transferableAmount": transferable_amount,
+        "remainingInscribableAmount": remaining_inscribable_amount,
+        "totalUsd": total_usd,
+        "transferableUsd": transferable_usd,
+        "remainingInscribableUsd": remaining_inscribable_usd,
+        "tokenPrice": token_price,
+        "count": transferable.len(),
+        "denominations": transferable.iter().map(|utxo| utxo.build_choice(token_address, decimals).map(|choice| choice["tokenAmount"].clone())).collect::<Result<Vec<_>>>()?,
+    }))
+}
+
+/// Returns the template-ready BRC-20 holdings values from the existing balance command.
+pub async fn cmd_brc20_balance(token_address: &str) -> Result<()> {
+    let token_address = validation::normalize_brc20_token_address(token_address)?;
+    let context = BtcContext::load(None).await?;
+    let mut metadata_api = BtcApi::new()?;
+    let metadata = metadata_api
+        .token_metadata(&context, &token_address)
+        .await?;
+    let decimals = api::extract_token_decimals(&metadata)?;
+    let mut balance_api = BtcApi::new()?;
+    let mut transferable_api = BtcApi::new()?;
+    let (balance, transferable_snapshot) = tokio::try_join!(
+        balance_api.brc20_balance(&context, &token_address),
+        transferable_api.brc20_transferable_utxos(&context, &token_address),
+    )?;
+    let mut result = build_brc20_template_values(
+        &token_address,
+        decimals,
+        &balance,
+        &transferable_snapshot,
+    )?;
+    let result_object = result
+        .as_object_mut()
+        .expect("BRC-20 template values are an object");
+    result_object.insert("tokenAddress".to_string(), json!(token_address));
+    output::success(result);
+    Ok(())
+}
+
+fn find_token_asset<'a>(value: &'a Value, token_address: &str) -> Option<&'a Value> {
+    if let Some(tokens) = value.get("tokenAssets").and_then(Value::as_array) {
+        if let Some(asset) = tokens.iter().find(|asset| {
+            asset["tokenAddress"]
+                .as_str()
+                .is_some_and(|address| address.eq_ignore_ascii_case(token_address))
+        }) {
+            return Some(asset);
+        }
+    }
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .find_map(|item| find_token_asset(item, token_address)),
+        Value::Object(fields) => fields
+            .values()
+            .find_map(|item| find_token_asset(item, token_address)),
+        _ => None,
+    }
+}
+
+/// Parses a non-negative plain decimal to an integer mantissa and decimal scale.
+fn parse_decimal(value: &str, field: &str) -> Result<(BigUint, usize)> {
+    let value = value.trim();
+    let mut parts = value.split('.');
+    let integer = parts.next().unwrap_or_default();
+    let fraction = parts.next();
+    if parts.next().is_some()
+        || integer.is_empty()
+        || !integer.bytes().all(|byte| byte.is_ascii_digit())
+        || fraction
+            .is_some_and(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        bail!("{field} must be a non-negative plain decimal");
+    }
+    let fraction = fraction.unwrap_or_default();
+    let mantissa = format!("{integer}{fraction}")
+        .parse::<BigUint>()
+        .map_err(|_| anyhow::anyhow!("{field} is outside the supported decimal range"))?;
+    Ok((mantissa, fraction.len()))
+}
+
+fn format_decimal(mantissa: BigUint, scale: usize) -> String {
+    let mut digits = mantissa.to_string();
+    if scale == 0 {
+        return digits;
+    }
+    if digits.len() <= scale {
+        digits = format!("{}{}", "0".repeat(scale + 1 - digits.len()), digits);
+    }
+    let split = digits.len() - scale;
+    let fraction = digits[split..].trim_end_matches('0');
+    if fraction.is_empty() {
+        digits[..split].to_string()
+    } else {
+        format!("{}.{}", &digits[..split], fraction)
+    }
+}
+
+fn decimal_subtract(left: &str, right: &str, left_name: &str, right_name: &str) -> Result<String> {
+    let (left_mantissa, left_scale) = parse_decimal(left, left_name)?;
+    let (right_mantissa, right_scale) = parse_decimal(right, right_name)?;
+    let scale = left_scale.max(right_scale);
+    let left = left_mantissa * BigUint::from(10u8).pow((scale - left_scale) as u32);
+    let right = right_mantissa * BigUint::from(10u8).pow((scale - right_scale) as u32);
+    if right > left {
+        bail!("{right_name} cannot exceed {left_name}");
+    }
+    Ok(format_decimal(left - right, scale))
+}
+
+fn decimal_multiply(left: &str, right: &str, left_name: &str, right_name: &str) -> Result<String> {
+    let (left_mantissa, left_scale) = parse_decimal(left, left_name)?;
+    let (right_mantissa, right_scale) = parse_decimal(right, right_name)?;
+    Ok(format_decimal(
+        left_mantissa * right_mantissa,
+        left_scale + right_scale,
+    ))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Brc20TransferableUtxo {
@@ -358,6 +544,56 @@ mod tests {
         assert_eq!(choice["tokenAmount"], "1");
         assert_eq!(choice["utxoAmountSats"], "546");
         assert_eq!(choice["selection"], format!("{tx_hash}:2"));
+    }
+
+    #[test]
+    fn summary_returns_every_balance_template_value_with_exact_decimals() {
+        let balance = json!([{
+            "tokenAssets": [{
+                "tokenAddress": "btc-brc20-pizza",
+                "balance": "4.25",
+                "tokenPrice": "1.2",
+                "usdValue": "5.1"
+            }]
+        }]);
+        let summary = build_brc20_template_values(
+            "btc-brc20-pizza",
+            18,
+            &balance,
+            &transferable_snapshot(),
+        )
+        .unwrap();
+
+        assert_eq!(summary["ticker"], "pizza");
+        assert_eq!(summary["totalAmount"], "4.25");
+        assert_eq!(summary["transferableAmount"], "3");
+        assert_eq!(summary["remainingInscribableAmount"], "1.25");
+        assert_eq!(summary["totalUsd"], "5.1");
+        assert_eq!(summary["transferableUsd"], "3.6");
+        assert_eq!(summary["remainingInscribableUsd"], "1.5");
+        assert_eq!(summary["count"], 2);
+        assert_eq!(summary["denominations"], json!(["1", "2"]));
+    }
+
+    #[test]
+    fn summary_marks_derived_usd_as_unavailable_without_a_valid_price() {
+        let balance = json!([{
+            "tokenAssets": [{
+                "tokenAddress": "btc-brc20-pizza",
+                "balance": "3"
+            }]
+        }]);
+        let summary = build_brc20_template_values(
+            "btc-brc20-pizza",
+            18,
+            &balance,
+            &transferable_snapshot(),
+        )
+        .unwrap();
+
+        assert!(summary["totalUsd"].is_null());
+        assert!(summary["transferableUsd"].is_null());
+        assert!(summary["remainingInscribableUsd"].is_null());
     }
 
     #[test]

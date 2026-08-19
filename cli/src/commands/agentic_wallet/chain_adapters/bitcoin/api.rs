@@ -42,6 +42,28 @@ impl BtcApi {
         Ok(first_data_item(data))
     }
 
+    /// Fetches the current account's balance for one BRC-20 token.
+    ///
+    /// This deliberately returns the raw balance payload: BRC-20 summary
+    /// rendering derives its display values with exact decimal arithmetic.
+    pub async fn brc20_balance(
+        &mut self,
+        context: &BtcContext,
+        token_address: &str,
+    ) -> Result<Value> {
+        let chain_index = context.profile.chain_index.as_str();
+        let query = [
+            ("accountId", context.account_id.as_str()),
+            ("chains", chain_index),
+            ("tokenAddresses[0].chainIndex", chain_index),
+            ("tokenAddresses[0].tokenAddress", token_address),
+        ];
+        self.client
+            .balance_single(&context.access_token, &query)
+            .await
+            .map_err(super::error::map_api_error)
+    }
+
     /// Queries one Bitcoin UTXO availability view and returns its normalized data object.
     pub async fn availability_details(
         &mut self,

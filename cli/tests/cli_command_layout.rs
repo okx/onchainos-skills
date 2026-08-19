@@ -113,6 +113,7 @@ fn wallet_utxo_available_and_brc20_transferable_expose_documented_inputs() {
                 .and(predicate::str::contains("--token-address"))
                 .and(predicate::str::contains("--readable-amount")),
         );
+
 }
 
 #[test]

@@ -8,7 +8,7 @@ Use a synthetic BRC-20 token address: `btc-brc20-<ticker>`. The CLI normalizes i
 onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker> [--force]
 ```
 
-For a holdings query, also run the transferable-UTXO command below, then follow the flow's paired-read amount/USD calculation and three-line balance template.
+For a BRC-20 holdings query, this existing balance command returns top-level, template-ready `totalAmount`, `transferableAmount`, `remainingInscribableAmount`, `totalUsd`, `transferableUsd`, `remainingInscribableUsd`, `count`, and `denominations`. It performs the paired balance and transferable-UTXO reads; amount arithmetic and derived USD values use exact decimal arithmetic. A null USD field means `USD value unavailable`.
 
 ## Transferable BRC-20 UTXOs
 

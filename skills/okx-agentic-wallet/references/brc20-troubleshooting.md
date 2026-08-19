@@ -13,7 +13,7 @@
 
 | Code/state | Meaning | Flow |
 | --- | --- | --- |
-| `selectionPlan.status=NO_EXACT_MATCH` | The current complete UTXOs have no subset whose token amounts sum exactly to the request | Show denominations. Offer another amount or inscription only when the current flow establishes sufficient `remainingInscribableAmount`. |
+| `selectionPlan.status=NO_EXACT_MATCH` | The current complete UTXOs have no subset whose token amounts sum exactly to the request | Show denominations. Offer another amount or inscription only when a fresh BRC-20 `wallet balance` result establishes sufficient `remainingInscribableAmount`. |
 | `selectionPlan.status=SEARCH_LIMIT_EXCEEDED` | The search reached 100,000 distinct amount states before completion | Show the returned choices and describe the result as incomplete. Continue with a user-selected exact combination or a simpler amount. |
 | `44003` / `NEED_INSCRIBE` | Service requires a separate transfer inscription before this BRC-20 transfer | Preserve the service response and end the transfer. Offer inscription only for an explicit user request and confirm it separately. |
 | A selected BRC-20 UTXO is no longer transferable | The refreshed transferable list no longer contains every outpoint in the confirmed combination | Show the refreshed amount-aware plan and obtain a fresh selection before `unsignedInfo`. |
@@ -23,7 +23,7 @@
 | Inscription `STATE_CHANGED` | UTXO state or inscription preview changed | Start a new inscription preview if the user still wants the write. |
 | Inscription `PREVIEW_INTENT_MISMATCH` / `INCOMPLETE_TRANSACTION_PREVIEW` | CLI cannot safely represent the inscription request | Stop this operation and report the error. |
 
-Never unify service codes into a generic BRC-20 failure: preserve the service message and code for diagnostics. Use the current flow's paired reads; present any remaining inscribable amount as available, not required.
+Never unify service codes into a generic BRC-20 failure: preserve the service message and code for diagnostics. Use a fresh BRC-20 `wallet balance` result when remaining inscribable amount is needed; present it as available, not required.
 
 ## Failed Write Diagnostics
 

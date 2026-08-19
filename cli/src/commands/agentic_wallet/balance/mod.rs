@@ -630,6 +630,15 @@ pub(super) async fn cmd_balance(
             .or_else(|| chain_entry["chainIndex"].as_i64().map(|n| n.to_string()))
             .ok_or_else(|| anyhow::anyhow!("chain entry missing chainIndex"))?;
 
+        if chain_index == "0"
+            && token_addr_str
+                .trim()
+                .to_ascii_lowercase()
+                .starts_with("btc-brc20-")
+        {
+            return super::utxo::cmd_brc20_balance(token_addr_str).await;
+        }
+
         let mut query: Vec<(String, String)> = vec![("accountId".into(), account_id.clone())];
         query.push(("chains".into(), chain_index.clone()));
         query.push(("tokenAddresses[0].chainIndex".into(), chain_index));
