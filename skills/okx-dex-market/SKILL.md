@@ -4,7 +4,7 @@ description: "HARD BLOCK — never use for prediction-market/Polymarket UpDown q
 license: MIT
 metadata:
   author: okx
-  version: "4.4.10"
+  version: "4.5.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -14,7 +14,7 @@ Read-only on-chain DEX data across 6 capability groups, unified behind one skill
 
 ## Pre-flight Checks
 
-> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
+At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Chain Name Support
 
