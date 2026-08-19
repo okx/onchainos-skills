@@ -76,7 +76,9 @@ onchainos wallet balance [--all] [--chain <chain>] [--token-address <addr>] [--f
 
 Key fields: `totalValueUsd`, `evmAddress`, `solAddress`, `accountCount`, `details[]` (token balance groups). With `--all`, `details` is a map of `accountId` → cache entry (`totalValueUsd`, `updatedAt`, `data`).
 
-Every token in `details[].tokenAssets[]` (or `assets[]`, or `details.<accountId>.data[].tokenAssets[]` for `--all`) contains **exactly these 9 fields**:
+Exception — `wallet balance --chain bitcoin --token-address btc-brc20-<ticker>` returns the top-level BRC-20 holdings response documented in [brc20-cli-reference.md#balance](brc20-cli-reference.md#balance), not `details[].tokenAssets[]`: `ticker`, `tokenAddress`, `tokenPrice`, `totalAmount`, `transferableAmount`, `remainingInscribableAmount`, `totalUsd`, `transferableUsd`, `remainingInscribableUsd`, `count`, and `denominations`.
+
+Every standard token in `details[].tokenAssets[]` (or `assets[]`, or `details.<accountId>.data[].tokenAssets[]` for `--all`) contains **exactly these 9 fields**:
 
 | Field | Type | Description |
 |---|---|---|
@@ -140,7 +142,7 @@ List mode: always pass --limit (page size, default 20) and --page-num (page numb
 
 List fields: `cursor`, `orderList[]` with `txHash`, `txStatus`, `txTime`, `direction` (send/receive), `chainSymbol`, `coinSymbol`, `coinAmount`, `serviceCharge`, `confirmedCount`, `assetChange[]` (`coinSymbol`/`coinAmount`/`direction` in/out). Detail adds `failReason`, `explorerUrl`, `input[]`, `output[]`.
 
-Transaction status: `0` Pending · `1` Success · `2` Failed · `3` Pending confirmation. `txTime` is Unix ms — convert for display.
+Transaction status is normalized by the CLI: `PENDING` (service `1` or `2`) · `ERROR` (service `3`) · `SUCCESS` (service `4`) · `CANCELLED` (service `6`). An unrecognized service value is preserved unchanged. `txTime` is Unix ms — convert for display.
 
 ---
 

@@ -27,4 +27,4 @@ Never unify service codes into a generic BRC-20 failure: preserve the service me
 
 ## Failed Write Diagnostics
 
-**MUST**: After a user-requested safe retry also fails, create a support diagnostic with `txHash` when available, `bitcoin` chain, BRC-20 token address, amount, service code/reason, wallet address, timestamp, and CLI version. Include preview fee and fee rate only for an inscription when returned. **NEVER** expose raw codes in user-facing output; show the service message and the next safe action.
+**MUST**: After a user-requested safe retry also fails, create a self-contained support diagnostic with exactly these fields: (1) `txHash` when available; (2) `chain=bitcoin`; (3) service code/reason; (4) parameter snapshot: `readableAmount`, recipient, selected outpoints when applicable, inscription preview fee/rate when returned, and `slippage` / `MEV` as `N/A`; (5) `fromToken` / `toToken` as the returned BRC-20 token address; (6) amount; (7) wallet address; (8) timestamp; (9) CLI version. Use `unavailable` for a field the CLI did not return. **NEVER** expose raw codes in user-facing output; show the service message and the next safe action.

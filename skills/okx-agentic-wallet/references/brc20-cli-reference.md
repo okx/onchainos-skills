@@ -8,7 +8,7 @@ Use a synthetic BRC-20 token address: `btc-brc20-<ticker>`. The CLI normalizes i
 onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker> [--force]
 ```
 
-For a BRC-20 holdings query, this existing balance command returns top-level, template-ready `totalAmount`, `transferableAmount`, `remainingInscribableAmount`, `totalUsd`, `transferableUsd`, `remainingInscribableUsd`, `count`, and `denominations`. It performs the paired balance and transferable-UTXO reads; amount arithmetic and derived USD values use exact decimal arithmetic. A null USD field means `USD value unavailable`.
+For a BRC-20 holdings query, this existing balance command returns a top-level, template-ready response: `ticker`, `tokenAddress`, `tokenPrice`, `totalAmount`, `transferableAmount`, `remainingInscribableAmount`, `totalUsd`, `transferableUsd`, `remainingInscribableUsd`, `count`, and `denominations`. It performs the paired balance and transferable-UTXO reads; amount arithmetic and derived USD values use exact decimal arithmetic. A null USD field means `USD value unavailable`.
 
 ## Transferable BRC-20 UTXOs
 
@@ -18,7 +18,7 @@ onchainos wallet utxo brc20-transferable --chain bitcoin --token-address <btc-br
 
 For this query, the user only needs to provide the BRC-20 ticker/token address. The CLI derives the active Bitcoin address and chain from the logged-in wallet and returns the current transferable choices.
 
-The command calls `POST /priapi/v5/wallet/agentic/utxo/availability-details` with the current Bitcoin `address`, `chainIndex=0`, `queryType=BRC20_TRANSFERABLE_UTXO_LIST`, and normalized `tokenAddress`. The CLI exposes the service total as `sumValue` and the individual transferable inscriptions as `choices[]`.
+The command calls `POST /priapi/v5/wallet/agentic/utxo/availability-details` with the current Bitcoin `address`, the runtime-resolved Bitcoin `chainIndex`, `queryType=BRC20_TRANSFERABLE_UTXO_LIST`, and normalized `tokenAddress`. The CLI exposes the service total as `sumValue` and the individual transferable inscriptions as `choices[]`.
 
 The response exposes `choices[]`. Preserve each `selection` (`<txHash>:<voutIndex>`) verbatim. `tokenAmount` / `tokenAmountRaw` is the BRC-20 quantity; `utxoAmountSats` is the carrier UTXO's BTC value in sats. Each choice is one whole, indivisible transfer inscription; multiple choices may be combined in one transaction.
 

@@ -25,4 +25,4 @@ Service `error` and `data.message` are the user-facing explanation. Unknown fail
 
 ## Failed Write Diagnostics
 
-**MUST**: After a user-requested safe retry also fails, create a support diagnostic with `txHash` when available, `sui` chain, Coin Type, amount, service code/reason, wallet address, timestamp, and CLI version. Include `gasBudget` and `gasPrice` only when the CLI returned them. **NEVER** expose raw codes in the user-facing response; show the returned service message and the next safe action.
+**MUST**: After a user-requested safe retry also fails, create a self-contained support diagnostic with exactly these fields: (1) `txHash` when available; (2) `chain=sui`; (3) service code/reason; (4) parameter snapshot: recipient, `gasBudget` / `gasPrice` when returned, and `slippage` / `MEV` as `N/A`; (5) `fromToken` / `toToken` as the Coin Type; (6) amount; (7) wallet address; (8) timestamp; (9) CLI version. Use `unavailable` for a field the CLI did not return. **NEVER** expose raw codes in the user-facing response; show the returned service message and the next safe action.

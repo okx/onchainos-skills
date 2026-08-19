@@ -32,4 +32,4 @@ Known failures use the output and continuation defined in the table. Unknown fai
 
 ## Failed Write Diagnostics
 
-**MUST**: After a user-requested safe retry also fails, create a support diagnostic with `txHash` when available, `bitcoin` chain, service code/reason, asset, amount, wallet address, timestamp, and CLI version. The user-facing response uses the matching Service Results template and its next safe action.
+**MUST**: After a user-requested safe retry also fails, create a self-contained support diagnostic with exactly these fields: (1) `txHash` when available; (2) `chain=bitcoin`; (3) service code/reason; (4) parameter snapshot: `readableAmount`, recipient, selected outpoints when applicable, returned fee/rate when present, and `slippage` / `MEV` as `N/A`; (5) `fromToken=BTC`, `toToken=BTC`; (6) amount; (7) wallet address; (8) timestamp; (9) CLI version. Use `unavailable` for a field the CLI did not return. The user-facing response uses the matching Service Results template and its next safe action; raw codes stay in the diagnostic only.
