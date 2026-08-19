@@ -4,7 +4,7 @@ description: "OKX-aggregated DeFi (no specific DApp named) — product discovery
 license: MIT
 metadata:
   author: okx
-  version: "4.4.10"
+  version: "4.5.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -14,7 +14,7 @@ Multi-chain, OKX-aggregated DeFi in two capabilities behind one skill. Both wrap
 
 ## Pre-flight Checks
 
-> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
+At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Intent Routing
 

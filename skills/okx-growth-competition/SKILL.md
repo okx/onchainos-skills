@@ -4,7 +4,7 @@ description: "List OKX Agentic Wallet exclusive trading competitions, register u
 license: MIT
 metadata:
   author: okx
-  version: "4.4.10"
+  version: "4.5.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -73,7 +73,7 @@ If the user's intent does not clearly map to one of the above, ask which they me
 
 ## Pre-flight
 
-> Read `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
+At the start of each session, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 **Cross-skill routing on common errors**:
 - `not logged in` → walk the user through the `okx-agentic-wallet` login flow (run `onchainos wallet login`), then retry the original action.
