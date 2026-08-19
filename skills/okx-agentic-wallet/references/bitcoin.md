@@ -1,6 +1,6 @@
 # Bitcoin Agentic Wallet
 
-Use this flow for native BTC, Bitcoin transaction status, and UTXO protection. BTC transfer follows ordinary `wallet send`, ordinary transaction history uses the shared `wallet history` query, and UTXO management keeps its own classification, preview, and continuation behavior.
+Use this flow for native BTC and UTXO protection. BTC transfer follows ordinary `wallet send`; UTXO management keeps its own classification, preview, and continuation behavior.
 
 ## Flow
 
@@ -24,11 +24,10 @@ Use this flow for native BTC, Bitcoin transaction status, and UTXO protection. B
 | Remove protection | one outpoint or all | `wallet utxo unlock --chain bitcoin` |
 | Restore protection | one outpoint or all UTXOs whose asset occupancy the user removed | `wallet utxo lock --chain bitcoin` |
 | Reclaim removed transaction inputs | one or more original tx hashes | `wallet utxo reclaim --chain bitcoin` |
-| Transaction history/status | optional tx hash or order ID | Shared `wallet history --chain bitcoin` query |
 
 ## BTC Balance Output
 
-**MUST**: For a BTC-only balance query, select only the native BTC item (`symbol=BTC` and empty `tokenAddress`) and return exactly this two-sentence structure in the user's current language, without a heading, bullets, chain total, other assets, address, refresh note, or environment note:
+**MUST**: For a BTC-only balance query, select only the native BTC item (`symbol=BTC` and empty `tokenAddress`) and return exactly this two-sentence structure, without a heading, bullets, chain total, other assets, address, refresh note, or environment note:
 
 `Your current balance is {balance} BTC, worth approximately ${usdValue}. This balance includes transferable and locked BTC and does not represent the currently spendable balance.`
 
@@ -53,12 +52,12 @@ If the user asks how much BTC is available/spendable, asks for available UTXOs, 
 - Never rename `USER_IGNORED_LIST` as the complete available, spendable, or ordinary UTXO list.
 - Before rendering UTXO amounts, run `wallet balance --chain bitcoin --force`, select the native BTC item (`symbol=BTC` with an empty `tokenAddress`), and use its returned `tokenPrice` for USD conversion. This read is only for display; it does not change UTXO availability or selection.
 - Render every individual and aggregate UTXO amount as `{sats} sats ({btcAmount} BTC, worth approximately ${usdValue})`, including query results, protection previews, and post-action results. Compute `btcAmount = sats / 100000000` and `usdValue = btcAmount * tokenPrice` with exact decimal arithmetic, then apply the shared USD display rules. If the native BTC price is missing or the balance query fails, retain the sats/BTC amount and state that the USD value is unavailable; never invent a price.
-- When the user asks for the list or details, render each returned item as `<txHash>:<voutIndex>`, `{valueRaw} sats ({btcAmount} BTC, worth approximately ${usdValue})`, and service-returned `source`; include `utxoId` only when non-null. For every item from `UNAVAILABLE_BREAKDOWN`, also show its parent category as `Reason: {category} — {localizedMeaning}` using the category meanings under Locked BTC Output. Copy identifiers and the raw category verbatim.
+- When the user asks for the list or details, render each returned item as `<txHash>:<voutIndex>`, `{valueRaw} sats ({btcAmount} BTC, worth approximately ${usdValue})`, and service-returned `source`; include `utxoId` only when non-null. For every item from `UNAVAILABLE_BREAKDOWN`, also show its parent category as `Reason: {category} — {localizedMeaning}` using the category meanings under Locked BTC Explanation. Copy identifiers and the raw category verbatim.
 - For an available-balance question, report `availableUtxoList.sumSats`, exact BTC conversion, and approximate USD value. For an available-list question, also enumerate `availableUtxoList.utxos` and preserve `pending` and `userIgnoreAsset` exactly as returned.
 - Treat inactive response branches being `null` as expected for the selected `queryType`. Preserve `source` exactly as returned, without normalizing `onchain` / `ON_CHAIN` / `MEMORY_POOL`.
 - Do not derive an exact spendable balance by subtracting categories.
 
-## Locked BTC Output
+## Locked BTC Explanation
 
 **MUST**: For a question about locked BTC, query unavailable UTXOs. The returned `UNAVAILABLE_BREAKDOWN` is the only source of facts.
 

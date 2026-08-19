@@ -46,7 +46,7 @@ The same `availability-details` endpoint also serves this BRC-20-context UTXO re
 onchainos wallet send --chain bitcoin --contract-token <btc-brc20-ticker> --readable-amount <amount> --recipient <address> --brc20-outpoint <txHash:voutIndex> [--brc20-outpoint <txHash:voutIndex> ...]
 ```
 
-BRC-20 transfer uses the same external CLI interaction as ordinary `wallet send`. Repeat `--brc20-outpoint` for every item in the confirmed combination. The CLI refreshes the transferable list, resolves every selected outpoint, rejects duplicates, and verifies that their token amount sum equals `--readable-amount` before preparing one transaction. It places every selected carrier in `txParam.inputs`, then owns signing and ordinary single-transaction broadcast. Intermediate transaction state is consumed directly and is not persisted in Keyring.
+BRC-20 transfer uses the same external CLI interaction as ordinary `wallet send`. Repeat `--brc20-outpoint` for every item in the confirmed combination. The CLI refreshes the transferable list, resolves every selected outpoint, rejects duplicates, verifies their token amount sum, and prepares one transaction.
 
 If broadcast returns the shared backend confirmation code, the CLI returns the ordinary `confirming` response with the service `message`; after explicit confirmation, re-run the same command with `--force`. Otherwise, success returns `state=PENDING`, `txHash`, and `orderId`.
 

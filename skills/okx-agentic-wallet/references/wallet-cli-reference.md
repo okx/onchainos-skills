@@ -123,7 +123,7 @@ Returns `txHash` (normal). Gas Station responses (`gasStationUsed`, `orderId`, C
 
 Providing any of `--order-id` / `--tx-hash` / `--uop-hash` → **detail mode** (single record); otherwise **list mode** (paged).
 
-This shared query handles ordinary BTC, SUI, and direct BRC-20 transfer history. BRC-20 transfer-inscription status remains under `wallet inscription status`.
+For BRC-20, this shared query handles direct-transfer history. Transfer-inscription status uses `wallet inscription status`.
 
 ```bash
 # List

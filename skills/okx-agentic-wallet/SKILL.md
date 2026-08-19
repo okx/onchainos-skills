@@ -18,18 +18,16 @@ Match the user intent to a row, then read its flow file first. Load an exact-com
 
 When a Bitcoin, BRC-20, or SUI row overlaps a generic wallet row, choose the chain-specific row.
 
-For these three routes, render user-facing text in the user's current language. Preserve protocol names, symbols, Coin Types, addresses, hashes, outpoints, signatures, field/status values, error codes, and CLI commands verbatim. English output templates define structure and meaning, not output language.
-
 | User Intent | Reference |
 | --- | --- |
-| Bitcoin/BTC address, native BTC total or available balance, available UTXOs, native BTC transfer, native BTC history/status; UTXOs whose asset occupancy the user removed, unavailable UTXO details, unlock/re-lock/reclaim, mempool-removed transaction recovery | Flow: [bitcoin.md](references/bitcoin.md). Exact commands/fields: [bitcoin-cli-reference.md](references/bitcoin-cli-reference.md). Shared history: [wallet-cli-reference.md#history](references/wallet-cli-reference.md#history). Failures: [bitcoin-troubleshooting.md](references/bitcoin-troubleshooting.md). |
-| BRC-20 ticker balance, transferable BRC-20 inscription UTXOs, UTXOs whose asset occupancy the user removed in a BRC-20 context, selected BRC-20 transfer or transfer status, transfer inscription or inscription status | Flow: [brc20.md](references/brc20.md). Exact commands/fields: [brc20-cli-reference.md](references/brc20-cli-reference.md). Shared history: [wallet-cli-reference.md#history](references/wallet-cli-reference.md#history). Failures: [brc20-troubleshooting.md](references/brc20-troubleshooting.md). |
-| SUI address and assets; native SUI or Coin<T> transfer; SUI history/status | Flow: [sui.md](references/sui.md). Exact commands/fields: [sui-cli-reference.md](references/sui-cli-reference.md). Shared history: [wallet-cli-reference.md#history](references/wallet-cli-reference.md#history). Failures: [sui-troubleshooting.md](references/sui-troubleshooting.md). |
+| Bitcoin: address, balance, UTXO queries and management, and transfer | Flow: [bitcoin.md](references/bitcoin.md). Exact commands/fields: [bitcoin-cli-reference.md](references/bitcoin-cli-reference.md). Failures: [bitcoin-troubleshooting.md](references/bitcoin-troubleshooting.md). |
+| BRC-20: balance, transferable inscriptions, transfer inscriptions, transfers, and history/status | Flow: [brc20.md](references/brc20.md). Exact commands/fields: [brc20-cli-reference.md](references/brc20-cli-reference.md). Shared history: [wallet-cli-reference.md#history](references/wallet-cli-reference.md#history). Failures: [brc20-troubleshooting.md](references/brc20-troubleshooting.md). |
+| SUI: address, assets, and native or token transfers | Flow: [sui.md](references/sui.md). Exact commands/fields: [sui-cli-reference.md](references/sui-cli-reference.md). Failures: [sui-troubleshooting.md](references/sui-troubleshooting.md). |
 | Sign in / connect / social login (Google / Apple / Email) / logout; add / switch account; login status | [wallet](references/wallet.md) |
 | My wallet address / QR code; check my (logged-in) balance / holdings | [wallet](references/wallet.md) |
 | Send / transfer native or ERC-20 / SPL tokens | [wallet](references/wallet.md) |
 | Call a contract (approve / deposit / withdraw / custom function) | [wallet](references/wallet.md) |
-| Transaction history / tx detail / order status for chains other than Bitcoin, BRC-20, or SUI; sign a message (personalSign / EIP-712) | [wallet](references/wallet.md) |
+| Transaction history / tx detail / order status; sign a message (personalSign / EIP-712) | [wallet](references/wallet.md) |
 | Policy / spending limit / whitelist; export wallet / mnemonic; MEV protection for a contract-call; third-party Solana plugin write pre-flight | [wallet](references/wallet.md) |
 | Apple-login wallet differs from the OKX Wallet App / "missing" balance; rename a wallet or account; how transaction signing works (TEE) | [account-faq](references/account-faq.md) |
 | Pay gas with a stablecoin on Solana; enable / disable / change default gas token / status; a `send` / `contract-call` returns `gasStationUsed` or a Gas Station Confirming; Gas Station FAQ / "check order" | [gas-station](references/gas-station.md) |
@@ -49,8 +47,8 @@ Before the first `onchainos` command this session, read and follow [_shared/pref
 
 ## Build the Command
 
-1. **Read the matched flow first** (per the Intent Routing table). Never guess subcommand, flag, or file names.
-2. **When you need exact CLI syntax**, run `onchainos <group> --help` to discover subcommands, then `onchainos <group> <subcommand> --help` for flags; load the direct reference for fields. The CLI is the source of truth.
+1. **Read the matched row's linked file first** (per the Intent Routing table) — it carries the flow and the commands you need. Never guess subcommand, flag, or file names.
+2. **When you need exact flags, defaults, or return-field schemas** that the domain file doesn't spell out, run `onchainos <group> --help` to discover subcommands, then `onchainos <group> <subcommand> --help` for flags; or load that domain's `-cli-reference.md` when the flow needs it. The CLI is the source of truth.
 3. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below.
 
 ## Chain Name Support

@@ -1,6 +1,6 @@
 # SUI Agentic Wallet
 
-Use this flow for SUI addresses, assets, transfers, and transaction status. SUI transfer follows ordinary `wallet send`, ordinary transaction history uses the shared `wallet history` query, and the service remains authoritative for Coin Object selection, Gas, and pre-execution.
+Use this flow for SUI addresses, assets, and transfers. SUI transfer follows ordinary `wallet send`; the service remains authoritative for Coin Object selection, Gas, and pre-execution.
 
 ## Flow
 
@@ -19,7 +19,6 @@ Use this flow for SUI addresses, assets, transfers, and transaction status. SUI 
 | Coin<T> assets and value | complete Coin Type | `wallet balance --chain sui --token-address <coin-type>` |
 | Native SUI transfer | recipient, readable amount | `wallet send --chain sui` |
 | Coin<T> transfer | Coin Type, recipient, readable amount | `wallet send --chain sui --contract-token <coin-type>` |
-| Transaction history/status | optional tx hash or order ID | Shared `wallet history --chain sui` query |
 
 ## Conversation Context
 
