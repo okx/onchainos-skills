@@ -41,7 +41,7 @@ Field rules:
 
 **`--chain`** accepts numeric IDs (`1`, `501`, `196`) and names (`ethereum`, `solana`, `xlayer`). If <100% confident, run `wallet chains`. On `"unsupported chain: ..."`, ask the user to confirm.
 
-**Amounts** — `wallet send`: pass `--readable-amount <human_amount>` (CLI converts; use `--amt` only for raw minimal units). `wallet contract-call`: `--amt` is the native value for payable functions in minimal units (default `"0"`; EVM 18, SOL 9 decimals). Never compute minimal units manually.
+**Amounts** — `wallet send`: pass `--readable-amount <human_amount>` (CLI converts; use `--amt` only for raw minimal units). `wallet contract-call`: `--amt` is the native value for payable functions in minimal units (default `"0"`; EVM 18, SOL 9 decimals). Never compute minimal units manually. For a SUI DApp contract call, use the SUI PTB route under Send vs Contract Call.
 
 ## Send vs Contract Call (funds-loss risk — determine intent first)
 
@@ -50,8 +50,9 @@ Field rules:
 | Send native token (ETH, SOL, BNB…) | `wallet send --chain <chain>` | "Send 0.1 ETH to 0xAbc" |
 | Send ERC-20 / SPL token (USDC, USDT…) | `wallet send --chain <chain> --contract-token` | "Transfer 100 USDC to 0xAbc" |
 | Interact with a contract (approve, deposit, withdraw, custom call) | `wallet contract-call --chain <chain>` | "Approve USDC for spender" |
+| Interact with a SUI DApp using its prebuilt PTB | `wallet contract-call --chain sui --sui-tx-bytes` | "Execute this DApp-built SUI PTB" |
 
-If ambiguous, ask the user to clarify — never guess. `contract-call` is for non-swap interactions only; never broadcast a DEX swap with it (use `swap execute`). Run `onchainos security tx-scan` before any `contract-call`.
+If ambiguous, ask the user to clarify — never guess. Use `swap execute` for an OKX-aggregated swap. For a SUI contract call, pass through only an unsigned PTB built by the maintained DApp or SDK; do not reconstruct or reinterpret it.
 
 ## Approvals (via contract-call)
 
@@ -59,7 +60,7 @@ Never execute unlimited approvals. Do not set the approve amount to `type(uint25
 
 ## MEV Protection
 
-`--mev-protection` is a `contract-call` flag only (`wallet send` does not support it). Load [mev-protection.md](wallet-mev-protection.md) when the user requests MEV protection, or before a high-value / DEX-swap `contract-call` — it holds the supported-chain table and the Solana `--jito-unsigned-tx` requirement.
+`--mev-protection` is a `contract-call` flag only (`wallet send` does not support it), and is not supported for SUI PTBs. Load [mev-protection.md](wallet-mev-protection.md) when the user requests MEV protection, or before a high-value / DEX-swap EVM/Solana `contract-call` — it holds the supported-chain table and the Solana `--jito-unsigned-tx` requirement.
 
 ## Policy & Wallet Export (Web portal)
 

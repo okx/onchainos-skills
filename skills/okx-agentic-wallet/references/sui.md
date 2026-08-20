@@ -7,7 +7,7 @@ Use this flow for SUI addresses, assets, and transfers. SUI transfer follows ord
 1. Resolve one SUI intent and collect the parameters in the routing table. Use `sui` as the `--chain` value and a complete Coin Type for `Coin<T>`.
 2. Invoke the matching CLI command. The current account supplies the SUI sender address when transfer `--from` is absent.
 3. Relay `data.message` or `error` with the relevant returned facts.
-4. For `confirming:true`, show `message` and any returned `preview`. After explicit confirmation, execute `next`. SUI transfer uses only the shared backend broadcast confirmation and does not create a chain-specific preview continuation. A cancellation ends that operation.
+4. A SUI transfer first signs and returns `confirming:true` before broadcast. **MUST** show `message` and the complete `preview`, then stop and wait for a new explicit user confirmation. Execute `next` only after that confirmation. A cancellation ends that operation.
 5. Execute `nextSteps` when it is the returned immediate or scheduled read continuation. Each transfer begins from an explicit user intent and receives its own confirmation.
 
 ## Intent Routing

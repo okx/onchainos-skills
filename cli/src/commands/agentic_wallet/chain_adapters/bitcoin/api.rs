@@ -15,6 +15,7 @@ pub struct BtcApi {
 }
 
 pub const UTXO_MANAGE_BATCH_SIZE: usize = 50;
+pub const UTXO_ASSET_INFO_BATCH_SIZE: usize = 10;
 
 impl BtcApi {
     /// Creates the authenticated wallet API adapter used by Bitcoin commands.
@@ -72,6 +73,45 @@ impl BtcApi {
     ) -> Result<Value> {
         self.availability_details_request(context, query_type, None)
             .await
+    }
+
+    /// Fetches BRC-20 assets bound to the supplied Bitcoin UTXOs.
+    ///
+    /// The endpoint accepts at most ten outpoints per request. Empty input is
+    /// valid at the CLI boundary and returns no asset records without issuing a
+    /// request.
+    pub async fn brc20_utxo_asset_info(
+        &mut self,
+        context: &BtcContext,
+        outpoints: &[BtcOutPoint],
+    ) -> Result<Vec<Value>> {
+        if outpoints.is_empty() {
+            return Ok(Vec::new());
+        }
+        if context.profile.chain_index != "0" {
+            anyhow::bail!(
+                "BRC-20 UTXO asset details require Bitcoin chainIndex 0, got {}",
+                context.profile.chain_index
+            );
+        }
+
+        let mut records = Vec::new();
+        for batch in outpoints.chunks(UTXO_ASSET_INFO_BATCH_SIZE) {
+            let body = build_brc20_utxo_asset_info_body(context, batch)?;
+            let result = self
+                .client
+                .post_authed(
+                    "/priapi/v5/wallet/agentic/utxo/utxo-asset-info",
+                    &context.access_token,
+                    &body,
+                )
+                .await;
+            match result.map_err(super::error::map_api_error)? {
+                Value::Array(items) => records.extend(items),
+                item => records.push(item),
+            }
+        }
+        Ok(records)
     }
 
     /// Queries transferable UTXOs for a BRC-20 token and returns the normalized snapshot.
@@ -146,6 +186,7 @@ impl BtcApi {
         sign_type: Option<&str>,
         operation_token: Option<&str>,
         preview_version: Option<&str>,
+        fee_rate: Option<&Value>,
     ) -> Result<Value> {
         let mut body = json!({
             "chainIndex": context.chain_index_u64()?,
@@ -165,6 +206,9 @@ impl BtcApi {
         }
         if let Some(value) = preview_version {
             body["previewVersion"] = Value::String(value.to_string());
+        }
+        if let Some(value) = fee_rate {
+            body["txParam"] = json!({"feeRate": value});
         }
         self.request_unsigned_info(context, body).await
     }
@@ -356,6 +400,31 @@ impl BtcApi {
     }
 }
 
+/// Builds one bounded BRC-20 UTXO asset-detail request for the current BTC address.
+fn build_brc20_utxo_asset_info_body(
+    context: &BtcContext,
+    outpoints: &[BtcOutPoint],
+) -> Result<Value> {
+    if outpoints.is_empty() || outpoints.len() > UTXO_ASSET_INFO_BATCH_SIZE {
+        anyhow::bail!(
+            "UTXO asset detail requests require 1..={UTXO_ASSET_INFO_BATCH_SIZE} outpoints per batch"
+        );
+    }
+    if context.profile.chain_index != "0" {
+        anyhow::bail!(
+            "BRC-20 UTXO asset details require Bitcoin chainIndex 0, got {}",
+            context.profile.chain_index
+        );
+    }
+
+    Ok(json!({
+        "chainIndex": "0",
+        "address": context.address.address,
+        "assetProtocols": ["BRC20"],
+        "utxos": outpoints.iter().map(BtcOutPoint::to_api_value).collect::<Vec<_>>(),
+    }))
+}
+
 /// Reads BRC-20 token precision from metadata and returns it as `u32`.
 pub(in crate::commands::agentic_wallet) fn extract_token_decimals(metadata: &Value) -> Result<u32> {
     decimal_field(metadata)
@@ -441,6 +510,42 @@ mod tests {
         );
         assert_eq!(extract_token_decimals(&json!({"decimals": 8})).unwrap(), 8);
         assert!(extract_token_decimals(&json!({})).is_err());
+    }
+
+    #[test]
+    fn brc20_utxo_asset_info_request_uses_current_address_and_bounded_outpoints() {
+        let context = test_context();
+        let outpoint = BtcOutPoint::parse(
+            "4d3f6a7a45dbb9d3398a8f83c0219b6bedfdcd77d1de63cc09f9cfe360c553c0:7",
+        )
+        .unwrap();
+
+        let body = build_brc20_utxo_asset_info_body(&context, &[outpoint]).unwrap();
+
+        assert_eq!(body["chainIndex"], "0");
+        assert_eq!(body["address"], context.address.address);
+        assert_eq!(body["assetProtocols"], json!(["BRC20"]));
+        assert_eq!(
+            body["utxos"][0],
+            json!({
+                "txHash": "4d3f6a7a45dbb9d3398a8f83c0219b6bedfdcd77d1de63cc09f9cfe360c553c0",
+                "voutIndex": "7",
+            })
+        );
+    }
+
+    #[test]
+    fn brc20_utxo_asset_info_request_rejects_more_than_ten_outpoints() {
+        let context = test_context();
+        let outpoints = (0..=UTXO_ASSET_INFO_BATCH_SIZE)
+            .map(|vout_index| BtcOutPoint {
+                tx_hash: "4d3f6a7a45dbb9d3398a8f83c0219b6bedfdcd77d1de63cc09f9cfe360c553c0"
+                    .to_string(),
+                vout_index: vout_index as u32,
+            })
+            .collect::<Vec<_>>();
+
+        assert!(build_brc20_utxo_asset_info_body(&context, &outpoints).is_err());
     }
 
     fn test_context() -> BtcContext {

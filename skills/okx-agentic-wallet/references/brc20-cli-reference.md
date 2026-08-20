@@ -6,9 +6,8 @@ Use a synthetic BRC-20 token address: `btc-brc20-<ticker>`. The CLI normalizes i
 
 ```bash
 onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker> [--force]
+onchainos wallet balance --all
 ```
-
-For a BRC-20 holdings query, this existing balance command returns a top-level, template-ready response: `ticker`, `tokenAddress`, `tokenPrice`, `totalAmount`, `transferableAmount`, `remainingInscribableAmount`, `totalUsd`, `transferableUsd`, `remainingInscribableUsd`, `count`, and `denominations`. It performs the paired balance and transferable-UTXO reads; amount arithmetic and derived USD values use exact decimal arithmetic. A null USD field means `USD value unavailable`.
 
 ## Transferable BRC-20 UTXOs
 
@@ -43,12 +42,14 @@ The same `availability-details` endpoint also serves this BRC-20-context UTXO re
 ## BRC-20 Transfer
 
 ```bash
-onchainos wallet send --chain bitcoin --contract-token <btc-brc20-ticker> --readable-amount <amount> --recipient <address> --brc20-outpoint <txHash:voutIndex> [--brc20-outpoint <txHash:voutIndex> ...]
+onchainos wallet send --chain bitcoin --contract-token <btc-brc20-ticker> --readable-amount <amount> --recipient <address> --brc20-outpoint <txHash:voutIndex> [--brc20-outpoint <txHash:voutIndex> ...] [--fee-rate <sat-per-vB>]
 ```
 
 BRC-20 transfer uses the same external CLI interaction as ordinary `wallet send`. Repeat `--brc20-outpoint` for every item in the confirmed combination. The CLI refreshes the transferable list, resolves every selected outpoint, rejects duplicates, verifies their token amount sum, and prepares one transaction.
 
-If broadcast returns the shared backend confirmation code, the CLI returns the ordinary `confirming` response with the service `message`; after explicit confirmation, re-run the same command with `--force`. Otherwise, success returns `state=PENDING`, `txHash`, and `orderId`.
+The initial command signs and returns the ordinary `confirming` response before broadcast. The Agent **MUST** display its complete confirmation and wait for a new explicit user confirmation before executing `next`. The confirmed continuation broadcasts and returns `state=PENDING`, `txHash`, and `orderId` on success.
+
+`--fee-rate` is optional, accepts a decimal value of at least `0.1` sat/vB, and is added as numeric `txParam.feeRate` alongside the selected inputs. It applies only to this transaction; omitting it on the next transfer uses the service default rate.
 
 Start a direct transfer after the amount-aware query has been shown and one current combination is fixed. A single returned combination can proceed to the normal transfer confirmation; several returned combinations require the user to choose one. If the refreshed list no longer contains every outpoint, show the new plan and ask the user to select again. A later explicit inscription request remains the separate flow below.
 
@@ -61,10 +62,12 @@ onchainos wallet history --chain bitcoin (--tx-hash <hash> | --order-id <id>)
 ## Transfer Inscription
 
 ```bash
-onchainos wallet inscription create --chain bitcoin --token-address <btc-brc20-ticker> --readable-amount <amount> [--from <address>]
+onchainos wallet inscription create --chain bitcoin --token-address <btc-brc20-ticker> --readable-amount <amount> [--from <address>] [--fee-rate <sat-per-vB>]
 onchainos wallet inscription status --chain bitcoin (--tx-hash <hash> | --order-id <id>)
 ```
 
-Creation returns ordinary `confirming` with `scene="btc_inscription"`; `preview.feeReadable` is nullable. Submitted output contains `state=INSCRIBING`, top-level `txHash` and `orderId`, ordered `broadcasts`, and `nextSteps.checkInscriptionStatus`. Show those identifiers and the complete continuation command; creation is a standalone asynchronous transfer inscription to the current Bitcoin address.
+The initial creation command stops after `unsignedInfo` and returns ordinary `confirming` with `scene="btc_inscription"`; `preview.feeReadable` is nullable. It has not signed or submitted. After explicit confirmation, `next` completes local signing, calls `sign-tx`, and batch-broadcasts the ordered inscription transactions. Submitted output contains `state=INSCRIBING`, top-level `txHash` and `orderId`, ordered `broadcasts`, and `nextSteps.checkInscriptionStatus`. Show those identifiers and the complete continuation command; creation is a standalone asynchronous transfer inscription to the current Bitcoin address.
+
+`--fee-rate` is optional, accepts a decimal value of at least `0.1` sat/vB, and is sent as numeric `txParam.feeRate`. It applies only to this inscription; omitting it on the next transaction uses the service default rate.
 
 Status can be `INSCRIBING`, `WAITING_CONFIRMATION`, `WAITING_INDEXER`, `READY_TO_TRANSFER`, `FAILED`, or `UNKNOWN`. `READY_TO_TRANSFER` supplies read-only `nextSteps.queryBrc20TransferableUtxos`, which refreshes the transferable list for the returned token address.

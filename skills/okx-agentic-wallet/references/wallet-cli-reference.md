@@ -150,11 +150,11 @@ Transaction status is normalized by the CLI: `PENDING` (service `1` or `2`) · `
 
 ### `wallet contract-call`
 
-Call an EVM contract (`--input-data`) or Solana program (`--unsigned-tx`) with TEE signing + auto-broadcast. Non-swap interactions only (approve / deposit / withdraw / custom calls) — use `swap execute` for DEX swaps.
+Call an EVM contract (`--input-data`), Solana program (`--unsigned-tx`), or execute a DApp-built SUI PTB (`--sui-tx-bytes`) with TEE signing + auto-broadcast. Use `swap execute` for OKX-aggregated swaps; `--sui-tx-bytes` is the delegated path for a third-party SUI DApp's already-built PTB.
 
 ```bash
-onchainos wallet contract-call --to <contract> --chain <chain> \
-  [--amt <minimal_units>] [--input-data <hex>] [--unsigned-tx <base58>] \
+onchainos wallet contract-call --chain <chain> [--to <contract>] \
+  [--amt <minimal_units>] [--input-data <hex>] [--unsigned-tx <base58>] [--sui-tx-bytes <base64>] \
   [--gas-limit <n>] [--from <address>] [--mev-protection] [--jito-unsigned-tx <base58>] \
   [--biz-type <type>] [--strategy <name>] [--aa-dex-token-addr <addr>] [--aa-dex-token-amount <amt>] \
   [--gas-token-address <addr>] [--relayer-id <id>] [--enable-gas-station] [--force]
@@ -162,19 +162,20 @@ onchainos wallet contract-call --to <contract> --chain <chain> \
 
 | Param | Required | Description |
 |---|---|---|
-| `--to` | Yes | Contract address. |
+| `--to` | EVM/Solana | Contract/program address. Optional service metadata for SUI; do not invent it. |
 | `--chain` | Yes | Chain name or ID. |
 | `--amt` | No | Native value in minimal units (payable functions only). Default `"0"`. |
 | `--input-data` | EVM | Hex calldata. Required for EVM. |
 | `--unsigned-tx` | Solana | Base58 unsigned tx. Required for Solana. |
+| `--sui-tx-bytes` | SUI | Base64 BCS TransactionData/PTB built by the DApp for the current wallet. Required for a SUI contract call. Never display or log it. |
 | `--gas-limit` | No | EVM gas override; auto-estimated if omitted. |
-| `--mev-protection` | No | MEV protection (Ethereum / BSC / Base / Solana). See [mev-protection.md](wallet-mev-protection.md). |
+| `--mev-protection` | No | MEV protection (Ethereum / BSC / Base / Solana); not supported with `--sui-tx-bytes`. See [mev-protection.md](wallet-mev-protection.md). |
 | `--jito-unsigned-tx` | No | Jito bundle base58 tx. Required when `--mev-protection` on Solana. Never substitute `--unsigned-tx`. |
 | `--biz-type` | No | `transfer` / `dex` / `defi` / `dapp`. |
 | `--gas-token-address`, `--relayer-id`, `--enable-gas-station` | No | Gas Station (Solana), second-phase only. See [gas-station.md](gas-station.md). |
 | `--force` | No | Re-run after a confirmed Confirming response. |
 
-Exactly one of `--input-data` (EVM) / `--unsigned-tx` (Solana) is required. Returns `txHash`. Run `onchainos security tx-scan` before calling.
+Use exactly one chain-native payload: `--input-data` (EVM), `--unsigned-tx` (Solana), or `--sui-tx-bytes` (SUI). Returns `txHash` and `orderId`. Run `onchainos security tx-scan` before EVM/Solana calls. SUI PTB scanning is unavailable: do not claim the transaction is safe; require the maintained DApp preview, explicit user confirmation, and successful backend simulation.
 
 ---
 

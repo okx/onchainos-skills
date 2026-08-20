@@ -722,10 +722,14 @@ pub(super) async fn cmd_balance(
                 total_usd
             );
         }
-        output::success(json!({
+        let result = json!({
             "totalValueUsd": total_usd,
             "details": data,
-        }));
+        });
+        if chain_index == "0" {
+            let _ = super::utxo::probe_unavailable_brc20_asset_info().await;
+        }
+        output::success(result);
         return Ok(());
     }
 

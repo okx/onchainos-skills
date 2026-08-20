@@ -66,6 +66,37 @@ impl SuiApi {
         Ok(first_data_item(data))
     }
 
+    /// Requests unsigned data for a pre-built SUI TransactionData / PTB.
+    pub async fn prepare_contract_call(
+        &mut self,
+        context: &SuiContext,
+        to: Option<&str>,
+        amount: &str,
+        tx_bytes: &str,
+    ) -> Result<Value> {
+        let body = build_contract_call_body(
+            context.chain_index_u64()?,
+            &context.address.address,
+            to,
+            amount,
+            &context.session_cert()?,
+            tx_bytes,
+        );
+        let idempotency_key = uuid::Uuid::new_v4().to_string();
+        let headers = [("idempotency-key", idempotency_key.as_str())];
+        let data = self
+            .client
+            .post_authed_with_headers(
+                UNSIGNED_INFO_PATH,
+                &context.access_token,
+                &body,
+                Some(&headers),
+            )
+            .await
+            .map_err(map_api_error)?;
+        Ok(first_data_item(data))
+    }
+
     /// Broadcasts one signed SUI transaction and returns the parsed broadcast response.
     pub async fn broadcast_transaction(
         &mut self,
@@ -85,10 +116,53 @@ impl SuiApi {
     }
 }
 
+/// Builds the SUI PTB unsignedInfo request. `toAddr` and `contractAddr` are
+/// service envelope fields; the PTB in `txParam.txBytes` remains authoritative.
+fn build_contract_call_body(
+    chain_index: u64,
+    from_addr: &str,
+    to_addr: Option<&str>,
+    amount: &str,
+    session_cert: &str,
+    tx_bytes: &str,
+) -> Value {
+    json!({
+        "chainIndex": chain_index,
+        "fromAddr": from_addr,
+        "toAddr": to_addr.unwrap_or("0x"),
+        "amount": amount,
+        "contractAddr": "0x0",
+        "sessionCert": session_cert,
+        "txParam": {
+            "txBytes": tx_bytes,
+        },
+    })
+}
+
 /// Maps SUI service failures into the CLI's stable coded-error representation.
 pub(in crate::commands::agentic_wallet) fn map_api_error(error: Error) -> Error {
     match error.downcast::<ApiCodeError>() {
         Ok(api_error) => CodedError::new(&api_error.code, None, api_error.msg).into(),
         Err(error) => error,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contract_call_body_nests_tx_bytes_in_tx_param() {
+        let body = build_contract_call_body(784, "0xsender", None, "0", "session-cert", "AAECAwQ=");
+
+        assert_eq!(body["chainIndex"], 784);
+        assert_eq!(body["fromAddr"], "0xsender");
+        assert_eq!(body["toAddr"], "0x");
+        assert_eq!(body["amount"], "0");
+        assert_eq!(body["contractAddr"], "0x0");
+        assert_eq!(body["sessionCert"], "session-cert");
+        assert_eq!(body["txParam"]["txBytes"], "AAECAwQ=");
+        assert!(body.get("unsignedTx").is_none());
+        assert!(body.get("inputData").is_none());
     }
 }

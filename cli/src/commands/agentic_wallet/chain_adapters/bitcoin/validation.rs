@@ -3,6 +3,7 @@
 use anyhow::{bail, Result};
 use bitcoin::address::{NetworkChecked, NetworkUnchecked};
 use bitcoin::{Address, AddressType, Network};
+use num_bigint::BigUint;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -34,6 +35,46 @@ pub fn validate_wallet_address(value: &str) -> Result<()> {
 pub fn validate_recipient(value: &str) -> Result<()> {
     parse_mainnet_address(value, "recipient")?;
     Ok(())
+}
+
+/// Parses a user-selected Bitcoin fee rate and enforces the 0.1 sat/vB minimum.
+///
+/// The returned JSON number is placed directly in `txParam.feeRate` for the
+/// current BTC or BRC-20 transaction only.
+pub fn parse_fee_rate(value: &str) -> Result<Value> {
+    let value = value.trim();
+    let (integer, fraction) = match value.split_once('.') {
+        Some((integer, fraction)) => {
+            if value.matches('.').count() != 1 || fraction.is_empty() {
+                bail!("--fee-rate must be a decimal sat/vB value");
+            }
+            (integer, Some(fraction))
+        }
+        None => (value, None),
+    };
+    if integer.is_empty()
+        || !integer.bytes().all(|byte| byte.is_ascii_digit())
+        || fraction.is_some_and(|digits| !digits.bytes().all(|byte| byte.is_ascii_digit()))
+        || (integer.len() > 1 && integer.starts_with('0'))
+    {
+        bail!("--fee-rate must be a decimal sat/vB value");
+    }
+
+    let scale = fraction.map_or(0, str::len);
+    let unscaled = format!("{integer}{}", fraction.unwrap_or_default())
+        .parse::<BigUint>()
+        .map_err(|_| anyhow::anyhow!("--fee-rate is outside the supported range"))?;
+    let minimum = BigUint::from(10u8).pow(scale as u32);
+    if unscaled * BigUint::from(10u8) < minimum {
+        bail!("--fee-rate must be at least 0.1 sat/vB");
+    }
+
+    let parsed: Value = serde_json::from_str(value)
+        .map_err(|_| anyhow::anyhow!("--fee-rate must be a decimal sat/vB value"))?;
+    if !parsed.is_number() {
+        bail!("--fee-rate must be a decimal sat/vB value");
+    }
+    Ok(parsed)
 }
 
 /// Normalizes a BRC-20 token address into the backend contract-address form.
@@ -141,6 +182,9 @@ pub fn preview_from_response(
     let fee_readable = value_as_decimal_string(&fee)
         .map(|value| minimal_to_readable(&value, native_decimals))
         .transpose()?;
+    let symbol = token_address
+        .and_then(|token_address| token_address.strip_prefix("btc-brc20-"))
+        .unwrap_or("BTC");
 
     Ok(json!({
         "operationType": operation,
@@ -150,12 +194,14 @@ pub fn preview_from_response(
         "to": to,
         "asset": {
             "tokenAddress": token_address,
+            "symbol": symbol,
             "amount": amount,
             "readableAmount": readable_amount,
         },
         "feeRate": transaction.get("feeRate").cloned().unwrap_or(Value::Null),
         "fee": fee,
         "feeReadable": fee_readable,
+        "feeSymbol": "BTC",
         "inputs": inputs,
         "outputs": outputs,
         "changeAddress": transaction.get("changeAddress").cloned().unwrap_or(Value::Null),
@@ -398,6 +444,17 @@ mod tests {
     fn validates_bitcoin_address_network() {
         assert!(validate_recipient("bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh").is_ok());
         assert!(validate_recipient("tb1qfm7wy7vazh5u5u8nmw4t27n3q8q4xu3z5m8v4j").is_err());
+    }
+
+    #[test]
+    fn parses_fee_rate_as_json_number_with_exact_minimum() {
+        assert_eq!(parse_fee_rate("0.1").unwrap(), json!(0.1));
+        assert_eq!(parse_fee_rate("8").unwrap(), json!(8));
+        assert_eq!(parse_fee_rate("1.25").unwrap(), json!(1.25));
+        assert!(parse_fee_rate("0.01").is_err());
+        assert!(parse_fee_rate("0").is_err());
+        assert!(parse_fee_rate("1e2").is_err());
+        assert!(parse_fee_rate("1.").is_err());
     }
 
     #[test]

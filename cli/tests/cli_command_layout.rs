@@ -113,7 +113,6 @@ fn wallet_utxo_available_and_brc20_transferable_expose_documented_inputs() {
                 .and(predicate::str::contains("--token-address"))
                 .and(predicate::str::contains("--readable-amount")),
         );
-
 }
 
 #[test]
@@ -205,8 +204,41 @@ fn wallet_send_help_shows_flag_surface() {
                 .and(predicate::str::contains("--contract-token"))
                 .and(predicate::str::contains("--brc20-outpoint"))
                 .and(predicate::str::contains("repeat to combine inputs"))
+                .and(predicate::str::contains("--fee-rate"))
                 .and(predicate::str::contains("--enable-gas-station")),
         );
+}
+
+#[test]
+fn wallet_contract_call_help_shows_chain_native_payloads() {
+    onchainos()
+        .args(["wallet", "contract-call", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("--input-data")
+                .and(predicate::str::contains("--unsigned-tx"))
+                .and(predicate::str::contains("--sui-tx-bytes"))
+                .and(predicate::str::contains("base64 BCS")),
+        );
+}
+
+#[test]
+fn wallet_contract_call_rejects_mixed_sui_and_evm_payloads() {
+    onchainos()
+        .args([
+            "wallet",
+            "contract-call",
+            "--chain",
+            "sui",
+            "--sui-tx-bytes",
+            "AAECAwQ=",
+            "--input-data",
+            "0x00",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("cannot be used with"));
 }
 
 // ── IT-007: `wallet send` rejects --amt together with --readable-amount ────────

@@ -195,7 +195,7 @@ fn overlay(kind: ChainKind, entry: &Value) -> (String, u32, ChainCapabilities) {
             ChainCapabilities {
                 transfer: TransferDriver::Sui,
                 inscription: InscriptionDriver::Unsupported,
-                contract_call: false,
+                contract_call: true,
                 message_sign: MessageSignDriver::Unsupported,
                 asset_model: AssetModel::Account,
             },
@@ -269,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn sui_profile_exposes_only_prd_command_drivers() {
+    fn sui_profile_supports_transfer_and_contract_call() {
         let profile = from_entry(&json!({
             "chainIndex": 784,
             "realChainIndex": 784,
@@ -284,7 +284,7 @@ mod tests {
             profile.capabilities.message_sign,
             MessageSignDriver::Unsupported
         );
-        assert!(!profile.capabilities.contract_call);
+        assert!(profile.capabilities.contract_call);
     }
 
     #[test]

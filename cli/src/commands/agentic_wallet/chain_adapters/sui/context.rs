@@ -81,7 +81,7 @@ mod tests {
             capabilities: ChainCapabilities {
                 transfer: TransferDriver::Sui,
                 inscription: InscriptionDriver::Unsupported,
-                contract_call: false,
+                contract_call: true,
                 message_sign: MessageSignDriver::Unsupported,
                 asset_model: AssetModel::Account,
             },

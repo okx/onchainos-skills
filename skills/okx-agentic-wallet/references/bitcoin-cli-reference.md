@@ -20,12 +20,14 @@ onchainos wallet balance --chain bitcoin [--force]
 ## Native BTC Transfer
 
 ```bash
-onchainos wallet send --chain bitcoin --recipient <address> --readable-amount <amount>
+onchainos wallet send --chain bitcoin --recipient <address> --readable-amount <amount> [--fee-rate <sat-per-vB>]
 ```
 
 BTC transfer uses the same CLI interaction as ordinary `wallet send`: `unsignedInfo` → sign → single-transaction broadcast. The CLI signs every item in `unsignedHashList` and sends the signed array in one broadcast request. It does not add a BTC-specific preview, operation token, preview version, or second preparation stage.
 
-If broadcast returns the shared backend confirmation code, the CLI returns the ordinary `confirming` response with the service `message`; after explicit confirmation, re-run the same command with `--force`. Otherwise, success returns `state=PENDING`, `txHash`, and `orderId`.
+The initial command signs and returns the ordinary `confirming` response before broadcast. The Agent **MUST** display its complete confirmation and wait for a new explicit user confirmation before executing `next`. The confirmed continuation broadcasts and returns `state=PENDING`, `txHash`, and `orderId` on success.
+
+`--fee-rate` is optional, accepts a decimal value of at least `0.1` sat/vB, and is sent as numeric `txParam.feeRate`. It applies only to this transaction; omitting it on the next transfer uses the service default rate.
 
 ## UTXO Management
 

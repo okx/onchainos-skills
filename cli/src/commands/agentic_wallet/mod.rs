@@ -130,6 +130,9 @@ pub enum WalletCommand {
         /// Transferable BRC-20 inscription UTXO (`txHash:voutIndex`); repeat to combine inputs
         #[arg(long = "brc20-outpoint", requires = "contract_token")]
         brc20_outpoint: Vec<String>,
+        /// Bitcoin fee rate in sat/vB. Applies only to this BTC or BRC-20 transaction.
+        #[arg(long)]
+        fee_rate: Option<String>,
         /// Force execution: skip confirmation prompts from the backend
         #[arg(long, default_value_t = false)]
         force: bool,
@@ -211,14 +214,14 @@ pub enum WalletCommand {
         #[arg(long)]
         plugin_parameter: String,
     },
-    /// Call a smart contract (EVM inputData or SOL unsigned tx).
+    /// Call a smart contract (EVM calldata, Solana unsigned tx, or SUI PTB).
     /// Supports Gas Station: if the account has Gas Station enabled, pass
     /// `--gas-token-address` + `--relayer-id` (and `--enable-gas-station` for
     /// first-time activation / re-enable) to pay gas with stablecoins.
     ContractCall {
-        /// Contract address to interact with
+        /// Contract address to interact with (required for EVM and Solana; optional SUI metadata)
         #[arg(long)]
-        to: String,
+        to: Option<String>,
         /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "bsc" or "56")
         #[arg(long)]
         chain: String,
@@ -229,8 +232,11 @@ pub enum WalletCommand {
         #[arg(long)]
         input_data: Option<String>,
         /// Solana unsigned transaction data (base58)
-        #[arg(long)]
+        #[arg(long, conflicts_with = "sui_tx_bytes")]
         unsigned_tx: Option<String>,
+        /// SUI pre-built TransactionData / PTB (base64 BCS)
+        #[arg(long, conflicts_with_all = ["input_data", "unsigned_tx"])]
+        sui_tx_bytes: Option<String>,
         /// Gas limit override (EVM only)
         #[arg(long)]
         gas_limit: Option<String>,
@@ -292,6 +298,9 @@ pub enum InscriptionCommand {
         operation_token: Option<String>,
         #[arg(long)]
         preview_version: Option<String>,
+        /// Bitcoin fee rate in sat/vB. Applies only to this transfer inscription.
+        #[arg(long)]
+        fee_rate: Option<String>,
         #[arg(long, default_value_t = false)]
         force: bool,
     },
@@ -651,6 +660,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             from,
             contract_token,
             brc20_outpoint,
+            fee_rate,
             force,
             gas_token_address,
             relayer_id,
@@ -670,6 +680,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                         from.as_deref(),
                         contract_token.as_deref(),
                         &brc20_outpoint,
+                        fee_rate.as_deref(),
                         force,
                     )
                     .await;
@@ -683,6 +694,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                     }
                     if gas_token_address.is_some() || relayer_id.is_some() || enable_gas_station {
                         bail!("Gas Station is not supported for SUI transfers");
+                    }
+                    if fee_rate.is_some() {
+                        bail!("--fee-rate is only supported for Bitcoin transfers");
                     }
                     let readable_amount = readable_amount
                         .as_deref()
@@ -699,6 +713,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             }
             if !brc20_outpoint.is_empty() {
                 bail!("--brc20-outpoint is only supported for Bitcoin BRC-20 transfers");
+            }
+            if fee_rate.is_some() {
+                bail!("--fee-rate is only supported for Bitcoin transfers");
             }
             let chain = crate::chains::resolve_chain(&chain);
             // Resolve `--contract-token` alias (`usdc`, `usdt`, ...) → CA and
@@ -767,6 +784,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 from,
                 operation_token,
                 preview_version,
+                fee_rate,
                 force,
             } => {
                 let profile = chain_profile::resolve(&chain).await?;
@@ -782,6 +800,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                     from.as_deref(),
                     operation_token.as_deref(),
                     preview_version.as_deref(),
+                    fee_rate.as_deref(),
                     force,
                 )
                 .await
@@ -881,6 +900,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             amt,
             input_data,
             unsigned_tx,
+            sui_tx_bytes,
             gas_limit,
             from,
             aa_dex_token_addr,
@@ -901,9 +921,46 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                         profile.chain_name
                     );
                 }
+                if profile.kind == chain_profile::ChainKind::Sui {
+                    if input_data.is_some() || unsigned_tx.is_some() {
+                        bail!("SUI contract calls require --sui-tx-bytes, not --input-data or --unsigned-tx");
+                    }
+                    let tx_bytes = sui_tx_bytes.as_deref().ok_or_else(|| {
+                        anyhow::anyhow!("--sui-tx-bytes is required for SUI contract calls")
+                    })?;
+                    if gas_limit.is_some()
+                        || aa_dex_token_addr.is_some()
+                        || aa_dex_token_amount.is_some()
+                        || mev_protection
+                        || jito_unsigned_tx.is_some()
+                        || gas_token_address.is_some()
+                        || relayer_id.is_some()
+                        || enable_gas_station
+                    {
+                        bail!(
+                            "EVM/Solana-only contract-call options are not supported with --sui-tx-bytes"
+                        );
+                    }
+                    return transfer::sui::cmd_contract_call(
+                        tx_bytes,
+                        to.as_deref(),
+                        &amt,
+                        from.as_deref(),
+                        force,
+                        biz_type.as_deref(),
+                        strategy.as_deref(),
+                    )
+                    .await;
+                }
             }
+            if sui_tx_bytes.is_some() {
+                bail!("--sui-tx-bytes is only supported for SUI contract calls");
+            }
+            let to = to.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("--to is required for EVM and Solana contract calls")
+            })?;
             transfer::cmd_contract_call(
-                &to,
+                to,
                 &chain,
                 &amt,
                 input_data.as_deref(),

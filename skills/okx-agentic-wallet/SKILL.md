@@ -49,7 +49,7 @@ At the start of each thread, complete the checks in [_shared/preflight.md](_shar
 
 1. **Read the matched row's linked file first** (per the Intent Routing table) — it carries the flow and the commands you need. Never guess subcommand, flag, or file names.
 2. **When you need exact flags, defaults, or return-field schemas** that the domain file doesn't spell out, run `onchainos <group> --help` to discover subcommands, then `onchainos <group> <subcommand> --help` for flags; or load that domain's `-cli-reference.md` when the flow needs it. The CLI is the source of truth.
-3. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below.
+3. **Follow the command's confirmation path before broadcast.** Native BTC, direct BRC-20, and SUI transfers first prepare and sign without `--force`, then return their broadcast confirmation. A BRC-20 transfer inscription first stops after `unsignedInfo`; its confirmation precedes `sign-tx` and broadcast.
 
 ## Chain Name Support
 
@@ -57,13 +57,27 @@ At the start of each thread, complete the checks in [_shared/preflight.md](_shar
 
 ## Confirming Response
 
-Some state-changing commands return **confirming** (exit code **2**) when the backend needs user confirmation. The response carries `message`, optional `preview`, and `next`.
+Some state-changing commands return **confirming** (exit code **2**) before they proceed. The response carries `message`, optional `preview`, and `next`.
 
-1. **Display** `message` and the complete `preview` when present, then ask for confirmation.
+1. **MUST** display `message` and the complete `preview` when present, then stop and wait for a new explicit user confirmation. Do not execute `next`, broadcast, or report the transaction as submitted before that confirmation.
 2. **Confirms** → immediately follow `next` (usually: re-run the same command with `--force` appended). For `wallet send`, do not query `wallet balance` between confirmation and the re-run; the server validates balances and gas.
 3. **Declines** → do NOT proceed; tell the user it was cancelled.
 
 Never pass `--force` on the FIRST invocation of a state-changing command. Add `--force` only after all of: (1) you ran the command once without it, (2) the CLI returned a Confirming response (exit code 2, `"confirming": true`), (3) you displayed `message` and the user explicitly confirmed.
+
+For a native BTC, direct BRC-20, or SUI transfer confirmation, the CLI has already signed and has not broadcast. **MUST** render the complete preview with this structure:
+
+`Transfer ready to broadcast`
+
+`From: ${preview.from}`
+
+`To: ${preview.to}`
+
+`Amount: ${preview.asset.readableAmount} ${preview.asset.symbol}`
+
+`Network fee: ${preview.feeReadable} ${preview.feeSymbol}`
+
+Render the fee line only when `preview.feeReadable` is present. For Bitcoin and BRC-20, also render `Network fee rate: ${preview.feeRate} sat/vB` when present, then ask the user to confirm broadcasting at that rate or provide a custom rate of at least `0.1` sat/vB to speed up confirmation. A custom rate starts a fresh `wallet send` without `--force`, which returns a refreshed signed confirmation. After a custom-rate transaction is confirmed, state: `The custom fee rate applies only to this transaction. Your next transaction will use the default rate.`
 
 ## Amount Display Rules
 

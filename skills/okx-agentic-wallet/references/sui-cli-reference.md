@@ -21,7 +21,7 @@ onchainos wallet send --chain sui --contract-token <coin-type> --recipient <addr
 
 SUI transfer uses the same external CLI interaction as ordinary `wallet send`. The CLI keeps the service-prepared transaction authoritative and owns Coin Object selection, Gas, signing, and ordinary single-transaction broadcast. Do not reproduce those steps in the Skill. It does not add a SUI-specific preview, balance precheck, or second preparation stage.
 
-If broadcast returns the shared backend confirmation code, the CLI returns the ordinary `confirming` response with the service `message`; after explicit confirmation, re-run the same command with `--force`. Otherwise, success returns `state=PENDING`, `txHash`, and `orderId` when supplied by the service.
+The initial command signs and returns the ordinary `confirming` response before broadcast. The Agent **MUST** display its complete confirmation and wait for a new explicit user confirmation before executing `next`. The confirmed continuation broadcasts and returns `state=PENDING`, `txHash`, and `orderId` when supplied by the service.
 
 ## History And Status
 

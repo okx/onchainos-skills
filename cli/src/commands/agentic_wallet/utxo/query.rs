@@ -110,8 +110,41 @@ async fn query_utxos(mode: UtxoQueryMode) -> Result<()> {
         "address": context.address.address,
     });
     result[mode.result_key()] = snapshot;
+    if mode == UtxoQueryMode::Unavailable {
+        let _ = brc20_asset_info(&mut api, &context, &outpoints).await;
+    }
     output::success(result);
     Ok(())
+}
+
+/// Refreshes unavailable Bitcoin UTXOs and probes their bound BRC-20 assets.
+///
+/// BTC balance calls this read without adding the asset-detail response to its
+/// current output.
+pub async fn probe_unavailable_brc20_asset_info() -> Result<()> {
+    let context = BtcContext::load(None).await?;
+    let mut api = BtcApi::new()?;
+    let snapshot = api
+        .availability_details(&context, UtxoQueryMode::Unavailable.query_type())
+        .await?;
+    let outpoints = UtxoQueryMode::Unavailable.collect_response_outpoints(&snapshot);
+
+    let _ = brc20_asset_info(&mut api, &context, &outpoints).await;
+    Ok(())
+}
+
+/// Queries BRC-20 asset records for already-normalized availability outpoints.
+async fn brc20_asset_info(
+    api: &mut BtcApi,
+    context: &BtcContext,
+    outpoints: &[BtcOutPoint],
+) -> Result<Value> {
+    let records = api.brc20_utxo_asset_info(context, outpoints).await?;
+    Ok(json!({
+        "assetProtocols": ["BRC20"],
+        "outpointCount": outpoints.len(),
+        "records": records,
+    }))
 }
 
 #[cfg(test)]

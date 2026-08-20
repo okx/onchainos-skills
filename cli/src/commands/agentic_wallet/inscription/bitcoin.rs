@@ -24,10 +24,12 @@ pub async fn cmd_create(
     from: Option<&str>,
     operation_token: Option<&str>,
     preview_version: Option<&str>,
+    fee_rate: Option<&str>,
     force: bool,
 ) -> Result<()> {
     let normalized_token_address = validation::normalize_brc20_token_address(token_address)?;
     let token_address = normalized_token_address.as_str();
+    let fee_rate = fee_rate.map(validation::parse_fee_rate).transpose()?;
     if operation_token.is_some() != preview_version.is_some() {
         bail!("--operation-token and --preview-version must be provided together");
     }
@@ -64,6 +66,7 @@ pub async fn cmd_create(
             Some("brc20Inscribe"),
             prepare_token,
             prepare_version,
+            fee_rate.as_ref(),
         )
         .await
         .map_err(error::map_api_error)?;
@@ -98,6 +101,7 @@ pub async fn cmd_create(
     let next = build_inscription_next_command(
         token_address,
         readable_amount,
+        fee_rate.as_ref(),
         &fresh_continuation.0,
         &fresh_continuation.1,
     );
@@ -193,16 +197,22 @@ fn select_reveal_broadcast(
 fn build_inscription_next_command(
     token_address: &str,
     readable_amount: &str,
+    fee_rate: Option<&Value>,
     operation_token: &str,
     preview_version: &str,
 ) -> String {
-    format!(
-        "onchainos wallet inscription create --chain bitcoin --token-address {} --readable-amount {} --operation-token {} --preview-version {} --force",
+    let mut command = format!(
+        "onchainos wallet inscription create --chain bitcoin --token-address {} --readable-amount {} --operation-token {} --preview-version {}",
         shell_arg(token_address),
         shell_arg(readable_amount),
         shell_arg(operation_token),
         shell_arg(preview_version),
-    )
+    );
+    if let Some(fee_rate) = fee_rate {
+        command.push_str(&format!(" --fee-rate {fee_rate}"));
+    }
+    command.push_str(" --force");
+    command
 }
 
 /// Extracts the service continuation token and version from an unsignedInfo response.
@@ -305,5 +315,18 @@ mod tests {
         assert_eq!(normalize_inscription_status("2"), "INSCRIBING");
         assert_eq!(normalize_inscription_status("4"), "READY_TO_TRANSFER");
         assert_eq!(normalize_inscription_status("6"), "FAILED");
+    }
+
+    #[test]
+    fn inscription_continuation_preserves_custom_fee_rate() {
+        let command = build_inscription_next_command(
+            "btc-brc20-pizza",
+            "1",
+            Some(&json!(1.25)),
+            "token",
+            "version",
+        );
+
+        assert!(command.contains("--fee-rate 1.25 --force"));
     }
 }

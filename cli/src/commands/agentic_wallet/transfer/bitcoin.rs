@@ -4,7 +4,9 @@ use anyhow::Result;
 use num_bigint::BigUint;
 use serde_json::{json, Value};
 
+use crate::commands::agentic_wallet::common::WalletPreviewConfirming;
 use crate::commands::agentic_wallet::support::amount::{parse_minimal, readable_to_minimal};
+use crate::commands::agentic_wallet::support::json::shell_arg;
 
 use super::super::chain_adapters::bitcoin::{
     api::{self, BtcApi},
@@ -14,16 +16,18 @@ use super::super::chain_adapters::bitcoin::{
 };
 use super::super::utxo::select_brc20_transferable_utxos;
 
-/// Executes the BTC/BRC-20 send flow and emits confirmation or broadcast output.
+/// Prepares and signs one BTC or BRC-20 transfer before its broadcast confirmation.
 pub async fn cmd_send(
     readable_amount: Option<&str>,
     recipient: &str,
     from: Option<&str>,
     token_address: Option<&str>,
     brc20_outpoints: &[String],
+    fee_rate: Option<&str>,
     force: bool,
 ) -> Result<()> {
     validation::validate_recipient(recipient)?;
+    let fee_rate = fee_rate.map(validation::parse_fee_rate).transpose()?;
     let normalized_token_address = token_address
         .map(validation::normalize_brc20_token_address)
         .transpose()?;
@@ -72,6 +76,11 @@ pub async fn cmd_send(
         }
     };
 
+    let mut selected_tx_param = selected_tx_param;
+    if let (Some(tx_param), Some(fee_rate)) = (&mut selected_tx_param, &fee_rate) {
+        tx_param["feeRate"] = fee_rate.clone();
+    }
+
     let prepared =
         if let (Some(token_address), Some(tx_param)) = (token_address, selected_tx_param) {
             api.prepare_selected_brc20_transfer(
@@ -83,13 +92,59 @@ pub async fn cmd_send(
             )
             .await
         } else {
-            api.prepare_transaction(&context, recipient, &amount, None, None, None, None)
-                .await
+            api.prepare_transaction(
+                &context,
+                recipient,
+                &amount,
+                None,
+                None,
+                None,
+                None,
+                fee_rate.as_ref(),
+            )
+            .await
         }
         .map_err(error::map_api_error)?;
 
     let seed = context.signing_seed()?;
     let signatures = signing::sign_unsigned_hashes(&prepared, &seed)?;
+    if !force {
+        let operation = if token_address.is_some() {
+            "BRC20_TRANSFER"
+        } else {
+            "BTC_TRANSFER"
+        };
+        let readable_amount = readable_amount.unwrap_or(&amount);
+        let preview = validation::preview_from_response(
+            &prepared,
+            operation,
+            &context.profile.chain_index,
+            &context.address.address,
+            recipient,
+            token_address,
+            &amount,
+            readable_amount,
+            context.profile.native_decimals,
+        )?;
+        return Err(WalletPreviewConfirming {
+            message: "The transfer has been signed and is ready to broadcast. Review the transfer and current network fee before confirming.".to_string(),
+            next: build_send_next_command(
+                recipient,
+                &context.address.address,
+                token_address,
+                readable_amount,
+                &selected_outpoints,
+                preview.get("feeRate"),
+            ),
+            scene: if token_address.is_some() {
+                "brc20_transfer".to_string()
+            } else {
+                "btc_transfer".to_string()
+            },
+            preview,
+        }
+        .into());
+    }
     let broadcast =
         broadcast::submit_direct_transaction(&mut api, &context, &prepared, &signatures, force)
             .await
@@ -116,6 +171,41 @@ pub async fn cmd_send(
         "broadcasts": [submitted],
     }));
     Ok(())
+}
+
+/// Rebuilds the exact confirmed BTC or BRC-20 send command without signing data.
+fn build_send_next_command(
+    recipient: &str,
+    from: &str,
+    token_address: Option<&str>,
+    readable_amount: &str,
+    selected_outpoints: &[String],
+    fee_rate: Option<&Value>,
+) -> String {
+    let mut command = format!(
+        "onchainos wallet send --chain bitcoin --recipient {} --readable-amount {}",
+        shell_arg(recipient),
+        shell_arg(readable_amount),
+    );
+    command.push_str(&format!(" --from {}", shell_arg(from)));
+    if let Some(token_address) = token_address {
+        command.push_str(&format!(" --contract-token {}", shell_arg(token_address)));
+    }
+    for outpoint in selected_outpoints {
+        command.push_str(&format!(" --brc20-outpoint {}", shell_arg(outpoint)));
+    }
+    let fee_rate = match fee_rate {
+        Some(Value::Number(value)) => Some(value.to_string()),
+        Some(Value::String(value)) if validation::parse_fee_rate(value).is_ok() => {
+            Some(value.to_string())
+        }
+        _ => None,
+    };
+    if let Some(fee_rate) = fee_rate {
+        command.push_str(&format!(" --fee-rate {}", shell_arg(&fee_rate)));
+    }
+    command.push_str(" --force");
+    command
 }
 
 /// Builds one BRC-20 transfer request from the selected current carrier UTXOs.
@@ -223,5 +313,22 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("combined BRC-20 UTXO amount"));
+    }
+
+    #[test]
+    fn confirmed_brc20_next_command_keeps_selection_and_fee_rate() {
+        let command = build_send_next_command(
+            "bc1precipient",
+            "bc1pfrom",
+            Some("btc-brc20-pizza"),
+            "3",
+            &["tx-a:0".to_string(), "tx-b:1".to_string()],
+            Some(&json!(12.5)),
+        );
+
+        assert_eq!(
+            command,
+            "onchainos wallet send --chain bitcoin --recipient bc1precipient --readable-amount 3 --from bc1pfrom --contract-token btc-brc20-pizza --brc20-outpoint tx-a:0 --brc20-outpoint tx-b:1 --fee-rate 12.5 --force"
+        );
     }
 }

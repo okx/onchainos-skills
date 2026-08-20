@@ -12,10 +12,12 @@ Load on a wallet operation failure or edge case.
 - **Empty cursor**: no more pages.
 
 ## Contract Call
-- **Neither `--input-data` nor `--unsigned-tx`**: exactly one is required; the command fails otherwise.
+- **Missing transaction payload**: EVM requires `--input-data`, Solana requires `--unsigned-tx`, and SUI requires `--sui-tx-bytes`.
+- **Mixed payload flags**: do not combine `--input-data`, `--unsigned-tx`, and `--sui-tx-bytes`; select the one for the target chain.
 - **Invalid calldata**: malformed hex causes an API error — help re-encode.
+- **Invalid SUI PTB**: `--sui-tx-bytes` must be the complete, unsigned, Base64-encoded Sui `TransactionData` produced by the maintained DApp integration or SDK. Never print the raw value while troubleshooting.
 - **Simulation failure**: show `executeErrorMsg`, do NOT broadcast.
-- **Insufficient gas**: suggest a higher `--gas-limit`.
+- **Insufficient gas**: for EVM, suggest a higher `--gas-limit`; for SUI, rebuild the PTB with suitable gas settings through the maintained DApp integration or SDK.
 
 ## Common
 - **Region restriction (error code 50125 or 80001)**: do NOT show the raw code. Display: "Service is not available in your region. Please switch to a supported region and try again."
