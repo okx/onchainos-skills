@@ -112,6 +112,18 @@ After success, report the returned latest UTXO snapshots using the same UTXO amo
 
 At that confirmation, the user may instead choose a custom fee rate. Re-run the initial transfer command with `--fee-rate <sat-per-vB>` and without `--force`; do not execute the previous continuation. The refreshed command signs before returning its new confirmation. The minimum custom rate is `0.1` sat/vB.
 
+For a BTC transfer confirmation, the CLI has already signed and has not broadcast. **MUST** render the complete preview:
+
+`Transfer ready to broadcast`
+
+`From: ${preview.from}`
+
+`To: ${preview.to}`
+
+`Amount: ${preview.asset.readableAmount} ${preview.asset.symbol}`
+
+Render `Network fee: ${preview.feeReadable} ${preview.feeSymbol}` only when `preview.feeReadable` is present. Also render `Network fee rate: ${preview.feeRate} sat/vB` when present, then ask the user to confirm broadcasting at that rate or provide a custom rate of at least `0.1` sat/vB. After a custom-rate transaction is confirmed, state: `The custom fee rate applies only to this transaction. Your next transaction will use the default rate.`
+
 For `MEMPOOL_REMOVED`, say: `Your transaction was removed from the mempool and its inputs may still be occupied. You can reclaim the UTXOs to restore them for selection. To send again, start a new transfer request.` Then run `wallet utxo list --chain bitcoin --unavailable` as a separate read.
 
 **MUST**: Reclaim is a separate confirmed write. Show its preview before following `next`. **NEVER** offer to rebroadcast the old raw transaction: a fresh transfer command is required.
@@ -120,3 +132,8 @@ For `MEMPOOL_REMOVED`, say: `Your transaction was removed from the mempool and i
 
 - Keep current-conversation addresses, outpoints, tx hashes, order IDs, balance facts, and intent. Ask for an identifier when reference resolution is ambiguous or the conversation is new.
 - After an account switch, login change, or address change, query the required facts again.
+
+## Additional Resources
+
+- Full parameter tables, return-field schemas, and worked examples → [bitcoin-cli-reference.md](bitcoin-cli-reference.md). Load only when the flow above does not provide the required exact syntax or fields.
+- Load on error → [bitcoin-troubleshooting.md](bitcoin-troubleshooting.md).

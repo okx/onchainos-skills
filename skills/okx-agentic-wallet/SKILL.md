@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "Use for OKX Onchain OS / onchainos Agentic Wallet actions: Bitcoin/BTC balance, available UTXOs, protection unlock/re-lock/reclaim, transfers and status; BRC-20 ticker balance, transferable inscription UTXOs, transfer inscriptions, transfers and status; SUI assets, native or custom-token transfers, and status; wallet login/status/account/address/holdings/deposit/receive/send; contract calls, Gas Station, DEX swap/trade/quote, bridge, limit orders, transaction broadcast/gas/simulation/tracking, public-address holdings, signing/approvals, wallet export/policy, security checks, and audit logs."
+description: "OKX Agentic Wallet — the single skill for the user's wallet and on-chain execution. Use it whenever the user wants to operate their wallet or execute an on-chain action, including: Bitcoin (BTC) balance, UTXOs, protection unlock / re-lock / reclaim, transfers & status; BRC-20 ticker balance, transferable inscription UTXOs, transfer inscriptions, transfers & status; SUI assets, native or custom-token transfers & status; login & accounts, balance / holdings, wallet address / deposit / receive, send / transfer, contract calls (approve / deposit / withdraw), transaction history & status, message signing, wallet export & policy; pay gas with a stablecoin (Gas Station, Solana); swap / trade / buy / sell / convert, get a quote; cross-chain bridge & track arrival; limit orders (buy dip / take profit / stop loss / buy above) plus cancel / list / resume them; broadcast / gas / simulate / track a transaction; look up any public address's holdings; security scanning (token / honeypot 蜜罐 / 貔貅, DApp phishing, tx & signature checks, approvals); audit log. Once matched, follow this skill's Intent Routing to dispatch to the exact action."
 license: MIT
 metadata:
   author: okx
@@ -14,15 +14,15 @@ Unified wallet skill driving the `onchainos` CLI: wallet lifecycle, Gas Station,
 
 ## Intent Routing
 
-Match the user intent to a row, then read its flow file first. Load an exact-command reference only when flags or return fields are needed, and load troubleshooting only for a relevant failure. Do not load files from unmatched rows or construct paths yourself.
+Match the user intent to a row, then **read that row's linked file first** — it holds the flow. Read only the matched file; do not load other rows' files. Each file links its own deeper files (cli-reference, troubleshooting) at the bottom via explicit links — open those when the flow needs them; never construct a file path yourself.
 
 When a Bitcoin, BRC-20, or SUI row overlaps a generic wallet row, choose the chain-specific row.
 
 | User Intent | Reference |
 | --- | --- |
-| Bitcoin: address, balance, UTXO queries and management, and transfer | Flow: [bitcoin.md](references/bitcoin.md). Exact commands/fields: [bitcoin-cli-reference.md](references/bitcoin-cli-reference.md). Failures: [bitcoin-troubleshooting.md](references/bitcoin-troubleshooting.md). |
-| BRC-20: balance, transferable inscriptions, transfer inscriptions, transfers, and history/status | Flow: [brc20.md](references/brc20.md). Exact commands/fields: [brc20-cli-reference.md](references/brc20-cli-reference.md). Shared history: [wallet-cli-reference.md#history](references/wallet-cli-reference.md#history). Failures: [brc20-troubleshooting.md](references/brc20-troubleshooting.md). |
-| SUI: address, assets, and native or token transfers | Flow: [sui.md](references/sui.md). Exact commands/fields: [sui-cli-reference.md](references/sui-cli-reference.md). Failures: [sui-troubleshooting.md](references/sui-troubleshooting.md). |
+| Bitcoin: address, balance, UTXO queries and management, and transfer | [bitcoin.md](references/bitcoin.md) |
+| BRC-20: balance, transferable inscriptions, transfer inscriptions, transfers, and history/status | [brc20.md](references/brc20.md) |
+| SUI: address, assets, and native or token transfers | [sui.md](references/sui.md) |
 | Sign in / connect / social login (Google / Apple / Email) / logout; add / switch account; login status | [wallet](references/wallet.md) |
 | My wallet address / QR code; check my (logged-in) balance / holdings | [wallet](references/wallet.md) |
 | Send / transfer native or ERC-20 / SPL tokens | [wallet](references/wallet.md) |
@@ -48,8 +48,8 @@ At the start of each thread, complete the checks in [_shared/preflight.md](_shar
 ## Build the Command
 
 1. **Read the matched row's linked file first** (per the Intent Routing table) — it carries the flow and the commands you need. Never guess subcommand, flag, or file names.
-2. **When you need exact flags, defaults, or return-field schemas** that the domain file doesn't spell out, run `onchainos <group> --help` to discover subcommands, then `onchainos <group> <subcommand> --help` for flags; or load that domain's `-cli-reference.md` when the flow needs it. The CLI is the source of truth.
-3. **Follow the command's confirmation path before broadcast.** Native BTC, direct BRC-20, and SUI transfers first prepare and sign without `--force`, then return their broadcast confirmation. A BRC-20 transfer inscription first stops after `unsignedInfo`; its confirmation precedes `sign-tx` and broadcast.
+2. **When you need exact flags, defaults, or return-field schemas** that the domain file doesn't spell out, run `onchainos <group> <subcommand> --help` (the CLI is the source of truth), or load that domain's `-cli-reference.md` when the flow needs it (each domain file lists its own deeper files at the bottom). Don't load it up front.
+3. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below. For native BTC, direct BRC-20, and SUI transfers, follow the chain-specific confirmation flow; a BRC-20 transfer inscription confirms before signing and broadcast.
 
 ## Chain Name Support
 
@@ -57,27 +57,13 @@ At the start of each thread, complete the checks in [_shared/preflight.md](_shar
 
 ## Confirming Response
 
-Some state-changing commands return **confirming** (exit code **2**) before they proceed. The response carries `message`, optional `preview`, and `next`.
+Some state-changing commands return **confirming** (exit code **2**) when the backend needs user confirmation. The response carries `message` (prompt to show) and `next` (what to do after they confirm).
 
-1. **MUST** display `message` and the complete `preview` when present, then stop and wait for a new explicit user confirmation. Do not execute `next`, broadcast, or report the transaction as submitted before that confirmation.
-2. **Confirms** → immediately follow `next` (usually: re-run the same command with `--force` appended). For `wallet send`, do not query `wallet balance` between confirmation and the re-run; the server validates balances and gas.
+1. **Display** `message` and ask for confirmation.
+2. **Confirms** → follow `next` (usually: re-run the same command with `--force` appended).
 3. **Declines** → do NOT proceed; tell the user it was cancelled.
 
 Never pass `--force` on the FIRST invocation of a state-changing command. Add `--force` only after all of: (1) you ran the command once without it, (2) the CLI returned a Confirming response (exit code 2, `"confirming": true`), (3) you displayed `message` and the user explicitly confirmed.
-
-For a native BTC, direct BRC-20, or SUI transfer confirmation, the CLI has already signed and has not broadcast. **MUST** render the complete preview with this structure:
-
-`Transfer ready to broadcast`
-
-`From: ${preview.from}`
-
-`To: ${preview.to}`
-
-`Amount: ${preview.asset.readableAmount} ${preview.asset.symbol}`
-
-`Network fee: ${preview.feeReadable} ${preview.feeSymbol}`
-
-Render the fee line only when `preview.feeReadable` is present. For Bitcoin and BRC-20, also render `Network fee rate: ${preview.feeRate} sat/vB` when present, then ask the user to confirm broadcasting at that rate or provide a custom rate of at least `0.1` sat/vB to speed up confirmation. A custom rate starts a fresh `wallet send` without `--force`, which returns a refreshed signed confirmation. After a custom-rate transaction is confirmed, state: `The custom fee rate applies only to this transaction. Your next transaction will use the default rate.`
 
 ## Amount Display Rules
 

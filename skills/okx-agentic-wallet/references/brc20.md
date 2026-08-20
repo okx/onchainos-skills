@@ -44,6 +44,18 @@ In a BRC-20 context, route user-removed asset-occupancy requests to the shared a
 
 Use only facts returned by the CLI. Substitute token ticker from the returned token address. Direct transfer uses the shared ordinary-send confirmation. Inscription uses the fixed confirmation below. **NEVER** invent, estimate, or sum a fee.
 
+For a direct BRC-20 transfer confirmation, the CLI has already signed and has not broadcast. **MUST** render the complete preview:
+
+`Transfer ready to broadcast`
+
+`From: ${preview.from}`
+
+`To: ${preview.to}`
+
+`Amount: ${preview.asset.readableAmount} ${preview.asset.symbol}`
+
+Render `Network fee: ${preview.feeReadable} ${preview.feeSymbol}` only when `preview.feeReadable` is present. Also render `Network fee rate: ${preview.feeRate} sat/vB` when present, then ask the user to confirm broadcasting at that rate or provide a custom rate of at least `0.1` sat/vB. A custom rate starts a fresh `wallet send` without `--force`, which returns a refreshed signed confirmation. After a custom-rate transaction is confirmed, state: `The custom fee rate applies only to this transaction. Your next transaction will use the default rate.`
+
 For a BRC-20 holdings query without a ticker, retain standard balance assets whose `tokenAddress` starts with `btc-brc20-` and render them in the standard `balance --all` format. If none remain, tell the user that they have no BRC-20-related assets.
 
 For a ticker-specific BRC-20 balance response, output these three lines without a heading or bullets:
@@ -91,3 +103,8 @@ Render the network-fee line only when `preview.feeReadable` is present, and the 
 After the user selects a valid custom fee rate, state: `The custom fee rate applies only to this transaction. Your next transaction will use the default rate.`
 
 Present `remainingInscribableAmount` as an available amount, not as a required action. Do not promise an indexing duration. Copy every returned transaction hash, order ID, and continuation command verbatim.
+
+## Additional Resources
+
+- Full parameter tables, return-field schemas, and worked examples → [brc20-cli-reference.md](brc20-cli-reference.md). For shared transaction-history fields, see [wallet-cli-reference.md#history](wallet-cli-reference.md#history). Load only when the flow above does not provide the required exact syntax or fields.
+- Load on error → [brc20-troubleshooting.md](brc20-troubleshooting.md).
