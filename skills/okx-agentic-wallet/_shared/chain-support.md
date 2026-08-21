@@ -17,8 +17,8 @@ The following 9 chains support **wallet address creation** (i.e., you can genera
 | Base | `base` | `8453` |
 | BSC | `bsc` | `56` |
 | Arbitrum | `arbitrum` | `42161` |
-| Bitcoin | `bitcoin` (`btc`, `0`) | runtime mapping from `wallet chains` |
-| SUI | `sui` (`784`) | runtime mapping from `wallet chains` |
+| Bitcoin | `bitcoin` | `0` |
+| SUI | `sui` | `784` |
 
 > **Note**: The wallet supports interacting with 17+ chains beyond this list (e.g., Polygon, Avalanche, Optimism).
 > Run `onchainos wallet chains` for the full list of supported chains.
