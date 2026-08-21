@@ -54,9 +54,9 @@ onchainos wallet utxo brc20-transferable --chain bitcoin --token-address <btc-br
 
 ## `wallet send`
 
-Transfer BRC-20 with one current exact combination returned by `wallet utxo brc20-transferable`. Proceed when one combination is returned; ask the user to choose when several are returned. Before the second confirmation, if a selected outpoint is no longer available, show the refreshed plan and ask again; afterward, follow the 10-second BTC/BRC-20 confirmation reuse rule in [wallet.md](wallet.md).
+Transfer BRC-20 with one current exact combination returned by `wallet utxo brc20-transferable`. Proceed when one combination is returned; ask the user to choose when several are returned. Before the user confirms the CLI Confirming response, if a selected outpoint is no longer available, show the refreshed plan and ask again; afterward, follow the shared Confirming Response rule in [SKILL.md](../SKILL.md).
 
-The initial command refreshes the selected outpoints, validates their availability, uniqueness, and amount sum, signs, and returns ordinary `confirming` before broadcast. Display the complete confirmation, then end with: `Confirm broadcasting and creating this inscription at the current fee rate? To change it, reply with a new sat/vB value.` Execute `next` only after explicit confirmation. If the user supplies a new sat/vB value, rerun without `--force`, display the fresh preview, and state: `The custom fee rate applies only to this transaction and does not change the default fee rate for future transactions.` After the user confirms that refreshed preview, apply the 10-second BTC/BRC-20 confirmation reuse rule in [wallet.md](wallet.md).
+The initial command refreshes the selected outpoints, validates their availability, uniqueness, and amount sum, signs, and returns ordinary `confirming` before broadcast. Display the complete confirmation, then end with: `Confirm broadcasting and creating this inscription at the current fee rate? To change it, reply with a new sat/vB value.` Execute `next` only after explicit confirmation. If the user supplies a new sat/vB value, rerun without `--force`, display the fresh preview, and state: `The custom fee rate applies only to this transaction and does not change the default fee rate for future transactions.`
 
 The confirmed continuation returns `state=PENDING`, `txHash`, and `orderId`.
 
@@ -89,7 +89,7 @@ onchainos wallet history --chain bitcoin (--tx-hash <hash> | --order-id <id>)
 
 Create a standalone asynchronous transfer inscription to the current Bitcoin address only after an explicit inscription request. If no direct-transfer combination exists, refresh the ticker balance before offering this command.
 
-Run initially without `--force`. It stops after `unsignedInfo` and returns ordinary `confirming` with `scene="btc_inscription"`; `preview.feeReadable` is nullable, and nothing has been signed or submitted. Display the complete preview and the same fee-rate prompt and one-transaction fee statement used by `wallet send`. A new sat/vB value requires a fresh preview without `--force`. After the user confirms that refreshed preview, apply the 10-second BTC/BRC-20 confirmation reuse rule in [wallet.md](wallet.md).
+Run initially without `--force`. It stops after `unsignedInfo` and returns ordinary `confirming` with `scene="btc_inscription"`; `preview.feeReadable` is nullable, and nothing has been signed or submitted. Display the complete preview and the same fee-rate prompt and one-transaction fee statement used by `wallet send`. A new sat/vB value requires a fresh preview without `--force`.
 
 The confirmed `next` signs, calls `sign-tx`, and batch-broadcasts the ordered inscription transactions. Show returned `state=INSCRIBING`, `txHash`, `orderId`, `broadcasts`, and `nextSteps.checkInscriptionStatus` verbatim, render the submission template, and stop. Do not query automatically or auto-send after `READY_TO_TRANSFER`.
 

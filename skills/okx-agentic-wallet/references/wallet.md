@@ -45,16 +45,14 @@ Field rules:
 
 **Native BTC fee rate** — After the initial transfer preview, ask the user to confirm the current fee rate or provide a new sat/vB value. For a new value, rerun the initial command with `--fee-rate <value>`, show the fresh preview, and require confirmation. The custom fee rate applies only to that transaction.
 
-**BTC/BRC-20 refreshed confirmation** — After the user explicitly confirms a refreshed preview (the second confirmation), that confirmation remains valid for 10 seconds. If the CLI refreshes the same requested transaction again within that window, execute the newest exact `next` without asking a third time, even when service-selected outpoints or computed fees change; never reuse an earlier `next`. Require a new confirmation after 10 seconds or when the user changes the chain, sender, recipient, asset, amount or quantity, or fee-rate input.
-
 **Bitcoin UTXOs and BRC-20** — Load [utxo-cli-reference.md](utxo-cli-reference.md) for spendable, locked, protected, or reclaimable BTC UTXOs. Load [brc20-cli-reference.md](brc20-cli-reference.md) for BRC-20 balances, transferable inscriptions, transfer inscriptions, and direct transfers. For a BRC-20 ticker balance, run `onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker>` and use that reference's reply template.
 
 ## Send vs Contract Call (funds-loss risk — determine intent first)
 
-| Intent | Command | Example |
-|---|---|---|
-| Token transfer | `wallet send --chain <chain>` | User-provided transfer parameters |
-| Contract call | `wallet contract-call --chain <chain>` | User-provided contract-call parameters |
+| Intent | Command |
+|---|---|
+| Token transfer | `wallet send --chain <chain>` |
+| Contract call | `wallet contract-call --chain <chain>` |
 
 For a SUI contract call, provide the unsigned PTB from the maintained integration or SDK with `--sui-tx-bytes`.
 
