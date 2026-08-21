@@ -290,10 +290,6 @@ pub enum AgentCommand {
         service_token_amount: String,
         #[arg(long = "payment-token-symbol")]
         payment_token_symbol: Option<String>,
-        #[arg(long = "payment-token-amount")]
-        payment_token_amount: Option<String>,
-        #[arg(long = "payment-most-token-amount")]
-        payment_most_token_amount: Option<String>,
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
@@ -439,6 +435,9 @@ pub enum AgentCommand {
         /// Target provider agentId
         #[arg(long)]
         provider: String,
+        /// Target registered service ID (preferred for exact selection)
+        #[arg(long = "service-id")]
+        service_id: Option<String>,
         /// Target service endpoint (for multi-service providers)
         #[arg(long)]
         endpoint: Option<String>,
@@ -1478,8 +1477,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             service_token_address,
             service_token_amount,
             payment_token_symbol,
-            payment_token_amount,
-            payment_most_token_amount,
             agent_id,
         } => {
             task::user::run_task(
@@ -1492,8 +1489,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     service_token_address,
                     service_token_amount,
                     payment_token_symbol,
-                    payment_token_amount,
-                    payment_most_token_amount,
                     agent_id,
                 },
                 ctx,
@@ -1633,8 +1628,17 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             .await
         }
 
-        AgentCommand::DesignatedRoute { provider, endpoint } => {
-            task::common::handle_designated_route(&provider, endpoint.as_deref()).await
+        AgentCommand::DesignatedRoute {
+            provider,
+            service_id,
+            endpoint,
+        } => {
+            task::common::handle_designated_route(
+                &provider,
+                service_id.as_deref(),
+                endpoint.as_deref(),
+            )
+            .await
         }
 
         AgentCommand::X402Validate {

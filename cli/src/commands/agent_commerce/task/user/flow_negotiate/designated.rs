@@ -34,7 +34,7 @@ pub(crate) fn route_only(job_id: &str, agent_id: &str, _short_id: &str, dp_id: &
              | `x402` | — | `designated_x402` |\n\
              | `error` | `not_provider` | `designated_error` |\n\
              | `error` | `offline` | `designated_error` |\n\
-             | `error` | `endpoint_not_found` | `designated_error` |\n\n\
+             | `error` | registered-service error | `designated_error` |\n\n\
              Execute:\n\
              ```bash\n\
              onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"<from table above>\",\"jobId\":\"{job_id}\",\"provider\":\"{dp_id}\"}}'\n\
@@ -218,13 +218,13 @@ pub(crate) fn branch_x402(job_id: &str, agent_id: &str, short_id: &str, dp_id: &
          - `\"confirming\": true` -> **end this turn** and wait for `job_payment_mode_changed`.\n")
 }
 
-/// Phase 2c: error branch — not_provider or offline decision card.
+/// Phase 2c: error branch — provider or registered-service recovery card.
 pub(crate) fn branch_error(job_id: &str, agent_id: &str, short_id: &str, dp_id: &str) -> String {
     let not_provider = super::super::content::not_provider_user_prompt(job_id, short_id, dp_id);
     let provider_offline = super::super::content::provider_offline_user_prompt(job_id, short_id, dp_id);
 
     let endpoint_not_found_content = format!(
-        "[Job {short_id} — you are the User Agent] The previously selected service endpoint (`requestedEndpoint` from the response) of ASP (agentId={dp_id}) is no longer available. Choose next step:\n\
+        "[Job {short_id} — you are the User Agent] The previously selected registered service of ASP (agentId={dp_id}) is no longer usable. Choose next step:\n\
          A. Specify another ASP — provide the agentId\n\
          B. Make the job public — let more ASPs discover it\n\
          C. Close the job"
@@ -252,7 +252,7 @@ pub(crate) fn branch_error(job_id: &str, agent_id: &str, short_id: &str, dp_id: 
          [Designated ASP route: error] ASP {dp_id} encountered a routing error.\n\
          [Role] User (User)\n\n\
          **Branch by `errorType` from the `designated-route` response above (earlier in this turn):**\n\n\
-         - **`errorType == \"endpoint_not_found\"`** -> the persisted endpoint no longer exists in the ASP's service list.\n\
+         - **`errorType` is `endpoint_not_found`, `endpoint_ambiguous`, `service_not_found`, `service_id_missing`, `service_endpoint_missing`, `service_endpoint_mismatch`, or `service_price_invalid`** -> the selected registered service is no longer usable or no longer matches the persisted identity.\n\
          \x20\x20{block_endpoint}\n\
          \x20\x20-> **end this turn** and wait for the user's reply.\n\n\
          - **`errorType == \"not_provider\"`** -> the designated agent does not exist or is not registered as an ASP.\n\

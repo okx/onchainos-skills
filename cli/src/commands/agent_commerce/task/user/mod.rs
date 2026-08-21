@@ -194,10 +194,6 @@ pub enum TaskCommand {
         service_token_amount: String,
         #[arg(long = "payment-token-symbol")]
         payment_token_symbol: Option<String>,
-        #[arg(long = "payment-token-amount")]
-        payment_token_amount: Option<String>,
-        #[arg(long = "payment-most-token-amount")]
-        payment_most_token_amount: Option<String>,
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
@@ -1315,8 +1311,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             asp_ops::handle_asp_match(&mut client, &job_id, provider_agent_id.as_deref(), payment_token_amount, page, agent_id.as_deref(), &format).await,
         TaskCommand::TaskServiceSelect(args) =>
             asp_ops::handle_task_service_select(&args.service_match, &args.format).await,
-        TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
-            asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), payment_token_amount.as_deref(), payment_most_token_amount.as_deref(), agent_id.as_deref()).await,
+        TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, agent_id } =>
+            asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), agent_id.as_deref()).await,
         TaskCommand::ResetAsp { job_id, agent_id } =>
             asp_ops::handle_reset_asp(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::UserReject { job_id, agent_id } =>

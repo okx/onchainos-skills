@@ -602,8 +602,9 @@ fn find_service_in_data(
         .cloned()
 }
 
-/// `onchainos agent designated-route --provider <agentId>` — runs service-list
-/// + profile in parallel, applies role/online/endpoint routing logic, and
+/// `onchainos agent designated-route --provider <agentId> [--service-id <id>]`
+/// — runs service-list + profile in parallel, applies role/online/service
+/// routing logic, and
 ///   returns a single JSON with the route decision.
 ///
 /// Output shape:
@@ -612,9 +613,9 @@ fn find_service_in_data(
 ///   "errorType": "not_provider"|"offline",   // only when route=error
 ///   "providerName": "...",
 ///   "onlineStatus": 1|2,
-///   "endpoint": "https://...",               // only when route=x402
-///   "feeAmount": "0.01",                     // only when route=x402
-///   "feeTokenSymbol": "USDT"                 // only when route=x402
+///   "serviceId": "...", "serviceType": "A2MCP",
+///   "endpoint": "https://...", "feeAmount": "0.01",
+///   "feeToken": "0x...", "feeTokenSymbol": "USDT" // route=x402
 /// }
 /// ```
 /// In-process variant of the `designated-route` query — returns the resolved
@@ -622,7 +623,93 @@ fn find_service_in_data(
 /// stdout). Used by user CLI flows to inline the routing query without an
 /// LLM round-trip. Errors propagate; success cases (a2a / x402 / error) are
 /// all encoded as `Ok(json)`.
-pub async fn designated_route_inner(provider_id: &str, target_endpoint: Option<&str>) -> Result<serde_json::Value> {
+fn scalar_text(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from)
+        .or_else(|| value.is_number().then(|| value.to_string()))
+}
+
+fn designated_service_summary(service: &serde_json::Value) -> serde_json::Value {
+    let mut summary = serde_json::Map::new();
+    if let Some(value) = service
+        .get("serviceId")
+        .and_then(scalar_text)
+        .or_else(|| service.get("id").and_then(scalar_text))
+    {
+        summary.insert("serviceId".to_string(), serde_json::json!(value));
+    }
+    for key in [
+        "serviceName",
+        "serviceDescription",
+        "serviceType",
+        "endpoint",
+        "feeTokenSymbol",
+    ] {
+        if let Some(value) = service.get(key).and_then(scalar_text) {
+            summary.insert(key.to_string(), serde_json::json!(value));
+        }
+    }
+    if let Some(value) = service
+        .get("feeAmount")
+        .and_then(scalar_text)
+        .or_else(|| service.get("fee").and_then(scalar_text))
+    {
+        summary.insert("feeAmount".to_string(), serde_json::json!(value));
+    }
+    if let Some(value) = service
+        .get("feeToken")
+        .and_then(scalar_text)
+        .or_else(|| service.get("contractAddress").and_then(scalar_text))
+    {
+        summary.insert("feeToken".to_string(), serde_json::json!(value));
+    }
+    serde_json::Value::Object(summary)
+}
+
+fn services_matching_endpoint<'a>(
+    services: &[&'a serde_json::Value],
+    endpoint: &str,
+) -> Vec<&'a serde_json::Value> {
+    services
+        .iter()
+        .copied()
+        .filter(|service| service.get("endpoint").and_then(|value| value.as_str()) == Some(endpoint))
+        .collect()
+}
+
+fn service_matching_id<'a>(
+    services: &[&'a serde_json::Value],
+    service_id: &str,
+) -> Option<&'a serde_json::Value> {
+    services.iter().copied().find(|service| {
+        service
+            .get("serviceId")
+            .and_then(scalar_text)
+            .or_else(|| service.get("id").and_then(scalar_text))
+            .as_deref()
+            == Some(service_id)
+    })
+}
+
+fn missing_x402_endpoint(service: &serde_json::Value) -> bool {
+    service
+        .get("serviceType")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| value.eq_ignore_ascii_case("A2MCP"))
+        && !service
+            .get("endpoint")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
+pub async fn designated_route_inner(
+    provider_id: &str,
+    target_service_id: Option<&str>,
+    target_endpoint: Option<&str>,
+) -> Result<serde_json::Value> {
     let id = provider_id.trim();
     if id.is_empty() {
         bail!("--provider must not be empty");
@@ -679,13 +766,41 @@ pub async fn designated_route_inner(provider_id: &str, target_endpoint: Option<&
         .copied()
         .collect();
 
-    // When --endpoint is specified, require an exact match; do NOT fall back.
-    let selected = if let Some(target) = target_endpoint.filter(|s| !s.is_empty()) {
-        match all_with_endpoint.iter().find(|s| {
-            s.get("endpoint").and_then(|v| v.as_str()) == Some(target)
-        }).copied() {
-            Some(svc) => Some(svc),
-            None => {
+    // Prefer --service-id when supplied, and use --endpoint only to validate
+    // that the caller selected the same registered service record.
+    let selected = if let Some(service_id) = target_service_id.filter(|s| !s.is_empty()) {
+        let Some(service) = service_matching_id(&service_entries, service_id) else {
+            return Ok(serde_json::json!({
+                "route": "error",
+                "errorType": "service_not_found",
+                "providerName": provider_name,
+                "onlineStatus": online_status,
+                "requestedServiceId": service_id,
+            }));
+        };
+        if let Some(target) = target_endpoint.filter(|s| !s.is_empty()) {
+            let registered_endpoint = service
+                .get("endpoint")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            if registered_endpoint != target {
+                return Ok(serde_json::json!({
+                    "route": "error",
+                    "errorType": "service_endpoint_mismatch",
+                    "providerName": provider_name,
+                    "onlineStatus": online_status,
+                    "requestedServiceId": service_id,
+                    "requestedEndpoint": target,
+                    "registeredEndpoint": registered_endpoint,
+                }));
+            }
+        }
+        Some(service)
+    } else if let Some(target) = target_endpoint.filter(|s| !s.is_empty()) {
+        let matches = services_matching_endpoint(&all_with_endpoint, target);
+        match matches.as_slice() {
+            [service] => Some(*service),
+            [] => {
                 return Ok(serde_json::json!({
                     "route": "error",
                     "errorType": "endpoint_not_found",
@@ -694,19 +809,75 @@ pub async fn designated_route_inner(provider_id: &str, target_endpoint: Option<&
                     "requestedEndpoint": target,
                 }));
             }
+            _ => {
+                return Ok(serde_json::json!({
+                    "route": "error",
+                    "errorType": "endpoint_ambiguous",
+                    "providerName": provider_name,
+                    "onlineStatus": online_status,
+                    "requestedEndpoint": target,
+                    "services": matches
+                        .into_iter()
+                        .map(designated_service_summary)
+                        .collect::<Vec<_>>(),
+                }));
+            }
         }
     } else {
         all_with_endpoint.first().copied()
     };
 
-    if let Some(svc) = selected {
-        let endpoint = svc.get("endpoint").and_then(|v| v.as_str()).unwrap_or("");
-        // service-list API returns `fee` (string) not `feeAmount`; `/match` API returns `feeAmount` (f64).
-        let fee_amount = svc.get("feeAmount").and_then(|v| v.as_str())
-            .or_else(|| svc.get("fee").and_then(|v| v.as_str()))
-            .unwrap_or("");
+    if let Some(service) = selected.filter(|service| missing_x402_endpoint(service)) {
+        return Ok(serde_json::json!({
+            "route": "error",
+            "errorType": "service_endpoint_missing",
+            "providerName": provider_name,
+            "onlineStatus": online_status,
+            "serviceId": service
+                .get("serviceId")
+                .and_then(scalar_text)
+                .or_else(|| service.get("id").and_then(scalar_text)),
+        }));
+    }
+
+    if let Some(svc) = selected.filter(|service| {
+        service
+            .get("endpoint")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty())
+    }) {
+        let mut service = designated_service_summary(svc);
+        let endpoint = service["endpoint"].as_str().unwrap_or("");
+        let service_id = service["serviceId"].as_str().unwrap_or("");
+        if service_id.is_empty() {
+            return Ok(serde_json::json!({
+                "route": "error",
+                "errorType": "service_id_missing",
+                "providerName": provider_name,
+                "onlineStatus": online_status,
+                "endpoint": endpoint,
+            }));
+        }
+        let fee_amount = service["feeAmount"].as_str().unwrap_or("");
+        if !fee_amount
+            .parse::<f64>()
+            .is_ok_and(|value| value.is_finite())
+        {
+            return Ok(serde_json::json!({
+                "route": "error",
+                "errorType": "service_price_invalid",
+                "providerName": provider_name,
+                "onlineStatus": online_status,
+                "serviceId": service_id,
+                "endpoint": endpoint,
+            }));
+        }
         // service-list API may omit `feeTokenSymbol`; fall back to chainIndex + contractAddress lookup.
-        let fee_token = match svc.get("feeTokenSymbol").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        let fee_token_symbol = match service
+            .get("feeTokenSymbol")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+        {
             Some(s) => s.to_string(),
             None => util::resolve_symbol_from_svc(svc).await.unwrap_or_else(|e| {
                 if DEBUG_LOG {
@@ -715,29 +886,34 @@ pub async fn designated_route_inner(provider_id: &str, target_endpoint: Option<&
                 String::new()
             }),
         };
+        service["feeTokenSymbol"] = serde_json::json!(fee_token_symbol);
         let mut result = serde_json::json!({
             "route": "x402",
             "providerName": provider_name,
             "onlineStatus": online_status,
-            "endpoint": endpoint,
-            "feeAmount": fee_amount,
-            "feeTokenSymbol": fee_token,
         });
+        for key in [
+            "serviceId",
+            "serviceName",
+            "serviceDescription",
+            "serviceType",
+            "endpoint",
+            "feeAmount",
+            "feeToken",
+            "feeTokenSymbol",
+        ] {
+            if let Some(value) = service.get(key) {
+                result[key] = value.clone();
+            }
+        }
         // When multiple services exist and no --endpoint was specified, expose
         // all services so the LLM can pick the correct one by matching against
         // the task description context.
         if target_endpoint.filter(|s| !s.is_empty()).is_none() && all_with_endpoint.len() > 1 {
-            let svc_list: Vec<serde_json::Value> = all_with_endpoint.iter().map(|s| {
-                serde_json::json!({
-                    "serviceName": s.get("serviceName").and_then(|v| v.as_str()).unwrap_or(""),
-                    "serviceDescription": s.get("serviceDescription").and_then(|v| v.as_str()).unwrap_or(""),
-                    "endpoint": s.get("endpoint").and_then(|v| v.as_str()).unwrap_or(""),
-                    "feeAmount": s.get("feeAmount").and_then(|v| v.as_str())
-                        .or_else(|| s.get("fee").and_then(|v| v.as_str()))
-                        .unwrap_or(""),
-                    "feeTokenSymbol": s.get("feeTokenSymbol").and_then(|v| v.as_str()).unwrap_or(""),
-                })
-            }).collect();
+            let svc_list = all_with_endpoint
+                .iter()
+                .map(|service| designated_service_summary(service))
+                .collect::<Vec<_>>();
             result["services"] = serde_json::json!(svc_list);
         }
         return Ok(result);
@@ -763,8 +939,12 @@ pub async fn designated_route_inner(provider_id: &str, target_endpoint: Option<&
 /// CLI entry point — wraps `designated_route_inner` and prints the resulting
 /// JSON to stdout. Existing callers (mod.rs `AgentCommand::DesignatedRoute`)
 /// keep their `Result<()>` contract unchanged.
-pub async fn handle_designated_route(provider_id: &str, target_endpoint: Option<&str>) -> Result<()> {
-    let result = designated_route_inner(provider_id, target_endpoint).await?;
+pub async fn handle_designated_route(
+    provider_id: &str,
+    target_service_id: Option<&str>,
+    target_endpoint: Option<&str>,
+) -> Result<()> {
+    let result = designated_route_inner(provider_id, target_service_id, target_endpoint).await?;
     crate::output::success(result);
     Ok(())
 }
@@ -829,6 +1009,58 @@ async fn fetch_task_budget(job_id: &str, agent_id: &str) -> Result<(Option<Strin
 ///   "maxBudget": "0.1", "taskTokenSymbol": "USDT",
 ///   "feeAmount": "0.005", "feeTokenSymbol": "USDT" }
 /// ```
+#[derive(Debug, PartialEq, Eq)]
+enum X402AmountDecision {
+    Pass,
+    PriceMismatch,
+    OverBudget,
+}
+
+fn parse_x402_task_budget(
+    budget_res: Result<(Option<String>, Option<String>)>,
+) -> Result<(String, String, f64)> {
+    let (max_budget, task_token) = budget_res
+        .map_err(|e| anyhow::anyhow!("task budget query failed: {e}"))?;
+    let max_budget = max_budget
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("task max budget is missing"))?;
+    let max_budget_value = max_budget
+        .parse::<f64>()
+        .map_err(|_| anyhow::anyhow!("task max budget is invalid: {max_budget}"))?;
+    if !max_budget_value.is_finite() || max_budget_value < 0.0 {
+        bail!("task max budget is invalid: {max_budget}");
+    }
+
+    Ok((max_budget, task_token.unwrap_or_default(), max_budget_value))
+}
+
+fn classify_x402_amounts(
+    registered_fee: f64,
+    endpoint_amount: f64,
+    max_budget: Option<f64>,
+) -> X402AmountDecision {
+    if endpoint_amount > 0.0 && max_budget == Some(0.0) {
+        return X402AmountDecision::OverBudget;
+    }
+    if registered_fee == 0.0 && endpoint_amount > 0.0 {
+        return if max_budget.is_some_and(|max| endpoint_amount > max) {
+            X402AmountDecision::OverBudget
+        } else {
+            X402AmountDecision::PriceMismatch
+        };
+    }
+    if registered_fee > 0.0 && endpoint_amount > 0.0 {
+        let delta = ((endpoint_amount - registered_fee) / registered_fee).abs();
+        if delta > 0.01 {
+            return X402AmountDecision::PriceMismatch;
+        }
+    }
+    if max_budget.is_some_and(|max| endpoint_amount > max) {
+        return X402AmountDecision::OverBudget;
+    }
+    X402AmountDecision::Pass
+}
+
 pub async fn handle_x402_validate(
     endpoint: &str,
     agent_id: &str,
@@ -884,12 +1116,23 @@ pub async fn handle_x402_validate(
     let accepts_json = x402_data.get("acceptsJson").cloned().unwrap_or(serde_json::Value::Null);
     let x402_version = x402_data.get("x402Version").cloned().unwrap_or(serde_json::Value::Null);
 
-    // --- DX-Step 2: price mismatch check (delta > 1%) ---
     let fee_f: f64 = fee_amount.parse().unwrap_or(0.0);
     let amount_f: f64 = amount_human.parse().unwrap_or(0.0);
-    if fee_f > 0.0 && amount_f > 0.0 {
-        let delta = ((amount_f - fee_f) / fee_f).abs();
-        if delta > 0.01 {
+
+    let (max_budget_str, task_token_str, max_f) = match parse_x402_task_budget(budget_res) {
+        Ok(budget) => budget,
+        Err(e) => {
+            crate::output::success(serde_json::json!({
+                "result": "x402_invalid",
+                "reason": format!("task budget unavailable or invalid: {e}"),
+                "endpoint": endpoint,
+            }));
+            return Ok(());
+        }
+    };
+
+    match classify_x402_amounts(fee_f, amount_f, Some(max_f)) {
+        X402AmountDecision::PriceMismatch => {
             crate::output::success(serde_json::json!({
                 "result": "price_mismatch",
                 "amountHuman": amount_human,
@@ -902,26 +1145,20 @@ pub async fn handle_x402_validate(
             }));
             return Ok(());
         }
-    }
-
-    // --- DX-Step 3: budget check ---
-    let (max_budget, task_token) = budget_res.unwrap_or((None, None));
-    let max_budget_str = max_budget.as_deref().unwrap_or("");
-    let task_token_str = task_token.as_deref().unwrap_or("");
-
-    let max_f: f64 = max_budget_str.parse().unwrap_or(0.0);
-    if max_f > 0.0 && amount_f > max_f {
-        crate::output::success(serde_json::json!({
-            "result": "over_budget",
-            "amountHuman": amount_human,
-            "tokenSymbol": token_symbol,
-            "maxBudget": max_budget_str,
-            "taskTokenSymbol": task_token_str,
-            "acceptsJson": accepts_json,
-            "x402Version": x402_version,
-            "endpoint": endpoint,
-        }));
-        return Ok(());
+        X402AmountDecision::OverBudget => {
+            crate::output::success(serde_json::json!({
+                "result": "over_budget",
+                "amountHuman": amount_human,
+                "tokenSymbol": token_symbol,
+                "maxBudget": max_budget_str,
+                "taskTokenSymbol": task_token_str,
+                "acceptsJson": accepts_json,
+                "x402Version": x402_version,
+                "endpoint": endpoint,
+            }));
+            return Ok(());
+        }
+        X402AmountDecision::Pass => {}
     }
 
     // --- all checks passed ---
@@ -1116,7 +1353,7 @@ pub async fn handle_prepare_create(
 
     // ── 3. Routing (designated-route, only when --provider given) ─
     let routing = if let Some(pid) = provider.filter(|s| !s.is_empty()) {
-        match designated_route_inner(pid, None).await {
+        match designated_route_inner(pid, None, None).await {
             Ok(r) => Some(r),
             Err(e) => {
                 crate::output::success(serde_json::json!({
@@ -1561,5 +1798,182 @@ mod find_service_tests {
             { "list": [ { "serviceId": "svc-b" } ] }
         ]);
         assert!(find_service_in_data(&data, "svc-missing", &to_str).is_none());
+    }
+}
+
+#[cfg(test)]
+mod designated_service_tests {
+    use super::{
+        designated_service_summary, missing_x402_endpoint, service_matching_id,
+        services_matching_endpoint,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn endpoint_match_keeps_all_services_for_ambiguity_handling() {
+        let first = json!({ "serviceId": "svc-1", "endpoint": "https://same" });
+        let second = json!({ "serviceId": "svc-2", "endpoint": "https://same" });
+        let other = json!({ "serviceId": "svc-3", "endpoint": "https://other" });
+        let services = vec![&first, &second, &other];
+
+        let matched = services_matching_endpoint(&services, "https://same");
+
+        assert_eq!(matched.len(), 2);
+        assert_eq!(matched[0]["serviceId"], "svc-1");
+        assert_eq!(matched[1]["serviceId"], "svc-2");
+    }
+
+    #[test]
+    fn service_id_selects_exact_record_when_endpoint_is_shared() {
+        let first = json!({ "serviceId": "svc-1", "endpoint": "https://same" });
+        let second = json!({ "serviceId": "svc-2", "endpoint": "https://same" });
+        let services = vec![&first, &second];
+
+        let selected = service_matching_id(&services, "svc-2").unwrap();
+
+        assert_eq!(selected["serviceId"], "svc-2");
+        assert_eq!(selected["endpoint"], "https://same");
+    }
+
+    #[test]
+    fn service_id_selection_can_validate_endpoint() {
+        let service = json!({ "serviceId": "svc-1", "endpoint": "https://registered" });
+        let services = vec![&service];
+
+        let selected = service_matching_id(&services, "svc-1").unwrap();
+
+        assert_ne!(selected["endpoint"], "https://requested");
+    }
+
+    #[test]
+    fn a2mcp_service_requires_registered_endpoint() {
+        assert!(missing_x402_endpoint(&json!({
+            "serviceType": "A2MCP",
+            "endpoint": ""
+        })));
+        assert!(!missing_x402_endpoint(&json!({
+            "serviceType": "A2A",
+            "endpoint": ""
+        })));
+    }
+
+    #[test]
+    fn designated_service_summary_contains_create_fields_and_numeric_fee() {
+        let service = json!({
+            "serviceId": "svc-1",
+            "serviceType": "A2MCP",
+            "serviceName": "Offline x402",
+            "endpoint": "https://example.invalid/x402",
+            "feeAmount": 1.25,
+            "feeToken": "0xToken",
+            "feeTokenSymbol": "USDT"
+        });
+
+        let summary = designated_service_summary(&service);
+
+        assert_eq!(summary["serviceId"], "svc-1");
+        assert_eq!(summary["serviceType"], "A2MCP");
+        assert_eq!(summary["endpoint"], "https://example.invalid/x402");
+        assert_eq!(summary["feeAmount"], "1.25");
+        assert_eq!(summary["feeToken"], "0xToken");
+        assert_eq!(summary["feeTokenSymbol"], "USDT");
+    }
+
+    #[test]
+    fn designated_service_summary_accepts_string_fee_and_contract_address() {
+        let service = json!({
+            "id": 2301,
+            "serviceType": "A2MCP",
+            "endpoint": "https://example.invalid/x402",
+            "fee": "2.50",
+            "contractAddress": "0xContract"
+        });
+
+        let summary = designated_service_summary(&service);
+
+        assert_eq!(summary["serviceId"], "2301");
+        assert_eq!(summary["feeAmount"], "2.50");
+        assert_eq!(summary["feeToken"], "0xContract");
+    }
+}
+
+#[cfg(test)]
+mod x402_amount_tests {
+    use super::{classify_x402_amounts, parse_x402_task_budget, X402AmountDecision};
+
+    #[test]
+    fn preserves_positive_price_and_budget_decisions() {
+        assert_eq!(
+            classify_x402_amounts(1.0, 1.02, Some(10.0)),
+            X402AmountDecision::PriceMismatch
+        );
+        assert_eq!(
+            classify_x402_amounts(1.0, 1.0, Some(0.5)),
+            X402AmountDecision::OverBudget
+        );
+        assert_eq!(
+            classify_x402_amounts(1.0, 1.0, Some(1.0)),
+            X402AmountDecision::Pass
+        );
+    }
+
+    #[test]
+    fn zero_fee_and_zero_endpoint_amount_pass() {
+        assert_eq!(
+            classify_x402_amounts(0.0, 0.0, Some(0.0)),
+            X402AmountDecision::Pass
+        );
+    }
+
+    #[test]
+    fn positive_endpoint_amount_exceeds_zero_budget() {
+        assert_eq!(
+            classify_x402_amounts(0.0, 0.01, Some(0.0)),
+            X402AmountDecision::OverBudget
+        );
+        assert_eq!(
+            classify_x402_amounts(1.0, 1.0, Some(0.0)),
+            X402AmountDecision::OverBudget
+        );
+    }
+
+    #[test]
+    fn positive_endpoint_amount_mismatches_zero_fee_with_raised_budget() {
+        assert_eq!(
+            classify_x402_amounts(0.0, 0.01, Some(0.1)),
+            X402AmountDecision::PriceMismatch
+        );
+    }
+
+    #[test]
+    fn task_budget_accepts_explicit_zero() {
+        let budget = parse_x402_task_budget(Ok((
+            Some("0".to_string()),
+            Some("USDT".to_string()),
+        )))
+        .unwrap();
+
+        assert_eq!(budget, ("0".to_string(), "USDT".to_string(), 0.0));
+    }
+
+    #[test]
+    fn task_budget_rejects_query_failure_missing_or_invalid_amount() {
+        assert!(parse_x402_task_budget(Err(anyhow::anyhow!("network error"))).is_err());
+        assert!(parse_x402_task_budget(Ok((None, Some("USDT".to_string())))).is_err());
+        assert!(parse_x402_task_budget(Ok((
+            Some("invalid".to_string()),
+            Some("USDT".to_string()),
+        )))
+        .is_err());
+        assert!(parse_x402_task_budget(Ok((
+            Some("NaN".to_string()),
+            Some("USDT".to_string()),
+        )))
+        .is_err());
+        assert!(parse_x402_task_budget(Ok((
+            Some("-0.01".to_string()),
+            Some("USDT".to_string()),
+        )))
+        .is_err());
     }
 }
