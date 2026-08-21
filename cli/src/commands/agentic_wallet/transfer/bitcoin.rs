@@ -98,8 +98,6 @@ pub async fn cmd_send(
                 &amount,
                 None,
                 None,
-                None,
-                None,
                 fee_rate.as_ref(),
             )
             .await

@@ -53,14 +53,14 @@ pub enum WalletCommand {
         #[arg(long = "session-id")]
         session_id: Option<String>,
     },
-    /// Add a new wallet account
+    /// Add a wallet account. Use after login when the user needs a separate account.
     Add,
-    /// Switch active account
+    /// Switch the active wallet account. Subsequent balance and write commands use this account.
     Switch {
         /// Account ID to switch to
         account_id: String,
     },
-    /// Show current wallet status
+    /// Show login and active-account status. Use before account-sensitive operations when status is needed.
     Status {
         /// Include the best-effort post-login subscription/device snapshot.
         /// Use only for an explicit user-facing login/status request; ordinary
@@ -68,9 +68,9 @@ pub enum WalletCommand {
         #[arg(long = "include-subscriptions")]
         include_subscriptions: bool,
     },
-    /// Show wallet addresses grouped by chain category (XLayer, EVM, Solana)
+    /// Show wallet addresses. Use to obtain an owned address for a selected chain.
     Addresses {
-        /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "xlayer" or "196")
+        /// Chain name or ID. Use for one chain's address; omit for all available addresses.
         #[arg(long)]
         chain: Option<String>,
     },
@@ -87,15 +87,15 @@ pub enum WalletCommand {
     /// Check Polymarket geoblock status. Prints `{"blocked":true|false}` on success;
     /// exits non-zero on any failure (skill should treat that as fail-closed).
     Geoblock,
-    /// Query wallet balances
+    /// Query wallet balances. Use --chain for one chain, --token-address for one token, or --all for every account.
     Balance {
-        /// Query all accounts' assets (uses accountId list)
+        /// Query all accounts' assets. Use only when the user asks for every account.
         #[arg(long)]
         all: bool,
-        /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "xlayer" or "196")
+        /// Chain name or ID. Required with --token-address; use bitcoin for BTC or BRC-20.
         #[arg(long)]
         chain: Option<String>,
-        /// Filter by token contract address. Requires --chain.
+        /// Query one token. Use a contract address for tokens, a Coin Type for SUI, or btc-brc20-<ticker> for BRC-20. Requires --chain.
         #[arg(long)]
         token_address: Option<String>,
         /// Force refresh: bypass all caches and re-fetch wallet accounts + balances from the API.
@@ -107,7 +107,7 @@ pub enum WalletCommand {
     // (Send / call-contract / broadcast / …) gate user confirmation via output::CliConfirming
     // inside their handler modules (transfer/mod.rs, broadcast.rs, common.rs) plus each
     // command's --force flag — not in this command-dispatch enum definition.
-    /// Send a transaction (native or token transfer)
+    /// Send a native or token transfer. Use for ordinary transfers, BTC, BRC-20 selected inscription transfers, and SUI Coin<T> transfers; use contract-call for contract interaction.
     Send {
         /// Amount in minimal units — whole number, no decimals (e.g. "100000000000000000" for 0.1 ETH). Mutually exclusive with --readable-amount.
         #[arg(long, conflicts_with = "readable_amount")]
@@ -115,16 +115,16 @@ pub enum WalletCommand {
         /// Human-readable amount (e.g. "1.5" for 1.5 USDC). CLI fetches token decimals and converts automatically. Mutually exclusive with --amt.
         #[arg(long, conflicts_with = "amt")]
         readable_amount: Option<String>,
-        /// Recipient address
+        /// Recipient address on --chain. Required for every transfer.
         #[arg(long)]
         recipient: String,
-        /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "bsc" or "56")
+        /// Destination chain name or ID. Use bitcoin for BTC/BRC-20 and sui for SUI transfers.
         #[arg(long)]
         chain: String,
         /// Sender address (optional — defaults to selectedAccountId)
         #[arg(long)]
         from: Option<String>,
-        /// Contract token address (optional — for ERC-20 / SPL token transfers)
+        /// Token identifier for non-native transfers: ERC-20/SPL address, SUI Coin Type, or btc-brc20-<ticker>.
         #[arg(long)]
         contract_token: Option<String>,
         /// Transferable BRC-20 inscription UTXO (`txHash:voutIndex`); repeat to combine inputs
@@ -133,7 +133,7 @@ pub enum WalletCommand {
         /// Bitcoin fee rate in sat/vB. Applies only to this BTC or BRC-20 transaction.
         #[arg(long)]
         fee_rate: Option<String>,
-        /// Force execution: skip confirmation prompts from the backend
+        /// Run only after this exact command returned confirming and the user explicitly confirmed.
         #[arg(long, default_value_t = false)]
         force: bool,
         // ── Gas Station params (second-phase call) ──
@@ -147,9 +147,9 @@ pub enum WalletCommand {
         #[arg(long, default_value_t = false)]
         enable_gas_station: bool,
     },
-    /// Query transaction history or detail
+    /// Query transaction history or one transaction/order detail. Use an ID flag for detail; omit all ID flags for a paged list.
     History {
-        /// Account ID (defaults to current selectedAccountId)
+        /// Account ID. Omit to use the active account.
         #[arg(long)]
         account_id: Option<String>,
         /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501"). Resolved to chainIndex internally.
@@ -158,16 +158,16 @@ pub enum WalletCommand {
         /// Address (optional; passed to detail query if provided)
         #[arg(long)]
         address: Option<String>,
-        /// Start time filter (ms timestamp)
+        /// List-mode start time in Unix milliseconds.
         #[arg(long)]
         begin: Option<String>,
-        /// End time filter (ms timestamp)
+        /// List-mode end time in Unix milliseconds.
         #[arg(long)]
         end: Option<String>,
-        /// Page cursor
+        /// List-mode page cursor.
         #[arg(long)]
         page_num: Option<String>,
-        /// Page size limit
+        /// List-mode page size.
         #[arg(long)]
         limit: Option<String>,
         /// Order ID — when present, queries /order/detail by orderId
@@ -180,12 +180,12 @@ pub enum WalletCommand {
         #[arg(long)]
         uop_hash: Option<String>,
     },
-    /// Create or query a Bitcoin inscription
+    /// Create or query a BRC-20 transfer inscription. Use create when no exact transferable inscription combination exists.
     Inscription {
         #[command(subcommand)]
         command: InscriptionCommand,
     },
-    /// Query and manage Bitcoin UTXOs
+    /// Query and manage Bitcoin UTXOs with asset protection.
     Utxo {
         #[command(subcommand)]
         command: UtxoCommand,
@@ -214,15 +214,15 @@ pub enum WalletCommand {
         #[arg(long)]
         plugin_parameter: String,
     },
-    /// Call a smart contract (EVM calldata, Solana unsigned tx, or SUI PTB).
+    /// Call a smart contract. Use EVM calldata, a Solana unsigned transaction, or a SUI PTB; use send for token transfers.
     /// Supports Gas Station: if the account has Gas Station enabled, pass
     /// `--gas-token-address` + `--relayer-id` (and `--enable-gas-station` for
     /// first-time activation / re-enable) to pay gas with stablecoins.
     ContractCall {
-        /// Contract address to interact with (required for EVM and Solana; optional SUI metadata)
+        /// Contract or program address. Required for EVM and Solana; optional service metadata for SUI.
         #[arg(long)]
         to: Option<String>,
-        /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "bsc" or "56")
+        /// Chain name or ID for the contract call.
         #[arg(long)]
         chain: String,
         /// Native token amount in minimal units — whole number, no decimals (default "0")
@@ -255,7 +255,7 @@ pub enum WalletCommand {
         /// Jito unsigned transaction data for Solana MEV protection (required when --mev-protection is used on Solana)
         #[arg(long)]
         jito_unsigned_tx: Option<String>,
-        /// Force execution: skip confirmation prompts from the backend
+        /// Run only after this exact command returned confirming and the user explicitly confirmed.
         #[arg(long, default_value_t = false)]
         force: bool,
         // ── Gas Station params (Phase 2: execution with chosen token) ──
@@ -284,28 +284,31 @@ pub enum WalletCommand {
 
 #[derive(Subcommand)]
 pub enum InscriptionCommand {
-    /// Create an asynchronous BRC-20 transfer inscription
+    /// Create an asynchronous BRC-20 transfer inscription. Use when the requested amount needs a new transferable inscription.
     Create {
+        /// Use bitcoin.
         #[arg(long)]
         chain: String,
+        /// BRC-20 token identifier: btc-brc20-<ticker>.
         #[arg(long)]
         token_address: String,
+        /// Exact human-readable BRC-20 amount to inscribe.
         #[arg(long)]
         readable_amount: String,
         #[arg(long)]
         from: Option<String>,
         #[arg(long)]
         operation_token: Option<String>,
-        #[arg(long)]
-        preview_version: Option<String>,
         /// Bitcoin fee rate in sat/vB. Applies only to this transfer inscription.
         #[arg(long)]
         fee_rate: Option<String>,
+        /// Run only after this exact creation command returned confirming and the user explicitly confirmed.
         #[arg(long, default_value_t = false)]
         force: bool,
     },
-    /// Query inscription status by transaction hash or order ID
+    /// Query BRC-20 transfer-inscription status by transaction hash or order ID.
     Status {
+        /// Use bitcoin.
         #[arg(long)]
         chain: String,
         #[arg(
@@ -321,49 +324,52 @@ pub enum InscriptionCommand {
 
 #[derive(Subcommand)]
 pub enum UtxoCommand {
-    /// Query Bitcoin UTXOs; defaults to UTXOs whose asset occupancy was explicitly removed by the user
-    List {
+    /// Query user-ignored Bitcoin UTXOs after asset protection is removed.
+    UserIgnored {
+        /// Use bitcoin.
         #[arg(long)]
         chain: String,
-        /// Query unavailable UTXO details instead of UTXOs whose asset occupancy was removed by the user
-        #[arg(long, default_value_t = false)]
-        unavailable: bool,
     },
-    /// Query unavailable Bitcoin UTXOs (legacy shortcut for list --unavailable)
+    /// Query unavailable or locked Bitcoin UTXOs grouped by the current service reason.
     Unavailable {
+        /// Use bitcoin.
         #[arg(long)]
         chain: String,
     },
-    /// Query currently available Bitcoin UTXOs and their total spendable sats
+    /// Query currently available Bitcoin UTXOs and total spendable BTC in sats.
     Available {
         #[arg(long)]
         chain: String,
     },
-    /// Query transferable inscription UTXOs for one BRC-20 token
+    /// Query transferable inscription UTXOs for one BRC-20 token. Add --readable-amount to receive exact transfer combinations.
     Brc20Transferable {
         #[arg(long)]
         chain: String,
-        /// Synthetic BRC-20 token address (`btc-brc20-<ticker>`)
+        /// BRC-20 token identifier: btc-brc20-<ticker>.
         #[arg(long)]
         token_address: String,
         /// Human-readable target amount used to find up to three exact UTXO combinations
         #[arg(long)]
         readable_amount: Option<String>,
     },
-    /// Remove asset protection from one or all currently protected UTXOs
+    /// Remove asset protection from one or all currently protected UTXOs. Use only after the user selects current returned outpoints.
     Unlock {
+        /// Use bitcoin.
         #[arg(long)]
         chain: String,
+        /// Repeat for selected outpoints in txHash:voutIndex form.
         #[arg(long, conflicts_with = "all", required_unless_present = "all")]
         outpoint: Vec<String>,
+        /// Remove protection from every currently protected UTXO.
         #[arg(long, conflicts_with = "outpoint")]
         all: bool,
         #[arg(long)]
         operation_token: Option<String>,
+        /// Run only after this exact command returned confirming and the user explicitly confirmed.
         #[arg(long, default_value_t = false)]
         force: bool,
     },
-    /// Restore asset protection for one or all previously unlocked UTXOs
+    /// Restore asset protection for one or all user-ignored UTXOs. Use only after the user selects current returned outpoints.
     Lock {
         #[arg(long)]
         chain: String,
@@ -376,10 +382,12 @@ pub enum UtxoCommand {
         #[arg(long, default_value_t = false)]
         force: bool,
     },
-    /// Close mempool-removed transactions and reclaim their still-unspent inputs
+    /// Close mempool-removed transactions and reclaim their still-unspent inputs. Use after history reports MEMPOOL_REMOVED.
     Reclaim {
+        /// Use bitcoin.
         #[arg(long)]
         chain: String,
+        /// Original transaction hash; repeat to reclaim inputs from multiple transactions.
         #[arg(long, required = true)]
         tx_hash: Vec<String>,
         #[arg(long, default_value_t = false)]
@@ -574,25 +582,6 @@ async fn ensure_bitcoin_command_chain(chain: &str) -> Result<()> {
     Ok(())
 }
 
-/// Returns whether a literal chain input should use the BTC/SUI-specific resolver.
-pub(super) fn is_btc_or_sui_chain_input(chain: &str) -> bool {
-    matches!(
-        chain.trim().to_ascii_lowercase().as_str(),
-        "bitcoin" | "btc" | "0" | "5" | "sui" | "784"
-    )
-}
-
-/// Resolves BTC/SUI inputs to a profile and leaves all other chains on the legacy path.
-async fn resolve_btc_or_sui_profile(
-    chain: &str,
-) -> Result<Option<chain_profile::ResolvedChainProfile>> {
-    if is_btc_or_sui_chain_input(chain) {
-        Ok(Some(chain_profile::resolve(chain).await?))
-    } else {
-        Ok(None)
-    }
-}
-
 pub async fn execute(command: WalletCommand) -> Result<()> {
     match command {
         WalletCommand::Login {
@@ -628,15 +617,24 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             let normalized_chain_token = if let (Some(raw_chain), Some(token_address)) =
                 (chain.as_deref(), token_address.as_deref())
             {
-                match resolve_btc_or_sui_profile(raw_chain).await? {
-                    Some(profile) if profile.kind == chain_profile::ChainKind::Bitcoin => Some(
-                        chain_adapters::bitcoin::validation::normalize_brc20_token_address(
+                match chain_profile::resolve(raw_chain).await? {
+                    profile
+                        if profile.capabilities.transfer
+                            == chain_profile::TransferDriver::Bitcoin =>
+                    {
+                        Some(
+                            chain_adapters::bitcoin::validation::normalize_brc20_token_address(
+                                token_address,
+                            )?,
+                        )
+                    }
+                    profile
+                        if profile.capabilities.transfer == chain_profile::TransferDriver::Sui =>
+                    {
+                        Some(chain_adapters::sui::identifiers::normalize_coin_type(
                             token_address,
-                        )?,
-                    ),
-                    Some(profile) if profile.kind == chain_profile::ChainKind::Sui => Some(
-                        chain_adapters::sui::identifiers::normalize_coin_type(token_address)?,
-                    ),
+                        )?)
+                    }
                     _ => None,
                 }
             } else {
@@ -666,7 +664,8 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             relayer_id,
             enable_gas_station,
         } => {
-            if let Some(profile) = resolve_btc_or_sui_profile(&chain).await? {
+            {
+                let profile = chain_profile::resolve(&chain).await?;
                 if profile.capabilities.transfer == chain_profile::TransferDriver::Bitcoin {
                     if amt.is_some() {
                         bail!("Bitcoin transfers require --readable-amount");
@@ -783,7 +782,6 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 readable_amount,
                 from,
                 operation_token,
-                preview_version,
                 fee_rate,
                 force,
             } => {
@@ -799,7 +797,6 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                     &readable_amount,
                     from.as_deref(),
                     operation_token.as_deref(),
-                    preview_version.as_deref(),
                     fee_rate.as_deref(),
                     force,
                 )
@@ -822,9 +819,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             }
         },
         WalletCommand::Utxo { command } => match command {
-            UtxoCommand::List { chain, unavailable } => {
+            UtxoCommand::UserIgnored { chain } => {
                 ensure_bitcoin_command_chain(&chain).await?;
-                utxo::cmd_list(unavailable).await
+                utxo::cmd_user_ignored().await
             }
             UtxoCommand::Unavailable { chain } => {
                 ensure_bitcoin_command_chain(&chain).await?;
@@ -881,7 +878,8 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             from,
             force,
         } => {
-            if let Some(profile) = resolve_btc_or_sui_profile(&chain).await? {
+            {
+                let profile = chain_profile::resolve(&chain).await?;
                 match profile.capabilities.message_sign {
                     chain_profile::MessageSignDriver::Unsupported => {
                         bail!(
@@ -914,14 +912,15 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             biz_type,
             strategy,
         } => {
-            if let Some(profile) = resolve_btc_or_sui_profile(&chain).await? {
+            {
+                let profile = chain_profile::resolve(&chain).await?;
                 if !profile.capabilities.contract_call {
                     bail!(
                         "wallet contract-call is not supported for chain '{}'",
                         profile.chain_name
                     );
                 }
-                if profile.kind == chain_profile::ChainKind::Sui {
+                if profile.capabilities.transfer == chain_profile::TransferDriver::Sui {
                     if input_data.is_some() || unsigned_tx.is_some() {
                         bail!("SUI contract calls require --sui-tx-bytes, not --input-data or --unsigned-tx");
                     }

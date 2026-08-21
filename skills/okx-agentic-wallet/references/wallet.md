@@ -41,18 +41,20 @@ Field rules:
 
 **`--chain`** accepts numeric IDs (`1`, `501`, `196`) and names (`ethereum`, `solana`, `xlayer`). If <100% confident, run `wallet chains`. On `"unsupported chain: ..."`, ask the user to confirm.
 
-**Amounts** — `wallet send`: pass `--readable-amount <human_amount>` (CLI converts; use `--amt` only for raw minimal units). `wallet contract-call`: `--amt` is the native value for payable functions in minimal units (default `"0"`; EVM 18, SOL 9 decimals). Never compute minimal units manually. For a SUI DApp contract call, use the SUI PTB route under Send vs Contract Call.
+**Amounts** — `wallet send`: pass `--readable-amount <human_amount>` (CLI converts; use `--amt` only for raw minimal units). `wallet contract-call`: `--amt` is the native value for payable functions in minimal units (default `"0"`; EVM 18, SOL 9 decimals). Never compute minimal units manually.
+
+**Native BTC fee rate** — After the initial transfer preview, ask the user to confirm the current fee rate or provide a new sat/vB value. For a new value, rerun the initial command with `--fee-rate <value>`, show the fresh preview, and require confirmation. The custom fee rate applies only to that transaction.
+
+**Bitcoin UTXOs and BRC-20** — Load [utxo.md](utxo.md) for spendable, locked, protected, or reclaimable BTC UTXOs. Load [brc20-cli-reference.md](brc20-cli-reference.md) for BRC-20 balances, transferable inscriptions, transfer inscriptions, and direct transfers. For a BRC-20 ticker balance, run `onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker>` and use that reference's reply template.
 
 ## Send vs Contract Call (funds-loss risk — determine intent first)
 
 | Intent | Command | Example |
 |---|---|---|
-| Send native token (ETH, SOL, BNB…) | `wallet send --chain <chain>` | "Send 0.1 ETH to 0xAbc" |
-| Send ERC-20 / SPL token (USDC, USDT…) | `wallet send --chain <chain> --contract-token` | "Transfer 100 USDC to 0xAbc" |
-| Interact with a contract (approve, deposit, withdraw, custom call) | `wallet contract-call --chain <chain>` | "Approve USDC for spender" |
-| Interact with a SUI DApp using its prebuilt PTB | `wallet contract-call --chain sui --sui-tx-bytes` | "Execute this DApp-built SUI PTB" |
+| Token transfer | `wallet send --chain <chain>` | User-provided transfer parameters |
+| Contract call | `wallet contract-call --chain <chain>` | User-provided contract-call parameters |
 
-If ambiguous, ask the user to clarify — never guess. Use `swap execute` for an OKX-aggregated swap. For a SUI contract call, pass through only an unsigned PTB built by the maintained DApp or SDK; do not reconstruct or reinterpret it.
+For a SUI contract call, provide the unsigned PTB from the maintained integration or SDK with `--sui-tx-bytes`.
 
 ## Approvals (via contract-call)
 
@@ -60,12 +62,12 @@ Never execute unlimited approvals. Do not set the approve amount to `type(uint25
 
 ## MEV Protection
 
-`--mev-protection` is a `contract-call` flag only (`wallet send` does not support it), and is not supported for SUI PTBs. Load [mev-protection.md](wallet-mev-protection.md) when the user requests MEV protection, or before a high-value / DEX-swap EVM/Solana `contract-call` — it holds the supported-chain table and the Solana `--jito-unsigned-tx` requirement.
+`--mev-protection` is a `contract-call` flag only (`wallet send` does not support it). Load [mev-protection.md](wallet-mev-protection.md) when the user requests MEV protection, or before a high-value / DEX-swap `contract-call` — it holds the supported-chain table and the Solana `--jito-unsigned-tx` requirement.
 
 ## Policy & Wallet Export (Web portal)
 
 Policy config and wallet export are completed by the user on the Web portal — the Agent only detects the trigger, explains the risk, and gives the jump link. On any trigger below, load [portal-actions.md](wallet-portal-actions.md) and follow its Trigger flows exactly:
-- New user login (`isNew: true`) — also in Authentication step 5
+- New user login (`isNew: true`) — also handled in Authentication step 2
 - After a successful `wallet add`
 - User asks about Policy (spending / daily limit, whitelist)
 - User asks about wallet export (export mnemonic, migrate, import to hardware wallet)
@@ -85,7 +87,7 @@ Before dispatching a third-party Solana DeFi plugin (kamino-plugin, raydium-plug
 
 ## Additional Resources
 
-- Full parameter tables, return-field schemas, and worked examples → [wallet-cli-reference.md](wallet-cli-reference.md), or run `onchainos wallet <subcommand> --help`. Load only when you need exact syntax the flow above doesn't spell out.
+- Full parameter tables, return-field schemas, and worked examples → [wallet-cli-reference.md](wallet-cli-reference.md), or run `onchainos wallet <subcommand> --help`. Load only when you need exact syntax not covered above.
 
 ## Edge Cases
 

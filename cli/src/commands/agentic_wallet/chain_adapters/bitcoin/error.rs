@@ -90,7 +90,7 @@ mod tests {
         assert!(insufficient.next_steps.unwrap()["queryUnavailableUtxos"]
             .as_str()
             .unwrap()
-            .contains("utxo list --chain bitcoin --unavailable"));
+            .contains("utxo unavailable --chain bitcoin"));
 
         let permission = map("82001");
         assert_eq!(permission.message, "service message");
@@ -101,7 +101,7 @@ mod tests {
         assert!(missing.next_steps.unwrap()["queryUnavailableUtxos"]
             .as_str()
             .unwrap()
-            .contains("utxo list --chain bitcoin --unavailable"));
+            .contains("utxo unavailable --chain bitcoin"));
 
         assert_eq!(map("82003").data.unwrap()["state"], "INVALID_UTXO_REQUEST");
         assert_eq!(map("82005").data.unwrap()["state"], "UTXO_ALREADY_SPENT");

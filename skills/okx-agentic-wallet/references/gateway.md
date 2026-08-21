@@ -8,12 +8,12 @@ Raw-transaction gateway: gas estimation, simulation, broadcasting a **pre-signed
 
 | Phrase | Maps to |
 |---|---|
-| 预估 gas / 估 gas / gas 费多少 / current gas | `gateway gas` or `gateway gas-limit` |
-| 广播交易 / 发送交易 / 发链上 / broadcast / send tx on-chain | `gateway broadcast` |
-| 模拟交易 / 干跑 / simulate / dry-run | `gateway simulate` |
-| 交易哈希是否上链 / 是否确认 / 交易状态 / check tx status | `gateway orders` |
-| 已签名交易 / signed transaction | `--signed-tx` on `gateway broadcast` |
-| 支持哪些链 | `gateway chains` |
+| Estimate gas / current gas | `gateway gas` or `gateway gas-limit` |
+| Broadcast / send a transaction on-chain | `gateway broadcast` |
+| Simulate / dry-run a transaction | `gateway simulate` |
+| Check whether a transaction is on-chain or confirmed | `gateway orders` |
+| Signed transaction | `--signed-tx` on `gateway broadcast` |
+| List supported chains | `gateway chains` |
 
 ## Operation Flow
 

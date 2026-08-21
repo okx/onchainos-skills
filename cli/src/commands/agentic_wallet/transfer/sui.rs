@@ -335,8 +335,8 @@ fn map_local_input_error(error: anyhow::Error) -> anyhow::Error {
 mod tests {
     use super::*;
     use crate::commands::agentic_wallet::chain_profile::{
-        AssetModel, ChainCapabilities, ChainKind, InscriptionDriver, MessageSignDriver,
-        ResolvedChainProfile, TransferDriver,
+        ChainCapabilities, InscriptionDriver, MessageSignDriver, ResolvedChainProfile,
+        TransferDriver,
     };
 
     #[test]
@@ -405,7 +405,6 @@ mod tests {
             access_token: String::new(),
             account_id: "account".to_string(),
             profile: ResolvedChainProfile {
-                kind: ChainKind::Sui,
                 chain_index: "784".to_string(),
                 real_chain_index: "784".to_string(),
                 chain_name: "Sui".to_string(),
@@ -416,7 +415,6 @@ mod tests {
                     inscription: InscriptionDriver::Unsupported,
                     contract_call: true,
                     message_sign: MessageSignDriver::Unsupported,
-                    asset_model: AssetModel::Account,
                 },
             },
             address: crate::wallet_store::AddressInfo {

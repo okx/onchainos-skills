@@ -63,7 +63,7 @@ impl ReadOnlyNextStep {
             ),
             Self::QueryUnavailableUtxos => (
                 "queryUnavailableUtxos",
-                "onchainos wallet utxo list --chain bitcoin --unavailable".to_string(),
+                "onchainos wallet utxo unavailable --chain bitcoin".to_string(),
             ),
             Self::ShowBitcoinAddress => (
                 "showBitcoinAddress",
@@ -126,7 +126,7 @@ fn build_inscription_status_command(
 fn ensure_read_only_command(command: &str) -> Result<()> {
     const PREFIXES: &[&str] = &[
         "onchainos wallet inscription status --chain bitcoin ",
-        "onchainos wallet utxo list --chain bitcoin",
+        "onchainos wallet utxo unavailable --chain bitcoin",
         "onchainos wallet utxo brc20-transferable --chain bitcoin ",
         "onchainos wallet addresses --chain bitcoin",
         "onchainos wallet balance --chain bitcoin",
@@ -196,7 +196,7 @@ mod tests {
         assert!(steps["queryUnavailableUtxos"]
             .as_str()
             .unwrap()
-            .contains("utxo list --chain bitcoin --unavailable"));
+            .contains("utxo unavailable --chain bitcoin"));
         assert!(steps["refreshBtcBalance"]
             .as_str()
             .unwrap()

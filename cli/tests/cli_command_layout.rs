@@ -86,7 +86,7 @@ fn wallet_bitcoin_command_groups_show_their_actions() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("list")
+            predicate::str::contains("user-ignored")
                 .and(predicate::str::contains("unavailable"))
                 .and(predicate::str::contains("available"))
                 .and(predicate::str::contains("brc20-transferable"))
@@ -116,20 +116,40 @@ fn wallet_utxo_available_and_brc20_transferable_expose_documented_inputs() {
 }
 
 #[test]
-fn wallet_utxo_list_exposes_unavailable_override() {
+fn wallet_utxo_query_commands_have_distinct_help() {
     onchainos()
-        .args(["wallet", "utxo", "list", "--help"])
+        .args(["wallet", "utxo", "user-ignored", "--help"])
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("--unavailable")
-                .and(predicate::str::contains(
-                    "asset occupancy was explicitly removed by the user",
-                ))
-                .and(predicate::str::contains("available for selection").not())
-                .and(predicate::str::contains("--detail").not())
+            predicate::str::contains("asset protection")
+                .and(predicate::str::contains("--chain"))
+                .and(predicate::str::contains("--unavailable").not()),
+        );
+
+    onchainos()
+        .args(["wallet", "utxo", "unavailable", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("grouped by the current service reason")
                 .and(predicate::str::contains("--chain")),
         );
+
+    onchainos()
+        .args(["wallet", "utxo", "available", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("total spendable BTC in sats")
+                .and(predicate::str::contains("--chain")),
+        );
+
+    onchainos()
+        .args(["wallet", "utxo", "list", "--help"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand"));
 }
 
 #[test]
@@ -157,6 +177,18 @@ fn wallet_send_does_not_expose_chain_specific_continuation_flags() {
         .stdout(
             predicate::str::contains("--operation-token")
                 .not()
+                .and(predicate::str::contains("--preview-version").not()),
+        );
+}
+
+#[test]
+fn wallet_inscription_create_uses_one_continuation_token() {
+    onchainos()
+        .args(["wallet", "inscription", "create", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("--operation-token")
                 .and(predicate::str::contains("--preview-version").not()),
         );
 }

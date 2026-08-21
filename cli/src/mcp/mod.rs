@@ -1126,7 +1126,7 @@ mod output_contract_tests {
         )
         .with_data(serde_json::json!({"availableBalance": "1"}))
         .with_next_steps(serde_json::json!({
-            "queryUnavailableUtxos": "onchainos wallet utxo list --chain bitcoin --unavailable"
+            "queryUnavailableUtxos": "onchainos wallet utxo unavailable --chain bitcoin"
         }))
         .into();
         let payload: serde_json::Value = serde_json::from_str(&err(error).unwrap_err()).unwrap();
@@ -1135,7 +1135,7 @@ mod output_contract_tests {
         assert!(payload["nextSteps"]["queryUnavailableUtxos"]
             .as_str()
             .unwrap()
-            .contains("utxo list --chain bitcoin --unavailable"));
+            .contains("utxo unavailable --chain bitcoin"));
     }
 }
 

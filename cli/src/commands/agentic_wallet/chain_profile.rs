@@ -2,17 +2,6 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChainKind {
-    Evm,
-    Solana,
-    Bitcoin,
-    Sui,
-    Tron,
-    Ton,
-    Unknown,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransferDriver {
     LegacyAccount,
     Bitcoin,
@@ -33,24 +22,15 @@ pub enum MessageSignDriver {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AssetModel {
-    Account,
-    Utxo,
-    Unknown,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChainCapabilities {
     pub transfer: TransferDriver,
     pub inscription: InscriptionDriver,
     pub contract_call: bool,
     pub message_sign: MessageSignDriver,
-    pub asset_model: AssetModel,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedChainProfile {
-    pub kind: ChainKind,
     pub chain_index: String,
     pub real_chain_index: String,
     pub chain_name: String,
@@ -60,9 +40,9 @@ pub struct ResolvedChainProfile {
 }
 
 impl ResolvedChainProfile {
-    /// Returns whether this resolved profile uses the Bitcoin transaction flow.
+    /// Returns whether this chain uses the Bitcoin transaction flow.
     pub fn is_bitcoin(&self) -> bool {
-        self.kind == ChainKind::Bitcoin
+        self.capabilities.transfer == TransferDriver::Bitcoin
     }
 }
 
@@ -126,39 +106,12 @@ pub(crate) fn from_entry(entry: &Value) -> Result<ResolvedChainProfile> {
         .context("chain profile: chain entry missing realChainIndex")?;
     let chain_name =
         string_field(entry, "chainName").context("chain profile: chain entry missing chainName")?;
-    let lower_name = chain_name.to_ascii_lowercase();
-
-    let kind = if matches!(real_chain_index.as_str(), "0" | "5")
-        || matches!(lower_name.as_str(), "bitcoin" | "btc")
-    {
-        ChainKind::Bitcoin
-    } else if real_chain_index == "501" || lower_name == "solana" {
-        ChainKind::Solana
-    } else if real_chain_index == "784" || lower_name == "sui" {
-        ChainKind::Sui
-    } else if real_chain_index == "195" || lower_name == "tron" {
-        ChainKind::Tron
-    } else if real_chain_index == "607" || lower_name == "ton" {
-        ChainKind::Ton
-    } else if entry
-        .get("isEvmChain")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        || lower_name == "tempo"
-        || crate::chains::SUPPORTED_CHAIN_INDICES.contains(&real_chain_index.as_str())
-    {
-        ChainKind::Evm
-    } else {
-        ChainKind::Unknown
-    };
-
-    let (native_symbol, native_decimals, capabilities) = overlay(kind, entry);
+    let (native_symbol, native_decimals, capabilities) = overlay(entry);
     if chain_index.trim().is_empty() || real_chain_index.trim().is_empty() {
         bail!("chain profile: chain identifiers must not be empty");
     }
 
     Ok(ResolvedChainProfile {
-        kind,
         chain_index,
         real_chain_index,
         chain_name,
@@ -169,15 +122,15 @@ pub(crate) fn from_entry(entry: &Value) -> Result<ResolvedChainProfile> {
 }
 
 /// Selects native-asset metadata and command drivers for the resolved chain kind.
-fn overlay(kind: ChainKind, entry: &Value) -> (String, u32, ChainCapabilities) {
+fn overlay(entry: &Value) -> (String, u32, ChainCapabilities) {
     let server_symbol = ["nativeSymbol", "chainSymbol", "symbol"]
         .iter()
         .find_map(|key| entry.get(key).and_then(Value::as_str))
         .filter(|value| !value.is_empty())
         .map(str::to_string);
 
-    match kind {
-        ChainKind::Bitcoin => (
+    if entry_matches_name_or_alias(entry, "bitcoin") || entry_matches_name_or_alias(entry, "btc") {
+        (
             server_symbol.unwrap_or_else(|| "BTC".to_string()),
             8,
             ChainCapabilities {
@@ -185,11 +138,10 @@ fn overlay(kind: ChainKind, entry: &Value) -> (String, u32, ChainCapabilities) {
                 inscription: InscriptionDriver::Bitcoin,
                 contract_call: false,
                 message_sign: MessageSignDriver::Unsupported,
-                asset_model: AssetModel::Utxo,
             },
-        ),
-        ChainKind::Solana => legacy_overlay(server_symbol.unwrap_or_else(|| "SOL".to_string()), 9),
-        ChainKind::Sui => (
+        )
+    } else if entry_matches_name_or_alias(entry, "sui") {
+        (
             server_symbol.unwrap_or_else(|| "SUI".to_string()),
             9,
             ChainCapabilities {
@@ -197,13 +149,18 @@ fn overlay(kind: ChainKind, entry: &Value) -> (String, u32, ChainCapabilities) {
                 inscription: InscriptionDriver::Unsupported,
                 contract_call: true,
                 message_sign: MessageSignDriver::Unsupported,
-                asset_model: AssetModel::Account,
             },
-        ),
-        ChainKind::Tron => legacy_overlay(server_symbol.unwrap_or_else(|| "TRX".to_string()), 6),
-        ChainKind::Ton => legacy_overlay(server_symbol.unwrap_or_else(|| "TON".to_string()), 9),
-        ChainKind::Evm => legacy_overlay(server_symbol.unwrap_or_default(), 18),
-        ChainKind::Unknown => (
+        )
+    } else if entry.get("isEvmChain").and_then(Value::as_bool) == Some(true)
+        || entry_matches_name_or_alias(entry, "solana")
+        || entry_matches_name_or_alias(entry, "sol")
+        || entry_matches_name_or_alias(entry, "tron")
+        || entry_matches_name_or_alias(entry, "trx")
+        || entry_matches_name_or_alias(entry, "ton")
+    {
+        legacy_overlay(server_symbol.unwrap_or_default(), 18)
+    } else {
+        (
             server_symbol.unwrap_or_default(),
             0,
             ChainCapabilities {
@@ -211,9 +168,8 @@ fn overlay(kind: ChainKind, entry: &Value) -> (String, u32, ChainCapabilities) {
                 inscription: InscriptionDriver::Unsupported,
                 contract_call: false,
                 message_sign: MessageSignDriver::Unsupported,
-                asset_model: AssetModel::Unknown,
             },
-        ),
+        )
     }
 }
 
@@ -227,7 +183,6 @@ fn legacy_overlay(symbol: String, decimals: u32) -> (String, u32, ChainCapabilit
             inscription: InscriptionDriver::Unsupported,
             contract_call: true,
             message_sign: MessageSignDriver::LegacyAccount,
-            asset_model: AssetModel::Account,
         },
     )
 }
@@ -245,7 +200,7 @@ mod tests {
             "chainName": "Bitcoin"
         }))
         .unwrap();
-        assert_eq!(profile.kind, ChainKind::Bitcoin);
+        assert_eq!(profile.capabilities.transfer, TransferDriver::Bitcoin);
         assert_eq!(profile.chain_index, "0");
         assert_eq!(profile.native_decimals, 8);
         assert_eq!(profile.capabilities.transfer, TransferDriver::Bitcoin);
@@ -261,7 +216,7 @@ mod tests {
             "alias": []
         });
         let profile = from_entry(&entry).unwrap();
-        assert_eq!(profile.kind, ChainKind::Bitcoin);
+        assert_eq!(profile.capabilities.transfer, TransferDriver::Bitcoin);
         assert_eq!(profile.chain_index, "0");
         assert_eq!(profile.real_chain_index, "0");
         assert!(entry_matches_name_or_alias(&entry, "bitcoin"));
@@ -278,7 +233,6 @@ mod tests {
             "alias": []
         }))
         .unwrap();
-        assert_eq!(profile.kind, ChainKind::Sui);
         assert_eq!(profile.capabilities.transfer, TransferDriver::Sui);
         assert_eq!(
             profile.capabilities.message_sign,
@@ -295,7 +249,6 @@ mod tests {
             "chainName": "Future Chain"
         }))
         .unwrap();
-        assert_eq!(profile.kind, ChainKind::Unknown);
         assert_eq!(profile.capabilities.transfer, TransferDriver::Unsupported);
         assert!(!profile.capabilities.contract_call);
     }
@@ -309,7 +262,6 @@ mod tests {
             "isEvmChain": true
         }))
         .unwrap();
-        assert_eq!(profile.kind, ChainKind::Evm);
         assert_eq!(profile.capabilities.transfer, TransferDriver::LegacyAccount);
     }
 
@@ -322,7 +274,6 @@ mod tests {
             "isEvmChain": true
         }))
         .unwrap();
-        assert_eq!(profile.kind, ChainKind::Evm);
         assert_eq!(profile.capabilities.transfer, TransferDriver::LegacyAccount);
     }
 

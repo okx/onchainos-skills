@@ -194,21 +194,7 @@ pub(super) async fn cmd_addresses(chain: Option<&str>) -> Result<()> {
         .unwrap_or("");
 
     let chain_filter = match chain {
-        Some(input) if super::is_btc_or_sui_chain_input(input) => {
-            let profile = super::chain_profile::resolve(input).await?;
-            Some(profile.chain_index)
-        }
-        Some(input) => {
-            let entry = super::chain::get_chain_by_real_chain_index(input)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("unsupported chain: {input}"))?;
-            let ci = entry["chainIndex"]
-                .as_str()
-                .map(|s| s.to_string())
-                .or_else(|| entry["chainIndex"].as_i64().map(|n| n.to_string()))
-                .ok_or_else(|| anyhow::anyhow!("unsupported chain: {input}"))?;
-            Some(ci)
-        }
+        Some(input) => Some(super::chain_profile::resolve(input).await?.chain_index),
         None => None,
     };
 

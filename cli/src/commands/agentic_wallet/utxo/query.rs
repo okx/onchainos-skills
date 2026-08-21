@@ -10,24 +10,14 @@ use crate::commands::agentic_wallet::chain_adapters::bitcoin::{
 };
 use crate::output;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UtxoQueryMode {
-    #[default]
     UserIgnored,
     Unavailable,
     Available,
 }
 
 impl UtxoQueryMode {
-    /// Selects the user-ignored or unavailable view from the legacy list flag.
-    fn from_unavailable_flag(unavailable: bool) -> Self {
-        if unavailable {
-            Self::Unavailable
-        } else {
-            Self::UserIgnored
-        }
-    }
-
     /// Returns the backend query type for this UTXO view.
     fn query_type(self) -> &'static str {
         match self {
@@ -79,9 +69,9 @@ impl UtxoQueryMode {
     }
 }
 
-/// Queries user-released UTXOs by default, or unavailable UTXOs when requested.
-pub async fn cmd_list(unavailable: bool) -> Result<()> {
-    query_utxos(UtxoQueryMode::from_unavailable_flag(unavailable)).await
+/// Queries user-ignored Bitcoin UTXOs after asset protection is removed.
+pub async fn cmd_user_ignored() -> Result<()> {
+    query_utxos(UtxoQueryMode::UserIgnored).await
 }
 
 /// Queries and emits the unavailable Bitcoin UTXO breakdown.
@@ -152,24 +142,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn utxo_list_defaults_to_user_ignored_and_can_select_unavailable() {
-        let default_mode = UtxoQueryMode::default();
-        assert_eq!(default_mode, UtxoQueryMode::UserIgnored);
-        assert_eq!(
-            UtxoQueryMode::from_unavailable_flag(false).query_type(),
-            "USER_IGNORED_LIST"
-        );
-        assert_eq!(
-            UtxoQueryMode::from_unavailable_flag(false).result_key(),
-            "userIgnored"
-        );
-        assert!(UtxoQueryMode::from_unavailable_flag(false)
+    fn utxo_query_modes_map_to_distinct_service_views() {
+        assert_eq!(UtxoQueryMode::UserIgnored.query_type(), "USER_IGNORED_LIST");
+        assert_eq!(UtxoQueryMode::UserIgnored.result_key(), "userIgnored");
+        assert!(UtxoQueryMode::UserIgnored
             .result_message()
             .contains("asset occupancy was explicitly removed by the user"));
-        assert_eq!(
-            UtxoQueryMode::from_unavailable_flag(true).query_type(),
-            "UNAVAILABLE_BREAKDOWN"
-        );
+        assert_eq!(UtxoQueryMode::Unavailable.query_type(), "UNAVAILABLE_BREAKDOWN");
         assert_eq!(UtxoQueryMode::Available.query_type(), "AVAILABLE_UTXO_LIST");
         assert_eq!(UtxoQueryMode::Available.result_key(), "available");
     }

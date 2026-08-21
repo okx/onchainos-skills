@@ -1,6 +1,6 @@
 //! Loads the authenticated Bitcoin account and chain context.
 
-use crate::commands::agentic_wallet::chain_profile::{ChainKind, ResolvedChainProfile};
+use crate::commands::agentic_wallet::chain_profile::{ResolvedChainProfile, TransferDriver};
 use crate::commands::agentic_wallet::support::context as shared_context;
 use crate::commands::agentic_wallet::support::session::{session_cert, SigningSeed};
 use crate::wallet_store::AddressInfo;
@@ -20,7 +20,7 @@ impl BtcContext {
     pub async fn load(from: Option<&str>) -> Result<Self> {
         let loaded = shared_context::load_chain_context(
             "bitcoin",
-            ChainKind::Bitcoin,
+            TransferDriver::Bitcoin,
             "Bitcoin",
             from,
             super::validation::validate_wallet_address,
@@ -67,14 +67,13 @@ impl BtcContext {
 mod tests {
     use super::*;
     use crate::commands::agentic_wallet::chain_profile::{
-        AssetModel, ChainCapabilities, InscriptionDriver, MessageSignDriver, TransferDriver,
+        ChainCapabilities, InscriptionDriver, MessageSignDriver, TransferDriver,
     };
     use crate::wallet_store::{AccountMapEntry, WalletsJson};
     use std::collections::HashMap;
 
     fn profile() -> ResolvedChainProfile {
         ResolvedChainProfile {
-            kind: ChainKind::Bitcoin,
             chain_index: "0".to_string(),
             real_chain_index: "5".to_string(),
             chain_name: "Bitcoin".to_string(),
@@ -85,7 +84,6 @@ mod tests {
                 inscription: InscriptionDriver::Bitcoin,
                 contract_call: false,
                 message_sign: MessageSignDriver::Unsupported,
-                asset_model: AssetModel::Utxo,
             },
         }
     }

@@ -1,6 +1,6 @@
 //! Loads the authenticated SUI account and chain context.
 
-use crate::commands::agentic_wallet::chain_profile::{ChainKind, ResolvedChainProfile};
+use crate::commands::agentic_wallet::chain_profile::{ResolvedChainProfile, TransferDriver};
 use crate::commands::agentic_wallet::support::context as shared_context;
 use crate::commands::agentic_wallet::support::session::{session_cert, SigningSeed};
 use crate::wallet_store::AddressInfo;
@@ -19,7 +19,7 @@ impl SuiContext {
     pub async fn load(from: Option<&str>) -> Result<Self> {
         let loaded = shared_context::load_chain_context(
             "sui",
-            ChainKind::Sui,
+            TransferDriver::Sui,
             "SUI",
             from,
             validate_sui_address,
@@ -65,14 +65,13 @@ fn validate_sui_address(value: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::commands::agentic_wallet::chain_profile::{
-        AssetModel, ChainCapabilities, InscriptionDriver, MessageSignDriver, TransferDriver,
+        ChainCapabilities, InscriptionDriver, MessageSignDriver, TransferDriver,
     };
     use crate::wallet_store::{AccountMapEntry, WalletsJson};
     use std::collections::HashMap;
 
     fn profile() -> ResolvedChainProfile {
         ResolvedChainProfile {
-            kind: ChainKind::Sui,
             chain_index: "784".to_string(),
             real_chain_index: "784".to_string(),
             chain_name: "sui".to_string(),
@@ -83,7 +82,6 @@ mod tests {
                 inscription: InscriptionDriver::Unsupported,
                 contract_call: true,
                 message_sign: MessageSignDriver::Unsupported,
-                asset_model: AssetModel::Account,
             },
         }
     }

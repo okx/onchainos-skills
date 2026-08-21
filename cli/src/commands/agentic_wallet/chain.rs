@@ -81,20 +81,31 @@ pub async fn get_chain_by_name(chain_name: &str) -> Result<Option<Value>> {
     }))
 }
 
-/// Look up a single chain entry by `realChainIndex` or chain name.
-/// Accepts both numeric IDs (e.g. "1", "501") and names (e.g. "ethereum", "solana").
-/// Returns `None` if no chain matches after resolution.
+/// Looks up a supported chain by `chainIndex`, `realChainIndex`, `chainName`, or alias.
 pub async fn get_chain_by_real_chain_index(input: &str) -> Result<Option<Value>> {
-    let resolved = crate::chains::resolve_chain(input);
+    let input = input.trim();
     let chains = get_all_chains().await?;
     Ok(chains.into_iter().find(|c| {
-        c.get("realChainIndex")
-            .and_then(|v| {
-                v.as_str()
-                    .map(|s| s.to_string())
-                    .or_else(|| v.as_i64().map(|n| n.to_string()))
-            })
-            .is_some_and(|idx| idx == resolved)
+        let field_matches = |key: &str| {
+            c.get(key).and_then(|value| {
+                value
+                    .as_str()
+                    .map(|value| value.eq_ignore_ascii_case(input))
+                    .or_else(|| value.as_i64().map(|value| value.to_string() == input))
+            }) == Some(true)
+        };
+        field_matches("chainIndex")
+            || field_matches("realChainIndex")
+            || field_matches("chainName")
+            || c.get("alias")
+                .and_then(Value::as_array)
+                .is_some_and(|aliases| {
+                    aliases.iter().any(|alias| {
+                        alias
+                            .as_str()
+                            .is_some_and(|alias| alias.eq_ignore_ascii_case(input))
+                    })
+                })
     }))
 }
 

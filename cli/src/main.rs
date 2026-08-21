@@ -108,7 +108,7 @@ pub enum Commands {
         #[arg(long)]
         base_url: Option<String>,
     },
-    /// Agentic wallet: login, verify, create, switch, status, logout, balance
+    /// Agentic wallet: accounts, balances, transfers, UTXOs, contract calls, and history
     Wallet {
         #[command(subcommand)]
         command: commands::agentic_wallet::WalletCommand,

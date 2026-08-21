@@ -184,8 +184,6 @@ impl BtcApi {
         amount: &str,
         token_address: Option<&str>,
         sign_type: Option<&str>,
-        operation_token: Option<&str>,
-        preview_version: Option<&str>,
         fee_rate: Option<&Value>,
     ) -> Result<Value> {
         let mut body = json!({
@@ -200,12 +198,6 @@ impl BtcApi {
         }
         if let Some(value) = sign_type {
             body["signType"] = Value::String(value.to_string());
-        }
-        if let Some(value) = operation_token {
-            body["operationToken"] = Value::String(value.to_string());
-        }
-        if let Some(value) = preview_version {
-            body["previewVersion"] = Value::String(value.to_string());
         }
         if let Some(value) = fee_rate {
             body["txParam"] = json!({"feeRate": value});
@@ -410,15 +402,12 @@ fn build_brc20_utxo_asset_info_body(
             "UTXO asset detail requests require 1..={UTXO_ASSET_INFO_BATCH_SIZE} outpoints per batch"
         );
     }
-    if context.profile.chain_index != "0" {
-        anyhow::bail!(
-            "BRC-20 UTXO asset details require Bitcoin chainIndex 0, got {}",
-            context.profile.chain_index
-        );
+    if !context.profile.is_bitcoin() {
+        anyhow::bail!("BRC-20 UTXO asset details require a Bitcoin chain profile");
     }
 
     Ok(json!({
-        "chainIndex": "0",
+        "chainIndex": context.profile.chain_index,
         "address": context.address.address,
         "assetProtocols": ["BRC20"],
         "utxos": outpoints.iter().map(BtcOutPoint::to_api_value).collect::<Vec<_>>(),

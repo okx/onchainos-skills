@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 
-use super::super::chain_profile::{self, ChainKind, ResolvedChainProfile};
+use super::super::chain_profile::{self, ResolvedChainProfile, TransferDriver};
 use crate::wallet_api::WalletApiClient;
 use crate::wallet_store::{self, AddressInfo, WalletsJson};
 
@@ -15,7 +15,7 @@ pub struct LoadedChainContext {
 /// Loads authentication, chain profile, account, and address data for a chain command.
 pub async fn load_chain_context(
     resolver_input: &str,
-    expected_kind: ChainKind,
+    expected_driver: TransferDriver,
     chain_label: &str,
     from: Option<&str>,
     validate_address: fn(&str) -> Result<()>,
@@ -23,7 +23,7 @@ pub async fn load_chain_context(
 ) -> Result<LoadedChainContext> {
     let access_token = super::super::auth::ensure_tokens_refreshed().await?;
     let profile = chain_profile::resolve(resolver_input).await?;
-    if profile.kind != expected_kind {
+    if profile.capabilities.transfer != expected_driver {
         bail!("{resolver_input} profile resolved to a non-{chain_label} chain");
     }
 

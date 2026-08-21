@@ -612,25 +612,16 @@ pub(super) async fn cmd_balance(
             Some(c) => c,
             None => bail!("--chain is required when using --token-address"),
         };
-        // Resolve the user-supplied --chain (name/alias/id) to a chainIndex via
-        // the canonical resolver at the command boundary.
-        let resolved_chain = crate::chains::resolve_chain(c);
-        let chain_entry = super::chain::get_chain_by_real_chain_index(&resolved_chain)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("unsupported chain: {c}"))?;
+        let profile = super::chain_profile::resolve(c).await?;
         if cfg!(feature = "debug-log") {
             eprintln!(
-                "[DEBUG][cmd_balance] scenario=token-address, chain_entry={}",
-                chain_entry
+                "[DEBUG][cmd_balance] scenario=token-address, chain_index={}",
+                profile.chain_index
             );
         }
-        let chain_index = chain_entry["chainIndex"]
-            .as_str()
-            .map(|s| s.to_string())
-            .or_else(|| chain_entry["chainIndex"].as_i64().map(|n| n.to_string()))
-            .ok_or_else(|| anyhow::anyhow!("chain entry missing chainIndex"))?;
+        let chain_index = profile.chain_index.clone();
 
-        if chain_index == "0"
+        if profile.is_bitcoin()
             && token_addr_str
                 .trim()
                 .to_ascii_lowercase()
@@ -676,21 +667,14 @@ pub(super) async fn cmd_balance(
 
     // ── Scenario 3: Chain filter (--chain, no --token-address) ──────
     if let Some(c) = chain {
-        let resolved_chain = crate::chains::resolve_chain(c);
-        let chain_entry = super::chain::get_chain_by_real_chain_index(&resolved_chain)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("unsupported chain: {c}"))?;
+        let profile = super::chain_profile::resolve(c).await?;
         if cfg!(feature = "debug-log") {
             eprintln!(
-                "[DEBUG][cmd_balance] scenario=chain, chain_entry={}",
-                chain_entry
+                "[DEBUG][cmd_balance] scenario=chain, chain_index={}",
+                profile.chain_index
             );
         }
-        let chain_index = chain_entry["chainIndex"]
-            .as_str()
-            .map(|s| s.to_string())
-            .or_else(|| chain_entry["chainIndex"].as_i64().map(|n| n.to_string()))
-            .ok_or_else(|| anyhow::anyhow!("chain entry missing chainIndex"))?;
+        let chain_index = profile.chain_index.clone();
 
         let query_refs: Vec<(&str, &str)> = vec![
             ("accountId", account_id.as_str()),
@@ -726,7 +710,7 @@ pub(super) async fn cmd_balance(
             "totalValueUsd": total_usd,
             "details": data,
         });
-        if chain_index == "0" {
+        if profile.is_bitcoin() {
             let _ = super::utxo::probe_unavailable_brc20_asset_info().await;
         }
         output::success(result);

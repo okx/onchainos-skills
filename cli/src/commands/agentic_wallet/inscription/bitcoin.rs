@@ -23,21 +23,20 @@ pub async fn cmd_create(
     readable_amount: &str,
     from: Option<&str>,
     operation_token: Option<&str>,
-    preview_version: Option<&str>,
     fee_rate: Option<&str>,
     force: bool,
 ) -> Result<()> {
     let normalized_token_address = validation::normalize_brc20_token_address(token_address)?;
     let token_address = normalized_token_address.as_str();
     let fee_rate = fee_rate.map(validation::parse_fee_rate).transpose()?;
-    if operation_token.is_some() != preview_version.is_some() {
-        bail!("--operation-token and --preview-version must be provided together");
-    }
     if force && operation_token.is_none() {
-        bail!("confirmed inscription requires --operation-token and --preview-version");
+        bail!("confirmed inscription requires --operation-token");
     }
     if !force && operation_token.is_some() {
-        bail!("preview continuation parameters are only valid with --force");
+        bail!("--operation-token is only valid with --force");
+    }
+    if operation_token.is_some_and(|value| !validation::is_local_continuation(value)) {
+        bail!("invalid Bitcoin preview continuation");
     }
 
     let context = BtcContext::load(from).await?;
@@ -48,15 +47,6 @@ pub async fn cmd_create(
     let unavailable = api
         .availability_details(&context, "UNAVAILABLE_BREAKDOWN")
         .await?;
-    let local_execution = validation::is_local_continuation(operation_token, preview_version);
-    if operation_token.is_some_and(|value| value.starts_with("sha256:")) && !local_execution {
-        bail!("invalid local Bitcoin preview continuation");
-    }
-    let (prepare_token, prepare_version) = if local_execution {
-        (None, None)
-    } else {
-        (operation_token, preview_version)
-    };
     let prepared = api
         .prepare_transaction(
             &context,
@@ -64,8 +54,6 @@ pub async fn cmd_create(
             &amount,
             Some(token_address),
             Some("brc20Inscribe"),
-            prepare_token,
-            prepare_version,
             fee_rate.as_ref(),
         )
         .await
@@ -92,21 +80,14 @@ pub async fn cmd_create(
     )?;
     validation::bind_utxo_availability(&mut preview, unavailable)?;
     let local_token = validation::local_transaction_token(&prepared, &preview)?;
-    let fresh_continuation = extract_continuation_from_response(&prepared).unwrap_or_else(|_| {
-        (
-            local_token.clone(),
-            validation::LOCAL_TX_PREVIEW_VERSION.to_string(),
-        )
-    });
     let next = build_inscription_next_command(
         token_address,
         readable_amount,
         fee_rate.as_ref(),
-        &fresh_continuation.0,
-        &fresh_continuation.1,
+        &local_token,
     );
 
-    if force && local_execution && operation_token != Some(local_token.as_str()) {
+    if force && operation_token != Some(local_token.as_str()) {
         return Err(WalletPreviewConfirming {
             message: "The BRC-20 inscription changed after the previous preview. Review the refreshed funding inputs and fees before confirming again.".to_string(),
             next,
@@ -199,29 +180,18 @@ fn build_inscription_next_command(
     readable_amount: &str,
     fee_rate: Option<&Value>,
     operation_token: &str,
-    preview_version: &str,
 ) -> String {
     let mut command = format!(
-        "onchainos wallet inscription create --chain bitcoin --token-address {} --readable-amount {} --operation-token {} --preview-version {}",
+        "onchainos wallet inscription create --chain bitcoin --token-address {} --readable-amount {} --operation-token {}",
         shell_arg(token_address),
         shell_arg(readable_amount),
         shell_arg(operation_token),
-        shell_arg(preview_version),
     );
     if let Some(fee_rate) = fee_rate {
         command.push_str(&format!(" --fee-rate {fee_rate}"));
     }
     command.push_str(" --force");
     command
-}
-
-/// Extracts the service continuation token and version from an unsignedInfo response.
-fn extract_continuation_from_response(response: &Value) -> Result<(String, String)> {
-    let token = find_string(response, &["operationToken"])
-        .ok_or_else(|| anyhow::anyhow!("transaction preview is missing operationToken"))?;
-    let version = find_string(response, &["previewVersion"])
-        .ok_or_else(|| anyhow::anyhow!("transaction preview is missing previewVersion"))?;
-    Ok((token, version))
 }
 
 /// Queries and emits inscription status by Reveal transaction hash or order ID.
@@ -319,14 +289,10 @@ mod tests {
 
     #[test]
     fn inscription_continuation_preserves_custom_fee_rate() {
-        let command = build_inscription_next_command(
-            "btc-brc20-pizza",
-            "1",
-            Some(&json!(1.25)),
-            "token",
-            "version",
-        );
+        let command =
+            build_inscription_next_command("btc-brc20-pizza", "1", Some(&json!(1.25)), "token");
 
         assert!(command.contains("--fee-rate 1.25 --force"));
+        assert!(!command.contains("--preview-version"));
     }
 }

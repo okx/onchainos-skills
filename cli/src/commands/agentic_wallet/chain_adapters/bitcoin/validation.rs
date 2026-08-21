@@ -388,8 +388,6 @@ fn validate_transaction_shape(
     Ok(())
 }
 
-pub const LOCAL_TX_PREVIEW_VERSION: &str = "btc-tx-v1";
-
 /// Hashes prepared data and confirmation facts into a local continuation token.
 pub fn local_transaction_token(response: &Value, preview: &Value) -> Result<String> {
     let binding = json!({
@@ -405,10 +403,13 @@ pub fn local_transaction_token(response: &Value, preview: &Value) -> Result<Stri
     ))
 }
 
-/// Checks whether both values identify the current local continuation format.
-pub fn is_local_continuation(operation_token: Option<&str>, preview_version: Option<&str>) -> bool {
-    operation_token.is_some_and(|value| value.starts_with("sha256:"))
-        && preview_version == Some(LOCAL_TX_PREVIEW_VERSION)
+/// Checks whether a continuation token contains one complete SHA-256 digest.
+pub fn is_local_continuation(operation_token: &str) -> bool {
+    operation_token
+        .strip_prefix("sha256:")
+        .is_some_and(|digest| {
+            digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
 }
 
 /// Compares an optional response field with its expected command input.
@@ -455,6 +456,13 @@ mod tests {
         assert!(parse_fee_rate("0").is_err());
         assert!(parse_fee_rate("1e2").is_err());
         assert!(parse_fee_rate("1.").is_err());
+    }
+
+    #[test]
+    fn validates_single_preview_continuation_token() {
+        assert!(is_local_continuation(&format!("sha256:{}", "a".repeat(64))));
+        assert!(!is_local_continuation("sha256:short"));
+        assert!(!is_local_continuation(&"a".repeat(64)));
     }
 
     #[test]
