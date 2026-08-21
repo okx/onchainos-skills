@@ -147,10 +147,17 @@ reserves the delivery before spawning the command, stores only a redacted outcom
 idempotent `--job-id`-scoped UI notice. A timeout is an unknown submission state and is never retried.
 The reservation records `reserved`, `prepared`, and `spawned` phases. Recovery may classify an interruption
 before `spawned` as failed-before-submit; an interruption at or after `spawned`, an unreadable legacy latch,
-or a started command with no conclusive receipt is always unknown-after-submit and is never auto-retried.
+or a started command with no conclusive receipt is unknown-after-submit and is never auto-retried unless
+the completed child output conclusively proves a local argument failure or an explicit venue rejection.
+For Trade Kit, the bridge canonicalizes the documented `-1` attached TP/SL market sentinels to
+`--tpOrdPx=-1` / `--slOrdPx=-1` before spawn so Node argument parsing cannot mistake them for options.
 Process exit code zero alone is not submission proof: `submitted` additionally requires a venue-specific
 order/transaction identifier. Generic `status` or `state` fields are not receipts, and nested failure fields
 override a nominally successful outer envelope.
+For a completed non-zero child, the bridge extracts only bounded, redacted diagnostic fields from
+stdout/stderr. Explicit error codes/messages and safe CLI argument errors are persisted in `reason` and
+included in the scoped AI-session notification; raw child output, credentials, headers, and tokens are never
+persisted. Opaque failures remain unknown-after-submit even when a safe text summary is available.
 Notification delivery is separate from transaction retry: a failed UI push is persisted with bounded
 backoff and retried by later Agent startup/heartbeat, new-delivery handling, or explicit outcome flush;
 the money-moving command itself is never reconstructed or retried.

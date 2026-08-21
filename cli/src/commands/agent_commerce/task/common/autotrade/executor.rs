@@ -380,7 +380,7 @@ fn terminal_reconciliation_complete(outcome: &ExecutionOutcome) -> bool {
 }
 
 fn parse_command(venue: &str, command_json: &str) -> Result<(PathBuf, Vec<String>)> {
-    let args: Vec<String> = serde_json::from_str(command_json)
+    let mut args: Vec<String> = serde_json::from_str(command_json)
         .context("--command-json must be a JSON array of argument strings")?;
     if args.is_empty() || args.len() > MAX_ARG_COUNT {
         bail!("invalid automatic execution argument count");
@@ -438,7 +438,26 @@ fn parse_command(venue: &str, command_json: &str) -> Result<(PathBuf, Vec<String
         },
         _ => bail!("unsupported automatic execution venue"),
     };
+    if venue == "trade_kit" {
+        normalize_trade_kit_dash_values(&mut args);
+    }
     Ok((program, args))
+}
+
+/// Node's `util.parseArgs` treats a following `-1` as another option rather
+/// than as the value of a string option. Trade Kit uses `-1` as the documented
+/// market-order sentinel for attached TP/SL, so canonicalize only those known
+/// flags to the equivalent `--flag=-1` argv representation before spawning.
+fn normalize_trade_kit_dash_values(args: &mut Vec<String>) {
+    const MARKET_SENTINEL_FLAGS: &[&str] = &["--tpOrdPx", "--slOrdPx"];
+    let mut index = 0;
+    while index + 1 < args.len() {
+        if MARKET_SENTINEL_FLAGS.contains(&args[index].as_str()) && args[index + 1] == "-1" {
+            args[index] = format!("{}=-1", args[index]);
+            args.remove(index + 1);
+        }
+        index += 1;
+    }
 }
 
 fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
@@ -764,35 +783,104 @@ fn structured_failure(stdout: &[u8]) -> Option<String> {
     structured_failure_value(&value, 0)
 }
 
+fn scalar_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) if !value.trim().is_empty() => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn failure_code(value: &Value) -> bool {
+    value
+        .as_str()
+        .is_some_and(|value| !matches!(value.trim(), "" | "0" | "200"))
+        || value
+            .as_i64()
+            .is_some_and(|value| !matches!(value, 0 | 200))
+}
+
+fn object_failure_message(object: &serde_json::Map<String, Value>) -> Option<String> {
+    [
+        "sMsg",
+        "errorMessage",
+        "error_message",
+        "message",
+        "msg",
+        "error",
+    ]
+    .iter()
+    .find_map(|key| object.get(*key).and_then(Value::as_str))
+    .filter(|value| !value.trim().is_empty())
+    .map(safe_child_text)
+}
+
+fn format_structured_failure(label: &str, code: Option<String>, message: Option<String>) -> String {
+    match (code, message) {
+        (Some(code), Some(message)) => format!("{label} (code {code}): {message}"),
+        (Some(code), None) => format!("{label} (code {code})"),
+        (None, Some(message)) => format!("{label}: {message}"),
+        (None, None) => label.to_string(),
+    }
+}
+
 fn structured_failure_value(value: &Value, depth: u8) -> Option<String> {
     if depth > 8 {
         return None;
     }
     let object = value.as_object();
     if let Some(object) = object {
-        if object.get("ok").and_then(Value::as_bool) == Some(false)
-            || object.get("success").and_then(Value::as_bool) == Some(false)
-        {
-            return Some("target command returned an explicit failure".to_string());
+        if let Some(code) = object.get("sCode").filter(|code| failure_code(code)) {
+            return Some(format_structured_failure(
+                "target order was rejected",
+                scalar_text(code).map(|code| safe_child_text(&code)),
+                object_failure_message(object),
+            ));
         }
-        if let Some(code) = object.get("code") {
-            let failed = code
-                .as_str()
-                .is_some_and(|value| !matches!(value, "" | "0" | "200"))
-                || code
-                    .as_i64()
-                    .is_some_and(|value| !matches!(value, 0 | 200));
-            if failed {
-                return Some(format!("target command returned failure code {code}"));
-            }
-        }
+    }
+
+    let nested = match value {
+        Value::Object(map) => map
+            .values()
+            .find_map(|child| structured_failure_value(child, depth + 1)),
+        Value::Array(values) => values
+            .iter()
+            .take(16)
+            .find_map(|child| structured_failure_value(child, depth + 1)),
+        _ => None,
+    };
+    if nested.is_some() {
+        return nested;
+    }
+
+    if let Some(object) = object {
+        let message = object_failure_message(object);
         if let Some(code) = object
             .get("errorCode")
             .or_else(|| object.get("error_code"))
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
+            .filter(|code| failure_code(code))
         {
-            return Some(format!("target command returned error code {code}"));
+            return Some(format_structured_failure(
+                "target command returned an error",
+                scalar_text(code).map(|code| safe_child_text(&code)),
+                message,
+            ));
+        }
+        if let Some(code) = object.get("code").filter(|code| failure_code(code)) {
+            return Some(format_structured_failure(
+                "target command returned a failure",
+                scalar_text(code).map(|code| safe_child_text(&code)),
+                message,
+            ));
+        }
+        if object.get("ok").and_then(Value::as_bool) == Some(false)
+            || object.get("success").and_then(Value::as_bool) == Some(false)
+        {
+            return Some(format_structured_failure(
+                "target command returned an explicit failure",
+                None,
+                message,
+            ));
         }
         if object
             .get("status")
@@ -804,29 +892,232 @@ fn structured_failure_value(value: &Value, depth: u8) -> Option<String> {
                 )
             })
         {
-            return Some("target command returned a failure status".to_string());
+            return Some(format_structured_failure(
+                "target command returned a failure status",
+                None,
+                message,
+            ));
         }
-        if object
-            .get("data")
-            .and_then(Value::as_array)
-            .and_then(|items| items.first())
-            .and_then(|item| item.get("sCode"))
-            .and_then(Value::as_str)
-            .is_some_and(|code| code != "0")
+    }
+    None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TextFailureDetail {
+    message: String,
+    code: Option<String>,
+    definitely_before_submit: bool,
+}
+
+fn sensitive_label(value: &str) -> bool {
+    let normalized = value
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    const NAMES: &[&str] = &[
+        "apikey",
+        "secret",
+        "secretkey",
+        "passphrase",
+        "password",
+        "authorization",
+        "accesstoken",
+        "refreshtoken",
+        "token",
+        "cookie",
+        "signature",
+        "privatekey",
+        "mnemonic",
+        "seed",
+    ];
+    NAMES
+        .iter()
+        .any(|name| normalized == *name || normalized.ends_with(name))
+}
+
+fn looks_like_jwt(value: &str) -> bool {
+    let trimmed = value.trim_matches(|character: char| {
+        matches!(character, '"' | '\'' | ',' | ';' | '(' | ')' | '[' | ']')
+    });
+    trimmed.len() >= 40
+        && trimmed.bytes().filter(|byte| *byte == b'.').count() == 2
+        && trimmed
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+/// Reduce child-process output to a bounded, single-line, user-safe summary.
+/// Raw stdout/stderr is never persisted. Known secret assignments, bearer
+/// values, JWT-shaped values, and control characters are removed first.
+fn safe_child_text(value: &str) -> String {
+    let printable = value
+        .chars()
+        .map(|character| if character.is_control() { ' ' } else { character })
+        .collect::<String>();
+    let mut output = Vec::new();
+    let mut redact_next = 0usize;
+    for token in printable.split_whitespace() {
+        if redact_next > 0 {
+            output.push("[REDACTED]".to_string());
+            redact_next -= 1;
+            continue;
+        }
+        if token.eq_ignore_ascii_case("bearer") {
+            output.push("Bearer".to_string());
+            redact_next = 1;
+            continue;
+        }
+        if looks_like_jwt(token) {
+            output.push("[REDACTED]".to_string());
+            continue;
+        }
+        let assignment = token
+            .char_indices()
+            .filter(|(_, character)| matches!(character, '=' | ':'))
+            .find(|(position, _)| sensitive_label(&token[..*position]))
+            .map(|(position, separator)| {
+                (&token[..position], &token[position + 1..], separator)
+            });
+        if let Some((label, assigned, separator)) = assignment {
+            output.push(format!("{label}{separator}[REDACTED]"));
+            if assigned.is_empty() {
+                redact_next = if label.eq_ignore_ascii_case("authorization") {
+                    2
+                } else {
+                    1
+                };
+            }
+            continue;
+        }
+        if sensitive_label(token) {
+            output.push(token.to_string());
+            redact_next = 1;
+            continue;
+        }
+        output.push(token.to_string());
+    }
+    safe_text(&output.join(" "))
+}
+
+fn definitely_pre_submit_cli_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("argument is ambiguous")
+        || message.contains("unexpected argument")
+        || message.contains("unknown command")
+        || message.contains("unknown option")
+        || message.contains("missing required argument")
+        || message.contains("did you forget to specify the option argument")
+}
+
+fn text_failure_detail(output: &[u8]) -> Option<TextFailureDetail> {
+    let text = String::from_utf8_lossy(output);
+    let mut message_parts = Vec::new();
+    let mut code = None;
+    let mut collecting_error = false;
+    let mut fallback = None;
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty()
+            || line.starts_with("Update available for ")
+            || line.starts_with("Run: npm install ")
+            || line.starts_with("Version: ")
+            || line.starts_with("TraceId: ")
+            || line.starts_with("Hint: ")
         {
-            return Some("target order was rejected".to_string());
+            continue;
+        }
+        fallback.get_or_insert_with(|| line.to_string());
+        if let Some(value) = line.strip_prefix("Error:") {
+            collecting_error = true;
+            if !value.trim().is_empty() {
+                message_parts.push(value.trim().to_string());
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("Code:") {
+            code = Some(safe_child_text(value));
+            collecting_error = false;
+            continue;
+        }
+        if collecting_error {
+            message_parts.push(line.to_string());
         }
     }
-    match value {
-        Value::Object(map) => map
-            .values()
-            .find_map(|child| structured_failure_value(child, depth + 1)),
-        Value::Array(values) => values
-            .iter()
-            .take(16)
-            .find_map(|child| structured_failure_value(child, depth + 1)),
-        _ => None,
+    let raw_message = if message_parts.is_empty() {
+        fallback?
+    } else {
+        message_parts.join(" ")
+    };
+    let message = safe_child_text(&raw_message);
+    Some(TextFailureDetail {
+        definitely_before_submit: definitely_pre_submit_cli_error(&message),
+        message,
+        code: code.filter(|code| !code.is_empty()),
+    })
+}
+
+fn classify_nonzero(
+    venue: &str,
+    exit_code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> (OutcomeStatus, Option<Value>, Option<String>) {
+    let receipt = receipt_from_stdout(venue, stdout);
+    let exit = exit_code
+        .map(|code| format!("exit code {code}"))
+        .unwrap_or_else(|| "a non-zero exit status".to_string());
+    if let Some(reason) = structured_failure(stdout).or_else(|| structured_failure(stderr)) {
+        return if receipt.is_some() {
+            (
+                OutcomeStatus::UnknownAfterSubmit,
+                receipt,
+                Some(format!(
+                    "{reason}; {exit}; a submission identifier was also returned, so final state is unknown"
+                )),
+            )
+        } else {
+            (
+                OutcomeStatus::FailedBeforeSubmit,
+                None,
+                Some(format!("{reason}; {exit}")),
+            )
+        };
     }
+    let text_detail = if json_from_stdout(stderr).is_none() {
+        text_failure_detail(stderr)
+    } else {
+        None
+    }
+    .or_else(|| {
+        if json_from_stdout(stdout).is_none() {
+            text_failure_detail(stdout)
+        } else {
+            None
+        }
+    });
+    if let Some(detail) = text_detail {
+        let code = detail
+            .code
+            .map(|code| format!(" (code {code})"))
+            .unwrap_or_default();
+        let reason = format!("target command failed with {exit}{code}: {}", detail.message);
+        if detail.definitely_before_submit && receipt.is_none() {
+            return (OutcomeStatus::FailedBeforeSubmit, None, Some(reason));
+        }
+        return (
+            OutcomeStatus::UnknownAfterSubmit,
+            receipt,
+            Some(format!("{reason}; submission state is unknown")),
+        );
+    }
+    (
+        OutcomeStatus::UnknownAfterSubmit,
+        receipt,
+        Some(format!(
+            "target command started and returned {exit} without a safe diagnostic; submission state is unknown"
+        )),
+    )
 }
 
 fn classify_success(venue: &str, stdout: &[u8]) -> (OutcomeStatus, Option<Value>, Option<String>) {
@@ -1281,13 +1572,11 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
         Ok(Ok(output)) if output.status.success() => {
             classify_success(request.venue, &output.stdout)
         }
-        Ok(Ok(output)) => (
-            OutcomeStatus::UnknownAfterSubmit,
-            None,
-            Some(format!(
-                "execution command started and exited with {}; submission state is unknown",
-                output.status
-            )),
+        Ok(Ok(output)) => classify_nonzero(
+            request.venue,
+            output.status.code(),
+            &output.stdout,
+            &output.stderr,
         ),
         Ok(Err(error)) => (
             OutcomeStatus::FailedBeforeSubmit,
@@ -1706,6 +1995,20 @@ mod tests {
     }
 
     #[test]
+    fn trade_kit_market_sentinels_are_canonicalized_for_node_parse_args() {
+        let (_, args) = parse_command(
+            "trade_kit",
+            r#"["--demo","--json","swap","place","--sz","1","--side","buy","--tpOrdPx","-1","--slOrdPx","-1"]"#,
+        )
+        .unwrap();
+        assert!(args.iter().any(|arg| arg == "--tpOrdPx=-1"));
+        assert!(args.iter().any(|arg| arg == "--slOrdPx=-1"));
+        assert!(!args.windows(2).any(|pair| {
+            matches!(pair[0].as_str(), "--tpOrdPx" | "--slOrdPx") && pair[1] == "-1"
+        }));
+    }
+
+    #[test]
     fn receipt_extraction_keeps_only_safe_identifiers() {
         let receipt = receipt_from_stdout(
             "dex",
@@ -1742,6 +2045,61 @@ mod tests {
             .0,
             OutcomeStatus::UnknownAfterSubmit
         );
+    }
+
+    #[test]
+    fn nonzero_trade_kit_parser_error_is_specific_and_pre_submit() {
+        let stderr = b"Error: Option '--tpOrdPx' argument is ambiguous.\nDid you forget to specify the option argument for '--tpOrdPx'?\nTo specify an option argument starting with a dash use '--tpOrdPx=-XYZ'.\nVersion: fixture\n";
+        let (status, receipt, reason) = classify_nonzero("trade_kit", Some(1), b"", stderr);
+        assert_eq!(status, OutcomeStatus::FailedBeforeSubmit);
+        assert!(receipt.is_none());
+        let reason = reason.unwrap();
+        assert!(reason.contains("argument is ambiguous"));
+        assert!(reason.contains("exit code 1"));
+        assert!(!reason.contains("Version:"));
+    }
+
+    #[test]
+    fn nonzero_structured_rejection_preserves_safe_code_and_message() {
+        let stdout = br#"{"code":"1","data":[{"sCode":"51008","sMsg":"Insufficient account balance"}]}"#;
+        let (status, receipt, reason) = classify_nonzero("trade_kit", Some(7), stdout, b"");
+        assert_eq!(status, OutcomeStatus::FailedBeforeSubmit);
+        assert!(receipt.is_none());
+        let reason = reason.unwrap();
+        assert!(reason.contains("51008"));
+        assert!(reason.contains("Insufficient account balance"));
+        assert!(reason.contains("exit code 7"));
+    }
+
+    #[test]
+    fn opaque_nonzero_output_keeps_unknown_state_but_exposes_safe_summary() {
+        let (status, receipt, reason) =
+            classify_nonzero("trade_kit", Some(9), b"", b"opaque transport failure");
+        assert_eq!(status, OutcomeStatus::UnknownAfterSubmit);
+        assert!(receipt.is_none());
+        let reason = reason.unwrap();
+        assert!(reason.contains("opaque transport failure"));
+        assert!(reason.contains("submission state is unknown"));
+    }
+
+    #[test]
+    fn child_diagnostics_redact_sensitive_assignments_and_jwt_shaped_values() {
+        let jwt_shaped = format!(
+            "{}.{}.{}",
+            "a".repeat(16),
+            "b".repeat(16),
+            "c".repeat(16)
+        );
+        let raw = format!(
+            "apiKey=fixture-api-value --secret fixture-secret-value https://invalid.local?token=fixture-query-value {jwt_shaped} Error: denied"
+        );
+        let safe = safe_child_text(&raw);
+        assert!(!safe.contains("fixture-api-value"));
+        assert!(!safe.contains("fixture-secret-value"));
+        assert!(!safe.contains("fixture-query-value"));
+        assert!(!safe.contains(&jwt_shaped));
+        assert!(safe.contains("[REDACTED]"));
+        assert!(safe.contains("denied"));
     }
 
     #[test]

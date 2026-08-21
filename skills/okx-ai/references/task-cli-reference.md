@@ -698,7 +698,11 @@ response includes `environment`, `readiness`, compatibility `ready`, stable `rea
 `agent autotrade-execute` enforces the same gate again for Trade Kit immediately before spawning the
 order command. It derives the asset class from the supported `spot|swap|futures|option|event place`
 command and requires exactly one explicit `--live` or `--demo`; a non-ready result is persisted as
-`failed_before_submit` and the order process is not started.
+`failed_before_submit` and the order process is not started. The gateway also canonicalizes split
+`--tpOrdPx -1` / `--slOrdPx -1` argv pairs to the Trade Kit-compatible equals form before spawn. Completed
+non-zero commands expose a bounded, redacted reason in both the persisted outcome and scoped AI-session
+notification. Conclusive local argument failures or explicit venue rejections are `failed_before_submit`;
+opaque, timeout, or transport failures remain `unknown_after_submit` and are never automatically retried.
 
 The five states are `ready`, `missing`, `verification_unknown`, `needs_configuration`, and
 `incompatible`. Authentication absence or a valid account response without exact `trade` permission is

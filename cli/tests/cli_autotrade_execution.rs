@@ -12,7 +12,7 @@ fn write_fake_okx(path: &std::path::Path) {
         path,
         r#"#!/bin/sh
 if [ "$1 $2" = "list-tools --json" ]; then
-  printf '%s\n' '{"version":"1.4.2","modules":[{"commands":[{"toolName":"market_get_ticker"},{"toolName":"spot_place_order"}]}]}'
+  printf '%s\n' '{"version":"1.4.2","modules":[{"commands":[{"toolName":"market_get_ticker"},{"toolName":"market_get_instruments"},{"toolName":"account_get_config"},{"toolName":"spot_place_order"},{"toolName":"swap_get_leverage"},{"toolName":"swap_set_leverage"},{"toolName":"swap_place_order"}]}]}'
   exit 0
 fi
 if [ "$1 $2 $3" = "account config --json" ]; then
@@ -24,15 +24,33 @@ if [ "$1 $2 $3" = "account config --json" ]; then
   exit 0
 fi
 case "$FAKE_OKX_MODE" in
-  nonzero)
+  nonzero_structured)
     echo '{"ok":false,"error":"post-run failure"}'
     exit 7
+    ;;
+  nonzero_opaque)
+    echo 'opaque transport failure' >&2
+    exit 9
     ;;
   status_only)
     echo '{"ok":true,"status":"success"}'
     ;;
   receipt)
     echo '{"ok":true,"data":{"ordId":"42"}}'
+    ;;
+  normalized_sentinels)
+    saw_tp=false
+    saw_sl=false
+    for arg in "$@"; do
+      [ "$arg" = "--tpOrdPx=-1" ] && saw_tp=true
+      [ "$arg" = "--slOrdPx=-1" ] && saw_sl=true
+    done
+    if [ "$saw_tp" = true ] && [ "$saw_sl" = true ]; then
+      echo '{"ok":true,"data":{"ordId":"normalized-42"}}'
+    else
+      echo "Error: negative TP/SL market sentinels were not normalized" >&2
+      exit 2
+    fi
     ;;
 esac
 "#,
@@ -511,7 +529,7 @@ fn over_cap_one_time_permit_is_exact_and_consumed_by_the_result_bridge() {
 
 #[cfg(unix)]
 #[test]
-fn started_command_failures_and_status_only_output_never_claim_submission() {
+fn completed_trade_kit_commands_preserve_receipts_and_safe_failure_details() {
     let (_guard, home) = fresh_home("cli_autotrade_conservative_receipt");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -519,8 +537,10 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
         .as_secs();
     for delivery in [
         "delivery-nonzero",
+        "delivery-opaque",
         "delivery-status",
         "delivery-receipt",
+        "delivery-normalized",
         "delivery-not-ready",
     ] {
         write_context(&home, delivery);
@@ -553,7 +573,7 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
     fs::create_dir_all(&bin).unwrap();
     write_fake_okx(&bin.join("okx"));
 
-    let run = |delivery: &str, mode: &str| {
+    let run = |delivery: &str, mode: &str, command_json: &str| {
         let mut command = onchainos();
         let output = scrubbed(&mut command, &home)
             .env("PATH", &bin)
@@ -572,7 +592,7 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
                 "--amount",
                 "1",
                 "--command-json",
-                r#"["spot","place","--sz","1","--side","buy","--live"]"#,
+                command_json,
             ])
             .output()
             .unwrap();
@@ -580,19 +600,57 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
         parse_stdout_json(&output)
     };
 
+    let structured = run(
+        "delivery-nonzero",
+        "nonzero_structured",
+        r#"["spot","place","--sz","1","--side","buy","--live"]"#,
+    );
+    assert_eq!(structured["data"]["status"], "failed_before_submit");
+    assert!(structured["data"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("post-run failure"));
+
+    let opaque = run(
+        "delivery-opaque",
+        "nonzero_opaque",
+        r#"["spot","place","--sz","1","--side","buy","--live"]"#,
+    );
+    assert_eq!(opaque["data"]["status"], "unknown_after_submit");
+    assert!(opaque["data"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("opaque transport failure"));
     assert_eq!(
-        run("delivery-nonzero", "nonzero")["data"]["status"],
+        run(
+            "delivery-status",
+            "status_only",
+            r#"["spot","place","--sz","1","--side","buy","--live"]"#,
+        )["data"]["status"],
         "unknown_after_submit"
     );
     assert_eq!(
-        run("delivery-status", "status_only")["data"]["status"],
-        "unknown_after_submit"
-    );
-    assert_eq!(
-        run("delivery-receipt", "receipt")["data"]["status"],
+        run(
+            "delivery-receipt",
+            "receipt",
+            r#"["spot","place","--sz","1","--side","buy","--live"]"#,
+        )["data"]["status"],
         "submitted"
     );
-    let not_ready = run("delivery-not-ready", "not_ready");
+
+    let normalized = run(
+        "delivery-normalized",
+        "normalized_sentinels",
+        r#"["--live","--json","swap","place","--sz","1","--side","buy","--tdMode","cross","--tpTriggerPx","999999","--tpOrdPx","-1","--slTriggerPx","1","--slOrdPx","-1"]"#,
+    );
+    assert_eq!(normalized["data"]["status"], "submitted");
+    assert_eq!(normalized["data"]["receipt"]["ordId"], "normalized-42");
+
+    let not_ready = run(
+        "delivery-not-ready",
+        "not_ready",
+        r#"["spot","place","--sz","1","--side","buy","--live"]"#,
+    );
     assert_eq!(not_ready["data"]["status"], "failed_before_submit");
     assert!(not_ready["data"]["reason"]
         .as_str()
