@@ -45,7 +45,7 @@ Field rules:
 
 **Native BTC fee rate** — After the initial transfer preview, ask the user to confirm the current fee rate or provide a new sat/vB value. For a new value, rerun the initial command with `--fee-rate <value>`, show the fresh preview, and require confirmation. The custom fee rate applies only to that transaction.
 
-**Bitcoin UTXOs and BRC-20** — Load [utxo.md](utxo.md) for spendable, locked, protected, or reclaimable BTC UTXOs. Load [brc20-cli-reference.md](brc20-cli-reference.md) for BRC-20 balances, transferable inscriptions, transfer inscriptions, and direct transfers. For a BRC-20 ticker balance, run `onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker>` and use that reference's reply template.
+**Bitcoin UTXOs and BRC-20** — Load [utxo-cli-reference.md](utxo-cli-reference.md) for spendable, locked, protected, or reclaimable BTC UTXOs. Load [brc20-cli-reference.md](brc20-cli-reference.md) for BRC-20 balances, transferable inscriptions, transfer inscriptions, and direct transfers. For a BRC-20 ticker balance, run `onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker>` and use that reference's reply template.
 
 ## Send vs Contract Call (funds-loss risk — determine intent first)
 

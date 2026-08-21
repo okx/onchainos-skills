@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "OKX Agentic Wallet — the single skill for the user's wallet and on-chain execution. Use it whenever the user wants to operate their wallet or execute an on-chain action, including: login & accounts, balance / holdings, wallet address / deposit / receive, send / transfer, contract calls (approve / deposit / withdraw), transaction history & status, message signing, wallet export & policy; pay gas with a stablecoin (Gas Station, Solana); swap / trade / buy / sell / convert, get a quote; cross-chain bridge & track arrival; limit orders (buy dip / take profit / stop loss / buy above) plus cancel / list / resume them; broadcast / gas / simulate / track a transaction; look up any public address's holdings; security scanning (token / honeypot, DApp phishing, tx & signature checks, approvals); audit log; Bitcoin / BRC-20 UTXOs, inscriptions, and transfers; SUI assets, transfers, and PTB contract calls. Once matched, follow this skill's Intent Routing to dispatch to the exact action."
+description: "Use this skill whenever the user wants to use OKX Onchain OS / onchainos CLI / agentic wallet for wallet state or on-chain actions. Triggers: onchainos, Onchain OS wallet, agentic wallet; wallet login/status/account/address/balance/holdings/deposit/receive/send/transfer; on-chain swap/DEX trade/buy/sell/convert; bridge; Gas Station; contract calls; transaction history/status; signing; approvals; wallet export/policy; token or DApp security checks; or audit log. Also use it for Bitcoin and BRC-20 balances, UTXOs, inscriptions, and transfers, and SUI balances and transfers."
 license: MIT
 metadata:
   author: okx
@@ -20,7 +20,7 @@ Match the user intent to a row, then **read that row's linked file first** — i
 | --- | --- |
 | Sign in / connect / social login (Google / Apple / Email) / logout; add / switch account; login status | [wallet](references/wallet.md) |
 | My wallet address / QR code; check my (logged-in) balance / holdings, including BTC or a BRC-20 ticker | [wallet](references/wallet.md) |
-| Bitcoin UTXO queries or management; UTXO FAQ / definitions such as available balance, dust, and locked or protected UTXOs | [utxo](references/utxo.md) |
+| Bitcoin UTXO queries or management; UTXO FAQ / definitions such as available balance, dust, and locked or protected UTXOs | [utxo-cli-reference](references/utxo-cli-reference.md) |
 | Send / transfer native, ERC-20, SPL, BTC, BRC-20, or SUI tokens | [wallet](references/wallet.md) |
 | Call a contract (approve / deposit / withdraw / custom function), including a SUI PTB | [wallet](references/wallet.md) |
 | Transaction history / tx detail / order status; sign a message (personalSign / EIP-712) | [wallet](references/wallet.md) |
@@ -39,7 +39,7 @@ Match the user intent to a row, then **read that row's linked file first** — i
 
 ## Pre-flight Checks
 
-Before your first `onchainos` command, read [_shared/preflight.md](_shared/preflight.md) once.
+At the start of each thread, complete the checks in [_shared/preflight.md](_shared/preflight.md).
 
 ## Build the Command
 
@@ -71,7 +71,7 @@ Never pass `--force` on the FIRST invocation of a state-changing command. Add `-
 
 ## Security & Global Notes
 
-- **Credential protection**: never log, display, or ask for session tokens, `clientId`, API keys, private keys, seed phrases, or passwords. Never expose: `accessToken`, `refreshToken`, `apiKey`, `secretKey`, `passphrase`, `sessionKey`, `sessionCert`, `teeId`, `saTeeId`, `encryptedSessionSk`, `signingKey`, raw tx data. Never display raw `accountId` to the user. Omit `accountName` from balance replies; display it only when another matched flow explicitly requires it.
+- **Credential protection**: never log, display, or ask for session tokens, `clientId`, API keys, private keys, seed phrases, or passwords. Never expose: `accessToken`, `refreshToken`, `apiKey`, `secretKey`, `passphrase`, `sessionKey`, `sessionCert`, `teeId`, `saTeeId`, `encryptedSessionSk`, `signingKey`, raw tx data. Show raw `accountName` (never raw `accountId` to the user).
 - **Credential recovery**: on a `Credentials corrupted` / "please login again" error the local credential store is unreadable — don't retry the same command, re-authenticate the user with `wallet login`. See [wallet-troubleshooting.md](references/wallet-troubleshooting.md).
 - **Address integrity (funds-loss risk)**: any on-chain identifier shown to the user (wallet address, `txHash`, signature, contract address) MUST be echoed **verbatim, character-for-character** from the most recent CLI stdout. Never reproduce an identifier from memory, expand an abbreviated form, or re-type it across messages — re-invoke the command that produced it; for a wallet address, use `wallet addresses`. Never paraphrase, normalize case, insert spaces, or line-break inside an identifier. Always display the **full** `txHash`.
 - **No address hallucination**: never fabricate a contract address — malicious tokens clone legitimate names. Only use addresses from a token lookup or the user's explicit input.
