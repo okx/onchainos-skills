@@ -4,8 +4,6 @@ Use a synthetic BRC-20 token address: `btc-brc20-<ticker>`. The CLI normalizes i
 
 ## `wallet balance`
 
-### Intent
-
 Query the current balance, transferable amount, and remaining inscribable amount for one BRC-20 ticker.
 
 ### Syntax
@@ -21,8 +19,6 @@ onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker> [--f
 | `--chain` | Yes | — | Use `bitcoin`. |
 | `--token-address` | Yes | — | BRC-20 token identifier in `btc-brc20-<ticker>` form. |
 | `--force` | No | Disabled | Bypass balance caches only when the user explicitly asks to refresh or sync. |
-
-### Response
 
 Reply with:
 
@@ -40,9 +36,7 @@ Currently transferable (already inscribed): 0 ${ticker}, worth approximately $${
 
 ## `wallet utxo brc20-transferable`
 
-### Intent
-
-Query current transferable inscriptions for one BRC-20 ticker. Add `--readable-amount` when the user wants exact transfer combinations for a target amount.
+Query current transferable inscriptions for one BRC-20 ticker. `sumValue` is the transferable total; `choices[]` contains indivisible inscriptions. Preserve each `selection` (`<txHash>:<voutIndex>`) verbatim; `tokenAmount` is the BRC-20 quantity and `utxoAmountSats` is its carrier BTC value. With `--readable-amount`, use `selectionPlan`: `EXACT_MATCH` supplies up to three `combinations[]` ordered by fewer inputs; use each combination's `selectedOutpoints[]` verbatim. `NO_EXACT_MATCH` requires a refreshed ticker balance before offering inscription; `SEARCH_LIMIT_EXCEEDED` means show the choices without claiming that no exact match exists.
 
 ### Syntax
 
@@ -58,23 +52,13 @@ onchainos wallet utxo brc20-transferable --chain bitcoin --token-address <btc-br
 | `--token-address` | Yes | — | BRC-20 token identifier in `btc-brc20-<ticker>` form. |
 | `--readable-amount` | No | — | Human-readable target amount used to find up to three exact UTXO combinations. |
 
-### Response
-
-The CLI derives the active Bitcoin address from the logged-in wallet. The response exposes the transferable total as `sumValue` and individual inscriptions as `choices[]`. Preserve each `selection` (`<txHash>:<voutIndex>`) verbatim. `tokenAmount` / `tokenAmountRaw` is the BRC-20 quantity, and `utxoAmountSats` is the carrier UTXO's BTC value in sats. Each choice is indivisible; several choices may be combined in one transaction.
-
-With `--readable-amount`, read `selectionPlan`:
-
-- `EXACT_MATCH`: `combinations[]` contains at most three exact options, ordered by fewer inputs. Each option provides `selectedCount`, `selectedOutpoints[]`, and `selectedChoices[]`.
-- `NO_EXACT_MATCH`: the complete bounded search found no exact subset for the requested amount. Refresh the ticker balance before offering a separate inscription.
-- `SEARCH_LIMIT_EXCEEDED`: the search reached 100,000 distinct amount states. Show the returned choices without claiming that no exact subset exists.
-
-Use only a current service-returned exact combination for a direct transfer.
-
 ## `wallet send`
 
-### Intent
+Transfer BRC-20 with one current exact combination returned by `wallet utxo brc20-transferable`. Proceed when one combination is returned; ask the user to choose when several are returned. Before the second confirmation, if a selected outpoint is no longer available, show the refreshed plan and ask again; afterward, follow the 10-second BTC/BRC-20 confirmation reuse rule in [wallet.md](wallet.md).
 
-Transfer BRC-20 with a current exact combination returned by `wallet utxo brc20-transferable`. If one combination is returned, proceed to preview; if several are returned, ask the user to select one. If any selected outpoint is no longer available after refresh, show the new plan and ask again.
+The initial command refreshes the selected outpoints, validates their availability, uniqueness, and amount sum, signs, and returns ordinary `confirming` before broadcast. Display the complete confirmation, then end with: `Confirm broadcasting and creating this inscription at the current fee rate? To change it, reply with a new sat/vB value.` Execute `next` only after explicit confirmation. If the user supplies a new sat/vB value, rerun without `--force`, display the fresh preview, and state: `The custom fee rate applies only to this transaction and does not change the default fee rate for future transactions.` After the user confirms that refreshed preview, apply the 10-second BTC/BRC-20 confirmation reuse rule in [wallet.md](wallet.md).
+
+The confirmed continuation returns `state=PENDING`, `txHash`, and `orderId`.
 
 ### Syntax
 
@@ -95,15 +79,7 @@ onchainos wallet send --chain bitcoin --contract-token <btc-brc20-ticker> --read
 | `--from` | No | Active wallet address | Sender Bitcoin address. |
 | `--force` | Continuation only | Disabled | Use only through the exact `next` returned after explicit confirmation. |
 
-### Response
-
-The CLI refreshes the transferable list, resolves every selected outpoint, rejects duplicates, verifies their token amount sum, and prepares one transaction.
-
-The initial command signs and returns ordinary `confirming` before broadcast. The Agent **MUST** display the complete confirmation, then end with: `Confirm broadcasting and creating this inscription at the current fee rate? To change it, reply with a new sat/vB value.` Execute `next` only after explicit confirmation.
-
-If the user supplies a new sat/vB value, rerun the initial command with `--fee-rate <value>` and without `--force`, display the complete fresh preview, and state: `The custom fee rate applies only to this transaction and does not change the default fee rate for future transactions.`
-
-The confirmed continuation returns `state=PENDING`, `txHash`, and `orderId`. Query a submitted direct transfer through the shared wallet history flow, not inscription status:
+Query a submitted direct transfer through the shared wallet history flow, not inscription status:
 
 ```bash
 onchainos wallet history --chain bitcoin (--tx-hash <hash> | --order-id <id>)
@@ -111,9 +87,11 @@ onchainos wallet history --chain bitcoin (--tx-hash <hash> | --order-id <id>)
 
 ## `wallet inscription create`
 
-### Intent
+Create a standalone asynchronous transfer inscription to the current Bitcoin address only after an explicit inscription request. If no direct-transfer combination exists, refresh the ticker balance before offering this command.
 
-Create a standalone asynchronous transfer inscription to the current Bitcoin address when the requested amount needs a new transferable inscription. Do not start this command merely because an exact direct-transfer combination is unavailable; refresh the ticker balance first and proceed only for an explicit inscription request.
+Run initially without `--force`. It stops after `unsignedInfo` and returns ordinary `confirming` with `scene="btc_inscription"`; `preview.feeReadable` is nullable, and nothing has been signed or submitted. Display the complete preview and the same fee-rate prompt and one-transaction fee statement used by `wallet send`. A new sat/vB value requires a fresh preview without `--force`. After the user confirms that refreshed preview, apply the 10-second BTC/BRC-20 confirmation reuse rule in [wallet.md](wallet.md).
+
+The confirmed `next` signs, calls `sign-tx`, and batch-broadcasts the ordered inscription transactions. Show returned `state=INSCRIBING`, `txHash`, `orderId`, `broadcasts`, and `nextSteps.checkInscriptionStatus` verbatim, render the submission template, and stop. Do not query automatically or auto-send after `READY_TO_TRANSFER`.
 
 ### Syntax
 
@@ -133,12 +111,7 @@ onchainos wallet inscription create --chain bitcoin --token-address <btc-brc20-t
 | `--operation-token` | Continuation only | — | Use only when supplied by the exact `next` returned after preview. |
 | `--force` | Continuation only | Disabled | Use only through the exact `next` returned after explicit confirmation. |
 
-### Response
-
-1. Run the initial command without `--force`. It stops after `unsignedInfo` and returns ordinary `confirming` with `scene="btc_inscription"`; `preview.feeReadable` is nullable. It has not signed or submitted. Display the complete preview, then end with: `Confirm broadcasting and creating this inscription at the current fee rate? To change it, reply with a new sat/vB value.`
-2. Continue only after explicit confirmation. If the user supplies a new sat/vB value, rerun the initial command with `--fee-rate <value>` and without `--force`, display the complete fresh preview, and state: `The custom fee rate applies only to this transaction and does not change the default fee rate for future transactions.`
-3. After explicit confirmation, `next` completes local signing, calls `sign-tx`, and batch-broadcasts the ordered inscription transactions. Submitted output contains `state=INSCRIBING`, top-level `txHash` and `orderId`, ordered `broadcasts`, and `nextSteps.checkInscriptionStatus`; show returned identifiers and the status continuation verbatim.
-4. Render the template below, including its prompt for the user to request a result check, then stop. Do not query the result automatically or auto-send after `READY_TO_TRANSFER`.
+### Submission template
 
 Translate this template to the user's language. Substitute only returned values and the fee from the confirmed preview; omit a line when its value is unavailable.
 
@@ -160,9 +133,7 @@ ${nextSteps.checkInscriptionStatus}
 
 ## `wallet inscription status`
 
-### Intent
-
-Check one submitted BRC-20 transfer inscription after the user asks for its result.
+Check one submitted BRC-20 transfer inscription after the user asks for its result. Run once; if still pending, show the current status and returned continuation, then stop. Do not loop, poll, sleep, or promise automatic checks. Status can be `INSCRIBING`, `WAITING_CONFIRMATION`, `WAITING_INDEXER`, `READY_TO_TRANSFER`, `FAILED`, or `UNKNOWN`; `READY_TO_TRANSFER` supplies read-only `nextSteps.queryBrc20TransferableUtxos` to refresh the transferable list.
 
 ### Syntax
 
@@ -177,9 +148,3 @@ onchainos wallet inscription status --chain bitcoin (--tx-hash <hash> | --order-
 | `--chain` | Yes | — | Use `bitcoin`. |
 | `--tx-hash` | One ID required | — | Reveal transaction hash. |
 | `--order-id` | One ID required | — | Reveal order ID. |
-
-### Response
-
-Run the returned status command once. If the result is still pending, render the current status and its returned continuation command, then stop again. Do not loop, poll, sleep, or promise a later automatic check.
-
-Status can be `INSCRIBING`, `WAITING_CONFIRMATION`, `WAITING_INDEXER`, `READY_TO_TRANSFER`, `FAILED`, or `UNKNOWN`. `READY_TO_TRANSFER` supplies read-only `nextSteps.queryBrc20TransferableUtxos`, which refreshes the transferable list for the returned token address.
