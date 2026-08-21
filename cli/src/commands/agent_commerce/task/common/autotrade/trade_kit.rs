@@ -11,7 +11,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use crate::asset_class::AssetClass;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// Skill-pack repository used by user-facing install guidance.
@@ -120,6 +120,20 @@ fn find_cli(home: &Path, path_var: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Resolve the helper exactly as Trade Kit does, without invoking the `okx
+/// auth` wrapper (which may perform a binary update check before `status`).
+fn auth_binary_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("OKX_AUTH_BIN").filter(|path| !path.is_empty()) {
+        return Some(PathBuf::from(path));
+    }
+    let name = if cfg!(windows) {
+        "okx-auth.exe"
+    } else {
+        "okx-auth"
+    };
+    dirs::home_dir().map(|home| home.join(".okx").join("bin").join(name))
 }
 
 /// Sanitized result of `okx list-tools --json`. It retains only version and tool
@@ -239,6 +253,50 @@ pub fn parse_runtime_asset_classes(values: &[String]) -> Result<Vec<AssetClass>,
     Ok(classes)
 }
 
+/// Trading environment used by the selected Trade Kit command. `Configured`
+/// preserves the CLI's profile/env resolution for compatibility; execution
+/// paths should pass `Live` or `Demo` explicitly whenever that intent is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TradeEnvironment {
+    Configured,
+    Live,
+    Demo,
+}
+
+impl TradeEnvironment {
+    pub fn parse(value: &str) -> Result<Self, &'static str> {
+        match value {
+            "configured" => Ok(Self::Configured),
+            "live" => Ok(Self::Live),
+            "demo" => Ok(Self::Demo),
+            _ => Err("environment must be configured, live, or demo"),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Configured => "configured",
+            Self::Live => "live",
+            Self::Demo => "demo",
+        }
+    }
+
+    pub fn is_explicit(self) -> bool {
+        matches!(self, Self::Live | Self::Demo)
+    }
+
+    fn account_args(self) -> Vec<&'static str> {
+        let mut args = vec!["account", "config", "--json"];
+        match self {
+            Self::Configured => {}
+            Self::Live => args.push("--live"),
+            Self::Demo => args.push("--demo"),
+        }
+        args
+    }
+}
+
 fn missing_capabilities(snapshot: &CapabilitySnapshot, class: AssetClass) -> Vec<String> {
     required_capabilities(class)
         .iter()
@@ -294,6 +352,7 @@ pub struct RuntimeReadiness {
     pub schema_version: u8,
     pub tool: &'static str,
     pub asset_classes: Vec<AssetClass>,
+    pub environment: TradeEnvironment,
     pub readiness: RuntimeState,
     pub ready: bool,
     pub reason: RuntimeReason,
@@ -316,6 +375,8 @@ pub enum RuntimeReason {
     CapabilityMissing,
     AuthRequired,
     TradePermissionRequired,
+    #[serde(rename = "oauth_trade_scope_required")]
+    OAuthTradeScopeRequired,
     PermissionResponseInvalid,
     AuthProbeTimeout,
     AuthProbeUnavailable,
@@ -367,12 +428,14 @@ impl RuntimeRemediation {
         }
     }
 
-    fn retry(classes: &[AssetClass]) -> Self {
+    fn retry(classes: &[AssetClass], environment: TradeEnvironment) -> Self {
         let mut command = "onchainos agent trade-kit-readiness".to_string();
         for class in classes {
             command.push_str(" --asset-class ");
             command.push_str(class.as_str());
         }
+        command.push_str(" --environment ");
+        command.push_str(environment.as_str());
         Self {
             install: None,
             upgrade: None,
@@ -386,6 +449,7 @@ impl RuntimeRemediation {
 impl RuntimeReadiness {
     fn all(
         classes: &[AssetClass],
+        environment: TradeEnvironment,
         readiness: RuntimeState,
         reason: RuntimeReason,
         version: Option<String>,
@@ -394,11 +458,12 @@ impl RuntimeReadiness {
             .iter()
             .map(|class| AssetReadinessCheck::new(*class, readiness, reason, Vec::new()))
             .collect();
-        Self::from_checks(classes, version, checks)
+        Self::from_checks(classes, environment, version, checks)
     }
 
     fn from_checks(
         classes: &[AssetClass],
+        environment: TradeEnvironment,
         version: Option<String>,
         asset_checks: Vec<AssetReadinessCheck>,
     ) -> Self {
@@ -413,11 +478,12 @@ impl RuntimeReadiness {
                 missing_capabilities.push(capability.clone());
             }
         }
-        let remediation = remediation_for(reason, classes);
+        let remediation = remediation_for(reason, classes, environment);
         Self {
             schema_version: READINESS_SCHEMA_VERSION,
             tool: "trade_kit",
             asset_classes: classes.to_vec(),
+            environment,
             readiness,
             ready,
             reason,
@@ -451,14 +517,20 @@ fn aggregate_result(checks: &[AssetReadinessCheck]) -> (RuntimeState, RuntimeRea
         ))
 }
 
-fn remediation_for(reason: RuntimeReason, classes: &[AssetClass]) -> Option<RuntimeRemediation> {
+fn remediation_for(
+    reason: RuntimeReason,
+    classes: &[AssetClass],
+    environment: TradeEnvironment,
+) -> Option<RuntimeRemediation> {
     match reason {
         RuntimeReason::Ready => None,
         RuntimeReason::CliMissing => Some(RuntimeRemediation::install()),
         RuntimeReason::UpgradeRequired | RuntimeReason::CapabilityMissing => {
             Some(RuntimeRemediation::upgrade())
         }
-        RuntimeReason::AuthRequired | RuntimeReason::TradePermissionRequired => {
+        RuntimeReason::AuthRequired
+        | RuntimeReason::TradePermissionRequired
+        | RuntimeReason::OAuthTradeScopeRequired => {
             Some(RuntimeRemediation::authenticate())
         }
         RuntimeReason::AuthorizationNotChecked
@@ -466,7 +538,9 @@ fn remediation_for(reason: RuntimeReason, classes: &[AssetClass]) -> Option<Runt
         | RuntimeReason::DiscoveryFailed
         | RuntimeReason::PermissionResponseInvalid
         | RuntimeReason::AuthProbeTimeout
-        | RuntimeReason::AuthProbeUnavailable => Some(RuntimeRemediation::retry(classes)),
+        | RuntimeReason::AuthProbeUnavailable => {
+            Some(RuntimeRemediation::retry(classes, environment))
+        }
     }
 }
 
@@ -484,8 +558,12 @@ enum CommandOutcome {
 }
 
 /// Re-check Trade Kit after venue selection and before every selected Trade Kit
-/// delivery. One batch shares discovery and at most one private read-only call.
-pub async fn probe_runtime(classes: &[AssetClass]) -> RuntimeReadiness {
+/// delivery. One batch shares discovery and one private read-only account call;
+/// an empty OAuth permission field adds one bounded local auth-status call.
+pub async fn probe_runtime(
+    classes: &[AssetClass],
+    environment: TradeEnvironment,
+) -> RuntimeReadiness {
     let mut unique = Vec::new();
     for class in classes {
         if *class != AssetClass::Defi && !unique.contains(class) {
@@ -495,6 +573,7 @@ pub async fn probe_runtime(classes: &[AssetClass]) -> RuntimeReadiness {
     if unique.is_empty() {
         return RuntimeReadiness::all(
             &[],
+            environment,
             RuntimeState::VerificationUnknown,
             RuntimeReason::AuthorizationNotChecked,
             None,
@@ -504,15 +583,20 @@ pub async fn probe_runtime(classes: &[AssetClass]) -> RuntimeReadiness {
     let Some(cli_path) = local.cli_path else {
         return RuntimeReadiness::all(
             &unique,
+            environment,
             RuntimeState::Missing,
             RuntimeReason::CliMissing,
             None,
         );
     };
-    probe_runtime_with_cli(&cli_path, &unique).await
+    probe_runtime_with_cli(&cli_path, &unique, environment).await
 }
 
-async fn probe_runtime_with_cli(cli_path: &Path, classes: &[AssetClass]) -> RuntimeReadiness {
+async fn probe_runtime_with_cli(
+    cli_path: &Path,
+    classes: &[AssetClass],
+    environment: TradeEnvironment,
+) -> RuntimeReadiness {
     let snapshot = match evaluate_discovery(
         run_bounded(
             cli_path,
@@ -524,13 +608,20 @@ async fn probe_runtime_with_cli(cli_path: &Path, classes: &[AssetClass]) -> Runt
     ) {
         Ok(snapshot) => snapshot,
         Err(reason) => {
-            return RuntimeReadiness::all(classes, RuntimeState::VerificationUnknown, reason, None)
+            return RuntimeReadiness::all(
+                classes,
+                environment,
+                RuntimeState::VerificationUnknown,
+                reason,
+                None,
+            )
         }
     };
 
     if !version_at_least(&snapshot.version, MIN_OAUTH_CLI_VERSION) {
         return RuntimeReadiness::all(
             classes,
+            environment,
             RuntimeState::Incompatible,
             RuntimeReason::UpgradeRequired,
             Some(snapshot.version),
@@ -562,21 +653,29 @@ async fn probe_runtime_with_cli(cli_path: &Path, classes: &[AssetClass]) -> Runt
         .iter()
         .any(|check| check.readiness == RuntimeState::Incompatible)
     {
-        return RuntimeReadiness::from_checks(classes, Some(snapshot.version), capability_checks);
+        return RuntimeReadiness::from_checks(
+            classes,
+            environment,
+            Some(snapshot.version),
+            capability_checks,
+        );
     }
 
     let version = snapshot.version;
+    let account_args = environment.account_args();
     evaluate_auth(
         classes,
+        environment,
         version,
         run_bounded(
             cli_path,
-            &["account", "config", "--json"],
+            &account_args,
             AUTH_TIMEOUT,
             Some(MAX_AUTH_STDOUT),
         )
         .await,
     )
+    .await
 }
 
 fn evaluate_discovery(discovery: CommandOutcome) -> Result<CapabilitySnapshot, RuntimeReason> {
@@ -596,8 +695,9 @@ fn evaluate_discovery(discovery: CommandOutcome) -> Result<CapabilitySnapshot, R
     }
 }
 
-fn evaluate_auth(
+async fn evaluate_auth(
     classes: &[AssetClass],
+    environment: TradeEnvironment,
     version: String,
     outcome: CommandOutcome,
 ) -> RuntimeReadiness {
@@ -608,20 +708,46 @@ fn evaluate_auth(
             stdout_truncated,
             ..
         } => match parse_trade_permission(&stdout, stdout_truncated) {
-            Ok(true) => RuntimeReadiness::all(
+            Ok(TradePermission::Granted) => RuntimeReadiness::all(
                 classes,
+                environment,
                 RuntimeState::Ready,
                 RuntimeReason::Ready,
                 Some(version),
             ),
-            Ok(false) => RuntimeReadiness::all(
+            Ok(TradePermission::Denied) => RuntimeReadiness::all(
                 classes,
+                environment,
                 RuntimeState::NeedsConfiguration,
                 RuntimeReason::TradePermissionRequired,
                 Some(version),
             ),
+            Ok(TradePermission::OAuthScopeRequired) => {
+                let Some(auth_binary) = auth_binary_path() else {
+                    return RuntimeReadiness::all(
+                        classes,
+                        environment,
+                        RuntimeState::VerificationUnknown,
+                        RuntimeReason::AuthProbeUnavailable,
+                        Some(version),
+                    );
+                };
+                evaluate_oauth_status(
+                    classes,
+                    environment,
+                    version,
+                    run_bounded(
+                        &auth_binary,
+                        &["status", "--json"],
+                        AUTH_TIMEOUT,
+                        Some(MAX_AUTH_STDOUT),
+                    )
+                    .await,
+                )
+            }
             Err(()) => RuntimeReadiness::all(
                 classes,
+                environment,
                 RuntimeState::VerificationUnknown,
                 RuntimeReason::PermissionResponseInvalid,
                 Some(version),
@@ -629,12 +755,14 @@ fn evaluate_auth(
         },
         CommandOutcome::TimedOut => RuntimeReadiness::all(
             classes,
+            environment,
             RuntimeState::VerificationUnknown,
             RuntimeReason::AuthProbeTimeout,
             Some(version),
         ),
         CommandOutcome::Unavailable => RuntimeReadiness::all(
             classes,
+            environment,
             RuntimeState::VerificationUnknown,
             RuntimeReason::AuthProbeUnavailable,
             Some(version),
@@ -651,7 +779,85 @@ fn evaluate_auth(
             } else {
                 RuntimeState::VerificationUnknown
             };
-            RuntimeReadiness::all(classes, readiness, reason, Some(version))
+            RuntimeReadiness::all(classes, environment, readiness, reason, Some(version))
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TradePermission {
+    Granted,
+    /// A non-empty permission list without the exact `trade` token. This is
+    /// conclusive and must not fall back to a possibly stale OAuth session,
+    /// because Trade Kit prefers configured AK credentials.
+    Denied,
+    /// OAuth account-config responses may authenticate successfully while
+    /// leaving `perm` empty. Only this shape may consult OAuth scopes.
+    OAuthScopeRequired,
+}
+
+fn evaluate_oauth_status(
+    classes: &[AssetClass],
+    environment: TradeEnvironment,
+    version: String,
+    outcome: CommandOutcome,
+) -> RuntimeReadiness {
+    match outcome {
+        CommandOutcome::Finished {
+            success: true,
+            stdout,
+            stdout_truncated,
+            ..
+        } => match parse_oauth_trade_scope(&stdout, stdout_truncated, environment) {
+            Ok(true) => RuntimeReadiness::all(
+                classes,
+                environment,
+                RuntimeState::Ready,
+                RuntimeReason::Ready,
+                Some(version),
+            ),
+            Ok(false) => RuntimeReadiness::all(
+                classes,
+                environment,
+                RuntimeState::NeedsConfiguration,
+                RuntimeReason::OAuthTradeScopeRequired,
+                Some(version),
+            ),
+            Err(()) => RuntimeReadiness::all(
+                classes,
+                environment,
+                RuntimeState::VerificationUnknown,
+                RuntimeReason::PermissionResponseInvalid,
+                Some(version),
+            ),
+        },
+        CommandOutcome::TimedOut => RuntimeReadiness::all(
+            classes,
+            environment,
+            RuntimeState::VerificationUnknown,
+            RuntimeReason::AuthProbeTimeout,
+            Some(version),
+        ),
+        CommandOutcome::Unavailable => RuntimeReadiness::all(
+            classes,
+            environment,
+            RuntimeState::VerificationUnknown,
+            RuntimeReason::AuthProbeUnavailable,
+            Some(version),
+        ),
+        CommandOutcome::Finished {
+            success: false,
+            stderr,
+            stderr_truncated,
+            ..
+        } => {
+            let reason = classify_auth_failure(&stderr, stderr_truncated);
+            let readiness = if reason == RuntimeReason::AuthRequired {
+                RuntimeState::NeedsConfiguration
+            } else {
+                RuntimeState::VerificationUnknown
+            };
+            RuntimeReadiness::all(classes, environment, readiness, reason, Some(version))
         }
     }
 }
@@ -660,7 +866,10 @@ fn evaluate_auth(
 /// The CLI currently prints the response `data` array directly; an envelope with
 /// `data` is accepted for environments that request output context. No other
 /// account field survives this function.
-fn parse_trade_permission(stdout: &[u8], stdout_truncated: bool) -> Result<bool, ()> {
+fn parse_trade_permission(
+    stdout: &[u8],
+    stdout_truncated: bool,
+) -> Result<TradePermission, ()> {
     if stdout_truncated {
         return Err(());
     }
@@ -680,10 +889,52 @@ fn parse_trade_permission(stdout: &[u8], stdout_truncated: bool) -> Result<bool,
         .and_then(|row| row.get("perm"))
         .and_then(serde_json::Value::as_str)
         .ok_or(())?;
-    Ok(permission
+    let tokens: Vec<&str> = permission
         .split(',')
         .map(str::trim)
-        .any(|token| token == "trade"))
+        .filter(|token| !token.is_empty())
+        .collect();
+    if tokens.contains(&"trade") {
+        Ok(TradePermission::Granted)
+    } else if tokens.is_empty() {
+        Ok(TradePermission::OAuthScopeRequired)
+    } else {
+        Ok(TradePermission::Denied)
+    }
+}
+
+/// Parse the documented `okx auth status --json` shape. In configured mode the
+/// effective live/demo profile is intentionally opaque, so both trading scopes
+/// are required to prove readiness without guessing the selected environment.
+fn parse_oauth_trade_scope(
+    stdout: &[u8],
+    stdout_truncated: bool,
+    environment: TradeEnvironment,
+) -> Result<bool, ()> {
+    if stdout_truncated {
+        return Err(());
+    }
+    let raw = std::str::from_utf8(stdout).map_err(|_| ())?;
+    let value: serde_json::Value = serde_json::from_str(raw).map_err(|_| ())?;
+    let status = value.get("status").and_then(serde_json::Value::as_str).ok_or(())?;
+    if status != "logged_in" {
+        return Ok(false);
+    }
+    let scopes = value
+        .get("scopes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(())?;
+    let has = |required: &str| {
+        scopes
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|scope| scope == required)
+    };
+    Ok(match environment {
+        TradeEnvironment::Live => has("live:trade"),
+        TradeEnvironment::Demo => has("demo:trade"),
+        TradeEnvironment::Configured => has("live:trade") && has("demo:trade"),
+    })
 }
 
 async fn run_bounded(
@@ -1085,6 +1336,7 @@ mod tests {
     fn runtime_result_serialization_keeps_the_stable_top_level_shape() {
         let ready = serde_json::to_value(RuntimeReadiness::all(
             &[AssetClass::Spot, AssetClass::Perp],
+            TradeEnvironment::Live,
             RuntimeState::Ready,
             RuntimeReason::Ready,
             Some("1.4.2".to_string()),
@@ -1092,6 +1344,7 @@ mod tests {
         .unwrap();
         assert_eq!(ready["schemaVersion"], 2);
         assert_eq!(ready["assetClasses"], serde_json::json!(["spot", "perp"]));
+        assert_eq!(ready["environment"], "live");
         assert_eq!(ready["readiness"], "ready");
         assert_eq!(ready["ready"], true);
         assert!(ready["checkedAt"].as_str().is_some());
@@ -1102,6 +1355,7 @@ mod tests {
 
         let missing = serde_json::to_value(RuntimeReadiness::all(
             &[AssetClass::Spot],
+            TradeEnvironment::Configured,
             RuntimeState::Missing,
             RuntimeReason::CliMissing,
             None,
@@ -1129,13 +1383,16 @@ mod tests {
         assert_eq!(timed_out, RuntimeReason::DiscoveryTimeout);
         let result = RuntimeReadiness::all(
             &[AssetClass::Spot, AssetClass::Perp],
+            TradeEnvironment::Demo,
             RuntimeState::VerificationUnknown,
             timed_out,
             None,
         );
         assert_eq!(
             result.remediation.unwrap().retry.as_deref(),
-            Some("onchainos agent trade-kit-readiness --asset-class spot --asset-class perp")
+            Some(
+                "onchainos agent trade-kit-readiness --asset-class spot --asset-class perp --environment demo"
+            )
         );
 
         let oversized = evaluate_discovery(CommandOutcome::Finished {
@@ -1163,19 +1420,23 @@ mod tests {
     fn permission_parser_requires_an_exact_trade_token_and_accepts_both_shapes() {
         assert_eq!(
             parse_trade_permission(br#"[{"perm":"read_only, trade","uid":"SECRET"}]"#, false),
-            Ok(true)
+            Ok(TradePermission::Granted)
         );
         assert_eq!(
             parse_trade_permission(br#"{"data":[{"perm":"trade"}]}"#, false),
-            Ok(true)
+            Ok(TradePermission::Granted)
         );
         for raw in [
             br#"[{"perm":"read_only"}]"#.as_slice(),
             br#"[{"perm":"trade_history"}]"#.as_slice(),
             br#"[{"perm":"read_only,trader"}]"#.as_slice(),
         ] {
-            assert_eq!(parse_trade_permission(raw, false), Ok(false));
+            assert_eq!(parse_trade_permission(raw, false), Ok(TradePermission::Denied));
         }
+        assert_eq!(
+            parse_trade_permission(br#"[{"perm":""}]"#, false),
+            Ok(TradePermission::OAuthScopeRequired)
+        );
         for raw in [
             br#"[{"uid":"no-perm"}]"#.as_slice(),
             br#"{"data":[]}"#.as_slice(),
@@ -1190,7 +1451,37 @@ mod tests {
     }
 
     #[test]
-    fn auth_failures_are_distinct_from_transport_failures() {
+    fn oauth_scope_parser_is_environment_specific_and_fails_closed_when_configured() {
+        let live_only = br#"{"status":"logged_in","scopes":["live:trade","demo:read"]}"#;
+        assert_eq!(
+            parse_oauth_trade_scope(live_only, false, TradeEnvironment::Live),
+            Ok(true)
+        );
+        assert_eq!(
+            parse_oauth_trade_scope(live_only, false, TradeEnvironment::Demo),
+            Ok(false)
+        );
+        assert_eq!(
+            parse_oauth_trade_scope(live_only, false, TradeEnvironment::Configured),
+            Ok(false)
+        );
+        let both = br#"{"status":"logged_in","scopes":["live:trade","demo:trade"]}"#;
+        assert_eq!(
+            parse_oauth_trade_scope(both, false, TradeEnvironment::Configured),
+            Ok(true)
+        );
+        assert_eq!(
+            parse_oauth_trade_scope(
+                br#"{"status":"not_logged_in","scopes":[]}"#,
+                false,
+                TradeEnvironment::Live
+            ),
+            Ok(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_failures_are_distinct_from_transport_failures() {
         for message in [
             "Error: No credentials found.",
             "Error: Partial API credentials detected.",
@@ -1207,6 +1498,7 @@ mod tests {
             );
             let readiness = evaluate_auth(
                 &[AssetClass::Spot],
+                TradeEnvironment::Live,
                 "1.4.2".to_string(),
                 CommandOutcome::Finished {
                     success: false,
@@ -1215,7 +1507,8 @@ mod tests {
                     stdout_truncated: false,
                     stderr_truncated: false,
                 },
-            );
+            )
+            .await;
             assert_eq!(readiness.reason, RuntimeReason::AuthRequired);
             let remediation = readiness.remediation.unwrap();
             assert_eq!(remediation.oauth, Some(OAUTH_LOGIN_COMMAND));
@@ -1236,8 +1529,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn auth_timeout_and_unavailable_results_never_offer_login_guidance() {
+    #[tokio::test]
+    async fn auth_timeout_and_unavailable_results_never_offer_login_guidance() {
         for outcome in [
             CommandOutcome::TimedOut,
             CommandOutcome::Unavailable,
@@ -1256,7 +1549,13 @@ mod tests {
                 stderr_truncated: false,
             },
         ] {
-            let readiness = evaluate_auth(&[AssetClass::Spot], "1.4.2".to_string(), outcome);
+            let readiness = evaluate_auth(
+                &[AssetClass::Spot],
+                TradeEnvironment::Configured,
+                "1.4.2".to_string(),
+                outcome,
+            )
+            .await;
             assert!(!readiness.ready);
             assert!(matches!(
                 readiness.reason,

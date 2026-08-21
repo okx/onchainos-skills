@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::autotrade::{
-    amount::Decimal, consent, grants,
+    amount::Decimal, consent, grants, trade_kit::TradeEnvironment,
 };
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
@@ -36,6 +36,7 @@ pub struct CreateSubscribeParams {
     pub autotrade_amount: Option<String>,
     pub autotrade_cap: Option<String>,
     pub autotrade_quote: Option<String>,
+    pub autotrade_environment: Option<String>,
     pub format: String,
     pub exclude_device: Option<Vec<String>>,
 }
@@ -48,6 +49,7 @@ struct SubscriptionAutoTradeConfig {
     amount: Option<String>,
     cap: Option<String>,
     quote: String,
+    environment: Option<TradeEnvironment>,
 }
 
 impl CreateSubscribeParams {
@@ -104,12 +106,19 @@ impl CreateSubscribeParams {
         if !consent::QUOTE_WHITELIST.contains(&quote.as_str()) {
             bail!("--autotrade-quote must be one of: usdt | usdc");
         }
+        let environment = match self.autotrade_environment.as_deref() {
+            None => None,
+            Some(value) if value.eq_ignore_ascii_case("live") => Some(TradeEnvironment::Live),
+            Some(value) if value.eq_ignore_ascii_case("demo") => Some(TradeEnvironment::Demo),
+            Some(_) => bail!("--autotrade-environment must be one of: live | demo"),
+        };
 
         Ok(SubscriptionAutoTradeConfig {
             mode,
             amount,
             cap,
             quote,
+            environment,
         })
     }
 }
@@ -130,12 +139,13 @@ fn persist_subscription_autotrade(
     job_id: &str,
     config: &SubscriptionAutoTradeConfig,
 ) -> Result<()> {
-    consent::write_consent_with_trade_amount(
+    consent::write_consent_policy(
         job_id,
         config.mode,
         config.cap.as_deref(),
         config.amount.as_deref(),
         Some(&config.quote),
+        config.environment,
         super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
     )?;
     let grant_result = match config.mode {
@@ -222,7 +232,8 @@ pub async fn handle_create_subscribe(
     let autotrade_requested = params.autotrade_mode.is_some()
         || params.autotrade_amount.is_some()
         || params.autotrade_cap.is_some()
-        || params.autotrade_quote.is_some();
+        || params.autotrade_quote.is_some()
+        || params.autotrade_environment.is_some();
     let autotrade_config = params.autotrade_config()?;
 
     let json_mode = params.format.eq_ignore_ascii_case("json");
@@ -520,6 +531,7 @@ mod tests {
                 autotrade_amount,
                 autotrade_cap,
                 autotrade_quote,
+                autotrade_environment,
                 format,
                 exclude_device,
             } => {
@@ -538,6 +550,7 @@ mod tests {
                 assert!(autotrade_amount.is_none());
                 assert!(autotrade_cap.is_none());
                 assert!(autotrade_quote.is_none());
+                assert!(autotrade_environment.is_none());
                 assert_eq!(format, "");
                 assert!(exclude_device.is_none());
             }
@@ -648,6 +661,7 @@ mod tests {
             autotrade_amount: None,
             autotrade_cap: None,
             autotrade_quote: None,
+            autotrade_environment: None,
             format: "json".to_string(),
             exclude_device: None,
         }
@@ -775,6 +789,7 @@ mod tests {
             autotrade_amount: None,
             autotrade_cap: None,
             autotrade_quote: None,
+            autotrade_environment: None,
             format: "json".to_string(),
             exclude_device: None,
         };
@@ -806,9 +821,15 @@ mod tests {
             "--autotrade-amount", "20.00",
             "--autotrade-cap", "50",
             "--autotrade-quote", "USDT",
+            "--autotrade-environment", "demo",
         ]);
         let super::super::TaskCommand::CreateSubscribe {
-            autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, ..
+            autotrade_mode,
+            autotrade_amount,
+            autotrade_cap,
+            autotrade_quote,
+            autotrade_environment,
+            ..
         } = cli.cmd else {
             panic!("expected CreateSubscribe");
         };
@@ -816,6 +837,7 @@ mod tests {
         assert_eq!(autotrade_amount.as_deref(), Some("20.00"));
         assert_eq!(autotrade_cap.as_deref(), Some("50"));
         assert_eq!(autotrade_quote.as_deref(), Some("USDT"));
+        assert_eq!(autotrade_environment.as_deref(), Some("demo"));
     }
 
     #[test]
@@ -827,6 +849,18 @@ mod tests {
         assert_eq!(config.amount.as_deref(), Some("20"));
         assert_eq!(config.cap, None);
         assert_eq!(config.quote, "usdt");
+        assert_eq!(config.environment, None);
+    }
+
+    #[test]
+    fn autotrade_config_rejects_non_explicit_trade_environment() {
+        let mut params = params_fixture(None);
+        params.autotrade_environment = Some("configured".to_string());
+        assert!(params
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("--autotrade-environment must be one of: live | demo"));
     }
 
     #[test]
@@ -884,6 +918,7 @@ mod tests {
             amount: Some("20".to_string()),
             cap: Some("50".to_string()),
             quote: "usdt".to_string(),
+            environment: Some(TradeEnvironment::Demo),
         };
         persist_subscription_autotrade("job-subscribe-auto", &config).unwrap();
 
@@ -894,6 +929,7 @@ mod tests {
         assert_eq!(stored.trade_amount_u.as_deref(), Some("20"));
         assert_eq!(stored.cap_u.as_deref(), Some("50"));
         assert_eq!(stored.quote_token.as_deref(), Some("usdt"));
+        assert_eq!(stored.trade_environment, config.environment);
         assert!(grants::check_grant("job-subscribe-auto", "dex", "buy", "50").is_ok());
         assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "50").is_ok());
         assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "51").is_ok());

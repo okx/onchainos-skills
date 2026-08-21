@@ -11,6 +11,18 @@ fn write_fake_okx(path: &std::path::Path) {
     fs::write(
         path,
         r#"#!/bin/sh
+if [ "$1 $2" = "list-tools --json" ]; then
+  printf '%s\n' '{"version":"1.4.2","modules":[{"commands":[{"toolName":"market_get_ticker"},{"toolName":"spot_place_order"}]}]}'
+  exit 0
+fi
+if [ "$1 $2 $3" = "account config --json" ]; then
+  if [ "$FAKE_OKX_MODE" = "not_ready" ]; then
+    printf '%s\n' '[{"perm":"read_only"}]'
+  else
+    printf '%s\n' '[{"perm":"trade"}]'
+  fi
+  exit 0
+fi
 case "$FAKE_OKX_MODE" in
   nonzero)
     echo '{"ok":false,"error":"post-run failure"}'
@@ -130,6 +142,7 @@ fn preflight_amount_mismatch_is_persisted_without_spawning_trade() {
             "capU": "10",
             "tradeAmountU": "1",
             "quoteToken": "usdt",
+            "tradeEnvironment": "live",
             "createdAt": now,
             "expiresAt": now + 3600
         }),
@@ -189,6 +202,91 @@ fn preflight_amount_mismatch_is_persisted_without_spawning_trade() {
     assert!(home
         .join("autotrade/outcomes/job1/delivery-1.json")
         .exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn trade_kit_execution_requires_and_matches_persisted_environment() {
+    let (_guard, home) = fresh_home("cli_autotrade_trade_environment_binding");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    for delivery in ["delivery-missing-env", "delivery-mismatch-env"] {
+        write_context(&home, delivery);
+    }
+    write_json(
+        &home.join("autotrade/grants/job1.json"),
+        &json!({
+            "version": 1,
+            "jobId": "job1",
+            "grants": {"trade_kit": {"maxBuy": "10", "maxSell": "10"}},
+            "createdAt": now,
+            "expiresAt": now + 3600
+        }),
+    );
+    let bin = home.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_fake_okx(&bin.join("okx"));
+
+    let write_policy = |environment: Option<&str>| {
+        let mut policy = json!({
+            "version": 2,
+            "jobId": "job1",
+            "mode": "auto",
+            "capU": "10",
+            "tradeAmountU": "1",
+            "quoteToken": "usdt",
+            "createdAt": now,
+            "expiresAt": now + 3600
+        });
+        if let Some(environment) = environment {
+            policy["tradeEnvironment"] = json!(environment);
+        }
+        write_json(&home.join("autotrade/consent/job1.json"), &policy);
+    };
+    let run = |delivery: &str| {
+        let mut command = onchainos();
+        let output = scrubbed(&mut command, &home)
+            .env("PATH", &bin)
+            .env("FAKE_OKX_MODE", "receipt")
+            .args([
+                "agent",
+                "autotrade-execute",
+                "--job-id",
+                "job1",
+                "--delivery-id",
+                delivery,
+                "--venue",
+                "trade_kit",
+                "--action",
+                "buy",
+                "--amount",
+                "1",
+                "--command-json",
+                r#"["spot","place","--sz","1","--side","buy","--live"]"#,
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        parse_stdout_json(&output)
+    };
+
+    write_policy(None);
+    let missing = run("delivery-missing-env");
+    assert_eq!(missing["data"]["status"], "failed_before_submit");
+    assert!(missing["data"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("persisted live or demo environment"));
+
+    write_policy(Some("demo"));
+    let mismatch = run("delivery-mismatch-env");
+    assert_eq!(mismatch["data"]["status"], "failed_before_submit");
+    assert!(mismatch["data"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("does not match persisted consent"));
 }
 
 #[test]
@@ -419,7 +517,12 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    for delivery in ["delivery-nonzero", "delivery-status", "delivery-receipt"] {
+    for delivery in [
+        "delivery-nonzero",
+        "delivery-status",
+        "delivery-receipt",
+        "delivery-not-ready",
+    ] {
         write_context(&home, delivery);
     }
     write_json(
@@ -431,6 +534,7 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
             "capU": "10",
             "tradeAmountU": "1",
             "quoteToken": "usdt",
+            "tradeEnvironment": "live",
             "createdAt": now,
             "expiresAt": now + 3600
         }),
@@ -468,7 +572,7 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
                 "--amount",
                 "1",
                 "--command-json",
-                r#"["order","--sz","1","--side","buy"]"#,
+                r#"["spot","place","--sz","1","--side","buy","--live"]"#,
             ])
             .output()
             .unwrap();
@@ -488,4 +592,10 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
         run("delivery-receipt", "receipt")["data"]["status"],
         "submitted"
     );
+    let not_ready = run("delivery-not-ready", "not_ready");
+    assert_eq!(not_ready["data"]["status"], "failed_before_submit");
+    assert!(not_ready["data"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("trade_permission_required"));
 }

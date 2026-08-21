@@ -567,6 +567,65 @@ fn autotrade_non_pause_modes_still_require_agent_id() {
 }
 
 #[test]
+fn autotrade_environment_set_upgrades_only_the_existing_policy() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_environment_set");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let consent_dir = dir.join("autotrade/consent");
+    std::fs::create_dir_all(&consent_dir).unwrap();
+    std::fs::write(
+        consent_dir.join("job_environment.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": 1,
+            "jobId": "job_environment",
+            "mode": "auto",
+            "capU": "20",
+            "tradeAmountU": "10",
+            "quoteToken": "usdc",
+            "createdAt": now,
+            "expiresAt": now + 3600
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job_environment",
+            "--agent-id",
+            "8315",
+            "--mode",
+            "environment-set",
+            "--environment",
+            "demo",
+        ])
+        .output()
+        .expect("persist Trade Kit environment");
+    let result = common::assert_ok_and_extract_data(&output);
+    assert_eq!(result["tradeEnvironment"], "demo");
+
+    let stored: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(consent_dir.join("job_environment.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(stored["version"], 2);
+    assert_eq!(stored["mode"], "auto");
+    assert_eq!(stored["capU"], "20");
+    assert_eq!(stored["tradeAmountU"], "10");
+    assert_eq!(stored["quoteToken"], "usdc");
+    assert_eq!(stored["tradeEnvironment"], "demo");
+    assert_eq!(stored["createdAt"], now);
+    assert_eq!(stored["expiresAt"], now + 3600);
+}
+
+#[test]
 fn autotrade_auto_accepts_missing_cap_and_authorizes_any_positive_amount() {
     let (_home, dir) = fresh_home("cli_agent_autotrade_unbounded_auto");
     let mut set = onchainos();

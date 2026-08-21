@@ -18,7 +18,8 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use super::amount::Decimal;
-use super::{consent, grants};
+use super::{consent, grants, trade_kit};
+use crate::asset_class::AssetClass;
 use crate::commands::agent_commerce::task::common::{okx_a2a, user_lang};
 
 const OUTCOME_VERSION: u32 = 1;
@@ -661,6 +662,32 @@ fn validate_bound_intent(
     Ok(())
 }
 
+fn trade_kit_readiness_context(
+    args: &[String],
+) -> Result<(AssetClass, trade_kit::TradeEnvironment)> {
+    let live = args.iter().any(|arg| arg == "--live");
+    let demo = args.iter().any(|arg| arg == "--demo");
+    let environment = match (live, demo) {
+        (true, false) => trade_kit::TradeEnvironment::Live,
+        (false, true) => trade_kit::TradeEnvironment::Demo,
+        (true, true) => bail!("Trade Kit command cannot select both live and demo trading"),
+        (false, false) => {
+            bail!("Trade Kit execution requires an explicit --live or --demo flag")
+        }
+    };
+    let asset_class = args
+        .windows(2)
+        .find_map(|pair| match (pair[0].as_str(), pair[1].as_str()) {
+            ("spot", "place") => Some(AssetClass::Spot),
+            ("swap" | "futures", "place") => Some(AssetClass::Perp),
+            ("option", "place") => Some(AssetClass::Option),
+            ("event", "place") => Some(AssetClass::Prediction),
+            _ => None,
+        })
+        .context("Trade Kit execution requires a supported place-order command")?;
+    Ok((asset_class, environment))
+}
+
 fn authorize(
     job_id: &str,
     delivery_id: &str,
@@ -668,7 +695,7 @@ fn authorize(
     action: &str,
     amount: &str,
     execution_mode: ExecutionMode,
-) -> Result<String> {
+) -> Result<(String, Option<trade_kit::TradeEnvironment>)> {
     let normalized = Decimal::parse(amount)
         .context("invalid automatic execution amount")?
         .to_plain_string();
@@ -713,7 +740,7 @@ fn authorize(
         }
         (_, consent::ConsentMode::Decline) => bail!("copy-trade execution is declined"),
     }
-    Ok(normalized)
+    Ok((normalized, policy.trade_environment))
 }
 
 fn json_from_stdout(stdout: &[u8]) -> Option<Value> {
@@ -1140,8 +1167,13 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
     }
 
     let started = now_secs();
-    let prepared = (|| -> Result<(String, PathBuf, Vec<String>)> {
-        let amount = authorize(
+    let prepared = (|| -> Result<(
+        String,
+        PathBuf,
+        Vec<String>,
+        Option<(AssetClass, trade_kit::TradeEnvironment)>,
+    )> {
+        let (amount, authorized_environment) = authorize(
             request.job_id,
             request.delivery_id,
             request.venue,
@@ -1158,9 +1190,20 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
             request.execution_mode,
             &args,
         )?;
-        Ok((amount, program, args))
+        let trade_kit_context = if request.venue == "trade_kit" {
+            let context = trade_kit_readiness_context(&args)?;
+            let expected = authorized_environment
+                .context("Trade Kit execution requires a persisted live or demo environment")?;
+            if context.1 != expected {
+                bail!("Trade Kit command environment does not match persisted consent");
+            }
+            Some(context)
+        } else {
+            None
+        };
+        Ok((amount, program, args, trade_kit_context))
     })();
-    let (amount, program, args) = match prepared {
+    let (amount, program, args, trade_kit_context) = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
             let amount = Decimal::parse(request.amount)
@@ -1177,6 +1220,24 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
             return persist_and_notify(&outcome_path, outcome);
         }
     };
+    if let Some((asset_class, environment)) = trade_kit_context {
+        let readiness = trade_kit::probe_runtime(&[asset_class], environment).await;
+        if !readiness.ready {
+            let reason = serde_json::to_value(readiness.reason)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "verification_unknown".to_string());
+            let outcome = make_outcome(
+                &request,
+                amount,
+                OutcomeStatus::FailedBeforeSubmit,
+                None,
+                Some(format!("Trade Kit readiness failed: {reason}")),
+                started,
+            );
+            return persist_and_notify(&outcome_path, outcome);
+        }
+    }
     if let Err(error) = update_execution_phase(
         request.job_id,
         request.delivery_id,
@@ -1717,6 +1778,40 @@ mod tests {
             &polymarket
         )
         .is_err());
+    }
+
+    #[test]
+    fn trade_kit_execution_requires_a_supported_command_and_explicit_environment() {
+        let live_spot = vec![
+            "spot".into(),
+            "place".into(),
+            "--sz".into(),
+            "1".into(),
+            "--live".into(),
+        ];
+        assert_eq!(
+            trade_kit_readiness_context(&live_spot).unwrap(),
+            (AssetClass::Spot, trade_kit::TradeEnvironment::Live)
+        );
+
+        let demo_perp = vec!["swap".into(), "place".into(), "--demo".into()];
+        assert_eq!(
+            trade_kit_readiness_context(&demo_perp).unwrap(),
+            (AssetClass::Perp, trade_kit::TradeEnvironment::Demo)
+        );
+
+        for invalid in [
+            vec!["spot".into(), "place".into()],
+            vec![
+                "spot".into(),
+                "place".into(),
+                "--live".into(),
+                "--demo".into(),
+            ],
+            vec!["order".into(), "--live".into()],
+        ] {
+            assert!(trade_kit_readiness_context(&invalid).is_err());
+        }
     }
 
     #[test]

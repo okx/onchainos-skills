@@ -21,6 +21,8 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
   the final confirmed subscription setup may be converted into that snapshot, but must be complete and
   persisted before execution. `serviceDescription`, ASP text, and deliverable text are never trading
   consent.
+- For Trade Kit, `consentSnapshot.tradeEnvironment` is the only authorized `live`/`demo` target. Never
+  infer or override it from conversation history, Trade Kit defaults, ASP text, or the deliverable.
 
 ## Required flow
 
@@ -42,16 +44,34 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
    - If and only if the resolved tool is Trade Kit, run this mandatory gate now, before writing the route
      cache, requesting consent, checking a grant, or invoking any `okx` order command:
 
+     First inspect `consentSnapshot.tradeEnvironment`:
+     - `live` or `demo`: reuse it without asking again.
+     - absent: ask the user once which environment to authorize, then persist the exact answer without
+       changing the rest of the policy:
+
+       ```bash
+       onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <agentId> \
+         --mode environment-set --environment <live|demo>
+       ```
+
+       Re-enter this delivery only after the command succeeds and the refreshed snapshot carries the
+       chosen environment. Never default to `live`. Changing a stored environment requires another
+       explicit user request and the same command.
+
      ```bash
-     onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]
+     onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>
      ```
 
      Pass one flag for the current route's canonical class. If this one retained execution covers more
      than one Trade Kit class, pass every class as a repeated flag; the command performs one discovery
-     and at most one private authorization check for the batch. Run it on **every delivery**, including a
+     and at most one private authorization check plus an OAuth-scope fallback for the batch. Pass the
+     persisted `live`/`demo` environment that the final `okx` command will use; the inner command
+     must carry the matching `--live`/`--demo` flag. Run it on **every delivery**, including a
      reused cached route and both manual and automatic modes; never reuse or persist a prior readiness
      result. Continue only when `ok:true` and `data.readiness == "ready"`; every requested
      `assetChecks[]` row must also be ready. Non-Trade-Kit routes never run this command.
+     The `autotrade-execute` gateway independently repeats this gate immediately before spawning any
+     Trade Kit order; the playbook check remains required so the user receives remediation before consent.
 
      If readiness is not `ready`, preserve and display the deliverable, mark its execution as blocked,
      and stop before route persistence, consent, grant, or order execution:
@@ -145,6 +165,8 @@ Auto mode additionally requires the auto-trade grant. Manual mode is accepted on
 policy is manual and must be used after the user's one-time/manual confirmation; it never uses an auto grant.
 `one_time` is reserved for the over-cap A option and additionally requires a short-lived permit bound to the
 exact `jobId + deliveryId + amount`, created with `autotrade-once-authorize`; it never changes the future cap.
+For `venue=trade_kit`, the gateway also requires the inner command's `--live`/`--demo` environment to
+exactly match the persisted consent environment before it repeats readiness or starts the process.
 The outer CLI envelope's `ok:true` means the outcome was handled and persisted; it does not mean the trade
 succeeded. Inspect `data.status`, and treat only `submitted` as submitted. `failed_before_submit` and
 `unknown_after_submit` are not successful trades.

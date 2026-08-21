@@ -493,6 +493,7 @@ agent create-subscribe \
   [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
   [--autotrade-mode <auto|manual>] [--autotrade-amount <decimal-number>] \
   [--autotrade-cap <decimal-number>] [--autotrade-quote <usdt|usdc>] \
+  [--autotrade-environment <live|demo>] \
   [--format json]
 ```
 
@@ -511,6 +512,7 @@ agent create-subscribe \
 | `--autotrade-amount` | No | - | Optional positive human-readable quote amount for each signal |
 | `--autotrade-cap` | No | - | Optional positive per-signal cap metadata; stored but not enforced |
 | `--autotrade-quote` | No | `usdt` | `usdt` or `usdc` |
+| `--autotrade-environment` | For confirmed Trade Kit routes | - | User-authorized target: `live` or `demo`; never inferred or defaulted |
 
 > **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
 
@@ -674,21 +676,31 @@ agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<
 Check the selected Trade Kit runtime before confirmation when directed by `autoTradePreflight`, and
 again before every Trade Kit delivery. The command runs one bounded machine-readable discovery,
 enforces the minimum OAuth-capable version and each requested class's capabilities, then runs at most
-one private read-only account check for the batch. It parses only the account `perm` field and requires
-the exact comma-separated token `trade`; all other private output is discarded. Trade Kit itself
+one private read-only account check for the batch. A non-empty account `perm` must contain the exact
+comma-separated token `trade`. An OAuth response may return an empty `perm`; only then the command
+checks the native `okx-auth status --json` result and requires `live:trade` or `demo:trade` for the selected environment.
+It never falls back from a non-trading AK permission set to a stale OAuth session. Trade Kit itself
 selects complete AK credentials first or OAuth otherwise. Partial/invalid AK configuration follows
-that upstream AK-first behavior and does not fall back to OnchainOS-managed OAuth. OnchainOS never
+that upstream AK-first behavior. OnchainOS never
 reads, returns, logs, or persists credentials or private account output.
 
 ```
-agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]
+agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] [--environment <configured|live|demo>]
 ```
 
 `--asset-class` is required and repeatable; accepted canonical values are `spot`, `perp`,
-`prediction`, and `option`. Repeated values are de-duplicated in caller order. The schema-version-2
-response includes `readiness`, compatibility `ready`, stable `reason`, `checkedAt`, `version`,
+`prediction`, and `option`. Repeated values are de-duplicated in caller order. `--environment` defaults
+to `configured` for compatibility, but execution flows must pass `live` or `demo` explicitly and use the
+matching Trade Kit flag. In configured OAuth mode, both `live:trade` and `demo:trade` are required because
+the effective environment is otherwise opaque. The schema-version-2
+response includes `environment`, `readiness`, compatibility `ready`, stable `reason`, `checkedAt`, `version`,
 `missingCapabilities`, `remediation`, and `assetChecks[]`. Branch on
 `data.readiness == "ready"`, not process status; all requested classes must be ready.
+
+`agent autotrade-execute` enforces the same gate again for Trade Kit immediately before spawning the
+order command. It derives the asset class from the supported `spot|swap|futures|option|event place`
+command and requires exactly one explicit `--live` or `--demo`; a non-ready result is persisted as
+`failed_before_submit` and the order process is not started.
 
 The five states are `ready`, `missing`, `verification_unknown`, `needs_configuration`, and
 `incompatible`. Authentication absence or a valid account response without exact `trade` permission is
@@ -1123,19 +1135,20 @@ in this MVP. This command never parses or replays a delivery;
 the active subscription signal skill owns the current execution turn.
 
 ```
-agent autotrade-consent-set --job-id <jobId> --mode <mode> [--agent-id <agentId>] [--cap <amount>] [--trade-amount <amount>] [--ttl-sec <secs>] [--plugin <id>] [--quote <usdc|usdt>] [--tool <tool>]
+agent autotrade-consent-set --job-id <jobId> --mode <mode> [--agent-id <agentId>] [--cap <amount>] [--trade-amount <amount>] [--ttl-sec <secs>] [--plugin <id>] [--quote <usdc|usdt>] [--environment <live|demo>] [--tool <tool>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--job-id` | Yes | - | Subscription job ID |
-| `--mode` | Yes | - | `auto`, `manual`, `decline`, `pause`, `cap-adjust`, or `plugin-ready-check` (`plugin-approved` compatibility alias) |
+| `--mode` | Yes | - | `auto`, `manual`, `decline`, `pause`, `cap-adjust`, `environment-set`, or `plugin-ready-check` (`plugin-approved` compatibility alias) |
 | `--agent-id` | Except `pause` | - | Buyer agent ID; omitted for `pause`, required for every other mode |
 | `--cap` | No | - | Optional per-trade cap metadata in quote-stablecoin units |
 | `--trade-amount` | No | - | Optional policy amount; the model/tool must still read and validate each delivery |
 | `--ttl-sec` | No | 31536000 | Consent lifetime in seconds (default 365 days) |
 | `--plugin` | For plugin readiness | - | Plugin-store ID for `plugin-ready-check` or its compatibility alias |
 | `--quote` | No | usdt | Quote stablecoin: `usdc` or `usdt` |
+| `--environment` | For `environment-set`; optional for policy writes | - | User-authorized Trade Kit target: `live` or `demo`; omission preserves an existing value |
 | `--tool` | No | - | Deprecated and rejected; model routes are stored with `subscription-route-set` |
 
 ### subscription-route-set / subscription-route-clear

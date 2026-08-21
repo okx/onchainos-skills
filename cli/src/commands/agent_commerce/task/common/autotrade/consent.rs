@@ -26,12 +26,13 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use super::super::user_lang::Lang;
 use super::amount::Decimal;
 use super::grants::job_id_is_safe;
-use super::super::user_lang::Lang;
+use super::trade_kit::TradeEnvironment;
 
 /// The current consent-file schema version.
-pub const CONSENT_VERSION: u32 = 1;
+pub const CONSENT_VERSION: u32 = 2;
 
 /// Versioned, trusted metadata for a saved Active-subscription delivery.
 ///
@@ -179,7 +180,7 @@ pub enum ConsentMode {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConsentFile {
-    /// This version = 1; a higher version ⇒ reject (treat as unreadable).
+    /// Versions newer than [`CONSENT_VERSION`] are rejected as unreadable.
     pub version: u32,
     pub job_id: String,
     pub mode: ConsentMode,
@@ -199,6 +200,11 @@ pub struct ConsentFile {
     /// ("A 每笔100 用USDC"); absent ⇒ the default, USDT (PRD denomination).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_token: Option<String>,
+    /// User-authorized Trade Kit target. Older records predate this field and
+    /// remain valid for non-Trade-Kit routes; a Trade Kit execution must fail
+    /// closed until the user chooses `live` or `demo` once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trade_environment: Option<TradeEnvironment>,
     /// seconds since epoch.
     pub created_at: u64,
     /// seconds since epoch.
@@ -242,6 +248,8 @@ pub struct ConsentSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quote_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub trade_environment: Option<TradeEnvironment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
@@ -255,6 +263,7 @@ impl ConsentSnapshot {
             cap_u: None,
             trade_amount_u: None,
             quote_token: None,
+            trade_environment: None,
             created_at: None,
             expires_at: None,
         }
@@ -362,6 +371,12 @@ pub fn load_consent(job_id: &str) -> Result<Option<ConsentFile>, ConsentError> {
     if file.job_id != job_id {
         return Err(ConsentError(CONSENT_JOB_MISMATCH));
     }
+    if file
+        .trade_environment
+        .is_some_and(|environment| !environment.is_explicit())
+    {
+        return Err(ConsentError(CONSENT_UNREADABLE));
+    }
     // Expired ⇒ re-ask (first-time), not a hard error.
     if file.expires_at <= now_secs() {
         return Ok(None);
@@ -379,6 +394,7 @@ pub fn consent_snapshot(job_id: &str) -> ConsentSnapshot {
             cap_u: file.cap_u,
             trade_amount_u: file.trade_amount_u,
             quote_token: file.quote_token,
+            trade_environment: file.trade_environment,
             created_at: Some(file.created_at),
             expires_at: Some(file.expires_at),
         },
@@ -453,6 +469,29 @@ pub fn write_consent_with_trade_amount(
     quote: Option<&str>,
     ttl_sec: u64,
 ) -> anyhow::Result<()> {
+    write_consent_policy(
+        job_id,
+        mode,
+        cap_u,
+        trade_amount_u,
+        quote,
+        None,
+        ttl_sec,
+    )
+}
+
+/// Persist consent and optionally replace the user-authorized Trade Kit
+/// environment. An omitted environment preserves an existing choice so cap,
+/// amount, quote, and renewal rewrites cannot silently clear it.
+pub fn write_consent_policy(
+    job_id: &str,
+    mode: ConsentMode,
+    cap_u: Option<&str>,
+    trade_amount_u: Option<&str>,
+    quote: Option<&str>,
+    trade_environment: Option<TradeEnvironment>,
+    ttl_sec: u64,
+) -> anyhow::Result<()> {
     if !job_id_is_safe(job_id) {
         anyhow::bail!("invalid job id");
     }
@@ -503,6 +542,14 @@ pub fn write_consent_with_trade_amount(
         }
         None => existing.as_ref().and_then(|c| c.quote_token.clone()),
     };
+    if trade_environment.is_some_and(|environment| !environment.is_explicit()) {
+        anyhow::bail!("trade environment must be live or demo");
+    }
+    let trade_environment = trade_environment.or_else(|| {
+        existing
+            .as_ref()
+            .and_then(|consent| consent.trade_environment)
+    });
 
     let created_at = now_secs();
     let file = ConsentFile {
@@ -512,6 +559,7 @@ pub fn write_consent_with_trade_amount(
         cap_u,
         trade_amount_u,
         quote_token,
+        trade_environment,
         created_at,
         expires_at: created_at + ttl_sec,
     };
@@ -520,6 +568,28 @@ pub fn write_consent_with_trade_amount(
     let body = serde_json::to_string_pretty(&file)?;
     crate::home::write_secure(&path, body.as_bytes())?;
     Ok(())
+}
+
+/// Update only the Trade Kit environment on an existing live consent record.
+/// This is used when an older policy first reaches a Trade Kit delivery: the
+/// user's one-time environment choice must not rewrite amount, cap, quote,
+/// mode, or expiry.
+pub fn write_trade_environment(
+    job_id: &str,
+    trade_environment: TradeEnvironment,
+) -> anyhow::Result<ConsentFile> {
+    if !trade_environment.is_explicit() {
+        anyhow::bail!("trade environment must be live or demo");
+    }
+    let mut file = load_consent(job_id)
+        .map_err(|error| anyhow::anyhow!(error.0))?
+        .ok_or_else(|| anyhow::anyhow!("no live consent"))?;
+    file.version = CONSENT_VERSION;
+    file.trade_environment = Some(trade_environment);
+    let path = consent_path(job_id).map_err(|error| anyhow::anyhow!(error.0))?;
+    let body = serde_json::to_string_pretty(&file)?;
+    crate::home::write_secure(&path, body.as_bytes())?;
+    Ok(file)
 }
 
 fn delivery_id_is_safe(delivery_id: &str) -> bool {
@@ -796,6 +866,7 @@ mod tests {
                     cap_u: None,
                     trade_amount_u: None,
                     quote_token: None,
+                    trade_environment: None,
                     created_at: None,
                     expires_at: None,
                 }
@@ -822,8 +893,44 @@ mod tests {
             assert_eq!(snapshot.cap_u.as_deref(), Some("50"));
             assert_eq!(snapshot.trade_amount_u.as_deref(), Some("12.5"));
             assert_eq!(snapshot.quote_token.as_deref(), Some("usdc"));
+            assert_eq!(snapshot.trade_environment, None);
             assert!(snapshot.created_at.is_some());
             assert!(snapshot.expires_at.is_some());
+        });
+    }
+
+    #[test]
+    fn trade_environment_upgrade_preserves_existing_policy_and_snapshot_exposes_it() {
+        with_home(|| {
+            write_consent_with_trade_amount(
+                "job1",
+                ConsentMode::Auto,
+                Some("50"),
+                Some("12.5"),
+                Some("USDC"),
+                3600,
+            )
+            .unwrap();
+            let before = load_consent("job1").unwrap().unwrap();
+
+            let upgraded = write_trade_environment("job1", TradeEnvironment::Demo).unwrap();
+            assert_eq!(upgraded.version, CONSENT_VERSION);
+            assert_eq!(upgraded.mode, before.mode);
+            assert_eq!(upgraded.cap_u, before.cap_u);
+            assert_eq!(upgraded.trade_amount_u, before.trade_amount_u);
+            assert_eq!(upgraded.quote_token, before.quote_token);
+            assert_eq!(upgraded.created_at, before.created_at);
+            assert_eq!(upgraded.expires_at, before.expires_at);
+            assert_eq!(upgraded.trade_environment, Some(TradeEnvironment::Demo));
+            assert_eq!(
+                consent_snapshot("job1").trade_environment,
+                Some(TradeEnvironment::Demo)
+            );
+
+            write_consent("job1", ConsentMode::Auto, Some("75"), None, 1800).unwrap();
+            let rewritten = load_consent("job1").unwrap().unwrap();
+            assert_eq!(rewritten.cap_u.as_deref(), Some("75"));
+            assert_eq!(rewritten.trade_environment, Some(TradeEnvironment::Demo));
         });
     }
 
@@ -1103,6 +1210,14 @@ mod tests {
             assert_eq!(
                 load_consent("job1").unwrap_err(),
                 ConsentError(CONSENT_VERSION_TOO_NEW)
+            );
+
+            let mut configured = good.clone();
+            configured.trade_environment = Some(TradeEnvironment::Configured);
+            std::fs::write(&path, serde_json::to_string(&configured).unwrap()).unwrap();
+            assert_eq!(
+                load_consent("job1").unwrap_err(),
+                ConsentError(CONSENT_UNREADABLE)
             );
 
             let mut mism = good;

@@ -178,12 +178,13 @@ Collect/infer:
    - Parse mode, fixed per-signal quote amount, per-signal cap, and quote currency (`USDT` or `USDC`) only from user-authored context. When the ASP explicitly asks for a field and the user has not answered it, ask for only the missing fields in one localized natural-language question, then **END THIS TURN**. Never use A/B/C, numbered choices, or a decision card.
    - Amount and cap are optional unless the ASP explicitly asks the user to configure them. Each supplied value must be a positive decimal. Do not compare amount with cap. Quote defaults to `USDT`.
    - Retain `autoTradePreflight` only as advisory runtime information. Never block subscription creation on a missing/unconfigured tool and never run installation or configuration during this flow.
+   - When `autoTradePreflight.tradeKitProbe.mode=probe_before_confirmation`, collect exactly one user-authored Trade Kit environment: `live` for real trading or `demo` for simulated trading. Never infer it from ASP text, Trade Kit defaults, or readiness output. If it is missing, ask once together with any other missing execution settings, then **END THIS TURN**. Retain the confirmed value as `tradeEnvironment`.
 
    The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the advisory notice and continue creating the subscription. Do not retry `task-service-select` solely to obtain preflight data. There is no standalone binary execution field to collect and no `--copy-trade` argument to pass.
    **Deterministic Trade Kit probe decision:** inspect `autoTradePreflight.tradeKitProbe.mode` after the service has been selected:
    - `probe_before_confirmation` → build one command from every token in `tradeKitProbe.assetClasses`, preserving the array order:
      ```text
-     onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]
+     onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>
      ```
      Run it now. Do not persist its result. A non-ready result is an advisory notice only.
    - `deferred_until_venue_selection` → Do not run a Trade Kit probe for `deferred_until_venue_selection`; the user has not selected that venue. Keep Trade Kit as `verification_unknown/authorization_not_checked` and continue the non-blocking subscription flow.
@@ -212,6 +213,7 @@ Step 5 -- Subscription confirmation form
 | Signal execution | Automatic (default) / Manual (only after an explicit opt-out) |
 | Per-signal amount | <amount> <USDT/USDC> / Not set |
 | Per-signal cap | <cap> <USDT/USDC> / Not set (stored only; not enforced) |
+| Trade Kit environment | Live / Demo / Not applicable |
 
 > Confirm? Once confirmed, the subscription will be created on-chain.
 
@@ -226,7 +228,7 @@ Step 5.5 -- Route by user decision (separate turn)
 - Edit serviceParams → update → Step 5
 - Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → Step 4 → Step 5
 - Edit autoRenew → update → Step 5
-- Edit automatic signal execution / amount / cap / quote currency → update the user-authored value; cap remains informational → Step 5
+- Edit automatic signal execution / amount / cap / quote currency / Trade Kit environment → update the user-authored value; cap remains informational → Step 5
 
 ================================================
 Step 6 -- Publish subscription (create-subscribe)
@@ -246,9 +248,10 @@ onchainos agent create-subscribe \\
   --autotrade-mode <auto|manual> \\
   [--autotrade-amount \"<decimal-number>\"] \\
   [--autotrade-cap \"<decimal-number>\"] \\
-  [--autotrade-quote <usdt|usdc>]
+  [--autotrade-quote <usdt|usdc>] \
+  [--autotrade-environment <live|demo>]
 ```
-- Always pass the confirmed mode; it defaults to `auto`. Pass amount, cap, and quote only when present in user-authored context. ASP suggestions alone are never values.
+- Always pass the confirmed mode; it defaults to `auto`. Pass amount, cap, quote, and Trade Kit environment only when present in user-authored context. ASP suggestions alone are never values.
 - `--autotrade-amount` and `--autotrade-cap` are human-readable quote amounts selected by `--autotrade-quote`: pass a decimal number only (for example `10` or `20.5`), never minimal units and never a `USDT`/`USDC` suffix.
 - Do not compare `--autotrade-amount` with `--autotrade-cap`. A stored cap is informational in this MVP.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
@@ -516,6 +519,8 @@ mod tests {
         assert!(out.contains("| Signal execution | Automatic (default)"));
         assert!(out.contains("| Per-signal amount |"));
         assert!(out.contains("| Per-signal cap |"));
+        assert!(out.contains("| Trade Kit environment | Live / Demo / Not applicable |"));
+        assert!(out.contains("--autotrade-environment <live|demo>"));
         assert!(out.contains("Do not compare amount with cap"));
         assert!(out.contains("Never use A/B/C, numbered choices, or a decision card"));
         // Preflight readiness stays advisory and never becomes confirmation fields.
@@ -561,7 +566,7 @@ mod tests {
         assert!(out.contains("probe_before_confirmation"));
         assert!(out.contains("deferred_until_venue_selection"));
         assert!(out.contains(
-            "onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]"
+            "onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>"
         ));
         assert!(out.contains("Do not run a Trade Kit probe for `deferred_until_venue_selection`"));
         assert!(out.contains("never opens a choice card"));

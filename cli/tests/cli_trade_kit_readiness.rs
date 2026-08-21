@@ -41,8 +41,12 @@ fi
 
 if [ "$1 $2 $3" = "account config --json" ]; then
   case "$FAKE_TRADE_KIT_MODE" in
-    ready|oauth-ready)
+    ready)
       printf '%s\n' '[{"perm":"read_only,trade","uid":"AUTH_STDOUT_CANARY"}]'
+      exit 0
+      ;;
+    oauth-ready|oauth-live-only|oauth-demo-only|oauth-scope-missing|oauth-not-logged-in|oauth-malformed)
+      printf '%s\n' '[{"perm":"","uid":"AUTH_STDOUT_CANARY"}]'
       exit 0
       ;;
     api-key-ready)
@@ -94,6 +98,35 @@ if [ "$1 $2 $3" = "account config --json" ]; then
   esac
 fi
 
+if [ "$1 $2" = "status --json" ]; then
+  case "$FAKE_TRADE_KIT_MODE" in
+    oauth-ready)
+      printf '%s\n' '{"status":"logged_in","scopes":["live:trade","demo:trade","market:read"]}'
+      exit 0
+      ;;
+    oauth-live-only)
+      printf '%s\n' '{"status":"logged_in","scopes":["live:trade","demo:read"]}'
+      exit 0
+      ;;
+    oauth-demo-only)
+      printf '%s\n' '{"status":"logged_in","scopes":["demo:trade","live:read"]}'
+      exit 0
+      ;;
+    oauth-scope-missing)
+      printf '%s\n' '{"status":"logged_in","scopes":["live:read","demo:read"]}'
+      exit 0
+      ;;
+    oauth-not-logged-in)
+      printf '%s\n' '{"status":"not_logged_in","scopes":[]}'
+      exit 0
+      ;;
+    oauth-malformed)
+      printf '%s\n' '{not-json'
+      exit 0
+      ;;
+  esac
+fi
+
 printf '%s\n' 'unexpected fake TradeKit invocation' >&2
 exit 70
 "#,
@@ -111,6 +144,18 @@ fn run_readiness(
     mode: &str,
     classes: &[&str],
 ) -> std::process::Output {
+    run_readiness_in(home, bin, log, mode, classes, "configured")
+}
+
+#[cfg(unix)]
+fn run_readiness_in(
+    home: &Path,
+    bin: &Path,
+    log: &Path,
+    mode: &str,
+    classes: &[&str],
+    environment: &str,
+) -> std::process::Output {
     let mut cmd = common::onchainos();
     common::scrubbed(&mut cmd, home)
         // `probe_local` intentionally checks bounded per-user npm locations in
@@ -121,7 +166,13 @@ fn run_readiness(
         .env("PATH", bin)
         .env("FAKE_TRADE_KIT_MODE", mode)
         .env("FAKE_TRADE_KIT_LOG", log)
-        .args(["agent", "trade-kit-readiness"]);
+        .env("OKX_AUTH_BIN", bin.join("okx"))
+        .args([
+            "agent",
+            "trade-kit-readiness",
+            "--environment",
+            environment,
+        ]);
     for class in classes {
         cmd.args(["--asset-class", class]);
     }
@@ -151,6 +202,10 @@ fn assert_v2_shape(data: &Value) {
     assert!(data["checkedAt"].as_str().is_some());
     assert!(data["assetClasses"].is_array());
     assert!(data["assetChecks"].is_array());
+    assert!(matches!(
+        data["environment"].as_str(),
+        Some("configured" | "live" | "demo")
+    ));
     assert_eq!(data["ready"], data["readiness"] == "ready");
 }
 
@@ -177,7 +232,7 @@ fn missing_cli_returns_missing_without_spawning() {
 
 #[cfg(unix)]
 #[test]
-fn multi_asset_probe_deduplicates_and_calls_discovery_and_auth_once() {
+fn multi_asset_probe_deduplicates_and_uses_one_account_call() {
     for mode in ["oauth-ready", "api-key-ready"] {
         let (_guard, home) = common::fresh_home(&format!("trade-kit-readiness-{mode}"));
         let (bin, log) = install_fake_trade_kit(&home);
@@ -200,14 +255,93 @@ fn multi_asset_probe_deduplicates_and_calls_discovery_and_auth_once() {
 
         assert_not_exposed(&output, &home, "AUTH_STDOUT_CANARY");
         let calls = fs::read_to_string(log).unwrap();
-        assert_eq!(
-            calls.lines().collect::<Vec<_>>(),
-            [
+        let expected = if mode == "oauth-ready" {
+            vec![
                 "update=false args=list-tools --json",
                 "update=false args=account config --json",
-            ],
-            "mode={mode}"
+                "update=false args=status --json",
+            ]
+        } else {
+            vec![
+                "update=false args=list-tools --json",
+                "update=false args=account config --json",
+            ]
+        };
+        assert_eq!(calls.lines().collect::<Vec<_>>(), expected, "mode={mode}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn oauth_readiness_requires_the_scope_for_the_selected_environment() {
+    for (mode, environment, ready) in [
+        ("oauth-live-only", "live", true),
+        ("oauth-live-only", "demo", false),
+        ("oauth-demo-only", "demo", true),
+        ("oauth-demo-only", "live", false),
+        ("oauth-scope-missing", "live", false),
+        ("oauth-not-logged-in", "live", false),
+    ] {
+        let (_guard, home) =
+            common::fresh_home(&format!("trade-kit-oauth-{mode}-{environment}"));
+        let (bin, log) = install_fake_trade_kit(&home);
+        let output = run_readiness_in(&home, &bin, &log, mode, &["spot"], environment);
+        let data = data_from_success(&output);
+        assert_eq!(data["environment"], environment);
+        assert_eq!(data["ready"], ready, "mode={mode} env={environment}");
+        if ready {
+            assert_eq!(data["reason"], "ready");
+        } else {
+            assert_eq!(data["reason"], "oauth_trade_scope_required");
+        }
+        assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 3);
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(
+            calls.contains(&format!("args=account config --json --{environment}")),
+            "mode={mode} env={environment} calls={calls}"
         );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn api_key_readiness_uses_and_proves_the_selected_environment() {
+    for environment in ["live", "demo"] {
+        let (_guard, home) = common::fresh_home(&format!("trade-kit-ak-{environment}"));
+        let (bin, log) = install_fake_trade_kit(&home);
+        let data = data_from_success(&run_readiness_in(
+            &home,
+            &bin,
+            &log,
+            "api-key-ready",
+            &["spot"],
+            environment,
+        ));
+        assert_eq!(data["ready"], true, "env={environment}");
+        assert_eq!(data["environment"], environment);
+        let calls = fs::read_to_string(&log).unwrap();
+        assert_eq!(calls.lines().count(), 2);
+        assert!(calls.contains(&format!(
+            "args=account config --json --{environment}"
+        )));
+        assert!(!calls.contains("args=status --json"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn configured_oauth_mode_requires_both_trade_scopes() {
+    for (mode, ready) in [("oauth-ready", true), ("oauth-live-only", false)] {
+        let (_guard, home) = common::fresh_home(&format!("trade-kit-oauth-configured-{mode}"));
+        let (bin, log) = install_fake_trade_kit(&home);
+        let data = data_from_success(&run_readiness(
+            &home,
+            &bin,
+            &log,
+            mode,
+            &["spot"],
+        ));
+        assert_eq!(data["ready"], ready, "mode={mode}");
     }
 }
 
@@ -377,6 +511,20 @@ fn asset_class_is_required_and_aliases_are_rejected_before_probe() {
             &["asset class must be spot, perp, prediction, or option"],
         );
     }
+
+    let (_guard, home) = common::fresh_home("trade-kit-readiness-invalid-environment");
+    let output = common::scrubbed(&mut common::onchainos(), &home)
+        .args([
+            "agent",
+            "trade-kit-readiness",
+            "--asset-class",
+            "spot",
+            "--environment",
+            "paper",
+        ])
+        .output()
+        .expect("run unsupported readiness environment");
+    common::assert_error_contains(&output, &["environment must be configured, live, or demo"]);
 }
 
 #[test]
@@ -409,8 +557,7 @@ fn legacy_plugin_check_cannot_claim_trade_kit_runtime_readiness() {
 #[test]
 fn signal_playbook_gates_every_delivery_and_never_auto_replays_blocked_work() {
     let playbook = include_str!("../../skills/okx-ai/references/task-subscription-signal.md");
-    let command =
-        "onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]";
+    let command = "onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>";
     let gate = playbook
         .find(command)
         .expect("signal playbook must invoke the typed Trade Kit gate");

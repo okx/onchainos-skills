@@ -170,6 +170,9 @@ pub enum AgentCommand {
         /// Quote currency for amount/cap (`usdt` or `usdc`).
         #[arg(long = "autotrade-quote")]
         autotrade_quote: Option<String>,
+        /// User-authorized Trade Kit environment (`live` or `demo`).
+        #[arg(long = "autotrade-environment")]
+        autotrade_environment: Option<String>,
         #[arg(long, default_value = "")]
         format: String,
         /// Legacy compatibility input. Create-time device selection is rejected.
@@ -595,6 +598,10 @@ pub enum AgentCommand {
         /// Repeatable: spot | perp | prediction | option.
         #[arg(long = "asset-class", required = true, action = clap::ArgAction::Append)]
         asset_class: Vec<String>,
+        /// Target trading environment. Explicit live/demo is required by
+        /// execution flows; configured preserves the Trade Kit profile default.
+        #[arg(long, default_value = "configured")]
+        environment: String,
     },
 
     /// Check a per-trade amount against the buyer's written authorization (bespoke
@@ -641,7 +648,8 @@ pub enum AgentCommand {
     AutotradeConsentSet {
         #[arg(long = "job-id")]
         job_id: String,
-        /// `auto` | `manual` | `decline` | `pause` | `cap-adjust` | `plugin-ready-check`.
+        /// `auto` | `manual` | `decline` | `pause` | `cap-adjust` |
+        /// `environment-set` | `plugin-ready-check`.
         #[arg(long)]
         mode: String,
         /// Per-trade cap in quote-stablecoin units (USDT by default); required for `auto`.
@@ -669,6 +677,10 @@ pub enum AgentCommand {
         /// (or the default, USDT).
         #[arg(long)]
         quote: Option<String>,
+        /// User-authorized Trade Kit environment (`live` or `demo`). Omitted
+        /// values preserve the existing choice.
+        #[arg(long)]
+        environment: Option<String>,
     },
 
     /// Queue and push a delivery's consent/manual decision. The CLI adds a
@@ -1365,6 +1377,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             autotrade_amount,
             autotrade_cap,
             autotrade_quote,
+            autotrade_environment,
             format,
             exclude_device,
         } => {
@@ -1385,6 +1398,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     autotrade_amount,
                     autotrade_cap,
                     autotrade_quote,
+                    autotrade_environment,
                     format,
                     exclude_device,
                 },
@@ -1820,11 +1834,18 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             .await
         }
 
-        AgentCommand::TradeKitReadiness { asset_class } => {
+        AgentCommand::TradeKitReadiness {
+            asset_class,
+            environment,
+        } => {
             let asset_classes =
                 task::common::autotrade::trade_kit::parse_runtime_asset_classes(&asset_class)
                     .map_err(anyhow::Error::msg)?;
-            let result = task::common::autotrade::trade_kit::probe_runtime(&asset_classes).await;
+            let environment =
+                task::common::autotrade::trade_kit::TradeEnvironment::parse(&environment)
+                    .map_err(anyhow::Error::msg)?;
+            let result =
+                task::common::autotrade::trade_kit::probe_runtime(&asset_classes, environment).await;
             crate::output::success(result);
             Ok(())
         }
@@ -2144,13 +2165,27 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             plugin,
             tool,
             quote,
+            environment,
         } => {
             use task::common::autotrade::{consent, grants};
+            let trade_environment = environment
+                .as_deref()
+                .map(task::common::autotrade::trade_kit::TradeEnvironment::parse)
+                .transpose()
+                .map_err(anyhow::Error::msg)?;
+            if trade_environment.is_some_and(|environment| !environment.is_explicit()) {
+                anyhow::bail!("--environment must be one of: live | demo");
+            }
             if tool.is_some() {
                 anyhow::bail!("--tool is deprecated; use subscription-route-set");
             }
             if mode == "pause" {
-                if cap.is_some() || trade_amount.is_some() || plugin.is_some() || quote.is_some() {
+                if cap.is_some()
+                    || trade_amount.is_some()
+                    || plugin.is_some()
+                    || quote.is_some()
+                    || environment.is_some()
+                {
                     anyhow::bail!("pause does not accept policy arguments");
                 }
                 consent::clear_consent(&job_id);
@@ -2164,8 +2199,30 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             if agent_id.is_none() {
                 anyhow::bail!("--agent-id is required unless --mode pause");
             }
+            if mode == "environment-set" {
+                if cap.is_some()
+                    || trade_amount.is_some()
+                    || plugin.is_some()
+                    || quote.is_some()
+                {
+                    anyhow::bail!("environment-set accepts only --environment");
+                }
+                let trade_environment = trade_environment
+                    .ok_or_else(|| anyhow::anyhow!("--environment is required"))?;
+                let policy = consent::write_trade_environment(&job_id, trade_environment)?;
+                crate::output::success(serde_json::json!({
+                    "consentMode": policy.mode,
+                    "tradeEnvironment": trade_environment.as_str(),
+                    "replayed": false
+                }));
+                return Ok(());
+            }
             if mode == "plugin-ready-check" || mode == "plugin-approved" {
-                if cap.is_some() || trade_amount.is_some() || quote.is_some() {
+                if cap.is_some()
+                    || trade_amount.is_some()
+                    || quote.is_some()
+                    || environment.is_some()
+                {
                     anyhow::bail!("plugin-ready-check accepts only --plugin");
                 }
                 let plugin = plugin.ok_or_else(|| anyhow::anyhow!("--plugin is required"))?;
@@ -2195,7 +2252,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
             if mode == "cap-adjust" {
-                if trade_amount.is_some() || plugin.is_some() || quote.is_some() {
+                if trade_amount.is_some()
+                    || plugin.is_some()
+                    || quote.is_some()
+                    || environment.is_some()
+                {
                     anyhow::bail!("cap-adjust accepts only --cap");
                 }
                 let new_cap = cap
@@ -2243,14 +2304,18 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     None
                 }
             });
-            consent::write_consent_with_trade_amount(
+            consent::write_consent_policy(
                 &job_id,
                 mode_enum,
                 cap.as_deref(),
                 effective_amount,
                 quote.as_deref(),
+                trade_environment,
                 ttl_sec,
             )?;
+            let persisted_environment = consent::load_consent(&job_id)?
+                .and_then(|policy| policy.trade_environment)
+                .map(|value| value.as_str());
             match mode_enum {
                 consent::ConsentMode::Auto => {
                     grants::write_cap_grant(&job_id, cap.as_deref().unwrap_or_default(), ttl_sec)?
@@ -2261,7 +2326,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }
             consent::clear_pending_signal(&job_id);
             crate::output::success(
-                serde_json::json!({"consentMode":mode,"cap":cap,"replayed":false}),
+                serde_json::json!({
+                    "consentMode": mode,
+                    "cap": cap,
+                    "tradeEnvironment": persisted_environment,
+                    "replayed": false
+                }),
             );
             Ok(())
         }
