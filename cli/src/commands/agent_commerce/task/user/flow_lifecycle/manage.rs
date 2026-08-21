@@ -269,7 +269,7 @@ fn create_task_regular() -> String {
 Step 4 -- Regular field collection
 ================================================
 
-For regular tasks, collect Currency only. Derive Budget and Max budget from the selected service:
+For regular tasks, collect Currency internally but do not show it in the confirmation form. Derive Budget and Max budget from the selected service:
 
 1. **Payment token** (--currency): Only USDT / USDG. Fuzzy input (\"U\"/\"USD\") → ask \"USDT or USDG?\".
    - Validate: must match `feeTokenSymbol` from task-service-select. Mismatch → ask user to change token or designate another provider.
@@ -294,7 +294,6 @@ Step 5 -- Regular confirmation form
 | ASP | Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent |
 | Service params | <serviceParams readable display, or \"None\"> |
 | Service price | <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this row if feeAmount has a value) |
-| Payment token | <USDT or USDG> |
 
 Payment mode: A2A → `escrow`, A2MCP → `x402` (from serviceType; do not ask user, do not show as a card row).
 
@@ -604,6 +603,7 @@ mod tests {
         assert!(!out.contains("ask user explicitly"));
         assert!(!out.contains("| Budget |"));
         assert!(!out.contains("| Max budget |"));
+        assert!(!out.contains("| Payment token |"));
     }
 
     #[test]

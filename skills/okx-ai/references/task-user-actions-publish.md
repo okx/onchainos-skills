@@ -27,7 +27,7 @@ Follow the returned script verbatim. The confirmation form format is in **Append
 
 ## Appendix A1: Regular Task Confirmation Card Template
 
-Display as a single `| Field | Value |` table with exactly these **6** fields in order (drop `Summary`, `Service`, `Service desc`, `Payment mode`, `Budget`, `Maximum Budget`):
+Display as a single `| Field | Value |` table with exactly these **5** fields in order (drop `Summary`, `Service`, `Service desc`, `Payment mode`, `Payment Currency`, `Budget`, `Maximum Budget`):
 
 | # | Field | Source | Render Rule |
 |---|---|---|---|
@@ -36,11 +36,10 @@ Display as a single `| Field | Value |` table with exactly these **6** fields in
 | 3 | Provider | task-service-select / designated-route | `Agent <providerAgentId>(<providerAgentName>)`; fall back to `Agent <providerAgentId>` |
 | 4 | Service Parameters | Agent-inferred | `None` when empty |
 | 5 | Service Price | task-service-select `feeAmount` + `feeTokenSymbol` | Zero (number or numeric string) → localized `Free`; otherwise `<feeAmount> <symbol>`; **omit the row when `feeAmount` is absent** |
-| 6 | Payment Currency | A2A: user input matching `feeTokenSymbol`; x402: `x402-check` `tokenSymbol` | `USDT` or `USDG` |
 
 If attachments present, add an Attachments row.
 
-Initialize internal `budget` and `max-budget` from the selected service `feeAmount`; never ask for them initially and never show them in this card. A user may explicitly edit them before `create-task`; validate and confirm the proposed values separately, then re-render this card without budget rows.
+Initialize internal `budget` and `max-budget` from the selected service `feeAmount`; never ask for them initially and never show them in this card. Continue collecting and validating Payment Currency internally for A2A and x402, but do not show it because Service Price already includes the currency. A user may explicitly edit budget fields before `create-task`; validate and confirm the proposed values separately, then re-render this card without budget rows.
 
 End with a localized confirmation blockquote and wait for explicit confirmation.
 
