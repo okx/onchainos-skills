@@ -33,7 +33,7 @@ When ANY trigger phrase below matches, execute §Action. The watch command is a 
 
 **Trigger phrases**:
 - Live monitor: `receive signals` / `start receiving signals` / `are you receiving signals` / `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching`
-- Explicit job: `watch job <jobId>` / `watch jobId:<X>`
+- Explicit job: `watch job <jobId>` / `watch jobId:<X>` / `monitor task jobId <X>` / `monitor subscription jobId <X>` and equivalent wording in any language
 - History / backlog drain: `show past messages` / `show message history` / `catch me up on tasks` / `unread task messages`
 - Continuation (clarify first; see §Continuation triggers): `resume watching subscribed services` / `continue receiving signals` / `keep watching` / `continue watching` / `resume monitoring`
 
@@ -230,7 +230,6 @@ cancellation fails, `watch-wake-scheduling.md` must reject the stale wake by chr
 - Do NOT use `/loop`, recurring Cron, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, or any self-rolled polling around `onchainos agent status` / `agent active-tasks`. The only scheduler use allowed is the one-shot pending-decision wake.
 - 🛑 Once started, the watch loop stops **only** when a §Stop condition fires. Until then you have no authority to end it — not by Ctrl-C'ing the in-flight call, not by skipping the next re-enter, not because output "looked thin", "felt slow", or you wanted to "restart cleanly". Silence is the healthy state of a long-poll.
 - Do NOT pass `--from-now`. By default watch returns the full backlog of unread events first, then long-polls for new ones; `--from-now` skips the backlog and silently drops any event the user hasn't seen yet (watch is destructive read — those events are gone for good).
-- Do NOT pass `--job-id` except in the post-publish `[Watch]` block, saved-job post-recharge route, an explicit current-turn jobId, or a resolved subscription signal-receipt entry. Other generic task-watch triggers still run watch **without** `--job-id`.
 - 🛑 **Run `okx-a2a user watch` / `okx-a2a user outdated-list` exactly as written. Do NOT append `| grep` / `| tail` / `| head` / `| awk` / `| sed` / `| jq` / shell redirects.** Both commands emit a single structured JSON document — any pipe/truncation breaks the JSON and silently drops items. If output looks noisy with `[DEBUG]` lines mixed in, those belong on stderr and never affect the JSON on stdout; do not "clean" stdout. Pipe = data loss.
 - 🛑 **Always run `okx-a2a user watch` in the foreground.** On Claude Code, the Bash tool exposes a `run_in_background` parameter — you **MUST** call watch with `run_in_background: false` (the default). Backgrounding the watch breaks the entire dispatch loop: stdout (the JSON with items) is no longer returned synchronously to the same tool call, so you can't dispatch by `kind`, can't render `userContent`, can't claim `decision_request` items, can't even know if watch returned anything. Watch is a single long-poll that must block this turn until it returns; the long-poll IS the wait. If you find yourself reaching for `run_in_background: true` because "watch takes too long", you are misusing the tool — that wait is the design.
 
