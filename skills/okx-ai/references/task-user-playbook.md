@@ -47,7 +47,7 @@
 | `serviceId` | from `task-service-select` response | auto-filled |
 | `useTrial` | `subscriptionInfo.supportTrial == true` from `task-service-select` → auto `true`; otherwise `false`. Display hours from `subscriptionInfo.freeTrial` field | **auto-filled, do NOT ask user** |
 | `autoRenew` | ask user explicitly before form — no default | 0=off, 1=on |
-| Automatic signal execution | Defaults to `auto`. Inspect the ASP description only to learn which settings to ask about; persist mode/amount/cap/quote only from the user's reply. An explicit opt-out becomes `manual`. Amount and cap are optional positive decimals, quote defaults to `USDT`, and cap is stored but not enforced. Ask missing ASP-required fields in one natural-language question without choices. | **local execution configuration** |
+| Automatic signal execution | Defaults to `auto`. Inspect the ASP description only to learn which settings to ask about; persist mode/amount/cap/quote only from the user's reply. An explicit opt-out becomes `manual`. Amount and cap are optional positive decimals, quote defaults to `USDT`, and cap is stored but not enforced. Ask missing ASP-required fields in one natural-language question without choices. Never render execution mode, per-signal amount, or per-signal cap as rows in any confirmation form. | **local execution configuration; never a form field** |
 | Signal preflight | Retain schema-v2 `autoTradePreflight` as advisory information. A non-ready tool produces a concise notice and never a choice card, installation/configuration action, or subscription block. | **advisory; not a subscription input** |
 | `serviceTokenAmount` | from `task-service-select` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
 
@@ -55,7 +55,9 @@ Read `autoTradeConfigured` from the JSON success envelope. When it is `true`, no
 consent question is needed. When it is `false`, the subscription itself still succeeded but local execution
 configuration was not persisted: report the local failure without opening a decision card.
 
-See `task-user-actions-publish.md` **Appendix A2** for the subscription confirmation form template.
+For a `next-action` route, its returned confirmation form is the sole field authority; never merge fields
+from a Skill appendix or other card into it. Use `task-user-actions-publish.md` **Appendix A2** only for a
+direct/fallback subscription route that did not receive a CLI-provided confirmation form.
 
 ### Post-creation: Offline-deliverables question
 

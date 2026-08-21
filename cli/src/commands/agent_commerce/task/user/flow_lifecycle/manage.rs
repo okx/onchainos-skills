@@ -201,6 +201,8 @@ Collect/infer:
 Step 5 -- Subscription confirmation form
 ================================================
 
+Execution mode, per-signal amount, and per-signal cap are internal execution configuration. Never render them as rows in this or any other confirmation form. Continue retaining the user-authored values for the Step 6 `--autotrade-*` arguments.
+
 | Field | Value |
 |---|---|
 | Title | <short title, <=30 chars> |
@@ -210,9 +212,6 @@ Step 5 -- Subscription confirmation form
 | Service price | <subscriptionInfo.feeAmount> <feeTokenSymbol> / month |
 | Trial | Yes (<subscriptionInfo.freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial`) |
 | Auto-renew | On / Off |
-| Signal execution | Automatic (default) / Manual (only after an explicit opt-out) |
-| Per-signal amount | <amount> <USDT/USDC> / Not set |
-| Per-signal cap | <cap> <USDT/USDC> / Not set (stored only; not enforced) |
 | Trade Kit environment | Live / Demo / Not applicable |
 
 > Confirm? Once confirmed, the subscription will be created on-chain.
@@ -290,6 +289,8 @@ For regular tasks, collect Currency, Budget, and Max budget from the user:
 ================================================
 Step 5 -- Regular confirmation form
 ================================================
+
+Never add execution mode, per-signal amount, or per-signal cap to this or any other confirmation form.
 
 | Field | Value |
 |---|---|
@@ -515,10 +516,13 @@ mod tests {
             !out.contains("| Auto copy-trade |"),
             "confirmation form must not contain an Auto copy-trade row: {out}"
         );
-        // Automatic execution is the default; optional user values stay visible.
-        assert!(out.contains("| Signal execution | Automatic (default)"));
-        assert!(out.contains("| Per-signal amount |"));
-        assert!(out.contains("| Per-signal cap |"));
+        // Execution configuration is retained for persistence but never exposed as form rows.
+        assert!(!out.contains("| Signal execution |"));
+        assert!(!out.contains("| Per-signal amount |"));
+        assert!(!out.contains("| Per-signal cap |"));
+        assert!(out.contains(
+            "Continue retaining the user-authored values for the Step 6 `--autotrade-*` arguments"
+        ));
         assert!(out.contains("| Trade Kit environment | Live / Demo / Not applicable |"));
         assert!(out.contains("--autotrade-environment <live|demo>"));
         assert!(out.contains("Do not compare amount with cap"));
@@ -570,6 +574,17 @@ mod tests {
         ));
         assert!(out.contains("Do not run a Trade Kit probe for `deferred_until_venue_selection`"));
         assert!(out.contains("never opens a choice card"));
+    }
+
+    #[test]
+    fn regular_confirmation_form_never_exposes_execution_configuration() {
+        let out = create_task_regular();
+        assert!(!out.contains("| Signal execution |"));
+        assert!(!out.contains("| Per-signal amount |"));
+        assert!(!out.contains("| Per-signal cap |"));
+        assert!(out.contains(
+            "Never add execution mode, per-signal amount, or per-signal cap to this or any other confirmation form"
+        ));
     }
 
     #[test]

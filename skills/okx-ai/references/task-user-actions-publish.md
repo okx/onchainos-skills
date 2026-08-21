@@ -21,11 +21,16 @@ Run the CLI to get the complete publishing playbook (field collection, validatio
 onchainos agent next-action --role user --agentId <agentId> --message '{"event":"create_task","jobId":"_"}'
 ```
 
-Follow the returned script verbatim. The confirmation form format is in **Appendix A** below.
+Follow the returned script verbatim. For any route where `next-action` returns a confirmation form, that
+returned form is the sole field authority: do not supplement or merge it with Appendix A. Appendix A is
+only a fallback render contract for a direct route that does not receive a CLI-provided form.
 
 ---
 
 ## Appendix A1: Regular Task Confirmation Card Template
+
+> **Scope:** fallback/direct routes only. If `next-action` returned a confirmation form, use that form
+> verbatim and do not add any Appendix A1 fields to it.
 
 Display as a single `| Field | Value |` table with exactly these **8** fields in order (drop `Summary`, `Service`, `Service desc`, `Payment mode`):
 
@@ -42,11 +47,18 @@ Display as a single `| Field | Value |` table with exactly these **8** fields in
 
 If attachments present, add an Attachments row.
 
+Execution mode, per-signal amount, and per-signal cap are internal execution configuration. Never add them
+to this or any other confirmation form, even when they appear in the user request, service description, or
+retained context.
+
 End with a localized confirmation blockquote and wait for explicit confirmation.
 
 ---
 
 ## Appendix A2: Subscription Task Confirmation Card Template
+
+> **Scope:** fallback/direct routes only. If `next-action` returned a confirmation form, use that form
+> verbatim and do not add any Appendix A2 fields to it.
 
 Display as a single `| Field | Value |` table with these **7 base fields** in order (drop `Summary`, `Service`, `Service desc`, and the old binary execution switch):
 
@@ -60,15 +72,11 @@ Display as a single `| Field | Value |` table with these **7 base fields** in or
 | 6 | Trial | `task-service-select`: `subscriptionInfo.supportTrial/freeTrial`; `service-list`: selected service `freeTrial` | A positive `freeTrial` → `Yes (<freeTrial> hours free)`; otherwise `No` |
 | 7 | Auto-Renew | Explicit user choice; no default | `On` or `Off` |
 
-Append these execution rows for a trading-signal subscription. Automatic execution is the default. The ASP
-description may define which fields to ask about, but only user-authored replies supply persisted values.
-Ask any ASP-required missing fields in one natural-language question without a choice card.
-
-| Field | Source | Render Rule |
-|---|---|---|
-| Signal Execution | Default or explicit user choice | `Automatic` by default; `Manual` after explicit opt-out |
-| Per-Signal Amount | Optional user-provided fixed quote amount and currency | `<amount> USDT/USDC` or `Not set` |
-| Per-Signal Cap | Optional user-provided cap in the same currency | `<cap> USDT/USDC` or `Not set`; stored only |
+Execution mode, per-signal amount, and per-signal cap are internal execution configuration. Never add them
+to this or any other confirmation form, even for a trading-signal subscription. Automatic execution remains
+the default. The ASP description may define which fields to ask about, but only user-authored replies supply
+persisted values. Ask any ASP-required missing fields in one natural-language question without a choice card,
+retain the answers outside the form, and pass them through the existing `--autotrade-*` arguments.
 
 If attachments present, add an Attachments row.
 
