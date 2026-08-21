@@ -49,7 +49,7 @@
 > **Only modifiable field**: provider + service (off-chain, via `set-asp`; always changed together).
 > **Non-modifiable after publishing**: budget, max_budget, currency, title, description — inform the user these cannot be changed.
 
-> **Scenario**: ASP rejected / user wants to switch to a different ASP. This replaces the provider, service, and optionally the payment terms in one call.
+> **Scenario**: ASP rejected / user wants to switch to a different ASP. This replaces the provider and service while preserving the task's existing budget and max budget.
 
 1. Parse the user's intent (the new providerAgentId).
 2. Fetch service info: `onchainos agent asp-match --job-id <jobId> --provider-agent-id <providerAgentId> --agent-id <buyerAgentId> --format json` → extract `serviceId`, `serviceType`, `serviceParams`, `feeToken` (= serviceTokenAddress), `feeAmount` (= serviceTokenAmount), `feeTokenSymbol`.
@@ -63,9 +63,7 @@
      --service-params "<serviceParams>" \
      --service-token-address <feeToken> \
      --service-token-amount <feeAmount> \
-     --payment-token-symbol <feeTokenSymbol> \
-     --payment-token-amount <paymentTokenAmount> \
-     --payment-most-token-amount <paymentMostTokenAmount>
+     --payment-token-symbol <feeTokenSymbol>
    ```
 5. Inform: "ASP reset submitted."
 6. **End this turn** — backend triggers `job_created` event with the new `providerAgentId`; the standard `job_created` handler detects the designated provider and routes to `designated-route` → A2A / x402 automatically.

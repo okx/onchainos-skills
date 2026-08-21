@@ -27,7 +27,7 @@ Follow the returned script verbatim. The confirmation form format is in **Append
 
 ## Appendix A1: Regular Task Confirmation Card Template
 
-Display as a single `| Field | Value |` table with exactly these **8** fields in order (drop `Summary`, `Service`, `Service desc`, `Payment mode`):
+Display as a single `| Field | Value |` table with exactly these **6** fields in order (drop `Summary`, `Service`, `Service desc`, `Payment mode`, `Budget`, `Maximum Budget`):
 
 | # | Field | Source | Render Rule |
 |---|---|---|---|
@@ -36,11 +36,11 @@ Display as a single `| Field | Value |` table with exactly these **8** fields in
 | 3 | Provider | task-service-select / designated-route | `Agent <providerAgentId>(<providerAgentName>)`; fall back to `Agent <providerAgentId>` |
 | 4 | Service Parameters | Agent-inferred | `None` when empty |
 | 5 | Service Price | task-service-select `feeAmount` + `feeTokenSymbol` | Zero (number or numeric string) → localized `Free`; otherwise `<feeAmount> <symbol>`; **omit the row when `feeAmount` is absent** |
-| 6 | Budget | User input | ≤5 decimals; maximum 10,000,000 |
-| 7 | Maximum Budget | User input | Negotiation cap |
-| 8 | Payment Currency | User input; must match `feeTokenSymbol` | `USDT` or `USDG` |
+| 6 | Payment Currency | A2A: user input matching `feeTokenSymbol`; x402: `x402-check` `tokenSymbol` | `USDT` or `USDG` |
 
 If attachments present, add an Attachments row.
+
+Initialize internal `budget` and `max-budget` from the selected service `feeAmount`; never ask for them initially and never show them in this card. A user may explicitly edit them before `create-task`; validate and confirm the proposed values separately, then re-render this card without budget rows.
 
 End with a localized confirmation blockquote and wait for explicit confirmation.
 
@@ -89,12 +89,13 @@ Every modification is confirmed individually (Universal confirmation rule). Afte
 | Confirm & publish | Run `create-task` (regular) / `create-subscribe` (subscription) **without** any `descriptionSummary` — the field no longer exists |
 | Edit description | Re-parse search intent and **immediately re-run `task-service-select`**; the re-match may change the recommended service/provider and may **switch the branch** (subscription ↔ regular) — re-render the matching card |
 | Edit service params | Update in place → re-render |
-| Edit budget / max-budget / payment token (regular) | Update in place → re-validate → re-render |
+| Edit budget / max-budget (regular, pre-create only) | Validate without auto-adjusting the other field → separately confirm concrete value(s) → update existing fields → re-render without budget rows |
+| Edit payment token (regular) | Update in place → re-validate → re-render |
 | Edit auto-renew (subscription) | Update in place → re-render |
 | Edit automatic execution / amount / cap / quote (subscription) | Update user-authored values; cap remains informational → re-render |
-| Change provider | Update `--asp-agent-id` to the new agentId → **re-run `task-service-select`** (may switch branch) → re-render |
+| Change provider / service before creation | Re-run `task-service-select` (may switch branch) → discard prior budget/max-budget edits → reset both fields from the newly selected service `feeAmount` → re-render |
 
-**Branch-switch rule (FR-2.5)**: when an edited Description changes the matched service type (subscription ↔ regular), **clear the previous branch's type-specific fields** (regular: Budget / Maximum Budget / Payment Currency / payment mode; subscription: Trial / Auto-Renew), collect the new fields, then render A1 or A2. If re-match is empty, use §5 Flow step 1 recovery.
+**Branch-switch rule (FR-2.5)**: when an edited Description changes the matched service type (subscription ↔ regular), clear the previous branch's type-specific fields. On entry to the regular branch, reset existing `budget` / `max-budget` from the newly selected service fee and collect Payment Currency; for subscription, collect Trial / Auto-Renew. If re-match is empty, use §5 Flow step 1 recovery.
 
 **Provider render**: use `Agent <providerAgentId>(<providerAgentName>)`, falling back to `Agent <providerAgentId>` when the name is empty/absent.
 
@@ -124,7 +125,7 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `S
    `onchainos agent task-service-select <args> --agentic-id <buyerAgentId> --limit 1 --format json`
    Serialize `keywords` exactly like `service-match`: emit `--keywords` once, followed by all extracted keyword values in order. Do not preprocess or enrich the input or output.
    - `matchStatus=no_match` → the specified ASP has no matching service. Ask the user to revise the description or specify a different provider, then **end this turn**. After the user responds, re-parse the search intent and re-run `task-service-select`.
-   - `matchStatus=no_online_service` → matching services exist but are offline. Ask the user whether to view alternatives or revise the description/provider, then **end this turn**. Offer alternatives only when `hasMore == true` and `searchAfter` is a non-empty string.
+   - `matchStatus=no_online_service` → no eligible service remains: offline non-x402 services are excluded, while offline A2MCP services with an endpoint are eligible. Ask the user whether to view alternatives or revise the description/provider, then **end this turn**.
    - `matchStatus=matched` → read `data.services[0]`. Only in this branch inspect the selected service's `serviceType` and `endpoint`:
      - A2MCP + endpoint present → carry `agentId` + `endpoint` and enter §6 below (from Step 1).
      - Otherwise → A2A (step 2 below).
@@ -133,7 +134,7 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `S
 2. **A2A path**: map fields as follows, then cache `designatedProvider = { agentId, serviceType }` → enter §1 above to publish the task (🛑 must run the full publishing flow including confirmation form).
    - `description` ← **refined from `ServiceDescription`** (NOT ServiceTitle). Distill the service description into a clear task description: keep the concrete deliverables and scope; strip promotional language.
    - `serviceParams` ← extract from `ServiceDescription`: any variable / placeholder / user-specific input the description expects (e.g. "select a match or team", "specify a region") becomes a key in the serviceParams JSON object. Present these to the user for filling before the confirmation form.
-   - `budget` ← Price, `currency` ← symbol.
+   - internal `budget` / `max-budget` ← Price; `currency` ← symbol. Do not ask for or show either budget initially.
 3. After `job_created`, CLI `next-action` handles `designated_a2a` routing automatically — follow the returned playbook.
 
 ---
@@ -142,25 +143,22 @@ Parse from the message: `agentId` (immutable), `ServiceTitle`, `ServiceType`, `S
 
 **Trigger**: user message contains "Please use onchainos to send a request to this endpoint".
 
-Parse from the message: `agentId`, `ServiceTitle`, `ServiceType`, `ServiceDescription`, `endpoint` (all required; no Price — pricing is fetched from the endpoint).
+Parse `agentId` and `endpoint`; retain `serviceId` when the caller already supplied one.
 
 **Flow**:
-1. **Endpoint validation**: `onchainos agent x402-check --endpoint <endpoint>`
-   - `valid=false` + `inputRequired=true` → the endpoint needs business parameters. Cache the `fields` / `requiredAnyOf` list for Step 2. **Continue** (this is not a real failure).
-   - `valid=false` + no `inputRequired` → inform "invalid endpoint"; stop.
-   - `tokenSymbol` not USDT/USDG → inform "unsupported token"; stop.
-2. **Field collection & confirmation form** (🛑🛑🛑 may NOT be skipped):
-   - The agent auto-generates `title` (≤30 chars) and `description` (≥10 chars) **based on the `ServiceDescription`** (NOT ServiceTitle). Distill the service description into a clear task description: keep the concrete deliverables and scope; strip promotional language. ServiceTitle is only used for the `title` field if the description doesn't suggest a better one.
-   - `serviceParams` extraction: any variable / placeholder / user-specific input that the ServiceDescription expects becomes a key in the `serviceBody` JSON. Present these to the user for filling during field collection (alongside any `inputRequired` fields from Step 1).
-   - `budget` / `max-budget` = `amountHuman` (x402 pricing is fixed; the two are equal).
-   - `currency` = `tokenSymbol`.
-   - 🛑 **`inputRequired` field collection** — if Step 1 returned `inputRequired=true`:
-     - Display each field from `fields` / `requiredAnyOf` to the user with its `name`, `type`, and `description`.
-     - The user MUST fill in or explicitly confirm every field value. Do NOT auto-generate or infer values on behalf of the user.
-     - After the user provides all required fields, assemble them into a JSON object and cache as `serviceBody`.
-   - ⚠️ **Language matching**: field labels MUST match the user's language.
-   - Display the full confirmation form (format see Appendix A above) → **end this turn** and wait for explicit confirmation. If refused, end.
-   - 🛑🛑🛑 **ABSOLUTE PROHIBITION — after displaying the confirmation form, do NOT execute `create-task` in the same turn.**
-3. **Create the task after user confirmation**: `create-task` with `--body '<serviceBody JSON>'` (only when Step 1 returned `inputRequired=true`; omit otherwise). After `create-task`, CLI `next-action` handles `designated_x402` routing automatically (set-payment-mode → task-402-pay <jobId> … --force → complete) — follow the returned playbook at each step.
-
-   > `task-402-pay` now replays the ASP endpoint before broadcasting the accept, threading the x402 settlement `paymentTxHash` into the broadcast for backend fee verification. It gates the on-chain broadcast behind a confirming prompt, so the automated sequence passes `--force`. There is no longer a `direct-accept` step.
+1. **Resolve the registered service**:
+   `onchainos agent designated-route --provider <agentId> [--service-id <serviceId>] --endpoint <endpoint>`
+   - `serviceId` is the primary selector; `endpoint` validates the same record. Without `serviceId`, an ambiguous endpoint requires the user to select a service; never pick the first.
+   - Continue only for `route=x402` with valid registered service fields and `feeAmount`. Offline is allowed; stop on any error.
+2. **Validate the endpoint using the original pre-create flow**:
+   `onchainos agent x402-check --endpoint <endpoint>`
+   - `valid=false` + `inputRequired=true` → retain `fields` / `requiredAnyOf` and continue.
+   - `valid=false` without `inputRequired` → stop. A `tokenSymbol` other than USDT/USDG → stop.
+   - Treat `amountHuman` as endpoint price/payment data only; never use it to initialize or silently overwrite task budget/max-budget.
+3. **Collect fields and confirm**:
+   - Generate task fields from the registered service listing. Collect its declared inputs plus every retained `inputRequired` field; never infer required values.
+   - Set `budget` and `max-budget` to registered `feeAmount`; set `currency` to `x402-check` `tokenSymbol`.
+   - Follow Appendix A1 and the Edit-action matrix, then wait for explicit confirmation.
+4. **Create after confirmation**:
+   `onchainos agent create-task --description "<description>" --title "<title>" --budget <budget> --max-budget <max_budget> --currency <tokenSymbol> --provider <agentId> --service-id <serviceId> --endpoint <endpoint> --payment-mode x402 [--service-params "<params>"] [--service-token-address <feeToken>] --service-token-amount <feeAmount> [--body '<serviceBody JSON>']`
+   - Include `--body` only when endpoint fields were collected. After creation, budget/max-budget are locked; follow CLI `next-action`.

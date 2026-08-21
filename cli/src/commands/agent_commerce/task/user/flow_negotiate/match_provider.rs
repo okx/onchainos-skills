@@ -67,8 +67,12 @@ async fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
     );
 
     // D-Step 1 — designated-route query (in-process).
+    let designated_service_id = ctx
+        .prefetched
+        .and_then(|task| task.service_id.as_deref());
     let route_result = crate::commands::agent_commerce::task::common::designated_route_inner(
         &dp_id,
+        designated_service_id,
         designated_endpoint.as_deref(),
     )
     .await;

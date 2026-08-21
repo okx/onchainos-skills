@@ -25,7 +25,7 @@ Collect Description → parse search intent → task-service-select → confirm 
 Step 1 -- Field collection (common fields only)
 ================================================
 
-Description: MUST come from user's explicit input — no guessing/auto-fill. Title: agent-generated. Currency, Budget, Max budget: do NOT collect here — they are branch-dependent and will be collected after task-service-select determines subscription vs regular.
+Description: MUST come from user's explicit input — no guessing/auto-fill. Title: agent-generated. Currency is branch-dependent. Budget and Max budget are never collected initially; after service selection they default to the selected service fee.
 
 | Field | CLI flag | Constraint | How to collect |
 |---|---|---|---|
@@ -52,13 +52,14 @@ Serialize `keywords` exactly like `service-match`: emit `--keywords` once, follo
 keyword values in order. Do not preprocess or enrich the input or output.
 
 - `matchStatus=no_match` → if `asp-agent-id` was supplied, say that the specified ASP has no matching service; otherwise say that no matching service was found. Ask the user to adjust the description or specify/change the provider.
-- `matchStatus=no_online_service` → matching services exist but are offline. Ask whether to view alternatives or adjust the description/provider.
-- `matchStatus=matched` → render the service confirmation card from `data.services[0]`.
+- `matchStatus=no_online_service` → matches exist, but none is eligible (offline non-x402 services remain ineligible). Ask whether to view alternatives or adjust the description/provider.
+- `matchStatus=matched` → render the service confirmation card from `data.services[0]`. The CLI keeps original ranking while filtering candidates to online services plus offline A2MCP services with a non-empty endpoint.
 
 **Service confirmation gate**:
 - Show Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
 - Render `serviceType` verbatim (for example, `A2A` or `A2MCP`); never translate or localize it.
 - For a non-subscription Service, render `feeAmount` with `feeTokenSymbol`. If `feeAmount` is zero (number or numeric string), render localized `Free` instead of `0 <symbol>`.
+- An offline A2MCP service with a non-empty endpoint is eligible; do not reject it for being offline. Offline non-x402 services remain ineligible.
 - Ask the user to confirm using this service. Offer \"show 3 alternatives\" only when `hasMore == true` and `searchAfter` is a non-empty string; otherwise state that no more alternatives are available.
 - If the user chooses alternatives, call:
   ```bash
@@ -268,18 +269,16 @@ fn create_task_regular() -> String {
 Step 4 -- Regular field collection
 ================================================
 
-For regular tasks, collect Currency, Budget, and Max budget from the user:
+For regular tasks, collect Currency only. Derive Budget and Max budget from the selected service:
 
 1. **Payment token** (--currency): Only USDT / USDG. Fuzzy input (\"U\"/\"USD\") → ask \"USDT or USDG?\".
    - Validate: must match `feeTokenSymbol` from task-service-select. Mismatch → ask user to change token or designate another provider.
-2. **Budget** (--budget): ask user explicitly. number; <=5 decimals; max 10M.
-   - Budget < 0 → reject (zero is legal)
-   - Budget > 10M or > 5 decimal places → reject
-3. **Max budget** (--max-budget): ask user explicitly. Constraint: >= budget; <=5 decimal places; max 10M.
-   - max_budget < budget → reject
-   - max_budget > 10M or > 5 decimal places → reject
+2. Read `feeAmount` from the exact selected service. Missing/non-numeric → stop before confirmation.
+   - `budget = feeAmount`
+   - `max_budget = feeAmount`
+   - Apply the existing create-task amount rules (>0, <=5 decimals, max 10M). Do not ask the user for either value.
 
-4. **serviceParams inference** (same logic as §serviceParams inference below).
+3. **serviceParams inference** (same logic as §serviceParams inference below).
 
 → Proceed to **Step 5** (regular confirmation form).
 
@@ -295,8 +294,6 @@ Step 5 -- Regular confirmation form
 | ASP | Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent |
 | Service params | <serviceParams readable display, or \"None\"> |
 | Service price | <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this row if feeAmount has a value) |
-| Budget | <number> |
-| Max budget | <number> (negotiation price cap) |
 | Payment token | <USDT or USDG> |
 
 Payment mode: A2A → `escrow`, A2MCP → `x402` (from serviceType; do not ask user, do not show as a card row).
@@ -311,9 +308,10 @@ Step 5.5 -- Route by user decision (separate turn)
 
 - Confirm / publish → Step 6
 - Edit description → update search intent → **re-run task-service-select** (may switch branch; if branch changes, load the other branch playbook via `next-action`) → Step 4 → Step 5
-- Edit budget/max-budget/currency → update → re-validate → Step 5
+- Edit budget/max-budget → validate the proposed value(s) with the existing rules, including `max_budget >= budget`; keep an omitted field unchanged and do not auto-adjust the other field. Invalid → explain and keep the current values. Valid → show the proposed value(s) separately, ask for one explicit confirmation, and end the turn. After confirmation, update the existing field(s) and return to Step 5; the confirmation form still omits both budget rows.
+- Edit currency → update → re-validate → Step 5
 - Edit serviceParams → update → Step 5
-- Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → Step 4 → Step 5
+- Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → reset budget/max_budget from the newly selected service fee → Step 4 → Step 5
 
 ================================================
 Step 6 -- Publish regular (create-task)
@@ -328,6 +326,7 @@ onchainos agent create-task \\
 ```
 - `--provider`, `--service-id`, `--payment-mode` required. Payment mode: A2A→escrow, A2MCP→x402.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
+- After `create-task` succeeds, budget and max budget are locked; never offer a direct edit.
 
 {attachments_stop}",
         service_params = service_params_inference(),
@@ -594,5 +593,26 @@ mod tests {
         assert!(out.contains("do not create again or Watch"));
         assert!(out.contains("Legacy submitted `balanceWarning`"));
         assert!(out.contains("do not Watch"));
+    }
+
+    #[test]
+    fn regular_create_task_defaults_budget_to_service_fee_without_showing_it() {
+        let out = create_task_regular();
+
+        assert!(out.contains("budget = feeAmount"));
+        assert!(out.contains("max_budget = feeAmount"));
+        assert!(!out.contains("ask user explicitly"));
+        assert!(!out.contains("| Budget |"));
+        assert!(!out.contains("| Max budget |"));
+    }
+
+    #[test]
+    fn regular_create_task_keeps_pre_create_budget_edits_with_separate_confirmation() {
+        let out = create_task_regular();
+
+        assert!(out.contains("Edit budget/max-budget"));
+        assert!(out.contains("show the proposed value(s) separately"));
+        assert!(out.contains("do not auto-adjust the other field"));
+        assert!(out.contains("After `create-task` succeeds, budget and max budget are locked"));
     }
 }

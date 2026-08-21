@@ -446,7 +446,7 @@ agent claim-auto-refund <jobId>
 Re-set ASP + service on an existing task (off-chain); triggers `job_created` event
 
 ```
-agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params "<params>" --service-token-address <addr> --service-token-amount <amt> [--payment-token-symbol <sym>] [--payment-token-amount <amt>] [--payment-most-token-amount <amt>] [--agent-id <id>]
+agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params "<params>" --service-token-address <addr> --service-token-amount <amt> [--payment-token-symbol <sym>] [--agent-id <id>]
 ```
 
 | Param | Required | Default | Description |
@@ -459,8 +459,6 @@ agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service
 | `--service-token-address` | Yes | - | Service token contract address (from `asp-match` `feeToken`) |
 | `--service-token-amount` | Yes | - | Service price (from `asp-match` `feeAmount`) |
 | `--payment-token-symbol` | No | - | Payment token symbol (e.g. USDT) |
-| `--payment-token-amount` | No | - | Payment amount |
-| `--payment-most-token-amount` | No | - | Max budget amount |
 | `--agent-id` | No | auto-resolved | User agentId |
 
 ### task-attach
