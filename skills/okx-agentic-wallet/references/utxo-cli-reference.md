@@ -4,7 +4,7 @@ Use this reference for Bitcoin UTXO queries, asset-protection changes, and mempo
 
 ## `wallet utxo available`
 
-Query currently spendable BTC UTXOs and the available BTC total.
+Query currently spendable BTC UTXOs. Use returned `sumSats` as the available BTC total; do not derive it from total holdings.
 
 ### Syntax
 
@@ -17,10 +17,6 @@ onchainos wallet utxo available --chain bitcoin
 | Parameter | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--chain` | Yes | — | Use `bitcoin`. |
-
-### Response
-
-This command returns the `AVAILABLE_UTXO_LIST` view. Use `sumSats` as the available BTC total. Display `sumSats` and `valueRaw` as sats and exact BTC, and preserve returned outpoints and source values verbatim.
 
 ## `wallet utxo user-ignored`
 
@@ -38,13 +34,9 @@ onchainos wallet utxo user-ignored --chain bitcoin
 | --- | --- | --- | --- |
 | `--chain` | Yes | — | Use `bitcoin`. |
 
-### Response
-
-This command returns the `USER_IGNORED_LIST` view. Preserve returned outpoints, asset labels, amounts, and source values verbatim.
-
 ## `wallet utxo unavailable`
 
-Query locked or otherwise unavailable BTC UTXOs. Also use it before replying when the user follows a BTC balance answer by asking what the remaining or unavailable BTC is.
+Query locked or otherwise unavailable BTC UTXOs. Use only returned categories, amounts, and UTXOs without inference. Also use it before replying when the user follows a BTC balance answer by asking what the remaining or unavailable BTC is.
 
 ### Syntax
 
@@ -57,10 +49,6 @@ onchainos wallet utxo unavailable --chain bitcoin
 | Parameter | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--chain` | Yes | — | Use `bitcoin`. |
-
-### Response
-
-This command returns the `UNAVAILABLE_BREAKDOWN` view. Preserve returned categories, outpoints, asset labels, amounts, and source values verbatim. Do not derive spendable BTC by subtracting these categories from total holdings.
 
 ## `wallet utxo unlock`
 
@@ -82,10 +70,6 @@ onchainos wallet utxo unlock --chain bitcoin (--outpoint <txHash:voutIndex>... |
 | `--operation-token` | Continuation only | — | Use only when supplied by the exact `next` returned after preview. |
 | `--force` | Continuation only | Disabled | Use only through the exact `next` returned after explicit confirmation. |
 
-### Response
-
-Run the initial command without `--force`, display its complete confirmation, and follow the exact `next` only after explicit confirmation.
-
 ## `wallet utxo lock`
 
 Restore asset protection for selected user-ignored UTXOs. Query the latest user-ignored view and resolve the user's reference against its current outpoints first. A single amount or asset reference must resolve to exactly one outpoint; if it matches zero or multiple UTXOs, ask the user to choose.
@@ -106,10 +90,6 @@ onchainos wallet utxo lock --chain bitcoin (--outpoint <txHash:voutIndex>... | -
 | `--operation-token` | Continuation only | — | Use only when supplied by the exact `next` returned after preview. |
 | `--force` | Continuation only | Disabled | Use only through the exact `next` returned after explicit confirmation. |
 
-### Response
-
-Run the initial command without `--force`, display its complete confirmation, and follow the exact `next` only after explicit confirmation.
-
 ## `wallet utxo reclaim`
 
 Reclaim still-unspent inputs from transactions whose history state is `MEMPOOL_REMOVED`. Query unavailable UTXOs first and use the returned transaction hashes. Reclaim restores the inputs for a new transfer; do not rebroadcast the removed transaction.
@@ -127,10 +107,6 @@ onchainos wallet utxo reclaim --chain bitcoin --tx-hash <hash> [--tx-hash <hash>
 | `--chain` | Yes | — | Use `bitcoin`. |
 | `--tx-hash` | Yes | — | Original `MEMPOOL_REMOVED` transaction hash; repeat for multiple transactions. |
 | `--force` | Continuation only | Disabled | Use only through the exact `next` returned after explicit confirmation. |
-
-### Response
-
-Run the initial command without `--force`, display its complete confirmation, and follow the exact `next` only after explicit confirmation.
 
 ## User-facing FAQ
 
