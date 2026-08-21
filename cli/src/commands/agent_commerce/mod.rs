@@ -587,6 +587,16 @@ pub enum AgentCommand {
         autotrade: String,
     },
 
+    /// Verify the selected Trade Kit runtime before any consent/grant/order
+    /// step. Returns a typed ready/not-ready result without exposing credentials
+    /// or child-process output.
+    #[command(name = "trade-kit-readiness")]
+    TradeKitReadiness {
+        /// Repeatable: spot | perp | prediction | option.
+        #[arg(long = "asset-class", required = true, action = clap::ArgAction::Append)]
+        asset_class: Vec<String>,
+    },
+
     /// Check a per-trade amount against the buyer's written authorization (bespoke
     /// `{ok,reason?}` process contract; NOT the standard `data` envelope).
     #[command(name = "autotrade-grant-check")]
@@ -1803,6 +1813,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             .await
         }
 
+        AgentCommand::TradeKitReadiness { asset_class } => {
+            let asset_classes =
+                task::common::autotrade::trade_kit::parse_runtime_asset_classes(&asset_class)
+                    .map_err(anyhow::Error::msg)?;
+            let result = task::common::autotrade::trade_kit::probe_runtime(&asset_classes).await;
+            crate::output::success(result);
+            Ok(())
+        }
+
         // ── Auto copy-trade (grant-check public; grant-write debug-only) ─────
         AgentCommand::AutotradeGrantCheck {
             job_id,
@@ -2138,7 +2157,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
                 let plugin = plugin.ok_or_else(|| anyhow::anyhow!("--plugin is required"))?;
                 let selected = match plugin.as_str() {
-                    "trade-kit" => task::common::autotrade::tooling::ExecutionTool::TradeKit,
+                    "trade-kit" => anyhow::bail!(
+                        "Trade Kit readiness requires an asset class; use `onchainos agent trade-kit-readiness --asset-class <spot|perp|prediction|option>`"
+                    ),
                     "polymarket-plugin" => {
                         task::common::autotrade::tooling::ExecutionTool::PolymarketPlugin
                     }

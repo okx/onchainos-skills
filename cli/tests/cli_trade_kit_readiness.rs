@@ -113,6 +113,11 @@ fn run_readiness(
 ) -> std::process::Output {
     let mut cmd = common::onchainos();
     common::scrubbed(&mut cmd, home)
+        // `probe_local` intentionally checks bounded per-user npm locations in
+        // addition to PATH. Isolate those locations from the developer machine
+        // so the missing-runtime case remains deterministic when `okx` is
+        // installed under ~/.local/bin.
+        .env("HOME", home)
         .env("PATH", bin)
         .env("FAKE_TRADE_KIT_MODE", mode)
         .env("FAKE_TRADE_KIT_LOG", log)
@@ -372,6 +377,33 @@ fn asset_class_is_required_and_aliases_are_rejected_before_probe() {
             &["asset class must be spot, perp, prediction, or option"],
         );
     }
+}
+
+#[test]
+fn legacy_plugin_check_cannot_claim_trade_kit_runtime_readiness() {
+    let (_guard, home) = common::fresh_home("trade-kit-legacy-plugin-check");
+    let output = common::scrubbed(&mut common::onchainos(), &home)
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job-1",
+            "--mode",
+            "plugin-ready-check",
+            "--agent-id",
+            "agent-1",
+            "--plugin",
+            "trade-kit",
+        ])
+        .output()
+        .expect("run legacy plugin readiness check");
+    common::assert_error_contains(
+        &output,
+        &[
+            "Trade Kit readiness requires an asset class",
+            "onchainos agent trade-kit-readiness --asset-class",
+        ],
+    );
 }
 
 #[test]

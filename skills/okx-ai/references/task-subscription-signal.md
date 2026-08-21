@@ -39,6 +39,32 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
    - If no compatible route exists, select the narrowest installed skill/tool capable of the action. A
      named third-party protocol must route through `okx-dapp-discovery`; an unnamed native swap may use
      `okx-agentic-wallet`; generic DeFi may use `okx-defi`. Read the selected skill in full before acting.
+   - If and only if the resolved tool is Trade Kit, run this mandatory gate now, before writing the route
+     cache, requesting consent, checking a grant, or invoking any `okx` order command:
+
+     ```bash
+     onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]
+     ```
+
+     Pass one flag for the current route's canonical class. If this one retained execution covers more
+     than one Trade Kit class, pass every class as a repeated flag; the command performs one discovery
+     and at most one private authorization check for the batch. Run it on **every delivery**, including a
+     reused cached route and both manual and automatic modes; never reuse or persist a prior readiness
+     result. Continue only when `ok:true` and `data.readiness == "ready"`; every requested
+     `assetChecks[]` row must also be ready. Non-Trade-Kit routes never run this command.
+
+     If readiness is not `ready`, preserve and display the deliverable, mark its execution as blocked,
+     and stop before route persistence, consent, grant, or order execution:
+     - `needs_configuration`: offer exactly OAuth (`okx auth login --manual`), API key
+       (`okx config init`), and Later. Run a setup command only after that explicit choice, then re-probe.
+     - `verification_unknown`: offer Retry and Later only. Never describe a timeout, network failure,
+       malformed private response, or other unknown result as logged out.
+     - `missing` or `incompatible`: offer the fixed install/upgrade action returned in
+       `data.remediation`, plus Later; re-probe after an explicit repair action.
+
+     Restoring readiness MUST NOT automatically replay the blocked delivery. Only an explicit user
+     request may reprocess that old `deliveryId`, and that attempt must run this fresh readiness gate
+     again. Future deliveries continue normally and each receives its own fresh probe.
 4. After resolving a valid route, cache identifiers only:
 
    ```bash
@@ -53,6 +79,7 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
 5. Apply the selected skill's setup and transaction safety rules. Plugin installation must remain visible;
    never silently install. Use the decision matrix below to decide whether this delivery may execute or
    which user decision is needed. The subscription itself and the route cache are not trading consent.
+   A Trade Kit grant or user consent never overrides a failed runtime-readiness result.
 6. Execute at most once for this `deliveryId`. Pass `jobId` to plugin/tool grant checks where supported.
    Let the target tool re-validate all dynamic fields. Every automatic execution MUST run through the
    CLI-owned execution bridge below. The bridge persists and
