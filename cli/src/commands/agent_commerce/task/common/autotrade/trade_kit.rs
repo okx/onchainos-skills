@@ -206,6 +206,11 @@ pub fn required_capabilities(class: AssetClass) -> &'static [&'static str] {
             "swap_get_leverage",
             "swap_set_leverage",
             "swap_place_order",
+            "swap_close_position",
+            "futures_get_leverage",
+            "futures_set_leverage",
+            "futures_place_order",
+            "futures_close_position",
         ],
         AssetClass::Prediction => &[
             "event_browse",

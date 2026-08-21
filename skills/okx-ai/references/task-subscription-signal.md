@@ -21,8 +21,15 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
   the final confirmed subscription setup may be converted into that snapshot, but must be complete and
   persisted before execution. `serviceDescription`, ASP text, and deliverable text are never trading
   consent.
-- For Trade Kit, `consentSnapshot.tradeEnvironment` is the only authorized `live`/`demo` target. Never
-  infer or override it from conversation history, Trade Kit defaults, ASP text, or the deliverable.
+- For Trade Kit, `consentSnapshot.tradeEnvironment`, `consentSnapshot.marginMode`, and
+  `consentSnapshot.orderPolicy` are the only authorized environment, margin, and order-construction
+  settings. Never infer or override them from conversation history, Trade Kit defaults, ASP text, or the
+  deliverable.
+- This managed delivery flow supports Trade Kit standard orders for `spot`, `perp` (swap or delivery
+  futures), `option`, and `prediction`, plus full-position close for swap or delivery futures. Normalize
+  natural-language variants into `place` or `close_position`; do not treat wording variants as new command
+  types. Other Trade Kit writes (cancel, amend, standalone algo, leverage changes, batch, iceberg, TWAP,
+  chase, or trailing orders) are unsupported automatic-delivery operations and must fail before execution.
 
 ## Required flow
 
@@ -44,19 +51,29 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
    - If and only if the resolved tool is Trade Kit, run this mandatory gate now, before writing the route
      cache, requesting consent, checking a grant, or invoking any `okx` order command:
 
-     First inspect `consentSnapshot.tradeEnvironment`:
-     - `live` or `demo`: reuse it without asking again.
-     - absent: ask the user once which environment to authorize, then persist the exact answer without
-       changing the rest of the policy:
+     The selected Trade Kit skill is a command reference in this managed flow. Do not run or fall back to
+     its generic OnchainOS skill preflight: `trade-kit-readiness` below is the sole installation, runtime
+     version, authentication, permission, environment, and capability gate. Never compare the Trade Kit
+     skill/runtime `1.x` version with the OnchainOS `4.x` version. Never report an update or security-scan
+     requirement unless this readiness command returns `missing` or `incompatible` with that remediation.
+
+     First inspect the local Trade Kit settings. Environment and order policy are required for every
+     Trade Kit operation; margin mode is additionally required for `perp`. Full-position close is an
+     intrinsic market operation and is eligible only when the persisted order policy is `market`:
+     - all applicable values present: reuse them without asking again.
+     - any applicable value absent: ask once for every missing value, then persist only the exact answers
+       without changing the rest of the policy:
 
        ```bash
        onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <agentId> \
-         --mode environment-set --environment <live|demo>
+         --mode settings-update [--environment <live|demo>] \
+         [--margin-mode <cross|isolated>] \
+         [--order-policy <market|signal_price_limit>]
        ```
 
        Re-enter this delivery only after the command succeeds and the refreshed snapshot carries the
-       chosen environment. Never default to `live`. Changing a stored environment requires another
-       explicit user request and the same command.
+       chosen values. Never default any missing setting. Changing a stored setting requires another
+       explicit user request and the same command. For spot, do not require or invent a margin mode.
 
      ```bash
      onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>
@@ -99,7 +116,9 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
 5. Apply the selected skill's setup and transaction safety rules. Plugin installation must remain visible;
    never silently install. Use the decision matrix below to decide whether this delivery may execute or
    which user decision is needed. The subscription itself and the route cache are not trading consent.
-   A Trade Kit grant or user consent never overrides a failed runtime-readiness result.
+   A Trade Kit grant or user consent never overrides a failed runtime-readiness result. For the managed
+   Trade Kit route, the explicit readiness exception in step 3 replaces only the selected skill's generic
+   OnchainOS version preflight; all command-specific trading safety rules still apply.
 6. Execute at most once for this `deliveryId`. Pass `jobId` to plugin/tool grant checks where supported.
    Let the target tool re-validate all dynamic fields. Every automatic execution MUST run through the
    CLI-owned execution bridge below. The bridge persists and
@@ -172,8 +191,14 @@ Auto mode additionally requires the auto-trade grant. Manual mode is accepted on
 policy is manual and must be used after the user's one-time/manual confirmation; it never uses an auto grant.
 `one_time` is reserved for the over-cap A option and additionally requires a short-lived permit bound to the
 exact `jobId + deliveryId + amount`, created with `autotrade-once-authorize`; it never changes the future cap.
-For `venue=trade_kit`, the gateway also requires the inner command's `--live`/`--demo` environment to
-exactly match the persisted consent environment before it repeats readiness or starts the process.
+For `venue=trade_kit`, the gateway classifies the inner command before it repeats readiness or starts the
+process. Standard `place` commands require `--live`/`--demo` and `--ordType` to match persisted consent;
+perp orders additionally require matching `--tdMode`, and `signal_price_limit` requires `--ordType limit`
+plus an explicit `--px`. Swap/futures `close` commands require matching `--live`/`--demo`, `--mgnMode`, and
+an explicit `--posSide <net|long|short>`; long close binds to `action=sell`, short close binds to
+`action=buy`, and the persisted order policy must be `market`. A full-position close carries no `--sz` or
+`--side`; the outer amount remains the exact persisted authorization amount and is not interpreted as the
+position size. Every other Trade Kit write command fails closed as unsupported.
 The outer CLI envelope's `ok:true` means the outcome was handled and persisted; it does not mean the trade
 succeeded. Inspect `data.status`, and treat only `submitted` as submitted. `failed_before_submit` and
 `unknown_after_submit` are not successful trades.

@@ -32,7 +32,7 @@ use super::grants::job_id_is_safe;
 use super::trade_kit::TradeEnvironment;
 
 /// The current consent-file schema version.
-pub const CONSENT_VERSION: u32 = 2;
+pub const CONSENT_VERSION: u32 = 3;
 
 /// Versioned, trusted metadata for a saved Active-subscription delivery.
 ///
@@ -177,6 +177,61 @@ pub enum ConsentMode {
     Decline,
 }
 
+/// User-authorized margin mode for Trade Kit derivative orders.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MarginMode {
+    Cross,
+    Isolated,
+}
+
+impl MarginMode {
+    pub fn parse(value: &str) -> anyhow::Result<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "cross" => Ok(Self::Cross),
+            "isolated" => Ok(Self::Isolated),
+            _ => anyhow::bail!("margin mode must be one of: cross | isolated"),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cross => "cross",
+            Self::Isolated => "isolated",
+        }
+    }
+}
+
+/// User-authorized policy for turning a signal entry into an order.
+///
+/// This is intentionally distinct from the execution bridge's `ExecutionMode`
+/// (`auto` / `manual` / `one_time`).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderPolicy {
+    Market,
+    SignalPriceLimit,
+}
+
+impl OrderPolicy {
+    pub fn parse(value: &str) -> anyhow::Result<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "market" => Ok(Self::Market),
+            "signal_price_limit" => Ok(Self::SignalPriceLimit),
+            _ => anyhow::bail!(
+                "order policy must be one of: market | signal_price_limit"
+            ),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Market => "market",
+            Self::SignalPriceLimit => "signal_price_limit",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConsentFile {
@@ -205,6 +260,15 @@ pub struct ConsentFile {
     /// closed until the user chooses `live` or `demo` once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trade_environment: Option<TradeEnvironment>,
+    /// User-confirmed Trade Kit margin mode. It is absent for products where a
+    /// margin mode does not apply and for older records that require one-time
+    /// restoration before derivative execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub margin_mode: Option<MarginMode>,
+    /// User-confirmed order construction policy. Older records deserialize it
+    /// as absent and must never silently fall back to a market order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_policy: Option<OrderPolicy>,
     /// seconds since epoch.
     pub created_at: u64,
     /// seconds since epoch.
@@ -250,6 +314,10 @@ pub struct ConsentSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trade_environment: Option<TradeEnvironment>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_mode: Option<MarginMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_policy: Option<OrderPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
@@ -264,6 +332,8 @@ impl ConsentSnapshot {
             trade_amount_u: None,
             quote_token: None,
             trade_environment: None,
+            margin_mode: None,
+            order_policy: None,
             created_at: None,
             expires_at: None,
         }
@@ -395,6 +465,8 @@ pub fn consent_snapshot(job_id: &str) -> ConsentSnapshot {
             trade_amount_u: file.trade_amount_u,
             quote_token: file.quote_token,
             trade_environment: file.trade_environment,
+            margin_mode: file.margin_mode,
+            order_policy: file.order_policy,
             created_at: Some(file.created_at),
             expires_at: Some(file.expires_at),
         },
@@ -442,8 +514,8 @@ pub fn evaluate_consent(
 }
 
 /// Persist a consent record for `job_id` (release-mode; replaces the debug-only
-/// `grants::write_grant` seeding). `cap_u` is required and validated for `Auto`,
-/// and must be absent for `Manual` / `Decline`.
+/// `grants::write_grant` seeding). `cap_u` is optional and validated when
+/// present for `Auto`, and must be absent for `Manual` / `Decline`.
 pub fn write_consent(
     job_id: &str,
     mode: ConsentMode,
@@ -492,6 +564,33 @@ pub fn write_consent_policy(
     trade_environment: Option<TradeEnvironment>,
     ttl_sec: u64,
 ) -> anyhow::Result<()> {
+    write_consent_policy_with_settings(
+        job_id,
+        mode,
+        cap_u,
+        trade_amount_u,
+        quote,
+        trade_environment,
+        None,
+        None,
+        ttl_sec,
+    )
+}
+
+/// Persist the complete local execution policy. Omitted Trade Kit settings
+/// preserve an existing choice, which makes cap/amount changes safe and lets
+/// older callers remain source-compatible.
+pub fn write_consent_policy_with_settings(
+    job_id: &str,
+    mode: ConsentMode,
+    cap_u: Option<&str>,
+    trade_amount_u: Option<&str>,
+    quote: Option<&str>,
+    trade_environment: Option<TradeEnvironment>,
+    margin_mode: Option<MarginMode>,
+    order_policy: Option<OrderPolicy>,
+    ttl_sec: u64,
+) -> anyhow::Result<()> {
     if !job_id_is_safe(job_id) {
         anyhow::bail!("invalid job id");
     }
@@ -499,15 +598,16 @@ pub fn write_consent_policy(
         anyhow::bail!("--ttl-sec must be > 0");
     }
     let cap_u = match mode {
-        ConsentMode::Auto => {
-            let cap = cap_u.ok_or_else(|| anyhow::anyhow!("--cap is required for --mode auto"))?;
-            let parsed =
-                Decimal::parse(cap).map_err(|_| anyhow::anyhow!("--cap is not a valid decimal"))?;
-            if parsed.is_zero() {
-                anyhow::bail!("--cap must be greater than 0");
-            }
-            Some(cap.to_string())
-        }
+        ConsentMode::Auto => cap_u
+            .map(|cap| {
+                let parsed = Decimal::parse(cap)
+                    .map_err(|_| anyhow::anyhow!("--cap is not a valid decimal"))?;
+                if parsed.is_zero() {
+                    anyhow::bail!("--cap must be greater than 0");
+                }
+                Ok(cap.to_string())
+            })
+            .transpose()?,
         ConsentMode::Manual | ConsentMode::Decline => {
             if cap_u.is_some() {
                 anyhow::bail!("--cap is only valid with --mode auto");
@@ -550,6 +650,8 @@ pub fn write_consent_policy(
             .as_ref()
             .and_then(|consent| consent.trade_environment)
     });
+    let margin_mode = margin_mode.or_else(|| existing.as_ref().and_then(|c| c.margin_mode));
+    let order_policy = order_policy.or_else(|| existing.as_ref().and_then(|c| c.order_policy));
 
     let created_at = now_secs();
     let file = ConsentFile {
@@ -560,6 +662,8 @@ pub fn write_consent_policy(
         trade_amount_u,
         quote_token,
         trade_environment,
+        margin_mode,
+        order_policy,
         created_at,
         expires_at: created_at + ttl_sec,
     };
@@ -586,6 +690,39 @@ pub fn write_trade_environment(
         .ok_or_else(|| anyhow::anyhow!("no live consent"))?;
     file.version = CONSENT_VERSION;
     file.trade_environment = Some(trade_environment);
+    let path = consent_path(job_id).map_err(|error| anyhow::anyhow!(error.0))?;
+    let body = serde_json::to_string_pretty(&file)?;
+    crate::home::write_secure(&path, body.as_bytes())?;
+    Ok(file)
+}
+
+/// Partially update user-confirmed Trade Kit execution settings without
+/// rewriting mode, amount, cap, quote, timestamps, or expiry.
+pub fn write_trade_settings(
+    job_id: &str,
+    trade_environment: Option<TradeEnvironment>,
+    margin_mode: Option<MarginMode>,
+    order_policy: Option<OrderPolicy>,
+) -> anyhow::Result<ConsentFile> {
+    if trade_environment.is_none() && margin_mode.is_none() && order_policy.is_none() {
+        anyhow::bail!("at least one Trade Kit setting is required");
+    }
+    if trade_environment.is_some_and(|environment| !environment.is_explicit()) {
+        anyhow::bail!("trade environment must be live or demo");
+    }
+    let mut file = load_consent(job_id)
+        .map_err(|error| anyhow::anyhow!(error.0))?
+        .ok_or_else(|| anyhow::anyhow!("no live consent"))?;
+    file.version = CONSENT_VERSION;
+    if let Some(value) = trade_environment {
+        file.trade_environment = Some(value);
+    }
+    if let Some(value) = margin_mode {
+        file.margin_mode = Some(value);
+    }
+    if let Some(value) = order_policy {
+        file.order_policy = Some(value);
+    }
     let path = consent_path(job_id).map_err(|error| anyhow::anyhow!(error.0))?;
     let body = serde_json::to_string_pretty(&file)?;
     crate::home::write_secure(&path, body.as_bytes())?;
@@ -867,6 +1004,8 @@ mod tests {
                     trade_amount_u: None,
                     quote_token: None,
                     trade_environment: None,
+                    margin_mode: None,
+                    order_policy: None,
                     created_at: None,
                     expires_at: None,
                 }
@@ -894,6 +1033,8 @@ mod tests {
             assert_eq!(snapshot.trade_amount_u.as_deref(), Some("12.5"));
             assert_eq!(snapshot.quote_token.as_deref(), Some("usdc"));
             assert_eq!(snapshot.trade_environment, None);
+            assert_eq!(snapshot.margin_mode, None);
+            assert_eq!(snapshot.order_policy, None);
             assert!(snapshot.created_at.is_some());
             assert!(snapshot.expires_at.is_some());
         });
@@ -931,6 +1072,41 @@ mod tests {
             let rewritten = load_consent("job1").unwrap().unwrap();
             assert_eq!(rewritten.cap_u.as_deref(), Some("75"));
             assert_eq!(rewritten.trade_environment, Some(TradeEnvironment::Demo));
+        });
+    }
+
+    #[test]
+    fn trade_settings_update_preserves_policy_and_snapshot_exposes_all_settings() {
+        with_home(|| {
+            write_consent_with_trade_amount(
+                "job1",
+                ConsentMode::Auto,
+                Some("50"),
+                Some("12.5"),
+                Some("USDC"),
+                3600,
+            )
+            .unwrap();
+            let before = load_consent("job1").unwrap().unwrap();
+
+            let updated = write_trade_settings(
+                "job1",
+                Some(TradeEnvironment::Live),
+                Some(MarginMode::Cross),
+                Some(OrderPolicy::SignalPriceLimit),
+            )
+            .unwrap();
+            assert_eq!(updated.mode, before.mode);
+            assert_eq!(updated.cap_u, before.cap_u);
+            assert_eq!(updated.trade_amount_u, before.trade_amount_u);
+            assert_eq!(updated.quote_token, before.quote_token);
+            assert_eq!(updated.created_at, before.created_at);
+            assert_eq!(updated.expires_at, before.expires_at);
+
+            let snapshot = consent_snapshot("job1");
+            assert_eq!(snapshot.trade_environment, Some(TradeEnvironment::Live));
+            assert_eq!(snapshot.margin_mode, Some(MarginMode::Cross));
+            assert_eq!(snapshot.order_policy, Some(OrderPolicy::SignalPriceLimit));
         });
     }
 
@@ -1233,8 +1409,8 @@ mod tests {
     #[test]
     fn write_consent_validates_cap_and_mode() {
         with_home(|| {
-            // Auto requires a positive, parseable cap.
-            assert!(write_consent("job1", ConsentMode::Auto, None, None, 3600).is_err());
+            // Auto permits no cap; a supplied cap must be positive and parseable.
+            assert!(write_consent("job1", ConsentMode::Auto, None, None, 3600).is_ok());
             assert!(write_consent("job1", ConsentMode::Auto, Some("abc"), None, 3600).is_err());
             assert!(write_consent("job1", ConsentMode::Auto, Some("0"), None, 3600).is_err());
             assert!(write_consent("job1", ConsentMode::Auto, Some("50"), None, 3600).is_ok());

@@ -173,6 +173,12 @@ pub enum AgentCommand {
         /// User-authorized Trade Kit environment (`live` or `demo`).
         #[arg(long = "autotrade-environment")]
         autotrade_environment: Option<String>,
+        /// User-authorized Trade Kit derivative margin mode.
+        #[arg(long = "autotrade-margin-mode")]
+        autotrade_margin_mode: Option<String>,
+        /// User-authorized signal-entry order policy.
+        #[arg(long = "autotrade-order-policy")]
+        autotrade_order_policy: Option<String>,
         #[arg(long, default_value = "")]
         format: String,
         /// Legacy compatibility input. Create-time device selection is rejected.
@@ -648,10 +654,10 @@ pub enum AgentCommand {
         #[arg(long = "job-id")]
         job_id: String,
         /// `auto` | `manual` | `decline` | `pause` | `cap-adjust` |
-        /// `environment-set` | `plugin-ready-check`.
+        /// `environment-set` | `settings-update` | `plugin-ready-check`.
         #[arg(long)]
         mode: String,
-        /// Per-trade cap in quote-stablecoin units (USDT by default); required for `auto`.
+        /// Optional per-trade cap in quote-stablecoin units (USDT by default).
         #[arg(long)]
         cap: Option<String>,
         /// Fixed quote-stablecoin amount used by the model-driven subscription.
@@ -680,6 +686,49 @@ pub enum AgentCommand {
         /// values preserve the existing choice.
         #[arg(long)]
         environment: Option<String>,
+        /// User-authorized Trade Kit margin mode (`cross` or `isolated`).
+        #[arg(long = "margin-mode")]
+        margin_mode: Option<String>,
+        /// User-authorized order policy (`market` or `signal_price_limit`).
+        #[arg(long = "order-policy")]
+        order_policy: Option<String>,
+    },
+
+    /// Continue a short-lived, job-bound execution configuration flow.
+    #[command(name = "autotrade-consent-continue", hide = true)]
+    AutotradeConsentContinue {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long = "continuation-id")]
+        continuation_id: Option<String>,
+        #[arg(long)]
+        mode: Option<String>,
+        #[arg(long)]
+        origin: Option<String>,
+        #[arg(long = "signal-type")]
+        signal_type: Option<String>,
+        #[arg(long = "delivery-id")]
+        delivery_id: Option<String>,
+        #[arg(long = "required-field")]
+        required_fields: Vec<String>,
+        #[arg(long = "confirm-mode", default_value_t = false)]
+        confirm_mode: bool,
+        #[arg(long = "trade-amount")]
+        trade_amount: Option<String>,
+        #[arg(long)]
+        cap: Option<String>,
+        #[arg(long)]
+        quote: Option<String>,
+        #[arg(long)]
+        environment: Option<String>,
+        #[arg(long = "margin-mode")]
+        margin_mode: Option<String>,
+        #[arg(long = "order-policy")]
+        order_policy: Option<String>,
+        #[arg(long, default_value_t = false)]
+        cancel: bool,
     },
 
     /// Queue and push a delivery's consent/manual decision. The CLI adds a
@@ -1377,6 +1426,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             autotrade_cap,
             autotrade_quote,
             autotrade_environment,
+            autotrade_margin_mode,
+            autotrade_order_policy,
             format,
             exclude_device,
         } => {
@@ -1398,6 +1449,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     autotrade_cap,
                     autotrade_quote,
                     autotrade_environment,
+                    autotrade_margin_mode,
+                    autotrade_order_policy,
                     format,
                     exclude_device,
                 },
@@ -2159,6 +2212,153 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
+        AgentCommand::AutotradeConsentContinue {
+            job_id,
+            agent_id,
+            continuation_id,
+            mode,
+            origin,
+            signal_type,
+            delivery_id,
+            required_fields,
+            confirm_mode,
+            trade_amount,
+            cap,
+            quote,
+            environment,
+            margin_mode,
+            order_policy,
+            cancel,
+        } => {
+            use task::common::autotrade::continuation::{
+                self, ExplicitValues, Origin, SelectedMode, StartBinding,
+            };
+            if cancel {
+                if mode.is_some()
+                    || origin.is_some()
+                    || signal_type.is_some()
+                    || delivery_id.is_some()
+                    || !required_fields.is_empty()
+                    || confirm_mode
+                    || trade_amount.is_some()
+                    || cap.is_some()
+                    || quote.is_some()
+                    || environment.is_some()
+                    || margin_mode.is_some()
+                    || order_policy.is_some()
+                {
+                    anyhow::bail!("--cancel does not accept configuration arguments");
+                }
+                let continuation_id = continuation_id
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("--continuation-id is required with --cancel"))?;
+                continuation::cancel(&job_id, &agent_id, continuation_id)?;
+                crate::output::success(serde_json::json!({
+                    "jobId": job_id,
+                    "continuationId": continuation_id,
+                    "cancelled": true,
+                }));
+                return Ok(());
+            }
+
+            let selected_mode = mode
+                .as_deref()
+                .map(SelectedMode::parse)
+                .transpose()?;
+            let values = ExplicitValues {
+                trade_amount_u: trade_amount.as_deref(),
+                cap_u: cap.as_deref(),
+                quote_token: quote.as_deref(),
+                trade_environment: environment.as_deref(),
+                margin_mode: margin_mode.as_deref(),
+                order_policy: order_policy.as_deref(),
+            };
+
+            let result = if continuation_id.is_none() {
+                let selected_mode = selected_mode
+                    .ok_or_else(|| anyhow::anyhow!("--mode is required when starting"))?;
+                let origin = origin
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("--origin is required when starting"))
+                    .and_then(Origin::parse)?;
+                if origin != Origin::SubscriptionRestore {
+                    anyhow::bail!(
+                        "new consent continuations are supported only for subscription restoration"
+                    );
+                }
+                let signal_type = signal_type
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("--signal-type is required when starting"))?;
+                let asset_class = signal_type
+                    .parse::<crate::asset_class::AssetClass>()
+                    .map_err(anyhow::Error::msg)?;
+                let precheck = task::user::scoped_watch_autotrade_precheck(&job_id).await?;
+                task::user::bind_subscription_restore_consent_context(
+                    &precheck,
+                    &job_id,
+                    &agent_id,
+                    asset_class,
+                )?;
+                continuation::start_or_update(
+                    Some(StartBinding {
+                        job_id: &job_id,
+                        agent_id: &agent_id,
+                        selected_mode,
+                        mode_confirmed: confirm_mode,
+                        origin,
+                        signal_type,
+                        original_delivery_id: delivery_id.as_deref(),
+                        required_fields: Some(&required_fields),
+                    }),
+                    &job_id,
+                    &agent_id,
+                    None,
+                    None,
+                    values,
+                )?
+            } else {
+                if origin.is_some()
+                    || signal_type.is_some()
+                    || delivery_id.is_some()
+                    || !required_fields.is_empty()
+                    || confirm_mode
+                {
+                    anyhow::bail!(
+                        "resume accepts only --continuation-id, optional --mode, and explicit values"
+                    );
+                }
+                let continuation_id = continuation_id.as_deref().expect("checked above");
+                let existing = continuation::load_for_resume(
+                    &job_id,
+                    &agent_id,
+                    continuation_id,
+                )?;
+                if existing.origin == Origin::SubscriptionRestore {
+                    let asset_class = existing
+                        .signal_type
+                        .parse::<crate::asset_class::AssetClass>()
+                        .map_err(anyhow::Error::msg)?;
+                    let precheck = task::user::scoped_watch_autotrade_precheck(&job_id).await?;
+                    task::user::bind_subscription_restore_consent_context(
+                        &precheck,
+                        &job_id,
+                        &agent_id,
+                        asset_class,
+                    )?;
+                }
+                continuation::start_or_update(
+                    None,
+                    &job_id,
+                    &agent_id,
+                    Some(continuation_id),
+                    selected_mode,
+                    values,
+                )?
+            };
+            crate::output::success(result);
+            Ok(())
+        }
+
         AgentCommand::AutotradeConsentSet {
             job_id,
             mode,
@@ -2170,6 +2370,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             tool,
             quote,
             environment,
+            margin_mode,
+            order_policy,
         } => {
             use task::common::autotrade::{consent, grants};
             let trade_environment = environment
@@ -2180,6 +2382,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             if trade_environment.is_some_and(|environment| !environment.is_explicit()) {
                 anyhow::bail!("--environment must be one of: live | demo");
             }
+            let margin_mode = margin_mode
+                .as_deref()
+                .map(consent::MarginMode::parse)
+                .transpose()?;
+            let order_policy = order_policy
+                .as_deref()
+                .map(consent::OrderPolicy::parse)
+                .transpose()?;
             if tool.is_some() {
                 anyhow::bail!("--tool is deprecated; use subscription-route-set");
             }
@@ -2189,12 +2399,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     || plugin.is_some()
                     || quote.is_some()
                     || environment.is_some()
+                    || margin_mode.is_some()
+                    || order_policy.is_some()
                 {
                     anyhow::bail!("pause does not accept policy arguments");
                 }
                 consent::clear_consent(&job_id);
                 grants::clear_grant(&job_id);
                 consent::clear_pending_signal(&job_id);
+                task::common::autotrade::continuation::clear(&job_id);
                 crate::output::success(
                     serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id}),
                 );
@@ -2208,6 +2421,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     || trade_amount.is_some()
                     || plugin.is_some()
                     || quote.is_some()
+                    || margin_mode.is_some()
+                    || order_policy.is_some()
                 {
                     anyhow::bail!("environment-set accepts only --environment");
                 }
@@ -2221,11 +2436,34 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }));
                 return Ok(());
             }
+            if mode == "settings-update" {
+                if cap.is_some() || trade_amount.is_some() || plugin.is_some() || quote.is_some() {
+                    anyhow::bail!(
+                        "settings-update accepts only --environment, --margin-mode, and --order-policy"
+                    );
+                }
+                let policy = consent::write_trade_settings(
+                    &job_id,
+                    trade_environment,
+                    margin_mode,
+                    order_policy,
+                )?;
+                crate::output::success(serde_json::json!({
+                    "consentMode": policy.mode,
+                    "tradeEnvironment": policy.trade_environment.map(|value| value.as_str()),
+                    "marginMode": policy.margin_mode.map(|value| value.as_str()),
+                    "orderPolicy": policy.order_policy.map(|value| value.as_str()),
+                    "replayed": false
+                }));
+                return Ok(());
+            }
             if mode == "plugin-ready-check" || mode == "plugin-approved" {
                 if cap.is_some()
                     || trade_amount.is_some()
                     || quote.is_some()
                     || environment.is_some()
+                    || margin_mode.is_some()
+                    || order_policy.is_some()
                 {
                     anyhow::bail!("plugin-ready-check accepts only --plugin");
                 }
@@ -2260,6 +2498,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     || plugin.is_some()
                     || quote.is_some()
                     || environment.is_some()
+                    || margin_mode.is_some()
+                    || order_policy.is_some()
                 {
                     anyhow::bail!("cap-adjust accepts only --cap");
                 }
@@ -2308,32 +2548,44 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     None
                 }
             });
-            consent::write_consent_policy(
+            consent::write_consent_policy_with_settings(
                 &job_id,
                 mode_enum,
                 cap.as_deref(),
                 effective_amount,
                 quote.as_deref(),
                 trade_environment,
+                margin_mode,
+                order_policy,
                 ttl_sec,
             )?;
-            let persisted_environment = consent::load_consent(&job_id)?
+            let persisted_policy = consent::load_consent(&job_id)?;
+            let persisted_environment = persisted_policy
+                .as_ref()
                 .and_then(|policy| policy.trade_environment)
                 .map(|value| value.as_str());
+            let persisted_margin_mode = persisted_policy
+                .as_ref()
+                .and_then(|policy| policy.margin_mode)
+                .map(|value| value.as_str());
+            let persisted_order_policy = persisted_policy
+                .and_then(|policy| policy.order_policy)
+                .map(|value| value.as_str());
             match mode_enum {
-                consent::ConsentMode::Auto => {
-                    grants::write_cap_grant(&job_id, cap.as_deref().unwrap_or_default(), ttl_sec)?
-                }
+                consent::ConsentMode::Auto => grants::write_auto_grant(&job_id, ttl_sec)?,
                 consent::ConsentMode::Manual | consent::ConsentMode::Decline => {
                     grants::clear_grant(&job_id)
                 }
             }
             consent::clear_pending_signal(&job_id);
+            task::common::autotrade::continuation::clear(&job_id);
             crate::output::success(
                 serde_json::json!({
                     "consentMode": mode,
                     "cap": cap,
                     "tradeEnvironment": persisted_environment,
+                    "marginMode": persisted_margin_mode,
+                    "orderPolicy": persisted_order_policy,
                     "replayed": false
                 }),
             );

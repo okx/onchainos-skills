@@ -492,6 +492,8 @@ agent create-subscribe \
   [--autotrade-mode <auto|manual>] [--autotrade-amount <decimal-number>] \
   [--autotrade-cap <decimal-number>] [--autotrade-quote <usdt|usdc>] \
   [--autotrade-environment <live|demo>] \
+  [--autotrade-margin-mode <cross|isolated>] \
+  [--autotrade-order-policy <market|signal_price_limit>] \
   [--format json]
 ```
 
@@ -511,6 +513,8 @@ agent create-subscribe \
 | `--autotrade-cap` | No | - | Optional positive per-signal cap metadata; stored but not enforced |
 | `--autotrade-quote` | No | `usdt` | `usdt` or `usdc` |
 | `--autotrade-environment` | For confirmed Trade Kit routes | - | User-authorized target: `live` or `demo`; never inferred or defaulted |
+| `--autotrade-margin-mode` | For confirmed Trade Kit `perp` routes | - | User-authorized margin mode: `cross` or `isolated` |
+| `--autotrade-order-policy` | For confirmed Trade Kit routes | - | User-authorized order construction: `market` or `signal_price_limit` |
 
 > **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
 
@@ -1114,13 +1118,16 @@ invalid supplied values are not persisted. Every later resume or cancel requires
 
 ```bash
 agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
-  --mode <auto|manual> --origin <pre-delivery|delivery|subscription-restore> --signal-type <class> \
+  --mode <auto|manual> --origin subscription-restore --signal-type <class> \
   [--delivery-id <deliveryId>] [--trade-amount <amount>] [--cap <amount>] \
-  [--quote <usdt|usdc>] [--required-field <tradeAmount|cap|quote>]... [--confirm-mode]
+  [--quote <usdt|usdc>] [--environment <live|demo>] [--margin-mode <cross|isolated>] \
+  [--order-policy <market|signal_price_limit>] \
+  [--required-field <tradeAmount|cap|quote|environment|marginMode|orderPolicy>]... [--confirm-mode]
 
 agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
   --continuation-id <id> [--mode <auto|manual>] [--trade-amount <amount>] [--cap <amount>] \
-  [--quote <usdt|usdc>]
+  [--quote <usdt|usdc>] [--environment <live|demo>] [--margin-mode <cross|isolated>] \
+  [--order-policy <market|signal_price_limit>]
 
 agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
   --continuation-id <id> --cancel
@@ -1129,6 +1136,8 @@ agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
 For `subscription-restore`, the starting mode is a display default until the current user explicitly
 selects it. `--confirm-mode` marks an explicitly selected starting mode; on resume, supplying `--mode`
 records that confirmation. Until then, `missingFields` includes `mode` and no consent command is returned.
+New records may be started only for `subscription-restore`. Older in-flight records with another origin
+remain resumable by their exact `continuationId` for compatibility.
 
 ### autotrade-consent-set
 
@@ -1137,13 +1146,13 @@ in this MVP. This command never parses or replays a delivery;
 the active subscription signal skill owns the current execution turn.
 
 ```
-agent autotrade-consent-set --job-id <jobId> --mode <mode> [--agent-id <agentId>] [--cap <amount>] [--trade-amount <amount>] [--ttl-sec <secs>] [--plugin <id>] [--quote <usdc|usdt>] [--environment <live|demo>] [--tool <tool>]
+agent autotrade-consent-set --job-id <jobId> --mode <mode> [--agent-id <agentId>] [--cap <amount>] [--trade-amount <amount>] [--ttl-sec <secs>] [--plugin <id>] [--quote <usdc|usdt>] [--environment <live|demo>] [--margin-mode <cross|isolated>] [--order-policy <market|signal_price_limit>] [--tool <tool>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--job-id` | Yes | - | Subscription job ID |
-| `--mode` | Yes | - | `auto`, `manual`, `decline`, `pause`, `cap-adjust`, `environment-set`, or `plugin-ready-check` (`plugin-approved` compatibility alias) |
+| `--mode` | Yes | - | `auto`, `manual`, `decline`, `pause`, `cap-adjust`, `environment-set`, `settings-update`, or `plugin-ready-check` (`plugin-approved` compatibility alias) |
 | `--agent-id` | Except `pause` | - | Buyer agent ID; omitted for `pause`, required for every other mode |
 | `--cap` | No | - | Optional per-trade cap metadata in quote-stablecoin units |
 | `--trade-amount` | No | - | Optional policy amount; the model/tool must still read and validate each delivery |
@@ -1151,6 +1160,8 @@ agent autotrade-consent-set --job-id <jobId> --mode <mode> [--agent-id <agentId>
 | `--plugin` | For plugin readiness | - | Plugin-store ID for `plugin-ready-check` or its compatibility alias |
 | `--quote` | No | usdt | Quote stablecoin: `usdc` or `usdt` |
 | `--environment` | For `environment-set`; optional for policy writes | - | User-authorized Trade Kit target: `live` or `demo`; omission preserves an existing value |
+| `--margin-mode` | No | - | User-authorized Trade Kit margin mode: `cross` or `isolated`; omission preserves an existing value |
+| `--order-policy` | No | - | User-authorized order policy: `market` or `signal_price_limit`; omission preserves an existing value |
 | `--tool` | No | - | Deprecated and rejected; model routes are stored with `subscription-route-set` |
 
 ### subscription-route-set / subscription-route-clear

@@ -35,7 +35,7 @@ if [ "$1 $2" = "list-tools --json" ]; then
       version="1.4.2"
       ;;
   esac
-  printf '%s\n' "{\"version\":\"$version\",\"modules\":[{\"commands\":[{\"toolName\":\"market_get_ticker\"},{\"toolName\":\"spot_place_order\"},{\"toolName\":\"market_get_instruments\"},{\"toolName\":\"account_get_config\"},{\"toolName\":\"swap_get_leverage\"},{\"toolName\":\"swap_set_leverage\"},{\"toolName\":\"swap_place_order\"},{\"toolName\":\"event_browse\"},{\"toolName\":\"event_get_series\"},{\"toolName\":\"event_get_events\"},{\"toolName\":\"event_get_markets\"},{\"toolName\":\"event_place_order\"},{\"toolName\":\"option_get_instruments\"},{\"toolName\":\"option_get_greeks\"},{\"toolName\":\"option_place_order\"}]}]}"
+  printf '%s\n' "{\"version\":\"$version\",\"modules\":[{\"commands\":[{\"toolName\":\"market_get_ticker\"},{\"toolName\":\"spot_place_order\"},{\"toolName\":\"market_get_instruments\"},{\"toolName\":\"account_get_config\"},{\"toolName\":\"swap_get_leverage\"},{\"toolName\":\"swap_set_leverage\"},{\"toolName\":\"swap_place_order\"},{\"toolName\":\"swap_close_position\"},{\"toolName\":\"futures_get_leverage\"},{\"toolName\":\"futures_set_leverage\"},{\"toolName\":\"futures_place_order\"},{\"toolName\":\"futures_close_position\"},{\"toolName\":\"event_browse\"},{\"toolName\":\"event_get_series\"},{\"toolName\":\"event_get_events\"},{\"toolName\":\"event_get_markets\"},{\"toolName\":\"event_place_order\"},{\"toolName\":\"option_get_instruments\"},{\"toolName\":\"option_get_greeks\"},{\"toolName\":\"option_place_order\"}]}]}"
   exit 0
 fi
 

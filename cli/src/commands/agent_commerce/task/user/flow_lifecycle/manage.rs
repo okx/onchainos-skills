@@ -99,7 +99,7 @@ Using the selected service's `serviceDescription` + `serviceName` + the user's t
 **Identify required user input** from `serviceDescription` (strict / fail closed):
 Create a service parameter ONLY when the listing explicitly addresses the subscriber and says a concrete value is required, for example \"you must provide ...\", \"please input ...\", \"required parameter: ...\", or an explicit subscriber-fillable placeholder. A capability description, output schema, signal example, risk disclosure, execution precondition, or phrase such as \"check X before execution\" is NOT a request for subscriber input.
 
-For trading-signal subscriptions, keep account, wallet, balance/collateral, per-trade amount, authorization limit/cap, venue/tool choice, plugin installation, API credentials, signal fields, and execution mode out of `serviceParams`. Parse user-authored execution settings into the separate `--autotrade-*` fields described below.
+For trading-signal subscriptions, keep account, wallet, balance/collateral, per-trade amount, authorization limit/cap, venue/tool choice, plugin installation, API credentials, signal fields, execution mode, Trade Kit environment, margin mode, and order policy out of `serviceParams`. Parse user-authored execution settings into the separate `--autotrade-*` fields described below.
 
 If explicit subscriber-input language is absent or ambiguous → `serviceParams` MUST be empty. Do not create `<to be provided>` rows from inference alone.
 
@@ -176,10 +176,10 @@ Collect/infer:
 4. **Signal execution setup and capability preflight**:
    - Automatic signal execution is the MVP default. Set mode=`auto` unless the user explicitly says not to execute automatically; an explicit opt-out sets mode=`manual`.
    - Inspect `serviceDescription` only to identify which execution settings the ASP asks the subscriber to provide and any values presented as suggestions. ASP text is not the user's answer and must never be persisted by itself.
-   - Parse mode, fixed per-signal quote amount, per-signal cap, and quote currency (`USDT` or `USDC`) only from user-authored context. When the ASP explicitly asks for a field and the user has not answered it, ask for only the missing fields in one localized natural-language question, then **END THIS TURN**. Never use A/B/C, numbered choices, or a decision card.
+   - Parse mode, fixed per-signal quote amount, per-signal cap, quote currency (`USDT` or `USDC`), margin mode (`cross` or `isolated`), and order policy (`market` or `signal_price_limit`) only from user-authored context. ASP prose determines only which supported fields to ask for; it never supplies a value. When a required field has not been answered, ask for only the missing fields in one localized natural-language question, then **END THIS TURN**. Never use A/B/C, numbered choices, or a decision card.
    - Amount and cap are optional unless the ASP explicitly asks the user to configure them. Each supplied value must be a positive decimal. Do not compare amount with cap. Quote defaults to `USDT`.
    - Retain `autoTradePreflight` only as advisory runtime information. Never block subscription creation on a missing/unconfigured tool. Installation or configuration may run only after the user explicitly chooses the optional Trade Kit preparation action below; choosing Later must continue the subscription unchanged.
-   - When `autoTradePreflight.tradeKitProbe.mode=probe_before_confirmation`, collect exactly one user-authored Trade Kit environment: `live` for real trading or `demo` for simulated trading. Never infer it from ASP text, Trade Kit defaults, or readiness output. If it is missing, ask once together with any other missing execution settings, then **END THIS TURN**. Retain the confirmed value as `tradeEnvironment`.
+   - When `autoTradePreflight.tradeKitProbe.mode=probe_before_confirmation`, collect exactly one user-authored Trade Kit environment (`live` or `demo`) and one order policy (`market` or `signal_price_limit`). When `tradeKitProbe.assetClasses` contains `perp`, also collect one margin mode (`cross` or `isolated`). Never infer any value from ASP text, Trade Kit defaults, or readiness output. Ask for all missing settings together, then **END THIS TURN**. Retain them as `tradeEnvironment`, `marginMode`, and `orderPolicy`.
 
    The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the advisory notice and continue creating the subscription. Do not retry `task-service-select` solely to obtain preflight data. There is no standalone binary execution field to collect and no `--copy-trade` argument to pass.
    **Deterministic Trade Kit probe decision:** inspect `autoTradePreflight.tradeKitProbe.mode` after the service has been selected:
@@ -213,7 +213,7 @@ Collect/infer:
 Step 5 -- Subscription confirmation form
 ================================================
 
-Execution mode, per-signal amount, and per-signal cap are internal execution configuration. Never render them as rows in this or any other confirmation form. Continue retaining the user-authored values for the Step 6 `--autotrade-*` arguments.
+Execution mode, per-signal amount, per-signal cap, margin mode, and order policy are internal execution configuration. Never render them as rows in this or any other confirmation form. Continue retaining the user-authored values for the Step 6 `--autotrade-*` arguments.
 
 | Field | Value |
 |---|---|
@@ -239,7 +239,7 @@ Step 5.5 -- Route by user decision (separate turn)
 - Edit serviceParams → update → Step 5
 - Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → Step 4 → Step 5
 - Edit autoRenew → update → Step 5
-- Edit automatic signal execution / amount / cap / quote currency / Trade Kit environment → update the user-authored value; cap remains informational → Step 5
+- Edit automatic signal execution / amount / cap / quote currency / Trade Kit environment / margin mode / order policy → update the user-authored value; cap remains informational → Step 5
 
 ================================================
 Step 6 -- Publish subscription (create-subscribe)
@@ -260,9 +260,11 @@ onchainos agent create-subscribe \\
   [--autotrade-amount \"<decimal-number>\"] \\
   [--autotrade-cap \"<decimal-number>\"] \\
   [--autotrade-quote <usdt|usdc>] \
-  [--autotrade-environment <live|demo>]
+  [--autotrade-environment <live|demo>] \
+  [--autotrade-margin-mode <cross|isolated>] \
+  [--autotrade-order-policy <market|signal_price_limit>]
 ```
-- Always pass the confirmed mode; it defaults to `auto`. Pass amount, cap, quote, and Trade Kit environment only when present in user-authored context. ASP suggestions alone are never values.
+- Always pass the confirmed mode; it defaults to `auto`. Pass amount, cap, quote, Trade Kit environment, margin mode, and order policy only from user-authored context. For a confirmed Trade Kit route, environment and order policy are required; margin mode is additionally required for `perp`. ASP suggestions alone are never values.
 - `--autotrade-amount` and `--autotrade-cap` are human-readable quote amounts selected by `--autotrade-quote`: pass a decimal number only (for example `10` or `20.5`), never minimal units and never a `USDT`/`USDC` suffix.
 - Do not compare `--autotrade-amount` with `--autotrade-cap`. A stored cap is informational in this MVP.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.

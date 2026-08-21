@@ -80,6 +80,26 @@ pub enum ExecutionMode {
     OneTime,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AuthorizedTradeKitSettings {
+    environment: Option<trade_kit::TradeEnvironment>,
+    margin_mode: Option<consent::MarginMode>,
+    order_policy: Option<consent::OrderPolicy>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TradeKitOperation {
+    Place,
+    ClosePosition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TradeKitExecutionContext {
+    asset_class: AssetClass,
+    environment: trade_kit::TradeEnvironment,
+    operation: TradeKitOperation,
+}
+
 impl ExecutionMode {
     pub fn parse(value: &str) -> Result<Self> {
         match value {
@@ -628,9 +648,40 @@ fn validate_bound_intent(
             _ => bail!("unsupported defi automatic execution operation"),
         },
         "trade_kit" => {
-            require_same_amount(flag_value(args, "--sz"), amount, "Trade Kit order size")?;
-            if flag_value(args, "--side") != Some(action) {
-                bail!("Trade Kit order side does not match the authorized action");
+            let context = trade_kit_execution_context(args)?;
+            match context.operation {
+                TradeKitOperation::Place => {
+                    let (actual_side, actual_amount) = if context.asset_class == AssetClass::Prediction {
+                        let index = args
+                            .windows(2)
+                            .position(|pair| pair[0] == "event" && pair[1] == "place")
+                            .context("Trade Kit event command shape is invalid")?;
+                        (
+                            args.get(index + 3).map(String::as_str),
+                            args.get(index + 5).map(String::as_str),
+                        )
+                    } else {
+                        (flag_value(args, "--side"), flag_value(args, "--sz"))
+                    };
+                    require_same_amount(actual_amount, amount, "Trade Kit order size")?;
+                    if actual_side != Some(action) {
+                        bail!("Trade Kit order side does not match the authorized action");
+                    }
+                }
+                TradeKitOperation::ClosePosition => {
+                    if flag_value(args, "--sz").is_some() || flag_value(args, "--side").is_some() {
+                        bail!("Trade Kit full-position close must not carry order size or side flags");
+                    }
+                    let position_side = flag_value(args, "--posSide")
+                        .context("Trade Kit full-position close requires an explicit position side")?;
+                    match (position_side, action) {
+                        ("long", "sell") | ("short", "buy") | ("net", "buy" | "sell") => {}
+                        ("long", _) | ("short", _) => {
+                            bail!("Trade Kit close direction does not match the authorized action")
+                        }
+                        _ => bail!("Trade Kit close position side must be net, long, or short"),
+                    }
+                }
             }
         }
         "polymarket" => {
@@ -681,9 +732,7 @@ fn validate_bound_intent(
     Ok(())
 }
 
-fn trade_kit_readiness_context(
-    args: &[String],
-) -> Result<(AssetClass, trade_kit::TradeEnvironment)> {
+fn trade_kit_execution_context(args: &[String]) -> Result<TradeKitExecutionContext> {
     let live = args.iter().any(|arg| arg == "--live");
     let demo = args.iter().any(|arg| arg == "--demo");
     let environment = match (live, demo) {
@@ -694,17 +743,81 @@ fn trade_kit_readiness_context(
             bail!("Trade Kit execution requires an explicit --live or --demo flag")
         }
     };
-    let asset_class = args
+    let (asset_class, operation) = args
         .windows(2)
         .find_map(|pair| match (pair[0].as_str(), pair[1].as_str()) {
-            ("spot", "place") => Some(AssetClass::Spot),
-            ("swap" | "futures", "place") => Some(AssetClass::Perp),
-            ("option", "place") => Some(AssetClass::Option),
-            ("event", "place") => Some(AssetClass::Prediction),
+            ("spot", "place") => Some((AssetClass::Spot, TradeKitOperation::Place)),
+            ("swap" | "futures", "place") => {
+                Some((AssetClass::Perp, TradeKitOperation::Place))
+            }
+            ("swap" | "futures", "close") => {
+                Some((AssetClass::Perp, TradeKitOperation::ClosePosition))
+            }
+            ("option", "place") => Some((AssetClass::Option, TradeKitOperation::Place)),
+            ("event", "place") => Some((AssetClass::Prediction, TradeKitOperation::Place)),
             _ => None,
         })
-        .context("Trade Kit execution requires a supported place-order command")?;
-    Ok((asset_class, environment))
+        .context("Trade Kit execution requires a supported place or contract-close command")?;
+    Ok(TradeKitExecutionContext {
+        asset_class,
+        environment,
+        operation,
+    })
+}
+
+fn validate_trade_kit_execution_settings(
+    args: &[String],
+    context: TradeKitExecutionContext,
+    settings: AuthorizedTradeKitSettings,
+) -> Result<()> {
+    let order_policy = settings
+        .order_policy
+        .context("Trade Kit execution requires a persisted order policy")?;
+    match context.operation {
+        TradeKitOperation::Place => {
+            let actual = flag_value(args, "--ordType")
+                .context("Trade Kit order type is missing from the command")?;
+            match order_policy {
+                consent::OrderPolicy::Market if actual != "market" => {
+                    bail!("Trade Kit order type does not match persisted market policy")
+                }
+                consent::OrderPolicy::SignalPriceLimit if actual != "limit" => {
+                    bail!("Trade Kit order type does not match persisted signal-price limit policy")
+                }
+                consent::OrderPolicy::SignalPriceLimit
+                    if flag_value(args, "--px").map_or(true, str::is_empty) =>
+                {
+                    bail!("Trade Kit signal-price limit policy requires an explicit order price")
+                }
+                _ => {}
+            }
+        }
+        TradeKitOperation::ClosePosition => {
+            if order_policy != consent::OrderPolicy::Market {
+                bail!("Trade Kit full-position close requires a persisted market policy");
+            }
+            if flag_value(args, "--ordType").is_some() || flag_value(args, "--tdMode").is_some() {
+                bail!("Trade Kit full-position close must use close-position margin arguments");
+            }
+        }
+    }
+
+    if let Some(margin_mode) = settings.margin_mode {
+        if matches!(context.asset_class, AssetClass::Perp | AssetClass::Option) {
+            let margin_flag = match context.operation {
+                TradeKitOperation::Place => "--tdMode",
+                TradeKitOperation::ClosePosition => "--mgnMode",
+            };
+            let actual = flag_value(args, margin_flag)
+                .context("Trade Kit margin mode is missing from the command")?;
+            if actual != margin_mode.as_str() {
+                bail!("Trade Kit margin mode does not match persisted consent");
+            }
+        }
+    } else if context.asset_class == AssetClass::Perp {
+        bail!("Trade Kit derivative execution requires a persisted margin mode");
+    }
+    Ok(())
 }
 
 fn authorize(
@@ -714,7 +827,7 @@ fn authorize(
     action: &str,
     amount: &str,
     execution_mode: ExecutionMode,
-) -> Result<(String, Option<trade_kit::TradeEnvironment>)> {
+) -> Result<(String, AuthorizedTradeKitSettings)> {
     let normalized = Decimal::parse(amount)
         .context("invalid automatic execution amount")?
         .to_plain_string();
@@ -759,7 +872,14 @@ fn authorize(
         }
         (_, consent::ConsentMode::Decline) => bail!("copy-trade execution is declined"),
     }
-    Ok((normalized, policy.trade_environment))
+    Ok((
+        normalized,
+        AuthorizedTradeKitSettings {
+            environment: policy.trade_environment,
+            margin_mode: policy.margin_mode,
+            order_policy: policy.order_policy,
+        },
+    ))
 }
 
 fn json_from_stdout(stdout: &[u8]) -> Option<Value> {
@@ -1462,9 +1582,9 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
         String,
         PathBuf,
         Vec<String>,
-        Option<(AssetClass, trade_kit::TradeEnvironment)>,
+        Option<TradeKitExecutionContext>,
     )> {
-        let (amount, authorized_environment) = authorize(
+        let (amount, authorized_settings) = authorize(
             request.job_id,
             request.delivery_id,
             request.venue,
@@ -1482,12 +1602,14 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
             &args,
         )?;
         let trade_kit_context = if request.venue == "trade_kit" {
-            let context = trade_kit_readiness_context(&args)?;
-            let expected = authorized_environment
+            let context = trade_kit_execution_context(&args)?;
+            let expected = authorized_settings
+                .environment
                 .context("Trade Kit execution requires a persisted live or demo environment")?;
-            if context.1 != expected {
+            if context.environment != expected {
                 bail!("Trade Kit command environment does not match persisted consent");
             }
+            validate_trade_kit_execution_settings(&args, context, authorized_settings)?;
             Some(context)
         } else {
             None
@@ -1511,8 +1633,8 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
             return persist_and_notify(&outcome_path, outcome);
         }
     };
-    if let Some((asset_class, environment)) = trade_kit_context {
-        let readiness = trade_kit::probe_runtime(&[asset_class], environment).await;
+    if let Some(context) = trade_kit_context {
+        let readiness = trade_kit::probe_runtime(&[context.asset_class], context.environment).await;
         if !readiness.ready {
             let reason = serde_json::to_value(readiness.reason)
                 .ok()
@@ -2139,7 +2261,7 @@ mod tests {
     }
 
     #[test]
-    fn trade_kit_execution_requires_a_supported_command_and_explicit_environment() {
+    fn trade_kit_execution_classifies_supported_commands_and_requires_environment() {
         let live_spot = vec![
             "spot".into(),
             "place".into(),
@@ -2148,14 +2270,78 @@ mod tests {
             "--live".into(),
         ];
         assert_eq!(
-            trade_kit_readiness_context(&live_spot).unwrap(),
-            (AssetClass::Spot, trade_kit::TradeEnvironment::Live)
+            trade_kit_execution_context(&live_spot).unwrap(),
+            TradeKitExecutionContext {
+                asset_class: AssetClass::Spot,
+                environment: trade_kit::TradeEnvironment::Live,
+                operation: TradeKitOperation::Place,
+            }
         );
 
         let demo_perp = vec!["swap".into(), "place".into(), "--demo".into()];
         assert_eq!(
-            trade_kit_readiness_context(&demo_perp).unwrap(),
-            (AssetClass::Perp, trade_kit::TradeEnvironment::Demo)
+            trade_kit_execution_context(&demo_perp).unwrap(),
+            TradeKitExecutionContext {
+                asset_class: AssetClass::Perp,
+                environment: trade_kit::TradeEnvironment::Demo,
+                operation: TradeKitOperation::Place,
+            }
+        );
+
+        for (module, asset_class) in [
+            ("futures", AssetClass::Perp),
+            ("option", AssetClass::Option),
+            ("event", AssetClass::Prediction),
+        ] {
+            let args = vec![module.into(), "place".into(), "--demo".into()];
+            assert_eq!(
+                trade_kit_execution_context(&args).unwrap(),
+                TradeKitExecutionContext {
+                    asset_class,
+                    environment: trade_kit::TradeEnvironment::Demo,
+                    operation: TradeKitOperation::Place,
+                }
+            );
+        }
+
+        let event_place = vec![
+            "event".into(),
+            "place".into(),
+            "BTC-ABOVE".into(),
+            "buy".into(),
+            "yes".into(),
+            "10".into(),
+            "--ordType".into(),
+            "market".into(),
+            "--demo".into(),
+        ];
+        validate_bound_intent(
+            "trade_kit",
+            "buy",
+            "10",
+            "job1",
+            ExecutionMode::Auto,
+            &event_place,
+        )
+        .unwrap();
+        assert!(validate_bound_intent(
+            "trade_kit",
+            "sell",
+            "10",
+            "job1",
+            ExecutionMode::Auto,
+            &event_place,
+        )
+        .is_err());
+
+        let futures_close = vec!["futures".into(), "close".into(), "--live".into()];
+        assert_eq!(
+            trade_kit_execution_context(&futures_close).unwrap(),
+            TradeKitExecutionContext {
+                asset_class: AssetClass::Perp,
+                environment: trade_kit::TradeEnvironment::Live,
+                operation: TradeKitOperation::ClosePosition,
+            }
         );
 
         for invalid in [
@@ -2168,8 +2354,161 @@ mod tests {
             ],
             vec!["order".into(), "--live".into()],
         ] {
-            assert!(trade_kit_readiness_context(&invalid).is_err());
+            assert!(trade_kit_execution_context(&invalid).is_err());
         }
+    }
+
+    #[test]
+    fn trade_kit_execution_settings_are_bound_to_local_consent() {
+        let market_perp = vec![
+            "swap".into(),
+            "place".into(),
+            "--tdMode".into(),
+            "cross".into(),
+            "--ordType".into(),
+            "market".into(),
+        ];
+        let context = TradeKitExecutionContext {
+            asset_class: AssetClass::Perp,
+            environment: trade_kit::TradeEnvironment::Demo,
+            operation: TradeKitOperation::Place,
+        };
+        validate_trade_kit_execution_settings(
+            &market_perp,
+            context,
+            AuthorizedTradeKitSettings {
+                environment: Some(trade_kit::TradeEnvironment::Demo),
+                margin_mode: Some(consent::MarginMode::Cross),
+                order_policy: Some(consent::OrderPolicy::Market),
+            },
+        )
+        .unwrap();
+
+        assert!(validate_trade_kit_execution_settings(
+            &market_perp,
+            context,
+            AuthorizedTradeKitSettings {
+                environment: Some(trade_kit::TradeEnvironment::Demo),
+                margin_mode: Some(consent::MarginMode::Cross),
+                order_policy: Some(consent::OrderPolicy::SignalPriceLimit),
+            },
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("signal-price limit policy"));
+
+        let limit_without_price = vec![
+            "spot".into(),
+            "place".into(),
+            "--ordType".into(),
+            "limit".into(),
+        ];
+        assert!(validate_trade_kit_execution_settings(
+            &limit_without_price,
+            TradeKitExecutionContext {
+                asset_class: AssetClass::Spot,
+                environment: trade_kit::TradeEnvironment::Live,
+                operation: TradeKitOperation::Place,
+            },
+            AuthorizedTradeKitSettings {
+                environment: Some(trade_kit::TradeEnvironment::Live),
+                margin_mode: None,
+                order_policy: Some(consent::OrderPolicy::SignalPriceLimit),
+            },
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("explicit order price"));
+
+        assert!(validate_trade_kit_execution_settings(
+            &["swap".into(), "place".into(), "--ordType".into(), "market".into()],
+            TradeKitExecutionContext {
+                asset_class: AssetClass::Perp,
+                environment: trade_kit::TradeEnvironment::Live,
+                operation: TradeKitOperation::Place,
+            },
+            AuthorizedTradeKitSettings {
+                environment: Some(trade_kit::TradeEnvironment::Live),
+                margin_mode: None,
+                order_policy: Some(consent::OrderPolicy::Market),
+            },
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("persisted margin mode"));
+    }
+
+    #[test]
+    fn trade_kit_contract_close_is_bound_to_direction_margin_and_market_policy() {
+        let close_long = vec![
+            "swap".into(),
+            "close".into(),
+            "--instId".into(),
+            "BTC-USDT-SWAP".into(),
+            "--mgnMode".into(),
+            "cross".into(),
+            "--posSide".into(),
+            "long".into(),
+            "--demo".into(),
+        ];
+        validate_bound_intent(
+            "trade_kit",
+            "sell",
+            "10",
+            "job1",
+            ExecutionMode::Auto,
+            &close_long,
+        )
+        .unwrap();
+        let context = trade_kit_execution_context(&close_long).unwrap();
+        validate_trade_kit_execution_settings(
+            &close_long,
+            context,
+            AuthorizedTradeKitSettings {
+                environment: Some(trade_kit::TradeEnvironment::Demo),
+                margin_mode: Some(consent::MarginMode::Cross),
+                order_policy: Some(consent::OrderPolicy::Market),
+            },
+        )
+        .unwrap();
+
+        assert!(validate_bound_intent(
+            "trade_kit",
+            "buy",
+            "10",
+            "job1",
+            ExecutionMode::Auto,
+            &close_long,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("close direction"));
+
+        assert!(validate_trade_kit_execution_settings(
+            &close_long,
+            context,
+            AuthorizedTradeKitSettings {
+                environment: Some(trade_kit::TradeEnvironment::Demo),
+                margin_mode: Some(consent::MarginMode::Isolated),
+                order_policy: Some(consent::OrderPolicy::Market),
+            },
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("margin mode"));
+
+        assert!(validate_trade_kit_execution_settings(
+            &close_long,
+            context,
+            AuthorizedTradeKitSettings {
+                environment: Some(trade_kit::TradeEnvironment::Demo),
+                margin_mode: Some(consent::MarginMode::Cross),
+                order_policy: Some(consent::OrderPolicy::SignalPriceLimit),
+            },
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("market policy"));
     }
 
     #[test]
