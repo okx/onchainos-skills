@@ -177,7 +177,7 @@ Collect/infer:
    - Inspect `serviceDescription` only to identify which execution settings the ASP asks the subscriber to provide and any values presented as suggestions. ASP text is not the user's answer and must never be persisted by itself.
    - Parse mode, fixed per-signal quote amount, per-signal cap, and quote currency (`USDT` or `USDC`) only from user-authored context. When the ASP explicitly asks for a field and the user has not answered it, ask for only the missing fields in one localized natural-language question, then **END THIS TURN**. Never use A/B/C, numbered choices, or a decision card.
    - Amount and cap are optional unless the ASP explicitly asks the user to configure them. Each supplied value must be a positive decimal. Do not compare amount with cap. Quote defaults to `USDT`.
-   - Retain `autoTradePreflight` only as advisory runtime information. Never block subscription creation on a missing/unconfigured tool and never run installation or configuration during this flow.
+   - Retain `autoTradePreflight` only as advisory runtime information. Never block subscription creation on a missing/unconfigured tool. Installation or configuration may run only after the user explicitly chooses the optional Trade Kit preparation action below; choosing Later must continue the subscription unchanged.
    - When `autoTradePreflight.tradeKitProbe.mode=probe_before_confirmation`, collect exactly one user-authored Trade Kit environment: `live` for real trading or `demo` for simulated trading. Never infer it from ASP text, Trade Kit defaults, or readiness output. If it is missing, ask once together with any other missing execution settings, then **END THIS TURN**. Retain the confirmed value as `tradeEnvironment`.
 
    The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the advisory notice and continue creating the subscription. Do not retry `task-service-select` solely to obtain preflight data. There is no standalone binary execution field to collect and no `--copy-trade` argument to pass.
@@ -187,10 +187,21 @@ Collect/infer:
      onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>
      ```
      Run it now. Do not persist its result. A non-ready result is an advisory notice only.
-   - `deferred_until_venue_selection` → Do not run a Trade Kit probe for `deferred_until_venue_selection`; the user has not selected that venue. Keep Trade Kit as `verification_unknown/authorization_not_checked` and continue the non-blocking subscription flow.
+   - `deferred_until_venue_selection` → Do not auto-run a Trade Kit probe because the user has not selected that venue. Keep Trade Kit as `verification_unknown/authorization_not_checked` and render the optional Trade Kit preparation gate below. If the user prepares Trade Kit, that action does not select it as the venue.
    - `not_applicable` → do not run the command.
 
-   When readiness is not ready or a preparation reminder exists, show one concise natural-language advisory without choices and continue to Step 5 in the same turn. Do not install, configure, retry, select a venue, persist readiness, or end the turn for this advisory. Delivery later saves and reports an execution failure when its selected tool is unavailable; it never opens a choice card.
+   **Trade Kit preparation gate (optional; separate turn):** when a required probe is not ready, or the mode is `deferred_until_venue_selection` with Trade Kit at `verification_unknown/authorization_not_checked`, render one localized card with exactly these two choices:
+   1. **Install/configure Trade Kit**
+   2. **Later — continue subscribing**
+
+   State that preparation is optional, Later does not affect subscription creation or delivery storage, and preparing Trade Kit does not select it as the execution venue. Then **END THIS TURN**. This is a tool-preparation choice, so the no-numbered-choices rule for collecting execution values does not apply.
+
+   On the user's next reply:
+   - **Later** → proceed to Step 5 with the retained selected-service and user-authored fields. Never upgrade readiness to ready.
+   - **Install/configure Trade Kit** → first resolve `okx-cex-auth` from the currently installed skills. If it is available, load it directly without reinstalling `okx/agent-skills`. Only when it is unavailable, run the required skill security scan scoped to `okx/agent-skills`; if that scan passes, run exactly `npx skills add okx/agent-skills --yes --global`, then load the newly installed `okx-cex-auth` skill. Follow that skill for CLI installation, site selection, OAuth, API-key setup, and authentication recovery. Do not reproduce or maintain those setup steps in this playbook. Retain the selected service and preflight while that skill waits for user replies. Once setup succeeds, collect `live` or `demo` if `tradeEnvironment` is still absent, then re-run the same `onchainos agent trade-kit-readiness` command with every retained asset class and that environment. Ready → proceed to Step 5; otherwise repeat this gate with the new readiness reason.
+   - **Ambiguous reply** → re-render the same two choices without installing or configuring anything.
+
+   Other non-Trade-Kit preparation reminders remain concise advisory notices without choices and continue to Step 5. Never auto-install a tool, persist a readiness result, or treat preparation as venue selection.
 
 **Max budget is NOT collected** for subscription tasks — the price is fixed at `subscriptionInfo.feeAmount`.
 
@@ -543,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn subscription_playbook_treats_preflight_as_optional_advisory() {
+    fn subscription_playbook_offers_optional_trade_kit_preparation() {
         let out = create_task_subscription();
         let common = create_task_common();
         assert!(
@@ -560,20 +571,29 @@ mod tests {
             "preflight absence must not force an extra match: {out}"
         );
         assert!(out.contains("ASP text is not the user's answer"));
-        assert!(out.contains("show one concise natural-language advisory without choices"));
+        assert!(out.contains("Trade Kit preparation gate (optional; separate turn)"));
+        assert!(out.contains("Install/configure Trade Kit"));
+        assert!(out.contains("Later — continue subscribing"));
+        assert!(out.contains("first resolve `okx-cex-auth` from the currently installed skills"));
+        assert!(out.contains("load it directly without reinstalling `okx/agent-skills`"));
+        assert!(out.contains("security scan scoped to `okx/agent-skills`"));
+        assert!(out.contains("npx skills add okx/agent-skills --yes --global"));
+        assert!(out.contains("load the newly installed `okx-cex-auth` skill"));
+        assert!(out.contains("Do not reproduce or maintain those setup steps in this playbook"));
+        assert!(out.contains("Then **END THIS TURN**"));
         assert!(
             common.contains("structured `autoTradePreflight` object"),
             "common match step must retain structured preflight data: {common}"
         );
-        assert!(out.contains("continue to Step 5 in the same turn"));
         assert!(out.contains("tradeKitProbe.mode"));
         assert!(out.contains("probe_before_confirmation"));
         assert!(out.contains("deferred_until_venue_selection"));
         assert!(out.contains(
             "onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>"
         ));
-        assert!(out.contains("Do not run a Trade Kit probe for `deferred_until_venue_selection`"));
-        assert!(out.contains("never opens a choice card"));
+        assert!(out.contains("Do not auto-run a Trade Kit probe"));
+        assert!(out.contains("does not select it as the venue"));
+        assert!(out.contains("re-run the same `onchainos agent trade-kit-readiness` command"));
     }
 
     #[test]

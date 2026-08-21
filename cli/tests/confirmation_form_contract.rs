@@ -36,3 +36,18 @@ only a fallback render contract for a direct route"
         "its returned confirmation form is the sole field authority; never merge fields"
     ));
 }
+
+#[test]
+fn skill_playbooks_delegate_optional_trade_kit_setup_to_agent_skills() {
+    for playbook in [PUBLISH_ACTIONS, USER_PLAYBOOK] {
+        assert!(playbook.contains("install/configure Trade Kit"));
+        assert!(playbook.contains("Later"));
+        assert!(playbook.contains("okx/agent-skills"));
+        assert!(playbook.contains("okx-cex-auth"));
+        assert!(playbook.contains("already installed"));
+        assert!(playbook.contains("security scan"));
+    }
+
+    assert!(PUBLISH_ACTIONS.contains("then re-run readiness"));
+    assert!(PUBLISH_ACTIONS.contains("Never duplicate those auth steps here"));
+}

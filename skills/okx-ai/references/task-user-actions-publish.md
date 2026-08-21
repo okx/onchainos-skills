@@ -80,9 +80,14 @@ retain the answers outside the form, and pass them through the existing `--autot
 
 If attachments present, add an Attachments row.
 
-Before displaying this confirmation table, inspect advisory readiness. If actionable `install_plugin` /
-`configure_tool` reminders exist, show a concise notice without choices and continue to confirmation. Do
-not install, configure, retry, or block the subscription in this flow.
+Before displaying this confirmation table, inspect advisory readiness. A non-ready or authorization-not-
+checked Trade Kit must show the separate optional two-choice preparation card from the CLI playbook:
+install/configure Trade Kit, or Later and continue subscribing. On prepare, first load `okx-cex-auth`
+directly when it is already installed. Only when it is unavailable, scope the required security scan to
+`okx/agent-skills`; after a passing scan, run `npx skills add okx/agent-skills --yes --global` and load
+`okx-cex-auth`. Delegate all CLI/OAuth/API-key setup to that skill, then re-run readiness.
+Never duplicate those auth steps here, auto-install, or block subscription creation. Other tool reminders
+remain concise notices without choices.
 
 End with a localized confirmation blockquote and wait for explicit confirmation.
 
