@@ -4,9 +4,9 @@
 
 The CLI accepts human-readable chain names and resolves them automatically.
 
-## Wallet address creation (7 chains)
+## Wallet address creation (9 chains)
 
-The following 7 chains support **wallet address creation** (i.e., you can generate a wallet address on these chains):
+The following 9 chains support **wallet address creation** (i.e., you can generate a wallet address on these chains):
 
 | Chain | Name | chainIndex |
 |---|---|---|
@@ -17,6 +17,8 @@ The following 7 chains support **wallet address creation** (i.e., you can genera
 | Base | `base` | `8453` |
 | BSC | `bsc` | `56` |
 | Arbitrum | `arbitrum` | `42161` |
+| Bitcoin | `bitcoin` | `0` |
+| SUI | `sui` | `784` |
 
 > **Note**: The wallet supports interacting with 17+ chains beyond this list (e.g., Polygon, Avalanche, Optimism).
 > Run `onchainos wallet chains` for the full list of supported chains.
@@ -30,4 +32,3 @@ Authoritative matrix for Gas Station. Use this when the Agent needs chain displa
 | `501` | Solana | SOL | ✓ | ✓ | ✓ |
 
 > **Always derive the per-tx token set from the response's `gasStationTokenList`** — it's backend-authoritative. The table above is for reference only (FAQ answers, unsupported-chain detection).
-

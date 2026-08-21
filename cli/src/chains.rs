@@ -114,6 +114,7 @@ pub fn resolve_chain(name: &str) -> String {
     match lower.as_str() {
         "ethereum" | "eth" => "1".to_string(),
         "solana" | "sol" => "501".to_string(),
+        "bitcoin" | "btc" => "0".to_string(),
         "bsc" | "bnb" => "56".to_string(),
         "polygon" | "matic" => "137".to_string(),
         "arbitrum" | "arb" => "42161".to_string(),
@@ -143,6 +144,7 @@ pub fn resolve_chain(name: &str) -> String {
 pub fn chain_name_for_index(chain_index: &str) -> Option<&'static str> {
     let name = match chain_index {
         "1" => "ethereum",
+        "0" => "bitcoin",
         "10" => "optimism",
         "56" => "bsc",
         "137" => "polygon",
@@ -256,6 +258,7 @@ pub fn merges_batch_unsignedinfo(chain_index: &str) -> bool {
 /// Returns the raw chain_index for unknown chains.
 pub fn chain_display_name(chain_index: &str) -> &str {
     match chain_index {
+        "0" | "5" => "Bitcoin",
         "1" => "Ethereum",
         "10" => "Optimism",
         "56" => "BNB Chain",
@@ -281,6 +284,7 @@ pub fn chain_display_name(chain_index: &str) -> &str {
 /// Falls back to "native token" for unknown chains.
 pub fn native_token_symbol(chain_index: &str) -> &str {
     match chain_index {
+        "0" | "5" => "BTC",
         "1" | "10" | "324" | "534352" | "8453" | "42161" | "59144" => "ETH",
         "56" => "BNB",
         "137" => "MATIC",
@@ -298,6 +302,7 @@ pub fn native_token_symbol(chain_index: &str) -> &str {
 /// Native token address for a given chainIndex.
 pub fn native_token_address(chain_index: &str) -> &str {
     match chain_index {
+        "0" | "5" => "",
         "501" => "11111111111111111111111111111111",
         "784" => "0x2::sui::SUI",
         "195" => "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb",
@@ -459,6 +464,20 @@ mod tests {
     fn resolve_chain_accepts_v11_x_layer_display_name_without_cache() {
         assert_eq!(resolve_chain("X Layer"), "196");
         assert_eq!(resolve_chain("x-layer"), "196");
+    }
+
+    #[test]
+    fn resolves_bitcoin_aliases_without_enabling_generic_evm_paths() {
+        assert_eq!(resolve_chain("bitcoin"), "0");
+        assert_eq!(resolve_chain("btc"), "0");
+        assert_eq!(chain_name_for_index("0"), Some("bitcoin"));
+        assert!(!SUPPORTED_CHAIN_INDICES.contains(&"0"));
+        assert!(!SUPPORTED_CHAIN_INDICES.contains(&"5"));
+        for index in ["0", "5"] {
+            assert_eq!(chain_display_name(index), "Bitcoin");
+            assert_eq!(native_token_symbol(index), "BTC");
+            assert_eq!(native_token_address(index), "");
+        }
     }
 
     #[test]

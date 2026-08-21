@@ -3,7 +3,7 @@
 Load on a wallet operation failure or edge case.
 
 ## Send
-- **Insufficient balance**: check balance first; warn if too low (include gas estimate for EVM).
+- **Insufficient balance**: only after the send command returns a backend insufficient-balance error, show the returned message and current balance; for EVM, include the returned gas estimate when available. Do not preemptively require a native-token top-up because backend-sponsored transactions may still succeed.
 - **Wrong chain for token**: `--contract-token` must exist on the specified chain.
 
 ## History
@@ -12,13 +12,49 @@ Load on a wallet operation failure or edge case.
 - **Empty cursor**: no more pages.
 
 ## Contract Call
-- **Neither `--input-data` nor `--unsigned-tx`**: exactly one is required; the command fails otherwise.
+- **Missing transaction payload**: EVM requires `--input-data`, Solana requires `--unsigned-tx`, and SUI requires `--sui-tx-bytes`.
+- **Mixed payload flags**: do not combine `--input-data`, `--unsigned-tx`, and `--sui-tx-bytes`; select the one for the target chain.
 - **Invalid calldata**: malformed hex causes an API error — help re-encode.
 - **Simulation failure**: show `executeErrorMsg`, do NOT broadcast.
-- **Insufficient gas**: suggest a higher `--gas-limit`.
 
 ## Common
 - **Region restriction (error code 50125 or 80001)**: do NOT show the raw code. Display: "Service is not available in your region. Please switch to a supported region and try again."
 - **Not logged in** (`not logged in`): session expired or store missing. **MUST**: recover by running `wallet login --phase init`, then the `nextSteps.completeLogin` command it returns (`wallet login --phase poll --session-id <authSessionId>`).
 - **Credentials corrupted** (`Credentials corrupted. Please login again`): the credential store (`keyring.enc` / session) exists but is unreadable — distinct from *not logged in*. Do not retry the failing command blindly (it keeps hitting the same unreadable store); have the user re-authenticate with `wallet login`, which overwrites the unreadable store with a fresh one. If `wallet login` itself still errors, run `wallet logout` first (it clears the store without reading it) and then `wallet login`.
 - **Confirming response (exit code 2, error code 81362)**: not an error — the backend needs confirmation. Handle via SKILL.md → Confirming Response.
+
+## Bitcoin
+
+- **Missing address or sender mismatch**: refresh wallet addresses and use the current account's Bitcoin address.
+- **Address, amount, or outpoint error**: use a complete mainnet recipient, positive `--readable-amount`, and a current `<txHash>:<voutIndex>` from a UTXO query.
+- **Empty UTXO view**: inactive branches may be `null`. `USER_IGNORED_LIST` means no user-ignored UTXOs; `AVAILABLE_UTXO_LIST` means zero available BTC. Do not subtract other views locally.
+- **`44001` / `INSUFFICIENT_UTXO`**: offer `wallet utxo available --chain bitcoin` to show currently available UTXOs and BTC.
+- **`STATE_CHANGED`**: rerun the relevant read or management preview. **`PREVIEW_INTENT_MISMATCH` / `INCOMPLETE_TRANSACTION_PREVIEW`**: stop and report the error.
+- **`MEMPOOL_REMOVED`**: run `wallet utxo unavailable --chain bitcoin`; reclaim requires explicit confirmation and a new transfer is required.
+- **`82001` / `UTXO_PERMISSION_DENIED`**: refresh account facts before a new request. **`82002` / `UTXO_NOT_FOUND` / `82005` / `UTXO_ALREADY_SPENT`**: refresh unavailable UTXOs. **`82003` / `INVALID_UTXO_REQUEST`**: stop and show the service message.
+- **`UTXO_MANAGE_REJECTED` / `UTXO_MANAGE_PARTIAL_FAILURE`**: report returned batch results and use returned UTXO state as authoritative.
+- **Failed write diagnostic**: after a user-requested safe retry also fails, create a self-contained support diagnostic with exactly these fields: (1) `txHash` when available; (2) `chain=bitcoin`; (3) service code/reason; (4) parameter snapshot: `readableAmount`, recipient, selected outpoints when applicable, returned fee/rate when present, and `slippage` / `MEV` as `N/A`; (5) `fromToken=BTC`, `toToken=BTC`; (6) amount; (7) wallet address; (8) timestamp; (9) CLI version. Use `unavailable` for a field the CLI did not return. Keep raw codes in the diagnostic, not the user-facing reply.
+
+## BRC-20
+
+- **Ticker error**: use `btc-brc20-<ticker>`; do not supply a token contract address from another chain.
+- **Transfer selection error**: repeat `--brc20-outpoint <txHash:voutIndex>` for every item in one current CLI-returned combination.
+- **Transfer-inscription amount error**: provide a positive exact decimal string in `--readable-amount`; the CLI converts it with the token metadata decimal before `unsignedInfo`.
+- **Recipient or status error**: use a complete Bitcoin mainnet recipient and one complete transaction hash or order ID.
+- **`selectionPlan.status=NO_EXACT_MATCH`**: show denominations. Offer another amount or inscription only when a fresh BRC-20 `wallet balance` result establishes sufficient `remainingInscribableAmount`.
+- **`selectionPlan.status=SEARCH_LIMIT_EXCEEDED`**: show the returned choices and describe the result as incomplete. Continue with a user-selected exact combination or a simpler amount.
+- **`44003` / `NEED_INSCRIBE`**: preserve the service response and end the transfer. Offer inscription only for an explicit user request and confirm it separately.
+- **Selected UTXO no longer transferable**: show the refreshed amount-aware plan and obtain a fresh selection before `unsignedInfo`.
+- **`44002` / `INSUFFICIENT_BTC_FOR_INSCRIPTION`**: relay the service message. Use returned read-only address and BTC-balance next steps; do not rewrite this as a BRC-20 balance error.
+- **`INSCRIBING`, `WAITING_CONFIRMATION`, `WAITING_INDEXER`**: show the returned `orderId`, `txHash`, and complete `nextSteps.checkInscriptionStatus` command. Run it once only when the user asks to check the result.
+- **`READY_TO_TRANSFER`**: show the returned `nextSteps.queryBrc20TransferableUtxos`; require a separate fresh transfer request and confirmation.
+- **Inscription `STATE_CHANGED`**: start a new inscription preview if the user still wants the write. **`PREVIEW_INTENT_MISMATCH` / `INCOMPLETE_TRANSACTION_PREVIEW`**: stop and report the error.
+- **Failed write diagnostic**: after a user-requested safe retry also fails, create a self-contained support diagnostic with exactly these fields: (1) `txHash` when available; (2) `chain=bitcoin`; (3) service code/reason; (4) parameter snapshot: `readableAmount`, recipient, selected outpoints when applicable, inscription preview fee/rate when returned, and `slippage` / `MEV` as `N/A`; (5) `fromToken` / `toToken` as the returned BRC-20 token address; (6) amount; (7) wallet address; (8) timestamp; (9) CLI version. Use `unavailable` for a field the CLI did not return. Never expose raw codes in user-facing output; show the service message and the next safe action.
+
+## SUI
+
+- **Missing address or sender mismatch**: refresh wallet addresses and use the current account's SUI address.
+- **Address, Coin Type, amount, or status lookup error**: use a canonical SUI address, a complete returned `<package>::<module>::<type>` Coin Type, positive `--readable-amount`, and one complete transaction hash or order ID.
+- **`PRE_EXECUTION_FAILED`**: relay the service reason and end the operation. **`confirming=true`**: relay the service message and, after explicit confirmation, rerun the same command with `--force`. **`LOCAL_SIGNING_FAILED`**: end the operation and report the error.
+- For other failures, show the returned service message and establish fresh facts with a new query; keep raw codes only for diagnostics.
+- **Failed write diagnostic**: after a user-requested safe retry also fails, create a self-contained support diagnostic with exactly these fields: (1) `txHash` when available; (2) `chain=sui`; (3) service code/reason; (4) parameter snapshot: recipient, `gasBudget` / `gasPrice` when returned, and `slippage` / `MEV` as `N/A`; (5) `fromToken` / `toToken` as the Coin Type; (6) amount; (7) wallet address; (8) timestamp; (9) CLI version. Use `unavailable` for a field the CLI did not return. Never expose raw codes in the user-facing reply; show the returned service message and the next safe action.

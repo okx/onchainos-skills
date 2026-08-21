@@ -259,6 +259,7 @@ const REDACT_FULL: &[&str] = &[
     "--otp",
     "--signed-tx",
     "--unsigned-tx",
+    "--sui-tx-bytes",
     "--jito-unsigned-tx",
     "--input-data",
     "--data",
@@ -727,6 +728,8 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::Balance { .. } => "balance",
         WalletCommand::Send { .. } => "send",
         WalletCommand::History { .. } => "history",
+        WalletCommand::Inscription { .. } => "inscription",
+        WalletCommand::Utxo { .. } => "utxo",
         WalletCommand::ContractCall { .. } => "contract-call",
         WalletCommand::SignMessage { .. } => "sign-message",
         WalletCommand::GasStation { .. } => "gas-station",
@@ -1034,6 +1037,22 @@ mod tests {
         ]);
         let out = redact_args(&args);
         assert_eq!(out[5], "--signed-tx");
+        assert_eq!(out[6], "[REDACTED]");
+    }
+
+    #[test]
+    fn redact_sui_tx_bytes() {
+        let args = vec_s(&[
+            "onchainos",
+            "wallet",
+            "contract-call",
+            "--chain",
+            "sui",
+            "--sui-tx-bytes",
+            "AAECAwQFBgc=",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[5], "--sui-tx-bytes");
         assert_eq!(out[6], "[REDACTED]");
     }
 

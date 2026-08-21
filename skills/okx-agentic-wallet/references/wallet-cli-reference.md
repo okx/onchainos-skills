@@ -37,7 +37,7 @@ Show login status and active account. Returns `email`, `loggedIn`, `currentAccou
 
 ### `wallet addresses`
 
-Show wallet addresses grouped by chain category (XLayer / EVM / Solana).
+Show wallet addresses grouped by chain category (XLayer / EVM / Solana / Bitcoin / SUI).
 
 ```bash
 onchainos wallet addresses [--chain <chain>]
@@ -71,24 +71,30 @@ onchainos wallet balance [--all] [--chain <chain>] [--token-address <addr>] [--f
 |---|---|---|
 | `--all` | false | All accounts' assets (batch). Only when the user explicitly asks for all accounts. |
 | `--chain` | all | Chain name or ID. Required with `--token-address`. |
-| `--token-address` | — | Single token contract address. Requires `--chain`. |
+| `--token-address` | — | Single token identifier. Requires `--chain`: `btc-brc20-<ticker>` for BRC-20, a Coin Type for SUI, or a contract address on account-model chains. |
 | `--force` | false | Bypass caches; re-fetch accounts + balances. |
 
-Key fields: `totalValueUsd`, `evmAddress`, `solAddress`, `accountCount`, `details[]` (token balance groups). With `--all`, `details` is a map of `accountId` → cache entry (`totalValueUsd`, `updatedAt`, `data`).
+### User-facing Reply Templates
 
-Every token in `details[].tokenAssets[]` (or `assets[]`, or `details.<accountId>.data[].tokenAssets[]` for `--all`) contains **exactly these 9 fields**:
+For one account, reply with:
 
-| Field | Type | Description |
-|---|---|---|
-| `symbol` | String | Token symbol (e.g. `"ETH"`) |
-| `tokenName` | String | Token full name (e.g. `"Ethereum"`) |
-| `chainIndex` | String | Chain identifier (e.g. `"1"`) |
-| `tokenAddress` | String | Token contract address; `""` for native tokens |
-| `balance` | String | Balance in UI units |
-| `rawBalance` | String | Balance in minimal units |
-| `decimal` | String | Token decimals |
-| `tokenPrice` | String | Token price in USD |
-| `usdValue` | String\|Number | Token value in USD (representation preserved as returned) |
+```
+Total assets: $${totalValueUsd}
+
+- ${symbol}: ${balance} (approximately $${usdValue})
+```
+
+Repeat the asset line for every returned asset.
+
+For `--all`, reply with:
+
+```
+Total assets across all accounts: $${totalValueUsd}
+
+- ${symbol}: ${balance} (approximately $${usdValue})
+```
+
+Repeat the asset line for every returned asset across all accounts. Do not display `accountId` or `accountName`.
 
 ---
 
@@ -96,22 +102,25 @@ Every token in `details[].tokenAssets[]` (or `assets[]`, or `details.<accountId>
 
 ### `wallet send`
 
-Send native or contract tokens (ERC-20 / SPL).
+Send native or contract tokens.
 
 ```bash
 onchainos wallet send --readable-amount <amount> --recipient <address> --chain <chain> \
-  [--from <address>] [--contract-token <address>] [--force] \
+  [--from <address>] [--contract-token <token>] [--fee-rate <sat-per-vB>] \
+  [--brc20-outpoint <txHash:voutIndex>]... [--force] \
   [--gas-token-address <address>] [--relayer-id <id>] [--enable-gas-station]
 ```
 
 | Param | Required | Description |
 |---|---|---|
-| `--readable-amount` | One of | Human-readable amount; CLI converts to minimal units. Preferred. |
-| `--amt` | One of | Raw minimal units. Mutually exclusive with `--readable-amount`. |
-| `--recipient` | Yes | Recipient address (0x EVM / Base58 Solana). |
+| `--readable-amount` | One of | Human-readable amount; required for Bitcoin and SUI, preferred otherwise. |
+| `--amt` | One of | Raw minimal units for supported account-model chains. Mutually exclusive with `--readable-amount`. |
+| `--recipient` | Yes | Recipient address for the selected chain. |
 | `--chain` | Yes | Chain name or ID. |
 | `--from` | No | Sender; defaults to selected account's address on the chain. |
-| `--contract-token` | No | Token contract for ERC-20 / SPL. Omit for native. |
+| `--contract-token` | No | Non-native token identifier: contract address, SUI Coin Type, or `btc-brc20-<ticker>`. Omit for native. |
+| `--fee-rate` | No | Bitcoin fee rate in sat/vB for the current BTC or BRC-20 transaction only; it does not change the default fee rate for future transactions. |
+| `--brc20-outpoint` | No | Current transferable BRC-20 inscription selection; repeat to combine inputs. See [brc20-cli-reference.md](brc20-cli-reference.md). |
 | `--force` | No | Re-run after a confirmed Confirming response. |
 | `--gas-token-address`, `--relayer-id`, `--enable-gas-station` | No | Gas Station (Solana). Second-phase values from a Confirming response — never on the first call. See [gas-station.md](gas-station.md). |
 
@@ -122,6 +131,8 @@ Returns `txHash` (normal). Gas Station responses (`gasStationUsed`, `orderId`, C
 ## History
 
 Providing any of `--order-id` / `--tx-hash` / `--uop-hash` → **detail mode** (single record); otherwise **list mode** (paged).
+
+For BRC-20, this shared query handles direct-transfer history. Transfer-inscription status uses `wallet inscription status`.
 
 ```bash
 # List
@@ -138,7 +149,7 @@ List mode: always pass --limit (page size, default 20) and --page-num (page numb
 
 List fields: `cursor`, `orderList[]` with `txHash`, `txStatus`, `txTime`, `direction` (send/receive), `chainSymbol`, `coinSymbol`, `coinAmount`, `serviceCharge`, `confirmedCount`, `assetChange[]` (`coinSymbol`/`coinAmount`/`direction` in/out). Detail adds `failReason`, `explorerUrl`, `input[]`, `output[]`.
 
-Transaction status: `0` Pending · `1` Success · `2` Failed · `3` Pending confirmation. `txTime` is Unix ms — convert for display.
+Transaction status is normalized by the CLI: `PENDING` (service `1` or `2`) · `ERROR` (service `3`) · `SUCCESS` (service `4`) · `CANCELLED` (service `6`). An unrecognized service value is preserved unchanged. `txTime` is Unix ms — convert for display.
 
 ---
 
@@ -146,11 +157,11 @@ Transaction status: `0` Pending · `1` Success · `2` Failed · `3` Pending conf
 
 ### `wallet contract-call`
 
-Call an EVM contract (`--input-data`) or Solana program (`--unsigned-tx`) with TEE signing + auto-broadcast. Non-swap interactions only (approve / deposit / withdraw / custom calls) — use `swap execute` for DEX swaps.
+Call an EVM contract (`--input-data`), Solana program (`--unsigned-tx`), or SUI PTB (`--sui-tx-bytes`) with TEE signing + auto-broadcast.
 
 ```bash
-onchainos wallet contract-call --to <contract> --chain <chain> \
-  [--amt <minimal_units>] [--input-data <hex>] [--unsigned-tx <base58>] \
+onchainos wallet contract-call --chain <chain> [--to <contract>] \
+  [--amt <minimal_units>] [--input-data <hex>] [--unsigned-tx <base58>] [--sui-tx-bytes <base64>] \
   [--gas-limit <n>] [--from <address>] [--mev-protection] [--jito-unsigned-tx <base58>] \
   [--biz-type <type>] [--strategy <name>] [--aa-dex-token-addr <addr>] [--aa-dex-token-amount <amt>] \
   [--gas-token-address <addr>] [--relayer-id <id>] [--enable-gas-station] [--force]
@@ -158,19 +169,20 @@ onchainos wallet contract-call --to <contract> --chain <chain> \
 
 | Param | Required | Description |
 |---|---|---|
-| `--to` | Yes | Contract address. |
+| `--to` | EVM/Solana | Contract/program address. Optional service metadata for SUI; do not invent it. |
 | `--chain` | Yes | Chain name or ID. |
 | `--amt` | No | Native value in minimal units (payable functions only). Default `"0"`. |
 | `--input-data` | EVM | Hex calldata. Required for EVM. |
 | `--unsigned-tx` | Solana | Base58 unsigned tx. Required for Solana. |
+| `--sui-tx-bytes` | SUI | Base64 BCS TransactionData/PTB for the current wallet. Required for a SUI contract call. Never display or log it. |
 | `--gas-limit` | No | EVM gas override; auto-estimated if omitted. |
-| `--mev-protection` | No | MEV protection (Ethereum / BSC / Base / Solana). See [mev-protection.md](wallet-mev-protection.md). |
+| `--mev-protection` | No | MEV protection (Ethereum / BSC / Base / Solana); not supported with `--sui-tx-bytes`. See [mev-protection.md](wallet-mev-protection.md). |
 | `--jito-unsigned-tx` | No | Jito bundle base58 tx. Required when `--mev-protection` on Solana. Never substitute `--unsigned-tx`. |
-| `--biz-type` | No | `transfer` / `dex` / `defi` / `dapp`. |
+| `--biz-type` | No | Service business-type metadata. Do not set it unless the matched flow requires it. |
 | `--gas-token-address`, `--relayer-id`, `--enable-gas-station` | No | Gas Station (Solana), second-phase only. See [gas-station.md](gas-station.md). |
 | `--force` | No | Re-run after a confirmed Confirming response. |
 
-Exactly one of `--input-data` (EVM) / `--unsigned-tx` (Solana) is required. Returns `txHash`. Run `onchainos security tx-scan` before calling.
+Use exactly one chain-native payload: `--input-data` (EVM), `--unsigned-tx` (Solana), or `--sui-tx-bytes` (SUI). Returns `txHash` and `orderId`. Run `onchainos security tx-scan` before EVM/Solana calls. SUI PTB scanning is unavailable: do not claim the transaction is safe; require an integration preview, explicit user confirmation, and successful backend simulation.
 
 ---
 

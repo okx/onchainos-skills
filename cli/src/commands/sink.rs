@@ -30,6 +30,8 @@ pub struct CodedError {
     pub code: String,
     pub field: Option<String>,
     pub message: String,
+    pub data: Option<Value>,
+    pub next_steps: Option<Value>,
 }
 
 impl CodedError {
@@ -38,7 +40,19 @@ impl CodedError {
             code: code.to_string(),
             field: field.map(str::to_string),
             message: message.into(),
+            data: None,
+            next_steps: None,
         }
+    }
+
+    pub fn with_data(mut self, data: Value) -> Self {
+        self.data = Some(data);
+        self
+    }
+
+    pub fn with_next_steps(mut self, next_steps: Value) -> Self {
+        self.next_steps = Some(next_steps);
+        self
     }
 
     /// Shorthand for the most common case: `errorCode:"invalid_input"` + a field.

@@ -91,6 +91,17 @@ pub fn error(msg: &str) {
 /// `errorCode` precedent. Used for the new validation errors (invalid_input,
 /// upstream_error, no_leaderboards).
 pub fn error_coded(code: &str, field: Option<&str>, message: &str) {
+    error_coded_details(code, field, message, None, None);
+}
+
+/// Print a coded error with optional machine facts and safe read-only continuations.
+pub fn error_coded_details(
+    code: &str,
+    field: Option<&str>,
+    message: &str,
+    data: Option<&Value>,
+    next_steps: Option<&Value>,
+) {
     let mut v = serde_json::json!({
         "ok": false,
         "error": message,
@@ -98,6 +109,12 @@ pub fn error_coded(code: &str, field: Option<&str>, message: &str) {
     });
     if let Some(f) = field {
         v["errorField"] = Value::String(f.to_string());
+    }
+    if let Some(data) = data {
+        v["data"] = data.clone();
+    }
+    if let Some(next_steps) = next_steps {
+        v["nextSteps"] = next_steps.clone();
     }
     let events = payment_notify::drain_events();
     if !events.is_empty() {
@@ -165,6 +182,19 @@ struct ConfirmingOutput {
     notifications: Vec<Value>,
 }
 
+#[derive(Serialize)]
+struct AgenticWalletConfirmingOutput {
+    confirming: bool,
+    scene: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    message: String,
+    preview: Value,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    next: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    notifications: Vec<Value>,
+}
+
 /// Print a confirming response:
 /// `{ "confirming": true, "message": "...", "next": "..." }`
 ///
@@ -182,6 +212,19 @@ pub fn confirming_scene(message: &str, next: &str, scene: Option<&str>) {
         confirming: true,
         scene: scene.map(|s| s.to_string()),
         message: message.to_string(),
+        next: next.to_string(),
+        notifications: payment_notify::drain_events(),
+    };
+    println!("{}", to_agent_json(&out).unwrap());
+}
+
+/// Prints an Agentic Wallet confirmation with its structured operation preview.
+pub(crate) fn agentic_wallet_confirming(message: &str, next: &str, scene: &str, preview: &Value) {
+    let out = AgenticWalletConfirmingOutput {
+        confirming: true,
+        scene: scene.to_string(),
+        message: message.to_string(),
+        preview: preview.clone(),
         next: next.to_string(),
         notifications: payment_notify::drain_events(),
     };
@@ -278,6 +321,22 @@ mod tests {
         let c = downcasted.unwrap();
         assert_eq!(c.message, "msg");
         assert_eq!(c.next, "next");
+    }
+
+    #[test]
+    fn agentic_wallet_confirming_output_keeps_structured_preview() {
+        let value = serde_json::to_value(AgenticWalletConfirmingOutput {
+            confirming: true,
+            scene: "btc_utxo_manage".to_string(),
+            message: "review".to_string(),
+            preview: serde_json::json!({"outpoints": ["a:0"]}),
+            next: "onchainos wallet utxo lock --force".to_string(),
+            notifications: Vec::new(),
+        })
+        .unwrap();
+        assert_eq!(value["scene"], "btc_utxo_manage");
+        assert_eq!(value["preview"]["outpoints"][0], "a:0");
+        assert!(value.get("notifications").is_none());
     }
 
     #[test]
