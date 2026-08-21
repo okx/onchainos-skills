@@ -20,10 +20,6 @@ The following 9 chains support **wallet address creation** (i.e., you can genera
 | Bitcoin | `bitcoin` (`btc`, `0`) | runtime mapping from `wallet chains` |
 | SUI | `sui` (`784`) | runtime mapping from `wallet chains` |
 
-Bitcoin uses one Taproot address for the current Agentic Wallet account. The CLI resolves the runtime `chainIndex` from the chain list and keeps UTXO, inscription, and transfer semantics in the Bitcoin driver.
-
-SUI uses one SUI address for the current Agentic Wallet account. The SUI driver owns address and Coin Type normalization, amount handling, transaction signing, and history. The service remains authoritative for Coin Object selection, Gas, and pre-execution. SUI contract calls become available when the Agent contract declares that capability.
-
 > **Note**: The wallet supports interacting with 17+ chains beyond this list (e.g., Polygon, Avalanche, Optimism).
 > Run `onchainos wallet chains` for the full list of supported chains.
 
