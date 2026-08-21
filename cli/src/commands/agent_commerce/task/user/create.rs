@@ -23,7 +23,7 @@ use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 pub const MAX_BUDGET: f64 = 10_000_000.0;
 pub const MIN_DESCRIPTION_CHARS: usize = 20;
 pub const MAX_DESCRIPTION_CHARS: usize = 2000;
-pub const MAX_BUDGET_DECIMALS: usize = 5;
+pub const MAX_BUDGET_DECIMALS: usize = 6;
 pub const MAX_TITLE_CHARS: usize = 30;
 
 // ─── Parameter struct ────────────────────────────────────────────────────
@@ -123,8 +123,8 @@ pub fn normalize_currency(currency: &str) -> Result<String> {
 }
 
 pub fn validate_budget(budget: f64) -> Result<()> {
-    if budget <= 0.0 {
-        bail!("budget must be a positive amount (greater than 0)");
+    if budget < 0.0 {
+        bail!("budget must be a non-negative amount");
     }
     if budget > MAX_BUDGET {
         bail!(
@@ -583,15 +583,29 @@ mod tests {
             .contains("never summarize"));
     }
 
-    // Reconciled with master's `validate_budget` after MR !187 review note-9880442
-    // asked to revert the budget change out of this doc-removal MR as out-of-scope.
-    // Master's guard is `budget <= 0.0`, so zero is rejected here. NOTE: MR !150
-    // (discussion d2c53d84) had settled zero-budget as legal (`< 0.0`); re-landing
-    // that zero-budget-allowed behavior belongs in its own dedicated MR, not here.
     #[test]
-    fn validate_budget_rejects_nonpositive_accepts_positive() {
-        assert!(validate_budget(0.0).is_err());
+    fn validate_budget_accepts_zero_and_positive_rejects_negative() {
+        assert!(validate_budget(0.0).is_ok());
         assert!(validate_budget(-1.0).is_err());
         assert!(validate_budget(1.0).is_ok());
+    }
+
+    #[test]
+    fn validate_budget_precision_accepts_six_decimals() {
+        assert!(validate_budget_decimals(0.000001).is_ok());
+        assert!(validate_budget_decimals(0.0000001).is_err());
+    }
+
+    #[test]
+    fn create_accepts_zero_budget_and_serializes_zero_amounts() {
+        let mut params = params_with_provider("agent-1".to_string());
+        params.budget = 0.0;
+        params.max_budget = 0.0;
+
+        let validated = params.validate().unwrap();
+        let body = build_create_body(&params, &validated).unwrap();
+
+        assert_eq!(body["paymentTokenAmount"], "0");
+        assert_eq!(body["paymentMostTokenAmount"], "0");
     }
 }

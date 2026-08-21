@@ -822,7 +822,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20- If the re-check fails → notify the user of the validation error and re-ask via `pending-decisions-v2 request` with `--source-event x402_input_required`.\n\n\
                      **Step 2b — Price & budget guard:**\n\
                      Compare `amountHuman` from x402-check output against the fee and budget (check in this order — over-budget takes priority):\n\n\
-                     \x20\x201. **Over-budget**: Read `maxBudget` from the `[Pre-fetched task context]`. If `maxBudget` > 0 AND `amountHuman` > `maxBudget`:\n\
+                     \x20\x201. **Over-budget**: Read `maxBudget` from the `[Pre-fetched task context]`. If it is a valid non-negative number and `amountHuman` > `maxBudget` (zero is a real cap):\n\
                      \x20\x20\x20\x20Push an `over_budget` decision card:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event over_budget --list-label \"[Over budget <shortJobId>] budget decision\" --user-content \"<compose from template below>\"\n\
@@ -832,7 +832,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20A. Specify another ASP — provide the agentId\n\
                      \x20\x20\x20\x20B. Close the job\n\
                      \x20\x20\x20\x20→ **end this turn** and wait for the user's reply.\n\n\
-                     \x20\x202. **Price-mismatch**: Read `feeAmount` from the `[IR_CONTEXT]` block. If both values > 0 AND `|amountHuman - feeAmount| / feeAmount > 0.01` (delta > 1%):\n\
+                     \x20\x202. **Price-mismatch**: Read `feeAmount` from the `[IR_CONTEXT]` block. Trigger when `feeAmount` is zero and `amountHuman` is positive, or when both values are positive and `|amountHuman - feeAmount| / feeAmount > 0.01` (delta > 1%):\n\
                      \x20\x20\x20\x20Push a `x402_ir_price_confirm` decision card:\n\
                      \x20\x20\x20\x20```bash\n\
                      \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event x402_ir_price_confirm --list-label \"[x402 price <shortJobId>] price confirmation\" --user-content \"<compose from template below>\"\n\
@@ -1225,6 +1225,23 @@ mod tests {
         assert!(out.contains("migration from an older card"));
         assert!(out.contains("subscription-route-set"));
         assert!(out.contains("Never call tool-selected/tool-skip"));
+    }
+
+    #[tokio::test]
+    async fn x402_input_recheck_treats_zero_as_a_real_budget_and_fee() {
+        let out = run(
+            "user_decision_x402_input_required",
+            json!({
+                "event": "user_decision_x402_input_required",
+                "jobId": JOB_ID,
+                "data": "A"
+            }),
+        )
+        .await;
+
+        assert!(out.contains("zero is a real cap"));
+        assert!(out.contains("`feeAmount` is zero"));
+        assert!(!out.contains("If `maxBudget` > 0 AND"));
     }
 
     #[tokio::test]

@@ -143,6 +143,16 @@ pub struct X402ServiceParams {
     pub fee_token_symbol: String,
 }
 
+fn cached_x402_service_fee(
+    endpoint: &str,
+    fee_amount: Option<f64>,
+    token_symbol: &str,
+) -> Option<f64> {
+    fee_amount.filter(|fee| {
+        !endpoint.is_empty() && fee.is_finite() && *fee >= 0.0 && !token_symbol.is_empty()
+    })
+}
+
 /// Resolve x402 service params: CLI flag > negotiate cache > identity service-list API > error.
 pub async fn resolve_x402_params(
     job_id: &str,
@@ -173,21 +183,22 @@ pub async fn resolve_x402_params(
         Ok(Some(pi)) => {
             cached_provider_agent_id = pi.provider_agent_id.clone();
             if let Some(svc) = pi.services.first() {
-                if !svc.endpoint.is_empty()
-                    && svc.fee_amount > 0.0
-                    && !svc.fee_token_symbol.is_empty()
-                {
+                if let Some(cached_fee_amount) = cached_x402_service_fee(
+                    &svc.endpoint,
+                    svc.fee_amount,
+                    &svc.fee_token_symbol,
+                ) {
                     if DEBUG_LOG {
                         eprintln!(
                             "ℹ x402: using negotiate cache endpoint={}, token={}, amount={}",
-                            svc.endpoint, svc.fee_token_symbol, svc.fee_amount
+                            svc.endpoint, svc.fee_token_symbol, cached_fee_amount
                         );
                     }
                     return Ok(X402ServiceParams {
                         endpoint: cli_endpoint.unwrap_or(&svc.endpoint).to_string(),
                         fee_amount: cli_token_amount
                             .and_then(|a| a.parse().ok())
-                            .unwrap_or(svc.fee_amount),
+                            .unwrap_or(cached_fee_amount),
                         fee_token_symbol: cli_token_symbol
                             .unwrap_or(&svc.fee_token_symbol)
                             .to_string(),
@@ -765,5 +776,25 @@ mod tests {
                       Note: gas is paid by the platform paymaster, no OKB / native required.";
         let e = InsufficientBalanceError::new(legacy.to_string(), "USDT", 100.0, 5.0);
         assert_eq!(format!("{e}"), legacy);
+    }
+
+    #[test]
+    fn cached_x402_service_accepts_zero_fee() {
+        assert_eq!(
+            cached_x402_service_fee("https://example.invalid/x402", Some(0.0), "USDT"),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn cached_x402_service_rejects_missing_negative_or_non_finite_fee() {
+        let endpoint = "https://example.invalid/x402";
+
+        assert_eq!(cached_x402_service_fee(endpoint, None, "USDT"), None);
+        assert_eq!(cached_x402_service_fee(endpoint, Some(-0.01), "USDT"), None);
+        assert_eq!(
+            cached_x402_service_fee(endpoint, Some(f64::INFINITY), "USDT"),
+            None
+        );
     }
 }

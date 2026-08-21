@@ -163,8 +163,8 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
 | Param | Required | Default | Description                                 |
 |---|---|---|---------------------------------------------|
 | `--description` | Yes | - | Task description (20–2000 chars)            |
-| `--budget` | Yes | - | Budget amount (>0, max 10M, ≤5 decimals)    |
-| `--max-budget` | Yes | - | Max budget (≥ budget)                       |
+| `--budget` | Yes | - | Non-negative budget amount (max 10M, ≤6 decimals) |
+| `--max-budget` | Yes | - | Non-negative max budget (≥ budget)           |
 | `--currency` | Yes | - | `USDT` or `USDG`                            |
 | `--title` | Yes | - | Task title (max 30 chars)                   |
 | `--provider` | Yes | - | Provider agentId; always required |

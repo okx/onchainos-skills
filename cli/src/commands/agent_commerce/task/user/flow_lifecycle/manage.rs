@@ -276,7 +276,7 @@ For regular tasks, collect Currency internally but do not show it in the confirm
 2. Read `feeAmount` from the exact selected service. Missing/non-numeric → stop before confirmation.
    - `budget = feeAmount`
    - `max_budget = feeAmount`
-   - Apply the existing create-task amount rules (>0, <=5 decimals, max 10M). Do not ask the user for either value.
+   - Apply the existing create-task amount rules (non-negative, <=6 decimals, max 10M). Do not ask the user for either value.
 
 3. **serviceParams inference** (same logic as §serviceParams inference below).
 
@@ -604,6 +604,7 @@ mod tests {
         assert!(!out.contains("| Budget |"));
         assert!(!out.contains("| Max budget |"));
         assert!(!out.contains("| Payment token |"));
+        assert!(out.contains("non-negative"));
     }
 
     #[test]

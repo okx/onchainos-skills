@@ -39,7 +39,7 @@ Display as a single `| Field | Value |` table with exactly these **5** fields in
 
 If attachments present, add an Attachments row.
 
-Initialize internal `budget` and `max-budget` from the selected service `feeAmount`; never ask for them initially and never show them in this card. Continue collecting and validating Payment Currency internally for A2A and x402, but do not show it because Service Price already includes the currency. A user may explicitly edit budget fields before `create-task`; validate and confirm the proposed values separately, then re-render this card without budget rows.
+Initialize internal `budget` and `max-budget` from the selected service `feeAmount`; a zero service fee produces `budget=0` and `max-budget=0` and remains publishable. Never ask for them initially and never show them in this card. Continue collecting and validating Payment Currency internally for A2A and x402, but do not show it because Service Price already includes the currency. A user may explicitly edit budget fields to zero before `create-task`, subject to `max-budget >= budget`; validate and confirm the proposed values separately, then re-render this card without budget rows.
 
 End with a localized confirmation blockquote and wait for explicit confirmation.
 
@@ -156,7 +156,7 @@ Parse `agentId` and `endpoint`; retain `serviceId` when the caller already suppl
    - Treat `amountHuman` as endpoint price/payment data only; never use it to initialize or silently overwrite task budget/max-budget.
 3. **Collect fields and confirm**:
    - Generate task fields from the registered service listing. Collect its declared inputs plus every retained `inputRequired` field; never infer required values.
-   - Set `budget` and `max-budget` to registered `feeAmount`; set `currency` to `x402-check` `tokenSymbol`.
+   - Set `budget` and `max-budget` to registered `feeAmount`, including zero; set `currency` to `x402-check` `tokenSymbol`.
    - Follow Appendix A1 and the Edit-action matrix, then wait for explicit confirmation.
 4. **Create after confirmation**:
    `onchainos agent create-task --description "<description>" --title "<title>" --budget <budget> --max-budget <max_budget> --currency <tokenSymbol> --provider <agentId> --service-id <serviceId> --endpoint <endpoint> --payment-mode x402 [--service-params "<params>"] [--service-token-address <feeToken>] --service-token-amount <feeAmount> [--body '<serviceBody JSON>']`

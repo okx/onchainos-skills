@@ -1009,6 +1009,58 @@ async fn fetch_task_budget(job_id: &str, agent_id: &str) -> Result<(Option<Strin
 ///   "maxBudget": "0.1", "taskTokenSymbol": "USDT",
 ///   "feeAmount": "0.005", "feeTokenSymbol": "USDT" }
 /// ```
+#[derive(Debug, PartialEq, Eq)]
+enum X402AmountDecision {
+    Pass,
+    PriceMismatch,
+    OverBudget,
+}
+
+fn parse_x402_task_budget(
+    budget_res: Result<(Option<String>, Option<String>)>,
+) -> Result<(String, String, f64)> {
+    let (max_budget, task_token) = budget_res
+        .map_err(|e| anyhow::anyhow!("task budget query failed: {e}"))?;
+    let max_budget = max_budget
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("task max budget is missing"))?;
+    let max_budget_value = max_budget
+        .parse::<f64>()
+        .map_err(|_| anyhow::anyhow!("task max budget is invalid: {max_budget}"))?;
+    if !max_budget_value.is_finite() || max_budget_value < 0.0 {
+        bail!("task max budget is invalid: {max_budget}");
+    }
+
+    Ok((max_budget, task_token.unwrap_or_default(), max_budget_value))
+}
+
+fn classify_x402_amounts(
+    registered_fee: f64,
+    endpoint_amount: f64,
+    max_budget: Option<f64>,
+) -> X402AmountDecision {
+    if endpoint_amount > 0.0 && max_budget == Some(0.0) {
+        return X402AmountDecision::OverBudget;
+    }
+    if registered_fee == 0.0 && endpoint_amount > 0.0 {
+        return if max_budget.is_some_and(|max| endpoint_amount > max) {
+            X402AmountDecision::OverBudget
+        } else {
+            X402AmountDecision::PriceMismatch
+        };
+    }
+    if registered_fee > 0.0 && endpoint_amount > 0.0 {
+        let delta = ((endpoint_amount - registered_fee) / registered_fee).abs();
+        if delta > 0.01 {
+            return X402AmountDecision::PriceMismatch;
+        }
+    }
+    if max_budget.is_some_and(|max| endpoint_amount > max) {
+        return X402AmountDecision::OverBudget;
+    }
+    X402AmountDecision::Pass
+}
+
 pub async fn handle_x402_validate(
     endpoint: &str,
     agent_id: &str,
@@ -1064,12 +1116,23 @@ pub async fn handle_x402_validate(
     let accepts_json = x402_data.get("acceptsJson").cloned().unwrap_or(serde_json::Value::Null);
     let x402_version = x402_data.get("x402Version").cloned().unwrap_or(serde_json::Value::Null);
 
-    // --- DX-Step 2: price mismatch check (delta > 1%) ---
     let fee_f: f64 = fee_amount.parse().unwrap_or(0.0);
     let amount_f: f64 = amount_human.parse().unwrap_or(0.0);
-    if fee_f > 0.0 && amount_f > 0.0 {
-        let delta = ((amount_f - fee_f) / fee_f).abs();
-        if delta > 0.01 {
+
+    let (max_budget_str, task_token_str, max_f) = match parse_x402_task_budget(budget_res) {
+        Ok(budget) => budget,
+        Err(e) => {
+            crate::output::success(serde_json::json!({
+                "result": "x402_invalid",
+                "reason": format!("task budget unavailable or invalid: {e}"),
+                "endpoint": endpoint,
+            }));
+            return Ok(());
+        }
+    };
+
+    match classify_x402_amounts(fee_f, amount_f, Some(max_f)) {
+        X402AmountDecision::PriceMismatch => {
             crate::output::success(serde_json::json!({
                 "result": "price_mismatch",
                 "amountHuman": amount_human,
@@ -1082,26 +1145,20 @@ pub async fn handle_x402_validate(
             }));
             return Ok(());
         }
-    }
-
-    // --- DX-Step 3: budget check ---
-    let (max_budget, task_token) = budget_res.unwrap_or((None, None));
-    let max_budget_str = max_budget.as_deref().unwrap_or("");
-    let task_token_str = task_token.as_deref().unwrap_or("");
-
-    let max_f: f64 = max_budget_str.parse().unwrap_or(0.0);
-    if max_f > 0.0 && amount_f > max_f {
-        crate::output::success(serde_json::json!({
-            "result": "over_budget",
-            "amountHuman": amount_human,
-            "tokenSymbol": token_symbol,
-            "maxBudget": max_budget_str,
-            "taskTokenSymbol": task_token_str,
-            "acceptsJson": accepts_json,
-            "x402Version": x402_version,
-            "endpoint": endpoint,
-        }));
-        return Ok(());
+        X402AmountDecision::OverBudget => {
+            crate::output::success(serde_json::json!({
+                "result": "over_budget",
+                "amountHuman": amount_human,
+                "tokenSymbol": token_symbol,
+                "maxBudget": max_budget_str,
+                "taskTokenSymbol": task_token_str,
+                "acceptsJson": accepts_json,
+                "x402Version": x402_version,
+                "endpoint": endpoint,
+            }));
+            return Ok(());
+        }
+        X402AmountDecision::Pass => {}
     }
 
     // --- all checks passed ---
@@ -1837,5 +1894,86 @@ mod designated_service_tests {
         assert_eq!(summary["serviceId"], "2301");
         assert_eq!(summary["feeAmount"], "2.50");
         assert_eq!(summary["feeToken"], "0xContract");
+    }
+}
+
+#[cfg(test)]
+mod x402_amount_tests {
+    use super::{classify_x402_amounts, parse_x402_task_budget, X402AmountDecision};
+
+    #[test]
+    fn preserves_positive_price_and_budget_decisions() {
+        assert_eq!(
+            classify_x402_amounts(1.0, 1.02, Some(10.0)),
+            X402AmountDecision::PriceMismatch
+        );
+        assert_eq!(
+            classify_x402_amounts(1.0, 1.0, Some(0.5)),
+            X402AmountDecision::OverBudget
+        );
+        assert_eq!(
+            classify_x402_amounts(1.0, 1.0, Some(1.0)),
+            X402AmountDecision::Pass
+        );
+    }
+
+    #[test]
+    fn zero_fee_and_zero_endpoint_amount_pass() {
+        assert_eq!(
+            classify_x402_amounts(0.0, 0.0, Some(0.0)),
+            X402AmountDecision::Pass
+        );
+    }
+
+    #[test]
+    fn positive_endpoint_amount_exceeds_zero_budget() {
+        assert_eq!(
+            classify_x402_amounts(0.0, 0.01, Some(0.0)),
+            X402AmountDecision::OverBudget
+        );
+        assert_eq!(
+            classify_x402_amounts(1.0, 1.0, Some(0.0)),
+            X402AmountDecision::OverBudget
+        );
+    }
+
+    #[test]
+    fn positive_endpoint_amount_mismatches_zero_fee_with_raised_budget() {
+        assert_eq!(
+            classify_x402_amounts(0.0, 0.01, Some(0.1)),
+            X402AmountDecision::PriceMismatch
+        );
+    }
+
+    #[test]
+    fn task_budget_accepts_explicit_zero() {
+        let budget = parse_x402_task_budget(Ok((
+            Some("0".to_string()),
+            Some("USDT".to_string()),
+        )))
+        .unwrap();
+
+        assert_eq!(budget, ("0".to_string(), "USDT".to_string(), 0.0));
+    }
+
+    #[test]
+    fn task_budget_rejects_query_failure_missing_or_invalid_amount() {
+        assert!(parse_x402_task_budget(Err(anyhow::anyhow!("network error"))).is_err());
+        assert!(parse_x402_task_budget(Ok((None, Some("USDT".to_string())))).is_err());
+        assert!(parse_x402_task_budget(Ok((
+            Some("invalid".to_string()),
+            Some("USDT".to_string()),
+        )))
+        .is_err());
+        assert!(parse_x402_task_budget(Ok((
+            Some("NaN".to_string()),
+            Some("USDT".to_string()),
+        )))
+        .is_err());
+        assert!(parse_x402_task_budget(Ok((
+            Some("-0.01".to_string()),
+            Some("USDT".to_string()),
+        )))
+        .is_err());
     }
 }
