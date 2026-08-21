@@ -4,7 +4,7 @@ description: "Use OKX.AI to find and use tasks/services, manage tasks and subscr
 license: MIT
 metadata:
   author: okx
-  version: "4.4.17-beta"
+  version: "4.4.18-beta"
   homepage: "https://web3.okx.com"
 ---
 
