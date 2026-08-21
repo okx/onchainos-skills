@@ -513,6 +513,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AutotradeDeliveryReport { .. } => "autotrade-delivery-report".into(),
         AgentCommand::SubscriptionRouteSet { .. } => "subscription-route-set".into(),
         AgentCommand::SubscriptionRouteClear { .. } => "subscription-route-clear".into(),
+        AgentCommand::AutotradeWatchPrecheck { .. } => "autotrade-watch-precheck".into(),
         AgentCommand::AutotradeCapAdjustRequest { .. } => "autotrade-cap-adjust-request".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::AspReject { .. } => "asp-reject".into(),

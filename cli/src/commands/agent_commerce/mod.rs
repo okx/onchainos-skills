@@ -774,6 +774,13 @@ pub enum AgentCommand {
         job_id: String,
     },
 
+    /// Read-only first-entry gate for an explicitly scoped subscription watch.
+    #[command(name = "autotrade-watch-precheck", hide = true)]
+    AutotradeWatchPrecheck {
+        #[arg(long = "job-id")]
+        job_id: String,
+    },
+
     /// Ask whether to raise the cap after a successful over-cap one-shot.
     #[command(name = "autotrade-cap-adjust-request", hide = true)]
     AutotradeCapAdjustRequest {
@@ -1898,6 +1905,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SubscriptionRouteClear { job_id } => {
             task::common::autotrade::profile::clear_model_routes(&job_id)?;
             crate::output::success_empty();
+            Ok(())
+        }
+
+        AgentCommand::AutotradeWatchPrecheck { job_id } => {
+            let result = task::user::scoped_watch_autotrade_precheck(&job_id).await?;
+            crate::output::success(result);
             Ok(())
         }
 

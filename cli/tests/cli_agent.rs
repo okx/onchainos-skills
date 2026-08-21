@@ -733,6 +733,24 @@ fn service_match_help_describes_pagination_headers_and_price_range() {
     assert!(!help.contains("backend raw data payload"));
 }
 
+#[test]
+fn hidden_autotrade_watch_precheck_is_callable_and_rejects_an_unsafe_job_id_locally() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_watch_precheck");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-watch-precheck",
+            "--job-id",
+            "../unsafe",
+        ])
+        .output()
+        .expect("run autotrade-watch-precheck");
+
+    assert_error_contains(&output, &["invalid job id"]);
+}
+
 // ════════════════════════════════════════════════════════════════════════
 //  agent create / update — §2.2 normalize_service seam (live, wallet-gated)
 // ════════════════════════════════════════════════════════════════════════════
