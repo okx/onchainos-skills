@@ -4,7 +4,7 @@ description: "Use when an agent hits HTTP 402 / payment-required, or the user me
 license: MIT
 metadata:
   author: okx
-  version: "4.4.10"
+  version: "4.5.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -61,7 +61,7 @@ Any close / topup / settle / voucher / refund near a `channel_id` or session con
 
 ## Pre-flight Checks
 
-Read `../okx-agentic-wallet/_shared/preflight.md` (fallback: `_shared/preflight.md`).
+At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Command Routing & Reference map
 

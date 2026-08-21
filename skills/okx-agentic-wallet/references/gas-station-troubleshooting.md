@@ -1,6 +1,6 @@
 # Gas Station — Troubleshooting (Solana)
 
-Edge cases, FAQ answers, and failure diagnosis for Gas Station. Render every user-facing template per the output-discipline rule in [gas-station.md](gas-station.md) (verbatim, translate at output time, no extras). Never expose internal mechanism terms or error codes.
+Edge cases, FAQ answers, and failure diagnosis for Gas Station. Render every user-facing template per the already-loaded Gas Station output-discipline rule (verbatim, translate at output time, no extras). Never expose internal mechanism terms or error codes.
 
 ## Edge Cases
 

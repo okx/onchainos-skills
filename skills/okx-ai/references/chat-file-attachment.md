@@ -2,10 +2,6 @@
 
 Upload and download encrypted file attachments via the AI economy platform. Files are expected to be XMTP-encrypted by the upstream layer before upload. Requires wallet authentication (JWT).
 
-## Pre-flight Checks
-
-> Read `../okx-agentic-wallet/_shared/preflight.md`.
-
 ## Command Index
 
 > **CLI Reference**: For full parameter tables, return field schemas, and usage examples, see `references/chat-cli-reference.md`.
