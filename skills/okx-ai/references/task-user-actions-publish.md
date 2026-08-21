@@ -153,11 +153,11 @@ Parse `agentId` and `endpoint`; retain `serviceId` when the caller already suppl
    `onchainos agent x402-check --endpoint <endpoint>`
    - `valid=false` + `inputRequired=true` → retain `fields` / `requiredAnyOf` and continue.
    - `valid=false` without `inputRequired` → stop. A `tokenSymbol` other than USDT/USDG → stop.
-   - Treat `amountHuman` as endpoint price/payment data only; never use it to initialize or silently overwrite task budget/max-budget.
+   - Treat `amountHuman` / `tokenSymbol` as endpoint price/payment data only; never use them to initialize or silently overwrite task budget/max-budget/currency.
 3. **Collect fields and confirm**:
    - Generate task fields from the registered service listing. Collect its declared inputs plus every retained `inputRequired` field; never infer required values.
-   - Set `budget` and `max-budget` to registered `feeAmount`, including zero; set `currency` to `x402-check` `tokenSymbol`.
+   - Set `budget` and `max-budget` to registered `feeAmount`, including zero; set `currency` to the registered service `feeTokenSymbol`.
    - Follow Appendix A1 and the Edit-action matrix, then wait for explicit confirmation.
 4. **Create after confirmation**:
-   `onchainos agent create-task --description "<description>" --title "<title>" --budget <budget> --max-budget <max_budget> --currency <tokenSymbol> --provider <agentId> --service-id <serviceId> --endpoint <endpoint> --payment-mode x402 [--service-params "<params>"] [--service-token-address <feeToken>] --service-token-amount <feeAmount> [--body '<serviceBody JSON>']`
+   `onchainos agent create-task --description "<description>" --title "<title>" --budget <budget> --max-budget <max_budget> --currency <feeTokenSymbol> --provider <agentId> --service-id <serviceId> --endpoint <endpoint> --payment-mode x402 [--service-params "<params>"] [--service-token-address <feeToken>] --service-token-amount <feeAmount> [--body '<serviceBody JSON>']`
    - Include `--body` only when endpoint fields were collected. After creation, budget/max-budget are locked; follow CLI `next-action`.
