@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill whenever the user wants to use OKX Onchain OS / onchainos CLI / agentic wallet for wallet state or on-chain actions. Triggers: onchainos, Onchain OS wallet, agentic wallet; wallet login/status/account/address/balance/holdings/deposit/receive/send/transfer; on-chain swap/DEX trade/buy/sell/convert; bridge; Gas Station; contract calls; transaction history/status; signing; approvals; wallet export/policy; token or DApp security checks; or audit log. Also use it for Bitcoin and BRC-20 balances, UTXOs, inscriptions, and transfers, and SUI balances and transfers."
+description: "Use this skill whenever the user wants to use OKX Onchain OS / onchainos CLI / agentic wallet for wallet state or on-chain actions. Triggers: onchainos, Onchain OS wallet, agentic wallet; wallet login/status/account/address/balance/holdings/deposit/receive/send/transfer; on-chain swap/DEX trade/buy/sell/convert; bridge; Gas Station; contract calls; transaction history/status; Bitcoin UTXOs, BRC-20, inscriptions; signing; approvals; wallet export/policy; token or DApp security checks; or audit log."
 license: MIT
 metadata:
   author: okx
