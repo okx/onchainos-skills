@@ -567,6 +567,132 @@ fn autotrade_non_pause_modes_still_require_agent_id() {
 }
 
 #[test]
+fn autotrade_environment_set_upgrades_only_the_existing_policy() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_environment_set");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let consent_dir = dir.join("autotrade/consent");
+    std::fs::create_dir_all(&consent_dir).unwrap();
+    std::fs::write(
+        consent_dir.join("job_environment.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": 1,
+            "jobId": "job_environment",
+            "mode": "auto",
+            "capU": "20",
+            "tradeAmountU": "10",
+            "quoteToken": "usdc",
+            "createdAt": now,
+            "expiresAt": now + 3600
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job_environment",
+            "--agent-id",
+            "8315",
+            "--mode",
+            "environment-set",
+            "--environment",
+            "demo",
+        ])
+        .output()
+        .expect("persist Trade Kit environment");
+    let result = common::assert_ok_and_extract_data(&output);
+    assert_eq!(result["tradeEnvironment"], "demo");
+
+    let stored: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(consent_dir.join("job_environment.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(stored["version"], 3);
+    assert_eq!(stored["mode"], "auto");
+    assert_eq!(stored["capU"], "20");
+    assert_eq!(stored["tradeAmountU"], "10");
+    assert_eq!(stored["quoteToken"], "usdc");
+    assert_eq!(stored["tradeEnvironment"], "demo");
+    assert_eq!(stored["createdAt"], now);
+    assert_eq!(stored["expiresAt"], now + 3600);
+}
+
+#[test]
+fn autotrade_settings_update_persists_all_trade_kit_choices_without_rewriting_policy() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_settings_update");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let consent_dir = dir.join("autotrade/consent");
+    std::fs::create_dir_all(&consent_dir).unwrap();
+    std::fs::write(
+        consent_dir.join("job_settings.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": 2,
+            "jobId": "job_settings",
+            "mode": "auto",
+            "capU": "20",
+            "tradeAmountU": "10",
+            "quoteToken": "usdc",
+            "createdAt": now,
+            "expiresAt": now + 3600
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job_settings",
+            "--agent-id",
+            "8315",
+            "--mode",
+            "settings-update",
+            "--environment",
+            "demo",
+            "--margin-mode",
+            "isolated",
+            "--order-policy",
+            "signal_price_limit",
+        ])
+        .output()
+        .expect("persist complete Trade Kit settings");
+    let result = common::assert_ok_and_extract_data(&output);
+    assert_eq!(result["tradeEnvironment"], "demo");
+    assert_eq!(result["marginMode"], "isolated");
+    assert_eq!(result["orderPolicy"], "signal_price_limit");
+
+    let stored: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(consent_dir.join("job_settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(stored["version"], 3);
+    assert_eq!(stored["mode"], "auto");
+    assert_eq!(stored["capU"], "20");
+    assert_eq!(stored["tradeAmountU"], "10");
+    assert_eq!(stored["quoteToken"], "usdc");
+    assert_eq!(stored["tradeEnvironment"], "demo");
+    assert_eq!(stored["marginMode"], "isolated");
+    assert_eq!(stored["orderPolicy"], "signal_price_limit");
+    assert_eq!(stored["createdAt"], now);
+    assert_eq!(stored["expiresAt"], now + 3600);
+}
+
+#[test]
 fn autotrade_auto_accepts_missing_cap_and_authorizes_any_positive_amount() {
     let (_home, dir) = fresh_home("cli_agent_autotrade_unbounded_auto");
     let mut set = onchainos();
@@ -731,6 +857,24 @@ fn service_match_help_describes_pagination_headers_and_price_range() {
     }
     assert!(!help.contains("      --format "));
     assert!(!help.contains("backend raw data payload"));
+}
+
+#[test]
+fn hidden_autotrade_watch_precheck_is_callable_and_rejects_an_unsafe_job_id_locally() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_watch_precheck");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-watch-precheck",
+            "--job-id",
+            "../unsafe",
+        ])
+        .output()
+        .expect("run autotrade-watch-precheck");
+
+    assert_error_contains(&output, &["invalid job id"]);
 }
 
 // ════════════════════════════════════════════════════════════════════════

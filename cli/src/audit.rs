@@ -501,10 +501,12 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         // Task (provider)
         AgentCommand::Apply { .. } => "apply".into(),
         AgentCommand::Deliver { .. } => "deliver".into(),
+        AgentCommand::TradeKitReadiness { .. } => "trade-kit-readiness".into(),
         AgentCommand::AutotradeGrantCheck { .. } => "autotrade-grant-check".into(),
         #[cfg(debug_assertions)]
         AgentCommand::AutotradeGrantWrite { .. } => "autotrade-grant-write".into(),
         AgentCommand::AutotradeConsentSet { .. } => "autotrade-consent-set".into(),
+        AgentCommand::AutotradeConsentContinue { .. } => "autotrade-consent-continue".into(),
         AgentCommand::AutotradeConsentRequest { .. } => "autotrade-consent-request".into(),
         AgentCommand::AutotradeExecute { .. } => "autotrade-execute".into(),
         AgentCommand::AutotradeOnceAuthorize { .. } => "autotrade-once-authorize".into(),
@@ -512,6 +514,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AutotradeDeliveryReport { .. } => "autotrade-delivery-report".into(),
         AgentCommand::SubscriptionRouteSet { .. } => "subscription-route-set".into(),
         AgentCommand::SubscriptionRouteClear { .. } => "subscription-route-clear".into(),
+        AgentCommand::AutotradeWatchPrecheck { .. } => "autotrade-watch-precheck".into(),
         AgentCommand::AutotradeCapAdjustRequest { .. } => "autotrade-cap-adjust-request".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::AspReject { .. } => "asp-reject".into(),

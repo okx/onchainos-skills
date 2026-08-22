@@ -1,10 +1,10 @@
 ---
 name: okx-ai
-description: "Use OKX.AI to find and use tasks/services, or register as an Agent Service Provider (ASP) to offer services. Includes Agent identity/profile and service management; service/capability search; Marketplace task lifecycle management; feedback/reputation and Evaluator staking; task/service subscriptions; task watch; device routing; A2A chat/files; and setup/repair for missing or uninitialized okx-a2a. Trigger phrases: OKX.AI, OKX AI, or OKX-AI actions; find/search/recommend/hire agents or services; register/update/search/activate/deactivate a User, Agent, ASP (seller), or Evaluator; task/deliverable actions; IDs: agentId, Agent#N, serviceId, jobId; multilingual subscription-signal receipt/resume. Exclude non-AI/local providers, introductions (okx-guide), payment subscriptions or 402/x402/paymentId (okx-agent-payments-protocol), and DeFi staking (okx-defi); clarify bare subscriptions."
+description: "Use OKX.AI to find and use tasks/services, manage tasks and subscriptions, or register as an Agent Service Provider (ASP) to offer services. Includes Agent identity/profile and service management; service/capability search; Marketplace task lifecycle management; feedback/reputation and Evaluator staking; task/service subscriptions; task watch; device routing; A2A chat/files; and setup/repair for missing or uninitialized okx-a2a. Trigger phrases: OKX.AI, OKX AI, or OKX-AI actions; find/search/recommend/hire agents or services; register/update/search/activate/deactivate a User, Agent, ASP (seller), or Evaluator; active tasks, task list, my subscriptions, subscription list; task/deliverable actions; IDs: agentId, Agent#N, serviceId, jobId; multilingual subscription-signal receipt/resume. Exclude non-AI/local providers, introductions (okx-guide), payment subscriptions or 402/x402/paymentId (okx-agent-payments-protocol), and DeFi staking (okx-defi); clarify bare subscriptions."
 license: MIT
 metadata:
   author: okx
-  version: "4.4.17-beta"
+  version: "4.4.18-beta"
   homepage: "https://web3.okx.com"
 ---
 

@@ -11,16 +11,46 @@ fn write_fake_okx(path: &std::path::Path) {
     fs::write(
         path,
         r#"#!/bin/sh
+if [ "$1 $2" = "list-tools --json" ]; then
+  printf '%s\n' '{"version":"1.4.2","modules":[{"commands":[{"toolName":"market_get_ticker"},{"toolName":"market_get_instruments"},{"toolName":"account_get_config"},{"toolName":"spot_place_order"},{"toolName":"swap_get_leverage"},{"toolName":"swap_set_leverage"},{"toolName":"swap_place_order"},{"toolName":"swap_close_position"},{"toolName":"futures_get_leverage"},{"toolName":"futures_set_leverage"},{"toolName":"futures_place_order"},{"toolName":"futures_close_position"},{"toolName":"event_browse"},{"toolName":"event_get_series"},{"toolName":"event_get_events"},{"toolName":"event_get_markets"},{"toolName":"event_place_order"},{"toolName":"option_get_instruments"},{"toolName":"option_get_greeks"},{"toolName":"option_place_order"}]}]}'
+  exit 0
+fi
+if [ "$1 $2 $3" = "account config --json" ]; then
+  if [ "$FAKE_OKX_MODE" = "not_ready" ]; then
+    printf '%s\n' '[{"perm":"read_only"}]'
+  else
+    printf '%s\n' '[{"perm":"trade"}]'
+  fi
+  exit 0
+fi
 case "$FAKE_OKX_MODE" in
-  nonzero)
+  nonzero_structured)
     echo '{"ok":false,"error":"post-run failure"}'
     exit 7
+    ;;
+  nonzero_opaque)
+    echo 'opaque transport failure' >&2
+    exit 9
     ;;
   status_only)
     echo '{"ok":true,"status":"success"}'
     ;;
   receipt)
     echo '{"ok":true,"data":{"ordId":"42"}}'
+    ;;
+  normalized_sentinels)
+    saw_tp=false
+    saw_sl=false
+    for arg in "$@"; do
+      [ "$arg" = "--tpOrdPx=-1" ] && saw_tp=true
+      [ "$arg" = "--slOrdPx=-1" ] && saw_sl=true
+    done
+    if [ "$saw_tp" = true ] && [ "$saw_sl" = true ]; then
+      echo '{"ok":true,"data":{"ordId":"normalized-42"}}'
+    else
+      echo "Error: negative TP/SL market sentinels were not normalized" >&2
+      exit 2
+    fi
     ;;
 esac
 "#,
@@ -130,6 +160,7 @@ fn preflight_amount_mismatch_is_persisted_without_spawning_trade() {
             "capU": "10",
             "tradeAmountU": "1",
             "quoteToken": "usdt",
+            "tradeEnvironment": "live",
             "createdAt": now,
             "expiresAt": now + 3600
         }),
@@ -189,6 +220,92 @@ fn preflight_amount_mismatch_is_persisted_without_spawning_trade() {
     assert!(home
         .join("autotrade/outcomes/job1/delivery-1.json")
         .exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn trade_kit_execution_requires_and_matches_persisted_environment() {
+    let (_guard, home) = fresh_home("cli_autotrade_trade_environment_binding");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    for delivery in ["delivery-missing-env", "delivery-mismatch-env"] {
+        write_context(&home, delivery);
+    }
+    write_json(
+        &home.join("autotrade/grants/job1.json"),
+        &json!({
+            "version": 1,
+            "jobId": "job1",
+            "grants": {"trade_kit": {"maxBuy": "10", "maxSell": "10"}},
+            "createdAt": now,
+            "expiresAt": now + 3600
+        }),
+    );
+    let bin = home.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    write_fake_okx(&bin.join("okx"));
+
+    let write_policy = |environment: Option<&str>| {
+        let mut policy = json!({
+            "version": 2,
+            "jobId": "job1",
+            "mode": "auto",
+            "capU": "10",
+            "tradeAmountU": "1",
+            "quoteToken": "usdt",
+            "createdAt": now,
+            "expiresAt": now + 3600
+        });
+        if let Some(environment) = environment {
+            policy["tradeEnvironment"] = json!(environment);
+        }
+        policy["orderPolicy"] = json!("market");
+        write_json(&home.join("autotrade/consent/job1.json"), &policy);
+    };
+    let run = |delivery: &str| {
+        let mut command = onchainos();
+        let output = scrubbed(&mut command, &home)
+            .env("PATH", &bin)
+            .env("FAKE_OKX_MODE", "receipt")
+            .args([
+                "agent",
+                "autotrade-execute",
+                "--job-id",
+                "job1",
+                "--delivery-id",
+                delivery,
+                "--venue",
+                "trade_kit",
+                "--action",
+                "buy",
+                "--amount",
+                "1",
+                "--command-json",
+                r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        parse_stdout_json(&output)
+    };
+
+    write_policy(None);
+    let missing = run("delivery-missing-env");
+    assert_eq!(missing["data"]["status"], "failed_before_submit");
+    assert!(missing["data"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("persisted live or demo environment"));
+
+    write_policy(Some("demo"));
+    let mismatch = run("delivery-mismatch-env");
+    assert_eq!(mismatch["data"]["status"], "failed_before_submit");
+    assert!(mismatch["data"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("does not match persisted consent"));
 }
 
 #[test]
@@ -413,13 +530,24 @@ fn over_cap_one_time_permit_is_exact_and_consumed_by_the_result_bridge() {
 
 #[cfg(unix)]
 #[test]
-fn started_command_failures_and_status_only_output_never_claim_submission() {
+fn completed_trade_kit_commands_preserve_receipts_and_safe_failure_details() {
     let (_guard, home) = fresh_home("cli_autotrade_conservative_receipt");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    for delivery in ["delivery-nonzero", "delivery-status", "delivery-receipt"] {
+    for delivery in [
+        "delivery-nonzero",
+        "delivery-opaque",
+        "delivery-status",
+        "delivery-receipt",
+        "delivery-normalized",
+        "delivery-futures-place",
+        "delivery-option",
+        "delivery-event",
+        "delivery-close",
+        "delivery-not-ready",
+    ] {
         write_context(&home, delivery);
     }
     write_json(
@@ -431,6 +559,9 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
             "capU": "10",
             "tradeAmountU": "1",
             "quoteToken": "usdt",
+            "tradeEnvironment": "live",
+            "marginMode": "cross",
+            "orderPolicy": "market",
             "createdAt": now,
             "expiresAt": now + 3600
         }),
@@ -449,7 +580,7 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
     fs::create_dir_all(&bin).unwrap();
     write_fake_okx(&bin.join("okx"));
 
-    let run = |delivery: &str, mode: &str| {
+    let run = |delivery: &str, mode: &str, command_json: &str| {
         let mut command = onchainos();
         let output = scrubbed(&mut command, &home)
             .env("PATH", &bin)
@@ -468,7 +599,7 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
                 "--amount",
                 "1",
                 "--command-json",
-                r#"["order","--sz","1","--side","buy"]"#,
+                command_json,
             ])
             .output()
             .unwrap();
@@ -476,16 +607,113 @@ fn started_command_failures_and_status_only_output_never_claim_submission() {
         parse_stdout_json(&output)
     };
 
+    let structured = run(
+        "delivery-nonzero",
+        "nonzero_structured",
+        r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
+    );
+    assert_eq!(structured["data"]["status"], "failed_before_submit");
+    assert!(structured["data"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("post-run failure"));
+
+    let opaque = run(
+        "delivery-opaque",
+        "nonzero_opaque",
+        r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
+    );
+    assert_eq!(opaque["data"]["status"], "unknown_after_submit");
+    assert!(opaque["data"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("opaque transport failure"));
     assert_eq!(
-        run("delivery-nonzero", "nonzero")["data"]["status"],
+        run(
+            "delivery-status",
+            "status_only",
+            r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
+        )["data"]["status"],
         "unknown_after_submit"
     );
     assert_eq!(
-        run("delivery-status", "status_only")["data"]["status"],
-        "unknown_after_submit"
-    );
-    assert_eq!(
-        run("delivery-receipt", "receipt")["data"]["status"],
+        run(
+            "delivery-receipt",
+            "receipt",
+            r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
+        )["data"]["status"],
         "submitted"
     );
+
+    let normalized = run(
+        "delivery-normalized",
+        "normalized_sentinels",
+        r#"["--live","--json","swap","place","--sz","1","--side","buy","--tdMode","cross","--ordType","market","--tpTriggerPx","999999","--tpOrdPx","-1","--slTriggerPx","1","--slOrdPx","-1"]"#,
+    );
+    assert_eq!(normalized["data"]["status"], "submitted");
+    assert_eq!(normalized["data"]["receipt"]["ordId"], "normalized-42");
+
+    let futures_place = run(
+        "delivery-futures-place",
+        "receipt",
+        r#"["--live","futures","place","--instId","BTC-USDT-260925","--tdMode","cross","--side","buy","--ordType","market","--sz","1","--json"]"#,
+    );
+    assert_eq!(futures_place["data"]["status"], "submitted");
+
+    let option = run(
+        "delivery-option",
+        "receipt",
+        r#"["--live","option","place","--instId","BTC-USD-260925-100000-C","--tdMode","cross","--side","buy","--ordType","market","--sz","1","--json"]"#,
+    );
+    assert_eq!(option["data"]["status"], "submitted");
+
+    let event = run(
+        "delivery-event",
+        "receipt",
+        r#"["--live","event","place","BTC-ABOVE","buy","yes","1","--ordType","market","--json"]"#,
+    );
+    assert_eq!(event["data"]["status"], "submitted", "event={event}");
+    assert_eq!(event["data"]["receipt"]["ordId"], "42");
+
+    let mut close = onchainos();
+    let close_output = scrubbed(&mut close, &home)
+        .env("PATH", &bin)
+        .env("FAKE_OKX_MODE", "receipt")
+        .args([
+            "agent",
+            "autotrade-execute",
+            "--job-id",
+            "job1",
+            "--delivery-id",
+            "delivery-close",
+            "--venue",
+            "trade_kit",
+            "--action",
+            "sell",
+            "--amount",
+            "1",
+            "--command-json",
+            r#"["--live","--json","futures","close","--instId","BTC-USDT-260925","--mgnMode","cross","--posSide","long"]"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        close_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&close_output.stderr)
+    );
+    let close_result = parse_stdout_json(&close_output);
+    assert_eq!(close_result["data"]["status"], "submitted");
+    assert_eq!(close_result["data"]["receipt"]["ordId"], "42");
+
+    let not_ready = run(
+        "delivery-not-ready",
+        "not_ready",
+        r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
+    );
+    assert_eq!(not_ready["data"]["status"], "failed_before_submit");
+    assert!(not_ready["data"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("trade_permission_required"));
 }

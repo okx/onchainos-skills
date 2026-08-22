@@ -47,15 +47,17 @@
 | `serviceId` | from `task-service-select` response | auto-filled |
 | `useTrial` | `subscriptionInfo.supportTrial == true` from `task-service-select` → auto `true`; otherwise `false`. Display hours from `subscriptionInfo.freeTrial` field | **auto-filled, do NOT ask user** |
 | `autoRenew` | ask user explicitly before form — no default | 0=off, 1=on |
-| Automatic signal execution | Defaults to `auto`. Inspect the ASP description only to learn which settings to ask about; persist mode/amount/cap/quote only from the user's reply. An explicit opt-out becomes `manual`. Amount and cap are optional positive decimals, quote defaults to `USDT`, and cap is stored but not enforced. Ask missing ASP-required fields in one natural-language question without choices. | **local execution configuration** |
-| Signal preflight | Retain schema-v2 `autoTradePreflight` as advisory information. A non-ready tool produces a concise notice and never a choice card, installation/configuration action, or subscription block. | **advisory; not a subscription input** |
+| Automatic signal execution | Defaults to `auto`. Inspect the ASP description only to learn which supported settings to ask about; persist mode/amount/cap/quote/environment/margin mode/order policy only from the user's reply. An explicit opt-out becomes `manual`. Amount and cap are optional positive decimals, quote defaults to `USDT`, Trade Kit environment is `live`/`demo`, margin mode is `cross`/`isolated`, and order policy is `market`/`signal_price_limit`. Ask missing fields in one natural-language question without choices. Never render execution mode, per-signal amount, per-signal cap, margin mode, or order policy as confirmation-form rows; the existing Trade Kit environment row is the only display exception. None of these values belongs in `serviceParams`. | **local execution configuration; not an ASP business parameter** |
+| Signal preflight | Retain schema-v2 `autoTradePreflight` as advisory information. A non-ready or authorization-not-checked Trade Kit produces one optional two-choice preparation card: install/configure Trade Kit, or Later and continue subscribing. On prepare, load `okx-cex-auth` directly when already installed. Only when unavailable, scope the required security scan to `okx/agent-skills`, install it after a passing scan, and load `okx-cex-auth`. Delegate all CLI/OAuth/API-key setup to that skill and re-run readiness afterward. Never auto-install or block subscription creation; other tool reminders remain concise notices. | **optional preparation; not a subscription input** |
 | `serviceTokenAmount` | from `task-service-select` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
 
 Read `autoTradeConfigured` from the JSON success envelope. When it is `true`, no additional execution-
 consent question is needed. When it is `false`, the subscription itself still succeeded but local execution
 configuration was not persisted: report the local failure without opening a decision card.
 
-See `task-user-actions-publish.md` **Appendix A2** for the subscription confirmation form template.
+For a `next-action` route, its returned confirmation form is the sole field authority; never merge fields
+from a Skill appendix or other card into it. Use `task-user-actions-publish.md` **Appendix A2** only for a
+direct/fallback subscription route that did not receive a CLI-provided confirmation form.
 
 ### Post-creation: Offline-deliverables question
 
@@ -162,7 +164,8 @@ authorized lifecycle/progress action unless the user explicitly made it conditio
 When the immediately preceding assistant turn asked for missing restore configuration after
 `autotrade-watch-precheck`, bind the reply only through the exact local `continuationId` returned in that
 turn. Run `autotrade-consent-continue --job-id <sameJobId> --agent-id <sameAgentId>
---continuation-id <exactId>` with only `--trade-amount`, `--cap`, or `--quote` values explicitly authored
+--continuation-id <exactId>` with only `--trade-amount`, `--cap`, `--quote`, `--environment`,
+`--margin-mode`, or `--order-policy` values explicitly authored
 in this reply. If the user explicitly disables automatic execution, add `--mode manual`; if they affirm
 the displayed automatic default, add `--mode auto`. Supplying the mode on resume records the user's
 confirmation; never treat the continuation's default `auto` value as confirmation. Never infer a value or

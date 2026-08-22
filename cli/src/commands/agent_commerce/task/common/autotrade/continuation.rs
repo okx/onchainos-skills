@@ -10,10 +10,11 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::amount::Decimal;
-use super::consent::QUOTE_WHITELIST;
+use super::consent::{MarginMode, OrderPolicy, QUOTE_WHITELIST};
+use super::trade_kit::TradeEnvironment;
 use super::grants::job_id_is_safe;
 
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 const TTL_SECS: u64 = 30 * 60;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,26 +76,37 @@ pub struct ConsentContinuation {
     pub cap_u: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quote_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trade_environment: Option<TradeEnvironment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_mode: Option<MarginMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_policy: Option<OrderPolicy>,
     created_at: u64,
     expires_at: u64,
 }
 
 impl ConsentContinuation {
     pub fn missing_fields(&self) -> Vec<String> {
-        let mut missing = if self.selected_mode == SelectedMode::Manual {
-            Vec::new()
-        } else {
-            self.required_fields
-                .iter()
-                .filter(|field| match field.as_str() {
-                    "tradeAmount" => self.trade_amount_u.is_none(),
-                    "cap" => self.cap_u.is_none(),
-                    "quote" => self.quote_token.is_none(),
-                    _ => true,
-                })
-                .cloned()
-                .collect()
-        };
+        let mut missing: Vec<String> = self
+            .required_fields
+            .iter()
+            .filter(|field| match field.as_str() {
+                "tradeAmount" | "cap" | "quote"
+                    if self.selected_mode == SelectedMode::Manual =>
+                {
+                    false
+                }
+                "tradeAmount" => self.trade_amount_u.is_none(),
+                "cap" => self.cap_u.is_none(),
+                "quote" => self.quote_token.is_none(),
+                "environment" => self.trade_environment.is_none(),
+                "marginMode" => self.margin_mode.is_none(),
+                "orderPolicy" => self.order_policy.is_none(),
+                _ => true,
+            })
+            .cloned()
+            .collect();
         if self.origin == Origin::SubscriptionRestore && !self.mode_confirmed {
             missing.insert(0, "mode".to_string());
         }
@@ -122,6 +134,9 @@ pub struct ExplicitValues<'a> {
     pub trade_amount_u: Option<&'a str>,
     pub cap_u: Option<&'a str>,
     pub quote_token: Option<&'a str>,
+    pub trade_environment: Option<&'a str>,
+    pub margin_mode: Option<&'a str>,
+    pub order_policy: Option<&'a str>,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -201,7 +216,12 @@ fn normalize_required_fields(values: &[String]) -> anyhow::Result<Vec<String>> {
             "tradeAmount" | "trade_amount" | "amount" => "tradeAmount",
             "cap" => "cap",
             "quote" | "quoteToken" | "quote_token" => "quote",
-            _ => anyhow::bail!("--required-field must be one of: tradeAmount | cap | quote"),
+            "environment" | "tradeEnvironment" | "trade_environment" => "environment",
+            "marginMode" | "margin_mode" => "marginMode",
+            "orderPolicy" | "order_policy" => "orderPolicy",
+            _ => anyhow::bail!(
+                "--required-field must be one of: tradeAmount | cap | quote | environment | marginMode | orderPolicy"
+            ),
         };
         if !normalized.iter().any(|existing| existing == field) {
             normalized.push(field.to_string());
@@ -397,6 +417,9 @@ pub fn start_or_update(
                     trade_amount_u: None,
                     cap_u: None,
                     quote_token: None,
+                    trade_environment: None,
+                    margin_mode: None,
+                    order_policy: None,
                     created_at: now,
                     expires_at: now.saturating_add(TTL_SECS),
                 },
@@ -456,6 +479,36 @@ pub fn start_or_update(
             }),
         }
     }
+    if let Some(value) = values.trade_environment {
+        match TradeEnvironment::parse(value) {
+            Ok(value) if value.is_explicit() => candidate.trade_environment = Some(value),
+            Ok(_) | Err(_) => validation_errors.push(ValidationError {
+                field: "environment".to_string(),
+                code: "invalid_environment".to_string(),
+                message: "--environment must be one of: live | demo".to_string(),
+            }),
+        }
+    }
+    if let Some(value) = values.margin_mode {
+        match MarginMode::parse(value) {
+            Ok(value) => candidate.margin_mode = Some(value),
+            Err(error) => validation_errors.push(ValidationError {
+                field: "marginMode".to_string(),
+                code: "invalid_margin_mode".to_string(),
+                message: error.to_string(),
+            }),
+        }
+    }
+    if let Some(value) = values.order_policy {
+        match OrderPolicy::parse(value) {
+            Ok(value) => candidate.order_policy = Some(value),
+            Err(error) => validation_errors.push(ValidationError {
+                field: "orderPolicy".to_string(),
+                code: "invalid_order_policy".to_string(),
+                message: error.to_string(),
+            }),
+        }
+    }
     let file = if validation_errors.is_empty() {
         write_record(&candidate)?;
         candidate
@@ -465,7 +518,20 @@ pub fn start_or_update(
 
     let missing_fields = file.missing_fields();
     let complete = validation_errors.is_empty() && missing_fields.is_empty();
-    let consent_command = complete.then(|| match file.selected_mode {
+    let consent_command = complete.then(|| {
+        let environment = file
+            .trade_environment
+            .map(|value| format!(" --environment {}", value.as_str()))
+            .unwrap_or_default();
+        let margin_mode = file
+            .margin_mode
+            .map(|value| format!(" --margin-mode {}", value.as_str()))
+            .unwrap_or_default();
+        let order_policy = file
+            .order_policy
+            .map(|value| format!(" --order-policy {}", value.as_str()))
+            .unwrap_or_default();
+        match file.selected_mode {
         SelectedMode::Auto => {
             let amount = file
                 .trade_amount_u
@@ -483,7 +549,7 @@ pub fn start_or_update(
                 .map(|value| format!(" --quote {value}"))
                 .unwrap_or_default();
             format!(
-                "onchainos agent autotrade-consent-set --job-id {} --agent-id {} --mode auto{amount}{cap}{quote}",
+                "onchainos agent autotrade-consent-set --job-id {} --agent-id {} --mode auto{amount}{cap}{quote}{environment}{margin_mode}{order_policy}",
                 file.job_id, file.agent_id
             )
         }
@@ -499,9 +565,10 @@ pub fn start_or_update(
                 .map(|value| format!(" --quote {value}"))
                 .unwrap_or_default();
             format!(
-                "onchainos agent autotrade-consent-set --job-id {} --agent-id {} --mode manual{amount}{quote}",
+                "onchainos agent autotrade-consent-set --job-id {} --agent-id {} --mode manual{amount}{quote}{environment}{margin_mode}{order_policy}",
                 file.job_id, file.agent_id
             )
+        }
         }
     });
 
@@ -659,6 +726,7 @@ mod tests {
                     trade_amount_u: Some("21"),
                     cap_u: Some("20"),
                     quote_token: Some("usdt"),
+                    ..ExplicitValues::default()
                 },
             )
             .unwrap();
@@ -695,6 +763,7 @@ mod tests {
                     trade_amount_u: Some("100"),
                     cap_u: Some("50"),
                     quote_token: Some("usdt"),
+                    ..ExplicitValues::default()
                 },
             )
             .unwrap();
@@ -787,6 +856,75 @@ mod tests {
                 completed.consent_command.as_deref(),
                 Some(
                     "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --trade-amount 12.5 --quote usdt"
+                )
+            );
+        });
+    }
+
+    #[test]
+    fn subscription_restore_collects_complete_trade_kit_settings() {
+        with_home(|| {
+            let required = vec![
+                "tradeAmount".to_string(),
+                "cap".to_string(),
+                "quote".to_string(),
+                "environment".to_string(),
+                "marginMode".to_string(),
+                "orderPolicy".to_string(),
+            ];
+            let first = start_or_update(
+                Some(StartBinding {
+                    job_id: "job-1",
+                    agent_id: "7",
+                    selected_mode: SelectedMode::Auto,
+                    mode_confirmed: false,
+                    origin: Origin::SubscriptionRestore,
+                    signal_type: "perp",
+                    original_delivery_id: None,
+                    required_fields: Some(&required),
+                }),
+                "job-1",
+                "7",
+                None,
+                None,
+                ExplicitValues::default(),
+            )
+            .unwrap();
+            assert_eq!(
+                first.missing_fields,
+                [
+                    "mode",
+                    "tradeAmount",
+                    "cap",
+                    "quote",
+                    "environment",
+                    "marginMode",
+                    "orderPolicy"
+                ]
+            );
+
+            let completed = start_or_update(
+                None,
+                "job-1",
+                "7",
+                Some(&first.continuation_id),
+                Some(SelectedMode::Auto),
+                ExplicitValues {
+                    trade_amount_u: Some("10"),
+                    cap_u: Some("100"),
+                    quote_token: Some("usdt"),
+                    trade_environment: Some("demo"),
+                    margin_mode: Some("cross"),
+                    order_policy: Some("signal_price_limit"),
+                    ..ExplicitValues::default()
+                },
+            )
+            .unwrap();
+            assert!(completed.complete);
+            assert_eq!(
+                completed.consent_command.as_deref(),
+                Some(
+                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --trade-amount 10 --cap 100 --quote usdt --environment demo --margin-mode cross --order-policy signal_price_limit"
                 )
             );
         });

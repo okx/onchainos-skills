@@ -8,7 +8,10 @@ use std::time::Duration;
 use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::autotrade::{
-    amount::Decimal, consent, grants,
+    amount::Decimal,
+    consent::{self, MarginMode, OrderPolicy},
+    grants,
+    trade_kit::TradeEnvironment,
 };
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
@@ -36,6 +39,9 @@ pub struct CreateSubscribeParams {
     pub autotrade_amount: Option<String>,
     pub autotrade_cap: Option<String>,
     pub autotrade_quote: Option<String>,
+    pub autotrade_environment: Option<String>,
+    pub autotrade_margin_mode: Option<String>,
+    pub autotrade_order_policy: Option<String>,
     pub format: String,
     pub exclude_device: Option<Vec<String>>,
 }
@@ -48,6 +54,9 @@ struct SubscriptionAutoTradeConfig {
     amount: Option<String>,
     cap: Option<String>,
     quote: String,
+    environment: Option<TradeEnvironment>,
+    margin_mode: Option<MarginMode>,
+    order_policy: Option<OrderPolicy>,
 }
 
 impl CreateSubscribeParams {
@@ -104,12 +113,31 @@ impl CreateSubscribeParams {
         if !consent::QUOTE_WHITELIST.contains(&quote.as_str()) {
             bail!("--autotrade-quote must be one of: usdt | usdc");
         }
+        let environment = match self.autotrade_environment.as_deref() {
+            None => None,
+            Some(value) if value.eq_ignore_ascii_case("live") => Some(TradeEnvironment::Live),
+            Some(value) if value.eq_ignore_ascii_case("demo") => Some(TradeEnvironment::Demo),
+            Some(_) => bail!("--autotrade-environment must be one of: live | demo"),
+        };
+        let margin_mode = self
+            .autotrade_margin_mode
+            .as_deref()
+            .map(MarginMode::parse)
+            .transpose()?;
+        let order_policy = self
+            .autotrade_order_policy
+            .as_deref()
+            .map(OrderPolicy::parse)
+            .transpose()?;
 
         Ok(SubscriptionAutoTradeConfig {
             mode,
             amount,
             cap,
             quote,
+            environment,
+            margin_mode,
+            order_policy,
         })
     }
 }
@@ -130,12 +158,15 @@ fn persist_subscription_autotrade(
     job_id: &str,
     config: &SubscriptionAutoTradeConfig,
 ) -> Result<()> {
-    consent::write_consent_with_trade_amount(
+    consent::write_consent_policy_with_settings(
         job_id,
         config.mode,
         config.cap.as_deref(),
         config.amount.as_deref(),
         Some(&config.quote),
+        config.environment,
+        config.margin_mode,
+        config.order_policy,
         super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
     )?;
     let grant_result = match config.mode {
@@ -222,7 +253,10 @@ pub async fn handle_create_subscribe(
     let autotrade_requested = params.autotrade_mode.is_some()
         || params.autotrade_amount.is_some()
         || params.autotrade_cap.is_some()
-        || params.autotrade_quote.is_some();
+        || params.autotrade_quote.is_some()
+        || params.autotrade_environment.is_some()
+        || params.autotrade_margin_mode.is_some()
+        || params.autotrade_order_policy.is_some();
     let autotrade_config = params.autotrade_config()?;
 
     let json_mode = params.format.eq_ignore_ascii_case("json");
@@ -520,6 +554,9 @@ mod tests {
                 autotrade_amount,
                 autotrade_cap,
                 autotrade_quote,
+                autotrade_environment,
+                autotrade_margin_mode,
+                autotrade_order_policy,
                 format,
                 exclude_device,
             } => {
@@ -538,6 +575,9 @@ mod tests {
                 assert!(autotrade_amount.is_none());
                 assert!(autotrade_cap.is_none());
                 assert!(autotrade_quote.is_none());
+                assert!(autotrade_environment.is_none());
+                assert!(autotrade_margin_mode.is_none());
+                assert!(autotrade_order_policy.is_none());
                 assert_eq!(format, "");
                 assert!(exclude_device.is_none());
             }
@@ -648,6 +688,9 @@ mod tests {
             autotrade_amount: None,
             autotrade_cap: None,
             autotrade_quote: None,
+            autotrade_environment: None,
+            autotrade_margin_mode: None,
+            autotrade_order_policy: None,
             format: "json".to_string(),
             exclude_device: None,
         }
@@ -775,6 +818,9 @@ mod tests {
             autotrade_amount: None,
             autotrade_cap: None,
             autotrade_quote: None,
+            autotrade_environment: None,
+            autotrade_margin_mode: None,
+            autotrade_order_policy: None,
             format: "json".to_string(),
             exclude_device: None,
         };
@@ -806,9 +852,19 @@ mod tests {
             "--autotrade-amount", "20.00",
             "--autotrade-cap", "50",
             "--autotrade-quote", "USDT",
+            "--autotrade-environment", "demo",
+            "--autotrade-margin-mode", "cross",
+            "--autotrade-order-policy", "market",
         ]);
         let super::super::TaskCommand::CreateSubscribe {
-            autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, ..
+            autotrade_mode,
+            autotrade_amount,
+            autotrade_cap,
+            autotrade_quote,
+            autotrade_environment,
+            autotrade_margin_mode,
+            autotrade_order_policy,
+            ..
         } = cli.cmd else {
             panic!("expected CreateSubscribe");
         };
@@ -816,6 +872,9 @@ mod tests {
         assert_eq!(autotrade_amount.as_deref(), Some("20.00"));
         assert_eq!(autotrade_cap.as_deref(), Some("50"));
         assert_eq!(autotrade_quote.as_deref(), Some("USDT"));
+        assert_eq!(autotrade_environment.as_deref(), Some("demo"));
+        assert_eq!(autotrade_margin_mode.as_deref(), Some("cross"));
+        assert_eq!(autotrade_order_policy.as_deref(), Some("market"));
     }
 
     #[test]
@@ -827,6 +886,18 @@ mod tests {
         assert_eq!(config.amount.as_deref(), Some("20"));
         assert_eq!(config.cap, None);
         assert_eq!(config.quote, "usdt");
+        assert_eq!(config.environment, None);
+    }
+
+    #[test]
+    fn autotrade_config_rejects_non_explicit_trade_environment() {
+        let mut params = params_fixture(None);
+        params.autotrade_environment = Some("configured".to_string());
+        assert!(params
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("--autotrade-environment must be one of: live | demo"));
     }
 
     #[test]
@@ -884,6 +955,9 @@ mod tests {
             amount: Some("20".to_string()),
             cap: Some("50".to_string()),
             quote: "usdt".to_string(),
+            environment: Some(TradeEnvironment::Demo),
+            margin_mode: Some(MarginMode::Cross),
+            order_policy: Some(OrderPolicy::Market),
         };
         persist_subscription_autotrade("job-subscribe-auto", &config).unwrap();
 
@@ -894,6 +968,9 @@ mod tests {
         assert_eq!(stored.trade_amount_u.as_deref(), Some("20"));
         assert_eq!(stored.cap_u.as_deref(), Some("50"));
         assert_eq!(stored.quote_token.as_deref(), Some("usdt"));
+        assert_eq!(stored.trade_environment, config.environment);
+        assert_eq!(stored.margin_mode, config.margin_mode);
+        assert_eq!(stored.order_policy, config.order_policy);
         assert!(grants::check_grant("job-subscribe-auto", "dex", "buy", "50").is_ok());
         assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "50").is_ok());
         assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "51").is_ok());

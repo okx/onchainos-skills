@@ -143,6 +143,15 @@ pub enum TaskCommand {
         /// Quote currency for amount/cap (`usdt` or `usdc`).
         #[arg(long = "autotrade-quote")]
         autotrade_quote: Option<String>,
+        /// User-authorized Trade Kit environment (`live` or `demo`).
+        #[arg(long = "autotrade-environment")]
+        autotrade_environment: Option<String>,
+        /// User-authorized Trade Kit derivative margin mode.
+        #[arg(long = "autotrade-margin-mode")]
+        autotrade_margin_mode: Option<String>,
+        /// User-authorized signal-entry order policy.
+        #[arg(long = "autotrade-order-policy")]
+        autotrade_order_policy: Option<String>,
         /// Output format: "json" for raw JSON
         #[arg(long, default_value = "")]
         format: String,
@@ -191,10 +200,6 @@ pub enum TaskCommand {
         service_token_amount: String,
         #[arg(long = "payment-token-symbol")]
         payment_token_symbol: Option<String>,
-        #[arg(long = "payment-token-amount")]
-        payment_token_amount: Option<String>,
-        #[arg(long = "payment-most-token-amount")]
-        payment_most_token_amount: Option<String>,
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
@@ -1300,20 +1305,21 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 title, provider, attachments, endpoint, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount,
             }).await,
-        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device } => {
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment, autotrade_margin_mode, autotrade_order_policy, format, exclude_device } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
                 service_id, use_trial, service_params, service_token_amount, service_token_address,
                 auto_renew, title, description, provider_agent_id, service_description, service_interval,
-                autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, format, exclude_device,
+                autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment,
+                autotrade_margin_mode, autotrade_order_policy, format, exclude_device,
             }).await
         }
         TaskCommand::AspMatch { job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
             asp_ops::handle_asp_match(&mut client, &job_id, provider_agent_id.as_deref(), payment_token_amount, page, agent_id.as_deref(), &format).await,
         TaskCommand::TaskServiceSelect(args) =>
             asp_ops::handle_task_service_select(&args.service_match, &args.format).await,
-        TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id } =>
-            asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), payment_token_amount.as_deref(), payment_most_token_amount.as_deref(), agent_id.as_deref()).await,
+        TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, agent_id } =>
+            asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), agent_id.as_deref()).await,
         TaskCommand::ResetAsp { job_id, agent_id } =>
             asp_ops::handle_reset_asp(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::UserReject { job_id, agent_id } =>

@@ -174,6 +174,18 @@ fn service_online(service: &serde_json::Value) -> bool {
         == Some(1)
 }
 
+fn offline_x402_service(service: &serde_json::Value) -> bool {
+    !service_online(service)
+        && service
+            .get("serviceType")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.eq_ignore_ascii_case("A2MCP"))
+        && service
+            .get("endpoint")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
 fn compact_task_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
     let subscription_info = build_subscription_info(service);
     let support_subscription = !subscription_info.is_null();
@@ -238,16 +250,22 @@ fn compact_task_service_select_response(resp: serde_json::Value) -> serde_json::
         .and_then(|value| value.as_array())
         .cloned()
         .unwrap_or_default();
-    let has_online_service = services
+    let eligible_services = services
         .iter()
-        .any(service_online);
-    let compact_services = services
-        .iter()
+        .filter(|service| service_online(service) || offline_x402_service(service))
+        .collect::<Vec<_>>();
+    let has_eligible_service = !eligible_services.is_empty();
+    let compact_services = if eligible_services.is_empty() {
+        services.iter().collect::<Vec<_>>()
+    } else {
+        eligible_services
+    }
+        .into_iter()
         .map(compact_task_service_for_ai)
         .collect::<Vec<_>>();
     let match_status = if services.is_empty() {
         "no_match"
-    } else if !has_online_service {
+    } else if !has_eligible_service {
         "no_online_service"
     } else {
         "matched"
@@ -546,8 +564,8 @@ fn service_type_to_payment_mode(service_type: &str) -> Result<PaymentMode> {
 
 /// POST /priapi/v1/aieco/task/{jobId}/set/asp
 ///
-/// Body: `{providerAgentId, serviceId, serviceType, serviceParams, serviceTokenAddress, serviceTokenAmount,
-///         paymentTokenSymbol?, paymentTokenAmount?, paymentMostTokenAmount?}`.
+/// Body: `{providerAgentId, serviceId, serviceType, serviceParams,
+///         serviceTokenAddress, serviceTokenAmount, paymentTokenSymbol?}`.
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_set_asp(
     client: &mut TaskApiClient,
@@ -559,8 +577,6 @@ pub async fn handle_set_asp(
     service_token_address: &str,
     service_token_amount: &str,
     payment_token_symbol: Option<&str>,
-    payment_token_amount: Option<&str>,
-    payment_most_token_amount: Option<&str>,
     explicit_agent_id: Option<&str>,
 ) -> Result<()> {
     let desired_mode = service_type_to_payment_mode(service_type)?;
@@ -621,12 +637,6 @@ pub async fn handle_set_asp(
     });
     if let Some(s) = payment_token_symbol {
         body["paymentTokenSymbol"] = serde_json::Value::String(s.to_string());
-    }
-    if let Some(a) = payment_token_amount {
-        body["paymentTokenAmount"] = serde_json::Value::String(a.to_string());
-    }
-    if let Some(m) = payment_most_token_amount {
-        body["paymentMostTokenAmount"] = serde_json::Value::String(m.to_string());
     }
 
     client
@@ -997,7 +1007,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_task_service_select_preserves_online_status_for_all_services() {
+    fn compact_task_service_select_filters_ineligible_offline_services() {
         let resp = json!({
             "services": [
                 {
@@ -1055,13 +1065,10 @@ mod tests {
 
         let compact = super::compact_task_service_select_response(resp);
         let services = compact["services"].as_array().unwrap();
-        let offline_svc = &services[0];
-        let svc = &services[1];
+        let svc = &services[0];
 
         assert_eq!(compact["matchStatus"], json!("matched"));
-        assert_eq!(services.len(), 2);
-        assert_eq!(offline_svc["serviceId"], json!("offline"));
-        assert_eq!(offline_svc["online"], json!(false));
+        assert_eq!(services.len(), 1);
         assert_eq!(svc["providerAgentId"], json!("2864"));
         assert_eq!(svc["providerAgentName"], json!("Onchain Task Copilot"));
         assert_eq!(svc["serviceId"], json!("svc-1"));
@@ -1097,6 +1104,7 @@ mod tests {
         let resp = json!({
             "services": [{
                 "serviceId": "svc-offline",
+                "serviceType": "A2A",
                 "asp": {
                     "onlineStatus": 0
                 }
@@ -1108,6 +1116,49 @@ mod tests {
         assert_eq!(compact["matchStatus"], json!("no_online_service"));
         assert_eq!(compact["services"].as_array().unwrap().len(), 1);
         assert_eq!(compact["services"][0]["online"], json!(false));
+    }
+
+    #[test]
+    fn compact_task_service_select_allows_offline_x402_and_filters_offline_a2a() {
+        let resp = json!({
+            "services": [
+                {
+                    "serviceId": "offline-a2a",
+                    "serviceType": "A2A",
+                    "asp": { "onlineStatus": 0 }
+                },
+                {
+                    "serviceId": "offline-x402",
+                    "serviceType": "A2MCP",
+                    "endpoint": "https://example.invalid/x402",
+                    "feeAmount": "1",
+                    "asp": { "onlineStatus": 0 }
+                }
+            ]
+        });
+
+        let compact = super::compact_task_service_select_response(resp);
+
+        assert_eq!(compact["matchStatus"], json!("matched"));
+        assert_eq!(compact["services"].as_array().unwrap().len(), 1);
+        assert_eq!(compact["services"][0]["serviceId"], json!("offline-x402"));
+        assert_eq!(compact["services"][0]["online"], json!(false));
+    }
+
+    #[test]
+    fn compact_task_service_select_does_not_treat_a2mcp_without_endpoint_as_x402() {
+        let resp = json!({
+            "services": [{
+                "serviceId": "offline-a2mcp",
+                "serviceType": "A2MCP",
+                "endpoint": "",
+                "asp": { "onlineStatus": 0 }
+            }]
+        });
+
+        let compact = super::compact_task_service_select_response(resp);
+
+        assert_eq!(compact["matchStatus"], json!("no_online_service"));
     }
 
     #[test]
@@ -1245,7 +1296,7 @@ mod tests {
             super::super::TaskCommand::SetAsp {
                 job_id, provider_agent_id, service_id, service_type, service_params,
                 service_token_address, service_token_amount,
-                payment_token_symbol, payment_token_amount, payment_most_token_amount, agent_id,
+                payment_token_symbol, agent_id,
             } => {
                 assert_eq!(job_id, "job-abc");
                 assert_eq!(provider_agent_id, "prov-1");
@@ -1255,8 +1306,6 @@ mod tests {
                 assert_eq!(service_token_address, "0xUSDT");
                 assert_eq!(service_token_amount, "10.5");
                 assert!(payment_token_symbol.is_none());
-                assert!(payment_token_amount.is_none());
-                assert!(payment_most_token_amount.is_none());
                 assert!(agent_id.is_none());
             }
             _ => panic!("expected SetAsp"),
@@ -1264,7 +1313,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_set_asp_with_payment_fields() {
+    fn cli_set_asp_with_payment_symbol() {
         let cli = TestCli::parse_from([
             "test", "set-asp", "job-abc",
             "--provider-agent-id", "prov-1",
@@ -1274,20 +1323,31 @@ mod tests {
             "--service-token-address", "0xAddr",
             "--service-token-amount", "5",
             "--payment-token-symbol", "USDT",
-            "--payment-token-amount", "5",
-            "--payment-most-token-amount", "10",
         ]);
         match cli.cmd {
             super::super::TaskCommand::SetAsp {
-                service_type, payment_token_symbol, payment_token_amount, payment_most_token_amount, ..
+                service_type, payment_token_symbol, ..
             } => {
                 assert_eq!(service_type, "A2A");
                 assert_eq!(payment_token_symbol.as_deref(), Some("USDT"));
-                assert_eq!(payment_token_amount.as_deref(), Some("5"));
-                assert_eq!(payment_most_token_amount.as_deref(), Some("10"));
             }
             _ => panic!("expected SetAsp"),
         }
+    }
+
+    #[test]
+    fn cli_set_asp_rejects_budget_fields() {
+        assert!(TestCli::try_parse_from([
+            "test", "set-asp", "job-abc",
+            "--provider-agent-id", "prov-1",
+            "--service-id", "svc-1",
+            "--service-type", "A2A",
+            "--service-params", "none",
+            "--service-token-address", "0xAddr",
+            "--service-token-amount", "5",
+            "--payment-token-amount", "5",
+            "--payment-most-token-amount", "10",
+        ]).is_err());
     }
 
     #[test]

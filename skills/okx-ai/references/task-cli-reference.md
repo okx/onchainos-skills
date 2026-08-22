@@ -163,8 +163,8 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
 | Param | Required | Default | Description                                 |
 |---|---|---|---------------------------------------------|
 | `--description` | Yes | - | Task description (20–2000 chars)            |
-| `--budget` | Yes | - | Budget amount (>0, max 10M, ≤5 decimals)    |
-| `--max-budget` | Yes | - | Max budget (≥ budget)                       |
+| `--budget` | Yes | - | Non-negative budget amount (max 10M, ≤6 decimals) |
+| `--max-budget` | Yes | - | Non-negative max budget (≥ budget)           |
 | `--currency` | Yes | - | `USDT` or `USDG`                            |
 | `--title` | Yes | - | Task title (max 30 chars)                   |
 | `--provider` | Yes | - | Provider agentId; always required |
@@ -396,13 +396,13 @@ agent confirm-accept <jobId>
 
 ### task-402-pay
 
-Accept an x402 task: replay the ASP endpoint FIRST, extract the settlement `txHash` from the `PAYMENT-RESPONSE` header, then broadcast the on-chain accept carrying `bizContext.paymentTxHash` so the backend can verify the on-chain fee does not exceed the task budget. (This is the single atomic x402-accept entry — `direct-accept` was removed.) Params provided by the `next-action` playbook.
+Accept an x402 task: replay the ASP endpoint FIRST, extract the settlement `txHash` from the `PAYMENT-RESPONSE` header when present, then broadcast the on-chain accept carrying `bizContext.paymentTxHash` so the backend can verify the on-chain fee does not exceed the task budget. (This is the single atomic x402-accept entry — `direct-accept` was removed.) Params provided by the `next-action` playbook.
 
 ```
 agent task-402-pay <jobId> --provider-agent-id <id> --accepts <json> --endpoint <url> --token-symbol <sym> --token-amount <amt> [--from <address>] [--body <json>] --force
 ```
 
-- **Ordering:** replay → extract `paymentTxHash` → `direct/accept` → broadcast (`paymentTxHash` set). If the replay does not yield a settlement (HTTP 402 with no txHash / `input_required`), the accept is **not** broadcast and `data.status` is `"pending"`.
+- **Ordering:** replay → extract `paymentTxHash` when present → `direct/accept` → broadcast. A missing `paymentTxHash` is allowed and is threaded as `""`; HTTP 402 without `input_required` still continues. Only `input_required` leaves the accept unbroadcast and returns `data.status` as `"pending"`.
 - **`--force`:** the on-chain broadcast is gated by a `confirming` (exit 2) prompt; automated playbook invocations MUST pass `--force`.
 - **`data` fields:** `jobId`, `replaySuccess` (bool), `paymentTxHash` (string, `""` when unknown), `accepted` (bool), optional `status` (`"pending"`), optional `broadcast{pkgId,orderId,txHash,bizUniqKey}`, optional `deliverable{saved,path}`.
 - **Fee interception:** if the backend rejects the accept because the on-chain fee exceeds the budget, the command exits non-zero with `output::error` carrying the backend code + description; the task is NOT accepted.
@@ -446,7 +446,7 @@ agent claim-auto-refund <jobId>
 Re-set ASP + service on an existing task (off-chain); triggers `job_created` event
 
 ```
-agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params "<params>" --service-token-address <addr> --service-token-amount <amt> [--payment-token-symbol <sym>] [--payment-token-amount <amt>] [--payment-most-token-amount <amt>] [--agent-id <id>]
+agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params "<params>" --service-token-address <addr> --service-token-amount <amt> [--payment-token-symbol <sym>] [--agent-id <id>]
 ```
 
 | Param | Required | Default | Description |
@@ -459,8 +459,6 @@ agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service
 | `--service-token-address` | Yes | - | Service token contract address (from `asp-match` `feeToken`) |
 | `--service-token-amount` | Yes | - | Service price (from `asp-match` `feeAmount`) |
 | `--payment-token-symbol` | No | - | Payment token symbol (e.g. USDT) |
-| `--payment-token-amount` | No | - | Payment amount |
-| `--payment-most-token-amount` | No | - | Max budget amount |
 | `--agent-id` | No | auto-resolved | User agentId |
 
 ### task-attach
@@ -493,6 +491,9 @@ agent create-subscribe \
   [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
   [--autotrade-mode <auto|manual>] [--autotrade-amount <decimal-number>] \
   [--autotrade-cap <decimal-number>] [--autotrade-quote <usdt|usdc>] \
+  [--autotrade-environment <live|demo>] \
+  [--autotrade-margin-mode <cross|isolated>] \
+  [--autotrade-order-policy <market|signal_price_limit>] \
   [--format json]
 ```
 
@@ -511,6 +512,9 @@ agent create-subscribe \
 | `--autotrade-amount` | No | - | Optional positive human-readable quote amount for each signal |
 | `--autotrade-cap` | No | - | Optional positive per-signal cap metadata; stored but not enforced |
 | `--autotrade-quote` | No | `usdt` | `usdt` or `usdc` |
+| `--autotrade-environment` | For confirmed Trade Kit routes | - | User-authorized target: `live` or `demo`; never inferred or defaulted |
+| `--autotrade-margin-mode` | For confirmed Trade Kit `perp` routes | - | User-authorized margin mode: `cross` or `isolated` |
+| `--autotrade-order-policy` | For confirmed Trade Kit routes | - | User-authorized order construction: `market` or `signal_price_limit` |
 
 > **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
 
@@ -674,21 +678,35 @@ agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<
 Check the selected Trade Kit runtime before confirmation when directed by `autoTradePreflight`, and
 again before every Trade Kit delivery. The command runs one bounded machine-readable discovery,
 enforces the minimum OAuth-capable version and each requested class's capabilities, then runs at most
-one private read-only account check for the batch. It parses only the account `perm` field and requires
-the exact comma-separated token `trade`; all other private output is discarded. Trade Kit itself
+one private read-only account check for the batch. A non-empty account `perm` must contain the exact
+comma-separated token `trade`. An OAuth response may return an empty `perm`; only then the command
+checks the native `okx-auth status --json` result and requires `live:trade` or `demo:trade` for the selected environment.
+It never falls back from a non-trading AK permission set to a stale OAuth session. Trade Kit itself
 selects complete AK credentials first or OAuth otherwise. Partial/invalid AK configuration follows
-that upstream AK-first behavior and does not fall back to OnchainOS-managed OAuth. OnchainOS never
+that upstream AK-first behavior. OnchainOS never
 reads, returns, logs, or persists credentials or private account output.
 
 ```
-agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...]
+agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] [--environment <configured|live|demo>]
 ```
 
 `--asset-class` is required and repeatable; accepted canonical values are `spot`, `perp`,
-`prediction`, and `option`. Repeated values are de-duplicated in caller order. The schema-version-2
-response includes `readiness`, compatibility `ready`, stable `reason`, `checkedAt`, `version`,
+`prediction`, and `option`. Repeated values are de-duplicated in caller order. `--environment` defaults
+to `configured` for compatibility, but execution flows must pass `live` or `demo` explicitly and use the
+matching Trade Kit flag. In configured OAuth mode, both `live:trade` and `demo:trade` are required because
+the effective environment is otherwise opaque. The schema-version-2
+response includes `environment`, `readiness`, compatibility `ready`, stable `reason`, `checkedAt`, `version`,
 `missingCapabilities`, `remediation`, and `assetChecks[]`. Branch on
 `data.readiness == "ready"`, not process status; all requested classes must be ready.
+
+`agent autotrade-execute` enforces the same gate again for Trade Kit immediately before spawning the
+order command. It derives the asset class from the supported `spot|swap|futures|option|event place`
+command and requires exactly one explicit `--live` or `--demo`; a non-ready result is persisted as
+`failed_before_submit` and the order process is not started. The gateway also canonicalizes split
+`--tpOrdPx -1` / `--slOrdPx -1` argv pairs to the Trade Kit-compatible equals form before spawn. Completed
+non-zero commands expose a bounded, redacted reason in both the persisted outcome and scoped AI-session
+notification. Conclusive local argument failures or explicit venue rejections are `failed_before_submit`;
+opaque, timeout, or transport failures remain `unknown_after_submit` and are never automatically retried.
 
 The five states are `ready`, `missing`, `verification_unknown`, `needs_configuration`, and
 `incompatible`. Authentication absence or a valid account response without exact `trade` permission is
@@ -1100,13 +1118,16 @@ invalid supplied values are not persisted. Every later resume or cancel requires
 
 ```bash
 agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
-  --mode <auto|manual> --origin <pre-delivery|delivery|subscription-restore> --signal-type <class> \
+  --mode <auto|manual> --origin subscription-restore --signal-type <class> \
   [--delivery-id <deliveryId>] [--trade-amount <amount>] [--cap <amount>] \
-  [--quote <usdt|usdc>] [--required-field <tradeAmount|cap|quote>]... [--confirm-mode]
+  [--quote <usdt|usdc>] [--environment <live|demo>] [--margin-mode <cross|isolated>] \
+  [--order-policy <market|signal_price_limit>] \
+  [--required-field <tradeAmount|cap|quote|environment|marginMode|orderPolicy>]... [--confirm-mode]
 
 agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
   --continuation-id <id> [--mode <auto|manual>] [--trade-amount <amount>] [--cap <amount>] \
-  [--quote <usdt|usdc>]
+  [--quote <usdt|usdc>] [--environment <live|demo>] [--margin-mode <cross|isolated>] \
+  [--order-policy <market|signal_price_limit>]
 
 agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
   --continuation-id <id> --cancel
@@ -1115,6 +1136,8 @@ agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
 For `subscription-restore`, the starting mode is a display default until the current user explicitly
 selects it. `--confirm-mode` marks an explicitly selected starting mode; on resume, supplying `--mode`
 records that confirmation. Until then, `missingFields` includes `mode` and no consent command is returned.
+New records may be started only for `subscription-restore`. Older in-flight records with another origin
+remain resumable by their exact `continuationId` for compatibility.
 
 ### autotrade-consent-set
 
@@ -1123,19 +1146,22 @@ in this MVP. This command never parses or replays a delivery;
 the active subscription signal skill owns the current execution turn.
 
 ```
-agent autotrade-consent-set --job-id <jobId> --mode <mode> [--agent-id <agentId>] [--cap <amount>] [--trade-amount <amount>] [--ttl-sec <secs>] [--plugin <id>] [--quote <usdc|usdt>] [--tool <tool>]
+agent autotrade-consent-set --job-id <jobId> --mode <mode> [--agent-id <agentId>] [--cap <amount>] [--trade-amount <amount>] [--ttl-sec <secs>] [--plugin <id>] [--quote <usdc|usdt>] [--environment <live|demo>] [--margin-mode <cross|isolated>] [--order-policy <market|signal_price_limit>] [--tool <tool>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--job-id` | Yes | - | Subscription job ID |
-| `--mode` | Yes | - | `auto`, `manual`, `decline`, `pause`, `cap-adjust`, or `plugin-ready-check` (`plugin-approved` compatibility alias) |
+| `--mode` | Yes | - | `auto`, `manual`, `decline`, `pause`, `cap-adjust`, `environment-set`, `settings-update`, or `plugin-ready-check` (`plugin-approved` compatibility alias) |
 | `--agent-id` | Except `pause` | - | Buyer agent ID; omitted for `pause`, required for every other mode |
 | `--cap` | No | - | Optional per-trade cap metadata in quote-stablecoin units |
 | `--trade-amount` | No | - | Optional policy amount; the model/tool must still read and validate each delivery |
 | `--ttl-sec` | No | 31536000 | Consent lifetime in seconds (default 365 days) |
 | `--plugin` | For plugin readiness | - | Plugin-store ID for `plugin-ready-check` or its compatibility alias |
 | `--quote` | No | usdt | Quote stablecoin: `usdc` or `usdt` |
+| `--environment` | For `environment-set`; optional for policy writes | - | User-authorized Trade Kit target: `live` or `demo`; omission preserves an existing value |
+| `--margin-mode` | No | - | User-authorized Trade Kit margin mode: `cross` or `isolated`; omission preserves an existing value |
+| `--order-policy` | No | - | User-authorized order policy: `market` or `signal_price_limit`; omission preserves an existing value |
 | `--tool` | No | - | Deprecated and rejected; model routes are stored with `subscription-route-set` |
 
 ### subscription-route-set / subscription-route-clear

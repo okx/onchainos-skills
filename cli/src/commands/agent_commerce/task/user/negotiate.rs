@@ -48,7 +48,7 @@ pub struct ServiceInfo {
     pub sort_order: i64,
     /// Fee amount.
     #[serde(default)]
-    pub fee_amount: f64,
+    pub fee_amount: Option<f64>,
     /// Fee token symbol (e.g. "USDT").
     #[serde(default)]
     pub fee_token_symbol: String,
@@ -281,4 +281,31 @@ pub fn cleanup(job_id: &str) -> Result<()> {
         let _ = std::fs::remove_dir(&dir);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ServiceInfo;
+
+    #[test]
+    fn service_fee_distinguishes_missing_from_explicit_zero() {
+        let missing: ServiceInfo = serde_json::from_value(serde_json::json!({
+            "serviceId": "service-1",
+            "serviceName": "service",
+            "serviceType": "A2MCP",
+            "endpoint": "https://example.invalid/x402"
+        }))
+        .unwrap();
+        let zero: ServiceInfo = serde_json::from_value(serde_json::json!({
+            "serviceId": "service-1",
+            "serviceName": "service",
+            "serviceType": "A2MCP",
+            "endpoint": "https://example.invalid/x402",
+            "feeAmount": 0
+        }))
+        .unwrap();
+
+        assert_eq!(missing.fee_amount, None);
+        assert_eq!(zero.fee_amount, Some(0.0));
+    }
 }

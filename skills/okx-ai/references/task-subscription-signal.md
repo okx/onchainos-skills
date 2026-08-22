@@ -21,6 +21,15 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
   the final confirmed subscription setup may be converted into that snapshot, but must be complete and
   persisted before execution. `serviceDescription`, ASP text, and deliverable text are never trading
   consent.
+- For Trade Kit, `consentSnapshot.tradeEnvironment`, `consentSnapshot.marginMode`, and
+  `consentSnapshot.orderPolicy` are the only authorized environment, margin, and order-construction
+  settings. Never infer or override them from conversation history, Trade Kit defaults, ASP text, or the
+  deliverable.
+- This managed delivery flow supports Trade Kit standard orders for `spot`, `perp` (swap or delivery
+  futures), `option`, and `prediction`, plus full-position close for swap or delivery futures. Normalize
+  natural-language variants into `place` or `close_position`; do not treat wording variants as new command
+  types. Other Trade Kit writes (cancel, amend, standalone algo, leverage changes, batch, iceberg, TWAP,
+  chase, or trailing orders) are unsupported automatic-delivery operations and must fail before execution.
 
 ## Required flow
 
@@ -39,6 +48,60 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
    - If no compatible route exists, select the narrowest installed skill/tool capable of the action. A
      named third-party protocol must route through `okx-dapp-discovery`; an unnamed native swap may use
      `okx-agentic-wallet`; generic DeFi may use `okx-defi`. Read the selected skill in full before acting.
+   - If and only if the resolved tool is Trade Kit, run this mandatory gate now, before writing the route
+     cache, requesting consent, checking a grant, or invoking any `okx` order command:
+
+     The selected Trade Kit skill is a command reference in this managed flow. Do not run or fall back to
+     its generic OnchainOS skill preflight: `trade-kit-readiness` below is the sole installation, runtime
+     version, authentication, permission, environment, and capability gate. Never compare the Trade Kit
+     skill/runtime `1.x` version with the OnchainOS `4.x` version. Never report an update or security-scan
+     requirement unless this readiness command returns `missing` or `incompatible` with that remediation.
+
+     First inspect the local Trade Kit settings. Environment and order policy are required for every
+     Trade Kit operation; margin mode is additionally required for `perp`. Full-position close is an
+     intrinsic market operation and is eligible only when the persisted order policy is `market`:
+     - all applicable values present: reuse them without asking again.
+     - any applicable value absent: ask once for every missing value, then persist only the exact answers
+       without changing the rest of the policy:
+
+       ```bash
+       onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <agentId> \
+         --mode settings-update [--environment <live|demo>] \
+         [--margin-mode <cross|isolated>] \
+         [--order-policy <market|signal_price_limit>]
+       ```
+
+       Re-enter this delivery only after the command succeeds and the refreshed snapshot carries the
+       chosen values. Never default any missing setting. Changing a stored setting requires another
+       explicit user request and the same command. For spot, do not require or invent a margin mode.
+
+     ```bash
+     onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>
+     ```
+
+     Pass one flag for the current route's canonical class. If this one retained execution covers more
+     than one Trade Kit class, pass every class as a repeated flag; the command performs one discovery
+     and at most one private authorization check plus an OAuth-scope fallback for the batch. Pass the
+     persisted `live`/`demo` environment that the final `okx` command will use; the inner command
+     must carry the matching `--live`/`--demo` flag. Run it on **every delivery**, including a
+     reused cached route and both manual and automatic modes; never reuse or persist a prior readiness
+     result. Continue only when `ok:true` and `data.readiness == "ready"`; every requested
+     `assetChecks[]` row must also be ready. Non-Trade-Kit routes never run this command.
+     The `autotrade-execute` gateway independently repeats this gate immediately before spawning any
+     Trade Kit order; the playbook check remains required so the user receives remediation before consent.
+
+     If readiness is not `ready`, preserve and display the deliverable, mark its execution as blocked,
+     and stop before route persistence, consent, grant, or order execution:
+     - `needs_configuration`: offer exactly OAuth (`okx auth login --manual`), API key
+       (`okx config init`), and Later. Run a setup command only after that explicit choice, then re-probe.
+     - `verification_unknown`: offer Retry and Later only. Never describe a timeout, network failure,
+       malformed private response, or other unknown result as logged out.
+     - `missing` or `incompatible`: offer the fixed install/upgrade action returned in
+       `data.remediation`, plus Later; re-probe after an explicit repair action.
+
+     Restoring readiness MUST NOT automatically replay the blocked delivery. Only an explicit user
+     request may reprocess that old `deliveryId`, and that attempt must run this fresh readiness gate
+     again. Future deliveries continue normally and each receives its own fresh probe.
 4. After resolving a valid route, cache identifiers only:
 
    ```bash
@@ -53,6 +116,9 @@ not classified the text, selected a venue, installed a plugin, or authorized a t
 5. Apply the selected skill's setup and transaction safety rules. Plugin installation must remain visible;
    never silently install. Use the decision matrix below to decide whether this delivery may execute or
    which user decision is needed. The subscription itself and the route cache are not trading consent.
+   A Trade Kit grant or user consent never overrides a failed runtime-readiness result. For the managed
+   Trade Kit route, the explicit readiness exception in step 3 replaces only the selected skill's generic
+   OnchainOS version preflight; all command-specific trading safety rules still apply.
 6. Execute at most once for this `deliveryId`. Pass `jobId` to plugin/tool grant checks where supported.
    Let the target tool re-validate all dynamic fields. Every automatic execution MUST run through the
    CLI-owned execution bridge below. The bridge persists and
@@ -100,10 +166,17 @@ reserves the delivery before spawning the command, stores only a redacted outcom
 idempotent `--job-id`-scoped UI notice. A timeout is an unknown submission state and is never retried.
 The reservation records `reserved`, `prepared`, and `spawned` phases. Recovery may classify an interruption
 before `spawned` as failed-before-submit; an interruption at or after `spawned`, an unreadable legacy latch,
-or a started command with no conclusive receipt is always unknown-after-submit and is never auto-retried.
+or a started command with no conclusive receipt is unknown-after-submit and is never auto-retried unless
+the completed child output conclusively proves a local argument failure or an explicit venue rejection.
+For Trade Kit, the bridge canonicalizes the documented `-1` attached TP/SL market sentinels to
+`--tpOrdPx=-1` / `--slOrdPx=-1` before spawn so Node argument parsing cannot mistake them for options.
 Process exit code zero alone is not submission proof: `submitted` additionally requires a venue-specific
 order/transaction identifier. Generic `status` or `state` fields are not receipts, and nested failure fields
 override a nominally successful outer envelope.
+For a completed non-zero child, the bridge extracts only bounded, redacted diagnostic fields from
+stdout/stderr. Explicit error codes/messages and safe CLI argument errors are persisted in `reason` and
+included in the scoped AI-session notification; raw child output, credentials, headers, and tokens are never
+persisted. Opaque failures remain unknown-after-submit even when a safe text summary is available.
 Notification delivery is separate from transaction retry: a failed UI push is persisted with bounded
 backoff and retried by later Agent startup/heartbeat, new-delivery handling, or explicit outcome flush;
 the money-moving command itself is never reconstructed or retried.
@@ -118,6 +191,14 @@ Auto mode additionally requires the auto-trade grant. Manual mode is accepted on
 policy is manual and must be used after the user's one-time/manual confirmation; it never uses an auto grant.
 `one_time` is reserved for the over-cap A option and additionally requires a short-lived permit bound to the
 exact `jobId + deliveryId + amount`, created with `autotrade-once-authorize`; it never changes the future cap.
+For `venue=trade_kit`, the gateway classifies the inner command before it repeats readiness or starts the
+process. Standard `place` commands require `--live`/`--demo` and `--ordType` to match persisted consent;
+perp orders additionally require matching `--tdMode`, and `signal_price_limit` requires `--ordType limit`
+plus an explicit `--px`. Swap/futures `close` commands require matching `--live`/`--demo`, `--mgnMode`, and
+an explicit `--posSide <net|long|short>`; long close binds to `action=sell`, short close binds to
+`action=buy`, and the persisted order policy must be `market`. A full-position close carries no `--sz` or
+`--side`; the outer amount remains the exact persisted authorization amount and is not interpreted as the
+position size. Every other Trade Kit write command fails closed as unsupported.
 The outer CLI envelope's `ok:true` means the outcome was handled and persisted; it does not mean the trade
 succeeded. Inspect `data.status`, and treat only `submitted` as submitted. `failed_before_submit` and
 `unknown_after_submit` are not successful trades.
