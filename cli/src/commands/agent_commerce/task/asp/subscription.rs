@@ -20,6 +20,9 @@ use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::subscription_identity::{
+    select_subscription_agent_id,
+};
 use crate::commands::agent_commerce::task::signing;
 
 /// `jobType` value that marks a task as a subscription (Subscribe API doc §1.3).
@@ -132,7 +135,6 @@ fn as_string(v: &Value, key: &str) -> Option<String> {
 pub struct SubscriptionDetail {
     pub job_type: i64,
     pub status: SubStatus,
-    pub copy_trade: bool,
     /// Subscription end (unix seconds).
     pub sub_end_time: Option<i64>,
     /// Buffer-window end (unix seconds); service is still usable until this while awaiting renewal.
@@ -145,11 +147,9 @@ impl SubscriptionDetail {
         let status_code = as_i64(v, "status")
             .or_else(|| as_i64(v, "subStatus"))
             .unwrap_or(SubStatus::None.code());
-        let copy_trade = as_i64(v, "copyTrade").map(|n| n == 1).unwrap_or(false);
         SubscriptionDetail {
             job_type,
             status: SubStatus::from_int(status_code),
-            copy_trade,
             sub_end_time: as_i64(v, "subEndTime"),
             sub_buffer_end_time: as_i64(v, "subBufferEndTime"),
         }
@@ -255,7 +255,6 @@ fn mock_detail() -> SubscriptionDetail {
     SubscriptionDetail {
         job_type: JOB_TYPE_SUBSCRIBE,
         status: mock_substatus(),
-        copy_trade: true,
         sub_end_time: None,
         sub_buffer_end_time: None,
     }
@@ -296,8 +295,6 @@ pub struct ActiveSubscription {
     pub sub_end_time: Option<i64>,
     #[serde(rename = "subBufferEndTime", skip_serializing_if = "Option::is_none")]
     pub sub_buffer_end_time: Option<i64>,
-    #[serde(rename = "copyTrade")]
-    pub copy_trade: bool,
     #[serde(rename = "status")]
     pub status: i64,
 }
@@ -311,9 +308,8 @@ pub struct ActiveSubscription {
 /// depends on the backend; to avoid buyer-view rows leaking into an ASP fan-out set we
 /// additionally keep only items whose `providerAgentId` matches the caller (when present).
 pub async fn handle_active(client: &mut TaskApiClient, agent_id: &str) -> Result<()> {
-    if agent_id.is_empty() {
-        bail!("--agent-id is required (the ASP's own agentId; the backend keys the subscription list off it)");
-    }
+    let validated_agent_id = select_subscription_agent_id("", agent_id)?;
+    let agent_id = validated_agent_id.as_str();
     let now_secs = chrono::Local::now().timestamp();
 
     #[cfg(debug_assertions)]
@@ -324,7 +320,6 @@ pub async fn handle_active(client: &mut TaskApiClient, agent_id: &str) -> Result
                 job_id: mock_job_id(),
                 sub_end_time: d.sub_end_time,
                 sub_buffer_end_time: d.sub_buffer_end_time,
-                copy_trade: d.copy_trade,
                 status: d.status.code(),
             }]
         } else {
@@ -362,7 +357,6 @@ pub async fn handle_active(client: &mut TaskApiClient, agent_id: &str) -> Result
                 job_id,
                 sub_end_time: detail.sub_end_time,
                 sub_buffer_end_time: detail.sub_buffer_end_time,
-                copy_trade: detail.copy_trade,
                 status: detail.status.code(),
             })
         })
@@ -383,9 +377,8 @@ pub async fn handle_agree_refund(
     job_id: &str,
     agent_id: &str,
 ) -> Result<()> {
-    if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
-    }
+    let validated_agent_id = select_subscription_agent_id("", agent_id)?;
+    let agent_id = validated_agent_id.as_str();
     let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
     let body = serde_json::json!({});
 
@@ -431,9 +424,8 @@ pub async fn handle_asp_claim(
     job_id: &str,
     agent_id: &str,
 ) -> Result<()> {
-    if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
-    }
+    let validated_agent_id = select_subscription_agent_id("", agent_id)?;
+    let agent_id = validated_agent_id.as_str();
     let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
     let body = serde_json::json!({});
 
@@ -480,9 +472,8 @@ pub async fn handle_dispute(
     reason: &str,
     agent_id: &str,
 ) -> Result<()> {
-    if agent_id.is_empty() {
-        bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
-    }
+    let validated_agent_id = select_subscription_agent_id("", agent_id)?;
+    let agent_id = validated_agent_id.as_str();
     if reason.chars().count() > MAX_DISPUTE_REASON_CHARS {
         bail!("Dispute reason exceeds {MAX_DISPUTE_REASON_CHARS} characters. Please shorten it and try again.");
     }
@@ -532,7 +523,6 @@ mod tests {
         SubscriptionDetail {
             job_type,
             status: SubStatus::from_int(status),
-            copy_trade: false,
             sub_end_time: None,
             sub_buffer_end_time: buffer_end,
         }
@@ -581,14 +571,13 @@ mod tests {
     }
 
     #[test]
-    fn from_json_parses_string_serialized_ints() {
+    fn from_json_parses_routing_fields_and_ignores_unrelated_fields() {
         let d = SubscriptionDetail::from_json(&json!({
             "jobType": "1", "status": "1", "copyTrade": "1",
             "subEndTime": "1783868715", "subBufferEndTime": "1786633515"
         }));
         assert!(d.is_subscription());
         assert!(d.status.is_active());
-        assert!(d.copy_trade);
         assert_eq!(d.sub_buffer_end_time, Some(1786633515));
     }
 

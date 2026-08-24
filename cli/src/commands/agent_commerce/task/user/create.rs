@@ -23,7 +23,7 @@ use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 pub const MAX_BUDGET: f64 = 10_000_000.0;
 pub const MIN_DESCRIPTION_CHARS: usize = 20;
 pub const MAX_DESCRIPTION_CHARS: usize = 2000;
-pub const MAX_BUDGET_DECIMALS: usize = 5;
+pub const MAX_BUDGET_DECIMALS: usize = 6;
 pub const MAX_TITLE_CHARS: usize = 30;
 
 // ─── Parameter struct ────────────────────────────────────────────────────
@@ -89,10 +89,10 @@ impl CreateTaskParams {
         let title = common::util::sanitize_title_for_shell(&title);
 
         if self.provider.trim().is_empty() {
-            bail!("A designated provider is required. Use asp-match to find a provider first.");
+            bail!("A designated provider is required. Use task-service-select to find a provider first.");
         }
         if self.service_id.trim().is_empty() {
-            bail!("A service id is required. Use asp-match to find a service first.");
+            bail!("A service id is required. Use task-service-select to find a service first.");
         }
 
         if let Some(ref files) = self.attachments {
@@ -123,8 +123,8 @@ pub fn normalize_currency(currency: &str) -> Result<String> {
 }
 
 pub fn validate_budget(budget: f64) -> Result<()> {
-    if budget <= 0.0 {
-        bail!("budget must be a positive amount (greater than 0)");
+    if budget < 0.0 {
+        bail!("budget must be a non-negative amount");
     }
     if budget > MAX_BUDGET {
         bail!(
@@ -219,35 +219,26 @@ pub async fn handle_create(
         eprintln!("[task-create] user identity check passed (agentId: {user_agent_id})");
     }
 
-    // Advisory balance check (non-blocking — the task still on-chains). On an
-    // insufficiency we attach a structured `balanceWarning` (FR-1) to the success
-    // `data`; `balance_warning_json` resolves the caller's XLayer deposit address
-    // and renders the QR to stderr (TTY-only). A non-insufficiency error (e.g.
-    // balance-query failure) is not surfaced — create-task is advisory.
-    let (balance_warning, balance_msg) =
-        match common::ensure_sufficient_balance(params.budget, &validated.currency).await {
-            Err(e) => {
-                if DEBUG_LOG {
-                    let mut err = std::io::stderr();
-                    let _ = writeln!(err, "[task-create] ⚠ balance warning: {e}");
-                }
-                match e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
-                    Some(ib) => {
-                        let ib_owned = ib.clone();
-                        // `balance_warning_json` returns the marker-filled advisory
-                        // message alongside the structured warning, so the guidance
-                        // text carries the QR position (under option 1) regardless of
-                        // the stderr side-effect.
-                        let (warning, msg) =
-                            common::deposit_qr::balance_warning_json(&ib_owned, &user_agent_id)
-                                .await;
-                        (Some(warning), Some(msg))
-                    }
-                    None => (None, None),
-                }
-            }
-            Ok(()) => (None, None),
-        };
+    // Blocking balance gate for regular task creation. If the caller is under-funded,
+    // do not create the backend task or broadcast anything. Query failures remain
+    // non-blocking so an unavailable balance service does not prevent creation.
+    if let Err(e) = common::ensure_sufficient_balance(params.budget, &validated.currency).await {
+        if DEBUG_LOG {
+            let mut err = std::io::stderr();
+            let _ = writeln!(err, "[task-create] ⚠ balance check: {e}");
+        }
+        if let Some(ib) = e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
+            let ib_owned = ib.clone();
+            let (warning, _) =
+                common::deposit_qr::balance_warning_json(&ib_owned, &user_agent_id).await;
+            crate::output::success(common::funding_notice::funding_blocked_envelope(
+                &warning,
+                "task-payment",
+                "Task creation",
+            ));
+            return Ok(());
+        }
+    }
 
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
 
@@ -336,12 +327,9 @@ pub async fn handle_create(
         None,
     );
 
-    // Terminal success emit — routed through `output::success` so stdout is a
-    // pure JSON envelope carrying the advisory `data.balanceWarning` (drift
-    // resolved per architecture §5.2/§10 #3). The human/agent-facing guidance
-    // (summary, advisory framing, [Watch] mandatory-gate block, set-payment-mode
-    // note) is preserved verbatim under `data.guidance` so agent orchestration is
-    // unchanged; only its carrier moved from raw stdout lines into the envelope.
+    // Terminal success emit — routed through `output::success` so stdout stays a
+    // pure JSON envelope. The human/agent-facing guidance remains under
+    // `data.guidance` so agent orchestration is unchanged.
     let mut guidance = String::new();
     guidance.push_str(
         "✓ Task publish in progress (transaction broadcast, awaiting on-chain confirmation)\n",
@@ -352,12 +340,6 @@ pub async fn handle_create(
         guidance.push_str(&format!("  Designated provider: {}\n", params.provider));
     }
     guidance.push('\n');
-    if let Some(ref msg) = balance_msg {
-        guidance.push('\n');
-        guidance.push_str("Advisory (NOT an error; task is on-chain; do NOT re-run create-task; the ASP may or may not apply — do NOT promise the user it will). Top up so the payment step doesn't fail if the ASP applies:\n");
-        guidance.push_str(msg);
-        guidance.push('\n');
-    }
     // In CLI mode (Claude Code / Codex), skip the "Next: wait for ..." hint —
     // its passive "wait" + "automatically" phrasing reads as a conversation-ending
     // cue to LLM-driven watch loops and was observed to suppress the immediately
@@ -367,13 +349,8 @@ pub async fn handle_create(
         guidance.push_str("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.\n");
     }
     if super::content::is_cli_mode() {
-        guidance.push_str("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.\n");
+        guidance.push_str(&super::content::scoped_watch_handoff(&job_id));
         guidance.push('\n');
-        guidance.push_str("**Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.\n");
-        guidance.push('\n');
-        guidance.push_str(&format!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{job_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read watch-core.md first.)\n"));
-        guidance.push('\n');
-        guidance.push_str("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.\n");
     }
     guidance.push_str("🛑 Do NOT call set-payment-mode.");
 
@@ -384,10 +361,6 @@ pub async fn handle_create(
     });
     if !params.provider.is_empty() {
         data["designatedProvider"] = serde_json::json!(params.provider);
-    }
-    // `balanceWarning` is present ONLY on insufficiency (absent when sufficient).
-    if let Some(warning) = balance_warning {
-        data["balanceWarning"] = warning;
     }
     crate::output::success(data);
     Ok(())
@@ -580,15 +553,59 @@ mod tests {
         assert_eq!(body["providerAgentId"], "agent-1");
     }
 
-    // Reconciled with master's `validate_budget` after MR !187 review note-9880442
-    // asked to revert the budget change out of this doc-removal MR as out-of-scope.
-    // Master's guard is `budget <= 0.0`, so zero is rejected here. NOTE: MR !150
-    // (discussion d2c53d84) had settled zero-budget as legal (`< 0.0`); re-landing
-    // that zero-budget-allowed behavior belongs in its own dedicated MR, not here.
     #[test]
-    fn validate_budget_rejects_nonpositive_accepts_positive() {
-        assert!(validate_budget(0.0).is_err());
+    fn task_create_funding_block_uses_shared_envelope() {
+        let warning = serde_json::json!({
+            "chain": "XLayer",
+            "currency": "USDT",
+            "shortfall": "0.01",
+            "available": "0",
+            "required": "0.01",
+            "depositAddress": "0x1234567890abcdef1234567890abcdef12345678",
+            "depositChain": "XLayer"
+        });
+        let envelope = common::funding_notice::funding_blocked_envelope(
+            &warning,
+            "task-payment",
+            "Task creation",
+        );
+        assert_eq!(envelope["blocked"], serde_json::json!(true));
+        assert_eq!(envelope["submitted"], serde_json::json!(false));
+        assert_eq!(envelope["mustRepeatInFinalResponse"], serde_json::json!(true));
+        assert_eq!(envelope["forbidFundingSummary"], serde_json::json!(true));
+        assert_eq!(
+            envelope["fundingNoticeCommand"],
+            "onchainos agent funding-notice --chain XLayer --currency USDT --shortfall 0.01 --deposit-address 0x1234567890abcdef1234567890abcdef12345678 --available 0 --required 0.01 --deposit-chain XLayer --reason task-payment --format json"
+        );
+        assert!(envelope["finalResponsePolicy"]
+            .as_str()
+            .expect("finalResponsePolicy")
+            .contains("never summarize"));
+    }
+
+    #[test]
+    fn validate_budget_accepts_zero_and_positive_rejects_negative() {
+        assert!(validate_budget(0.0).is_ok());
         assert!(validate_budget(-1.0).is_err());
         assert!(validate_budget(1.0).is_ok());
+    }
+
+    #[test]
+    fn validate_budget_precision_accepts_six_decimals() {
+        assert!(validate_budget_decimals(0.000001).is_ok());
+        assert!(validate_budget_decimals(0.0000001).is_err());
+    }
+
+    #[test]
+    fn create_accepts_zero_budget_and_serializes_zero_amounts() {
+        let mut params = params_with_provider("agent-1".to_string());
+        params.budget = 0.0;
+        params.max_budget = 0.0;
+
+        let validated = params.validate().unwrap();
+        let body = build_create_body(&params, &validated).unwrap();
+
+        assert_eq!(body["paymentTokenAmount"], "0");
+        assert_eq!(body["paymentMostTokenAmount"], "0");
     }
 }

@@ -19,19 +19,18 @@ fn create_task_common() -> String {
 [Role] User Agent
 [Session Type] user session (talking directly to the user)
 
-Collect Description (+ optional Provider) → ASP match → determine branch → load branch-specific playbook.
+Collect Description → parse search intent → task-service-select → confirm service → load branch-specific playbook.
 
 ================================================
 Step 1 -- Field collection (common fields only)
 ================================================
 
-Description: MUST come from user's explicit input — no guessing/auto-fill. Title: agent-generated. Currency, Budget, Max budget: do NOT collect here — they are branch-dependent and will be collected after asp-match determines subscription vs regular.
+Description: MUST come from user's explicit input — no guessing/auto-fill. Title: agent-generated. Currency is branch-dependent. Budget and Max budget are never collected initially; after service selection they default to the selected service fee.
 
 | Field | CLI flag | Constraint | How to collect |
 |---|---|---|---|
 | Description | --description | 20-2000 chars | Consolidate user's words. If <20 → ask to expand |
 | Title | --title | <=30 chars | Agent-generated; count chars, shorten if >30 |
-| Designated provider | --provider | Optional; provider agentId | Extract the provider the user names. If not given, leave blank — Step 3 will auto-discover |
 
 ================================================
 Step 2 -- Basic validation
@@ -40,35 +39,41 @@ Step 2 -- Basic validation
 1. Description < 20 chars → ask to expand
 
 ================================================
-Step 3 -- ASP matching
+Step 3 -- Search-intent parsing and service selection
 ================================================
 
-**Path A — Provider specified** (`--provider` is set). Match its registered services:
+For the initial search, pass the user's original utterance verbatim to [`intent-keyword-extraction.md`], then use its output unchanged as `<args>` in:
 
 ```bash
-onchainos agent asp-match --task-desc \"<description>\" --provider-agent-id <agentId> --format json
+onchainos agent task-service-select <args> --agentic-id <buyerAgentId> --limit 1 --format json
 ```
 
-- Empty → \"This ASP has no matching services. Ask the user to designate another provider or adjust the description.\"
-- Non-empty → extract top service (see field list below).
+Serialize `keywords` exactly like `service-match`: emit `--keywords` once, followed by all extracted
+keyword values in order. Do not preprocess or enrich the input or output.
 
-**Path B — No provider specified**. Auto-discover matching ASPs by description:
+- `matchStatus=no_match` → if `asp-agent-id` was supplied, say that the specified ASP has no matching service; otherwise say that no matching service was found. Ask the user to adjust the description or specify/change the provider.
+- `matchStatus=no_online_service` → matches exist, but none is eligible (offline non-x402 services remain ineligible). Ask whether to view alternatives or adjust the description/provider.
+- `matchStatus=matched` → render the service confirmation card from `data.services[0]`. The CLI keeps original ranking while filtering candidates to online services plus offline A2MCP services with a non-empty endpoint.
 
-```bash
-onchainos agent asp-match --task-desc \"<description>\" --format json
-```
+**Service confirmation gate**:
+- Show Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
+- Render `serviceType` verbatim (for example, `A2A` or `A2MCP`); never translate or localize it.
+- For a non-subscription Service, render `feeAmount` with `feeTokenSymbol`. If `feeAmount` is zero (number or numeric string), render localized `Free` instead of `0 <symbol>`.
+- An offline A2MCP service with a non-empty endpoint is eligible; do not reject it for being offline. Offline non-x402 services remain ineligible.
+- Ask the user to confirm using this service. Offer \"show 3 alternatives\" only when `hasMore == true` and `searchAfter` is a non-empty string; otherwise state that no more alternatives are available.
+- If the user chooses alternatives, call:
+  ```bash
+  onchainos agent task-service-select --search-after \"<searchAfter>\" --limit 3 --agentic-id <buyerAgentId> --format json
+  ```
+  Do not include first-search conditions with `--search-after`. Render returned services and let the user choose one.
 
-- Empty → no matching ASP found. Ask the user to: (a) specify a provider agentId manually, or (b) adjust the description, then re-run asp-match. Loop until a match is found or the user gives up.
-- Non-empty → auto-select the top-ranked recommendation's provider and service. Proceed as if the user had designated that provider.
-
-**Field extraction** (both paths): from the selected recommendation/service retain `providerAgentId`, `serviceId`, `serviceName`, `serviceDescription`, `serviceType`, `feeAmount`→serviceTokenAmount (`asp-match` normalizes a missing/null value from the monthly `subscription[].fee`), `feeToken`→serviceTokenAddress, `feeTokenSymbol`, `endpoint` (if A2MCP), **`supportSubscription`** (subscription array non-empty → true), **`supportTrial`** / **`supportTrail`** (boolean — whether trial is available; check both spellings), **`freeTrial`** (trial hours), and the complete **`autoTradePreflight` object verbatim**. Do not retain only the compact text summary: the subscription branch needs the structured `reminders[]`, `tools[]`, and `pluginId` values.
-- If the same ASP returns both subscription and non-subscription services, display each with `[Subscription]` / `[One-time]` label and let the user choose. The chosen service determines the branch.
+Retain the complete `task-service-select` JSON stdout. The CLI has already normalized the selected service fields, preserved each service's `online` status, and preserved the structured `autoTradePreflight` object for subscription preparation. Do not parse raw service-match fields yourself.
 
 ================================================
 Step 3.5 -- Load branch playbook
 ================================================
 
-Check the selected service's `supportSubscription` field and load the branch-specific playbook:
+After the user confirms a service, check the selected service's `supportSubscription` and load the branch-specific playbook. Retain the selected `task-service-select` JSON for later field extraction, but `next-action` branch routing still uses the explicit `branch` field.
 
 - `supportSubscription == true` → call:
   ```bash
@@ -94,7 +99,7 @@ Using the selected service's `serviceDescription` + `serviceName` + the user's t
 **Identify required user input** from `serviceDescription` (strict / fail closed):
 Create a service parameter ONLY when the listing explicitly addresses the subscriber and says a concrete value is required, for example \"you must provide ...\", \"please input ...\", \"required parameter: ...\", or an explicit subscriber-fillable placeholder. A capability description, output schema, signal example, risk disclosure, execution precondition, or phrase such as \"check X before execution\" is NOT a request for subscriber input.
 
-For trading-signal subscriptions, NEVER invent service parameters for an account, wallet, balance/collateral, per-trade amount, authorization limit/cap, venue/tool choice, plugin installation, API credentials, signal fields, or runtime consent. Those belong to tool readiness and the first-signal runtime decision flow, not `serviceParams`.
+For trading-signal subscriptions, keep account, wallet, balance/collateral, per-trade amount, authorization limit/cap, venue/tool choice, plugin installation, API credentials, signal fields, execution mode, Trade Kit environment, margin mode, and order policy out of `serviceParams`. Parse user-authored execution settings into the separate `--autotrade-*` fields described below.
 
 If explicit subscriber-input language is absent or ambiguous → `serviceParams` MUST be empty. Do not create `<to be provided>` rows from inference alone.
 
@@ -118,7 +123,8 @@ fn attachments_and_stop() -> String {
     let watch_section = if is_cli_mode() {
         "\
 **After create-task/create-subscribe + task-attach (if any), check CLI output for a `[Watch]` block:**
-1. `[Watch]` block present → follow its instructions: read `skills/okx-ai/references/watch-core.md`, execute watch, then **end this turn**.
+0. If balanceWarning exists, stop here; do not Watch.
+1. `[Watch]` block present → follow its instructions: read `skills/okx-ai/references/watch-core.md` and enter its Watch generation. A returned notification, deliverable, or empty poll does **not** end the turn; dispatch and re-enter until `watch-core.md` says to stop or a decision requires the user's reply.
 2. No `[Watch]` block → **end this turn immediately**."
     } else {
         "**End this turn immediately.** Do NOT mention or ask about monitoring/watching task progress."
@@ -133,10 +139,11 @@ If the user included file(s)/image(s) as task material → for each: `onchainos 
 
 ================================================
 
-After success, tell the user directly (you are in the user session, no `onchainos agent user-notify` needed):
+After success:
 
-- \"{create_designated}\"
-Append `Insufficient ... balance` warning from CLI output if present. Localize.
+- `blockedReason=insufficient-balance`: save the exact `create-task` command + `balanceWarning`; if `fundingNoticeCommand` exists, run it. `terminal-unicode`: show `terminalQr` + full notice. `image-notify`: localize `contentCanonical`, run `notifyCommandArgs`, put `markdownImage` under option 1 in final. If missing, show `balanceWarning`. END TURN; do not create again or Watch.
+- No `balanceWarning`: tell the user directly: \"{create_designated}\"
+- Legacy submitted `balanceWarning`: save `jobId` + warning, render `funding-notice`; on Codex/Claude Code repeat the full notice in final. END TURN; do not Watch.
 
 {watch_section}
 
@@ -155,37 +162,49 @@ Step 4 -- Subscription field collection
 ================================================
 
 For subscription tasks, Currency and Budget are derived from the service — do NOT ask the user:
-- **Currency** = `feeTokenSymbol` from asp-match (auto-filled)
-- **Budget** = `feeAmount` from asp-match (auto-filled; this is the fixed subscription price)
+- **Currency** = `feeTokenSymbol` from task-service-select (auto-filled)
+- **Budget** = `subscriptionInfo.feeAmount` from task-service-select (auto-filled fixed subscription price)
 
 Collect/infer:
 
 1. **serviceParams inference** (same logic as §serviceParams inference below).
 
-2. **useTrial**: if `supportTrial == true` (or `supportTrail == true` — legacy typo, check both) from asp-match → automatically set to `true` (do NOT ask the user). Otherwise `false`. Display trial hours from `freeTrial` field in the confirmation form.
+2. **useTrial**: if `subscriptionInfo.supportTrial == true` from task-service-select → automatically set to `true` (do NOT ask the user). Otherwise `false`. Display trial hours from `subscriptionInfo.freeTrial` in the confirmation form.
 
 3. **autoRenew**: ask the user explicitly (0=off, 1=on). Do NOT pre-fill a default — collect the answer before Step 5.
 
 4. **Signal execution setup and capability preflight**:
-   - Never ask the old standalone binary execution opt-in question and never infer financial authorization from `serviceDescription`, ASP text, candidate tools, or the backend delivery marker.
-   - If the user's own request explicitly asks for automatic signal execution, collect/infer exactly four bounded fields from user-authored context: mode=`auto`, fixed per-signal quote amount, per-signal cap, and quote currency (`USDT` or `USDC`). If any field is missing, ask only for those missing fields in one localized natural-language question, then **END THIS TURN**. Do not use A/B/C or numbered choices. Amount must be positive and no greater than cap.
-   - If the user did not explicitly request automatic execution, collect no execution settings and continue normally. The first actionable delivery may ask for the missing configuration then; a service description alone never opts the user in.
-   - Use `autoTradePreflight.assetClasses`, each `tools[].readiness`, and any `reminders[]` only for the separate optional preparation gate below. Never block the subscription on a missing/unconfigured tool, never pick a venue, and never trigger an install unless the user explicitly asks.
+   - Automatic signal execution is the MVP default. Set mode=`auto` unless the user explicitly says not to execute automatically; an explicit opt-out sets mode=`manual`.
+   - Inspect `serviceDescription` only to identify which execution settings the ASP asks the subscriber to provide and any values presented as suggestions. ASP text is not the user's answer and must never be persisted by itself.
+   - Parse mode, fixed per-signal quote amount, per-signal cap, quote currency (`USDT` or `USDC`), margin mode (`cross` or `isolated`), and order policy (`market` or `signal_price_limit`) only from user-authored context. ASP prose determines only which supported fields to ask for; it never supplies a value. When a required field has not been answered, ask for only the missing fields in one localized natural-language question, then **END THIS TURN**. Never use A/B/C, numbered choices, or a decision card.
+   - Amount and cap are optional unless the ASP explicitly asks the user to configure them. Each supplied value must be a positive decimal. Do not compare amount with cap. Quote defaults to `USDT`.
+   - Retain `autoTradePreflight` only as advisory runtime information. Never block subscription creation on a missing/unconfigured tool. Installation or configuration may run only after the user explicitly chooses the optional Trade Kit preparation action below; choosing Later must continue the subscription unchanged.
+   - When `autoTradePreflight.tradeKitProbe.mode=probe_before_confirmation`, collect exactly one user-authored Trade Kit environment (`live` or `demo`) and one order policy (`market` or `signal_price_limit`). When `tradeKitProbe.assetClasses` contains `perp`, also collect one margin mode (`cross` or `isolated`). Never infer any value from ASP text, Trade Kit defaults, or readiness output. Ask for all missing settings together, then **END THIS TURN**. Retain them as `tradeEnvironment`, `marginMode`, and `orderPolicy`.
 
-   The preflight is advisory only and does not control delivery routing. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the preparation card and continue creating the subscription. Do not retry `asp-match` solely to obtain preflight data. The CLI writes the backend delivery marker internally; there is no `copyTrade` field to collect and no `--copy-trade` argument to pass.
+   The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the advisory notice and continue creating the subscription. Do not retry `task-service-select` solely to obtain preflight data. There is no standalone binary execution field to collect and no `--copy-trade` argument to pass.
+   **Deterministic Trade Kit probe decision:** inspect `autoTradePreflight.tradeKitProbe.mode` after the service has been selected:
+   - `probe_before_confirmation` → build one command from every token in `tradeKitProbe.assetClasses`, preserving the array order:
+     ```text
+     onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>
+     ```
+     Run it now. Do not persist its result. A non-ready result is an advisory notice only.
+   - `deferred_until_venue_selection` → Do not auto-run a Trade Kit probe because the user has not selected that venue. Keep Trade Kit as `verification_unknown/authorization_not_checked` and render the optional Trade Kit preparation gate below. If the user prepares Trade Kit, that action does not select it as the venue.
+   - `not_applicable` → do not run the command.
 
-   **Pre-confirmation gate (mandatory when an actionable reminder exists):** if `reminders[]` contains at least one `install_plugin` or `configure_tool`, render one separate, localized **Tool preparation (optional)** choice card now. Build one action from each actionable reminder, identified by its exact `tool` / `pluginId` and using its localized message; de-duplicate by tool. Append a final `Later — continue subscribing` action. The card footer must say that skipping preparation does not affect subscription, delivery visibility/storage, or the user's ability to ask their agent later to execute the delivered signal manually with any available tool. Do not invent actions from `serviceDescription`, DApp names, `choose_at_first_signal`, or `readiness_advisory`.
+   **Trade Kit preparation gate (optional; separate turn):** when a required probe is not ready, or the mode is `deferred_until_venue_selection` with Trade Kit at `verification_unknown/authorization_not_checked`, render one localized card with exactly these two choices:
+   1. **Install/configure Trade Kit**
+   2. **Later — continue subscribing**
 
-   After rendering that card, **END THIS TURN**. Do NOT render Step 5, do NOT call `create-subscribe`, and do NOT treat an install action as subscription confirmation in the same turn. This is preparation only: do NOT call it venue selection, do NOT set a default, and do NOT persist a venue preference or consent.
+   State that preparation is optional, Later does not affect subscription creation or delivery storage, and preparing Trade Kit does not select it as the execution venue. Then **END THIS TURN**. This is a tool-preparation choice, so the no-numbered-choices rule for collecting execution values does not apply.
 
    On the user's next reply:
-   - **Later / skip** → proceed to Step 5 using the retained selected-service fields.
-   - **One named preparation action** → run only that user-approved plugin install or Trade Kit install/configuration flow. After it returns (success or failure), re-run the original `asp-match` command with the same task description, provider and user agent, locate the **same `serviceId`**, replace the retained `autoTradePreflight` with the fresh object, and repeat this pre-confirmation gate. If the same service is no longer returned, stop and ask the user to choose a service again. Never continue from stale readiness and never silently switch to the new top service.
-   - **Ambiguous / multiple actions** → re-render the same bounded card; do not install anything.
+   - **Later** → proceed to Step 5 with the retained selected-service and user-authored fields. Never upgrade readiness to ready.
+   - **Install/configure Trade Kit** → first resolve `okx-cex-auth` from the currently installed skills. If it is available, load it directly without reinstalling `okx/agent-skills`. Only when it is unavailable, run the required skill security scan scoped to `okx/agent-skills`; if that scan passes, run exactly `npx skills add okx/agent-skills --yes --global`, then load the newly installed `okx-cex-auth` skill. Follow that skill for CLI installation, site selection, OAuth, API-key setup, and authentication recovery. Do not reproduce or maintain those setup steps in this playbook. Retain the selected service and preflight while that skill waits for user replies. Once setup succeeds, collect `live` or `demo` if `tradeEnvironment` is still absent, then re-run the same `onchainos agent trade-kit-readiness` command with every retained asset class and that environment. Ready → proceed to Step 5; otherwise repeat this gate with the new readiness reason.
+   - **Ambiguous reply** → re-render the same two choices without installing or configuring anything.
 
-   If there is no actionable reminder, skip this gate and proceed to Step 5. Missing/invalid preflight also skips the gate and remains non-blocking.
+   Other non-Trade-Kit preparation reminders remain concise advisory notices without choices and continue to Step 5. Never auto-install a tool, persist a readiness result, or treat preparation as venue selection.
 
-**Max budget is NOT collected** for subscription tasks — the price is fixed at `feeAmount`.
+**Max budget is NOT collected** for subscription tasks — the price is fixed at `subscriptionInfo.feeAmount`.
 
 → Proceed to **Step 5** (subscription confirmation form).
 
@@ -194,18 +213,18 @@ Collect/infer:
 Step 5 -- Subscription confirmation form
 ================================================
 
+Execution mode, per-signal amount, per-signal cap, margin mode, and order policy are internal execution configuration. Never render them as rows in this or any other confirmation form. Continue retaining the user-authored values for the Step 6 `--autotrade-*` arguments.
+
 | Field | Value |
 |---|---|
 | Title | <short title, <=30 chars> |
 | Description | <full content> (if <=200 chars in table; if >200 write `see below` and render below) |
 | Provider | Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent |
 | Service params | <serviceParams readable display, or \"None\"> |
-| Service price | <feeAmount> <feeTokenSymbol> / month |
-| Trial | Yes (<freeTrial> hours free) / No (based on `supportTrial` or `supportTrail` field) |
+| Service price | <subscriptionInfo.feeAmount> <feeTokenSymbol> / month |
+| Trial | Yes (<subscriptionInfo.freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial`) |
 | Auto-renew | On / Off |
-| Signal execution | Automatic (only when explicitly requested; otherwise omit this row) |
-| Per-signal amount | <amount> <USDT/USDC> (only with Signal execution) |
-| Per-signal cap | <cap> <USDT/USDC> (only with Signal execution) |
+| Trade Kit environment | Live / Demo / Not applicable |
 
 > Confirm? Once confirmed, the subscription will be created on-chain.
 
@@ -216,13 +235,11 @@ Step 5.5 -- Route by user decision (separate turn)
 ================================================
 
 - Confirm / publish → Step 6
-- Edit description → update → **re-run asp-match** (may switch branch; if branch changes, load the other branch playbook via `next-action`) → Step 4 → Step 5
+- Edit description → update search intent → **re-run task-service-select** (may switch branch; if branch changes, load the other branch playbook via `next-action`) → Step 4 → Step 5
 - Edit serviceParams → update → Step 5
-- Change ASP → update `--provider` to the new agentId → **re-run asp-match** (may switch branch) → Step 4 → Step 5
+- Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → Step 4 → Step 5
 - Edit autoRenew → update → Step 5
-- Edit automatic signal execution / amount / cap / quote currency → update; ask only for any missing bounded field → Step 5
-- Prepare a tool now → run only the explicitly selected install/configuration flow, re-run the original `asp-match`, re-select the same `serviceId`, and repeat the Step 4 pre-confirmation gate; do not save a venue preference
-- Later / skip tool preparation → Step 5 without blocking subscription
+- Edit automatic signal execution / amount / cap / quote currency / Trade Kit environment / margin mode / order policy → update the user-authored value; cap remains informational → Step 5
 
 ================================================
 Step 6 -- Publish subscription (create-subscribe)
@@ -232,20 +249,24 @@ Step 6 -- Publish subscription (create-subscribe)
 onchainos agent create-subscribe \\
   --service-id <sid> \\
   --use-trial <true|false> \\
-  --service-token-amount \"<feeAmount>\" \\
+  --service-token-amount \"<subscriptionInfo.feeAmount>\" \\
   --service-token-address \"<feeToken>\" \\
   --auto-renew <0|1> \\
   --title \"<title>\" \\
   --description \"<description>\" \\
   --service-description \"<serviceDescription>\" \\
   --provider-agent-id <agentId> \\
-  [--autotrade-mode auto \\
-   --autotrade-amount \"<decimal-number>\" \\
-   --autotrade-cap \"<decimal-number>\" \\
-   --autotrade-quote <usdt|usdc>]
+  --autotrade-mode <auto|manual> \\
+  [--autotrade-amount \"<decimal-number>\"] \\
+  [--autotrade-cap \"<decimal-number>\"] \\
+  [--autotrade-quote <usdt|usdc>] \
+  [--autotrade-environment <live|demo>] \
+  [--autotrade-margin-mode <cross|isolated>] \
+  [--autotrade-order-policy <market|signal_price_limit>]
 ```
-- Pass the four `--autotrade-*` flags together only when the final subscription confirmation contained the user's explicit automatic-execution setup. Never synthesize them from service or deliverable content.
+- Always pass the confirmed mode; it defaults to `auto`. Pass amount, cap, quote, Trade Kit environment, margin mode, and order policy only from user-authored context. For a confirmed Trade Kit route, environment and order policy are required; margin mode is additionally required for `perp`. ASP suggestions alone are never values.
 - `--autotrade-amount` and `--autotrade-cap` are human-readable quote amounts selected by `--autotrade-quote`: pass a decimal number only (for example `10` or `20.5`), never minimal units and never a `USDT`/`USDC` suffix.
+- Do not compare `--autotrade-amount` with `--autotrade-cap`. A stored cap is informational in this MVP.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
 
 {attachments_stop}",
@@ -263,18 +284,16 @@ fn create_task_regular() -> String {
 Step 4 -- Regular field collection
 ================================================
 
-For regular tasks, collect Currency, Budget, and Max budget from the user:
+For regular tasks, collect Currency internally but do not show it in the confirmation form. Derive Budget and Max budget from the selected service:
 
 1. **Payment token** (--currency): Only USDT / USDG. Fuzzy input (\"U\"/\"USD\") → ask \"USDT or USDG?\".
-   - Validate: must match `feeTokenSymbol` from asp-match. Mismatch → ask user to change token or designate another provider.
-2. **Budget** (--budget): ask user explicitly. number; <=5 decimals; max 10M.
-   - Budget < 0 → reject (zero is legal)
-   - Budget > 10M or > 5 decimal places → reject
-3. **Max budget** (--max-budget): ask user explicitly. Constraint: >= budget; <=5 decimal places; max 10M.
-   - max_budget < budget → reject
-   - max_budget > 10M or > 5 decimal places → reject
+   - Validate: must match `feeTokenSymbol` from task-service-select. Mismatch → ask user to change token or designate another provider.
+2. Read `feeAmount` from the exact selected service. Missing/non-numeric → stop before confirmation.
+   - `budget = feeAmount`
+   - `max_budget = feeAmount`
+   - Apply the existing create-task amount rules (non-negative, <=6 decimals, max 10M). Do not ask the user for either value.
 
-4. **serviceParams inference** (same logic as §serviceParams inference below).
+3. **serviceParams inference** (same logic as §serviceParams inference below).
 
 → Proceed to **Step 5** (regular confirmation form).
 
@@ -283,16 +302,15 @@ For regular tasks, collect Currency, Budget, and Max budget from the user:
 Step 5 -- Regular confirmation form
 ================================================
 
+Never add execution mode, per-signal amount, or per-signal cap to this or any other confirmation form.
+
 | Field | Value |
 |---|---|
 | Title | <short title, <=30 chars> |
 | Description | <full content> (if <=200 chars in table; if >200 write `see below` and render below) |
 | ASP | Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent |
 | Service params | <serviceParams readable display, or \"None\"> |
-| Service price | <feeAmount> <feeTokenSymbol> (only show this row if feeAmount has a value) |
-| Budget | <number> |
-| Max budget | <number> (negotiation price cap) |
-| Payment token | <USDT or USDG> |
+| Service price | <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this row if feeAmount has a value) |
 
 Payment mode: A2A → `escrow`, A2MCP → `x402` (from serviceType; do not ask user, do not show as a card row).
 
@@ -305,10 +323,11 @@ Step 5.5 -- Route by user decision (separate turn)
 ================================================
 
 - Confirm / publish → Step 6
-- Edit description → update → **re-run asp-match** (may switch branch; if branch changes, load the other branch playbook via `next-action`) → Step 4 → Step 5
-- Edit budget/max-budget/currency → update → re-validate → Step 5
+- Edit description → update search intent → **re-run task-service-select** (may switch branch; if branch changes, load the other branch playbook via `next-action`) → Step 4 → Step 5
+- Edit budget/max-budget → validate the proposed value(s) with the existing rules, including `max_budget >= budget`; keep an omitted field unchanged and do not auto-adjust the other field. Invalid → explain and keep the current values. Valid → show the proposed value(s) separately, ask for one explicit confirmation, and end the turn. After confirmation, update the existing field(s) and return to Step 5; the confirmation form still omits both budget rows.
+- Edit currency → update → re-validate → Step 5
 - Edit serviceParams → update → Step 5
-- Change ASP → update `--provider` to the new agentId → **re-run asp-match** (may switch branch) → Step 4 → Step 5
+- Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → reset budget/max_budget from the newly selected service fee → Step 4 → Step 5
 
 ================================================
 Step 6 -- Publish regular (create-task)
@@ -323,6 +342,7 @@ onchainos agent create-task \\
 ```
 - `--provider`, `--service-id`, `--payment-mode` required. Payment mode: A2A→escrow, A2MCP→x402.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
+- After `create-task` succeeds, budget and max budget are locked; never offer a direct edit.
 
 {attachments_stop}",
         service_params = service_params_inference(),
@@ -472,6 +492,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn common_create_task_confirms_selected_service_after_matching() {
+        let out = create_task_common();
+        assert!(
+            !out.contains("Draft-description confirmation gate"),
+            "common create_task playbook must not confirm the description before matching: {out}"
+        );
+        assert!(
+            out.contains("Ask the user to confirm using this service"),
+            "common create_task playbook must confirm the selected service: {out}"
+        );
+    }
+
+    #[test]
     fn subscription_playbook_reads_preflight_not_prompt() {
         let out = create_task_subscription();
         // FR-7 / AC-8: the old copy-trade prompt is gone …
@@ -494,14 +527,18 @@ mod tests {
             !out.contains("| Auto copy-trade |"),
             "confirmation form must not contain an Auto copy-trade row: {out}"
         );
-        // Explicit user-authored automatic execution is shown as bounded fields;
-        // these rows are omitted entirely when the user did not opt in.
-        assert!(out.contains("| Signal execution | Automatic"));
-        assert!(out.contains("| Per-signal amount |"));
-        assert!(out.contains("| Per-signal cap |"));
-        assert!(out.contains("otherwise omit this row"));
-        assert!(out.contains("Do not use A/B/C or numbered choices"));
-        // Preflight readiness belongs only to the separate optional preparation card.
+        // Execution configuration is retained for persistence but never exposed as form rows.
+        assert!(!out.contains("| Signal execution |"));
+        assert!(!out.contains("| Per-signal amount |"));
+        assert!(!out.contains("| Per-signal cap |"));
+        assert!(out.contains(
+            "Continue retaining the user-authored values for the Step 6 `--autotrade-*` arguments"
+        ));
+        assert!(out.contains("| Trade Kit environment | Live / Demo / Not applicable |"));
+        assert!(out.contains("--autotrade-environment <live|demo>"));
+        assert!(out.contains("Do not compare amount with cap"));
+        assert!(out.contains("Never use A/B/C, numbered choices, or a decision card"));
+        // Preflight readiness stays advisory and never becomes confirmation fields.
         assert!(
             !out.contains("| Signal types |"),
             "confirmation form must not add a Signal types row: {out}"
@@ -517,57 +554,57 @@ mod tests {
     }
 
     #[test]
-    fn subscription_playbook_treats_preflight_as_optional_advisory() {
+    fn subscription_playbook_offers_optional_trade_kit_preparation() {
         let out = create_task_subscription();
         let common = create_task_common();
         assert!(
             out.contains("advisory only and does not control delivery routing"),
             "playbook must keep preflight advisory: {out}"
         );
-        assert!(
-            out.contains("omit the preparation card and continue"),
-            "missing preflight must not block creation: {out}"
-        );
+        assert!(out.contains("continue creating the subscription"));
         assert!(
             !out.contains("  --copy-trade"),
             "removed copy-trade argument must not appear: {out}"
         );
         assert!(
-            !out.contains("re-run `asp-match` exactly once"),
+            !out.contains("re-run `task-service-select` exactly once"),
             "preflight absence must not force an extra match: {out}"
         );
+        assert!(out.contains("ASP text is not the user's answer"));
+        assert!(out.contains("Trade Kit preparation gate (optional; separate turn)"));
+        assert!(out.contains("Install/configure Trade Kit"));
+        assert!(out.contains("Later — continue subscribing"));
+        assert!(out.contains("first resolve `okx-cex-auth` from the currently installed skills"));
+        assert!(out.contains("load it directly without reinstalling `okx/agent-skills`"));
+        assert!(out.contains("security scan scoped to `okx/agent-skills`"));
+        assert!(out.contains("npx skills add okx/agent-skills --yes --global"));
+        assert!(out.contains("load the newly installed `okx-cex-auth` skill"));
+        assert!(out.contains("Do not reproduce or maintain those setup steps in this playbook"));
+        assert!(out.contains("Then **END THIS TURN**"));
         assert!(
-            out.contains("Do NOT parse `serviceDescription` yourself"),
-            "playbook must forbid agent-side description parsing: {out}"
-        );
-        assert!(
-            out.contains("Tool preparation (optional)"),
-            "unready tools must expose an optional preparation action: {out}"
-        );
-        assert!(
-            out.contains("do NOT persist a venue preference or consent"),
-            "preparation must not become venue selection: {out}"
-        );
-        assert!(
-            common.contains("complete **`autoTradePreflight` object verbatim**"),
+            common.contains("structured `autoTradePreflight` object"),
             "common match step must retain structured preflight data: {common}"
         );
-        assert!(
-            out.contains("**END THIS TURN**"),
-            "tool preparation must be a separate user turn: {out}"
-        );
-        assert!(
-            out.contains("locate the **same `serviceId`**"),
-            "readiness refresh must not silently switch services: {out}"
-        );
-        assert!(
-            out.contains("Never continue from stale readiness"),
-            "installation result must be refreshed deterministically: {out}"
-        );
-        assert!(
-            out.contains("execute the delivered signal manually with any available tool"),
-            "skipping preparation must preserve the independent manual path: {out}"
-        );
+        assert!(out.contains("tradeKitProbe.mode"));
+        assert!(out.contains("probe_before_confirmation"));
+        assert!(out.contains("deferred_until_venue_selection"));
+        assert!(out.contains(
+            "onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>"
+        ));
+        assert!(out.contains("Do not auto-run a Trade Kit probe"));
+        assert!(out.contains("does not select it as the venue"));
+        assert!(out.contains("re-run the same `onchainos agent trade-kit-readiness` command"));
+    }
+
+    #[test]
+    fn regular_confirmation_form_never_exposes_execution_configuration() {
+        let out = create_task_regular();
+        assert!(!out.contains("| Signal execution |"));
+        assert!(!out.contains("| Per-signal amount |"));
+        assert!(!out.contains("| Per-signal cap |"));
+        assert!(out.contains(
+            "Never add execution mode, per-signal amount, or per-signal cap to this or any other confirmation form"
+        ));
     }
 
     #[test]
@@ -579,5 +616,46 @@ mod tests {
         assert!(out.contains("authorization limit/cap"));
         assert!(out.contains("venue/tool choice"));
         assert!(out.contains("serviceParams` MUST be empty"));
+    }
+
+    #[test]
+    fn regular_create_task_requires_full_balance_notice_before_watch() {
+        let out = create_task_regular();
+        assert!(out.contains("balanceWarning"));
+        assert!(out.contains("blockedReason=insufficient-balance"));
+        assert!(out.contains("save the exact `create-task` command + `balanceWarning`"));
+        assert!(out.contains("if `fundingNoticeCommand` exists, run it"));
+        assert!(out.contains("`terminal-unicode`"));
+        assert!(out.contains("show `terminalQr` + full notice"));
+        assert!(out.contains("`image-notify`"));
+        assert!(out.contains("run `notifyCommandArgs`"));
+        assert!(out.contains("If missing, show `balanceWarning`"));
+        assert!(out.contains("END TURN"));
+        assert!(out.contains("do not create again or Watch"));
+        assert!(out.contains("Legacy submitted `balanceWarning`"));
+        assert!(out.contains("do not Watch"));
+    }
+
+    #[test]
+    fn regular_create_task_defaults_budget_to_service_fee_without_showing_it() {
+        let out = create_task_regular();
+
+        assert!(out.contains("budget = feeAmount"));
+        assert!(out.contains("max_budget = feeAmount"));
+        assert!(!out.contains("ask user explicitly"));
+        assert!(!out.contains("| Budget |"));
+        assert!(!out.contains("| Max budget |"));
+        assert!(!out.contains("| Payment token |"));
+        assert!(out.contains("non-negative"));
+    }
+
+    #[test]
+    fn regular_create_task_keeps_pre_create_budget_edits_with_separate_confirmation() {
+        let out = create_task_regular();
+
+        assert!(out.contains("Edit budget/max-budget"));
+        assert!(out.contains("show the proposed value(s) separately"));
+        assert!(out.contains("do not auto-adjust the other field"));
+        assert!(out.contains("After `create-task` succeeds, budget and max budget are locked"));
     }
 }

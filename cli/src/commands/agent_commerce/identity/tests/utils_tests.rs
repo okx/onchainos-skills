@@ -596,55 +596,65 @@ fn add_agent_list_cells_walks_envelope_and_skips_detail_unaffected() {
 // ─── §6 search cells ─────────────────────────────────────────────────
 
 #[test]
-fn build_search_cells_feedbackrate_not_divided() {
-    // feedbackRate is ALREADY 0–5: 4.6 must render as ★ 4.6, NOT 4.6/20.
+fn build_search_table_row_converts_feedbackrate_to_stars() {
+    // The backend returns feedbackRate on a 0–100 scale.
     let row = json!({
         "agentId": "1128",
         "name": "DeFi Analyzer",
-        "profileDescription": "On-chain data analysis",
-        "feedbackRate": 4.6,
+        "soldCount": 10,
+        "feedbackRate": 95,
         "serviceMinPrice": 10.0,
         "services": [
             { "serviceName": "TVL Query", "serviceType": "A2MCP",
               "feeAmount": 10.0, "feeToken": "USDT", "endpoint": "https://x" }
         ],
     });
-    let cells = build_search_cells(row.as_object().unwrap());
+    let row = build_search_table_row(row.as_object().unwrap());
     assert_eq!(
-        cell_pairs(&Value::Array(cells)),
-        vec![
-            ("Agent ID".to_string(), "#1128".to_string()),
-            ("Name".to_string(), "DeFi Analyzer".to_string()),
-            ("Rating".to_string(), "★ 4.6".to_string()),
-            ("Min price".to_string(), "10.0".to_string()),
-            (
-                "Top service".to_string(),
-                "TVL Query (API service, 10.0 USDT)".to_string()
-            ),
-        ]
+        row,
+        json!({
+            "agentId": "#1128",
+            "name": "DeFi Analyzer",
+            "soldCount": 10,
+            "rating": "★ 4.75",
+            "minPrice": "10.0",
+            "recommendService": "TVL Query (API service, 10.0 USDT)"
+        })
     );
 }
 
 #[test]
-fn build_search_cells_null_rate_null_price_absent_services() {
+fn build_search_table_row_formats_perfect_feedbackrate_as_five_stars() {
+    let row = json!({
+        "agentId": "1129",
+        "name": "Perfect Agent",
+        "feedbackRate": 100,
+    });
+    let row = build_search_table_row(row.as_object().unwrap());
+    assert_eq!(row["rating"], json!("★ 5"));
+}
+
+#[test]
+fn build_search_table_row_null_rate_null_price_absent_services() {
     // feedbackRate null → `—`; serviceMinPrice null → `—`; services key
     // absent (NON_NULL) → `—` Top service.
     let row = json!({
         "agentId": "1129",
         "name": "On-chain Insights",
         "profileDescription": "Analytics",
+        "soldCount": null,
         "feedbackRate": null,
         "serviceMinPrice": null,
     });
-    let cells = build_search_cells(row.as_object().unwrap());
-    let pairs = cell_pairs(&Value::Array(cells));
-    assert_eq!(pairs[2], ("Rating".to_string(), "—".to_string()));
-    assert_eq!(pairs[3], ("Min price".to_string(), "—".to_string()));
-    assert_eq!(pairs[4], ("Top service".to_string(), "—".to_string()));
+    let row = build_search_table_row(row.as_object().unwrap());
+    assert_eq!(row["soldCount"], json!("—"));
+    assert_eq!(row["rating"], json!("—"));
+    assert_eq!(row["minPrice"], json!("—"));
+    assert_eq!(row["recommendService"], json!("—"));
 }
 
 #[test]
-fn build_search_cells_feedbackrate_zero_is_no_rating_yet() {
+fn build_search_table_row_feedbackrate_zero_is_no_rating_yet() {
     // 0 means no feedback yet — never `★ 0`.
     let row = json!({
         "agentId": "1130",
@@ -655,30 +665,41 @@ fn build_search_cells_feedbackrate_zero_is_no_rating_yet() {
             { "serviceName": "Free Tier", "serviceType": "A2A" }
         ],
     });
-    let cells = build_search_cells(row.as_object().unwrap());
-    let pairs = cell_pairs(&Value::Array(cells));
-    assert_eq!(
-        pairs[2],
-        ("Rating".to_string(), "No rating yet".to_string())
-    );
+    let row = build_search_table_row(row.as_object().unwrap());
+    assert_eq!(row["rating"], json!("No rating yet"));
     // A2A with no fee and no subscription → "free"; no token appended.
     assert_eq!(
-        pairs[4],
-        (
-            "Top service".to_string(),
-            "Free Tier (agent-to-agent, free)".to_string()
-        )
+        row["recommendService"],
+        json!("Free Tier (agent-to-agent, free)")
     );
 }
 
 #[test]
-fn add_search_cells_walks_flat_list() {
-    let mut env = json!({
+fn build_search_table_has_fixed_columns_and_walks_flat_list() {
+    let env = json!({
         "total": 1,
-        "list": [ { "agentId": "1", "name": "A", "feedbackRate": null } ],
+        "page": 2,
+        "pageSize": 5,
+        "list": [ { "agentId": "1", "name": "A", "feedbackRate": null } ]
     });
-    add_search_cells(&mut env);
-    assert_eq!(env["list"][0]["cells"].as_array().unwrap().len(), 5);
+    let table = build_search_table(&env);
+    assert_eq!(table["total"], json!(1));
+    assert_eq!(table["page"], json!(2));
+    assert_eq!(table["pageSize"], json!(5));
+    assert_eq!(
+        table["table"]["columns"],
+        json!([
+            { "key": "agentId", "label": "Agent ID" },
+            { "key": "name", "label": "Name" },
+            { "key": "soldCount", "label": "Sold Count" },
+            { "key": "rating", "label": "Rating" },
+            { "key": "minPrice", "label": "Min price" },
+            { "key": "recommendService", "label": "Top service" }
+        ])
+    );
+    assert_eq!(table["table"]["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(table["table"]["rows"][0]["agentId"], json!("#1"));
+    assert_eq!(table["table"]["rows"][0]["soldCount"], json!("—"));
 }
 
 // ─── §4 service-list cells ───────────────────────────────────────────

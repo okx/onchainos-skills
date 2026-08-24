@@ -17,9 +17,234 @@
 //! Notify failures are non-fatal: the trade result must never be masked by a
 //! reporting error.
 
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use anyhow::{bail, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use super::super::user_lang::{self, Lang};
+
+const NOTICE_VERSION: u32 = 1;
+const MAX_FLUSH_BATCH: usize = 4;
+const STALE_LEASE_SEC: u64 = 30;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PendingNotice {
+    version: u32,
+    job_id: String,
+    idempotency_key: String,
+    content: String,
+    attempts: u32,
+    next_attempt_at: u64,
+    created_at: u64,
+    updated_at: u64,
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn outbox_root() -> Result<PathBuf> {
+    Ok(crate::home::onchainos_home()?
+        .join("autotrade")
+        .join("notification-outbox"))
+}
+
+fn notice_path(job_id: &str, idempotency_key: &str) -> Result<PathBuf> {
+    if !super::grants::job_id_is_safe(job_id) {
+        bail!("invalid job id");
+    }
+    let name = hex::encode(Sha256::digest(idempotency_key.as_bytes()));
+    Ok(outbox_root()?.join(job_id).join(format!("{name}.json")))
+}
+
+fn persist_failed_notice(
+    job_id: &str,
+    idempotency_key: &str,
+    content: &str,
+    previous_attempts: u32,
+) -> Result<()> {
+    let path = notice_path(job_id, idempotency_key)?;
+    let now = now_secs();
+    let attempts = previous_attempts.saturating_add(1);
+    let delay = 30u64.saturating_mul(1u64 << attempts.min(5)).min(15 * 60);
+    let created_at = std::fs::read(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<PendingNotice>(&raw).ok())
+        .map(|notice| notice.created_at)
+        .unwrap_or(now);
+    crate::home::write_secure(
+        &path,
+        &serde_json::to_vec_pretty(&PendingNotice {
+            version: NOTICE_VERSION,
+            job_id: job_id.to_string(),
+            idempotency_key: idempotency_key.to_string(),
+            content: content.to_string(),
+            attempts,
+            next_attempt_at: now.saturating_add(delay),
+            created_at,
+            updated_at: now,
+        })?,
+    )?;
+    Ok(())
+}
+
+fn deliver_pending(
+    path: &Path,
+    mut notice: PendingNotice,
+    force: bool,
+    timeout: Option<Duration>,
+) -> Result<bool> {
+    if notice.version != NOTICE_VERSION || !super::grants::job_id_is_safe(&notice.job_id) {
+        bail!("invalid pending notification record");
+    }
+    if !force && notice.next_attempt_at > now_secs() {
+        return Ok(false);
+    }
+    let delivered = match timeout {
+        Some(timeout) => super::super::okx_a2a::user_notify_scoped_with_timeout(
+            &notice.content,
+            &notice.job_id,
+            &notice.idempotency_key,
+            timeout,
+        ),
+        None => super::super::okx_a2a::user_notify_scoped(
+            &notice.content,
+            &notice.job_id,
+            &notice.idempotency_key,
+        ),
+    };
+    match delivered {
+        Ok(()) => {
+            let _ = std::fs::remove_file(path);
+            Ok(true)
+        }
+        Err(_) => {
+            notice.attempts = notice.attempts.saturating_add(1);
+            notice.updated_at = now_secs();
+            let delay = 30u64
+                .saturating_mul(1u64 << notice.attempts.min(5))
+                .min(15 * 60);
+            notice.next_attempt_at = notice.updated_at.saturating_add(delay);
+            crate::home::write_secure(path, &serde_json::to_vec_pretty(&notice)?)?;
+            Ok(false)
+        }
+    }
+}
+
+pub(crate) fn flush_pending(job_id: &str, force: bool) -> Result<usize> {
+    if !super::grants::job_id_is_safe(job_id) {
+        bail!("invalid job id");
+    }
+    let directory = outbox_root()?.join(job_id);
+    if !directory.is_dir() {
+        return Ok(0);
+    }
+    let mut pending = Vec::new();
+    for entry in std::fs::read_dir(directory)? {
+        let path = entry?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let notice: PendingNotice = match std::fs::read(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_slice(&raw).ok())
+        {
+            Some(notice) => notice,
+            None => continue,
+        };
+        if notice.job_id == job_id {
+            pending.push((path, notice));
+        }
+    }
+    pending.sort_by_key(|(_, notice)| notice.next_attempt_at);
+    let mut delivered = 0;
+    for (path, notice) in pending.into_iter().take(MAX_FLUSH_BATCH) {
+        delivered += usize::from(deliver_pending(&path, notice, force, None)?);
+    }
+    Ok(delivered)
+}
+
+pub(crate) fn flush_all_pending_bounded(limit: usize, budget: Duration) -> Result<usize> {
+    let deadline = Instant::now() + budget;
+    let root = outbox_root()?;
+    if !root.is_dir() {
+        return Ok(0);
+    }
+    let mut pending = Vec::new();
+    for directory in std::fs::read_dir(root)? {
+        let directory = directory?;
+        if !directory.path().is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(directory.path())? {
+            let path = entry?.path();
+            let extension = path.extension().and_then(|value| value.to_str());
+            if extension.is_some_and(|value| value.starts_with("lease-")) {
+                let stale = path
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+                    .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                    .is_some_and(|age| age.as_secs() >= STALE_LEASE_SEC);
+                if stale {
+                    let original = path.with_extension("json");
+                    if original.exists() {
+                        let _ = std::fs::remove_file(&path);
+                    } else {
+                        let _ = std::fs::rename(&path, original);
+                    }
+                }
+                continue;
+            }
+            if extension != Some("json") {
+                continue;
+            }
+            if let Some(notice) = std::fs::read(&path)
+                .ok()
+                .and_then(|raw| serde_json::from_slice::<PendingNotice>(&raw).ok())
+            {
+                pending.push((path, notice));
+            }
+        }
+    }
+    pending.sort_by_key(|(_, notice)| notice.next_attempt_at);
+    let mut delivered = 0;
+    for (path, notice) in pending.into_iter().take(limit.max(1)) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining < Duration::from_millis(25) {
+            break;
+        }
+        let lease = path.with_extension(format!("lease-{}", std::process::id()));
+        if std::fs::rename(&path, &lease).is_err() {
+            continue;
+        }
+        let result = deliver_pending(&lease, notice, false, Some(remaining));
+        // A failed delivery rewrites the lease path. Move it back into the
+        // pending-only index; successful delivery removes it.
+        if lease.exists() {
+            if path.exists() {
+                let _ = std::fs::remove_file(&lease);
+            } else {
+                let _ = std::fs::rename(&lease, &path);
+            }
+        }
+        delivered += usize::from(result.unwrap_or(false));
+    }
+    Ok(delivered)
+}
+
+#[cfg(test)]
+fn flush_all_pending(limit: usize) -> Result<usize> {
+    flush_all_pending_bounded(limit, Duration::from_secs(5))
+}
 
 /// Identity of the trade being reported — everything the executing command
 /// already knows from its own arguments.
@@ -74,8 +299,8 @@ pub(crate) fn notify_swap_outcome(
             // cap-gated — claiming a 500-dollar sell was "within your 50 limit"
             // would be false). The line carries the ACTUAL paid stablecoin's
             // symbol so it matches the swap line above it (PRD copy: USDT).
-            let from_is_quote = super::consent::QUOTE_WHITELIST
-                .contains(&from_arg.to_ascii_lowercase().as_str());
+            let from_is_quote =
+                super::consent::QUOTE_WHITELIST.contains(&from_arg.to_ascii_lowercase().as_str());
             let cap = if auto_mode && from_is_quote {
                 consent
                     .and_then(|c| c.cap_u)
@@ -96,7 +321,11 @@ pub(crate) fn notify_swap_outcome(
             failure_message(&t, &flatten_reason(&format!("{e:#}")), lang)
         }
     };
-    if let Err(e) = super::super::okx_a2a::user_notify(&msg, false) {
+    let idempotency_key = format!(
+        "autotrade-swap:{}",
+        hex::encode(Sha256::digest(format!("{job_id}\0{msg}")))
+    );
+    if let Err(e) = super::super::okx_a2a::user_notify_scoped(&msg, job_id, &idempotency_key) {
         eprintln!("[autotrade] outcome notification failed (non-fatal): {e}");
     }
 }
@@ -214,25 +443,48 @@ pub(crate) fn push_degrade_notice(n: &mut super::card::NotifyOnly, job_id: &str)
     }
     let lang = user_lang::resolve(job_id);
     let msg = degrade_message(job_id, &n.reason, lang);
-    match super::super::okx_a2a::user_notify(&msg, false) {
-        Ok(()) => {
-            n.notification_pushed = true;
-            n.notification_template = String::new();
-            // In-band instruction so even a resumed session holding OLD playbook
-            // text (which says "notify the user with reason+template") won't double-send.
-            n.guidance = "The CLI already delivered this degrade notice to the user — \
+    let idempotency_key = format!(
+        "autotrade-degrade:{}",
+        hex::encode(Sha256::digest(format!("{job_id}\0{}", n.reason)))
+    );
+    let mut delivered = false;
+    let mut last_error = None;
+    for _ in 0..3 {
+        match super::super::okx_a2a::user_notify_scoped(&msg, job_id, &idempotency_key) {
+            Ok(()) => {
+                delivered = true;
+                if let Ok(path) = notice_path(job_id, &idempotency_key) {
+                    let _ = std::fs::remove_file(path);
+                }
+                break;
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    if delivered {
+        n.notification_pushed = true;
+        n.notification_template = String::new();
+        // In-band instruction so even a resumed session holding OLD playbook
+        // text (which says "notify the user with reason+template") won't double-send.
+        n.guidance = "The CLI already delivered this degrade notice to the user — \
                           do NOT run `onchainos agent user-notify` again; just end the turn."
-                .to_string();
-        }
-        Err(e) => {
-            eprintln!(
-                "[autotrade] degrade notification failed (non-fatal, agent fallback keeps the template): {e}"
-            );
-            n.guidance = "CLI push failed — deliver this degrade notice yourself: fill \
-                          `notificationTemplate` with `reason` (localized) and push it via \
-                          `onchainos agent user-notify`."
-                .to_string();
-        }
+            .to_string();
+    } else {
+        let persisted = persist_failed_notice(job_id, &idempotency_key, &msg, 2).is_ok();
+        eprintln!(
+            "[autotrade] degrade notification failed (non-fatal, persisted={persisted}): {}",
+            last_error
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "unknown error".to_string())
+        );
+        n.guidance = if persisted {
+            "CLI push failed, but the notice is persisted in the local outbox for bounded retry. Do not execute a trade; the agent may also use the notification template as an immediate fallback."
+                .to_string()
+        } else {
+            "CLI push and outbox persistence failed — deliver this degrade notice yourself: fill `notificationTemplate` with `reason` (localized) and push it via `onchainos agent user-notify`."
+                .to_string()
+        };
     }
 }
 
@@ -283,10 +535,7 @@ fn short_id(s: &str) -> String {
 
 /// One-line, bounded failure reason: anyhow chains can be multi-line and long.
 fn flatten_reason(raw: &str) -> String {
-    let mut one_line = raw
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let mut one_line = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     const MAX: usize = 300;
     if one_line.chars().count() > MAX {
         one_line = one_line.chars().take(MAX).collect::<String>() + "…";
@@ -311,7 +560,10 @@ mod tests {
     #[test]
     fn success_en_is_single_language_with_tx_and_cap_pause_line() {
         let msg = success_message(&t(), "0xTxHash", "", Some("50 USDT"), true, Lang::En);
-        assert!(msg.contains("[Auto Copy-Trade] Job 0xb5b8…9b35"), "got: {msg}");
+        assert!(
+            msg.contains("[Auto Copy-Trade] Job 0xb5b8…9b35"),
+            "got: {msg}"
+        );
         assert!(msg.contains("swap 25 USDC → PEPE on base"));
         assert!(msg.contains("Tx: 0xTxHash"));
         assert!(msg.contains("50 USDT per-trade auto limit"));
@@ -383,10 +635,21 @@ mod tests {
 
     #[test]
     fn degrade_message_is_single_language_with_reason() {
-        let en = degrade_message("0xb5b8b2b800000000000000000000000000000000000000000000000000009b35", "freshness_expired", Lang::En);
-        assert!(en.contains("job 0xb5b8…9b35") && en.contains("(freshness_expired)"), "got: {en}");
+        let en = degrade_message(
+            "0xb5b8b2b800000000000000000000000000000000000000000000000000009b35",
+            "freshness_expired",
+            Lang::En,
+        );
+        assert!(
+            en.contains("job 0xb5b8…9b35") && en.contains("(freshness_expired)"),
+            "got: {en}"
+        );
         assert!(!en.contains("自动跟单"));
-        let zh = degrade_message("0xb5b8b2b800000000000000000000000000000000000000000000000000009b35", "freshness_expired", Lang::Zh);
+        let zh = degrade_message(
+            "0xb5b8b2b800000000000000000000000000000000000000000000000000009b35",
+            "freshness_expired",
+            Lang::Zh,
+        );
         assert!(zh.contains("[自动跟单]") && zh.contains("freshness_expired"));
         assert!(!zh.contains("[Auto Copy-Trade]"));
     }
@@ -426,5 +689,34 @@ mod tests {
             short_id("0xb5b8b2b800000000000000000000000000000000000000000000000000009b35"),
             "0xb5b8…9b35"
         );
+    }
+
+    #[test]
+    fn failed_notice_is_persisted_with_bounded_backoff() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("notification-outbox-test");
+        std::fs::create_dir_all(&root).unwrap();
+        let home = tempfile::tempdir_in(root).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+
+        persist_failed_notice("job1", "notice-key", "safe user notice", 2).unwrap();
+        let path = notice_path("job1", "notice-key").unwrap();
+        let notice: PendingNotice =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(notice.job_id, "job1");
+        assert_eq!(notice.idempotency_key, "notice-key");
+        assert_eq!(notice.attempts, 3);
+        assert!(notice.next_attempt_at > notice.updated_at);
+        assert!(notice.next_attempt_at - notice.updated_at <= 15 * 60);
+        assert_eq!(flush_pending("job1", false).unwrap(), 0);
+        assert_eq!(flush_all_pending(4).unwrap(), 0);
+        assert!(notice_path("job1", "notice-key").unwrap().exists());
+
+        std::env::remove_var("ONCHAINOS_HOME");
     }
 }

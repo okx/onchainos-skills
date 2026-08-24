@@ -17,11 +17,9 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 
 | Role | Role code | CLI value | Aliases (recognize these as the same role) | Sub-session playbook |
 |---|---|---|---|---|
-| **User Agent** | `1` | `--role user` | User / User Agent / Buyer / Client / 用户 / 买家 / 买方 | [`task-user-sub-playbook.md`](task-user-sub-playbook.md) |
-| **ASP** | `2` | `--role asp` | ASP / Provider / Provider Agent / Seller / Merchant / 提供者 / 商家 / 服务提供商 / 卖家 / 卖方 | [`task-asp.md`](task-asp.md) |
-| **Evaluator** | `3` | `--role evaluator` | Evaluator / 评审员（旧称 Arbitrator / 仲裁者 / 仲裁员，仅用于识别用户输入，不对外展示） | [`task-evaluator.md`](task-evaluator.md) |
-
-<!-- retention: the Evaluator alias cell keeps the legacy words (Arbitrator / 仲裁者 / 仲裁员) as input aliases for recognition only; do not delete them or reduce their occurrences. They are never surfaced to the user — presentation uses Evaluator / 评审员. -->
+| **User Agent** | `1` | `--role user` | User / User Agent / Buyer / Client | [`task-user-sub-playbook.md`](task-user-sub-playbook.md) |
+| **ASP** | `2` | `--role asp` | ASP / Provider / Provider Agent / Seller / Merchant  | [`task-asp.md`](task-asp.md) |
+| **Evaluator** | `3` | `--role evaluator` | Evaluator / 评审员 | [`task-evaluator.md`](task-evaluator.md) |
 
 #### Multi-account agentId lookup
 
@@ -92,15 +90,14 @@ any activation flow and must never be used to hand-compose a notification.
 
 > 🛑 **User sub/backup skip** — if this session was triggered by Activation #1 (system event) or #2 (a2a-agent-chat) AND the resolved role is **user** (`sender.role == 2` or system event routed to user agent), skip Pre-flight entirely. The user session already verified the environment; CLI commands will surface runtime errors if anything changed.
 
-Before any task flow starts, execute **both steps in order**.
+Unless the **User sub/backup skip** above applies, before any task flow starts, execute **both steps in order**:
 
-### Step 1 — Environment check
-
-Follow [`task-preflight.md`](task-preflight.md) to ensure the onchainos binary is installed, up-to-date, and integrity-verified. Do NOT skip this step.
+1. Ensure the shared environment pre-flight has run once in this thread. The normal `okx-ai/SKILL.md` entry performs it. If this file was loaded directly and it has not run, follow [`../../okx-agentic-wallet/_shared/preflight.md`](../../okx-agentic-wallet/_shared/preflight.md) once. Otherwise, do not repeat it.
+2. Always run the task-specific business gate-check after the shared environment pre-flight check.
 
 **Remind the user to complete OpenClaw BootStrap (OpenClaw runtime only, non-blocking).** When the user **is** running inside an OpenClaw runtime (either `OPENCLAW_CLI` or `OPENCLAW_SHELL` is set): if BootStrap has not finished, send the user a one-line strong reminder to finish OpenClaw BootStrap so it stops interrupting the chat. **Continue with the downstream skill-specific pre-flight gates regardless** — do not block the task flow. When the user is **not** running inside an OpenClaw runtime, this is a silent no-op.
 
-### Step 2 — Business gate-check
+### Task-specific business gate-check — REQUIRED
 
 ```bash
 onchainos agent gate-check --role <user|asp|evaluator>
@@ -146,7 +143,6 @@ When dealing with integer values of any of the fields below, **look up the table
 - [`task-cli-reference.md`](task-cli-reference.md) — full CLI argument table
 - [`task-state-machine.md`](task-state-machine.md) — 54 events + 11 statuses
 - [`task-exception-escalation.md`](task-exception-escalation.md) — shared exception rules
-- [`task-preflight.md`](task-preflight.md) — environment check (install, upgrade, integrity)
 - [`task-user-intent-routing.md`](task-user-intent-routing.md) — user session free-form text routing
 - [`task-evaluator-decision-rubric.md`](task-evaluator-decision-rubric.md) — decision methodology
 - [`task-evaluator-staking.md`](task-evaluator-staking.md) — staking flow

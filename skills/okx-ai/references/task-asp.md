@@ -11,8 +11,8 @@ The task state machine has moved into the CLI (`onchainos agent next-action`) �
 ## Deposit-address QR (insufficient-balance — MANDATORY)
 
 🛑 **Rule:** when any ASP command (`dispute raise`, `subscribe-dispute`, etc.) returns a JSON error containing a non-empty `depositAddress` field:
-1. **Render QR**: run `onchainos wallet qrcode --address <depositAddress>` and display the QR under option 1 of the funding list. Do NOT rewrite or drop the 4-option list.
-2. **Relay** (sub-session): if relaying to the user session via `user-notify --content`, translate freely but keep all 4 options and the wallet address intact. The user session's playbook will extract the address and render QR on its side.
+1. **Build notice**: run `onchainos agent funding-notice --chain <chain> --currency <symbol> --shortfall <amount> --deposit-address <addr> --format json` (add optional balance fields only if present).
+2. **Relay**: `displayMode=terminal-unicode` → show `terminalQr` + full notice; `displayMode=image-notify` → localize `contentCanonical`, run `notifyCommandArgs`, put `markdownImage` under option 1.
 
 ---
 
@@ -50,18 +50,18 @@ next-action --role asp --agentId <yours> --message '{"event":"user_attachment_re
 
 > 🛑 All 6 fields (`fileKey`, `digest`, `salt`, `nonce`, `secret`, `filename`) are REQUIRED. Copy each value in FULL from the inbound message — do NOT truncate or abbreviate.
 
-## My Provided Subscriptions (我提供的订阅服务 — provider view)
+## My Provided Subscriptions (provider view)
 
-Trigger: ASP asks for the subscriptions they provide (`我提供的订阅` / `我的订阅服务` / `my provided subscriptions`). Command: `onchainos agent my-subscriptions --role provider` → JSON `{ "list": [ … ] }`. Render each element (localize labels for non-CN users). **Render ALL columns below — never drop 订阅方, 当前周期 or 期数.**
+Trigger: `my provided subscriptions` / `subscriptions I provide`. Command: `onchainos agent my-subscriptions --role provider` → JSON `{ "list": [ … ] }`. Render each item. **Never drop Subscriber, Current Period, or Billing Period.**
 
-| # | 服务 | 订阅方 | 状态 | 当前周期 | 订阅期数 |
+| # | Service | Subscriber | Status | Current Period | Billing Period |
 |---|------|--------|------|---------|------|
-| 1 | {title} | Agent#{buyerAgentId} | {statusName} | {subStartTime}~{subEndTime}（按日期渲染） | {期数} |
+| 1 | {title} | Agent#{buyerAgentId} | {statusName} | {subStartTime}–{subEndTime} (render as dates) | {billingPeriod} |
 
-- **状态**: 直接展示 CLI 返回的 `statusName`（same as user side：ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>），原样输出、不翻译成中文。试用 vs 正式改由「期数」列区分（`trialType==1` 显示"试用期"）。
-- **期数** (按状态分派): `trialType==1` → "试用期"; else `periodIndex` 为合法正整数(> 0) → `第{periodIndex}期`; else (`periodIndex` 为 null 或 ≤ 0) → "—"。
+- **Status**: render CLI `statusName` verbatim (`ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>`). Billing Period distinguishes trial from paid.
+- **Billing Period**: `trialType==1` → `Trial Period`; else positive integer `periodIndex` → `Billing Period {periodIndex}`; else null/non-positive → `—`.
 - Timestamps are **epoch seconds** — render as locale dates.
-- Empty list → "你还没有提供任何订阅服务。" Do NOT invent rows.
+- Empty list → "You have no provided subscriptions." Do NOT invent rows.
 - Read-only display; ASP takes no on-chain action here.
 
 ## Subscription events (`sub_*`)
@@ -73,23 +73,14 @@ NOT treat it as display-only or ignore it.
 
 | Event | Action |
 |---|---|
-| `sub_asp_selected` | Render the new-subscriber notice: "[New Subscription] You have a new subscriber for \"<jobTitle>\". Buyer: <buyerAgentId>. Job <jobId>, current period <subStartTime>–<subEndTime>, payment received: <tokenAmount> <tokenSymbol>. Please begin delivering the service." **Language rule**: English → verbatim; Chinese → use the fixed template, filling `{…}` from the CLI content, no free translation: "[新订阅通知] 您收到「{serviceName}」的新订阅，买家：{buyerAgentId}，任务 {job_id}，本周期 {periodStart}–{periodEnd}，已收款 {amount} {tokenSymbol}。请开始交付服务。"; other languages → faithful translation from EN. End turn. |
-| `sub_complete_notify` / `sub_close_notify` / `sub_failed_notify` | Render the terminal notice (English = the CLI `Content:` verbatim; Chinese → use the fixed template below, no free translation), then follow the returned terminal hint (`session-cleanup`). End turn. |
+| `sub_asp_selected` | Render the CLI's canonical `Content:` per the language rule below. End turn. |
+| `sub_complete_notify` / `sub_close_notify` / `sub_failed_notify` | Render the CLI's canonical terminal `Content:` per the language rule below, then follow `session-cleanup`. End turn. |
 | `sub_asp_agree` / `sub_asp_dispute` | **ASP's own action (agree refund / open a dispute) — no ASP-side push. Silently ignore. End turn.** Owned by the action-command flows (`subscribe-agree-refund` / `subscribe-dispute`), not this notification path. |
 | `sub_user_reject` | **Decision — NOT display-only, do NOT ignore.** The buyer rejected the current period. Call `next-action --role asp`; the CLI returns a `pending-decisions-v2 request-prompt` decision (A = file a dispute for evaluation / B = confirm the refund — ASP-3 copy: `[Action Needed: User Rejection]` with the rejected period, the precise response deadline `{rejectWindowEndsAt}`, and the auto-refund amount). Push that decision to the user per the returned guidance. Limited window (~1 day); if it lapses the backend auto-refunds the period in full. After the user picks, the relay maps to `sub_dispute` → `subscribe-dispute` / `sub_agree_refund` → `subscribe-agree-refund`. |
 | `sub_created` / `sub_cancel` / `sub_trial_into_active` | **Not handled on the ASP side in this slice — silently ignore. End turn.** Buyer-only. |
 | `sub_renew` | Renewal → the **previous period's income is now claimable**. Run `onchainos agent subscribe-asp-claim <jobId> --agent-id <yours>` (claims your own funds — no buyer action, do NOT xmtp-send anything), then push a short localized note via `onchainos agent user-notify`; if the CLI reports nothing claimable, end the turn silently. |
 
-#### ASP `sub_*` language rule (use the fixed template verbatim — no free translation)
+#### ASP `sub_*` language rule
 
 - **English ASP** → send the CLI `Content:` **verbatim**.
-- **Chinese ASP** → do NOT free-translate. Use the fixed Chinese template below for the event,
-  filling each `{…}` slot from the CLI `Content:`. Omit a clause if the corresponding field is absent.
-- **Any other language** → translate faithfully from the CLI EN content.
-
-| Event | Chinese template (use verbatim, fill `{…}` from CLI content) |
-|---|---|
-| `sub_asp_selected` | [新订阅通知] 您收到「{serviceName}」的新订阅，买家：{buyerAgentId}，任务 {job_id}，本周期 {periodStart}–{periodEnd}，已收款 {amount} {tokenSymbol}。请开始交付服务。 |
-| `sub_complete_notify` | [订阅完成] 用户「{serviceName}」的订阅已完成约定的全部续费次数，任务 {job_id} 状态：Completed，服务将于 {periodEnd} 正常结束，无需再继续交付。 |
-| `sub_close_notify` | [订阅已终止] 用户「{serviceName}」的订阅因宽限期内续费扣款失败已终止，任务 {job_id} 状态：Closed，请停止交付服务。 |
-| `sub_failed_notify` | [体验未转化] 用户「{serviceName}」的免费体验未能成功转为正式订阅（原因：{reason}），任务 {job_id} 状态：Closed，无需继续交付。 |
+- **Any other language** → translate the CLI English content faithfully, preserving every field and omitted-clause behavior.

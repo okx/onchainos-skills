@@ -36,8 +36,11 @@
 
 mod common;
 
-use common::{fresh_home, onchainos, parse_stdout_json, run_with_retry, scrubbed};
+use common::{
+    assert_error_contains, fresh_home, onchainos, parse_stdout_json, run_with_retry, scrubbed,
+};
 use serde_json::Value;
+use std::fs;
 
 /// Run `agent validate-listing` offline in an isolated `ONCHAINOS_HOME` sandbox
 /// and return the parsed raw `{ pass, findings }` JSON. Asserts exit 0 (the CSV
@@ -75,6 +78,168 @@ fn findings(result: &Value) -> &Vec<Value> {
     result["findings"]
         .as_array()
         .unwrap_or_else(|| panic!("`findings` is not an array: {result}"))
+}
+
+fn funding_notice_image_dir() -> std::path::PathBuf {
+    let image_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test_tmp")
+        .join("funding notice");
+    fs::create_dir_all(&image_dir).expect("create funding-notice image dir");
+    image_dir
+}
+
+#[test]
+fn funding_notice_outputs_canonical_json_and_png() {
+    let image_dir = funding_notice_image_dir();
+    let output = onchainos()
+        .env_remove("CODEX_THREAD_ID")
+        .args([
+            "agent",
+            "funding-notice",
+            "--chain",
+            "XLayer",
+            "--currency",
+            "USDT",
+            "--shortfall",
+            "0.01",
+            "--deposit-address",
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "--format",
+            "json",
+            "--image-dir",
+            image_dir.to_str().expect("utf8 image dir"),
+        ])
+        .output()
+        .expect("run funding-notice");
+
+    let data = common::assert_ok_and_extract_data(&output);
+    assert_eq!(data["mustLocalize"], true);
+    assert_eq!(data["mustNotifyWithImagePath"], true);
+    assert_eq!(data["mustRunNotifyCommand"], true);
+    assert_eq!(data["mustRepeatInFinalResponse"], true);
+    assert_eq!(data["mustRenderMarkdownImageBelowFirstOption"], true);
+    assert_eq!(data["displayMode"], "image-notify");
+    assert!(data["terminalQr"].is_null());
+    assert_eq!(data["endTurn"], true);
+    assert_eq!(data["chain"], "XLayer");
+    assert_eq!(data["depositChain"], "XLayer");
+    assert_eq!(data["currency"], "USDT");
+    assert_eq!(data["shortfall"], "0.01");
+    assert_eq!(
+        data["depositAddress"],
+        "0x1234567890abcdef1234567890abcdef12345678"
+    );
+
+    let content = data["contentCanonical"].as_str().expect("contentCanonical");
+    for expected in [
+        "Insufficient USDT balance on XLayer",
+        "1. Scan and deposit",
+        "2. Swap",
+        "3. Bridge",
+        "4. Withdraw from OKX",
+        "Gas is paid by the platform",
+        "After topping up, tell me \"I topped up\".",
+    ] {
+        assert!(
+            content.contains(expected),
+            "contentCanonical missing {expected:?}: {content}"
+        );
+    }
+    let notify_command = data["notifyCommand"]
+        .as_str()
+        .expect("notifyCommand");
+    assert!(notify_command.contains("$ONCHAINOS_FUNDING_NOTICE_CONTENT"));
+    assert!(notify_command.contains("--image-path"));
+    assert!(notify_command.contains("'"));
+    let notify_args = data["notifyCommandArgs"]
+        .as_array()
+        .expect("notifyCommandArgs");
+    assert_eq!(notify_args[0], "onchainos");
+    assert_eq!(notify_args[1], "agent");
+    assert_eq!(notify_args[2], "user-notify");
+    assert!(notify_args.iter().any(|arg| arg == "--image-path"));
+    assert!(notify_args
+        .iter()
+        .any(|arg| arg.as_str().is_some_and(|value| value.contains("funding notice"))));
+    let policy = data["displayPolicy"].as_str().expect("displayPolicy");
+    assert!(policy.contains("Non-TTY"));
+    assert!(policy.contains("run notifyCommandArgs"));
+    assert!(policy.contains("put markdownImage under option 1"));
+
+    let image_path = data["imagePath"].as_str().expect("imagePath");
+    let markdown_image = data["markdownImage"].as_str().expect("markdownImage");
+    assert!(markdown_image.starts_with("![QR Code]("));
+    assert!(markdown_image.contains("onchainos-funding-qr-"));
+    let bytes = fs::read(image_path).expect("read generated QR PNG");
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    let _ = fs::remove_file(image_path);
+}
+
+#[test]
+fn funding_notice_unknown_chain_does_not_claim_gas_subsidy() {
+    let image_dir = funding_notice_image_dir();
+    let output = onchainos()
+        .args([
+            "agent",
+            "funding-notice",
+            "--chain",
+            "Base",
+            "--currency",
+            "USDC",
+            "--shortfall",
+            "2.5",
+            "--deposit-address",
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "--format",
+            "json",
+            "--image-dir",
+            image_dir.to_str().expect("utf8 image dir"),
+        ])
+        .output()
+        .expect("run funding-notice");
+
+    let data = common::assert_ok_and_extract_data(&output);
+    let content = data["contentCanonical"].as_str().expect("contentCanonical");
+    assert!(content.contains("Insufficient USDC balance on Base"));
+    assert!(content.contains("2.5 USDC"));
+    assert!(content.contains("Ensure the wallet meets the network gas requirements."));
+    assert!(!content.contains("Gas is paid by the platform"));
+
+    let image_path = data["imagePath"].as_str().expect("imagePath");
+    let _ = fs::remove_file(image_path);
+}
+
+#[test]
+fn funding_notice_accepts_payment_402_reason() {
+    let output = onchainos()
+        .env_remove("CODEX_THREAD_ID")
+        .args([
+            "agent",
+            "funding-notice",
+            "--chain",
+            "XLayer",
+            "--currency",
+            "USDT",
+            "--shortfall",
+            "0.01",
+            "--deposit-address",
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "--reason",
+            "payment-402",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run funding-notice");
+
+    let data = common::assert_ok_and_extract_data(&output);
+    assert_eq!(data["reason"], "payment-402");
+    let image_path = data["imagePath"].as_str().expect("imagePath");
+    assert!(fs::read(image_path)
+        .expect("read generated QR PNG")
+        .starts_with(b"\x89PNG\r\n\x1a\n"));
+    let _ = fs::remove_file(image_path);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -303,6 +468,416 @@ fn validate_listing_a2a_suggest_and_block_together_blocks() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+//  agent autotrade-consent-set --mode pause — local compatibility contract
+// ══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn autotrade_pause_needs_only_job_id_and_keeps_existing_output() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_pause");
+    let job_id = "job_pause_zh";
+
+    for store in ["consent", "grants", "pending"] {
+        let store_dir = dir.join("autotrade").join(store);
+        std::fs::create_dir_all(&store_dir).expect("create autotrade store");
+        std::fs::write(store_dir.join(format!("{job_id}.json")), b"seed")
+            .expect("seed autotrade state");
+    }
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            job_id,
+            "--mode",
+            "pause",
+        ])
+        .output()
+        .expect("run autotrade pause");
+    let data = common::assert_ok_and_extract_data(&output);
+
+    assert_eq!(
+        data,
+        serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id})
+    );
+
+    let consent_path = dir
+        .join("autotrade")
+        .join("consent")
+        .join(format!("{job_id}.json"));
+    let consent: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&consent_path).expect("pause must persist manual policy"),
+    )
+    .expect("parse paused policy");
+    assert_eq!(consent["mode"], "manual");
+
+    for store in ["grants", "pending"] {
+        assert!(
+            !dir.join("autotrade")
+                .join(store)
+                .join(format!("{job_id}.json"))
+                .exists(),
+            "pause must clear the {store} record"
+        );
+    }
+}
+
+#[test]
+fn autotrade_pause_keeps_legacy_agent_id_compatible() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_pause_legacy");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job_pause_legacy",
+            "--agent-id",
+            "5254",
+            "--mode",
+            "pause",
+        ])
+        .output()
+        .expect("run legacy autotrade pause");
+    let data = common::assert_ok_and_extract_data(&output);
+    assert_eq!(data["consentMode"], "pause");
+    assert_eq!(data["cleared"], true);
+}
+
+#[test]
+fn autotrade_non_pause_modes_still_require_agent_id() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_non_pause");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job_manual",
+            "--mode",
+            "manual",
+        ])
+        .output()
+        .expect("run autotrade manual without agent id");
+
+    assert_error_contains(&output, &["--agent-id is required unless --mode pause"]);
+}
+
+#[test]
+fn autotrade_environment_set_upgrades_only_the_existing_policy() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_environment_set");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let consent_dir = dir.join("autotrade/consent");
+    std::fs::create_dir_all(&consent_dir).unwrap();
+    std::fs::write(
+        consent_dir.join("job_environment.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": 1,
+            "jobId": "job_environment",
+            "mode": "auto",
+            "capU": "20",
+            "tradeAmountU": "10",
+            "quoteToken": "usdc",
+            "createdAt": now,
+            "expiresAt": now + 3600
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job_environment",
+            "--agent-id",
+            "8315",
+            "--mode",
+            "environment-set",
+            "--environment",
+            "demo",
+        ])
+        .output()
+        .expect("persist Trade Kit environment");
+    let result = common::assert_ok_and_extract_data(&output);
+    assert_eq!(result["tradeEnvironment"], "demo");
+
+    let stored: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(consent_dir.join("job_environment.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(stored["version"], 3);
+    assert_eq!(stored["mode"], "auto");
+    assert_eq!(stored["capU"], "20");
+    assert_eq!(stored["tradeAmountU"], "10");
+    assert_eq!(stored["quoteToken"], "usdc");
+    assert_eq!(stored["tradeEnvironment"], "demo");
+    assert_eq!(stored["createdAt"], now);
+    assert_eq!(stored["expiresAt"], now + 3600);
+}
+
+#[test]
+fn autotrade_settings_update_persists_all_trade_kit_choices_without_rewriting_policy() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_settings_update");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let consent_dir = dir.join("autotrade/consent");
+    std::fs::create_dir_all(&consent_dir).unwrap();
+    std::fs::write(
+        consent_dir.join("job_settings.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": 2,
+            "jobId": "job_settings",
+            "mode": "auto",
+            "capU": "20",
+            "tradeAmountU": "10",
+            "quoteToken": "usdc",
+            "createdAt": now,
+            "expiresAt": now + 3600
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job_settings",
+            "--agent-id",
+            "8315",
+            "--mode",
+            "settings-update",
+            "--environment",
+            "demo",
+            "--margin-mode",
+            "isolated",
+            "--order-policy",
+            "signal_price_limit",
+        ])
+        .output()
+        .expect("persist complete Trade Kit settings");
+    let result = common::assert_ok_and_extract_data(&output);
+    assert_eq!(result["tradeEnvironment"], "demo");
+    assert_eq!(result["marginMode"], "isolated");
+    assert_eq!(result["orderPolicy"], "signal_price_limit");
+
+    let stored: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(consent_dir.join("job_settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(stored["version"], 3);
+    assert_eq!(stored["mode"], "auto");
+    assert_eq!(stored["capU"], "20");
+    assert_eq!(stored["tradeAmountU"], "10");
+    assert_eq!(stored["quoteToken"], "usdc");
+    assert_eq!(stored["tradeEnvironment"], "demo");
+    assert_eq!(stored["marginMode"], "isolated");
+    assert_eq!(stored["orderPolicy"], "signal_price_limit");
+    assert_eq!(stored["createdAt"], now);
+    assert_eq!(stored["expiresAt"], now + 3600);
+}
+
+#[test]
+fn autotrade_auto_accepts_missing_cap_and_authorizes_any_positive_amount() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_unbounded_auto");
+    let mut set = onchainos();
+    scrubbed(&mut set, &dir);
+    let set_output = set
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job_unbounded_auto",
+            "--agent-id",
+            "8315",
+            "--mode",
+            "auto",
+        ])
+        .output()
+        .expect("persist default auto policy");
+    common::assert_ok_and_extract_data(&set_output);
+
+    let mut check = onchainos();
+    scrubbed(&mut check, &dir);
+    let check_output = check
+        .args([
+            "agent",
+            "autotrade-grant-check",
+            "--job-id",
+            "job_unbounded_auto",
+            "--venue",
+            "dex",
+            "--action",
+            "buy",
+            "--amount",
+            "999999",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("check unbounded auto grant");
+    assert!(check_output.status.success());
+    let result: serde_json::Value =
+        serde_json::from_slice(&check_output.stdout).expect("parse grant-check result");
+    assert_eq!(result, serde_json::json!({"ok": true}));
+}
+
+#[test]
+fn autotrade_consent_request_suppresses_first_time_card_for_existing_policy() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_consent_request_existing_policy");
+
+    for (job_id, mode, extra_args) in [
+        (
+            "job_auto",
+            "auto",
+            vec!["--cap", "10", "--trade-amount", "1"],
+        ),
+        ("job_manual", "manual", Vec::new()),
+    ] {
+        let mut set = onchainos();
+        scrubbed(&mut set, &dir);
+        let mut set_args = vec![
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            job_id,
+            "--agent-id",
+            "8315",
+            "--mode",
+            mode,
+        ];
+        set_args.extend(extra_args);
+        let set_output = set.args(set_args).output().expect("persist consent policy");
+        common::assert_ok_and_extract_data(&set_output);
+
+        let mut request = onchainos();
+        scrubbed(&mut request, &dir);
+        let output = request
+            .args([
+                "agent",
+                "autotrade-consent-request",
+                "--job-id",
+                job_id,
+                "--agent-id",
+                "8315",
+                "--delivery-id",
+                "msg:delivery-1",
+                "--signal-type",
+                "spot",
+            ])
+            .output()
+            .expect("request first-time consent with an existing policy");
+        let data = common::assert_ok_and_extract_data(&output);
+
+        assert_eq!(data["decision"], false);
+        assert_eq!(data["decisionPushed"], false);
+        assert_eq!(data["reason"], "consent_already_configured");
+        assert_eq!(data["jobId"], job_id);
+        assert_eq!(data["deliveryId"], "msg:delivery-1");
+        assert_eq!(data["consentMode"], mode);
+    }
+}
+
+#[test]
+fn user_notify_image_path_must_exist() {
+    let (_home, dir) = fresh_home("cli_agent_user_notify_image");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "user-notify",
+            "--content",
+            "notice",
+            "--image-path",
+            "/tmp/onchainos-missing-qr.png",
+        ])
+        .output()
+        .expect("run user-notify with missing image");
+
+    assert_error_contains(&output, &["--image-path file not found"]);
+}
+
+#[test]
+fn user_notify_rejects_local_image_links_in_content() {
+    let (_home, dir) = fresh_home("cli_agent_user_notify_local_image_link");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "user-notify",
+            "--content",
+            "![QR Code](file:///tmp/deposit_usdt.png)",
+        ])
+        .output()
+        .expect("run user-notify with local image link");
+
+    assert_error_contains(&output, &["use --image-path <file>"]);
+}
+
+#[test]
+fn service_match_help_describes_pagination_headers_and_price_range() {
+    let (_home, dir) = fresh_home("cli_agent_service_match_help");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args(["agent", "service-match", "--help"])
+        .output()
+        .expect("run service-match help");
+
+    assert_eq!(output.status.code(), Some(0));
+    let help = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "Search marketplace Services by capability, ASP, Service name, or price range.",
+        "Results include searchAfter, hasMore, unmatchReason",
+        "--agentic-id <AGENTIC_ID>",
+        "--min-payment-token-amount <MIN_PAYMENT_TOKEN_AMOUNT>",
+        "--max-payment-token-amount <MAX_PAYMENT_TOKEN_AMOUNT>",
+        "--search-after <SEARCH_AFTER>",
+        "Initial request without filters",
+        "Continuation request",
+    ] {
+        assert!(help.contains(expected), "missing {expected:?} in help:\n{help}");
+    }
+    assert!(!help.contains("      --format "));
+    assert!(!help.contains("backend raw data payload"));
+}
+
+#[test]
+fn hidden_autotrade_watch_precheck_is_callable_and_rejects_an_unsafe_job_id_locally() {
+    let (_home, dir) = fresh_home("cli_agent_autotrade_watch_precheck");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-watch-precheck",
+            "--job-id",
+            "../unsafe",
+        ])
+        .output()
+        .expect("run autotrade-watch-precheck");
+
+    assert_error_contains(&output, &["invalid job id"]);
+}
+
+// ════════════════════════════════════════════════════════════════════════
 //  agent create / update — §2.2 normalize_service seam (live, wallet-gated)
 // ════════════════════════════════════════════════════════════════════════════
 //

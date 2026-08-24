@@ -1,16 +1,14 @@
 # Invariants — rendering rules, id ladder, fields, commands
 
-Load this file when: rendering a card / diff / detail view, resolving `#<id>`, translating CLI labels, or handling `--service` fields.
-
 ---
 
 ## Lexicon (prose / Q&A / post-success rows when CLI label is absent)
 
 - **Roles:** `user` → **User** / 用户 · `asp` → **ASP** / 服务提供商 · `evaluator` → **Evaluator** / 评审员 — each rendered as its localized label in the conversation language. Never show the raw enum token, never legacy nouns (buyer/seller/arbitrator/仲裁者/仲裁员 or their localized equivalents), never a bilingual parenthetical. Legacy "arbitrator"-family words (in any language) are input aliases — recognize them on input, but always render the localized **Evaluator** label on output (`评审员` in Chinese, `Evaluator` in English).
-- **Service type:** A2MCP → **API service** · A2A → **agent to agent**. Gloss once per table: "API service = pay-per-call, fixed price; agent to agent = per-call or monthly-subscription pricing (one or the other)." Never raw A2MCP/A2A.
-- **Stars:** render `★ <value>` from CLI's `ratingStars` / `feedbackRate` / `average` **directly** — never divide by 20, never show raw 0–100. Null/0 context-split: **search** rows → `null`=`—`, `0`=`No rating yet`; **list / detail / feedback** → no rating = `No rating yet` (never `—`).
-- **Fee:** stored/sent as a plain numeric string (`"10"`); **displayed** as `N USDT` (USDT is implicit — the renderer appends it). Both API service (A2MCP) and agent to agent (A2A) support a `0` fee → an explicit `0` displays as `0 USDT` (a free service). An empty single-purchase `fee` (`""`) means "no per-call price" (a subscription-priced A2A service) → display the Fee row as `—`, with the price in the Subscription row. A2MCP with no fee → `—` (missing required fee — not `free`, since A2MCP requires a fee at create/update). An A2A service with **neither** a fee nor a subscription set (a legacy/backend-anomalous state — current registration always requires exactly one) → `free`.
-- **Subscription (A2A only):** the `subscription[]` array carries monthly pricing tiers `{interval:"month", fee:"N"}`. **Displayed** as `N USDT / month` per tier; an empty `[]` displays as `—` (no subscription). A2MCP never has one. Fee and Subscription are **mutually exclusive** on A2A — a service shows **exactly one** of them as a real price and the other as `—` (never both real, never both `—`).
+- **Service type:** display the raw enum exactly: `A2MCP` → **A2MCP** and `A2A` → **A2A**. This rule applies everywhere the service type is user-visible, including prompts, tables, cards, diffs, search results, details, errors, and post-success output. Never translate, localize, expand, gloss, alias, or rewrite either value (for example, never display "API service", "agent to agent", or "agent-to-agent" as the type).
+- **Stars:** render the CLI's `ratingStars` / search-table `rating` / service-match `asp.rating` / feedback-list `average` **directly** — never divide by 20 skill-side, never show raw 0–100. Null/0 context-split: **search / service-match** rows → `null`=`—`, `0`=`No rating yet`; **list / detail / feedback** → no rating = `No rating yet` (never `—`).
+- **Fee:** stored/sent as a plain numeric string (`"10"`); a non-zero fee is **displayed** as `N USDT` (USDT is implicit — the renderer appends it). A numeric zero in any normal representation (`0`, `0.0`, `"0"`, `"0.000000"`) is **always displayed as the localized `Free` label** (`免费` in Chinese, `Free` in English), never `0`, `0 USDT`, or another zero amount. An empty single-purchase `fee` (`""`) means "no per-call price" (a subscription-priced A2A service) → display the Fee row as `—`, with the price in the Subscription row; empty/missing is not zero and must not become `Free`. A2MCP with no fee → `—` (missing required fee). An A2A service with **neither** a fee nor a subscription set (a legacy/backend-anomalous state — current registration always requires exactly one) → the localized `Free` label.
+- **Subscription (A2A only):** the `subscription[]` array carries monthly pricing tiers `{interval:"month", fee:"N"}`. A non-zero tier is **displayed** as `N USDT / month`; a zero tier is displayed as the localized `Free` label, never `0 USDT / month`. An empty `[]` displays as `—` (no subscription). A2MCP never has one. Fee and Subscription are **mutually exclusive** on A2A — a service shows **exactly one** of them as a real price or `Free` and the other as `—` (never both populated, never both `—`).
 - **Free trial (A2A subscription only):** `freeTrial` is a duration in **hours**; the skill only ever sets the fixed 3-day value `"72"`. **Displayed** as its duration — `3 days` (whole days collapse to a day count; otherwise `<N> hours`) — in the Free trial column/row; absent, single-fee A2A, or A2MCP → `—`. **Address:** lowercase `0x…1234`. **Reviewer** slot = "reviewer", never "creator".
 
 ## Legacy role words — rename prompt (Evaluator)
@@ -42,7 +40,7 @@ When CLI returns `card[]` / `cells[]` plus `roleLabel` / `statusLabel` / `approv
 ## CLI output fields — translate before rendering
 
 - `roleLabel` / `statusLabel` / `approvalLabel`
-- Service type values: "API service" / "agent to agent"
+- Service type values: exact raw enum `A2MCP` / `A2A`; never translate or rewrite
 - Placeholder strings: "(not set)" / "default" / "No rating yet" / "(no comment)" / "free"
 - `findings[].message` — the unified per-rule user-facing message text (English-canonical), and the ONLY rule-message field in the output. Translate it into the SKILL §Language-Lock language, then render **as-is** on the offending field row. Each finding also carries `code` (fine-grained diagnostic, e.g. `U1`/`N1`) for grouping/diagnostics only, **never shown to the user** (the canonical rule id is deliberately NOT serialized). Several sub-checks on the SAME field can carry the SAME `message`: **de-duplicate by (`field`, `message`) and render that sentence ONCE per field** (do not repeat the identical sentence per sub-check). (Legacy responses may still carry `issue`/`fix` instead of `message` — if so, translate and render `<issue> → <fix>` as before.)
 
@@ -65,9 +63,9 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
 
 **Confirmation requirement for any reformat/draft (non-overridable):** reformatting or drafting is a *draft*, never an authorization to commit silently. Whenever you reshape the user's words into the multi-line description, you MUST (1) flag every affected row on the confirmation card / diff card with an explicit marker — e.g. ` ✏️ drafted from your words — please review` — so the user can tell Claude-rewritten content from their own verbatim input, and (2) wait for the normal card confirm (Reply **1**) before the write. Never let reformatted/drafted content reach the chain presented as the user's literal input. If the user flags any drafted row as wrong, re-collect that field from their own words and redraw — do not argue or keep your draft.
 
-## Commands (11 `onchainos agent` subcommands — you invoke them, never show them)
+## Commands (12 `onchainos agent` subcommands — you invoke them, never show them)
 
-`create · pre-check · update · get-my-agents · get-agents · activate · deactivate · upload · search · service-list · feedback-list`.
+`create · pre-check · update · get-my-agents · get-agents · activate · deactivate · upload · search · service-match · service-list · feedback-list`.
 (`get` is a hidden dual-mode read alias — prefer `get-my-agents` for list and `get-agents --agent-ids` for detail.) `feedback-submit` is a task-marketplace command (post-task rating) — not invoked by any identity flow.
 
 - `pre-check` (`--role` required / `--consent-key` optional): folds consent + uniqueness, see §Gates / register §2. Auto/internal — never shown; outputs (`canCreate` etc.) rendered inline.
@@ -76,7 +74,9 @@ Never invent or borrow a pre-check id; never emit a bare `# `.
 - `consent` has no public subcommand — driven by `pre-check`.
 - Never suggest `xmtp-sign`; no `--address` (signs with current wallet).
 
-Array fields: create/update/get-agents/get-my-agents/search → `list`; feedback-list → `items` or `list` (backend inconsistent; CLI normalizes both); service-list → nested `services`.
+Array fields: create/update/get-agents/get-my-agents → `list`; search → `table.rows`; service-match → raw
+Agent/Service match payload plus ready-to-render `asp.rating`; feedback-list → `items` or `list` (backend inconsistent; CLI normalizes both);
+service-list → nested `services`.
 
 ## Input contract — `--service` JSON + flag gotchas (single source of truth)
 
@@ -86,7 +86,7 @@ Array fields: create/update/get-agents/get-my-agents/search → `list`; feedback
 |---|---|---|
 | `serviceName` | yes | service name (5–30) |
 | `serviceDescription` | yes | parts on separate lines. Part count & meaning follow **serviceType only** (pricing model is irrelevant): **A2MCP → 4 parts, each prefixed `1.`/`2.`/`3.`/`4.` plus its bracketed label (request description — see §A2MCP `serviceDescription` structure)**; **A2A → up to 3 parts, identical for per-call and subscription pricing, no numbering prefix required** — `1.` core-capability summary (**required** — capability points + who it's for, plus what kind of signals for a signal service) · `2.` what the user must provide (**optional** — e.g. `1. wallet address 2. amount 3. chain`) · `3.` delivery note (**optional** — delivery format, plus copy-trading notes for a signal service). Recommended: total ≤1000 CJK chars (no per-part length limit). **The part counts above are collection-time guidance only — `validate-listing` has NO paragraph-count rule, so subscription and per-call services are validated identically and no shape is ever rejected for its paragraph count. Advisory (`severity:"suggest"`, never blocks `pass`; register §4): the A2A total-length finding. Skill-layer A2A semantic suggestions fire ONLY when the description lacks a core-capability introduction; otherwise no semantic description suggestion is shown. Still blocking: a test marker and an empty description (every service type), and a URL (A2A only — an A2MCP request description must carry the endpoint URL of its `curl` example); A2MCP additionally uses the blocking request-description check (§A2MCP `serviceDescription` structure).** Length is counted in **East-Asian display width** (CJK = 2, ASCII = 1) |
-| `serviceType` | yes | raw enum `A2MCP` (API service) or `A2A` (agent to agent) — never the localized label |
+| `serviceType` | yes | raw enum `A2MCP` or `A2A`; display this exact value unchanged everywhere |
 | `fee` | A2MCP yes / A2A: exactly one real price across `fee` & `subscription` | a **plain number as a JSON string**, e.g. `"10"` (quoted — never a bare number `10`). USDT is the implicit, only currency; **no currency suffix/symbol**, ≤6 dp. `"10 USDT"` / a fee carrying any localized currency word or symbol → rejected (P1). Both keys are always transmitted; **exactly one** carries a real price — A2A subscription-priced → send an empty `fee` (`""`) alongside the `subscription` (P2 if neither has a price, P6 if both do) |
 | `subscription` | **A2A only** | array of monthly tiers `[{"interval":"month","fee":"10"}]`. `interval` currently limited to `"month"` (P4 otherwise); each tier `fee` follows the same plain-number rule (P5 otherwise). Empty `[]` = no subscription. **Forbidden on A2MCP** (P3). An A2A service carries **exactly one** of `fee` XOR a non-empty `subscription` — never neither (P2), never both (P6). |
 | `freeTrial` | **A2A subscription only, optional** | free-trial duration in **hours** as a plain-number string. The skill offers a **fixed 3-day** trial → send `"72"` when the user opts in, **omit entirely** when they don't (never `""`, never `"0"`). Only valid alongside a non-empty `subscription` — **forbidden on a single-fee A2A and on A2MCP** (P7); must be a positive integer (P8). |

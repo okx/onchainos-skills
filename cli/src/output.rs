@@ -51,6 +51,29 @@ pub fn success<T: Serialize>(data: T) {
     println!("{}", to_agent_json(&out).unwrap());
 }
 
+#[derive(Debug)]
+pub struct CliFundingBlocked {
+    pub data: Value,
+}
+
+impl std::fmt::Display for CliFundingBlocked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "insufficient balance")
+    }
+}
+
+impl std::error::Error for CliFundingBlocked {}
+
+pub fn error_data(data: Value) {
+    let out = JsonOutput {
+        ok: false,
+        data: Some(data),
+        error: None,
+        notifications: payment_notify::drain_events(),
+    };
+    println!("{}", to_agent_json(&out).unwrap());
+}
+
 // ── Bespoke top-level `{ok,reason?}` (autotrade-grant-check) ──────────────
 //
 // A deliberately-frozen process contract (cli_command_spec.md / architecture.md

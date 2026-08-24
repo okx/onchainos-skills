@@ -1,10 +1,10 @@
 ---
 name: okx-agent-payments-protocol
-description: "Use when an agent hits HTTP 402 / payment-required, or the user mentions x402, x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, permit2, upto, metered billing, a payment channel / voucher / session, channelId / channel_id, opening / closing / topping up / settling / refunding a channel, a paymentId or a2a_ link, creating / checking a payment link, A2MCP / an A2MCP endpoint, or sending a request to / calling an Agent's endpoint with a concrete endpoint URL. Covers x402 (exact, exact+Permit2, upto, aggr_deferred), MPP (charge / session), and a2a-pay paymentId flows. Any close / topup / settle / voucher / refund near a channel_id or session is an MPP mid-session op. Two-phase quote/pay: `payment quote`, `payment pay --payment-id`, `decode-receipt`. The full bilingual trigger list (including Chinese) lives in the skill body."
+description: "For agent payments and paid endpoints via x402, MPP, payment links, a2a-pay, and HTTP-payment recurring or metered billing. Use it for HTTP 402/payment-required; paid Agent or A2MCP endpoints; x402/Permit2; MPP channels, vouchers, or sessions; HTTP-payment subscriptions; or paymentId/link operations or status. Trigger phrases: x402/x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, x402 exact/exact+Permit2/upto/aggr_deferred, MPP charge/session, channelId/channel_id, payment-channel voucher/topup/settle/refund, metered billing, paymentId, a2a_, payment link, A2MCP, paid endpoint, and HTTP 402 period/permit2_subscription."
 license: MIT
 metadata:
   author: okx
-  version: "4.5.0"
+  version: "4.5.10"
   homepage: "https://web3.okx.com"
 ---
 
@@ -125,19 +125,38 @@ candidates, and writes a `paymentId`.
 Read `data`:
 - `summary` — the human one-liner. `needsConfirm` is always true here.
 - `candidates[]` (with `recommended:true`) and `alternatives[]` — the ranked schemes. Each carries `acceptsIndex` — its position in `accepts[]` (the ranked order differs from `accepts[]`, so never treat a candidate's list position as the index).
+- Every candidate also carries `balanceStatus` (`sufficient` / `insufficient` / `unavailable`), `availableAmount`, `requiredAmount`, and `shortfall`. Before the user selects a method, display only the status and (when insufficient) the shortfall alongside each method — **do not display `depositAddress`, generate a QR, or send a funding notice yet**.
 - `missingParams[]` + `merchantBody` — params the CLI could not fill; find the rest in `merchantBody`.
 - `walletError` — if `login_required`, tell the user to log in, then re-quote.
 - `recommended:null` on every candidate ⇒ no balance anywhere; present the list and ask.
 
 ### Step A3 — Confirm (round 2)  ⚠ MANDATORY — never skip
-Use `AskUserQuestion` to confirm the **full** payment terms — the same set Step A4
-shows, so the buyer always sees where the money goes before signing:
+Confirm the **full** payment terms — the same set Step A4 shows, so the buyer
+always sees where the money goes before signing. Use `AskUserQuestion` for a
+sufficient candidate; the insufficient-candidate funding card described below
+replaces it as the one confirmation surface:
 - **Network**: `chainName` (`chainId`) of the chosen candidate
 - **Token / amount**: `amountHuman` `tokenSymbol` (for the `upto` scheme this is an
   authorization cap — render it as "up to `amountHuman`", not a fixed charge)
 - **Scheme**: the chosen candidate's `scheme`
 - **Pay to**: the challenge `recipient` (the `payTo` address)
 - any `missingParams`
+
+If the selected candidate is `insufficient`, use one funding-first card:
+
+1. Run `onchainos agent funding-notice --chain <chainName> --currency <tokenSymbol> --available <availableAmount> --required <requiredAmount> --shortfall <shortfall> --deposit-address <depositAddress> --deposit-chain <chainName> --reason payment-402 --format json`.
+2. Localize `contentCanonical`, preserving balance, address, four funding
+   options, and one gas line only: X Layer = **platform-paid gas; no OKB or other
+   native token required**; other chains = generic gas warning.
+3. Follow `displayMode`: `image-notify` → call `user-notify --image-path` once;
+   `terminal-unicode` → include `terminalQr`. QR failure → full text + address.
+
+Offer `funded`, `cancel`, and—only if available—`choose another payment method`;
+never advertise `pay anyway` or ask generic `yes/no`. Route: `funded` → re-quote;
+alternative → show other sufficient entries from `candidates[] + alternatives[]`
+(re-quote first if expired), then confirm once using `acceptsIndex`; `cancel` → stop. An unsolicited, unambiguous
+request to pay despite the shortfall is that single authorization; ambiguous
+`yes` is not. Do not run `funding-check` or add a hard balance gate.
 
 Pass the chosen candidate's **`acceptsIndex`** as `--selected-index`
 (NOT its position in `candidates[]`/`alternatives[]`) so the CLI signs exactly the
@@ -291,6 +310,10 @@ When it applies → **load `references/multi-scheme.md`** and follow it end to e
 
 **⚠️ MANDATORY (when run): Display details and STOP to wait for explicit user confirmation. Do NOT call `onchainos wallet status` or any other tool until the user confirms.**
 
+For a quote-flow candidate, also show its `balanceStatus`; when insufficient,
+show `availableAmount`, `requiredAmount`, and `shortfall`, then follow Step A3's
+single funding-first card and action table.
+
 For **`accepts`-based 402** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1):
 
 > This resource requires payment via the **OKX Agent Payments Protocol**:
@@ -399,7 +422,7 @@ After a successful payment + response, suggest conversationally:
 
 | Just completed | Suggest |
 |---|---|
-| `payment quote` returned `needsConfirm:true` | `AskUserQuestion` to confirm, then `payment pay --payment-id <id> --selected-index <n> --yes` |
+| `payment quote` returned `needsConfirm:true` | Confirm once: use `AskUserQuestion` when sufficient, or the adaptive QR-enriched confirmation (`image-notify` PNG / `terminal-unicode`) when insufficient; then `payment pay --payment-id <id> --selected-index <n> --yes` |
 | `payment quote` returned `data.mcpTools[]` (MCP-transport, no `paymentId`) | pick a tool per the user's intent, then `payment quote <url> --tool <name> --param k=v …` to trigger the 402 (see `references/a2mcp-mcp.md`) |
 | `payment pay` returned `status:"success"` | Report `txHash`; if a `PAYMENT-RESPONSE` header is present, `payment decode-receipt --header <b64>` |
 | `payment pay` returned `status:"pending"` | `payment a2a-pay status --payment-id <id> --wait` (a2a) or await the facilitator callback |

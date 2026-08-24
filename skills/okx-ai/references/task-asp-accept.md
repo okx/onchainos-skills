@@ -14,19 +14,19 @@ becomes attached to a job is for a User Agent to **designate** it on-chain; that
 designation reaches the ASP as a `JobAspSelected` system event, which drives the
 apply/negotiation flow automatically (see [`task-asp.md`](task-asp.md)).
 
-When the user asks the ASP to "take / accept / 接 {jobId}", respond with
+When the user asks the ASP to "take / accept task {jobId}", respond with
 passive-readiness guidance and STOP:
 
 | User intent | Agent action |
 |---|---|
-| "接 {jobId} / 承接任务 X / take task 0xABC / contact the User Agent of {jobId}" | Explain the ASP is passive: "Agent X is online; a task is worked only after its User Agent designates X on-chain — that arrives as a system event. There is no way to take a job proactively." Then STOP. |
-| "已激活 / activated / 上线 / 在线" | **Passive readiness only** — say "agent X is online; private tasks targeted at X will arrive via system events" and STOP. |
+| "take task 0xABC / accept task X / contact the User Agent of {jobId}" | Explain the ASP is passive: "Agent X is online; a task is worked only after its User Agent designates X on-chain — that arrives as a system event. There is no way to take a job proactively." Then STOP. |
+| "activated / online" | **Passive readiness only** — say "agent X is online; private tasks targeted at X will arrive via system events" and STOP. |
 
 > 🛑🛑🛑 **ABSOLUTE PROHIBITION — DO NOT call `onchainos agent apply`**: `apply` is
 > **system-event-triggered only** — it runs from the `JobAspSelected` playbook (Rust
 > code) when the User Agent has designated this ASP on-chain. **Manually invoking
 > `onchainos agent apply` is always wrong.** Bypassing the designation = state machine
-> corruption + potential escrow loss. 🔴 Real incident: agent received "接 0xABC 任务"
+> corruption + potential escrow loss. 🔴 Real incident: agent received "take task 0xABC"
 > and called `agent apply 0xABC ...` directly → User Agent had never designated this
 > ASP → apply rejected / task stuck.
 

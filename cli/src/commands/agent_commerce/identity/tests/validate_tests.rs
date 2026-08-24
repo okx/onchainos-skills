@@ -796,6 +796,50 @@ fn service_name_different_from_agent_passes_s3() {
     assert!(!codes(&r).contains(&"S3".to_string()), "got {:?}", codes(&r));
 }
 
+// ─── S2: service names must be unique within one ASP listing ──────────────
+
+#[test]
+fn duplicate_service_names_fail_s2() {
+    let services = r#"[
+        {"serviceName":"Trade Executor","serviceDescription":"Executes trades.","serviceType":"A2A","fee":"5"},
+        {"serviceName":"Trade Executor","serviceDescription":"Executes other trades.","serviceType":"A2A","fee":"6"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+
+    assert!(codes(&r).contains(&"S2".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass, "duplicate service names must block registration");
+    assert!(
+        r.findings
+            .iter()
+            .any(|f| f.code == "S2" && f.field == "service[1].name"),
+        "the repeated service entry should be identified"
+    );
+}
+
+#[test]
+fn duplicate_service_names_ignore_ascii_case_and_whitespace() {
+    let services = r#"[
+        {"serviceName":"Trade Executor","serviceDescription":"Executes trades.","serviceType":"A2A","fee":"5"},
+        {"serviceName":"  trade executor  ","serviceDescription":"Executes other trades.","serviceType":"A2A","fee":"6"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+
+    assert!(codes(&r).contains(&"S2".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
+fn distinct_service_names_pass_s2() {
+    let services = r#"[
+        {"serviceName":"Trade Executor","serviceDescription":"Executes trades.","serviceType":"A2A","fee":"5"},
+        {"serviceName":"Portfolio Analyst","serviceDescription":"Analyzes portfolios.","serviceType":"A2A","fee":"6"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+
+    assert!(!codes(&r).contains(&"S2".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "distinct valid services should pass: {:?}", codes(&r));
+}
+
 // ─── S4: service name contains price info ─────────────────────────────────
 
 #[test]
@@ -1476,7 +1520,7 @@ fn no_ordinal_suffix_integration_fails_n3() {
 
 #[test]
 fn service_name_findings_unify_to_same_message() {
-    // S1 (length) + S3 (duplicates agent) + S4 (price) + S6 (test marker) all
+    // S1 (length) + S2/S3 (duplicates) + S4 (price) + S6 (test marker) all
     // map to the service-name message. Craft a name that hits S1 + S6 + S4.
     // "ab(test)USDT" < 5 chars is not easy to combine, so test one multi-hit
     // combo: an 4-char name with "free" and a test marker.

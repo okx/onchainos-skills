@@ -58,7 +58,8 @@ pub async fn handle_dispute_raise(
             let e = e.context(format!(
                 "Raising a dispute requires a deposit >= 5% of the task amount ({required} {token_symbol}; task amount {task_amount} {token_symbol})"
             ));
-            return Err(common::deposit_qr::enrich_blocking_at(e, &address));
+            let enriched = common::deposit_qr::enrich_blocking_at(e, &address);
+            return print_dispute_funding_block_from_error(enriched);
         }
     }
 
@@ -104,4 +105,25 @@ pub async fn handle_dispute_raise(
     println!("⚠️  Stage 1 complete — **end this turn** and wait for the on-chain `dispute_approved` system notification:");
     println!("    - Do NOT call `dispute confirm` in the same turn");
     Ok(())
+}
+
+fn print_dispute_funding_block_from_error(err: anyhow::Error) -> Result<()> {
+    match err.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
+        Some(ib) => {
+            let mut warning = common::deposit_qr::balance_warning_base(ib);
+            if let Some(address) = ib.deposit_address.as_deref() {
+                warning["depositAddress"] = serde_json::Value::String(address.to_string());
+                warning["depositChain"] = serde_json::Value::String(ib.deposit_chain.clone());
+            }
+            Err(crate::output::CliFundingBlocked {
+                data: common::funding_notice::funding_blocked_envelope(
+                    &warning,
+                    "dispute-bond",
+                    "Dispute bond",
+                ),
+            }
+            .into())
+        }
+        None => Err(err),
+    }
 }

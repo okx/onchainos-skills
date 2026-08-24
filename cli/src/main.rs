@@ -123,16 +123,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::payment::PaymentCommand,
     },
-    /// Trading competition: list, join, rank, claim rewards (Agentic Wallet exclusive)
-    Competition {
-        #[command(subcommand)]
-        command: commands::competition::CompetitionCommand,
-    },
-    /// Register for the OKX.AI Trading Hackathon with an existing Trading ASP
-    Hackathon {
-        #[command(subcommand)]
-        command: commands::hackathon::HackathonCommand,
-    },
     /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
@@ -244,8 +234,6 @@ async fn run() {
         Commands::Wallet { command } => commands::agentic_wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::payment::execute(command).await,
-        Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
-        Commands::Hackathon { command } => commands::hackathon::execute(&ctx, command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Strategy { command } => {
             commands::agentic_wallet::strategy::execute(&ctx, *command).await
@@ -290,29 +278,38 @@ async fn run() {
                         // {ok,reason?}); just exit with its code, no standard error envelope.
                         // audit::log already fired above for both allow and deny.
                         Ok(b) => std::process::exit(b.0),
-                        Err(e) => match e.downcast::<commands::sink::CodedError>() {
-                            Ok(c) => {
-                                output::error_coded_details(
-                                    &c.code,
-                                    c.field.as_deref(),
-                                    &c.message,
-                                    c.data.as_ref(),
-                                    c.next_steps.as_ref(),
-                                );
-                                std::process::exit(1);
+                        Err(e) => {
+                            let e = match e.downcast::<output::CliFundingBlocked>() {
+                                Ok(blocked) => {
+                                    output::error_data(blocked.data);
+                                    std::process::exit(1);
+                                }
+                                Err(e) => e,
+                            };
+                            match e.downcast::<commands::sink::CodedError>() {
+                                Ok(c) => {
+                                    output::error_coded_details(
+                                        &c.code,
+                                        c.field.as_deref(),
+                                        &c.message,
+                                        c.data.as_ref(),
+                                        c.next_steps.as_ref(),
+                                    );
+                                    std::process::exit(1);
+                                }
+                                Err(e) => match e.downcast::<
+                                    commands::agent_commerce::task::common::deposit_qr::InsufficientBalanceError,
+                                >() {
+                                    Ok(ib) => {
+                                        output::error_insufficient_balance(&ib);
+                                        std::process::exit(1);
+                                    }
+                                    Err(e) => {
+                                        output::error(&format!("{e:#}"));
+                                        std::process::exit(1);
+                                    }
+                                },
                             }
-                            Err(e) => match e.downcast::<
-                                commands::agent_commerce::task::common::deposit_qr::InsufficientBalanceError,
-                            >() {
-                                Ok(ib) => {
-                                    output::error_insufficient_balance(&ib);
-                                    std::process::exit(1);
-                                }
-                                Err(e) => {
-                                    output::error(&format!("{e:#}"));
-                                    std::process::exit(1);
-                                }
-                            },
                         }
                     },
                 },

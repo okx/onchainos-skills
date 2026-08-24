@@ -2,8 +2,8 @@
 //!
 //! One file per `jobId` at `<onchainos_home>/autotrade/consent/<jobId>.json`,
 //! written **whole** in one shot. The consent record is the client-side gate that
-//! sits AFTER the exact-Active backend subscription gate. `copyTrade` is ignored;
-//! the model-driven session uses this policy when handling an inbound signal:
+//! sits AFTER the exact-Active backend subscription gate. The model-driven session
+//! uses this policy when handling an inbound signal:
 //!
 //! - no record (first time) ⇒ ask the user a three-way decision, then remember it
 //! - `Auto` + amount ≤ `capU` ⇒ auto-execute (execution card)
@@ -21,15 +21,149 @@
 //! single source of truth exposed through `autotrade-grant-check`, so the
 //! Skill-selected execution tool enforces the same client-side cap.
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use super::super::user_lang::Lang;
 use super::amount::Decimal;
 use super::grants::job_id_is_safe;
+use super::trade_kit::TradeEnvironment;
 
 /// The current consent-file schema version.
-pub const CONSENT_VERSION: u32 = 1;
+pub const CONSENT_VERSION: u32 = 3;
+
+/// Versioned, trusted metadata for a saved Active-subscription delivery.
+///
+/// The deliverable itself remains untrusted market data. This record only proves
+/// which local artifact and stable delivery id were admitted by the CLI, so a
+/// user-decision relay can safely resume after the original model turn ended.
+pub const DELIVERY_CONTEXT_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeliveryContext {
+    pub version: u32,
+    pub job_id: String,
+    pub agent_id: String,
+    pub provider_agent_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_session_key: Option<String>,
+    pub delivery_id: String,
+    pub saved_path: String,
+    pub deliverable_type: String,
+    pub received_at_ms: u64,
+}
+
+fn bounded_json_after_marker(raw: &str) -> Option<serde_json::Value> {
+    const MARKER: &str = "[ACTIONABLE_TRADING_SIGNAL]";
+    let tail = raw.split_once(MARKER).map(|(_, tail)| tail).unwrap_or(raw);
+    let start = tail.find('{')?;
+    serde_json::Deserializer::from_str(&tail[start..])
+        .into_iter::<serde_json::Value>()
+        .next()?
+        .ok()
+}
+
+fn short_display(value: &str, max: usize) -> String {
+    let flattened = value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(max)
+        .collect::<String>();
+    if value.chars().filter(|character| !character.is_control()).count() > max {
+        format!("{flattened}…")
+    } else {
+        flattened
+    }
+}
+
+/// Render only bounded, canonical fields from a trusted delivery context and
+/// its untrusted artifact. Raw provider prose is deliberately never copied
+/// into a decision card.
+pub fn delivery_decision_summary(context: &DeliveryContext, lang: Lang) -> String {
+    let raw = std::fs::read_to_string(&context.saved_path)
+        .ok()
+        .map(|value| value.chars().take(64 * 1024).collect::<String>());
+    let signal = raw.as_deref().and_then(bounded_json_after_marker);
+    let field = |pointer: &str| {
+        signal
+            .as_ref()
+            .and_then(|value| value.pointer(pointer))
+            .and_then(|value| match value {
+                serde_json::Value::String(value) => Some(value.clone()),
+                serde_json::Value::Number(value) => Some(value.to_string()),
+                _ => None,
+            })
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| short_display(value.trim(), 128))
+    };
+    let signal_id = field("/signalId");
+    let signal_type = field("/signalType").unwrap_or_else(|| context.deliverable_type.clone());
+    let side = field("/params/side");
+    let amount = field("/params/amount");
+    let amount_unit = field("/params/amountUnit");
+    let quote = field("/params/quoteCurrency");
+    let chain = field("/params/chainIndex");
+    let token = field("/params/tokenAddress");
+    let file_name = std::path::Path::new(&context.saved_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| short_display(value, 96));
+
+    let mut lines = match lang {
+        Lang::Zh => vec!["[对应交付物]".to_string()],
+        Lang::En => vec!["[Deliverable for this decision]".to_string()],
+    };
+    let mut push = |zh: &str, en: &str, value: Option<String>| {
+        if let Some(value) = value {
+            lines.push(match lang {
+                Lang::Zh => format!("{zh}: {value}"),
+                Lang::En => format!("{en}: {value}"),
+            });
+        }
+    };
+    push(
+        "交付 ID",
+        "Delivery ID",
+        Some(short_display(&context.delivery_id, 128)),
+    );
+    push("信号 ID", "Signal ID", signal_id);
+    push("信号类型", "Signal type", Some(signal_type));
+    push("方向", "Side", side);
+    let amount_display = amount.map(|amount| {
+        [Some(amount), amount_unit, quote]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
+    push("信号金额", "Signal amount", amount_display);
+    push("链", "Chain", chain);
+    push("Token", "Token", token);
+    if signal.is_none() {
+        push("文件", "File", file_name);
+    }
+    lines.join("\n")
+}
+
+pub fn pending_delivery_decision_summary(job_id: &str, lang: Lang) -> Option<String> {
+    load_pending_delivery_context(job_id)
+        .ok()
+        .flatten()
+        .map(|context| delivery_decision_summary(&context, lang))
+}
+
+/// Result of atomically binding an outstanding user decision to a delivery.
+/// A different pending delivery is never overwritten: doing so would let an
+/// A/B/C reply authorize the wrong signal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeliveryActivation {
+    Activated(DeliveryContext),
+    AlreadyPending(DeliveryContext),
+    Conflict(DeliveryContext),
+}
 
 /// How the buyer wants this subscription's Active signals handled.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,10 +177,65 @@ pub enum ConsentMode {
     Decline,
 }
 
+/// User-authorized margin mode for Trade Kit derivative orders.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MarginMode {
+    Cross,
+    Isolated,
+}
+
+impl MarginMode {
+    pub fn parse(value: &str) -> anyhow::Result<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "cross" => Ok(Self::Cross),
+            "isolated" => Ok(Self::Isolated),
+            _ => anyhow::bail!("margin mode must be one of: cross | isolated"),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cross => "cross",
+            Self::Isolated => "isolated",
+        }
+    }
+}
+
+/// User-authorized policy for turning a signal entry into an order.
+///
+/// This is intentionally distinct from the execution bridge's `ExecutionMode`
+/// (`auto` / `manual` / `one_time`).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderPolicy {
+    Market,
+    SignalPriceLimit,
+}
+
+impl OrderPolicy {
+    pub fn parse(value: &str) -> anyhow::Result<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "market" => Ok(Self::Market),
+            "signal_price_limit" => Ok(Self::SignalPriceLimit),
+            _ => anyhow::bail!(
+                "order policy must be one of: market | signal_price_limit"
+            ),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Market => "market",
+            Self::SignalPriceLimit => "signal_price_limit",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConsentFile {
-    /// This version = 1; a higher version ⇒ reject (treat as unreadable).
+    /// Versions newer than [`CONSENT_VERSION`] are rejected as unreadable.
     pub version: u32,
     pub job_id: String,
     pub mode: ConsentMode,
@@ -66,6 +255,20 @@ pub struct ConsentFile {
     /// ("A 每笔100 用USDC"); absent ⇒ the default, USDT (PRD denomination).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_token: Option<String>,
+    /// User-authorized Trade Kit target. Older records predate this field and
+    /// remain valid for non-Trade-Kit routes; a Trade Kit execution must fail
+    /// closed until the user chooses `live` or `demo` once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trade_environment: Option<TradeEnvironment>,
+    /// User-confirmed Trade Kit margin mode. It is absent for products where a
+    /// margin mode does not apply and for older records that require one-time
+    /// restoration before derivative execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub margin_mode: Option<MarginMode>,
+    /// User-confirmed order construction policy. Older records deserialize it
+    /// as absent and must never silently fall back to a market order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_policy: Option<OrderPolicy>,
     /// seconds since epoch.
     pub created_at: u64,
     /// seconds since epoch.
@@ -109,6 +312,12 @@ pub struct ConsentSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quote_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub trade_environment: Option<TradeEnvironment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_mode: Option<MarginMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_policy: Option<OrderPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
@@ -122,6 +331,9 @@ impl ConsentSnapshot {
             cap_u: None,
             trade_amount_u: None,
             quote_token: None,
+            trade_environment: None,
+            margin_mode: None,
+            order_policy: None,
             created_at: None,
             expires_at: None,
         }
@@ -229,6 +441,12 @@ pub fn load_consent(job_id: &str) -> Result<Option<ConsentFile>, ConsentError> {
     if file.job_id != job_id {
         return Err(ConsentError(CONSENT_JOB_MISMATCH));
     }
+    if file
+        .trade_environment
+        .is_some_and(|environment| !environment.is_explicit())
+    {
+        return Err(ConsentError(CONSENT_UNREADABLE));
+    }
     // Expired ⇒ re-ask (first-time), not a hard error.
     if file.expires_at <= now_secs() {
         return Ok(None);
@@ -246,6 +464,9 @@ pub fn consent_snapshot(job_id: &str) -> ConsentSnapshot {
             cap_u: file.cap_u,
             trade_amount_u: file.trade_amount_u,
             quote_token: file.quote_token,
+            trade_environment: file.trade_environment,
+            margin_mode: file.margin_mode,
+            order_policy: file.order_policy,
             created_at: Some(file.created_at),
             expires_at: Some(file.expires_at),
         },
@@ -293,8 +514,8 @@ pub fn evaluate_consent(
 }
 
 /// Persist a consent record for `job_id` (release-mode; replaces the debug-only
-/// `grants::write_grant` seeding). `cap_u` is required and validated for `Auto`,
-/// and must be absent for `Manual` / `Decline`.
+/// `grants::write_grant` seeding). `cap_u` is optional and validated when
+/// present for `Auto`, and must be absent for `Manual` / `Decline`.
 pub fn write_consent(
     job_id: &str,
     mode: ConsentMode,
@@ -320,6 +541,56 @@ pub fn write_consent_with_trade_amount(
     quote: Option<&str>,
     ttl_sec: u64,
 ) -> anyhow::Result<()> {
+    write_consent_policy(
+        job_id,
+        mode,
+        cap_u,
+        trade_amount_u,
+        quote,
+        None,
+        ttl_sec,
+    )
+}
+
+/// Persist consent and optionally replace the user-authorized Trade Kit
+/// environment. An omitted environment preserves an existing choice so cap,
+/// amount, quote, and renewal rewrites cannot silently clear it.
+pub fn write_consent_policy(
+    job_id: &str,
+    mode: ConsentMode,
+    cap_u: Option<&str>,
+    trade_amount_u: Option<&str>,
+    quote: Option<&str>,
+    trade_environment: Option<TradeEnvironment>,
+    ttl_sec: u64,
+) -> anyhow::Result<()> {
+    write_consent_policy_with_settings(
+        job_id,
+        mode,
+        cap_u,
+        trade_amount_u,
+        quote,
+        trade_environment,
+        None,
+        None,
+        ttl_sec,
+    )
+}
+
+/// Persist the complete local execution policy. Omitted Trade Kit settings
+/// preserve an existing choice, which makes cap/amount changes safe and lets
+/// older callers remain source-compatible.
+pub fn write_consent_policy_with_settings(
+    job_id: &str,
+    mode: ConsentMode,
+    cap_u: Option<&str>,
+    trade_amount_u: Option<&str>,
+    quote: Option<&str>,
+    trade_environment: Option<TradeEnvironment>,
+    margin_mode: Option<MarginMode>,
+    order_policy: Option<OrderPolicy>,
+    ttl_sec: u64,
+) -> anyhow::Result<()> {
     if !job_id_is_safe(job_id) {
         anyhow::bail!("invalid job id");
     }
@@ -327,15 +598,16 @@ pub fn write_consent_with_trade_amount(
         anyhow::bail!("--ttl-sec must be > 0");
     }
     let cap_u = match mode {
-        ConsentMode::Auto => {
-            let cap = cap_u.ok_or_else(|| anyhow::anyhow!("--cap is required for --mode auto"))?;
-            let parsed =
-                Decimal::parse(cap).map_err(|_| anyhow::anyhow!("--cap is not a valid decimal"))?;
-            if parsed.is_zero() {
-                anyhow::bail!("--cap must be greater than 0");
-            }
-            Some(cap.to_string())
-        }
+        ConsentMode::Auto => cap_u
+            .map(|cap| {
+                let parsed = Decimal::parse(cap)
+                    .map_err(|_| anyhow::anyhow!("--cap is not a valid decimal"))?;
+                if parsed.is_zero() {
+                    anyhow::bail!("--cap must be greater than 0");
+                }
+                Ok(cap.to_string())
+            })
+            .transpose()?,
         ConsentMode::Manual | ConsentMode::Decline => {
             if cap_u.is_some() {
                 anyhow::bail!("--cap is only valid with --mode auto");
@@ -370,6 +642,16 @@ pub fn write_consent_with_trade_amount(
         }
         None => existing.as_ref().and_then(|c| c.quote_token.clone()),
     };
+    if trade_environment.is_some_and(|environment| !environment.is_explicit()) {
+        anyhow::bail!("trade environment must be live or demo");
+    }
+    let trade_environment = trade_environment.or_else(|| {
+        existing
+            .as_ref()
+            .and_then(|consent| consent.trade_environment)
+    });
+    let margin_mode = margin_mode.or_else(|| existing.as_ref().and_then(|c| c.margin_mode));
+    let order_policy = order_policy.or_else(|| existing.as_ref().and_then(|c| c.order_policy));
 
     let created_at = now_secs();
     let file = ConsentFile {
@@ -379,6 +661,9 @@ pub fn write_consent_with_trade_amount(
         cap_u,
         trade_amount_u,
         quote_token,
+        trade_environment,
+        margin_mode,
+        order_policy,
         created_at,
         expires_at: created_at + ttl_sec,
     };
@@ -389,15 +674,237 @@ pub fn write_consent_with_trade_amount(
     Ok(())
 }
 
-/// Remove a pending file written by a pre-model-routing client. New deliveries
-/// stay in their persistent subscription session and are never serialized here.
+/// Update only the Trade Kit environment on an existing live consent record.
+/// This is used when an older policy first reaches a Trade Kit delivery: the
+/// user's one-time environment choice must not rewrite amount, cap, quote,
+/// mode, or expiry.
+pub fn write_trade_environment(
+    job_id: &str,
+    trade_environment: TradeEnvironment,
+) -> anyhow::Result<ConsentFile> {
+    if !trade_environment.is_explicit() {
+        anyhow::bail!("trade environment must be live or demo");
+    }
+    let mut file = load_consent(job_id)
+        .map_err(|error| anyhow::anyhow!(error.0))?
+        .ok_or_else(|| anyhow::anyhow!("no live consent"))?;
+    file.version = CONSENT_VERSION;
+    file.trade_environment = Some(trade_environment);
+    let path = consent_path(job_id).map_err(|error| anyhow::anyhow!(error.0))?;
+    let body = serde_json::to_string_pretty(&file)?;
+    crate::home::write_secure(&path, body.as_bytes())?;
+    Ok(file)
+}
+
+/// Partially update user-confirmed Trade Kit execution settings without
+/// rewriting mode, amount, cap, quote, timestamps, or expiry.
+pub fn write_trade_settings(
+    job_id: &str,
+    trade_environment: Option<TradeEnvironment>,
+    margin_mode: Option<MarginMode>,
+    order_policy: Option<OrderPolicy>,
+) -> anyhow::Result<ConsentFile> {
+    if trade_environment.is_none() && margin_mode.is_none() && order_policy.is_none() {
+        anyhow::bail!("at least one Trade Kit setting is required");
+    }
+    if trade_environment.is_some_and(|environment| !environment.is_explicit()) {
+        anyhow::bail!("trade environment must be live or demo");
+    }
+    let mut file = load_consent(job_id)
+        .map_err(|error| anyhow::anyhow!(error.0))?
+        .ok_or_else(|| anyhow::anyhow!("no live consent"))?;
+    file.version = CONSENT_VERSION;
+    if let Some(value) = trade_environment {
+        file.trade_environment = Some(value);
+    }
+    if let Some(value) = margin_mode {
+        file.margin_mode = Some(value);
+    }
+    if let Some(value) = order_policy {
+        file.order_policy = Some(value);
+    }
+    let path = consent_path(job_id).map_err(|error| anyhow::anyhow!(error.0))?;
+    let body = serde_json::to_string_pretty(&file)?;
+    crate::home::write_secure(&path, body.as_bytes())?;
+    Ok(file)
+}
+
+fn delivery_id_is_safe(delivery_id: &str) -> bool {
+    !delivery_id.is_empty()
+        && delivery_id.len() <= 96
+        && delivery_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':'))
+}
+
+fn delivery_context_path(job_id: &str, delivery_id: &str) -> anyhow::Result<PathBuf> {
+    if !job_id_is_safe(job_id) {
+        anyhow::bail!("invalid job id");
+    }
+    if !delivery_id_is_safe(delivery_id) {
+        anyhow::bail!("invalid delivery id");
+    }
+    Ok(crate::home::onchainos_home()?
+        .join("autotrade")
+        .join("delivery-context")
+        .join(job_id)
+        .join(format!("{delivery_id}.json")))
+}
+
+fn pending_delivery_path(job_id: &str) -> anyhow::Result<PathBuf> {
+    if !job_id_is_safe(job_id) {
+        anyhow::bail!("invalid job id");
+    }
+    Ok(crate::home::onchainos_home()?
+        .join("autotrade")
+        .join("pending")
+        .join(format!("{job_id}.json")))
+}
+
+/// Register a delivery admitted by the exact-Active subscription path.
+///
+/// This runs before the model sees the route prompt. A later hidden consent
+/// command can therefore activate only a delivery id that the CLI registered;
+/// model-supplied paths can never create a trusted continuation context.
+#[allow(clippy::too_many_arguments)]
+pub fn register_delivery_context(
+    job_id: &str,
+    agent_id: &str,
+    provider_agent_id: &str,
+    origin_session_key: Option<&str>,
+    delivery_id: &str,
+    saved_path: &str,
+    deliverable_type: &str,
+    received_at_ms: u64,
+) -> anyhow::Result<DeliveryContext> {
+    let context = DeliveryContext {
+        version: DELIVERY_CONTEXT_VERSION,
+        job_id: job_id.to_string(),
+        agent_id: agent_id.to_string(),
+        provider_agent_id: provider_agent_id.to_string(),
+        origin_session_key: origin_session_key.map(str::to_string),
+        delivery_id: delivery_id.to_string(),
+        saved_path: saved_path.to_string(),
+        deliverable_type: deliverable_type.to_string(),
+        received_at_ms,
+    };
+    let path = delivery_context_path(job_id, delivery_id)?;
+    let body = serde_json::to_vec_pretty(&context)?;
+    crate::home::write_secure(&path, &body)?;
+    Ok(context)
+}
+
+pub fn load_delivery_context(job_id: &str, delivery_id: &str) -> anyhow::Result<DeliveryContext> {
+    let path = delivery_context_path(job_id, delivery_id)?;
+    let raw = std::fs::read(&path)?;
+    let context: DeliveryContext = serde_json::from_slice(&raw)?;
+    if context.version != DELIVERY_CONTEXT_VERSION
+        || context.job_id != job_id
+        || context.delivery_id != delivery_id
+    {
+        anyhow::bail!("delivery context mismatch");
+    }
+    Ok(context)
+}
+
+/// Bind the A/B/C decision to one previously registered delivery. This pointer
+/// is what makes a reply recoverable when it arrives in a fresh model session.
+pub fn activate_delivery_context(
+    job_id: &str,
+    delivery_id: &str,
+) -> anyhow::Result<DeliveryContext> {
+    let context = load_delivery_context(job_id, delivery_id)?;
+    let path = pending_delivery_path(job_id)?;
+    let body = serde_json::to_vec_pretty(&context)?;
+    crate::home::write_secure(&path, &body)?;
+    Ok(context)
+}
+
+/// Atomically bind the first delivery awaiting consent without replacing a
+/// different outstanding delivery. This is the production entry point for the
+/// A/B/C card; `activate_delivery_context` remains available for migration and
+/// focused tests that intentionally replace the pointer.
+pub fn activate_delivery_context_exclusive(
+    job_id: &str,
+    delivery_id: &str,
+) -> anyhow::Result<DeliveryActivation> {
+    let context = load_delivery_context(job_id, delivery_id)?;
+    let path = pending_delivery_path(job_id)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("pending delivery path has no parent"))?;
+    std::fs::create_dir_all(parent)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+    }
+    let body = serde_json::to_vec_pretty(&context)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(&path) {
+        Ok(mut file) => {
+            file.write_all(&body)?;
+            file.flush()?;
+            Ok(DeliveryActivation::Activated(context))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let pending = load_pending_delivery_context(job_id)?.ok_or_else(|| {
+                anyhow::anyhow!("pending delivery disappeared during activation")
+            })?;
+            if pending.delivery_id == delivery_id {
+                Ok(DeliveryActivation::AlreadyPending(pending))
+            } else {
+                Ok(DeliveryActivation::Conflict(pending))
+            }
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Load the exact delivery bound to the outstanding user decision.
+pub fn load_pending_delivery_context(job_id: &str) -> anyhow::Result<Option<DeliveryContext>> {
+    let path = pending_delivery_path(job_id)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read(&path)?;
+    let context: DeliveryContext = serde_json::from_slice(&raw)?;
+    if context.version != DELIVERY_CONTEXT_VERSION || context.job_id != job_id {
+        anyhow::bail!("pending delivery context mismatch");
+    }
+    Ok(Some(context))
+}
+
+/// Remove the delivery continuation pointer when the policy is paused/reset.
 pub fn clear_pending_signal(job_id: &str) {
     if !job_id_is_safe(job_id) {
         return;
     }
     if let Ok(home) = crate::home::onchainos_home() {
-        let path = home.join("autotrade").join("pending").join(format!("{job_id}.json"));
+        let path = home
+            .join("autotrade")
+            .join("pending")
+            .join(format!("{job_id}.json"));
         let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Clear the continuation pointer only when it still refers to the delivery
+/// that just reached a terminal outcome. This avoids removing a newer prompt
+/// if cleanup races with another admitted signal.
+pub fn clear_pending_delivery(job_id: &str, delivery_id: &str) {
+    if load_pending_delivery_context(job_id)
+        .ok()
+        .flatten()
+        .is_some_and(|context| context.delivery_id == delivery_id)
+    {
+        clear_pending_signal(job_id);
     }
 }
 /// Pause auto copy-trade for this job: delete the consent record so `evaluate_consent`
@@ -496,6 +1003,9 @@ mod tests {
                     cap_u: None,
                     trade_amount_u: None,
                     quote_token: None,
+                    trade_environment: None,
+                    margin_mode: None,
+                    order_policy: None,
                     created_at: None,
                     expires_at: None,
                 }
@@ -522,8 +1032,81 @@ mod tests {
             assert_eq!(snapshot.cap_u.as_deref(), Some("50"));
             assert_eq!(snapshot.trade_amount_u.as_deref(), Some("12.5"));
             assert_eq!(snapshot.quote_token.as_deref(), Some("usdc"));
+            assert_eq!(snapshot.trade_environment, None);
+            assert_eq!(snapshot.margin_mode, None);
+            assert_eq!(snapshot.order_policy, None);
             assert!(snapshot.created_at.is_some());
             assert!(snapshot.expires_at.is_some());
+        });
+    }
+
+    #[test]
+    fn trade_environment_upgrade_preserves_existing_policy_and_snapshot_exposes_it() {
+        with_home(|| {
+            write_consent_with_trade_amount(
+                "job1",
+                ConsentMode::Auto,
+                Some("50"),
+                Some("12.5"),
+                Some("USDC"),
+                3600,
+            )
+            .unwrap();
+            let before = load_consent("job1").unwrap().unwrap();
+
+            let upgraded = write_trade_environment("job1", TradeEnvironment::Demo).unwrap();
+            assert_eq!(upgraded.version, CONSENT_VERSION);
+            assert_eq!(upgraded.mode, before.mode);
+            assert_eq!(upgraded.cap_u, before.cap_u);
+            assert_eq!(upgraded.trade_amount_u, before.trade_amount_u);
+            assert_eq!(upgraded.quote_token, before.quote_token);
+            assert_eq!(upgraded.created_at, before.created_at);
+            assert_eq!(upgraded.expires_at, before.expires_at);
+            assert_eq!(upgraded.trade_environment, Some(TradeEnvironment::Demo));
+            assert_eq!(
+                consent_snapshot("job1").trade_environment,
+                Some(TradeEnvironment::Demo)
+            );
+
+            write_consent("job1", ConsentMode::Auto, Some("75"), None, 1800).unwrap();
+            let rewritten = load_consent("job1").unwrap().unwrap();
+            assert_eq!(rewritten.cap_u.as_deref(), Some("75"));
+            assert_eq!(rewritten.trade_environment, Some(TradeEnvironment::Demo));
+        });
+    }
+
+    #[test]
+    fn trade_settings_update_preserves_policy_and_snapshot_exposes_all_settings() {
+        with_home(|| {
+            write_consent_with_trade_amount(
+                "job1",
+                ConsentMode::Auto,
+                Some("50"),
+                Some("12.5"),
+                Some("USDC"),
+                3600,
+            )
+            .unwrap();
+            let before = load_consent("job1").unwrap().unwrap();
+
+            let updated = write_trade_settings(
+                "job1",
+                Some(TradeEnvironment::Live),
+                Some(MarginMode::Cross),
+                Some(OrderPolicy::SignalPriceLimit),
+            )
+            .unwrap();
+            assert_eq!(updated.mode, before.mode);
+            assert_eq!(updated.cap_u, before.cap_u);
+            assert_eq!(updated.trade_amount_u, before.trade_amount_u);
+            assert_eq!(updated.quote_token, before.quote_token);
+            assert_eq!(updated.created_at, before.created_at);
+            assert_eq!(updated.expires_at, before.expires_at);
+
+            let snapshot = consent_snapshot("job1");
+            assert_eq!(snapshot.trade_environment, Some(TradeEnvironment::Live));
+            assert_eq!(snapshot.margin_mode, Some(MarginMode::Cross));
+            assert_eq!(snapshot.order_policy, Some(OrderPolicy::SignalPriceLimit));
         });
     }
 
@@ -551,7 +1134,9 @@ mod tests {
             write_consent("job1", ConsentMode::Auto, Some("200"), None, 3600).unwrap();
             assert_eq!(quote_token("job1"), "usdc");
             // Whitelist: arbitrary tokens can't bend the cap semantics.
-            assert!(write_consent("job1", ConsentMode::Auto, Some("50"), Some("dai"), 3600).is_err());
+            assert!(
+                write_consent("job1", ConsentMode::Auto, Some("50"), Some("dai"), 3600).is_err()
+            );
             // Manual (B) can carry a preference too.
             write_consent("job1", ConsentMode::Manual, None, Some("usdt"), 3600).unwrap();
             assert_eq!(quote_token("job1"), "usdt");
@@ -625,6 +1210,82 @@ mod tests {
                 3600,
             )
             .is_ok());
+        });
+    }
+
+    #[test]
+    fn delivery_context_round_trips_and_activates_exact_delivery() {
+        with_home(|| {
+            let saved = register_delivery_context(
+                "job1",
+                "1506",
+                "8779",
+                Some("job:job1:my:1506:to:8779"),
+                "msg:abc123",
+                "/tmp/signal.txt",
+                "text",
+                1234,
+            )
+            .unwrap();
+            assert_eq!(saved.delivery_id, "msg:abc123");
+            assert_eq!(
+                saved.origin_session_key.as_deref(),
+                Some("job:job1:my:1506:to:8779")
+            );
+            assert_eq!(load_pending_delivery_context("job1").unwrap(), None);
+
+            let active = activate_delivery_context("job1", "msg:abc123").unwrap();
+            assert_eq!(active, saved);
+            assert_eq!(load_pending_delivery_context("job1").unwrap(), Some(saved));
+            assert!(activate_delivery_context("job1", "msg:missing").is_err());
+        });
+    }
+
+    #[test]
+    fn exclusive_activation_never_overwrites_a_different_pending_delivery() {
+        with_home(|| {
+            for delivery_id in ["delivery-1", "delivery-2"] {
+                register_delivery_context(
+                    "job1",
+                    "1506",
+                    "8779",
+                    Some("job:job1:my:1506:to:8779"),
+                    delivery_id,
+                    &format!("/tmp/{delivery_id}.txt"),
+                    "text",
+                    1234,
+                )
+                .unwrap();
+            }
+            assert!(matches!(
+                activate_delivery_context_exclusive("job1", "delivery-1").unwrap(),
+                DeliveryActivation::Activated(_)
+            ));
+            assert!(matches!(
+                activate_delivery_context_exclusive("job1", "delivery-1").unwrap(),
+                DeliveryActivation::AlreadyPending(_)
+            ));
+            let conflict =
+                activate_delivery_context_exclusive("job1", "delivery-2").unwrap();
+            assert!(matches!(
+                conflict,
+                DeliveryActivation::Conflict(ref pending)
+                    if pending.delivery_id == "delivery-1"
+            ));
+            assert_eq!(
+                load_pending_delivery_context("job1")
+                    .unwrap()
+                    .unwrap()
+                    .delivery_id,
+                "delivery-1"
+            );
+            clear_pending_delivery("job1", "delivery-2");
+            assert!(load_pending_delivery_context("job1").unwrap().is_some());
+            clear_pending_delivery("job1", "delivery-1");
+            assert!(matches!(
+                activate_delivery_context_exclusive("job1", "delivery-2").unwrap(),
+                DeliveryActivation::Activated(_)
+            ));
         });
     }
 
@@ -727,6 +1388,14 @@ mod tests {
                 ConsentError(CONSENT_VERSION_TOO_NEW)
             );
 
+            let mut configured = good.clone();
+            configured.trade_environment = Some(TradeEnvironment::Configured);
+            std::fs::write(&path, serde_json::to_string(&configured).unwrap()).unwrap();
+            assert_eq!(
+                load_consent("job1").unwrap_err(),
+                ConsentError(CONSENT_UNREADABLE)
+            );
+
             let mut mism = good;
             mism.job_id = "other".into();
             std::fs::write(&path, serde_json::to_string(&mism).unwrap()).unwrap();
@@ -740,8 +1409,8 @@ mod tests {
     #[test]
     fn write_consent_validates_cap_and_mode() {
         with_home(|| {
-            // Auto requires a positive, parseable cap.
-            assert!(write_consent("job1", ConsentMode::Auto, None, None, 3600).is_err());
+            // Auto permits no cap; a supplied cap must be positive and parseable.
+            assert!(write_consent("job1", ConsentMode::Auto, None, None, 3600).is_ok());
             assert!(write_consent("job1", ConsentMode::Auto, Some("abc"), None, 3600).is_err());
             assert!(write_consent("job1", ConsentMode::Auto, Some("0"), None, 3600).is_err());
             assert!(write_consent("job1", ConsentMode::Auto, Some("50"), None, 3600).is_ok());

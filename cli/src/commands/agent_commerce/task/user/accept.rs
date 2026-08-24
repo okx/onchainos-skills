@@ -5,7 +5,7 @@
 //! - `confirm-accept`: confirm acceptance of the provider (run after `setPaymentMode`).
 //!    - escrow: providerConfirmStatus → sign_escrow → accept → broadcast.
 //!    - x402: do NOT use this command (use `task-402-pay` instead).
-//! - `task-402-pay`: x402 phase 2 — replay the ASP endpoint FIRST, extract the settlement txHash, then broadcast the on-chain accept carrying `paymentTxHash`.
+//! - `task-402-pay`: x402 phase 2 — replay the ASP endpoint FIRST, extract the settlement txHash when present, then broadcast the on-chain accept carrying `paymentTxHash`.
 
 use anyhow::{bail, Context, Result};
 use std::time::Duration;
@@ -152,9 +152,7 @@ pub async fn handle_set_payment_mode(
                 common::ensure_sufficient_balance(resolved.fee_amount, &resolved.fee_token_symbol)
                     .await
             {
-                // FR-1: enrich the blocking insufficiency with the caller's XLayer
-                // deposit address + stderr QR (silent-degrade if unresolved).
-                return Err(common::deposit_qr::enrich_blocking(e, &agent_id).await);
+                return print_payment_funding_block_from_error(e, &agent_id, "Payment mode update").await;
             }
         }
         Some(resolved)
@@ -164,8 +162,7 @@ pub async fn handle_set_payment_mode(
         let amt: f64 = amt_str.parse().unwrap_or(0.0);
         if amt > 0.0 {
             if let Err(e) = common::ensure_sufficient_balance(amt, &sym).await {
-                // FR-1: enrich the blocking insufficiency (set-payment-mode escrow).
-                return Err(common::deposit_qr::enrich_blocking(e, &agent_id).await);
+                return print_payment_funding_block_from_error(e, &agent_id, "Payment mode update").await;
             }
         }
         None
@@ -331,8 +328,7 @@ pub async fn handle_confirm_accept(
     let amt: f64 = token_amount.parse().unwrap_or(0.0);
     if amt > 0.0 {
         if let Err(e) = common::ensure_sufficient_balance(amt, &token_symbol).await {
-            // FR-1: enrich the blocking insufficiency (confirm-accept escrow pre-check).
-            return Err(common::deposit_qr::enrich_blocking(e, &agent_id).await);
+            return print_payment_funding_block_from_error(e, &agent_id, "Task payment").await;
         }
     }
 
@@ -636,11 +632,11 @@ enum Action {
     /// 2xx, or 402 with a settlement txHash present → call direct/accept and
     /// broadcast the accept carrying `paymentTxHash`.
     ContinueAccept,
-    /// 2xx but the PAYMENT-RESPONSE header was missing / undecodable → still
-    /// broadcast the accept, with `paymentTxHash = ""` (FR-2.3 / matrix row 2).
+    /// The PAYMENT-RESPONSE header was missing / undecodable → still broadcast
+    /// the accept, with `paymentTxHash = ""` (FR-2.3).
     ContinueAcceptNoHash,
-    /// 402 with no settlement txHash (facilitator still settling) → skip the
-    /// accept broadcast, emit `status:"pending"` (matrix row 4 / FR-7.1).
+    /// The endpoint needs additional business input → skip the accept broadcast
+    /// and emit `status:"pending"` (FR-5.1).
     Pending,
     /// non-2xx & non-402 replay failure → skip the accept, preserve retry
     /// material, emit `output::error` (matrix row 5 / AC-3).
@@ -665,7 +661,7 @@ fn decide_402_action(replay_status: u16, tx_hash_present: bool) -> Action {
             if tx_hash_present {
                 Action::ContinueAccept
             } else {
-                Action::Pending
+                Action::ContinueAcceptNoHash
             }
         }
         _ => Action::Error,
@@ -688,6 +684,10 @@ fn decide_402_action_with_body(
     } else {
         decide_402_action(replay_status, tx_hash_present)
     }
+}
+
+fn action_is_replay_success(action: Action) -> bool {
+    matches!(action, Action::ContinueAccept | Action::ContinueAcceptNoHash)
 }
 
 /// task-402-pay — x402 phase 2: signing + direct/accept + endpoint replay.
@@ -856,7 +856,7 @@ pub async fn handle_task_402_pay(
 
     // Capture (success, status, body) plus the settlement txHash decoded from the
     // PAYMENT-RESPONSE header (FR-2). decode_receipt failure is non-fatal → "" (FR-2.3).
-    let (replay_success, replay_status, replay_body, payment_tx_hash) = match replay_resp {
+    let (_http_success, replay_status, replay_body, payment_tx_hash) = match replay_resp {
         Ok(resp) => {
             let status = resp.status().as_u16();
             let payment_tx_hash = resp
@@ -886,6 +886,7 @@ pub async fn handle_task_402_pay(
         replay_body.get("status").and_then(|v| v.as_str()) == Some("input_required");
     let action =
         decide_402_action_with_body(replay_status, !payment_tx_hash.is_empty(), input_required);
+    let replay_success = action_is_replay_success(action);
     let replay_body_display = format_replay_body_display(&replay_body);
 
     // ── Error branch (matrix row 5 / AC-3): replay failed (non-2xx & non-402).
@@ -912,8 +913,8 @@ pub async fn handle_task_402_pay(
         bail!("replay endpoint {detail}; accept not attempted. Re-run with --body <json> to retry.");
     }
 
-    // ── Pending branch (matrix row 4 / FR-7.1): 402 with no settlement txHash, or
-    //    input_required. Skip the accept; retain signature/authorization/sessionCert
+    // ── Pending branch (FR-7.1): input_required. Skip the accept; retain
+    //    signature/authorization/sessionCert
     //    so the caller can re-sign for a --body retry (SR-5).
     if action == Action::Pending {
         audit::log(
@@ -1173,11 +1174,33 @@ pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str, agent
     Ok(())
 }
 
+async fn print_payment_funding_block_from_error(
+    err: anyhow::Error,
+    agent_id: &str,
+    action: &str,
+) -> Result<()> {
+    match err.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
+        Some(ib) => {
+            let ib_owned = ib.clone();
+            let (warning, _) = common::deposit_qr::balance_warning_json(&ib_owned, agent_id).await;
+            Err(crate::output::CliFundingBlocked {
+                data: common::funding_notice::funding_blocked_envelope(
+                    &warning,
+                    "task-payment",
+                    action,
+                ),
+            }
+            .into())
+        }
+        None => Err(err),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        decide_402_action, decide_402_action_with_body, map_accept_broadcast_error,
-        status_confirms_accepted, Action,
+        action_is_replay_success, decide_402_action, decide_402_action_with_body,
+        map_accept_broadcast_error, status_confirms_accepted, Action,
     };
     use super::common::state_machine::Status;
     use crate::wallet_api::ApiCodeError;
@@ -1254,8 +1277,8 @@ mod tests {
             (200, false, Action::ContinueAcceptNoHash),
             // 402 (facilitator settling) with txHash → broadcast (row 3).
             (402, true, Action::ContinueAccept),
-            // 402 with no txHash → skip accept, pending (row 4).
-            (402, false, Action::Pending),
+            // 402 without a txHash still continues; paymentTxHash is optional.
+            (402, false, Action::ContinueAcceptNoHash),
             // non-2xx & non-402 → skip accept, error (row 5).
             (500, false, Action::Error),
             (500, true, Action::Error),
@@ -1269,6 +1292,14 @@ mod tests {
                 "status={status} tx_hash_present={tx_present}"
             );
         }
+    }
+
+    #[test]
+    fn replay_success_follows_accept_action_not_payment_tx_hash() {
+        assert!(action_is_replay_success(Action::ContinueAccept));
+        assert!(action_is_replay_success(Action::ContinueAcceptNoHash));
+        assert!(!action_is_replay_success(Action::Pending));
+        assert!(!action_is_replay_success(Action::Error));
     }
 
     // FR-5.1 — `input_required` in the endpoint body is a non-terminal pending

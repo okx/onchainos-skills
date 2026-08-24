@@ -44,7 +44,7 @@ pub async fn validate_listing(args: ValidateListingArgs, _ctx: &Context) -> Resu
 mod fe {
     pub const FE03: &str = "The Agent name doesn't meet the naming rules: it may contain a test marker, an ordinal suffix, or special symbols, or its length or bilingual format is invalid. Use a clean brand name instead: 2\u{2013}12 characters in Chinese or 3\u{2013}25 in English, with no test markers, ordinals, or special symbols; for a bilingual name, use the \"Chinese name \u{00B7} English name\" format. Then resubmit.";
     pub const FE05: &str = "The Agent description has an issue: it contains a URL or a test marker (e.g. \"(test)\", \"-pre\", or a trailing \"beta\"), exceeds 500 characters, or is empty. Remove any links and test markers, trim it to 500 characters or fewer, and make sure it's filled in. Then resubmit.";
-    pub const FE06: &str = "The service name doesn't meet the rules: its length is out of range, it duplicates the Agent name, or it contains pricing or a test marker. Keep the name to 5\u{2013}30 characters and different from the Agent name, move any pricing to the fee field, and remove test markers. Then resubmit.";
+    pub const FE06: &str = "The service name doesn't meet the rules: its length is out of range, it duplicates the Agent name or another service name, or it contains pricing or a test marker. Keep every service name unique, 5\u{2013}30 characters long, and different from the Agent name; move any pricing to the fee field, remove test markers, then resubmit.";
     /// FE-10 proper — the `serviceType` VALUE itself is neither A2A nor A2MCP (T1).
     pub const FE10: &str = "The service type must be exactly A2A or A2MCP; the current value is invalid. Select A2A or A2MCP from the menu, then resubmit.";
     /// U5 — the serviceType value is VALID, but the service name or description
@@ -227,6 +227,7 @@ pub(crate) fn run_validation(
                         for (i, svc) in services.iter().enumerate() {
                             check_service(i, svc, name, &mut findings);
                         }
+                        check_duplicate_service_names(&services, &mut findings);
                     }
                     Err(()) => findings.push(Finding::block("service", "PARSE", fe::FE13)),
                 }
@@ -407,6 +408,34 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
     // description governed by FE-16 (skill rule), so it is not length-checked
     // here; only FE-22 prohibited-content runs for A2MCP.
     check_service_description(index, &svc.service_description, is_a2mcp, findings);
+}
+
+/// S2: service names within one ASP listing must be unique. Names have already
+/// been trimmed by `parse_services_lenient`; compare ASCII case-insensitively to
+/// match the existing service-name-versus-Agent-name duplicate rule (S3).
+/// Empty names are left to the structural/required-field checks.
+fn check_duplicate_service_names(services: &[AgentService], findings: &mut Vec<Finding>) {
+    let mut seen_names: Vec<&str> = Vec::new();
+
+    for (index, service) in services.iter().enumerate() {
+        let service_name = service.service_name.as_str();
+        if service_name.is_empty() {
+            continue;
+        }
+
+        if seen_names
+            .iter()
+            .any(|seen_name| seen_name.eq_ignore_ascii_case(service_name))
+        {
+            findings.push(Finding::block(
+                format!("service[{index}].name"),
+                "S2",
+                fe::FE06,
+            ));
+        } else {
+            seen_names.push(service_name);
+        }
+    }
 }
 
 // Pricing QA. A2MCP: single-purchase `fee` required (plain number), no

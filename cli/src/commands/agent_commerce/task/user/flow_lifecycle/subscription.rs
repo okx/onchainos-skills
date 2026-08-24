@@ -353,14 +353,22 @@ fn as_epoch_secs(v: &serde_json::Value, key: &str) -> Option<i64> {
 pub(crate) async fn sub_expire_warn(ctx: &FlowContext<'_>) -> String {
     use super::super::create_subscribe::SUBSCRIBE_API_PREFIX;
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+    use crate::commands::agent_commerce::task::common::subscription_identity::{
+        select_subscription_agent_id,
+    };
 
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
 
     let mut client = TaskApiClient::new();
-    let detail = client
-        .get_with_identity(&format!("{SUBSCRIBE_API_PREFIX}/{job_id}"), agent_id)
-        .await;
+    let detail = match select_subscription_agent_id(agent_id, "") {
+        Ok(agent_id) => {
+            client
+                .get_with_identity(&format!("{SUBSCRIBE_API_PREFIX}/{job_id}"), &agent_id)
+                .await
+        }
+        Err(error) => Err(error),
+    };
 
     // FR-9: distinguish an explicit `autoRenew=0` (false → new template) from
     // missing/legacy (None → treated as true → existing template).

@@ -1,13 +1,14 @@
 //! Subscription-time execution-tool preflight (`autoTradePreflight`).
 //!
 //! Deterministic, local, non-networked classification of a service description
-//! into a bounded `AssetClass` set, plus a local readiness probe of the candidate
-//! execution tools and bilingual, non-blocking install/config reminders. Attached
-//! to every `asp-match` service (see [`super::super::user::asp_ops`]).
+//! into a bounded `AssetClass` set, plus a local inventory of candidate tools and
+//! a deterministic post-selection Trade Kit probe directive. Attached to every
+//! `asp-match` service (see [`super::super::user::asp_ops`]).
 //!
 //! Safety model (FR-5 / org GR_RESTRICTED_FILE_ACCESS, GR_DATA_LEAKAGE): readiness
 //! probes inspect ONLY presence of skill dirs and executables — never credential
-//! or configuration state. `evidence[]` carries only fixed
+//! or configuration state. An installed Trade Kit is therefore unverified, never
+//! ready. `evidence[]` carries only fixed
 //! diagnostic codes, never raw description text.
 //!
 //! This module is ORTHOGONAL to [`super::schema::SignalType`] (the venue/wire
@@ -125,7 +126,22 @@ impl ExecutionTool {
 pub enum Readiness {
     Ready,
     Missing,
+    VerificationUnknown,
     NeedsConfiguration,
+    Incompatible,
+}
+
+/// Stable local reason. This is intentionally narrower than runtime reasons:
+/// matching never performs authentication, capability, or network checks.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolReadinessReason {
+    Ready,
+    CliMissing,
+    PluginMissing,
+    AuthorizationNotChecked,
+    ConfigurationRequired,
+    Incompatible,
 }
 
 /// The kind of a reminder (closed set).
@@ -147,6 +163,23 @@ pub struct ToolStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_id: Option<String>,
     pub readiness: Readiness,
+    pub reason: ToolReadinessReason,
+    pub checked_at: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TradeKitProbeMode {
+    ProbeBeforeConfirmation,
+    DeferredUntilVenueSelection,
+    NotApplicable,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TradeKitProbeDirective {
+    pub mode: TradeKitProbeMode,
+    pub asset_classes: Vec<AssetClass>,
 }
 
 /// A bilingual, non-blocking install/config/choose reminder.
@@ -166,10 +199,12 @@ pub struct Reminder {
     pub message_zh: String,
 }
 
-/// The object attached to each `asp-match` service. STABILITY CONTRACT.
+/// The object attached to each service returned by `asp-match` or
+/// `task-service-select`. STABILITY CONTRACT.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoTradePreflight {
+    pub schema_version: u8,
     pub is_trading_signal: bool,
     pub asset_classes: Vec<AssetClass>,
     pub explicit_tools: Vec<ExecutionTool>,
@@ -177,6 +212,7 @@ pub struct AutoTradePreflight {
     pub advisory_only: bool,
     pub tools: Vec<ToolStatus>,
     pub reminders: Vec<Reminder>,
+    pub trade_kit_probe: TradeKitProbeDirective,
     pub evidence: Vec<String>,
 }
 
@@ -622,7 +658,7 @@ impl ToolInventory {
         let hyperliquid = plugin_readiness(home, "hyperliquid-plugin");
         let trade_kit = match super::trade_kit::probe_local_with(home, path_var).readiness() {
             super::trade_kit::LocalReadiness::Missing => Readiness::Missing,
-            super::trade_kit::LocalReadiness::Ready => Readiness::Ready,
+            super::trade_kit::LocalReadiness::VerificationUnknown => Readiness::VerificationUnknown,
         };
         ToolInventory {
             onchainos: Readiness::Ready,
@@ -639,6 +675,20 @@ impl ToolInventory {
             ExecutionTool::TradeKit => self.trade_kit,
             ExecutionTool::PolymarketPlugin => self.polymarket,
             ExecutionTool::HyperliquidPlugin => self.hyperliquid,
+        }
+    }
+
+    fn reason_of(&self, tool: ExecutionTool) -> ToolReadinessReason {
+        match (tool, self.readiness_of(tool)) {
+            (_, Readiness::Ready) => ToolReadinessReason::Ready,
+            (ExecutionTool::TradeKit, Readiness::Missing) => ToolReadinessReason::CliMissing,
+            (_, Readiness::Missing) => ToolReadinessReason::PluginMissing,
+            (ExecutionTool::TradeKit, Readiness::VerificationUnknown) => {
+                ToolReadinessReason::AuthorizationNotChecked
+            }
+            (_, Readiness::VerificationUnknown) => ToolReadinessReason::AuthorizationNotChecked,
+            (_, Readiness::NeedsConfiguration) => ToolReadinessReason::ConfigurationRequired,
+            (_, Readiness::Incompatible) => ToolReadinessReason::Incompatible,
         }
     }
 }
@@ -698,6 +748,7 @@ pub fn build_preflight_from_classes(
 /// a built preflight into the `asp-match` response `Value` fails.
 pub fn degraded_preflight() -> AutoTradePreflight {
     AutoTradePreflight {
+        schema_version: 2,
         is_trading_signal: false,
         asset_classes: Vec::new(),
         explicit_tools: Vec::new(),
@@ -705,6 +756,10 @@ pub fn degraded_preflight() -> AutoTradePreflight {
         advisory_only: true,
         tools: Vec::new(),
         reminders: Vec::new(),
+        trade_kit_probe: TradeKitProbeDirective {
+            mode: TradeKitProbeMode::NotApplicable,
+            asset_classes: Vec::new(),
+        },
         evidence: vec!["preflight:unavailable".to_string()],
     }
 }
@@ -737,8 +792,11 @@ fn assemble(
             display_name: tool.display_name().to_string(),
             plugin_id: tool.plugin_id().map(str::to_string),
             readiness: inv.readiness_of(tool),
+            reason: inv.reason_of(tool),
+            checked_at: None,
         })
         .collect();
+    let trade_kit_probe = trade_kit_probe_directive(classes, explicit);
 
     // Reminders + selection flag, iterating classes in stable ORDER.
     let mut reminders: Vec<Reminder> = Vec::new();
@@ -771,7 +829,7 @@ fn assemble(
                 Readiness::NeedsConfiguration => {
                     merge_reminder(&mut reminders, ReminderKind::ConfigureTool, Some(tool), c);
                 }
-                Readiness::Ready => {}
+                Readiness::Ready | Readiness::VerificationUnknown | Readiness::Incompatible => {}
             }
         } else {
             // Multiple candidates, no explicit single choice (FR-6): advise
@@ -813,7 +871,10 @@ fn assemble(
                                 c,
                             );
                         }
-                        Readiness::Ready | Readiness::Missing => {}
+                        Readiness::Ready
+                        | Readiness::Missing
+                        | Readiness::VerificationUnknown
+                        | Readiness::Incompatible => {}
                     }
                 }
             }
@@ -827,6 +888,7 @@ fn assemble(
     }
 
     AutoTradePreflight {
+        schema_version: 2,
         is_trading_signal,
         asset_classes: classes.to_vec(),
         explicit_tools: explicit.to_vec(),
@@ -834,7 +896,65 @@ fn assemble(
         advisory_only: true,
         tools,
         reminders,
+        trade_kit_probe,
         evidence,
+    }
+}
+
+fn trade_kit_probe_directive(
+    classes: &[AssetClass],
+    explicit: &[ExecutionTool],
+) -> TradeKitProbeDirective {
+    let relevant: Vec<AssetClass> = AssetClass::ORDER
+        .iter()
+        .copied()
+        .filter(|class| {
+            classes.contains(class) && candidate_tools(*class).contains(&ExecutionTool::TradeKit)
+        })
+        .collect();
+    if relevant.is_empty() {
+        return TradeKitProbeDirective {
+            mode: TradeKitProbeMode::NotApplicable,
+            asset_classes: Vec::new(),
+        };
+    }
+
+    if explicit == [ExecutionTool::TradeKit] {
+        return TradeKitProbeDirective {
+            mode: TradeKitProbeMode::ProbeBeforeConfirmation,
+            asset_classes: relevant,
+        };
+    }
+
+    let sole_trade_kit: Vec<AssetClass> = relevant
+        .iter()
+        .copied()
+        .filter(|class| candidate_tools(*class) == [ExecutionTool::TradeKit])
+        .collect();
+    if !sole_trade_kit.is_empty() {
+        return TradeKitProbeDirective {
+            mode: TradeKitProbeMode::ProbeBeforeConfirmation,
+            asset_classes: sole_trade_kit,
+        };
+    }
+
+    let every_class_has_explicit_alternative = !explicit.contains(&ExecutionTool::TradeKit)
+        && relevant.iter().all(|class| {
+            candidate_tools(*class)
+                .iter()
+                .any(|tool| *tool != ExecutionTool::TradeKit && explicit.contains(tool))
+        });
+    TradeKitProbeDirective {
+        mode: if every_class_has_explicit_alternative {
+            TradeKitProbeMode::NotApplicable
+        } else {
+            TradeKitProbeMode::DeferredUntilVenueSelection
+        },
+        asset_classes: if every_class_has_explicit_alternative {
+            Vec::new()
+        } else {
+            relevant
+        },
     }
 }
 
@@ -1321,29 +1441,106 @@ mod tests {
         }
     }
 
-    // ── reminders: installed Trade Kit never causes subscription auth prompts ──
+    // ── local preflight: installation is never authorization readiness ─────
     #[test]
-    fn installed_trade_kit_without_config_has_no_configure_reminder() {
+    fn installed_trade_kit_is_unknown_and_option_requires_preconfirmation_probe() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("okx"), b"#!/bin/sh\n").unwrap();
         let inv = ToolInventory::detect_with(home, bin.to_str().unwrap());
-        assert_eq!(inv.readiness_of(ExecutionTool::TradeKit), Readiness::Ready);
+        assert_eq!(
+            serde_json::to_value(inv.readiness_of(ExecutionTool::TradeKit)).unwrap(),
+            serde_json::json!("verification_unknown")
+        );
 
-        // Option is Trade-Kit-only. Subscription preflight must not infer auth
-        // state or prompt for configuration from a missing config.toml marker.
+        // Option is Trade-Kit-only. Local matching stays network-free and marks
+        // auth unknown, while the deterministic directive requires a real probe
+        // after service selection and before subscription confirmation.
         let pf = build_preflight(
             "\u{3010}Options Signal\u{3011} buy BTC call option, strike 70000",
             &inv,
         );
         assert_eq!(pf.asset_classes, vec![AssetClass::Option]);
+        let wire = serde_json::to_value(&pf).unwrap();
+        assert_eq!(wire["schemaVersion"], 2);
+        assert_eq!(wire["tools"][0]["readiness"], "verification_unknown");
+        assert_eq!(wire["tools"][0]["reason"], "authorization_not_checked");
+        assert!(wire["tools"][0]["checkedAt"].is_null());
+        assert_eq!(wire["tradeKitProbe"]["mode"], "probe_before_confirmation");
+        assert_eq!(
+            wire["tradeKitProbe"]["assetClasses"],
+            serde_json::json!(["option"])
+        );
         assert!(pf
             .reminders
             .iter()
             .all(|r| r.kind != ReminderKind::ConfigureTool));
         assert!(pf.reminders.is_empty());
+    }
+
+    #[test]
+    fn explicit_trade_kit_batches_all_relevant_classes_before_confirmation() {
+        let inv = ready_inventory();
+        let pf = build_preflight_from_classes(
+            &[AssetClass::Perp, AssetClass::Spot],
+            &[ExecutionTool::TradeKit],
+            &inv,
+        );
+
+        assert_eq!(
+            pf.trade_kit_probe,
+            TradeKitProbeDirective {
+                mode: TradeKitProbeMode::ProbeBeforeConfirmation,
+                asset_classes: vec![AssetClass::Spot, AssetClass::Perp],
+            }
+        );
+    }
+
+    #[test]
+    fn explicit_non_trade_kit_candidate_makes_probe_not_applicable() {
+        let inv = ready_inventory();
+        let pf = build_preflight_from_classes(
+            &[AssetClass::Prediction],
+            &[ExecutionTool::PolymarketPlugin],
+            &inv,
+        );
+
+        assert_eq!(
+            pf.trade_kit_probe,
+            TradeKitProbeDirective {
+                mode: TradeKitProbeMode::NotApplicable,
+                asset_classes: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn multiple_explicit_venues_defer_trade_kit_probe_until_selection() {
+        let inv = ToolInventory {
+            onchainos: Readiness::Ready,
+            trade_kit: Readiness::VerificationUnknown,
+            polymarket: Readiness::Missing,
+            hyperliquid: Readiness::Missing,
+        };
+        let pf = build_preflight(
+            "Prediction signal: execute through Polymarket or Trade Kit after venue selection",
+            &inv,
+        );
+
+        assert!(pf.selection_required);
+        assert_eq!(
+            pf.explicit_tools,
+            vec![ExecutionTool::TradeKit, ExecutionTool::PolymarketPlugin,]
+        );
+        assert_eq!(
+            pf.trade_kit_probe,
+            TradeKitProbeDirective {
+                mode: TradeKitProbeMode::DeferredUntilVenueSelection,
+                asset_classes: vec![AssetClass::Prediction],
+            }
+        );
     }
 
     // ── ToolInventory readiness ────────────────────────────────────────────
@@ -1389,43 +1586,58 @@ mod tests {
     }
 
     #[test]
-    fn readiness_trade_kit_depends_only_on_cli_presence() {
+    fn readiness_trade_kit_presence_is_missing_or_verification_unknown() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let readiness = |path_var: &str| {
-            ToolInventory::detect_with(home, path_var).readiness_of(ExecutionTool::TradeKit)
+            serde_json::to_value(
+                ToolInventory::detect_with(home, path_var).readiness_of(ExecutionTool::TradeKit),
+            )
+            .unwrap()
         };
 
         // (1) CLI absent → Missing
-        assert_eq!(readiness(""), Readiness::Missing);
+        assert_eq!(readiness(""), serde_json::json!("missing"));
 
-        // (2) CLI present, no config → Ready. Runtime owns auth checks.
+        // (2) CLI present, no config → authorization has not been checked.
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("okx"), b"#!/bin/sh\n").unwrap();
         let path_var = bin.to_str().unwrap();
-        assert_eq!(readiness(path_var), Readiness::Ready);
+        assert_eq!(
+            readiness(path_var),
+            serde_json::json!("verification_unknown")
+        );
 
-        // (3) CLI + non-empty ~/.okx/config.toml → Ready
+        // (3) Credential-file markers cannot upgrade local readiness.
         std::fs::create_dir_all(home.join(".okx")).unwrap();
         std::fs::write(home.join(".okx/config.toml"), b"[trade]\nk = 1\n").unwrap();
-        assert_eq!(readiness(path_var), Readiness::Ready);
+        assert_eq!(
+            readiness(path_var),
+            serde_json::json!("verification_unknown")
+        );
 
         // An empty config marker does not change subscription-time readiness.
         std::fs::write(home.join(".okx/config.toml"), b"").unwrap();
-        assert_eq!(readiness(path_var), Readiness::Ready);
+        assert_eq!(
+            readiness(path_var),
+            serde_json::json!("verification_unknown")
+        );
 
         // Other configuration markers are likewise irrelevant at subscription time.
         std::fs::remove_file(home.join(".okx/config.toml")).unwrap();
         std::fs::write(home.join(".okx/config.json"), b"{\"k\":1}").unwrap();
-        assert_eq!(readiness(path_var), Readiness::Ready);
+        assert_eq!(
+            readiness(path_var),
+            serde_json::json!("verification_unknown")
+        );
     }
 
     // ── reminders: plugin missing → single install; installed → none ───────
     #[test]
     fn reminders_explicit_plugin_missing_single_install() {
         let tmp = tempfile::tempdir().unwrap();
-        // trade kit ready so a non-preference class would not add an install for it
+        // Trade Kit installed-but-unverified, so it does not add an install reminder.
         let bin = tmp.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("okx"), b"x").unwrap();
@@ -1434,12 +1646,15 @@ mod tests {
         let inv = ToolInventory::detect_with(tmp.path(), bin.to_str().unwrap());
 
         let pf = build_preflight("\u{3010}Prediction Signal\u{3011} Polymarket BUY YES", &inv);
-        // Both candidates listed; Polymarket missing, Trade Kit ready.
+        // Both candidates listed; Polymarket missing, Trade Kit unverified.
         assert_eq!(pf.tools.len(), 2);
         assert_eq!(pf.tools[0].tool, ExecutionTool::PolymarketPlugin);
         assert_eq!(pf.tools[0].readiness, Readiness::Missing);
         assert_eq!(pf.tools[1].tool, ExecutionTool::TradeKit);
-        assert_eq!(pf.tools[1].readiness, Readiness::Ready);
+        assert_eq!(
+            serde_json::to_value(pf.tools[1].readiness).unwrap(),
+            serde_json::json!("verification_unknown")
+        );
         // Exactly one reminder: install the polymarket plugin. Not selection-required
         // (explicit single choice), all reminders non-blocking + bilingual.
         assert_eq!(pf.reminders.len(), 1);
@@ -1510,15 +1725,18 @@ mod tests {
     #[test]
     fn reminders_readiness_advisory_multi_venue() {
         // (1) generic Prediction; Polymarket missing + Trade Kit installed with no
-        //     config marker → Trade Kit is locally ready. Do not infer auth state,
-        //     emit ConfigureTool, or claim every candidate is unavailable.
+        //     real auth probe → Trade Kit is unknown. Do not infer auth state or
+        //     probe while the venue is still unselected.
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("okx"), b"#!/bin/sh\n").unwrap(); // CLI present, no config
         let inv = ToolInventory::detect_with(home, bin.to_str().unwrap());
-        assert_eq!(inv.readiness_of(ExecutionTool::TradeKit), Readiness::Ready);
+        assert_eq!(
+            serde_json::to_value(inv.readiness_of(ExecutionTool::TradeKit)).unwrap(),
+            serde_json::json!("verification_unknown")
+        );
         assert_eq!(
             inv.readiness_of(ExecutionTool::PolymarketPlugin),
             Readiness::Missing
@@ -1527,18 +1745,26 @@ mod tests {
         let pf = build_preflight("prediction market signal, buy YES, entry", &inv);
         assert_eq!(pf.asset_classes, vec![AssetClass::Prediction]);
         assert!(pf.selection_required);
-        let advisory: Vec<&Reminder> = pf
+        let wire = serde_json::to_value(&pf).unwrap();
+        assert_eq!(
+            wire["tradeKitProbe"]["mode"],
+            "deferred_until_venue_selection"
+        );
+        assert!(pf
             .reminders
             .iter()
-            .filter(|r| r.kind == ReminderKind::ReadinessAdvisory)
-            .collect();
-        assert!(advisory.is_empty(), "Trade Kit is an available candidate");
+            .any(|r| r.kind == ReminderKind::ReadinessAdvisory));
         assert!(pf
             .reminders
             .iter()
             .all(|r| r.kind != ReminderKind::ConfigureTool));
-        assert_eq!(pf.reminders.len(), 1);
-        assert_eq!(pf.reminders[0].kind, ReminderKind::ChooseAtFirstSignal);
+        assert_eq!(
+            pf.reminders
+                .iter()
+                .filter(|r| r.kind == ReminderKind::ChooseAtFirstSignal)
+                .count(),
+            1
+        );
 
         // (2) generic Prediction with Polymarket READY → at least one candidate
         //     ready → NO readiness advisory (no redundant-backup nudge).
@@ -1622,6 +1848,9 @@ mod tests {
     #[test]
     fn degraded_preflight_shape() {
         let pf = degraded_preflight();
+        let wire = serde_json::to_value(&pf).unwrap();
+        assert_eq!(wire["schemaVersion"], 2);
+        assert_eq!(wire["tradeKitProbe"]["mode"], "not_applicable");
         assert!(!pf.is_trading_signal);
         assert!(pf.asset_classes.is_empty());
         assert!(pf.tools.is_empty());
@@ -1699,6 +1928,7 @@ mod tests {
 
         // Top-level keys are camelCase per the stability contract.
         for key in [
+            "schemaVersion",
             "isTradingSignal",
             "assetClasses",
             "explicitTools",
@@ -1706,11 +1936,11 @@ mod tests {
             "advisoryOnly",
             "tools",
             "reminders",
+            "tradeKitProbe",
             "evidence",
         ] {
             assert!(v.get(key).is_some(), "missing contract key {key}: {v}");
         }
-        assert!(v.get("copyTrade").is_none(), "obsolete copyTrade key: {v}");
         assert_eq!(v["isTradingSignal"], serde_json::json!(true));
         assert_eq!(v["assetClasses"], serde_json::json!(["prediction"]));
         assert_eq!(v["advisoryOnly"], serde_json::json!(true));
@@ -1721,6 +1951,8 @@ mod tests {
         assert_eq!(tool0["displayName"], serde_json::json!("Polymarket"));
         assert_eq!(tool0["pluginId"], serde_json::json!("polymarket-plugin"));
         assert_eq!(tool0["readiness"], serde_json::json!("ready"));
+        assert_eq!(tool0["reason"], serde_json::json!("ready"));
+        assert!(tool0["checkedAt"].is_null());
         // Native tool omits pluginId.
         let tool1 = &v["tools"][1];
         assert_eq!(tool1["tool"], serde_json::json!("trade_kit"));
@@ -1729,6 +1961,7 @@ mod tests {
             "native tool must omit pluginId"
         );
         assert_eq!(tool1["readiness"], serde_json::json!("missing"));
+        assert_eq!(tool1["reason"], serde_json::json!("cli_missing"));
         // Every reminder is non-blocking with both message languages present.
         for r in v["reminders"].as_array().unwrap() {
             assert_eq!(r["blocking"], serde_json::json!(false));
@@ -1740,6 +1973,5 @@ mod tests {
         // Degraded sentinel shape.
         let dv = serde_json::to_value(degraded_preflight()).unwrap();
         assert_eq!(dv["evidence"], serde_json::json!(["preflight:unavailable"]));
-        assert!(dv.get("copyTrade").is_none());
     }
 }

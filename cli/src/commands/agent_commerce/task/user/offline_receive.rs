@@ -21,6 +21,9 @@ use serde_json::{json, Value};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
+use crate::commands::agent_commerce::task::common::subscription_identity::{
+    select_subscription_agent_id,
+};
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::output;
 
@@ -99,6 +102,7 @@ pub async fn handle_subscribe_offline_update(
         .await
         .map_err(|e| anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
     let (user_agent_id, _) = resolve_user_agent().await?;
+    let user_agent_id = select_subscription_agent_id(&user_agent_id, "")?;
 
     let body = build_offline_body(flag);
     let path = offline_receive_path(job_id);

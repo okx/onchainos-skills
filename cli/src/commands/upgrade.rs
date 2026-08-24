@@ -40,6 +40,11 @@ const DEPRECATED_SKILLS: &[&str] = &[
     // Fully removed from the repo — true orphans, no stub left behind.
     "okx-a2a-payment",
     "okx-x402-payment",
+    // Retired activity / competition skills. Keep the legacy hackathon name so
+    // older per-skill installs are removed alongside the final skill names.
+    "okx-hackathon",
+    "okx-activity",
+    "okx-growth-competition",
     // Merged into `okx-guide` (former deprecated alias stubs, now removed).
     "okx-how-to-play",
     "okx-ai-guide",
@@ -68,10 +73,6 @@ const DEPRECATED_SKILLS: &[&str] = &[
     "okx-dex-ws",
     // Renamed to `okx-dex-market` (old umbrella name, now removed).
     "okx-dex",
-    // Renamed to `okx-activity` (activity hub; the hackathon is one activity
-    // under its `references/`). No stub left behind, so a per-skill checkout
-    // would otherwise keep serving the frozen old copy alongside the new hub.
-    "okx-hackathon",
 ];
 
 #[derive(clap::Args)]
@@ -1352,7 +1353,7 @@ mod tests {
         discover_skill_paths_in, env_disables_self_update, highest_version, is_dev_build_path,
         is_throttled, parse_ls_remote_versions, parse_release_tag_url, record_check,
         remote_is_trusted_okx, removal_action, reportable_skills, semver_gt, skill_requests_beta,
-        update_one_checkout,
+        update_one_checkout, DEPRECATED_SKILLS,
     };
     use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
@@ -1936,6 +1937,16 @@ ccc333\trefs/heads/main
             "skills": ["okx-a2a-payment", "okx-x402-payment"],
         });
         assert!(removal_action(&v).is_none());
+    }
+
+    #[test]
+    fn retired_activity_skills_remain_in_removal_list() {
+        for skill in ["okx-hackathon", "okx-activity", "okx-growth-competition"] {
+            assert!(
+                DEPRECATED_SKILLS.contains(&skill),
+                "retired skill {skill} must be removed during upgrade"
+            );
+        }
     }
 
     #[test]

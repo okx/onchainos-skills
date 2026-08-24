@@ -38,7 +38,7 @@ ls -la ~/.agents/skills/onchainos-skills
 ```
 
 You should see the skill directories: `okx-agentic-wallet`, `okx-dex-market`, `okx-defi`,
-`okx-ai`, `okx-guide`, `okx-growth-competition`, `okx-activity`.
+`okx-ai`, `okx-guide`.
 
 ## Available Skills
 
@@ -49,8 +49,6 @@ You should see the skill directories: `okx-agentic-wallet`, `okx-dex-market`, `o
 | `okx-defi`               | Earn yield: deposit/withdraw, stake, claim rewards, DeFi positions & portfolio                                                                            |
 | `okx-ai`                 | ERC-8004 Agent identity + task marketplace (publish/accept/deliver/dispute) + task-progress monitor                                                       |
 | `okx-guide`              | Onboarding & guide hub: Onchain OS intro, OKX.AI, customer support                                                                                        |
-| `okx-growth-competition` | Agentic Wallet trading competitions: list, join, rank, claim rewards                                                                                      |
-| `okx-activity`           | OKX activities hub — currently OKX.AI Trading Hackathon registration with an existing Trading ASP                                                         |
 
 ## Updating
 

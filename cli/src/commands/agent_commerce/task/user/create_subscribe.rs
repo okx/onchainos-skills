@@ -8,18 +8,20 @@ use std::time::Duration;
 use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::autotrade::{
-    amount::Decimal, consent, grants,
+    amount::Decimal,
+    consent::{self, MarginMode, OrderPolicy},
+    grants,
+    trade_kit::TradeEnvironment,
 };
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
+use crate::commands::agent_commerce::task::common::subscription_identity::{
+    select_subscription_agent_id,
+};
 use crate::commands::agent_commerce::task::common::{self, DEBUG_LOG};
 use crate::commands::agent_commerce::task::signing;
 
 pub(crate) const SUBSCRIBE_API_PREFIX: &str = "/priapi/v1/aieco/task/subscribe";
-/// Compatibility marker required by the current subscription API. It enables
-/// delivery routing only; runtime parsing, consent, cap and tool checks remain
-/// authoritative for whether a delivery can execute.
-const SUBSCRIPTION_DELIVERY_ENABLED: i32 = 1;
 
 pub struct CreateSubscribeParams {
     pub service_id: String,
@@ -37,24 +39,31 @@ pub struct CreateSubscribeParams {
     pub autotrade_amount: Option<String>,
     pub autotrade_cap: Option<String>,
     pub autotrade_quote: Option<String>,
+    pub autotrade_environment: Option<String>,
+    pub autotrade_margin_mode: Option<String>,
+    pub autotrade_order_policy: Option<String>,
     pub format: String,
-    /// Device ids to omit from the default all-devices routing set (repeatable).
     pub exclude_device: Option<Vec<String>>,
 }
 
 const MAX_TITLE_CHARS: usize = 64;
 const MAX_DESCRIPTION_CHARS: usize = 4096;
-const SUBSCRIPTION_AUTOTRADE_TTL_SEC: u64 = 31_536_000;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SubscriptionAutoTradeConfig {
-    amount: String,
-    cap: String,
+    mode: consent::ConsentMode,
+    amount: Option<String>,
+    cap: Option<String>,
     quote: String,
+    environment: Option<TradeEnvironment>,
+    margin_mode: Option<MarginMode>,
+    order_policy: Option<OrderPolicy>,
 }
 
 impl CreateSubscribeParams {
     fn validate(&self) -> Result<()> {
+        if self.exclude_device.is_some() {
+            bail!("create-time device selection is unsupported; create the subscription for all logged-in devices, then adjust receiving devices with subscribe-device-update");
+        }
         if self.service_id.is_empty() {
             bail!("--service-id is required");
         }
@@ -83,82 +92,94 @@ impl CreateSubscribeParams {
         Ok(())
     }
 
-    fn autotrade_config(&self) -> Result<Option<SubscriptionAutoTradeConfig>> {
-        let has_policy_field = self.autotrade_amount.is_some()
-            || self.autotrade_cap.is_some()
-            || self.autotrade_quote.is_some();
-        let Some(mode) = self.autotrade_mode.as_deref() else {
-            if has_policy_field {
-                bail!("--autotrade-mode auto is required when automatic execution fields are supplied");
-            }
-            return Ok(None);
+    fn autotrade_config(&self) -> Result<SubscriptionAutoTradeConfig> {
+        let mode = match self.autotrade_mode.as_deref() {
+            None => consent::ConsentMode::Auto,
+            Some(mode) if mode.eq_ignore_ascii_case("auto") => consent::ConsentMode::Auto,
+            Some(mode) if mode.eq_ignore_ascii_case("manual") => consent::ConsentMode::Manual,
+            Some(_) => bail!("--autotrade-mode must be one of: auto | manual"),
         };
-        if !mode.eq_ignore_ascii_case("auto") {
-            bail!("--autotrade-mode currently supports only: auto");
-        }
-
-        let mut missing = Vec::new();
-        if self.autotrade_amount.as_deref().map_or(true, str::is_empty) {
-            missing.push("--autotrade-amount");
-        }
-        if self.autotrade_cap.as_deref().map_or(true, str::is_empty) {
-            missing.push("--autotrade-cap");
-        }
-        if self.autotrade_quote.as_deref().map_or(true, str::is_empty) {
-            missing.push("--autotrade-quote");
-        }
-        if !missing.is_empty() {
-            bail!(
-                "automatic signal execution is missing required fields: {}",
-                missing.join(", ")
-            );
-        }
-
-        let amount = self.autotrade_amount.as_deref().unwrap_or_default();
-        let cap = self.autotrade_cap.as_deref().unwrap_or_default();
-        let parsed_amount = Decimal::parse(amount)
-            .map_err(|_| anyhow::anyhow!("--autotrade-amount must be a positive decimal"))?;
-        let parsed_cap = Decimal::parse(cap)
-            .map_err(|_| anyhow::anyhow!("--autotrade-cap must be a positive decimal"))?;
-        if parsed_amount.is_zero() {
-            bail!("--autotrade-amount must be greater than 0");
-        }
-        if parsed_cap.is_zero() {
-            bail!("--autotrade-cap must be greater than 0");
-        }
-        if !parsed_amount.le(&parsed_cap) {
-            bail!("--autotrade-amount must not exceed --autotrade-cap");
-        }
+        let amount = parse_optional_positive_decimal(
+            self.autotrade_amount.as_deref(),
+            "--autotrade-amount",
+        )?;
+        let cap =
+            parse_optional_positive_decimal(self.autotrade_cap.as_deref(), "--autotrade-cap")?;
         let quote = self
             .autotrade_quote
             .as_deref()
-            .unwrap_or_default()
+            .unwrap_or(consent::DEFAULT_QUOTE)
             .to_ascii_lowercase();
         if !consent::QUOTE_WHITELIST.contains(&quote.as_str()) {
             bail!("--autotrade-quote must be one of: usdt | usdc");
         }
+        let environment = match self.autotrade_environment.as_deref() {
+            None => None,
+            Some(value) if value.eq_ignore_ascii_case("live") => Some(TradeEnvironment::Live),
+            Some(value) if value.eq_ignore_ascii_case("demo") => Some(TradeEnvironment::Demo),
+            Some(_) => bail!("--autotrade-environment must be one of: live | demo"),
+        };
+        let margin_mode = self
+            .autotrade_margin_mode
+            .as_deref()
+            .map(MarginMode::parse)
+            .transpose()?;
+        let order_policy = self
+            .autotrade_order_policy
+            .as_deref()
+            .map(OrderPolicy::parse)
+            .transpose()?;
 
-        Ok(Some(SubscriptionAutoTradeConfig {
-            amount: parsed_amount.to_plain_string(),
-            cap: parsed_cap.to_plain_string(),
+        Ok(SubscriptionAutoTradeConfig {
+            mode,
+            amount,
+            cap,
             quote,
-        }))
+            environment,
+            margin_mode,
+            order_policy,
+        })
     }
+}
+
+fn parse_optional_positive_decimal(value: Option<&str>, flag: &str) -> Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let parsed =
+        Decimal::parse(value).map_err(|_| anyhow::anyhow!("{flag} must be a positive decimal"))?;
+    if parsed.is_zero() {
+        bail!("{flag} must be greater than 0");
+    }
+    Ok(Some(parsed.to_plain_string()))
 }
 
 fn persist_subscription_autotrade(
     job_id: &str,
     config: &SubscriptionAutoTradeConfig,
 ) -> Result<()> {
-    consent::write_consent_with_trade_amount(
+    consent::write_consent_policy_with_settings(
         job_id,
-        consent::ConsentMode::Auto,
-        Some(&config.cap),
-        Some(&config.amount),
+        config.mode,
+        config.cap.as_deref(),
+        config.amount.as_deref(),
         Some(&config.quote),
-        SUBSCRIPTION_AUTOTRADE_TTL_SEC,
+        config.environment,
+        config.margin_mode,
+        config.order_policy,
+        super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
     )?;
-    if let Err(err) = grants::write_cap_grant(job_id, &config.cap, SUBSCRIPTION_AUTOTRADE_TTL_SEC) {
+    let grant_result = match config.mode {
+        consent::ConsentMode::Auto => grants::write_auto_grant(
+            job_id,
+            super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
+        ),
+        consent::ConsentMode::Manual | consent::ConsentMode::Decline => {
+            grants::clear_grant(job_id);
+            Ok(())
+        }
+    };
+    if let Err(err) = grant_result {
         consent::clear_consent(job_id);
         grants::clear_grant(job_id);
         return Err(err);
@@ -174,7 +195,6 @@ fn build_create_body(
     effective_use_trial: bool,
     terms_for_create: serde_json::Value,
     terms_sig: &str,
-    device_list: &[String],
 ) -> serde_json::Value {
     let mut create_body = serde_json::json!({
         "serviceId": params.service_id,
@@ -183,13 +203,12 @@ fn build_create_body(
         "serviceTokenAmount": params.service_token_amount,
         "serviceTokenAddress": params.service_token_address,
         "autoRenew": params.auto_renew,
-        "copyTrade": SUBSCRIPTION_DELIVERY_ENABLED,
         "title": params.title,
         "description": params.description,
         "serviceInterval": params.service_interval,
         "terms": terms_for_create,
         "termsSig": terms_sig,
-        "deviceList": device_list,
+        "deviceList": serde_json::Value::Null,
     });
     if let Some(ref pid) = params.provider_agent_id {
         create_body["providerAgentId"] = serde_json::json!(pid);
@@ -197,17 +216,16 @@ fn build_create_body(
     create_body
 }
 
-/// The json-mode success envelope data — always carries the `deviceRoutingDegraded`
-/// marker so the skill can render the degraded notice without a second query, plus
-/// the `offlineReplaySupported` capability flag (always present). When the comm
-/// package cannot honor an offline-replay preference, also carries
+/// The json-mode success envelope data — retains `deviceRoutingDegraded: false`
+/// for compatibility, plus the `offlineReplaySupported` capability flag (always
+/// present). When the comm package cannot honor an offline-replay preference, it
+/// also carries
 /// `offlineReplayFixCommands` (the upgrade commands) so the skill can prompt an
 /// upgrade. These offline-replay fields are copy-only — they never change whether
 /// or how the subscription was created.
 fn build_create_success(
     sub_id: &str,
     tx_hash: &str,
-    degraded: bool,
     offline_replay: &OfflineReplayCapability,
     autotrade_requested: bool,
     autotrade_configured: bool,
@@ -215,7 +233,7 @@ fn build_create_success(
     let mut envelope = serde_json::json!({
         "subId": sub_id,
         "txHash": tx_hash,
-        "deviceRoutingDegraded": degraded,
+        "deviceRoutingDegraded": false,
         "offlineReplaySupported": offline_replay.supported,
         "autoTradeConfigRequested": autotrade_requested,
         "autoTradeConfigured": autotrade_configured,
@@ -232,6 +250,13 @@ pub async fn handle_create_subscribe(
     params: CreateSubscribeParams,
 ) -> Result<()> {
     params.validate()?;
+    let autotrade_requested = params.autotrade_mode.is_some()
+        || params.autotrade_amount.is_some()
+        || params.autotrade_cap.is_some()
+        || params.autotrade_quote.is_some()
+        || params.autotrade_environment.is_some()
+        || params.autotrade_margin_mode.is_some()
+        || params.autotrade_order_policy.is_some();
     let autotrade_config = params.autotrade_config()?;
 
     let json_mode = params.format.eq_ignore_ascii_case("json");
@@ -240,8 +265,22 @@ pub async fn handle_create_subscribe(
         .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
 
     let (user_agent_id, _) = super::create::resolve_user_agent().await?;
+    let user_agent_id = select_subscription_agent_id(&user_agent_id, "")?;
     if DEBUG_LOG {
         eprintln!("[create-subscribe] user identity check passed (agentId: {user_agent_id})");
+    }
+
+    if let Some(warning) = subscribe_balance_warning(
+        &params.service_token_amount,
+        &params.service_token_address,
+        &user_agent_id,
+    )
+    .await?
+    {
+        return Err(crate::output::CliFundingBlocked {
+            data: build_subscription_funding_block(&warning),
+        }
+        .into());
     }
 
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
@@ -305,30 +344,11 @@ pub async fn handle_create_subscribe(
         );
     }
 
-    // Resolve the receive-device routing set: default = all logged-in devices
-    // (device-list paged to completion) minus any --exclude-device. If that query
-    // fails or returns empty, degrade to this device only and mark the result —
-    // never abort the create. deviceList is ALWAYS sent explicitly so the
-    // created record never depends on server-default semantics.
-    let excluded = params.exclude_device.clone().unwrap_or_default();
-    let fetched = super::device_routing::fetch_all_device_ids(client, &user_agent_id)
-        .await
-        .ok();
-    let this_device_id = crate::device::id::get_cached_device_id();
-    let (device_list, device_routing_degraded) =
-        super::device_routing::resolve_create_device_set(fetched, &excluded, this_device_id);
-    if DEBUG_LOG {
-        eprintln!(
-            "[create-subscribe] deviceList={device_list:?} degraded={device_routing_degraded}"
-        );
-    }
-
     let create_body = build_create_body(
         &params,
         effective_use_trial,
         terms_for_create,
         &terms_sig,
-        &device_list,
     );
 
     let create_resp = client
@@ -348,45 +368,21 @@ pub async fn handle_create_subscribe(
         eprintln!("[create-subscribe] subId={sub_id}, bizType={biz_type}");
     }
 
-    // Blocking balance pre-check (the "6th" balance checkpoint). Unlike
-    // create-task — which only *registers* the task and involves no transfer, so
-    // an advisory (non-blocking) warning is appropriate — create-subscribe's
-    // broadcast performs an *immediate* ERC20 token transfer. An insufficient
-    // business-token balance must therefore block *before* broadcast: the
-    // previous advisory mode continued to broadcast, the transfer reverted
-    // on-chain as an opaque `estimateGas` error ("ERC20: transfer amount exceeds
-    // balance") propagated via `?`, and the already-computed deposit
-    // address + QR were dropped (JSON output missing depositAddress; non-TTY
-    // runtimes got no output at all). On insufficiency this bails the enriched
-    // `InsufficientBalanceError`, which `main.rs` downcasts into the structured
-    // `error_insufficient_balance` JSON envelope (carrying `depositAddress`); the
-    // agent playbook reads that field and calls `onchainos wallet qrcode` to
-    // render the QR in non-TTY runtimes.
-    ensure_subscribe_balance(
-        &params.service_token_amount,
-        &params.service_token_address,
-        &user_agent_id,
-    )
-    .await?;
-
     // Step 4 + 5: sign uopData → broadcast (reuses the standard task broadcast endpoint)
     let tx_hash = signing::sign_uop_and_broadcast(
         client, uop_data, &account_id, &address, &sub_id, biz_type, &user_agent_id, None,
     ).await?;
 
-    // The jobId exists only after create + broadcast. Persist the user's final,
-    // explicit subscription setup into the same fail-closed policy files used
-    // by runtime execution. A write failure cannot roll back the subscription.
-    let autotrade_requested = autotrade_config.is_some();
-    let autotrade_configured = match autotrade_config.as_ref() {
-        Some(config) => match persist_subscription_autotrade(&sub_id, config) {
-            Ok(()) => true,
-            Err(err) => {
-                eprintln!("[autotrade] subscription created, but automatic execution configuration could not be persisted: {err}");
-                false
-            }
-        },
-        None => false,
+    // The jobId exists only after create + broadcast. Persist the MVP default
+    // policy together with any final user-authored setup into the same local
+    // files used by runtime execution. A write failure cannot roll back the
+    // subscription.
+    let autotrade_configured = match persist_subscription_autotrade(&sub_id, &autotrade_config) {
+        Ok(()) => true,
+        Err(err) => {
+            eprintln!("[autotrade] subscription created, but execution configuration could not be persisted: {err}");
+            false
+        }
     };
 
     // Persist only bounded classifier output. Failure is advisory: the
@@ -415,7 +411,6 @@ pub async fn handle_create_subscribe(
             format!("serviceId={}", params.service_id),
             format!("useTrial={effective_use_trial}"),
             format!("autoRenew={}", params.auto_renew),
-            format!("copyTrade={SUBSCRIPTION_DELIVERY_ENABLED}"),
             format!("autoTradeConfigRequested={autotrade_requested}"),
             format!("autoTradeConfigured={autotrade_configured}"),
             format!("txHash={tx_hash}"),
@@ -437,23 +432,15 @@ pub async fn handle_create_subscribe(
         crate::output::success(build_create_success(
             &sub_id,
             &tx_hash,
-            device_routing_degraded,
             &offline_replay,
             autotrade_requested,
             autotrade_configured,
         ));
-        // Balance is verified *before* broadcast now (blocking), so a success
-        // envelope no longer carries a `balanceWarning` — an insufficiency exits
-        // earlier via the structured `error_insufficient_balance` envelope.
+        // Balance is verified before create/broadcast; insufficiency exits earlier
+        // via the blocked funding-notice envelope.
         if super::content::is_cli_mode() {
             println!();
-            println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
-            println!();
-            println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
-            println!();
-            println!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{sub_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read watch-core.md first.)");
-            println!();
-            println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
+            println!("{}", super::content::scoped_watch_handoff(&sub_id));
         }
         return Ok(());
     }
@@ -463,13 +450,8 @@ pub async fn handle_create_subscribe(
     println!("  txHash: {tx_hash}");
     if autotrade_requested {
         println!(
-            "  Automatic signal execution: {}",
+            "  Signal execution policy: {}",
             if autotrade_configured { "configured" } else { "configuration pending" }
-        );
-    }
-    if device_routing_degraded {
-        println!(
-            "  ⚠ Device list unavailable — this subscription was set to receive on THIS device only; other devices can be added later."
         );
     }
     if let Some(ref pid) = params.provider_agent_id {
@@ -480,39 +462,20 @@ pub async fn handle_create_subscribe(
     }
     if super::content::is_cli_mode() {
         println!();
-        println!("[Watch] 🛑 Mandatory next steps. End the turn after Step 2. Do NOT ask the user whether to watch — it is required to receive the next event.");
-        println!();
-        println!("**Step 1 (MANDATORY GATE) — Read `skills/okx-ai/references/watch-core.md` now.** If you have NOT read it in this session, you cannot proceed to Step 2 — Step 2's invocation, dispatch rules, and re-arm semantics live ONLY in that file. Skipping this step is a protocol violation.");
-        println!();
-        println!("**Step 2 — Execute the watch per `skills/okx-ai/references/watch-core.md` §Run watch, scoped to job-id `{sub_id}`.** Then dispatch each returned item per §Dispatch by `kind` and re-enter per §Re-enter after processing. (Do NOT guess the bash invocation — read watch-core.md first.)");
-        println!();
-        println!("⏭ Skip `detect_watch_support` — this `[Watch]` block is only emitted on supported platforms.");
+        println!("{}", super::content::scoped_watch_handoff(&sub_id));
     }
 
     Ok(())
 }
 
-/// Blocking balance pre-check for the subscription flow — the "6th" balance
-/// checkpoint. Unlike create-task's advisory checkpoint, create-subscribe's
-/// broadcast performs an *immediate* ERC20 transfer, so an insufficient balance
-/// must block *before* broadcast. Subscribe carries a token *address* (not a
-/// symbol), so the symbol is resolved first. On an insufficient XLayer
-/// business-token balance this bails the enriched `InsufficientBalanceError`
-/// (deposit address attached + XLayer QR rendered to stderr on TTY, silent-degrade
-/// if the address can't be resolved), which `main.rs` downcasts into the
-/// structured `error_insufficient_balance` JSON envelope. Pre-check inputs that
-/// carry no balance obligation (a zero/unparsable amount) or that can't be mapped
-/// to a symbol silent-degrade to `Ok(())` — the symbol lookup is a subscribe-only
-/// pre-check step and must never introduce a new blocking failure mode for an
-/// otherwise-fundable subscription (FR-6).
-async fn ensure_subscribe_balance(
+async fn subscribe_balance_warning(
     service_token_amount: &str,
     service_token_address: &str,
     user_agent_id: &str,
-) -> Result<()> {
+) -> Result<Option<serde_json::Value>> {
     let required: f64 = service_token_amount.parse().unwrap_or(0.0);
     if required <= 0.0 {
-        return Ok(());
+        return Ok(None);
     }
 
     let symbol = match common::util::resolve_token_symbol_by_address(
@@ -529,22 +492,26 @@ async fn ensure_subscribe_balance(
                      (skipping balance pre-check): {e}"
                 );
             }
-            return Ok(());
+            return Ok(None);
         }
     };
 
-    if let Err(e) = common::ensure_sufficient_balance(required, &symbol).await {
-        // Blocking: enrich the insufficiency with the caller's XLayer deposit
-        // address + stderr QR (silent-degrade if unresolved), then bail so main.rs
-        // downcasts to the structured `error_insufficient_balance` JSON. A
-        // non-insufficiency infra error (login expired, balance-query failure)
-        // passes through `enrich_blocking` unchanged and blocks the same way the
-        // sibling checkpoints (accept / dispute) do — consistent with a flow whose
-        // very next step is an immediate on-chain transfer.
-        return Err(common::deposit_qr::enrich_blocking(e, user_agent_id).await);
+    match common::ensure_sufficient_balance(required, &symbol).await {
+        Ok(()) => Ok(None),
+        Err(e) => match e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
+            Some(ib) => {
+                let ib_owned = ib.clone();
+                let (warning, _) =
+                    common::deposit_qr::balance_warning_json(&ib_owned, user_agent_id).await;
+                Ok(Some(warning))
+            }
+            None => Err(e),
+        },
     }
+}
 
-    Ok(())
+fn build_subscription_funding_block(warning: &serde_json::Value) -> serde_json::Value {
+    common::funding_notice::funding_blocked_envelope(warning, "subscription", "Subscription")
 }
 
 #[cfg(test)]
@@ -587,6 +554,9 @@ mod tests {
                 autotrade_amount,
                 autotrade_cap,
                 autotrade_quote,
+                autotrade_environment,
+                autotrade_margin_mode,
+                autotrade_order_policy,
                 format,
                 exclude_device,
             } => {
@@ -605,6 +575,9 @@ mod tests {
                 assert!(autotrade_amount.is_none());
                 assert!(autotrade_cap.is_none());
                 assert!(autotrade_quote.is_none());
+                assert!(autotrade_environment.is_none());
+                assert!(autotrade_margin_mode.is_none());
+                assert!(autotrade_order_policy.is_none());
                 assert_eq!(format, "");
                 assert!(exclude_device.is_none());
             }
@@ -666,6 +639,38 @@ mod tests {
         ]).is_err());
     }
 
+    #[test]
+    fn cli_create_subscribe_rejects_create_time_device_selection() {
+        let cli = TestCli::try_parse_from([
+            "test", "create-subscribe",
+            "--service-id", "svc_001",
+            "--service-token-amount", "10",
+            "--service-token-address", "0xAddr",
+            "--auto-renew", "1",
+            "--title", "t",
+            "--description", "d",
+            "--exclude-device", "device-2",
+        ])
+        .expect("legacy flag remains parseable so the command can return a specific error");
+
+        let exclude_device = match cli.cmd {
+            super::super::TaskCommand::CreateSubscribe { exclude_device, .. } => exclude_device,
+            _ => panic!("expected CreateSubscribe"),
+        };
+        let mut params = params_fixture(None);
+        params.exclude_device = exclude_device;
+        let error = params
+            .validate()
+            .expect_err("create-time device selection must be rejected locally");
+
+        assert!(
+            error
+                .to_string()
+                .contains("create-time device selection is unsupported"),
+            "unexpected error: {error}"
+        );
+    }
+
     fn params_fixture(provider: Option<&str>) -> super::CreateSubscribeParams {
         super::CreateSubscribeParams {
             service_id: "svc".to_string(),
@@ -683,50 +688,52 @@ mod tests {
             autotrade_amount: None,
             autotrade_cap: None,
             autotrade_quote: None,
+            autotrade_environment: None,
+            autotrade_margin_mode: None,
+            autotrade_order_policy: None,
             format: "json".to_string(),
             exclude_device: None,
         }
     }
 
     #[test]
-    fn create_body_always_embeds_device_list_even_when_empty() {
-        // Degrade / all-excluded resolves to an empty set — the body must still
-        // carry an explicit (empty) deviceList so routing never falls to a server default.
+    fn create_body_defaults_subscription_routing_to_all_devices() {
+        // A successful subscription create always uses the backend's default-all
+        // routing mode; create-time device selection is not supported.
         let p = params_fixture(None);
-        let body = super::build_create_body(&p, false, serde_json::json!({ "asp": "x" }), "0xsig", &[]);
-        assert_eq!(body["deviceList"], serde_json::json!([]));
+        let body = super::build_create_body(&p, false, serde_json::json!({ "asp": "x" }), "0xsig");
+        assert_eq!(body["deviceList"], serde_json::Value::Null);
         assert!(body.get("deviceList").is_some());
         assert_eq!(body["termsSig"], serde_json::json!("0xsig"));
         assert!(body.get("providerAgentId").is_none());
     }
 
     #[test]
-    fn create_body_carries_devices_and_provider_when_present() {
+    fn create_body_carries_default_all_routing_and_provider_when_present() {
         let p = params_fixture(Some("agent-7"));
-        let devices = vec!["d1".to_string(), "d2".to_string()];
-        let body = super::build_create_body(&p, true, serde_json::json!({}), "0xsig", &devices);
-        assert_eq!(body["deviceList"], serde_json::json!(["d1", "d2"]));
+        let body = super::build_create_body(&p, true, serde_json::json!({}), "0xsig");
+        assert_eq!(body["deviceList"], serde_json::Value::Null);
         assert_eq!(body["providerAgentId"], serde_json::json!("agent-7"));
         assert_eq!(body["useTrial"], serde_json::json!(true));
     }
 
     #[test]
-    fn create_success_envelope_carries_degrade_marker() {
+    fn create_success_envelope_never_reports_device_routing_degradation() {
         use crate::commands::agent_commerce::task::common::okx_a2a::OfflineReplayCapability;
         // Supported comm package ⇒ offlineReplaySupported:true and NO fix-commands field.
         let supported = OfflineReplayCapability {
             supported: true,
             fix_commands: Vec::new(),
         };
-        let degraded = super::build_create_success("0xjob", "0xhash", true, &supported, true, true);
-        assert_eq!(degraded["deviceRoutingDegraded"], serde_json::json!(true));
-        assert_eq!(degraded["subId"], serde_json::json!("0xjob"));
-        assert_eq!(degraded["txHash"], serde_json::json!("0xhash"));
-        assert_eq!(degraded["offlineReplaySupported"], serde_json::json!(true));
-        assert_eq!(degraded["autoTradeConfigRequested"], serde_json::json!(true));
-        assert_eq!(degraded["autoTradeConfigured"], serde_json::json!(true));
-        assert!(degraded.get("offlineReplayFixCommands").is_none());
-        let ok = super::build_create_success("0xjob", "0xhash", false, &supported, false, false);
+        let success = super::build_create_success("0xjob", "0xhash", &supported, true, true);
+        assert_eq!(success["deviceRoutingDegraded"], serde_json::json!(false));
+        assert_eq!(success["subId"], serde_json::json!("0xjob"));
+        assert_eq!(success["txHash"], serde_json::json!("0xhash"));
+        assert_eq!(success["offlineReplaySupported"], serde_json::json!(true));
+        assert_eq!(success["autoTradeConfigRequested"], serde_json::json!(true));
+        assert_eq!(success["autoTradeConfigured"], serde_json::json!(true));
+        assert!(success.get("offlineReplayFixCommands").is_none());
+        let ok = super::build_create_success("0xjob", "0xhash", &supported, false, false);
         assert_eq!(ok["deviceRoutingDegraded"], serde_json::json!(false));
     }
 
@@ -738,7 +745,7 @@ mod tests {
             supported: false,
             fix_commands: vec!["npm i -g @okxweb3/a2a-node@1.2.3".to_string()],
         };
-        let env = super::build_create_success("0xjob", "0xhash", false, &unsupported, false, false);
+        let env = super::build_create_success("0xjob", "0xhash", &unsupported, false, false);
         assert_eq!(env["offlineReplaySupported"], serde_json::json!(false));
         assert_eq!(
             env["offlineReplayFixCommands"],
@@ -749,10 +756,33 @@ mod tests {
             supported: false,
             fix_commands: Vec::new(),
         };
-        let env2 = super::build_create_success("0xjob", "0xhash", false, &unsupported_default, false, false);
+        let env2 = super::build_create_success("0xjob", "0xhash", &unsupported_default, false, false);
         assert_eq!(
             env2["offlineReplayFixCommands"],
             serde_json::json!(["npm install -g @okxweb3/a2a-node@latest"])
+        );
+    }
+
+    #[test]
+    fn subscription_funding_block_uses_funding_notice_protocol() {
+        let warning = serde_json::json!({
+            "sufficient": false,
+            "chain": "XLayer",
+            "currency": "USDT",
+            "available": "0",
+            "required": "0.0001",
+            "shortfall": "0.0001",
+            "depositAddress": "0x1234567890abcdef1234567890abcdef12345678",
+            "depositChain": "XLayer"
+        });
+
+        let output = build_subscription_funding_block(&warning);
+        assert_eq!(output["blocked"], serde_json::json!(true));
+        assert_eq!(output["submitted"], serde_json::json!(false));
+        assert_eq!(output["mustRunFundingNotice"], serde_json::json!(true));
+        assert_eq!(
+            output["fundingNoticeCommand"],
+            "onchainos agent funding-notice --chain XLayer --currency USDT --shortfall 0.0001 --deposit-address 0x1234567890abcdef1234567890abcdef12345678 --available 0 --required 0.0001 --deposit-chain XLayer --reason subscription --format json"
         );
     }
 
@@ -771,7 +801,7 @@ mod tests {
     }
 
     #[test]
-    fn create_body_always_enables_subscription_delivery() {
+    fn create_body_omits_retired_delivery_marker() {
         let params = CreateSubscribeParams {
             service_id: "svc_report_only".to_string(),
             use_trial: false,
@@ -788,6 +818,9 @@ mod tests {
             autotrade_amount: None,
             autotrade_cap: None,
             autotrade_quote: None,
+            autotrade_environment: None,
+            autotrade_margin_mode: None,
+            autotrade_order_policy: None,
             format: "json".to_string(),
             exclude_device: None,
         };
@@ -797,10 +830,9 @@ mod tests {
             false,
             serde_json::json!({"subId": 0}),
             "0xsignature",
-            &[],
         );
 
-        assert_eq!(body["copyTrade"], serde_json::json!(1));
+        assert!(body.get("copyTrade").is_none());
         assert_eq!(body["providerAgentId"], serde_json::json!("agent-99"));
         assert_eq!(body["description"], params.description);
         assert!(body.get("descriptionSummary").is_none());
@@ -820,9 +852,19 @@ mod tests {
             "--autotrade-amount", "20.00",
             "--autotrade-cap", "50",
             "--autotrade-quote", "USDT",
+            "--autotrade-environment", "demo",
+            "--autotrade-margin-mode", "cross",
+            "--autotrade-order-policy", "market",
         ]);
         let super::super::TaskCommand::CreateSubscribe {
-            autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, ..
+            autotrade_mode,
+            autotrade_amount,
+            autotrade_cap,
+            autotrade_quote,
+            autotrade_environment,
+            autotrade_margin_mode,
+            autotrade_order_policy,
+            ..
         } = cli.cmd else {
             panic!("expected CreateSubscribe");
         };
@@ -830,33 +872,67 @@ mod tests {
         assert_eq!(autotrade_amount.as_deref(), Some("20.00"));
         assert_eq!(autotrade_cap.as_deref(), Some("50"));
         assert_eq!(autotrade_quote.as_deref(), Some("USDT"));
+        assert_eq!(autotrade_environment.as_deref(), Some("demo"));
+        assert_eq!(autotrade_margin_mode.as_deref(), Some("cross"));
+        assert_eq!(autotrade_order_policy.as_deref(), Some("market"));
     }
 
     #[test]
-    fn autotrade_config_reports_only_missing_fields() {
+    fn autotrade_config_accepts_partial_fields_and_defaults_auto_usdt() {
         let mut params = params_fixture(None);
-        params.autotrade_mode = Some("auto".to_string());
         params.autotrade_amount = Some("20".to_string());
-        let error = params.validate().unwrap_err().to_string();
-        assert!(error.contains("--autotrade-cap"));
-        assert!(error.contains("--autotrade-quote"));
-        assert!(!error.contains("--autotrade-amount,"));
+        let config = params.autotrade_config().unwrap();
+        assert_eq!(config.mode, consent::ConsentMode::Auto);
+        assert_eq!(config.amount.as_deref(), Some("20"));
+        assert_eq!(config.cap, None);
+        assert_eq!(config.quote, "usdt");
+        assert_eq!(config.environment, None);
     }
 
     #[test]
-    fn autotrade_config_normalizes_and_rejects_amount_above_cap() {
+    fn autotrade_config_rejects_non_explicit_trade_environment() {
+        let mut params = params_fixture(None);
+        params.autotrade_environment = Some("configured".to_string());
+        assert!(params
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("--autotrade-environment must be one of: live | demo"));
+    }
+
+    #[test]
+    fn autotrade_config_normalizes_and_does_not_enforce_cap() {
         let mut params = params_fixture(None);
         params.autotrade_mode = Some("auto".to_string());
         params.autotrade_amount = Some("20.00".to_string());
         params.autotrade_cap = Some("50.0".to_string());
         params.autotrade_quote = Some("USDT".to_string());
-        let config = params.autotrade_config().unwrap().unwrap();
-        assert_eq!(config.amount, "20");
-        assert_eq!(config.cap, "50");
+        let config = params.autotrade_config().unwrap();
+        assert_eq!(config.amount.as_deref(), Some("20"));
+        assert_eq!(config.cap.as_deref(), Some("50"));
         assert_eq!(config.quote, "usdt");
 
         params.autotrade_amount = Some("51".to_string());
-        assert!(params.validate().unwrap_err().to_string().contains("must not exceed"));
+        assert!(params.validate().is_ok());
+        assert_eq!(
+            params.autotrade_config().unwrap().amount.as_deref(),
+            Some("51")
+        );
+    }
+
+    #[test]
+    fn autotrade_config_preserves_explicit_manual_and_user_values() {
+        let mut params = params_fixture(None);
+        params.autotrade_mode = Some("manual".to_string());
+        params.autotrade_amount = Some("25.00".to_string());
+        params.autotrade_cap = Some("10".to_string());
+        params.autotrade_quote = Some("USDC".to_string());
+
+        let config = params.autotrade_config().unwrap();
+        assert_eq!(config.mode, consent::ConsentMode::Manual);
+        assert_eq!(config.amount.as_deref(), Some("25"));
+        assert_eq!(config.cap.as_deref(), Some("10"));
+        assert_eq!(config.quote, "usdc");
     }
 
     #[test]
@@ -875,9 +951,13 @@ mod tests {
         std::env::set_var("ONCHAINOS_HOME", &home);
 
         let config = SubscriptionAutoTradeConfig {
-            amount: "20".to_string(),
-            cap: "50".to_string(),
+            mode: consent::ConsentMode::Auto,
+            amount: Some("20".to_string()),
+            cap: Some("50".to_string()),
             quote: "usdt".to_string(),
+            environment: Some(TradeEnvironment::Demo),
+            margin_mode: Some(MarginMode::Cross),
+            order_policy: Some(OrderPolicy::Market),
         };
         persist_subscription_autotrade("job-subscribe-auto", &config).unwrap();
 
@@ -888,9 +968,12 @@ mod tests {
         assert_eq!(stored.trade_amount_u.as_deref(), Some("20"));
         assert_eq!(stored.cap_u.as_deref(), Some("50"));
         assert_eq!(stored.quote_token.as_deref(), Some("usdt"));
+        assert_eq!(stored.trade_environment, config.environment);
+        assert_eq!(stored.margin_mode, config.margin_mode);
+        assert_eq!(stored.order_policy, config.order_policy);
         assert!(grants::check_grant("job-subscribe-auto", "dex", "buy", "50").is_ok());
         assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "50").is_ok());
-        assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "51").is_err());
+        assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "51").is_ok());
 
         std::env::remove_var("ONCHAINOS_HOME");
         std::fs::remove_dir_all(home).ok();

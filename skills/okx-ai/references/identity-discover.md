@@ -1,57 +1,72 @@
-# Discover — search · list my agents · detail · service-list
-Loaded when: search/find agents · list my agents · detail #N · "what services does #N offer".
-
-Render per identity-invariants.md (§Lexicon, §Card skeleton, §Verbatim-render contract). The CLI computes the
-labels/stars; you render its output and never re-divide a score or hand-map an enum. One intent = one
-CLI call (SKILL §Gates One-call rule); never grep/jq/parse the JSON or read your own tool-result files —
-re-issue the CLI instead (SKILL §Gates One-call rule).
+# Discover — service-match · list my agents · detail · service-list
 
 ## Routing nuances (decide before calling)
 - "my <descriptor> agents" / any ownership word → **list** = `agent get-my-agents` + client-side group/filter,
-  NOT `search`. Explicit `#ids` ("detail #42", "#42 #58") → **detail** = `agent get-agents --agent-ids`, NOT search.
-- Free-text "find agents doing X" → **search**.
+  NOT `service-match`. Explicit `#ids` ("detail #42", "#42 #58") → **detail** = `agent get-agents --agent-ids`, NOT service-match.
+- Free-text "find agents/services doing X" → **service-match**.
 
 ---
 
-## search — `agent search`
+## service-match — `agent service-match`
 
-**Empty query guard** — if the user expressed search intent but gave no keywords, ask for the query before calling `agent search`.
+For the initial search, pass the user's original utterance verbatim to
+`intent-keyword-extraction.md`, then use its output unchanged in
+`onchainos agent service-match <args> --limit 5`. Do not preprocess or enrich the input or output.
 
-`--query` = the user's FULL sentence, **verbatim** — no translate / paraphrase / split / canonicalize;
-strip only `#id` tokens. Filter intent → separate **verbatim** flags, value carries the user's own wording:
-`--feedback` (rating-related words), `--agent-info` (domain/keyword words like "on-chain data analysis"), `--status`,
-`--service` (closed interface-token list). **Never default `--status`.** ONE search per intent — no
-re-sort, no second call to "improve" results.
+### Initial-search argument example
 
-Each row carries a ready `cells[]` (`Agent ID | Name | Rating | Min price | Top service`) — rating
-(`feedbackRate` direct, `null`→`—` / `0`→`No rating yet`), min-price, and top-service are already
-resolved. **Render `cells` verbatim** (identity-invariants.md §Verbatim-render contract).
+The extraction object is internal; convert non-null fields to CLI flags, emit `--keywords` once,
+and preserve keyword order. For example:
 
-```
-> Search: `"<user's original utterance, verbatim>"`
-> Read as: <natural-language: surviving buckets + keyword tokens — never paste raw flags>
+```text
+# Extraction:
+{"asp-agent-id":null,"asp-name":null,"service-name":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["analyze this wallet","generate a report"]}
 
-| Agent ID | Name | Rating | Min price | Top service |
-|---|---|---|---|---|
-| <cells, in order, verbatim — one row per list[*]> |
-
-> Service types: API service = pay-per-call, fixed price; agent to agent = per-call or monthly-subscription pricing (one or the other).
-> N results total. Say "detail #42" for details; "what services does #42 offer" for services; "reviews #42" for its reputation.
+# CLI:
+onchainos agent service-match --keywords "analyze this wallet" "generate a report" --limit 5
 ```
 
-- **Render every row the page returned; never claim a count you didn't show.** The `> N results` footer is
-  the backend `total`; if you render fewer rows than `total`, say "showing first K of N" — never write
-  "found N / all shown" while the table has fewer than N rows.
-- "Read as" omitted if no filter survived. Gloss footnote once; omit if already shown this conversation.
-- Pagination: backend `--page <prev+1> --query "<same>"` for a new page (render that response, not memory),
-  or render the in-context remainder if all rows already returned. Never stitch two pages into one table.
-  Page size is capped at 100 — fetch more with `--page N+1`, never a bigger page.
-- **No sort knob on search.** `agent search` has no sort option. If the user asks to sort results ("by
-  review count / newest / highest rating"), say it isn't directly supported — narrow via `--query`, or
-  pick an agent and sort *their* reviews instead. Never promise or paste a sort flag (SKILL §UX Red Lines).
-- **Confirm an `inactive` / `delisted` filter** before sending — that's usually a debug request, not
-  discovery. On confirm, pass the user's verbatim wording (don't remap to another term).
-- Agents ≠ skills — if you have no `agent search` response yet, you may not name candidates. Run the search.
+For continuation pages, use only `--search-after <searchAfter>` with pagination options; do not
+repeat initial-search filters.
+
+### Rendering (blocking)
+
+Group `services[]` by `asp.aspAgentId`, preserving the returned Agent and Service order. Render a
+full Markdown table for the **first returned Agent only**. After that table, render every remaining
+Agent as one compact bullet under an "Other results" heading. The first Agent is determined solely
+by returned order — never score, recommend, filter, or reorder Agents model-side.
+
+```markdown
+### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>
+
+| # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description |
+|---|---|---|---|---|---|---|---|
+| 1 | <name> | <A2MCP or A2A> | <fee> | <subscription> | <free trial> | <endpoint> | <description> |
+
+### Other results
+
+- **<asp.aspName> (Agent ID: <asp.aspAgentId>):** Rating <asp.rating>, Sold Count <asp.soldCount>; <service 1 name> — <service 1 description>, <service 1 price>[, Free trial <service 1 freeTrial>]; <service 2 name> — <service 2 description>, <service 2 price>[, Free trial <service 2 freeTrial>]
+```
+
+- **First Agent table:** keep the existing §service-list 8-column contents and presentation rules.
+  Populate them from each Service's `serviceName`, `serviceType`, `feeAmount`, `feeTokenSymbol`,
+  `subscription[]`, `freeTrial`, `endpoint`, and `serviceDescription`; number rows from 1. Apply the
+  §service-list all-`—` column omission rule to this table.
+- **Other results:** emit one bullet per remaining Agent, in returned order. Within each bullet,
+  append every returned Service in order as `name — description, price`, separated by semicolons.
+  `price` is the populated Fee or Subscription value rendered per §service-list; append the localized
+  Free-trial label and value only when present. Do not show Type, Endpoint, or `—` placeholders in
+  these compact bullets.
+- Never display a Service's raw `serviceId` or `id` in either the first table or Other-results bullets.
+  The table's `#` column is only a display row number starting from 1.
+
+Render the CLI-normalized `rating` directly.
+
+### Pagination
+
+After each page with `hasMore == true`, append a "more" prompt. On "more", run exactly
+`onchainos agent service-match --search-after <returned searchAfter> --limit 5`; do not repeat
+initial-search filters. Apply this rule to every continuation page.
 
 ---
 
@@ -112,21 +127,24 @@ contract). The agent-list card does **not** inline services or rating. **ASP →
 
 ## service-list — `agent service-list --agent-id N`
 
-Single 8-column table; values verbatim. Service-type gloss once per table (wording per identity-invariants.md §Lexicon).
+Single 8-column table; values verbatim. Do not add a service-type gloss: display `A2MCP` / `A2A` exactly per identity-invariants.md §Lexicon.
+**Never display the raw `serviceId` or `id` fields, even when they are present in the CLI response.**
 
 ```
 > Agent #<id> — <name> (<role label>) services:
 
 | # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description |
 |---|---|---|---|---|---|---|---|
-| 1 | <name> | <localized type> | <fee> | <subscription> | <free trial> | <endpoint> | <description> |
+| 1 | <name> | <A2MCP or A2A> | <fee> | <subscription> | <free trial> | <endpoint> | <description> |
 
-> Service types: API service = pay-per-call, fixed price; agent to agent = per-call or monthly-subscription pricing (one or the other).
+Do not append a service-type explanation or alias.
 ```
 
-- `#` numbered from 1. Type per Lexicon (API service / agent to agent), never raw A2MCP/A2A.
-- **Fee / Subscription / Free trial:** render per identity-invariants.md §Lexicon (Fee / Subscription / Free trial rows) — the CLI does the mapping; render `cells` verbatim, never recompute.
+- `#` is a display-only row number starting from 1; it is never `serviceId` or `id`. Type per Lexicon:
+  render only the exact raw value `A2MCP` or `A2A`; never translate or rewrite it.
+- Omit any column whose values are all `—`; otherwise keep it and render missing values as `—`.
+- **Fee / Subscription / Free trial:** render per identity-invariants.md §Lexicon (Fee / Subscription / Free trial rows). Zero-price normalization is the sole price-value exception to verbatim rendering: if a returned Fee or Subscription value is numeric zero, or a ready cell formats that zero as `0 USDT` / `0 USDT / month`, show the localized `Free` label instead. Do not treat empty, missing, or `—` as zero; otherwise render `cells` verbatim and never recompute prices.
   **Endpoint:** A2A always `—` (CLI clears it); wrap URLs in backticks so the table doesn't break.
-- Values verbatim — don't normalize odd shapes; truncate long descriptions with `…`, keep first sentence.
+- Values verbatim except the zero-price normalization above — don't normalize other odd shapes; truncate long descriptions with `…`, keep first sentence.
   If a value's shape diverges from the local schema (e.g. `serviceType: query`, fee in ETH), render it as-is
   and add a one-line footnote: looks like backend demo data — verify before integrating.

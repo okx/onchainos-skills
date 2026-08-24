@@ -7,13 +7,31 @@
 //! consumers should minimize calls in hot paths.
 
 use anyhow::Result;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 // ── Communication readiness preflight ──────────────────────────────────────
 
 /// Env flag that disables the readiness preflight entirely (tests / CI /
 /// power users who manage the a2a environment themselves).
 pub const SKIP_A2A_PREFLIGHT_ENV: &str = "ONCHAINOS_SKIP_A2A_PREFLIGHT";
+
+fn output_with_timeout(mut command: Command, timeout: Duration) -> Result<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        if child.try_wait()?.is_some() {
+            return Ok(child.wait_with_output()?);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("okx-a2a command timed out after {}s", timeout.as_secs());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
 
 /// Build a command that resolves npm-installed CLIs on every platform.
 /// Windows CreateProcess only resolves `.exe` for a bare name, but npm lays
@@ -41,12 +59,26 @@ fn run_silently(program: &str, args: &[&str]) -> Option<std::process::Output> {
     npm_cli_command(program, args).output().ok()
 }
 
+fn version_probe_failure_hint(details: Option<&str>) -> String {
+    let mut hint = concat!(
+        "okx-a2a may not be installed, or the active Node environment may differ from the one ",
+        "used to install it. Switch to the correct Node environment and retry. If it is not ",
+        "installed, run `npm i -g @okxweb3/a2a-node` in a compatible Node environment."
+    )
+    .to_string();
+    if let Some(details) = details.map(str::trim).filter(|value| !value.is_empty()) {
+        hint.push_str(" Details: ");
+        hint.push_str(details);
+    }
+    hint
+}
+
 /// Result of the read-only A2A readiness probe.
 enum CommReadiness {
     /// A definitive positive verdict (or the probe was skipped via env).
     Ready,
-    /// A DEFINITIVE negative: okx-a2a not installed, or doctor returned a valid
-    /// report whose readiness verdict is false. Callers block with this hint.
+    /// A DEFINITIVE negative: the version probe failed (missing command or wrong
+    /// Node environment), or doctor returned a valid false readiness verdict.
     NotReady(String),
     /// No usable verdict could be obtained even though okx-a2a is installed
     /// (doctor crashed / produced no JSON / a build too old to have `doctor` /
@@ -60,7 +92,7 @@ enum CommReadiness {
 /// move via `okx-a2a doctor --fix`, which can do the interactive parts (plugin
 /// install, provider login) that a silent path cannot. Outcomes:
 /// - SKIP env set → Ready
-/// - `okx-a2a` not installed → NotReady (a definitive, knowable bad state)
+/// - version probe fails → NotReady with missing-install / Node-environment guidance
 /// - doctor returns a valid readiness verdict → Ready / NotReady accordingly
 /// - okx-a2a present but doctor yields no usable verdict (crash / non-JSON /
 ///   no `doctor` command / missing readiness field) → Unverifiable (proceed)
@@ -69,15 +101,21 @@ fn probe_communication_readiness() -> CommReadiness {
         return CommReadiness::Ready;
     }
 
-    let installed = run_silently("okx-a2a", &["--version"])
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if !installed {
-        return CommReadiness::NotReady(
-            "okx-a2a is not installed. Install and initialize it: \
-             run `npm i -g @okxweb3/a2a-node`, then `okx-a2a doctor --fix`."
-                .to_string(),
-        );
+    match npm_cli_command("okx-a2a", &["--version"]).output() {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let details = if stderr.trim().is_empty() {
+                stdout.as_ref()
+            } else {
+                stderr.as_ref()
+            };
+            return CommReadiness::NotReady(version_probe_failure_hint(Some(details)));
+        }
+        Err(error) => {
+            return CommReadiness::NotReady(version_probe_failure_hint(Some(&error.to_string())));
+        }
     }
 
     eprintln!("[onchainos] checking A2A communication readiness (okx-a2a doctor)...");
@@ -131,7 +169,10 @@ fn build_not_ready_hint(user_message: &str, report: &serde_json::Value) -> Strin
     let mut lines = vec![user_message.to_string()];
     if let Some(actions) = report.get("nextActions").and_then(|v| v.as_array()) {
         for action in actions {
-            let optional = action.get("optional").and_then(|v| v.as_bool()).unwrap_or(false);
+            let optional = action
+                .get("optional")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             if optional {
                 continue;
             }
@@ -145,7 +186,9 @@ fn build_not_ready_hint(user_message: &str, report: &serde_json::Value) -> Strin
             }
         }
     }
-    lines.push("Run `okx-a2a doctor --fix` to repair the local A2A environment, then retry.".to_string());
+    lines.push(
+        "Run `okx-a2a doctor --fix` to repair the local A2A environment, then retry.".to_string(),
+    );
     lines.join("\n")
 }
 
@@ -319,18 +362,91 @@ fn interpret_capabilities_output(stdout: Option<&[u8]>) -> OfflineReplayCapabili
 /// stdout is consumed directly by a human / shell. In-process callers inside
 /// playbook handlers (e.g. `next-action` event dispatch) must pass `false`,
 /// otherwise the `OK` would prepend the playbook returned to the LLM.
-pub fn user_notify(content: &str, print_output: bool) -> Result<()> {
+pub fn compose_user_notify_content(
+    content: &str,
+    image_path: Option<&std::path::Path>,
+) -> Result<String> {
     let content = content.replace("\\n", "\n");
+    if content.contains("file://") || (content.contains("![") && content.contains("](")) {
+        anyhow::bail!("local image links in --content are not supported; use --image-path <file>");
+    }
+    let Some(path) = image_path else {
+        return Ok(content);
+    };
+    let path = path.to_string_lossy();
+    if path.trim().is_empty() || path.contains('\n') || path.contains('\r') {
+        anyhow::bail!("--image-path must be a non-empty single-line path");
+    }
+    Ok(format!("{content}\n\nMEDIA:{path}"))
+}
+
+pub fn user_notify(
+    content: &str,
+    image_path: Option<&std::path::Path>,
+    print_output: bool,
+) -> Result<()> {
+    if let Some(path) = image_path {
+        if !path.exists() {
+            anyhow::bail!("--image-path file not found: {}", path.display());
+        }
+    }
+    let content = compose_user_notify_content(content, image_path)?;
     let out = Command::new("okx-a2a")
         .args(["user", "notify", "--content", &content, "--json"])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a user notify exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "okx-a2a user notify exit {status}: {stderr}",
+            status = out.status
+        );
     }
     if print_output {
         println!("OK");
+    }
+    Ok(())
+}
+
+/// Job-scoped, idempotent notification used by automatic execution outcomes.
+/// Existing callers keep their environment-routed behavior; this path makes a
+/// background trade result deterministic for the owning job UI.
+pub fn user_notify_scoped(content: &str, job_id: &str, idempotency_key: &str) -> Result<()> {
+    user_notify_scoped_with_timeout(
+        content,
+        job_id,
+        idempotency_key,
+        Duration::from_secs(5),
+    )
+}
+
+pub fn user_notify_scoped_with_timeout(
+    content: &str,
+    job_id: &str,
+    idempotency_key: &str,
+    timeout: Duration,
+) -> Result<()> {
+    let content = compose_user_notify_content(content, None)?;
+    let mut command = Command::new("okx-a2a");
+    command.args([
+            "user",
+            "notify",
+            "--content",
+            &content,
+            "--job-id",
+            job_id,
+            "--idempotency-key",
+            idempotency_key,
+            "--json",
+        ]);
+    let out = output_with_timeout(command, timeout)
+        .map_err(|e| anyhow::anyhow!("scoped user notify failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!(
+            "okx-a2a scoped user notify exit {status}: {stderr}",
+            status = out.status
+        );
     }
     Ok(())
 }
@@ -339,45 +455,76 @@ pub fn user_notify(content: &str, print_output: bool) -> Result<()> {
 /// Sub-side replacement for the MCP `xmtp_prompt_user` tool. Pushes a
 /// decision card into the okx-a2a CLI's SQLite `user_attention` table so the
 /// user-session can surface it and relay the user's reply back later.
-/// The job id is also passed as a first-class CLI argument so okx-a2a can
-/// atomically replace an older pending decision for the same job. The remaining
-/// routing fields are encoded inside `llm_content` by the caller (see
-/// `resolve_llm_content_cli`).
-fn user_decision_request_args<'a>(
-    job_id: &'a str,
-    user_content: &'a str,
-    llm_content: &'a str,
-) -> Vec<&'a str> {
-    vec![
-        "user",
-        "decision-request",
-        "--user-content",
-        user_content,
-        "--llm-content",
-        llm_content,
-        "--job-id",
-        job_id,
-        "--json",
-    ]
-}
-
-pub fn user_decision_request(job_id: &str, user_content: &str, llm_content: &str) -> Result<()> {
-    if job_id.trim().is_empty() {
-        anyhow::bail!("job id is required for an atomic user decision request");
-    }
-    let args = user_decision_request_args(job_id, user_content, llm_content);
+/// All routing fields (job_id / role / agent_id / to_agent_id / source_event)
+/// are encoded inside `llm_content` by the caller (see `resolve_llm_content_cli`).
+pub fn user_decision_request(user_content: &str, llm_content: &str) -> Result<()> {
     let out = Command::new("okx-a2a")
-        .args(args)
+        .args([
+            "user",
+            "decision-request",
+            "--user-content",
+            user_content,
+            "--llm-content",
+            llm_content,
+            "--json",
+        ])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a user decision-request exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "okx-a2a user decision-request exit {status}: {stderr}",
+            status = out.status
+        );
     }
     Ok(())
 }
 
 // ── Session management ────────────────────────────────────────────────────
+
+fn pending_user_attention_items(value: &serde_json::Value) -> Option<&Vec<serde_json::Value>> {
+    value.get("items").and_then(serde_json::Value::as_array)
+        .or_else(|| value.get("data").and_then(serde_json::Value::as_array))
+        .or_else(|| value.get("data").and_then(|data| data.get("items")).and_then(serde_json::Value::as_array))
+}
+
+fn decision_source_event(llm_content: &str) -> Option<&str> {
+    let rest = llm_content.split_once("--source-event \"")?.1;
+    rest.split_once('"').map(|(event, _)| event)
+}
+
+fn retired_autotrade_todo_ids(value: &serde_json::Value, job_id: &str) -> Vec<String> {
+    pending_user_attention_items(value).into_iter().flatten()
+        .filter(|item| item.get("jobId").and_then(serde_json::Value::as_str) == Some(job_id))
+        .filter(|item| item.get("kind").and_then(serde_json::Value::as_str) == Some("decision_request"))
+        .filter(|item| item.get("status").and_then(serde_json::Value::as_str) == Some("pending"))
+        .filter(|item| {
+            let event = item.get("llmContent").and_then(serde_json::Value::as_str).and_then(decision_source_event);
+            crate::commands::agent_commerce::task::common::autotrade::is_retired_delivery_decision(event)
+        })
+        .filter_map(|item| item.get("id").and_then(serde_json::Value::as_str))
+        .map(str::to_string).collect()
+}
+
+pub fn mark_retired_autotrade_decisions_handled(job_id: &str) -> Result<usize> {
+    if job_id.trim().is_empty() { anyhow::bail!("job id is required"); }
+    let list = npm_cli_command("okx-a2a", &["user", "outdated-list"]).output()
+        .map_err(|error| anyhow::anyhow!("spawn failed: {error}"))?;
+    if !list.status.success() {
+        anyhow::bail!("okx-a2a user outdated-list exit {}: {}", list.status, String::from_utf8_lossy(&list.stderr));
+    }
+    let json: serde_json::Value = serde_json::from_slice(&list.stdout)
+        .map_err(|error| anyhow::anyhow!("user outdated-list stdout not valid JSON: {error}"))?;
+    let todo_ids = retired_autotrade_todo_ids(&json, job_id);
+    if todo_ids.is_empty() { return Ok(0); }
+    let joined = todo_ids.join(",");
+    let check = npm_cli_command("okx-a2a", &["user", "check", "--todo-ids", &joined, "--json"]).output()
+        .map_err(|error| anyhow::anyhow!("spawn failed: {error}"))?;
+    if !check.status.success() {
+        anyhow::bail!("okx-a2a user check exit {}: {}", check.status, String::from_utf8_lossy(&check.stderr));
+    }
+    Ok(todo_ids.len())
+}
 
 /// Bridge equivalent: `xmtp_sessions_query '{jobId, myAgentId, toAgentId}'`
 /// The bridge only consumes `.length` on the returned sessions array;
@@ -385,17 +532,24 @@ pub fn user_decision_request(job_id: &str, user_content: &str, llm_content: &str
 pub fn session_query_exists(job_id: &str, my_agent_id: &str, to_agent_id: &str) -> Result<bool> {
     let out = Command::new("okx-a2a")
         .args([
-            "session", "query",
-            "--job-id", job_id,
-            "--my-agent-id", my_agent_id,
-            "--to-agent-id", to_agent_id,
+            "session",
+            "query",
+            "--job-id",
+            job_id,
+            "--my-agent-id",
+            my_agent_id,
+            "--to-agent-id",
+            to_agent_id,
             "--json",
         ])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a session query exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "okx-a2a session query exit {status}: {stderr}",
+            status = out.status
+        );
     }
     let json: serde_json::Value = serde_json::from_slice(&out.stdout)
         .map_err(|e| anyhow::anyhow!("session query stdout not valid JSON: {e}"))?;
@@ -415,17 +569,24 @@ pub fn session_query_exists(job_id: &str, my_agent_id: &str, to_agent_id: &str) 
 pub fn session_create(job_id: &str, my_agent_id: &str, to_agent_id: &str) -> Result<String> {
     let out = Command::new("okx-a2a")
         .args([
-            "session", "create",
-            "--job-id", job_id,
-            "--my-agent-id", my_agent_id,
-            "--to-agent-id", to_agent_id,
+            "session",
+            "create",
+            "--job-id",
+            job_id,
+            "--my-agent-id",
+            my_agent_id,
+            "--to-agent-id",
+            to_agent_id,
             "--json",
         ])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a session create exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "okx-a2a session create exit {status}: {stderr}",
+            status = out.status
+        );
     }
     let json: serde_json::Value = serde_json::from_slice(&out.stdout)
         .map_err(|e| anyhow::anyhow!("session create stdout not valid JSON: {e}"))?;
@@ -447,23 +608,74 @@ pub fn session_create(job_id: &str, my_agent_id: &str, to_agent_id: &str) -> Res
 /// - `to_agent_id = Some`  → sends to every session matching `jobId + toAgentId`.
 ///   The CLI auto-suffixes message ids to avoid duplicates across fan-out.
 pub fn session_send(job_id: &str, to_agent_id: Option<&str>, content: &str) -> Result<()> {
+    session_send_with_timeout(job_id, to_agent_id, content, Duration::from_secs(5))
+}
+
+pub fn session_send_with_timeout(
+    job_id: &str,
+    to_agent_id: Option<&str>,
+    content: &str,
+    timeout: Duration,
+) -> Result<()> {
     let mut args: Vec<&str> = vec![
-        "session", "send",
-        "--job-id", job_id,
-        "--content", content,
+        "session",
+        "send",
+        "--job-id",
+        job_id,
+        "--content",
+        content,
         "--json",
     ];
     if let Some(to) = to_agent_id {
         args.push("--to-agent-id");
         args.push(to);
     }
-    let out = Command::new("okx-a2a")
-        .args(&args)
-        .output()
-        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    let mut command = Command::new("okx-a2a");
+    command.args(&args);
+    let out = output_with_timeout(command, timeout)
+        .map_err(|e| anyhow::anyhow!("session send failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a session send exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "okx-a2a session send exit {status}: {stderr}",
+            status = out.status
+        );
+    }
+    Ok(())
+}
+
+/// Dispatch to one exact AI session. Used only with a session key captured
+/// from the trusted inbound delivery envelope.
+pub fn session_send_exact(session_key: &str, content: &str, message_id: &str) -> Result<()> {
+    session_send_exact_with_timeout(session_key, content, message_id, Duration::from_secs(5))
+}
+
+pub fn session_send_exact_with_timeout(
+    session_key: &str,
+    content: &str,
+    message_id: &str,
+    timeout: Duration,
+) -> Result<()> {
+    let mut command = Command::new("okx-a2a");
+    command.args([
+            "session",
+            "send",
+            "--session-key",
+            session_key,
+            "--content",
+            content,
+            "--message-id",
+            message_id,
+            "--json",
+        ]);
+    let out = output_with_timeout(command, timeout)
+        .map_err(|e| anyhow::anyhow!("exact session send failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!(
+            "okx-a2a exact session send exit {status}: {stderr}",
+            status = out.status
+        );
     }
     Ok(())
 }
@@ -476,11 +688,7 @@ pub fn session_send(job_id: &str, to_agent_id: Option<&str>, content: &str) -> R
 /// When the daemon's lifecycle provider is `openclaw`, the CLI also asks the
 /// gateway to drop the corresponding session.
 pub fn session_delete(job_id: &str, to_agent_id: Option<&str>) -> Result<()> {
-    let mut args: Vec<&str> = vec![
-        "session", "delete",
-        "--job-id", job_id,
-        "--json",
-    ];
+    let mut args: Vec<&str> = vec!["session", "delete", "--job-id", job_id, "--json"];
     if let Some(to) = to_agent_id {
         args.push("--to-agent-id");
         args.push(to);
@@ -491,7 +699,10 @@ pub fn session_delete(job_id: &str, to_agent_id: Option<&str>) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a session delete exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "okx-a2a session delete exit {status}: {stderr}",
+            status = out.status
+        );
     }
     Ok(())
 }
@@ -508,15 +719,21 @@ pub fn xmtp_send(job_id: &str, to_agent_id: &str, message: &str) -> Result<()> {
     let out = Command::new("okx-a2a")
         .args([
             "xmtp-send",
-            "--job-id", job_id,
-            "--to-agent-id", to_agent_id,
-            "--message", message,
+            "--job-id",
+            job_id,
+            "--to-agent-id",
+            to_agent_id,
+            "--message",
+            message,
         ])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a xmtp-send exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "okx-a2a xmtp-send exit {status}: {stderr}",
+            status = out.status
+        );
     }
     Ok(())
 }
@@ -535,16 +752,22 @@ pub fn xmtp_send(job_id: &str, to_agent_id: &str, message: &str) -> Result<()> {
 pub fn session_history(job_id: &str, to_agent_id: &str) -> Result<String> {
     let out = Command::new("okx-a2a")
         .args([
-            "session", "history",
-            "--job-id", job_id,
-            "--to-agent-id", to_agent_id,
+            "session",
+            "history",
+            "--job-id",
+            job_id,
+            "--to-agent-id",
+            to_agent_id,
             "--json",
         ])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a session history exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "okx-a2a session history exit {status}: {stderr}",
+            status = out.status
+        );
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -558,8 +781,10 @@ pub fn session_history(job_id: &str, to_agent_id: &str) -> Result<String> {
 /// messages in the queue for an already-accepted task.
 pub fn task_reject_by_job(job_id: &str, content: Option<&str>) -> Result<()> {
     let mut args: Vec<String> = vec![
-        "task".into(), "reject".into(),
-        "--job-id".into(), job_id.into(),
+        "task".into(),
+        "reject".into(),
+        "--job-id".into(),
+        job_id.into(),
     ];
     if let Some(c) = content {
         args.push("--content".into());
@@ -612,10 +837,14 @@ pub fn file_upload(
     mime_type: Option<&str>,
 ) -> Result<FileUploadResult> {
     let mut args: Vec<&str> = vec![
-        "file", "upload",
-        "--file-path", file_path,
-        "--agent-id", agent_id,
-        "--job-id", job_id,
+        "file",
+        "upload",
+        "--file-path",
+        file_path,
+        "--agent-id",
+        agent_id,
+        "--job-id",
+        job_id,
     ];
     if let Some(f) = filename {
         args.push("--filename");
@@ -631,7 +860,10 @@ pub fn file_upload(
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a file upload exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "okx-a2a file upload exit {status}: {stderr}",
+            status = out.status
+        );
     }
     let json: serde_json::Value = serde_json::from_slice(&out.stdout)
         .map_err(|e| anyhow::anyhow!("file upload stdout not valid JSON: {e}"))?;
@@ -671,13 +903,20 @@ pub fn file_download(
     filename: Option<&str>,
 ) -> Result<String> {
     let mut args: Vec<&str> = vec![
-        "file", "download",
-        "--file-key", file_key,
-        "--agent-id", agent_id,
-        "--digest", digest,
-        "--salt", salt,
-        "--nonce", nonce,
-        "--secret", secret,
+        "file",
+        "download",
+        "--file-key",
+        file_key,
+        "--agent-id",
+        agent_id,
+        "--digest",
+        digest,
+        "--salt",
+        salt,
+        "--nonce",
+        nonce,
+        "--secret",
+        secret,
     ];
     if let Some(f) = filename {
         args.push("--filename");
@@ -689,7 +928,10 @@ pub fn file_download(
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("okx-a2a file download exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "okx-a2a file download exit {status}: {stderr}",
+            status = out.status
+        );
     }
     // The doc says stdout is "the local saved path" — pass-through. Some CLI
     // builds may wrap it in a JSON object (e.g. `{"path": "..."}`). Handle
@@ -712,28 +954,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decision_request_is_bound_to_job_for_atomic_coalescing() {
-        let args = user_decision_request_args("job-123", "prompt", "route");
-        assert_eq!(
-            args,
-            [
-                "user",
-                "decision-request",
-                "--user-content",
-                "prompt",
-                "--llm-content",
-                "route",
-                "--job-id",
-                "job-123",
-                "--json",
-            ]
-        );
+    fn user_notify_content_appends_media_path() {
+        let content =
+            compose_user_notify_content("line1\\nline2", Some(std::path::Path::new("/tmp/qr.png")))
+                .expect("compose notify content");
+        assert_eq!(content, "line1\nline2\n\nMEDIA:/tmp/qr.png");
     }
 
     #[test]
-    fn decision_request_rejects_an_empty_job_binding() {
-        let err = user_decision_request("  ", "prompt", "route").unwrap_err();
-        assert!(err.to_string().contains("job id is required"));
+    fn user_notify_content_rejects_multiline_media_path() {
+        let err =
+            compose_user_notify_content("notice", Some(std::path::Path::new("/tmp/a\nb.png")))
+                .expect_err("path must be rejected");
+        assert!(err.to_string().contains("single-line path"));
+    }
+
+    #[test]
+    fn user_notify_content_rejects_local_image_links() {
+        let md_err =
+            compose_user_notify_content("1. Scan\n![QR Code](file:///tmp/deposit.png)", None)
+                .expect_err("markdown local image must be rejected");
+        assert!(md_err.to_string().contains("--image-path"));
+
+        let file_err = compose_user_notify_content("QR: file:///tmp/deposit.png", None)
+            .expect_err("file url must be rejected");
+        assert!(file_err.to_string().contains("--image-path"));
+    }
+
+    #[test]
+    fn version_probe_hint_covers_missing_install_and_wrong_node_environment() {
+        let hint = version_probe_failure_hint(None);
+        assert!(hint.contains("may not be installed"));
+        assert!(hint.contains("active Node environment"));
+        assert!(hint.contains("npm i -g @okxweb3/a2a-node"));
+    }
+
+    #[test]
+    fn version_probe_hint_preserves_command_failure_details() {
+        let hint = version_probe_failure_hint(Some(
+            "Detected Node 20.14.0; okx-a2a requires Node >=22.14.0",
+        ));
+        assert!(hint.contains("Detected Node 20.14.0"));
+        assert!(hint.contains("requires Node >=22.14.0"));
     }
 
     // The verdict is exercised through the pure `interpret_capabilities_output` seam

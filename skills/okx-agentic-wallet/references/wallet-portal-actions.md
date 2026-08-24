@@ -67,15 +67,4 @@ e.g., "How do I set a spending limit?", "What's my daily limit?", "How to config
 
 e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I import my wallet into a hardware wallet?"
 
-**Required sequence — follow exactly, no steps may be skipped or reordered:**
-
-**Step 1.** Run `onchainos wallet status` (confirms login, surfaces `accountId`, and gives `loginType`). **Only** when `loginType` is `google` or `apple`, output the **Google/Apple notice** (above). For every other value (`email`, `ak`, or empty/unknown), continue to Step 2 — export is supported.
-
-**Step 2.** Call `onchainos competition user-status` (no `--activity-id`). The command uses the active session's `accountId` automatically — no wallet args needed.
-
-**Step 3.** Inspect results:
-- If **any** entry has `joinStatus=1` → output the warning below and **stop**. Do NOT output export instructions. Wait for explicit user confirmation before proceeding to Step 4.
-  > Your wallet is registered for an Agentic Wallet trading competition. Exporting the wallet will forfeit your eligibility for this competition. Please confirm whether you want to proceed with the export.
-- If no entry has `joinStatus=1` → proceed directly to Step 4.
-
-**Step 4.** Only after Step 2 and Step 3 complete, output the **Wallet Export template** (above).
+Run `onchainos wallet status` (confirms login, surfaces `accountId`, and gives `loginType`). **Only** when `loginType` is `google` or `apple`, output the **Google/Apple notice** (above). For every other value (`email`, `ak`, or empty/unknown), output the **Wallet Export template** (above).
