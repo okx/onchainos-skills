@@ -1,6 +1,6 @@
 ---
 name: okx-guide
-description: "Guide users through Onchain OS onboarding, OKX.AI introduction and role-registration routing, and customer support. Use when someone is new, asks what Onchain OS or OKX.AI is, wants a quick start or tutorial, needs to register a User, ASP, or Evaluator role, or asks for Help Center, human support, complaints, feedback, FAQs, or bug-report guidance."
+description: "Guide users through getting started with Onchain OS, OKX.AI introduction and role-registration routing, and customer support. Use when someone is new, asks what Onchain OS or OKX.AI is, wants a quick start or tutorial, needs to register a User, ASP, or Evaluator role, or asks for Help Center, human support, complaints, feedback, FAQs, or bug-report guidance."
 license: MIT
 metadata:
   author: okx

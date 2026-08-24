@@ -4,10 +4,10 @@ use anyhow::{bail, Result};
 use serde_json::{json, Value};
 
 use crate::commands::agentic_wallet::common::WalletPreviewConfirming;
-use crate::commands::agentic_wallet::support::amount::readable_to_minimal;
-use crate::commands::agentic_wallet::support::json::{find_string, shell_arg};
+use crate::commands::agentic_wallet::shared::common::amount::readable_to_minimal;
+use crate::commands::agentic_wallet::shared::common::json::{find_string, shell_arg};
 
-use super::super::chain_adapters::bitcoin::{
+use super::super::shared::adapters::bitcoin::{
     api::{self, BtcApi},
     broadcast,
     context::BtcContext,

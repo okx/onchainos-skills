@@ -3,8 +3,8 @@
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
-use crate::commands::agentic_wallet::support::amount::{decimal_field, value_as_decimal_string};
-use crate::commands::agentic_wallet::support::json::first_data_item;
+use crate::commands::agentic_wallet::shared::common::amount::{decimal_field, value_as_decimal_string};
+use crate::commands::agentic_wallet::shared::common::json::first_data_item;
 use crate::wallet_api::{BroadcastResponse, WalletApiClient};
 
 use super::context::BtcContext;

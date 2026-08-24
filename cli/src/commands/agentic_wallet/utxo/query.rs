@@ -3,7 +3,7 @@
 use anyhow::Result;
 use serde_json::{json, Value};
 
-use crate::commands::agentic_wallet::chain_adapters::bitcoin::{
+use crate::commands::agentic_wallet::shared::adapters::bitcoin::{
     api::BtcApi,
     context::BtcContext,
     models::{collect_outpoints, BtcOutPoint},

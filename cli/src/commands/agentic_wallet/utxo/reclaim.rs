@@ -5,14 +5,14 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
-use crate::commands::agentic_wallet::chain_adapters::bitcoin::{
+use crate::commands::agentic_wallet::common::WalletPreviewConfirming;
+use crate::commands::agentic_wallet::shared::adapters::bitcoin::{
     api::BtcApi,
     context::BtcContext,
     error,
     models::{collect_outpoints, BtcOutPoint},
 };
-use crate::commands::agentic_wallet::common::WalletPreviewConfirming;
-use crate::commands::agentic_wallet::support::json::shell_arg;
+use crate::commands::agentic_wallet::shared::common::json::shell_arg;
 use crate::commands::sink::CodedError;
 use crate::output;
 
