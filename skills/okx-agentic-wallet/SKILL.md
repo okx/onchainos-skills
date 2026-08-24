@@ -56,7 +56,7 @@ At the start of each thread, complete the checks in [_shared/preflight.md](_shar
 Some state-changing commands return **confirming** (exit code **2**) when the backend needs user confirmation. The response carries `message` (prompt to show) and `next` (what to do after they confirm).
 
 1. **Display** `message` and ask for confirmation.
-2. **Confirms** → immediately follow `next` (usually: re-run the same command with `--force` appended). For `wallet send`, do not query `wallet balance` between confirmation and the re-run; the server validates balances and gas.
+2. **Confirms** → immediately follow `next` (usually: re-run the same command with `--force` appended).
 3. **Declines** → do NOT proceed; tell the user it was cancelled.
 
 Never pass `--force` on the FIRST invocation of a state-changing command. Add `--force` only after all of: (1) you ran the command once without it, (2) the CLI returned a Confirming response (exit code 2, `"confirming": true`), (3) you displayed `message` and the user explicitly confirmed.
