@@ -41,15 +41,11 @@ use predicates::prelude::*;
 //   agentic_wallet (spec §1 / Appendix C).
 #[test]
 fn top_level_help_lists_wallet_strategy_swap() {
-    onchainos()
-        .arg("--help")
-        .assert()
-        .success()
-        .stdout(
-            predicate::str::contains("wallet")
-                .and(predicate::str::contains("strategy"))
-                .and(predicate::str::contains("swap")),
-        );
+    onchainos().arg("--help").assert().success().stdout(
+        predicate::str::contains("wallet")
+            .and(predicate::str::contains("strategy"))
+            .and(predicate::str::contains("swap")),
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -70,10 +66,140 @@ fn wallet_help_lists_all_actions() {
         .stdout(
             predicate::str::contains("gas-station")
                 .and(predicate::str::contains("send"))
+                .and(predicate::str::contains("inscription"))
+                .and(predicate::str::contains("utxo"))
                 .and(predicate::str::contains("login"))
                 .and(predicate::str::contains("contract-call"))
                 .and(predicate::str::contains("sign-message")),
         );
+}
+
+#[test]
+fn wallet_bitcoin_command_groups_show_their_actions() {
+    onchainos()
+        .args(["wallet", "inscription", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("create").and(predicate::str::contains("status")));
+    onchainos()
+        .args(["wallet", "utxo", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("user-ignored")
+                .and(predicate::str::contains("unavailable"))
+                .and(predicate::str::contains("available"))
+                .and(predicate::str::contains("brc20-transferable"))
+                .and(predicate::str::contains("unlock"))
+                .and(predicate::str::contains("lock"))
+                .and(predicate::str::contains("reclaim")),
+        );
+}
+
+#[test]
+fn wallet_utxo_available_and_brc20_transferable_expose_documented_inputs() {
+    onchainos()
+        .args(["wallet", "utxo", "available", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--chain"));
+
+    onchainos()
+        .args(["wallet", "utxo", "brc20-transferable", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("--chain")
+                .and(predicate::str::contains("--token-address"))
+                .and(predicate::str::contains("--readable-amount")),
+        );
+}
+
+#[test]
+fn wallet_utxo_query_commands_have_distinct_help() {
+    onchainos()
+        .args(["wallet", "utxo", "user-ignored", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("asset protection")
+                .and(predicate::str::contains("--chain"))
+                .and(predicate::str::contains("--unavailable").not()),
+        );
+
+    onchainos()
+        .args(["wallet", "utxo", "unavailable", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("grouped by the current service reason")
+                .and(predicate::str::contains("--chain")),
+        );
+
+    onchainos()
+        .args(["wallet", "utxo", "available", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("total spendable BTC in sats")
+                .and(predicate::str::contains("--chain")),
+        );
+
+    onchainos()
+        .args(["wallet", "utxo", "list", "--help"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand"));
+}
+
+#[test]
+fn wallet_utxo_manage_exposes_only_required_confirmation_fields() {
+    for action in ["lock", "unlock"] {
+        onchainos()
+            .args(["wallet", "utxo", action, "--help"])
+            .assert()
+            .success()
+            .stdout(
+                predicate::str::contains("--outpoint")
+                    .and(predicate::str::contains("--all"))
+                    .and(predicate::str::contains("--operation-token"))
+                    .and(predicate::str::contains("--preview-version").not()),
+            );
+    }
+}
+
+#[test]
+fn wallet_send_does_not_expose_chain_specific_continuation_flags() {
+    onchainos()
+        .args(["wallet", "send", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("--operation-token")
+                .not()
+                .and(predicate::str::contains("--preview-version").not()),
+        );
+}
+
+#[test]
+fn wallet_inscription_create_uses_one_continuation_token() {
+    onchainos()
+        .args(["wallet", "inscription", "create", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("--operation-token")
+                .and(predicate::str::contains("--preview-version").not()),
+        );
+}
+
+#[test]
+fn wallet_does_not_expose_undocumented_available_balance() {
+    onchainos()
+        .args(["wallet", "available-balance", "--help"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand"));
 }
 
 // ── IT-003: `wallet gas-station --help` still shows its management actions ─────
@@ -108,8 +234,43 @@ fn wallet_send_help_shows_flag_surface() {
                 .and(predicate::str::contains("--amt"))
                 .and(predicate::str::contains("--readable-amount"))
                 .and(predicate::str::contains("--contract-token"))
+                .and(predicate::str::contains("--brc20-outpoint"))
+                .and(predicate::str::contains("repeat to combine inputs"))
+                .and(predicate::str::contains("--fee-rate"))
                 .and(predicate::str::contains("--enable-gas-station")),
         );
+}
+
+#[test]
+fn wallet_contract_call_help_shows_chain_native_payloads() {
+    onchainos()
+        .args(["wallet", "contract-call", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("--input-data")
+                .and(predicate::str::contains("--unsigned-tx"))
+                .and(predicate::str::contains("--sui-tx-bytes"))
+                .and(predicate::str::contains("base64 BCS")),
+        );
+}
+
+#[test]
+fn wallet_contract_call_rejects_mixed_sui_and_evm_payloads() {
+    onchainos()
+        .args([
+            "wallet",
+            "contract-call",
+            "--chain",
+            "sui",
+            "--sui-tx-bytes",
+            "AAECAwQ=",
+            "--input-data",
+            "0x00",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("cannot be used with"));
 }
 
 // ── IT-007: `wallet send` rejects --amt together with --readable-amount ────────

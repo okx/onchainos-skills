@@ -50,7 +50,7 @@ The following are **trigger conditions** — when any is met, the Agent **MUST**
 
 ### New user login (`isNew: true`)
 
-Handled in Authentication step 5 (SKILL.md) — output the **Policy Settings template** followed by the **Wallet Export template** (above).
+Handled in [Wallet Authentication step 2](wallet.md) — output the **Policy Settings template** followed by the **Wallet Export template** (above).
 
 ### New account via `wallet add`
 
