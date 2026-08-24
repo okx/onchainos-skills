@@ -3,8 +3,8 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::commands::agentic_wallet::support::session::SigningSeed;
-use crate::commands::agentic_wallet::support::unsigned_hash_list::{self, SigningProfile};
+use crate::commands::agentic_wallet::shared::common::session::SigningSeed;
+use crate::commands::agentic_wallet::shared::common::unsigned_hash_list::{self, SigningProfile};
 
 /// Signs a SUI `unsignedHashList` and returns every item with `sessionSignature`.
 pub fn sign_unsigned_hashes(response: &Value, seed: &SigningSeed) -> Result<Vec<Value>> {

@@ -1,6 +1,10 @@
 use anyhow::{bail, Result};
 
-use super::super::chain_profile::{self, ResolvedChainProfile, TransferDriver};
+use crate::commands::agentic_wallet::{
+    account, auth, balance,
+    chain_profile::{self, ResolvedChainProfile, TransferDriver},
+    common::ERR_NOT_LOGGED_IN,
+};
 use crate::wallet_api::WalletApiClient;
 use crate::wallet_store::{self, AddressInfo, WalletsJson};
 
@@ -21,15 +25,15 @@ pub async fn load_chain_context(
     validate_address: fn(&str) -> Result<()>,
     same_address: fn(&str, &str) -> Result<bool>,
 ) -> Result<LoadedChainContext> {
-    let access_token = super::super::auth::ensure_tokens_refreshed().await?;
+    let access_token = auth::ensure_tokens_refreshed().await?;
     let profile = chain_profile::resolve(resolver_input).await?;
     if profile.capabilities.transfer != expected_driver {
         bail!("{resolver_input} profile resolved to a non-{chain_label} chain");
     }
 
     let mut wallets = wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!(super::super::common::ERR_NOT_LOGGED_IN))?;
-    let account_id = super::super::account::resolve_active_account_id(&wallets)?;
+        .ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let account_id = account::resolve_active_account_id(&wallets)?;
     let mut address = select_current_address(
         &wallets,
         &account_id,
@@ -40,7 +44,7 @@ pub async fn load_chain_context(
     );
     if address.is_err() {
         let mut client = WalletApiClient::new()?;
-        super::super::balance::ensure_wallet_accounts_fresh(
+        balance::ensure_wallet_accounts_fresh(
             &mut client,
             &access_token,
             &mut wallets,

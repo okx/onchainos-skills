@@ -3,17 +3,16 @@ pub mod auth;
 pub mod balance;
 pub mod broadcast;
 pub mod chain;
-mod chain_adapters;
 pub mod chain_profile;
 pub mod common;
 pub mod gas_station;
 pub mod geoblock;
 pub mod history;
+mod shared;
 mod inscription;
 pub mod plugin;
 pub mod sign;
 pub mod strategy;
-mod support;
 pub mod transfer;
 mod utxo;
 
@@ -622,18 +621,14 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                         if profile.capabilities.transfer
                             == chain_profile::TransferDriver::Bitcoin =>
                     {
-                        Some(
-                            chain_adapters::bitcoin::validation::normalize_brc20_token_address(
-                                token_address,
-                            )?,
-                        )
+                        Some(shared::adapters::bitcoin::validation::normalize_brc20_token_address(
+                            token_address,
+                        )?)
                     }
                     profile
                         if profile.capabilities.transfer == chain_profile::TransferDriver::Sui =>
                     {
-                        Some(chain_adapters::sui::identifiers::normalize_coin_type(
-                            token_address,
-                        )?)
+                        Some(shared::adapters::sui::identifiers::normalize_coin_type(token_address)?)
                     }
                     _ => None,
                 }

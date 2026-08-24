@@ -1,16 +1,18 @@
 use anyhow::{Context, Result};
 use zeroize::Zeroizing;
 
+use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
+
 pub struct SigningSeed(Zeroizing<[u8; 32]>);
 
 impl SigningSeed {
     /// Decrypts the current session seed and returns an automatically zeroized wrapper.
     pub fn load() -> Result<Self> {
         let session = crate::wallet_store::load_session()?
-            .ok_or_else(|| anyhow::anyhow!(super::super::common::ERR_NOT_LOGGED_IN))?;
+            .ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
         let session_key = Zeroizing::new(
             crate::keyring_store::get("session_key")
-                .map_err(|_| anyhow::anyhow!(super::super::common::ERR_NOT_LOGGED_IN))?,
+                .map_err(|_| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?,
         );
         let seed = crate::crypto::hpke_decrypt_session_sk(
             &session.encrypted_session_sk,
@@ -34,7 +36,7 @@ impl SigningSeed {
 /// Returns the certificate attached to signed Agentic Wallet requests.
 pub fn session_cert() -> Result<String> {
     Ok(crate::wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(super::super::common::ERR_NOT_LOGGED_IN))?
+        .ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?
         .session_cert)
 }
 
