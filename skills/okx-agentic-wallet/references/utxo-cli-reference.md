@@ -36,7 +36,7 @@ onchainos wallet utxo user-ignored --chain bitcoin
 
 ## `wallet utxo unavailable`
 
-Query locked or otherwise unavailable BTC UTXOs. Use only returned categories, amounts, and UTXOs without inference. Also use it before replying when the user follows a BTC balance answer by asking what the remaining or unavailable BTC is.
+Query locked or otherwise unavailable BTC UTXOs. Use only returned categories, amounts, and UTXOs without inference. Use it before replying when the user follows a BTC balance answer by asking what the remaining or unavailable BTC is.
 
 ### Syntax
 
@@ -52,7 +52,7 @@ onchainos wallet utxo unavailable --chain bitcoin
 
 ## `wallet utxo unlock`
 
-Remove asset protection from selected currently protected UTXOs. Query the latest unavailable view and resolve the user's reference against its current outpoints first. A single amount or asset reference must resolve to exactly one outpoint; if it matches zero or multiple UTXOs, ask the user to choose.
+Remove asset protection from selected currently protected UTXOs. Query the latest unavailable view and resolve the user's reference against its current outpoints first. A single amount or asset reference must resolve to exactly one outpoint; if it matches zero or multiple UTXOs, show the matches and wait for the user's decision.
 
 ### Syntax
 
@@ -72,7 +72,7 @@ onchainos wallet utxo unlock --chain bitcoin (--outpoint <txHash:voutIndex>... |
 
 ## `wallet utxo lock`
 
-Restore asset protection for selected user-ignored UTXOs. Query the latest user-ignored view and resolve the user's reference against its current outpoints first. A single amount or asset reference must resolve to exactly one outpoint; if it matches zero or multiple UTXOs, ask the user to choose.
+Restore asset protection for selected user-ignored UTXOs. Query the latest user-ignored view and resolve the user's reference against its current outpoints first. A single amount or asset reference must resolve to exactly one outpoint; if it matches zero or multiple UTXOs, show the matches and wait for the user's decision.
 
 ### Syntax
 
@@ -92,7 +92,7 @@ onchainos wallet utxo lock --chain bitcoin (--outpoint <txHash:voutIndex>... | -
 
 ## `wallet utxo reclaim`
 
-Reclaim still-unspent inputs from transactions whose history state is `MEMPOOL_REMOVED`. Query unavailable UTXOs first and use the returned transaction hashes. Reclaim restores the inputs for a new transfer; do not rebroadcast the removed transaction.
+Reclaim still-unspent inputs from transactions whose history state is `MEMPOOL_REMOVED`. Query unavailable UTXOs first and use the returned transaction hashes.
 
 ### Syntax
 
@@ -144,11 +144,21 @@ Triggers include `dust`, `dust UTXO`, `small UTXO`, and questions asking why a s
 A dust UTXO contains a very small amount of BTC. Spending it increases transaction data size and network fees, so it is excluded from the available balance.
 ```
 
-### Why is BTC unavailable?
+### What is unavailable balance?
 
-Triggers include follow-ups such as `what is the remaining BTC?` and `why is it unavailable?`. Run `wallet utxo unavailable --chain bitcoin`, then output one matching reply:
+Triggers include `unavailable balance`, `unavailable BTC`, `locked balance`, `what is the remaining BTC?`, `why is it unavailable?`, and questions asking what unavailable balance means or how much is currently unavailable. Run `wallet utxo unavailable --chain bitcoin`; do not use a stored balance or derive this amount from total BTC holdings.
 
-- If no unavailable UTXO is returned: `There are currently no unavailable BTC UTXOs.`
-- Otherwise: `These {totalAmount} BTC are distributed across {totalUnavailableCount} unavailable UTXOs: {breakdown}. To protect assets, they are excluded from transfers and transaction fees by default.`
+First reply:
 
-Build `{breakdown}` from the returned non-empty categories, asset names, and amounts; do not infer missing values.
+```text
+Unavailable balance is BTC that currently cannot be used for BTC transfers or network fees, including locked and dust UTXOs.
+```
+
+Then use the current `unavailable.unavailableBreakdown` to append one matching reply:
+
+- If `totalUnavailableCount` is `0`: `You currently have no unavailable BTC balance.`
+- If `assetLocked` contains UTXOs: `You currently have {unavailableBalance} BTC unavailable. The following UTXOs are locked:` Then list each returned locked UTXO as `- {txHash}:{voutIndex}: {amount} BTC`. If `feeUneconomic` also contains UTXOs, append: `The remaining {dustBalance} BTC is dust UTXOs. Spending them increases network fees.`
+- If `assetLocked` is empty and `feeUneconomic` is the only non-empty category: `You currently have {unavailableBalance} BTC unavailable, all of which is dust UTXOs. Spending them increases network fees.`
+- If any other category is non-empty: show its returned category, UTXOs, and amounts. Do not describe it as locked or dust.
+
+Use the returned `totalUnavailableSumSats` for `{unavailableBalance}` and returned UTXO amounts for `{amount}` / `{dustBalance}`. If a required amount is absent, omit that aggregate sentence rather than calculating or inferring it.

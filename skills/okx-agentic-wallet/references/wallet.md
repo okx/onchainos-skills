@@ -43,9 +43,9 @@ Field rules:
 
 **Amounts** — `wallet send`: pass `--readable-amount <human_amount>` (CLI converts; use `--amt` only for raw minimal units). `wallet contract-call`: `--amt` is the native value for payable functions in minimal units (default `"0"`; EVM 18, SOL 9 decimals). Never compute minimal units manually.
 
-**Native BTC fee rate** — After the initial transfer preview, ask the user to confirm the current fee rate or provide a new sat/vB value. For a new value, rerun the initial command with `--fee-rate <value>`, show the fresh preview, and require confirmation. The custom fee rate applies only to that transaction.
+**Native BTC fee rate** — After the initial transfer preview, ask the user to confirm the current fee rate. If they provide a new sat/vB value, rerun the initial command with `--fee-rate <value>`. Show the fresh preview, remind them that the custom fee rate applies only to that transaction, and wait for confirmation.
 
-**Bitcoin UTXOs and BRC-20** — Load [utxo-cli-reference.md](utxo-cli-reference.md) for spendable, locked, protected, or reclaimable BTC UTXOs. Load [brc20-cli-reference.md](brc20-cli-reference.md) for BRC-20 balances, transferable inscriptions, transfer inscriptions, and direct transfers. For a BRC-20 ticker balance, run `onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker>` and use that reference's reply template.
+**Bitcoin UTXOs and BRC-20** — For BTC UTXO management, load [utxo-cli-reference.md](utxo-cli-reference.md). For BRC-20 management, load [brc20-cli-reference.md](brc20-cli-reference.md). To query a BRC-20 ticker balance, run `onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker>` and use that reference's reply template.
 
 ## Send vs Contract Call (funds-loss risk — determine intent first)
 
