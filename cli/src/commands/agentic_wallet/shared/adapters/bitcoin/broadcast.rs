@@ -3,8 +3,8 @@
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
-use crate::commands::agentic_wallet::support::json::required_string;
-use crate::commands::agentic_wallet::support::unsigned_hash_list::build_direct_extra_data;
+use crate::commands::agentic_wallet::shared::common::json::required_string;
+use crate::commands::agentic_wallet::shared::common::unsigned_hash_list::build_direct_extra_data;
 use crate::wallet_api::BroadcastResponse;
 
 use super::api::BtcApi;

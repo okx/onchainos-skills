@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
-use crate::commands::agentic_wallet::support::amount::{
+use crate::commands::agentic_wallet::shared::common::amount::{
     minimal_to_readable, parse_minimal, value_as_decimal_string,
 };
 

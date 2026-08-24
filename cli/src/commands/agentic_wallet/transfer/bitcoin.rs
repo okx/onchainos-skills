@@ -5,10 +5,10 @@ use num_bigint::BigUint;
 use serde_json::{json, Value};
 
 use crate::commands::agentic_wallet::common::WalletPreviewConfirming;
-use crate::commands::agentic_wallet::support::amount::{parse_minimal, readable_to_minimal};
-use crate::commands::agentic_wallet::support::json::shell_arg;
+use crate::commands::agentic_wallet::shared::common::amount::{parse_minimal, readable_to_minimal};
+use crate::commands::agentic_wallet::shared::common::json::shell_arg;
 
-use super::super::chain_adapters::bitcoin::{
+use super::super::shared::adapters::bitcoin::{
     api::{self, BtcApi},
     broadcast,
     context::BtcContext,

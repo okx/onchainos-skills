@@ -3,7 +3,7 @@
 use anyhow::{Error, Result};
 use serde_json::{json, Value};
 
-use crate::commands::agentic_wallet::support::json::first_data_item;
+use crate::commands::agentic_wallet::shared::common::json::first_data_item;
 use crate::commands::sink::CodedError;
 use crate::wallet_api::{ApiCodeError, BroadcastResponse, WalletApiClient};
 

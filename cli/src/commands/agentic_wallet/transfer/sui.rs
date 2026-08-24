@@ -5,16 +5,16 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 use crate::commands::agentic_wallet::common::WalletPreviewConfirming;
-use crate::commands::agentic_wallet::support::amount::{
+use crate::commands::agentic_wallet::shared::common::amount::{
     decimal_field, minimal_to_readable, readable_to_minimal, value_as_decimal_string,
 };
-use crate::commands::agentic_wallet::support::json::shell_arg;
-use crate::commands::agentic_wallet::support::unsigned_hash_list::build_direct_extra_data;
+use crate::commands::agentic_wallet::shared::common::json::shell_arg;
+use crate::commands::agentic_wallet::shared::common::unsigned_hash_list::build_direct_extra_data;
 use crate::commands::sink::CodedError;
 use crate::validators::validate_non_negative_integer;
 use crate::wallet_api::BroadcastResponse;
 
-use super::super::chain_adapters::sui::{
+use super::super::shared::adapters::sui::{
     api::{self, SuiApi},
     context::SuiContext,
     identifiers, signing,

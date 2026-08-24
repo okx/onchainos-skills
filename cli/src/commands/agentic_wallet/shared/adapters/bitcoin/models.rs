@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use crate::commands::agentic_wallet::support::json::shell_arg;
+use crate::commands::agentic_wallet::shared::common::json::shell_arg;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BtcOutPoint {

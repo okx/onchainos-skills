@@ -5,14 +5,14 @@ use num_bigint::BigUint;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::commands::agentic_wallet::chain_adapters::bitcoin::{
+use crate::commands::agentic_wallet::shared::common::amount::{
+    minimal_to_readable, parse_minimal, readable_to_minimal, value_as_decimal_string,
+};
+use crate::commands::agentic_wallet::shared::adapters::bitcoin::{
     api::{self, BtcApi},
     context::BtcContext,
     models::BtcOutPoint,
     validation,
-};
-use crate::commands::agentic_wallet::support::amount::{
-    minimal_to_readable, parse_minimal, readable_to_minimal, value_as_decimal_string,
 };
 use crate::output;
 
