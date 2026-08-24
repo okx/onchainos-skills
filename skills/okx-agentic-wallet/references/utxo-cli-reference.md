@@ -108,11 +108,24 @@ onchainos wallet utxo reclaim --chain bitcoin --tx-hash <hash> [--tx-hash <hash>
 | `--tx-hash` | Yes | — | Original `MEMPOOL_REMOVED` transaction hash; repeat for multiple transactions. |
 | `--force` | Continuation only | Disabled | Use only through the exact `next` returned after explicit confirmation. |
 
-## User-facing FAQ
+## User-Facing Templates
+
+### Bound BRC-20 Assets
+
+`wallet utxo available`, `wallet utxo unavailable`, `wallet utxo user-ignored`, and `wallet utxo brc20-transferable` return `assets` for UTXOs carrying BRC-20 assets.
+
+For each returned asset, append:
+
+```text
+This UTXO carries: ${readableAmount} ${symbol} (${protocol}).
+Spending this UTXO can permanently lose these assets.
+```
+
+### UTXO FAQ
 
 When the user asks any semantic equivalent of one of the questions below, follow the matching entry and translate its reply template to the user's language without extra explanation.
 
-### What is available balance?
+#### What is available balance?
 
 Triggers include `available balance`, `available BTC`, `spendable balance`, and `spendable BTC` when the user is asking for the definition rather than their current amount.
 
@@ -120,7 +133,7 @@ Triggers include `available balance`, `available BTC`, `spendable balance`, and 
 Available balance is the amount currently available for BTC transfers and network fees. It excludes locked and dust UTXOs.
 ```
 
-### What is a locked UTXO?
+#### What is a locked UTXO?
 
 Triggers include `locked UTXO`, `protected UTXO`, and questions asking why a UTXO is locked.
 
@@ -128,7 +141,7 @@ Triggers include `locked UTXO`, `protected UTXO`, and questions asking why a UTX
 A locked UTXO is excluded from ordinary BTC transactions to protect the inscription assets it carries. You can explicitly unlock that UTXO.
 ```
 
-### What are the risks of unlocking a UTXO?
+#### What are the risks of unlocking a UTXO?
 
 Triggers include `unlock UTXO risk`, `is unlocking safe`, and questions asking what happens after a UTXO is unlocked.
 
@@ -136,7 +149,7 @@ Triggers include `unlock UTXO risk`, `is unlocking safe`, and questions asking w
 After unlocking, the UTXO is treated as ordinary BTC. If it is spent, the inscription assets it carries will be permanently lost.
 ```
 
-### What is a dust UTXO?
+#### What is a dust UTXO?
 
 Triggers include `dust`, `dust UTXO`, `small UTXO`, and questions asking why a small BTC UTXO is unavailable.
 
@@ -144,7 +157,7 @@ Triggers include `dust`, `dust UTXO`, `small UTXO`, and questions asking why a s
 A dust UTXO contains a very small amount of BTC. Spending it increases transaction data size and network fees, so it is excluded from the available balance.
 ```
 
-### What is unavailable balance?
+#### What is unavailable balance?
 
 Triggers include `unavailable balance`, `unavailable BTC`, `locked balance`, `what is the remaining BTC?`, `why is it unavailable?`, and questions asking what unavailable balance means or how much is currently unavailable. Run `wallet utxo unavailable --chain bitcoin`; do not use a stored balance or derive this amount from total BTC holdings.
 
