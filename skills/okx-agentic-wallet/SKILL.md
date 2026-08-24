@@ -20,7 +20,7 @@ Match the user intent to a row, then **read that row's linked file first** — i
 | --- | --- |
 | Sign in / connect / social login (Google / Apple / Email) / logout; add / switch account; login status | [wallet](references/wallet.md) |
 | My wallet address / QR code; check my (logged-in) balance / holdings, including BTC or a BRC-20 ticker | [wallet](references/wallet.md) |
-| Bitcoin UTXO-specific queries, management, or FAQ / definitions (for example, dust, locked, or protected UTXOs) | [utxo-cli-reference](references/utxo-cli-reference.md) |
+| Bitcoin UTXO-specific queries, management, or FAQ / definitions | [utxo-cli-reference](references/utxo-cli-reference.md) |
 | Send / transfer native, ERC-20, SPL, BTC, BRC-20, or SUI tokens | [wallet](references/wallet.md) |
 | Call a contract (approve / deposit / withdraw / custom function), including a SUI PTB | [wallet](references/wallet.md) |
 | Transaction history / tx detail / order status; sign a message (personalSign / EIP-712) | [wallet](references/wallet.md) |
@@ -39,7 +39,7 @@ Match the user intent to a row, then **read that row's linked file first** — i
 
 ## Pre-flight Checks
 
-Before the first `onchainos` command this session, read and follow [_shared/preflight.md](_shared/preflight.md).
+At the start of each thread, complete the checks in [_shared/preflight.md](_shared/preflight.md).
 
 ## Build the Command
 

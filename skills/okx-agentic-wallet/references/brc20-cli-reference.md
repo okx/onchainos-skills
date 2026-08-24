@@ -4,7 +4,7 @@ Use a synthetic BRC-20 token address: `btc-brc20-<ticker>`. The CLI normalizes i
 
 ## `wallet balance`
 
-Query the current balance, transferable amount, and remaining inscribable amount for one BRC-20 ticker.
+Query BRC-20 balance for one ticker.
 
 ### Syntax
 
@@ -17,7 +17,7 @@ onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker> [--f
 | Parameter | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--chain` | Yes | — | Use `bitcoin`. |
-| `--token-address` | Yes | — | BRC-20 token identifier in `btc-brc20-<ticker>` form. |
+| `--token-address` | Yes | — | BRC-20 identifier: `btc-brc20-<ticker>`. |
 | `--force` | No | Disabled | Bypass balance caches only when the user explicitly asks to refresh or sync. |
 
 Reply with:
@@ -36,7 +36,7 @@ Currently transferable (already inscribed): 0 ${ticker}, worth approximately $${
 
 ## `wallet utxo brc20-transferable`
 
-Query current transferable inscriptions for one BRC-20 ticker. `sumValue` is the transferable total; `choices[]` contains indivisible inscriptions. Preserve each `selection` (`<txHash>:<voutIndex>`) verbatim; `tokenAmount` is the BRC-20 quantity and `utxoAmountSats` is its carrier BTC value. With `--readable-amount`, use `selectionPlan`: `EXACT_MATCH` supplies up to three `combinations[]` ordered by fewer inputs; use each combination's `selectedOutpoints[]` verbatim. `NO_EXACT_MATCH` requires a refreshed ticker balance before offering inscription; `SEARCH_LIMIT_EXCEEDED` means show the choices without claiming that no exact match exists.
+Query transferable inscriptions for one ticker. With `--readable-amount`, use `selectionPlan`: `EXACT_MATCH` uses a returned combination; `NO_EXACT_MATCH` refreshes the ticker balance before inscription; `SEARCH_LIMIT_EXCEEDED` shows choices without claiming no exact match.
 
 ### Syntax
 
@@ -49,12 +49,12 @@ onchainos wallet utxo brc20-transferable --chain bitcoin --token-address <btc-br
 | Parameter | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--chain` | Yes | — | Use `bitcoin`. |
-| `--token-address` | Yes | — | BRC-20 token identifier in `btc-brc20-<ticker>` form. |
-| `--readable-amount` | No | — | Human-readable target amount used to find up to three exact UTXO combinations. |
+| `--token-address` | Yes | — | BRC-20 identifier: `btc-brc20-<ticker>`. |
+| `--readable-amount` | No | — | Human-readable target amount for exact combinations. |
 
 ## `wallet send`
 
-Transfer BRC-20 with one current exact combination returned by `wallet utxo brc20-transferable`. Proceed when one combination is returned; ask the user to choose when several are returned. Before the user confirms the CLI Confirming response, if a selected outpoint is no longer available, show the refreshed plan and ask again; afterward, follow the shared Confirming Response rule in [SKILL.md](../SKILL.md).
+Transfer BRC-20 with a current exact combination from `wallet utxo brc20-transferable`. For multiple or unavailable selections before confirmation, show the available combinations and wait for a choice; afterward, follow the shared Confirming Response rule in [SKILL.md](../SKILL.md).
 
 The initial command refreshes the selected outpoints, validates their availability, uniqueness, and amount sum, signs, and returns ordinary `confirming` before broadcast. Display the complete confirmation, then end with: `Confirm broadcasting and creating this inscription at the current fee rate? To change it, reply with a new sat/vB value.` Execute `next` only after explicit confirmation. If the user supplies a new sat/vB value, rerun without `--force`, display the fresh preview, and state: `The custom fee rate applies only to this transaction and does not change the default fee rate for future transactions.`
 
@@ -71,12 +71,12 @@ onchainos wallet send --chain bitcoin --contract-token <btc-brc20-ticker> --read
 | Parameter | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--chain` | Yes | — | Use `bitcoin`. |
-| `--contract-token` | Yes | — | BRC-20 token identifier in `btc-brc20-<ticker>` form. |
+| `--contract-token` | Yes | — | BRC-20 identifier: `btc-brc20-<ticker>`. |
 | `--readable-amount` | Yes | — | Exact human-readable BRC-20 amount. |
 | `--recipient` | Yes | — | Recipient Bitcoin address. |
 | `--brc20-outpoint` | Yes | — | Selected transferable inscription in `<txHash>:<voutIndex>` form; repeat for every selected input. |
-| `--fee-rate` | No | Service default | Decimal fee rate of at least `0.1` sat/vB for this transaction only. |
-| `--from` | No | Active wallet address | Sender Bitcoin address. |
+| `--fee-rate` | No | Service default | Fee rate for this transaction only (minimum `0.1` sat/vB). |
+| `--from` | No | Active wallet address | Sender address; defaults to the active wallet. |
 | `--force` | Continuation only | Disabled | Use only through the exact `next` returned after explicit confirmation. |
 
 Query a submitted direct transfer through the shared wallet history flow, not inscription status:
@@ -87,7 +87,7 @@ onchainos wallet history --chain bitcoin (--tx-hash <hash> | --order-id <id>)
 
 ## `wallet inscription create`
 
-Create a standalone asynchronous transfer inscription to the current Bitcoin address only after an explicit inscription request. If no direct-transfer combination exists, refresh the ticker balance before offering this command.
+Create an asynchronous transfer inscription to the current Bitcoin address only after an explicit request. If no direct-transfer combination exists, refresh the ticker balance before offering it.
 
 Run initially without `--force`. It stops after `unsignedInfo` and returns ordinary `confirming` with `scene="btc_inscription"`; `preview.feeReadable` is nullable, and nothing has been signed or submitted. Display the complete preview and the same fee-rate prompt and one-transaction fee statement used by `wallet send`. A new sat/vB value requires a fresh preview without `--force`.
 
@@ -104,10 +104,10 @@ onchainos wallet inscription create --chain bitcoin --token-address <btc-brc20-t
 | Parameter | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--chain` | Yes | — | Use `bitcoin`. |
-| `--token-address` | Yes | — | BRC-20 token identifier in `btc-brc20-<ticker>` form. |
+| `--token-address` | Yes | — | BRC-20 identifier: `btc-brc20-<ticker>`. |
 | `--readable-amount` | Yes | — | Exact human-readable amount to inscribe. |
-| `--from` | No | Active wallet address | Sender Bitcoin address. |
-| `--fee-rate` | No | Service default | Decimal fee rate of at least `0.1` sat/vB for this inscription only. |
+| `--from` | No | Active wallet address | Sender address; defaults to the active wallet. |
+| `--fee-rate` | No | Service default | Fee rate for this inscription only (minimum `0.1` sat/vB). |
 | `--operation-token` | Continuation only | — | Use only when supplied by the exact `next` returned after preview. |
 | `--force` | Continuation only | Disabled | Use only through the exact `next` returned after explicit confirmation. |
 
@@ -133,7 +133,7 @@ ${nextSteps.checkInscriptionStatus}
 
 ## `wallet inscription status`
 
-Check one submitted BRC-20 transfer inscription after the user asks for its result. Run once; if still pending, show the current status and returned continuation, then stop. Do not loop, poll, sleep, or promise automatic checks. Status can be `INSCRIBING`, `WAITING_CONFIRMATION`, `WAITING_INDEXER`, `READY_TO_TRANSFER`, `FAILED`, or `UNKNOWN`; `READY_TO_TRANSFER` supplies read-only `nextSteps.queryBrc20TransferableUtxos` to refresh the transferable list.
+Check one submitted BRC-20 inscription after the user asks for its result. Run once; if pending, show the returned status and continuation, then stop. Do not loop, poll, sleep, or promise automatic checks. `READY_TO_TRANSFER` provides read-only `nextSteps.queryBrc20TransferableUtxos` to refresh the transferable list.
 
 ### Syntax
 

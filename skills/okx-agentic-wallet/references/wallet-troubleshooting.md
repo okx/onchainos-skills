@@ -33,7 +33,6 @@ Load on a wallet operation failure or edge case.
 - **`MEMPOOL_REMOVED`**: run `wallet utxo unavailable --chain bitcoin`; reclaim requires explicit confirmation and a new transfer is required.
 - **`82001` / `UTXO_PERMISSION_DENIED`**: refresh account facts before a new request. **`82002` / `UTXO_NOT_FOUND` / `82005` / `UTXO_ALREADY_SPENT`**: refresh unavailable UTXOs. **`82003` / `INVALID_UTXO_REQUEST`**: stop and show the service message.
 - **`UTXO_MANAGE_REJECTED` / `UTXO_MANAGE_PARTIAL_FAILURE`**: report returned batch results and use returned UTXO state as authoritative.
-- **Failed write diagnostic**: after a user-requested safe retry also fails, create a self-contained support diagnostic with exactly these fields: (1) `txHash` when available; (2) `chain=bitcoin`; (3) service code/reason; (4) parameter snapshot: `readableAmount`, recipient, selected outpoints when applicable, returned fee/rate when present, and `slippage` / `MEV` as `N/A`; (5) `fromToken=BTC`, `toToken=BTC`; (6) amount; (7) wallet address; (8) timestamp; (9) CLI version. Use `unavailable` for a field the CLI did not return. Keep raw codes in the diagnostic, not the user-facing reply.
 
 ## BRC-20
 
@@ -49,7 +48,6 @@ Load on a wallet operation failure or edge case.
 - **`INSCRIBING`, `WAITING_CONFIRMATION`, `WAITING_INDEXER`**: show the returned `orderId`, `txHash`, and complete `nextSteps.checkInscriptionStatus` command. Run it once only when the user asks to check the result.
 - **`READY_TO_TRANSFER`**: show the returned `nextSteps.queryBrc20TransferableUtxos`; require a separate fresh transfer request and confirmation.
 - **Inscription `STATE_CHANGED`**: start a new inscription preview if the user still wants the write. **`PREVIEW_INTENT_MISMATCH` / `INCOMPLETE_TRANSACTION_PREVIEW`**: stop and report the error.
-- **Failed write diagnostic**: after a user-requested safe retry also fails, create a self-contained support diagnostic with exactly these fields: (1) `txHash` when available; (2) `chain=bitcoin`; (3) service code/reason; (4) parameter snapshot: `readableAmount`, recipient, selected outpoints when applicable, inscription preview fee/rate when returned, and `slippage` / `MEV` as `N/A`; (5) `fromToken` / `toToken` as the returned BRC-20 token address; (6) amount; (7) wallet address; (8) timestamp; (9) CLI version. Use `unavailable` for a field the CLI did not return. Never expose raw codes in user-facing output; show the service message and the next safe action.
 
 ## SUI
 
@@ -57,4 +55,3 @@ Load on a wallet operation failure or edge case.
 - **Address, Coin Type, amount, or status lookup error**: use a canonical SUI address, a complete returned `<package>::<module>::<type>` Coin Type, positive `--readable-amount`, and one complete transaction hash or order ID.
 - **`PRE_EXECUTION_FAILED`**: relay the service reason and end the operation. **`confirming=true`**: relay the service message and, after explicit confirmation, rerun the same command with `--force`. **`LOCAL_SIGNING_FAILED`**: end the operation and report the error.
 - For other failures, show the returned service message and establish fresh facts with a new query; keep raw codes only for diagnostics.
-- **Failed write diagnostic**: after a user-requested safe retry also fails, create a self-contained support diagnostic with exactly these fields: (1) `txHash` when available; (2) `chain=sui`; (3) service code/reason; (4) parameter snapshot: recipient, `gasBudget` / `gasPrice` when returned, and `slippage` / `MEV` as `N/A`; (5) `fromToken` / `toToken` as the Coin Type; (6) amount; (7) wallet address; (8) timestamp; (9) CLI version. Use `unavailable` for a field the CLI did not return. Never expose raw codes in the user-facing reply; show the returned service message and the next safe action.
