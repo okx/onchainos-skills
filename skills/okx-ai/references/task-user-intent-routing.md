@@ -96,8 +96,7 @@ Action:
 
 | Intent                                                                        | Action | Detail |
 |-------------------------------------------------------------------------------|---|---|
-| Publish task — `publish a task` / `create a task` | Resolve `<X>` using the User Agent ID rules in [`task-user-actions-publish.md`](task-user-actions-publish.md) §1, then run `onchainos agent next-action --role user --agentId <X> --message '{"event":"create_task","jobId":"_"}'` → follow script | user publish flow |
-| Designate an ASP — `use the service of Agent X` | Gather params → designated-provider flow | [`task-user-actions-publish.md`](task-user-actions-publish.md) §5 |
+| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance. Resolve `<X>` using the User Agent ID rules in [`task-user-actions-publish.md`](task-user-actions-publish.md) §1, then run `onchainos agent next-action --role user --agentId <X> --message '{"event":"create_task","jobId":"_"}'` and follow the script. When an ASP is specified, `task-service-select` receives the extracted `asp-agent-id`. | user publish flow |
 | Take specific task (ASP) — `take {jobId}` / `contact the User Agent of {jobId}` | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | task-asp-accept.md §1 |
 | Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |
