@@ -21,12 +21,11 @@
 
 | Intent | Trigger examples | Route to |
 |---|---|---|
-| Publish task | "subscribe / subscription task / publish / create a task" | [`task-user-actions-publish.md`](task-user-actions-publish.md) |
+| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`task-user-actions-publish.md`](task-user-actions-publish.md) |
 | Add attachment / image | "attach a file/image to a task" | [`task-user-actions.md`](task-user-actions.md) §2 |
 | Switch provider / stop task | "switch provider / stop task" | [`task-user-actions.md`](task-user-actions.md) §3 |
 | View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
-| Designated-provider A2A | "use/buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`task-user-actions-publish.md`](task-user-actions-publish.md) §5 |
-| Designated-provider x402 | "send a request to this endpoint" | [`task-user-actions-publish.md`](task-user-actions-publish.md) §6 |
+| Designated-provider x402 | "send a request to this endpoint" | [`task-user-actions-publish.md`](task-user-actions-publish.md) §5 |
 | Subscription task ops | "auto-renew / trial cancel / reject delivery / apply for refund / claim refund / my subscriptions / subscription charge / subscription cost" | §Subscription below |
 | Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
 | Re-submit / nudge | "re-submit / nudge" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
