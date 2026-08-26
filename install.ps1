@@ -14,8 +14,8 @@
 #     compares with local version, installs/upgrades if needed.
 #   - Beta: fetches all tags, finds the latest version (including
 #     pre-releases) by semver, and installs it.
-#   - Caches the last check timestamp. Skips GitHub API calls if
-#     checked within the last 12 hours.
+#   - Every invocation checks the requested release channel. Automatic
+#     update throttling is handled by `onchainos preflight` / `upgrade --throttle`.
 #
 # Supported platforms:
 #   Windows: x86_64, i686, ARM64
@@ -49,8 +49,6 @@ $REPO = "okx/onchainos-skills"
 $BINARY = "onchainos"
 $INSTALL_DIR = Join-Path $env:USERPROFILE ".local\bin"
 $CACHE_DIR = Join-Path $env:USERPROFILE ".onchainos"
-$CACHE_FILE = Join-Path $CACHE_DIR "last_check"
-$CACHE_TTL = 43200  # 12 hours in seconds
 
 function Get-Target {
     $arch = $env:PROCESSOR_ARCHITECTURE
@@ -60,21 +58,6 @@ function Get-Target {
         "ARM64"  { return "aarch64-pc-windows-msvc" }
         default  { throw "Unsupported architecture: $arch" }
     }
-}
-
-# ── Cache helpers ────────────────────────────────────────────
-function Test-CacheFresh {
-    if (-not (Test-Path $CACHE_FILE)) { return $false }
-    $cachedTs = (Get-Content $CACHE_FILE -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
-    if (-not $cachedTs) { return $false }
-    $now = [int][double]::Parse((Get-Date -UFormat %s))
-    $elapsed = $now - [int]$cachedTs
-    return ($elapsed -lt $CACHE_TTL)
-}
-
-function Write-Cache {
-    if (-not (Test-Path $CACHE_DIR)) { New-Item -ItemType Directory -Path $CACHE_DIR -Force | Out-Null }
-    [int][double]::Parse((Get-Date -UFormat %s)) | Out-File -FilePath $CACHE_FILE -Encoding ascii -NoNewline
 }
 
 # ── Version helpers ──────────────────────────────────────────
@@ -359,18 +342,10 @@ function Main {
         if ($localVer -eq $targetVer) {
             $wfDir = Join-Path $CACHE_DIR "workflows"
             if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
-            Write-Cache
             return
         }
     } else {
         # ── Stable mode ──
-
-        # Fast path: binary exists and was checked recently — skip API call
-        if ($localVer -and (Test-CacheFresh)) {
-            $wfDir = Join-Path $CACHE_DIR "workflows"
-            if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
-            return
-        }
 
         $latestStable = Get-LatestStableVersion
 
@@ -381,7 +356,6 @@ function Main {
             # Already on exact latest stable
             $wfDir = Join-Path $CACHE_DIR "workflows"
             if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
-            Write-Cache
             return
         } else {
             if (Test-SemverGt $latestStable $localVer) {
@@ -391,7 +365,6 @@ function Main {
                 # Local is same or newer (e.g., on a beta ahead of stable)
                 $wfDir = Join-Path $CACHE_DIR "workflows"
                 if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
-                Write-Cache
                 return
             }
         }
@@ -403,7 +376,6 @@ function Main {
 
     Install-Binary -Tag "v${targetVer}"
     Sync-Workflows -Tag "v${targetVer}"
-    Write-Cache
     Add-ToPath
 }
 

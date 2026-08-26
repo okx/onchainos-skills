@@ -9,10 +9,6 @@ ONCHAINOS_BIN="$INSTALL_DIR/onchainos"
 # --- 1. Install CLI + workflows -----------------------------
 echo "[onchainos] Installing CLI + workflows..."
 
-# Force install.sh to do a fresh check on the first install: with no existing
-# binary, a stale `last_check` would cause the upstream installer to skip.
-[ ! -f "$ONCHAINOS_BIN" ] && rm -f "$HOME/.onchainos/last_check"
-
 curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
 
 if [ ! -x "$ONCHAINOS_BIN" ]; then
