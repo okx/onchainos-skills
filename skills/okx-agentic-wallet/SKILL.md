@@ -4,7 +4,7 @@ description: "Use this skill whenever the user wants to use OKX Onchain OS / onc
 license: MIT
 metadata:
   author: okx
-  version: "4.5.1"
+  version: "4.8.0-beta"
   homepage: "https://web3.okx.com"
 ---
 
