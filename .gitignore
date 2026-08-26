@@ -77,7 +77,7 @@ onchainos_bin
 run.sh
 test-cases.json
 
-evals/
+**/evals/
 
 # Agent task workspace (local only)
 skills/okx-agent-task-workspace/
@@ -90,3 +90,5 @@ skills/okx-agent-task-workspace/
 .codegraph/
 
 .agents/skills/onchainos-skills
+
+output/

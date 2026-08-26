@@ -129,7 +129,7 @@ async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Val
     // approvalDisplayStatus / reputation are left intact.
     enrich_agent_get_rows(&mut out);
     // Additive: add a ready-to-render `cells` array per row (the list-table
-    // analog of `card`; references/discover.md §list columns). `agent get` is
+    // analog of `card`; references/identity-discover.md §list columns). `agent get` is
     // now list-only — filtered by `--role` / `--owner-address` — so cells are
     // always meaningful.
     add_agent_list_cells(&mut out);
@@ -193,7 +193,7 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
     // approvalDisplayStatus / reputation are left intact.
     enrich_agent_get_rows(&mut out);
     // Additive: in LIST mode (no --agent-ids) add a ready-to-render `cells`
-    // array per row (references/discover.md §list columns). Detail mode (with
+    // array per row (references/identity-discover.md §list columns). Detail mode (with
     // --agent-ids) already carries the `card`; the list-table `cells` are the
     // row analog and only meaningful for the list view.
     if args.agent_ids.is_none() {
@@ -331,11 +331,29 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
 
 // ─── `agent service-list` ─────────────────────────────────────────────────
 
+/// Query params for `/agent/services` — only fields the backend contract
+/// defines: `agentId` (required) plus the optional `serviceId` filter.
+/// A provided-but-blank `serviceId` is an error rather than a silent drop:
+/// dropping it would return the full unfiltered listing, and a caller that
+/// reads one service's detail from the response would get the wrong service.
+fn build_service_list_query(
+    agent_id: &str,
+    service_id: Option<&str>,
+) -> Result<Vec<(String, String)>> {
+    let mut query = vec![("agentId".to_string(), agent_id.to_string())];
+    match service_id.map(str::trim) {
+        Some("") => bail!("invalid parameter: --service-id must not be blank"),
+        Some(service_id) => query.push(("serviceId".to_string(), service_id.to_string())),
+        None => {}
+    }
+    Ok(query)
+}
+
 async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
-    let query = [("agentId".to_string(), agent_id.to_string())];
+    let query = build_service_list_query(agent_id, args.service_id.as_deref())?;
     let query_refs: Vec<(&str, &str)> = query
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -588,4 +606,31 @@ mod tests {
         assert!(output.get("list").is_none());
     }
 
+    #[test]
+    fn service_list_query_sends_only_agent_id_by_default() {
+        let query = build_service_list_query("1921", None).unwrap();
+        assert_eq!(query, vec![("agentId".to_string(), "1921".to_string())]);
+    }
+
+    #[test]
+    fn service_list_query_appends_service_id_filter_when_given() {
+        let query =
+            build_service_list_query("1921", Some("4a7f30a7-46fb-4695-80a1-25d160da33b3")).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "1921".to_string()),
+                (
+                    "serviceId".to_string(),
+                    "4a7f30a7-46fb-4695-80a1-25d160da33b3".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn service_list_query_rejects_blank_service_id() {
+        let err = build_service_list_query("1921", Some("  ")).unwrap_err();
+        assert!(err.to_string().contains("--service-id must not be blank"));
+    }
 }

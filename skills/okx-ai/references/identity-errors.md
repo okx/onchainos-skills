@@ -9,19 +9,20 @@ Next step: <user action / what you'll do>
 `<raw CLI line — verbatim, never translated>`
 ```
 
-Translate, don't parrot — the friendly line is for the user; the raw line sits in inline code for debug. **Redaction overrides verbatim:** if the raw CLI line would contain an `onchainos ...` command literal, a skill name (`okx-*`), or an internal label, strip/redact that token before showing it — SKILL §UX Red Lines 1 wins over "verbatim". **Never auto-retry** a business error (retry once only on 5xx / network, per SKILL §Gates One-call rule). Never chase a failure with `agent get-agents` / `agent get-my-agents` — the error is authoritative. Each row resumes at a concrete step. An unlisted string → put it in the raw line and ask how to proceed.
+Translate, don't parrot — the friendly line is for the user; the raw line sits in inline code for debug. **Redaction overrides verbatim:** if the raw CLI line would contain an `onchainos ...` command literal, a skill name (`okx-*`), or an internal label, strip/redact that token before showing it. **Never auto-retry** a business error; retry once only on a 5xx or network failure. Never chase a failure with `agent get-agents` / `agent get-my-agents` — the error is authoritative. Each row resumes at a concrete step. An unlisted string → put it in the raw line and ask how to proceed.
 
 ## CLI `bail!` rows (usually never reach the user — you collect params upfront)
 
 | Raw line | Friendly + next |
 |---|---|
-| `session expired` | "Session expired." → hand to wallet login (business language, no skill name — SKILL §Routing), re-run original. |
+| `session expired` | "Session expired." → hand to wallet login in business language without naming internal routing, then re-run the original flow. |
 | `no XLayer address found` | "No XLayer address in the current account." → hand to wallet add / switch. |
 | `missing required parameter: <flag>` | "`<flag>` can't be empty." → re-ask it. `--agent-id` → ask which agent (`agent get-my-agents` if needed); `--file` → ask path. |
 | `unexpected argument '<v>' found` (positional) | User typed e.g. `update 42`. Re-ask in plain language; you supply the flag yourself, never echo it. |
 | `missing required field in --service: serviceName`/`: serviceDescription` | "Service <name/description> can't be empty." → re-ask that field. |
 | `missing required field in --service: fee`/`: endpoint` | A2MCP needs a fee (a plain number, USDT implied, ≤6 dp) / a public https endpoint → re-ask. Display `A2MCP` exactly; do not translate, expand, or gloss it. |
 | `invalid fee in --service` | "The fee must be a plain number (USDT is the default — don't add a currency)." → re-ask the fee as a bare number, e.g. `10`. |
+| `invalid freeTrial in --service` | "The free trial must be a positive integer number of hours." → the CLI accepts legacy positive-hour values for write-back, but the guided product flow offers only no trial or the fixed 3-day trial; write `"72"` when enabled and omit the field when disabled. |
 | `invalid serviceType` | "Type must be A2MCP or A2A." → re-render the numbered type prompt. Display both enum values exactly; do not translate or rewrite them. |
 | `invalid value for --role` | "Role must be User / ASP / Evaluator." → re-render numbered role prompt. Never echo the enum. |
 | `ASP agents require at least one service` | "An ASP needs at least one service." → return to service Q&A. No raw enum. |
@@ -44,9 +45,3 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 | Region `50125` / `80001` | "Service is not available in your region." **Never** echo the code (not in summary, reason, next step, or raw line — omit the raw line entirely for region errors). **Never** suggest checking the network environment, using a VPN, or any region workaround. No auto-retry. |
 | `stake` / `staking` / `insufficient` on create evaluator | Not a normal path — create doesn't consume the stake. "Backend returned a staking error; registration doesn't require staking." Surface raw line; point to the task-side staking flow; don't cache drafts. |
 | `HTTP 500` | "Backend temporarily unavailable." Retry once; if persists, surface and move on. |
-
-### activate / submit-approval outcomes
-
-- `activate.approvalStatus: 2` → "Your agent is under review — usually ready within 24h; once approved it appears on the marketplace." **Stop.** Don't call `submit-approval`; no post-mutation continuation.
-- `submit-approval success:true` → see manage.md `activate + submitApproval` row.
-- `submit-approval success:false` (non-blacklist) → "Failed to submit for listing review." + raw line + "You can try again later." **Stop.**

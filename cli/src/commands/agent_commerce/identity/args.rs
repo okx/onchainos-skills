@@ -56,6 +56,12 @@ pub struct CreateArgs {
     ///                          A2MCP request example necessarily carries the
     ///                          endpoint URL), and no test/env markers. A wallet
     ///                          or contract address is allowed anywhere.
+    ///   • serviceGuide       — optional for every A2A pricing model. Guided
+    ///                          flows never collect or display it for A2MCP,
+    ///                          but the CLI accepts and forwards an explicitly
+    ///                          supplied A2MCP value. Any supplied value must be at most
+    ///                          2000 East-Asian display width (CJK/full-width
+    ///                          characters count as 2, Latin/half-width as 1).
     ///   • serviceType        — `A2A` (agent-to-agent) or `A2MCP` (API service).
     ///   • fee                — single-purchase price. A plain number as a JSON
     ///                          string ("10"), USDT implied, ≤6 decimals. An
@@ -66,9 +72,12 @@ pub struct CreateArgs {
     ///                          [{"interval":"month","fee":"10"}]. `interval` is
     ///                          currently limited to "month"; each `fee` is a
     ///                          plain number.
-    ///   • freeTrial          — OPTIONAL. Free-trial duration in HOURS for a
-    ///                          subscription-priced service. A positive integer
-    ///                          string ("72" = 3 days). Only allowed when
+    ///   • freeTrial          — OPTIONAL. Free-trial duration in HOURS as a
+    ///                          positive integer string ("72" = 3 days) for a
+    ///                          subscription-priced A2A service. The low-level CLI
+    ///                          accepts legacy positive-hour values for write-back;
+    ///                          guided product flows create 72-hour trials only.
+    ///                          Only allowed when
     ///                          `subscription` is non-empty; forbidden on
     ///                          single-purchase A2A and on A2MCP. Absent or an
     ///                          empty "" both mean NO trial (equivalent).
@@ -89,8 +98,8 @@ pub struct CreateArgs {
     /// Examples:
     ///   A2MCP:            [{"serviceName":"Realtime price feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST\ncurl -X POST https://api.example.com/mcp -H \"Content-Type: application/json\" -d '{\"tokenAddress\":\"0xdac17f...\",\"chainIndex\":\"1\"}'","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]
     ///   A2A single only:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals for onchain traders\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"0.11"}]
-    ///   A2A sub only:     [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]
-    ///   A2A sub + trial:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}],"freeTrial":"72"}]
+    ///   A2A sub only:     [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceGuide":"Choose a market and submit your risk limit.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]
+    ///   A2A sub + trial:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceGuide":"Choose a market and submit your risk limit.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}],"freeTrial":"72"}]
     #[arg(long)]
     pub service: Option<String>,
 }
@@ -153,16 +162,24 @@ pub struct UpdateArgs {
     /// (2000 half-width), no per-part length limit; no URLs (A2A only — the
     /// A2MCP request example necessarily carries the endpoint URL) / test
     /// markers),
+    /// `serviceGuide` (optional for every A2A pricing model; guided flows never
+    /// collect or display it for A2MCP, but the CLI accepts and forwards an
+    /// explicitly supplied A2MCP value; when provided, at most 2000
+    /// East-Asian display width, with
+    /// CJK/full-width characters counting as 2 and Latin/half-width as 1),
     /// `serviceType` (`A2A` | `A2MCP`),
     /// `fee` (single-purchase price — plain number, USDT implied, ≤6 decimals),
     /// `subscription` (A2A only — array of `{interval, fee}`, `interval`
     /// limited to `"month"`), `freeTrial` (OPTIONAL — free-trial duration in
-    /// HOURS as a positive integer string, e.g. `"72"`; only allowed on a
-    /// subscription-priced service, forbidden on single-purchase A2A / A2MCP;
+    /// HOURS as a positive integer string, e.g. `"72"`; the low-level CLI
+    /// accepts legacy positive-hour values for write-back, while guided product
+    /// flows create 72-hour trials only; only allowed on a subscription-priced service,
+    /// forbidden on single-purchase A2A / A2MCP;
     /// absent or an empty `""` both mean NO trial, so an update that omits it
     /// leaves the service with no trial), `endpoint` (A2MCP only), plus `operation`:
     /// `create` (new service, no `id`) / `update` (modify, carry the existing
-    /// service `id`) / `delete` (remove, carry the existing service `id`).
+    /// service `id`) / `delete` (remove, send only `operation` and the existing
+    /// service `id`).
     /// Same pricing rules as create: A2MCP requires a real `fee` (a plain
     /// number — an empty `fee` is rejected) and forbids `subscription`; A2A
     /// carries EXACTLY ONE billing model — a single-purchase `fee` XOR a
@@ -173,11 +190,11 @@ pub struct UpdateArgs {
     /// `fee`. Omitting the whole `services` flag changes no service (omission
     /// does NOT clear existing services).
     ///
-    /// Example — add one A2MCP service and delete an existing one:
-    ///   --service '[{"operation":"create","serviceName":"Price feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST\ncurl -X POST https://api.example.com/mcp -H \"Content-Type: application/json\" -d \"{\\\"tokenAddress\\\":\\\"0xdac17f...\\\",\\\"chainIndex\\\":\\\"1\\\"}\"","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"},{"operation":"delete","id":"svc_123"}]'
+    /// Example — add one A2A service and delete an existing one:
+    ///   --service '[{"operation":"create","serviceName":"Market Signals","serviceDescription":"Provides market signals for onchain traders","serviceType":"A2A","fee":"10","subscription":[]},{"operation":"delete","id":"svc_123"}]'
     ///
     /// Example — update a subscription-priced A2A service (empty single fee):
-    ///   --service '[{"operation":"update","id":"7","serviceName":"…","serviceDescription":"…","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]'
+    ///   --service '[{"operation":"update","id":"7","serviceName":"Market Signals","serviceDescription":"Provides market signals for onchain traders","serviceGuide":"Choose a market and submit your risk limit.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]'
     #[arg(long)]
     pub service: Option<String>,
 }
@@ -342,6 +359,12 @@ pub struct ServiceListArgs {
     /// list. Missing → `missing required parameter: --agent-id`.
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
+    /// Optional service id (UUID) to narrow the listing to one service —
+    /// backend-side filter, used to fetch a single service's detail
+    /// (including its `serviceGuide`) without pulling the agent's full
+    /// service page. Omitted → the backend returns all services.
+    #[arg(long = "service-id")]
+    pub service_id: Option<String>,
 }
 
 /// `onchainos agent service-match`: search marketplace services directly.

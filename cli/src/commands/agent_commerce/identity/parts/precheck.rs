@@ -1,6 +1,6 @@
 //! Registration pre-check (powers `agent pre-check`).
 //!
-//! Sinks references/register.md §2's per-wallet uniqueness logic into the CLI:
+//! Sinks references/identity-register.md §2's per-wallet uniqueness logic into the CLI:
 //! scope an `/agent-list` envelope to the signing wallet, count by role, and
 //! decide whether the requested role can be created (≤1 user, ≤1 evaluator
 //! per address; asp unlimited). The skill renders the verdict instead of

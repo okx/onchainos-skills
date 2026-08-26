@@ -50,6 +50,15 @@ pub(super) struct AgentService {
     pub(super) service_name: String,
     #[serde(rename = "serviceDescription")]
     pub(super) service_description: String,
+    /// Optional buyer-facing usage instructions. The guided flow only offers
+    /// this field for A2A, but the CLI accepts and forwards an explicitly
+    /// supplied A2MCP value for backend compatibility.
+    #[serde(
+        rename = "serviceGuide",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub(super) service_guide: String,
     /// Single-purchase price. Always serialized. A plain number string when a
     /// one-off price applies; an EMPTY string (`""`) when the service is
     /// subscription-priced (no single-purchase price). A2MCP always carries a
@@ -67,10 +76,13 @@ pub(super) struct AgentService {
     /// deserializes cleanly.
     #[serde(rename = "subscription", default)]
     pub(super) subscription: Vec<SubscriptionTier>,
-    /// `freeTrial` — duration in HOURS (A2A subscription services only). Optional —
-    /// only meaningful alongside a NON-EMPTY `subscription`. A positive integer
-    /// number of hours as a string (e.g. `"72"` = 3 days) sets a trial. An ABSENT
-    /// key and an EMPTY string `""` are EQUIVALENT — both mean "no trial"; the
+    /// `freeTrial` — duration in HOURS for A2A subscription services only. Optional —
+    /// only meaningful alongside a NON-EMPTY `subscription`; the low-level CLI
+    /// accepts a positive integer number of hours as a string so legacy values
+    /// can be written back unchanged (the guided product flow emits only
+    /// `"72"` = 3 days). An ABSENT key
+    /// and an EMPTY string `""` are
+    /// EQUIVALENT — both mean "no trial"; the
     /// field is then omitted from the payload (a missing `freeTrial` is read as
     /// no trial). Setting or clearing the trial does not affect `subscription`.
     /// Forbidden (must be absent/empty) on single-purchase A2A and on A2MCP.
@@ -101,4 +113,3 @@ pub(super) struct AgentCard {
     #[serde(rename = "services")]
     pub(super) services: Vec<AgentService>,
 }
-
