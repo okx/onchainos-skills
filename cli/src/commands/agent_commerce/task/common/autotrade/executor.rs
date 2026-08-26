@@ -47,6 +47,12 @@ enum OutcomeStatus {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+enum FailureCategory {
+    AuthenticationRequired,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 enum ExecutionPhase {
     Reserved,
     Prepared,
@@ -138,6 +144,8 @@ pub struct ExecutionOutcome {
     receipt: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure_category: Option<FailureCategory>,
     notification_pending: bool,
     #[serde(default)]
     notification_attempts: u32,
@@ -450,10 +458,7 @@ fn parse_command(venue: &str, command_json: &str) -> Result<(PathBuf, Vec<String
             PathBuf::from("polymarket-plugin")
         }
         "hyperliquid" => match args.first().map(String::as_str) {
-            Some("order" | "close" | "tpsl" | "spot-order" | "order-batch") => {
-                PathBuf::from("hyperliquid")
-            }
-            Some("outcome-buy" | "outcome-sell") => PathBuf::from("hyperliquid-plugin"),
+            Some("order" | "close") => PathBuf::from("hyperliquid-plugin"),
             _ => bail!("unsupported hyperliquid automatic trade operation"),
         },
         _ => bail!("unsupported automatic execution venue"),
@@ -719,12 +724,24 @@ fn validate_bound_intent(
                 }
                 _ => {}
             }
-            if matches!(
-                args.first().map(String::as_str),
-                Some("order" | "spot-order")
-            ) && flag_value(args, "--side") != Some(action)
-            {
-                bail!("hyperliquid order side does not match the authorized action");
+            if !args.iter().any(|arg| arg == "--confirm") {
+                bail!("hyperliquid execution requires --confirm");
+            }
+            if args.iter().any(|arg| arg == "--dry-run") {
+                bail!("hyperliquid execution must not use --dry-run");
+            }
+            match args.first().map(String::as_str) {
+                Some("order") => {
+                    flag_value(args, "--coin").context("hyperliquid order --coin is missing")?;
+                    flag_value(args, "--size").context("hyperliquid order --size is missing")?;
+                    if flag_value(args, "--side") != Some(action) {
+                        bail!("hyperliquid order side does not match the authorized action");
+                    }
+                }
+                Some("close") => {
+                    flag_value(args, "--coin").context("hyperliquid close --coin is missing")?;
+                }
+                _ => bail!("unsupported hyperliquid automatic trade operation"),
             }
         }
         _ => bail!("unsupported automatic execution venue"),
@@ -1128,6 +1145,62 @@ fn definitely_pre_submit_cli_error(message: &str) -> bool {
         || message.contains("unknown option")
         || message.contains("missing required argument")
         || message.contains("did you forget to specify the option argument")
+        // Trade Kit resolves credentials before it creates the HTTP order
+        // request. These failures therefore cannot represent a submitted
+        // order, and may be surfaced as concrete configuration errors.
+        || trade_kit_authentication_error(&message)
+}
+
+fn trade_kit_authentication_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    const MARKERS: &[&str] = &[
+        "failed to spawn okx-auth",
+        "no credentials found",
+        "not logged in",
+        "not authenticated",
+        "requires_auth",
+        "session expired",
+        "401 unauthorized",
+        "http 401",
+        "token refresh failed",
+        "token expired",
+        "token not found",
+        "storagenotfounderror",
+        "no config found",
+        "run `okx auth login`",
+        "run okx auth login",
+        "run `okx config init`",
+        "run okx config init",
+        "re-run: okx config init",
+        "api key doesn't exist",
+        "api key does not exist",
+        "invalid api-key",
+        "invalid api key",
+        "invalid ok-access-key",
+        "invalid sign",
+        "passphrase is incorrect",
+        "50100",
+        "50110",
+        "50111",
+        "50112",
+        "50113",
+    ];
+    MARKERS.iter().any(|marker| message.contains(marker))
+}
+
+fn failure_category_for(
+    venue: &str,
+    status: OutcomeStatus,
+    reason: Option<&str>,
+) -> Option<FailureCategory> {
+    if venue == "trade_kit"
+        && status == OutcomeStatus::FailedBeforeSubmit
+        && reason.is_some_and(trade_kit_authentication_error)
+    {
+        Some(FailureCategory::AuthenticationRequired)
+    } else {
+        None
+    }
 }
 
 fn text_failure_detail(output: &[u8]) -> Option<TextFailureDetail> {
@@ -1297,6 +1370,7 @@ fn make_outcome(
     reason: Option<String>,
     created_at: u64,
 ) -> ExecutionOutcome {
+    let failure_category = failure_category_for(request.venue, status, reason.as_deref());
     ExecutionOutcome {
         version: OUTCOME_VERSION,
         job_id: request.job_id.to_string(),
@@ -1308,6 +1382,7 @@ fn make_outcome(
         status,
         receipt,
         reason,
+        failure_category,
         notification_pending: true,
         notification_attempts: 0,
         next_notification_attempt_at: 0,
@@ -1419,6 +1494,20 @@ fn notification(outcome: &ExecutionOutcome) -> String {
         ExecutionMode::Auto => "[Auto Copy-Trade]",
         ExecutionMode::Manual | ExecutionMode::OneTime => "[Manual Copy-Trade]",
     };
+    let zh_auth_guidance = if outcome.failure_category
+        == Some(FailureCategory::AuthenticationRequired)
+    {
+        " 请回复“连接 Trade Kit”以启动授权；授权完成后，本次交易不会自动重试。"
+    } else {
+        ""
+    };
+    let en_auth_guidance = if outcome.failure_category
+        == Some(FailureCategory::AuthenticationRequired)
+    {
+        " Reply “Connect Trade Kit” to start authorization. This trade will not be retried automatically after authorization."
+    } else {
+        ""
+    };
     match (user_lang::resolve(&outcome.job_id), outcome.status) {
         (user_lang::Lang::Zh, OutcomeStatus::Submitted) => format!(
             "{zh_label} 交易已提交。类型: {},方向: {},金额: {}。{}",
@@ -1435,14 +1524,14 @@ fn notification(outcome: &ExecutionOutcome) -> String {
             receipt.unwrap_or_else(|| "Check the venue history for details".to_string())
         ),
         (user_lang::Lang::Zh, OutcomeStatus::FailedBeforeSubmit) => format!(
-            "{zh_label} 交易执行失败，未确认提交。类型: {},方向: {},金额: {}。原因: {}。系统不会自动重试。",
+            "{zh_label} 交易执行失败，未确认提交。类型: {},方向: {},金额: {}。原因: {}。系统不会自动重试。{zh_auth_guidance}",
             outcome.venue,
             outcome.action,
             outcome.amount,
             outcome.reason.as_deref().unwrap_or("执行命令失败")
         ),
         (user_lang::Lang::En, OutcomeStatus::FailedBeforeSubmit) => format!(
-            "{en_label} Trade execution failed; submission was not confirmed. Venue: {}, action: {}, amount: {}. Reason: {}. No automatic retry will occur.",
+            "{en_label} Trade execution failed; submission was not confirmed. Venue: {}, action: {}, amount: {}. Reason: {}. No automatic retry will occur.{en_auth_guidance}",
             outcome.venue,
             outcome.action,
             outcome.amount,
@@ -1472,7 +1561,7 @@ fn notification(outcome: &ExecutionOutcome) -> String {
         ),
         (user_lang::Lang::Zh, OutcomeStatus::FailedBeforeExecution) => format!(
             "{zh_label} 交付物处理失败，未启动交易。原因: {}。系统不会自动下单重试。",
-            outcome.reason.as_deref().unwrap_or("无法完成交易前处理")
+            outcome.reason.as_deref().unwrap_or("无法完成交易前处理").trim_end_matches('。')
         ),
         (user_lang::Lang::En, OutcomeStatus::FailedBeforeExecution) => format!(
             "{en_label} Delivery processing failed before a trade was started. Reason: {}. No automatic order retry will occur.",
@@ -1578,12 +1667,7 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
     }
 
     let started = now_secs();
-    let prepared = (|| -> Result<(
-        String,
-        PathBuf,
-        Vec<String>,
-        Option<TradeKitExecutionContext>,
-    )> {
+    let prepared = (|| -> Result<(String, PathBuf, Vec<String>)> {
         let (amount, authorized_settings) = authorize(
             request.job_id,
             request.delivery_id,
@@ -1601,7 +1685,7 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
             request.execution_mode,
             &args,
         )?;
-        let trade_kit_context = if request.venue == "trade_kit" {
+        if request.venue == "trade_kit" {
             let context = trade_kit_execution_context(&args)?;
             let expected = authorized_settings
                 .environment
@@ -1610,13 +1694,10 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
                 bail!("Trade Kit command environment does not match persisted consent");
             }
             validate_trade_kit_execution_settings(&args, context, authorized_settings)?;
-            Some(context)
-        } else {
-            None
-        };
-        Ok((amount, program, args, trade_kit_context))
+        }
+        Ok((amount, program, args))
     })();
-    let (amount, program, args, trade_kit_context) = match prepared {
+    let (amount, program, args) = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
             let amount = Decimal::parse(request.amount)
@@ -1633,24 +1714,6 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
             return persist_and_notify(&outcome_path, outcome);
         }
     };
-    if let Some(context) = trade_kit_context {
-        let readiness = trade_kit::probe_runtime(&[context.asset_class], context.environment).await;
-        if !readiness.ready {
-            let reason = serde_json::to_value(readiness.reason)
-                .ok()
-                .and_then(|value| value.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "verification_unknown".to_string());
-            let outcome = make_outcome(
-                &request,
-                amount,
-                OutcomeStatus::FailedBeforeSubmit,
-                None,
-                Some(format!("Trade Kit readiness failed: {reason}")),
-                started,
-            );
-            return persist_and_notify(&outcome_path, outcome);
-        }
-    }
     if let Err(error) = update_execution_phase(
         request.job_id,
         request.delivery_id,
@@ -1766,6 +1829,7 @@ pub fn report_delivery(
             status,
             receipt: None,
             reason: Some(safe_text(reason)),
+            failure_category: None,
             notification_pending: true,
             notification_attempts: 0,
             next_notification_attempt_at: 0,
@@ -1816,6 +1880,7 @@ pub(crate) fn recover_incomplete(job_id: &str, delivery_id: &str) -> Result<bool
             status,
             receipt: None,
             reason: Some(reason.to_string()),
+            failure_category: None,
             notification_pending: true,
             notification_attempts: 0,
             next_notification_attempt_at: 0,
@@ -2084,6 +2149,7 @@ mod tests {
             status: OutcomeStatus::FailedBeforeSubmit,
             receipt: None,
             reason: Some("test".to_string()),
+            failure_category: None,
             notification_pending: true,
             notification_attempts: 1,
             next_notification_attempt_at: now_secs() + 30,
@@ -2107,13 +2173,17 @@ mod tests {
         assert!(parse_command("dex", r#"["agent","autotrade-execute","--job-id","x"]"#).is_err());
         let (program, _) =
             parse_command("hyperliquid", r#"["order","--coin","BTC","--confirm"]"#).unwrap();
-        assert_eq!(program, PathBuf::from("hyperliquid"));
-        let (program, _) = parse_command(
-            "hyperliquid",
-            r#"["outcome-buy","--outcome","2","--confirm"]"#,
-        )
-        .unwrap();
         assert_eq!(program, PathBuf::from("hyperliquid-plugin"));
+        for unsupported in [
+            "tpsl",
+            "spot-order",
+            "order-batch",
+            "outcome-buy",
+            "outcome-sell",
+        ] {
+            let command = format!(r#"["{unsupported}","--confirm"]"#);
+            assert!(parse_command("hyperliquid", &command).is_err());
+        }
     }
 
     #[test]
@@ -2179,6 +2249,35 @@ mod tests {
         assert!(reason.contains("argument is ambiguous"));
         assert!(reason.contains("exit code 1"));
         assert!(!reason.contains("Version:"));
+    }
+
+    #[test]
+    fn nonzero_trade_kit_auth_error_is_specific_and_pre_submit() {
+        let stderr = b"Error: Failed to spawn okx-auth: helper unavailable\n";
+        let (status, receipt, reason) = classify_nonzero("trade_kit", Some(1), b"", stderr);
+        assert_eq!(status, OutcomeStatus::FailedBeforeSubmit);
+        assert!(receipt.is_none());
+        let reason = reason.unwrap();
+        assert!(reason.contains("Failed to spawn okx-auth"));
+        assert!(reason.contains("exit code 1"));
+        assert!(!reason.contains("submission state is unknown"));
+        assert_eq!(
+            failure_category_for("trade_kit", status, Some(&reason)),
+            Some(FailureCategory::AuthenticationRequired)
+        );
+        assert_eq!(failure_category_for("dex", status, Some(&reason)), None);
+    }
+
+    #[test]
+    fn trade_kit_business_rejection_does_not_request_authentication() {
+        assert_eq!(
+            failure_category_for(
+                "trade_kit",
+                OutcomeStatus::FailedBeforeSubmit,
+                Some("51008: insufficient account balance")
+            ),
+            None
+        );
     }
 
     #[test]
@@ -2258,6 +2357,73 @@ mod tests {
             &polymarket
         )
         .is_err());
+    }
+
+    #[test]
+    fn hyperliquid_execution_is_confirmed_and_bound_to_the_auto_trade_job() {
+        let order = vec![
+            "order".into(),
+            "--coin".into(),
+            "BTC".into(),
+            "--side".into(),
+            "buy".into(),
+            "--size".into(),
+            "0.001".into(),
+            "--confirm".into(),
+            "--autotrade-job".into(),
+            "job1".into(),
+        ];
+        validate_bound_intent(
+            "hyperliquid",
+            "buy",
+            "100",
+            "job1",
+            ExecutionMode::Auto,
+            &order,
+        )
+        .unwrap();
+
+        let mut preview = order.clone();
+        preview.retain(|arg| arg != "--confirm");
+        assert!(validate_bound_intent(
+            "hyperliquid",
+            "buy",
+            "100",
+            "job1",
+            ExecutionMode::Auto,
+            &preview,
+        )
+        .is_err());
+
+        let mut dry_run = order.clone();
+        dry_run.push("--dry-run".into());
+        assert!(validate_bound_intent(
+            "hyperliquid",
+            "buy",
+            "100",
+            "job1",
+            ExecutionMode::Auto,
+            &dry_run,
+        )
+        .is_err());
+
+        let close = vec![
+            "close".into(),
+            "--coin".into(),
+            "BTC".into(),
+            "--confirm".into(),
+            "--autotrade-job".into(),
+            "job1".into(),
+        ];
+        validate_bound_intent(
+            "hyperliquid",
+            "sell",
+            "100",
+            "job1",
+            ExecutionMode::Auto,
+            &close,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -2573,6 +2739,7 @@ mod tests {
             status: OutcomeStatus::FailedBeforeExecution,
             receipt: None,
             reason: Some("test interruption".to_string()),
+            failure_category: None,
             notification_pending: true,
             notification_attempts: 0,
             next_notification_attempt_at: 0,
@@ -2641,6 +2808,7 @@ mod tests {
             status: OutcomeStatus::FailedBeforeExecution,
             receipt: None,
             reason: Some("journal unavailable".to_string()),
+            failure_category: None,
             notification_pending: true,
             notification_attempts: 0,
             next_notification_attempt_at: 0,

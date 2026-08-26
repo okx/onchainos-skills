@@ -546,6 +546,14 @@ pub struct SubscriptionInfo {
 struct SubscriptionList {
     #[serde(default)]
     list: Vec<SubscriptionInfo>,
+    #[serde(default)]
+    total: u64,
+    #[serde(default, rename = "totalNoCondition")]
+    total_no_condition: Option<u64>,
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default, rename = "pageSize")]
+    page_size: Option<u32>,
 }
 
 /// Programmatic form of `my-subscriptions`, shared by the standalone command
@@ -556,6 +564,82 @@ pub(crate) struct MySubscriptionsSnapshot {
     pub(crate) data: serde_json::Value,
     pub(crate) agent_id: String,
     pub(crate) is_empty: bool,
+}
+
+/// Minimal machine-readable view used by subscription creation prechecks.
+/// Only non-terminal buyer subscriptions are ever exposed through this type.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExistingSubscriptionSummary {
+    pub(crate) job_id: String,
+    pub(crate) service_id: String,
+    pub(crate) provider_agent_id: String,
+    pub(crate) status_name: String,
+    pub(crate) restore_listening_available: bool,
+}
+
+fn blocks_duplicate_creation(status: i64) -> bool {
+    // Unknown future states fail closed: SubStatus::from_code intentionally
+    // maps them to Init, which is non-terminal. Only a known terminal state is
+    // sufficient evidence that creating the service again is safe.
+    !SubStatus::from_code(status).is_terminal()
+}
+
+fn summarize_non_terminal_buyer_subscriptions(
+    list: Vec<SubscriptionInfo>,
+    buyer_agent_id: &str,
+) -> Vec<ExistingSubscriptionSummary> {
+    let mut summaries = list
+        .into_iter()
+        .filter(|item| item.buyer_agent_id == buyer_agent_id)
+        .filter(|item| blocks_duplicate_creation(item.status))
+        .map(|item| ExistingSubscriptionSummary {
+            job_id: item.job_id,
+            service_id: item.service_id,
+            provider_agent_id: item.provider_agent_id,
+            status_name: status_name(item.status),
+            restore_listening_available: item.status == SubStatus::Active.code(),
+        })
+        .collect::<Vec<_>>();
+
+    // Historical duplicate rows can exist. Surface ACTIVE first because it is
+    // the only status for which the product may offer "Restore listening".
+    summaries.sort_by_key(|item| {
+        (
+            !item.restore_listening_available,
+            item.job_id.clone(),
+        )
+    });
+    summaries
+}
+
+/// Read all non-terminal subscriptions owned by an already-resolved buyer.
+/// Unlike the user-facing listing, this precheck does not create sessions or
+/// alter device routing.
+pub(crate) async fn fetch_non_terminal_buyer_subscriptions_for_agent(
+    client: &mut TaskApiClient,
+    buyer_agent_id: &str,
+) -> Result<Vec<ExistingSubscriptionSummary>> {
+    let buyer_agent_id = select_subscription_agent_id(buyer_agent_id, "")?;
+    let data = client
+        .get_with_agent_id(&my_subscriptions_path(), &buyer_agent_id)
+        .await
+        .map_err(|e| anyhow!("failed to check existing subscriptions: {e}"))?;
+    let wrapper: SubscriptionList = serde_json::from_value(data)
+        .map_err(|e| anyhow!("failed to parse existing subscriptions: {e}"))?;
+    Ok(summarize_non_terminal_buyer_subscriptions(
+        wrapper.list,
+        &buyer_agent_id,
+    ))
+}
+
+pub(crate) fn existing_subscription_for_service<'a>(
+    subscriptions: &'a [ExistingSubscriptionSummary],
+    service_id: &str,
+) -> Option<&'a ExistingSubscriptionSummary> {
+    subscriptions
+        .iter()
+        .find(|item| item.service_id == service_id)
 }
 
 pub fn status_name(status: i64) -> String {
@@ -811,6 +895,52 @@ fn filter_subscriptions(
         .collect()
 }
 
+/// Prepare one paginated buyer subscription response for the unified task list.
+/// The backend owns grouping and totals; this adapter only preserves the existing
+/// buyer filtering and device/status enrichment used by `my-subscriptions`.
+pub(crate) fn enrich_buyer_subscription_page(
+    data: serde_json::Value,
+    agent_id: &str,
+) -> Result<serde_json::Value> {
+    let wrapper: SubscriptionList = serde_json::from_value(data)
+        .map_err(|e| anyhow!("failed to parse subscription page: {e}"))?;
+    let this_device_id = crate::device::id::get_cached_device_id();
+    let mut list = filter_subscriptions(
+        wrapper.list,
+        SubscriptionRole::Buyer,
+        agent_id,
+        None,
+    );
+    for item in &mut list {
+        enrich_subscription_info(item, this_device_id, true);
+    }
+
+    let mut page = serde_json::Map::new();
+    page.insert("list".to_string(), serde_json::json!(list));
+    page.insert("total".to_string(), serde_json::json!(wrapper.total));
+    if let Some(total_no_condition) = wrapper.total_no_condition {
+        page.insert(
+            "totalNoCondition".to_string(),
+            serde_json::json!(total_no_condition),
+        );
+    }
+    if let Some(page_number) = wrapper.page {
+        page.insert("page".to_string(), serde_json::json!(page_number));
+    }
+    if let Some(page_size) = wrapper.page_size {
+        page.insert("pageSize".to_string(), serde_json::json!(page_size));
+    }
+    page.insert(
+        FIELD_THIS_DEVICE_ID.to_string(),
+        serde_json::json!(this_device_id),
+    );
+    page.insert(
+        FIELD_THIS_DEVICE_NAME.to_string(),
+        serde_json::json!(this_device_name()),
+    );
+    Ok(serde_json::Value::Object(page))
+}
+
 pub(crate) async fn fetch_my_subscriptions_snapshot(
     client: &mut TaskApiClient,
     role: SubscriptionRole,
@@ -898,6 +1028,62 @@ pub async fn handle_my_subscriptions(
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn enrich_buyer_subscription_page_preserves_total_and_device_fields() {
+        let data = serde_json::json!({
+            "total": 2,
+            "totalNoCondition": 7,
+            "page": 2,
+            "pageSize": 20,
+            "list": [{
+                "jobId": "sub-1",
+                "status": 1,
+                "buyerAgentId": "user-1",
+                "providerAgentId": "asp-1",
+                "deviceList": null,
+                "categoryCodes": null
+            }]
+        });
+
+        let page = enrich_buyer_subscription_page(data, "user-1").unwrap();
+
+        assert_eq!(page["total"], 2);
+        assert_eq!(page["totalNoCondition"], 7);
+        assert_eq!(page["page"], 2);
+        assert_eq!(page["pageSize"], 20);
+        assert_eq!(page["list"][0]["statusName"], "ACTIVE");
+        assert!(page["list"][0]["deviceList"].is_null());
+        assert_eq!(page["list"][0]["categoryCodes"], serde_json::json!([]));
+        assert_eq!(page["list"][0]["thisDeviceReceives"], true);
+        assert!(page.get("thisDeviceId").is_some());
+        assert!(page.get("thisDeviceName").is_some());
+    }
+
+    #[test]
+    fn enrich_buyer_subscription_page_filters_other_buyers_without_rewriting_total() {
+        let data = serde_json::json!({
+            "total": 9,
+            "list": [
+                {
+                    "jobId": "mine",
+                    "buyerAgentId": "user-1",
+                    "providerAgentId": "asp-1"
+                },
+                {
+                    "jobId": "theirs",
+                    "buyerAgentId": "user-2",
+                    "providerAgentId": "asp-2"
+                }
+            ]
+        });
+
+        let page = enrich_buyer_subscription_page(data, "user-1").unwrap();
+
+        assert_eq!(page["total"], 9);
+        assert_eq!(page["list"].as_array().unwrap().len(), 1);
+        assert_eq!(page["list"][0]["jobId"], "mine");
+    }
     use serde_json::json;
 
     #[derive(Parser)]
@@ -912,6 +1098,58 @@ mod tests {
         assert!(!should_ensure_subscription_session(SubStatus::Init.code()));
         assert!(!should_ensure_subscription_session(SubStatus::Closed.code()));
         assert!(!should_ensure_subscription_session(SubStatus::Failed.code()));
+    }
+
+    #[test]
+    fn duplicate_creation_is_blocked_only_by_non_terminal_statuses() {
+        for status in [-1, 1, 3, 4, 42] {
+            assert!(
+                blocks_duplicate_creation(status),
+                "status {status} must block duplicate creation"
+            );
+        }
+        for status in [6, 7, 9] {
+            assert!(
+                !blocks_duplicate_creation(status),
+                "terminal status {status} must allow a new subscription"
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_summary_prefers_active_and_only_active_can_restore_listening() {
+        let row = |job_id: &str, service_id: &str, buyer: &str, status: i64| {
+            SubscriptionInfo {
+                job_id: job_id.to_string(),
+                service_id: service_id.to_string(),
+                buyer_agent_id: buyer.to_string(),
+                provider_agent_id: "asp-1".to_string(),
+                status,
+                ..SubscriptionInfo::default()
+            }
+        };
+        let summaries = summarize_non_terminal_buyer_subscriptions(
+            vec![
+                row("job-rejected", "svc-1", "buyer-1", 3),
+                row("job-active", "svc-1", "buyer-1", 1),
+                row("job-closed", "svc-1", "buyer-1", 7),
+                row("job-other-buyer", "svc-1", "buyer-2", 1),
+            ],
+            "buyer-1",
+        );
+
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].job_id, "job-active");
+        assert!(summaries[0].restore_listening_available);
+        assert_eq!(summaries[1].job_id, "job-rejected");
+        assert!(!summaries[1].restore_listening_available);
+        assert_eq!(
+            existing_subscription_for_service(&summaries, "svc-1")
+                .expect("service must be blocked")
+                .job_id,
+            "job-active"
+        );
+        assert!(existing_subscription_for_service(&summaries, "svc-other").is_none());
     }
 
     #[test]

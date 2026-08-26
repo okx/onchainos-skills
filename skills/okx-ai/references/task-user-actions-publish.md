@@ -99,6 +99,18 @@ End with a localized confirmation blockquote and wait for explicit confirmation.
 > **Scope:** fallback/direct routes only. If `next-action` returned a confirmation form, use that form
 > verbatim and do not add any Appendix A2 fields to it.
 
+Before rendering any subscription confirmation card, require the `task-service-select` result to carry
+`subscriptionCheck.status:"checked"` and inspect the selected row's `existingSubscription`. `null` continues normally.
+A non-null value means a non-terminal subscription already exists for the exact service. Require the
+top-level `duplicateSubscription` object and render only its `userFacingPrompt`, translated faithfully to
+the user's language. The duplicate result intentionally omits fee, trial, description, and readiness so
+these details cannot leak into the reply.
+Do not query, list, or suggest the ASP's other services. Offer only `nextAfterUserChoice` when present;
+**Restore listening** is the only possible action and is present only for ACTIVE. It routes the existing
+`jobId` to `task-user-playbook.md` §Signal-receipt watch entry as an explicit restore. INIT / REJECTED /
+DISPUTED / unknown non-terminal subscriptions end after the duplicate warning. Known terminal history
+(`COMPLETED` / `CLOSED` / `FAILED`) does not block a new subscription.
+
 Display as a single `| Field | Value |` table with these **7 base fields** in order (drop `Summary`, `Service`, `Service desc`, and the old binary execution switch):
 
 | # | Field | Source | Render Rule |
@@ -120,14 +132,16 @@ retain the answers outside the form, and pass them through the existing `--autot
 If attachments present, add an Attachments row.
 
 Before displaying this confirmation table, verify the **Service Usage Guide gate** above has already
-run for the selected service (run it now if not — backstop), then inspect advisory readiness. A non-ready or authorization-not-
-checked Trade Kit must show the separate optional two-choice preparation card from the CLI playbook:
-install/configure Trade Kit, or Later and continue subscribing. On prepare, first load `okx-cex-auth`
-directly when it is already installed. Only when it is unavailable, scope the required security scan to
-`okx/agent-skills`; after a passing scan, run `npx skills add okx/agent-skills --yes --global` and load
-`okx-cex-auth`. Delegate all CLI/OAuth/API-key setup to that skill, then re-run readiness.
-Never duplicate those auth steps here, auto-install, or block subscription creation. Other tool reminders
-remain concise notices without choices.
+run for the selected service (run it now if not — backstop), then inspect advisory local readiness. When
+Trade Kit is explicit or the sole candidate, show the separate optional two-choice card from the CLI
+playbook: Install/connect Trade Kit, or Later and continue subscribing. This is an optional setup action,
+not evidence that the user is logged out. On Install/connect, load `okx-cex-auth`; install
+`okx/agent-skills` only after its required security scan when the auth skill is absent, and delegate
+CLI/site/OAuth/API-key setup to that skill. The schema-v3 readiness probe remains local-only; re-run it
+only after install/upgrade and never to verify OAuth. Never auto-install, persist an authentication
+conclusion, or block subscription creation. Actual authentication/trading availability is determined
+later only by the final Trade Kit target command. Other tool reminders remain concise notices without
+choices.
 
 End with a localized confirmation blockquote and wait for explicit confirmation.
 

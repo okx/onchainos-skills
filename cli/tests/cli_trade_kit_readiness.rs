@@ -18,117 +18,29 @@ fn install_fake_trade_kit(home: &Path) -> (PathBuf, PathBuf) {
         r#"#!/bin/sh
 printf 'update=%s args=%s\n' "$OKX_UPDATE_CHECK" "$*" >> "$FAKE_TRADE_KIT_LOG"
 
-if [ "$1 $2" = "list-tools --json" ]; then
-  case "$FAKE_TRADE_KIT_MODE" in
-    old)
-      version="1.3.1"
-      ;;
-    malformed)
-      printf '%s\n' '{not-json'
-      exit 0
-      ;;
-    missing-capability)
-      printf '%s\n' '{"version":"1.4.2","modules":[{"commands":[{"toolName":"market_get_ticker"}]}]}'
-      exit 0
-      ;;
-    *)
-      version="1.4.2"
-      ;;
-  esac
-  printf '%s\n' "{\"version\":\"$version\",\"modules\":[{\"commands\":[{\"toolName\":\"market_get_ticker\"},{\"toolName\":\"spot_place_order\"},{\"toolName\":\"market_get_instruments\"},{\"toolName\":\"account_get_config\"},{\"toolName\":\"swap_get_leverage\"},{\"toolName\":\"swap_set_leverage\"},{\"toolName\":\"swap_place_order\"},{\"toolName\":\"swap_close_position\"},{\"toolName\":\"futures_get_leverage\"},{\"toolName\":\"futures_set_leverage\"},{\"toolName\":\"futures_place_order\"},{\"toolName\":\"futures_close_position\"},{\"toolName\":\"event_browse\"},{\"toolName\":\"event_get_series\"},{\"toolName\":\"event_get_events\"},{\"toolName\":\"event_get_markets\"},{\"toolName\":\"event_place_order\"},{\"toolName\":\"option_get_instruments\"},{\"toolName\":\"option_get_greeks\"},{\"toolName\":\"option_place_order\"}]}]}"
-  exit 0
+if [ "$1 $2" != "list-tools --json" ]; then
+  printf '%s\n' 'private or unexpected Trade Kit invocation' >&2
+  exit 70
 fi
 
-if [ "$1 $2 $3" = "account config --json" ]; then
-  case "$FAKE_TRADE_KIT_MODE" in
-    ready)
-      printf '%s\n' '[{"perm":"read_only,trade","uid":"AUTH_STDOUT_CANARY"}]'
-      exit 0
-      ;;
-    oauth-ready|oauth-live-only|oauth-demo-only|oauth-scope-missing|oauth-not-logged-in|oauth-malformed)
-      printf '%s\n' '[{"perm":"","uid":"AUTH_STDOUT_CANARY"}]'
-      exit 0
-      ;;
-    api-key-ready)
-      printf '%s\n' '{"data":[{"perm":"trade","uid":"AUTH_STDOUT_CANARY"}]}'
-      exit 0
-      ;;
-    read-only)
-      printf '%s\n' '[{"perm":"read_only","uid":"ACCOUNT_DATA_CANARY"}]'
-      exit 0
-      ;;
-    near-match-permission)
-      printf '%s\n' '[{"perm":"read_only,trade_history","uid":"ACCOUNT_DATA_CANARY"}]'
-      exit 0
-      ;;
-    missing-permission)
-      printf '%s\n' '[{"uid":"ACCOUNT_DATA_CANARY","acctLv":"2"}]'
-      exit 0
-      ;;
-    auth-required)
-      printf '%s\n' 'Error: No credentials found. AUTH_STDERR_CANARY' >&2
-      printf '%s\n' 'Hint: Run `okx auth login` or configure API key credentials.' >&2
-      exit 1
-      ;;
-    invalid-oauth-token)
-      printf '%s\n' 'Error: HTTP 400 from OKX: Invalid token' >&2
-      printf '%s\n' 'Code: 400' >&2
-      printf '%s\n' 'Hint: Retry later or verify endpoint parameters.' >&2
-      exit 1
-      ;;
-    empty-oauth-token)
-      printf '%s\n' 'Error: okx-auth returned empty token.' >&2
-      printf '%s\n' 'Hint: Run `okx auth login` to re-authenticate.' >&2
-      exit 1
-      ;;
-    oauth-helper-error)
-      printf '%s\n' 'Error: okx-auth token exited with code 9.' >&2
-      printf '%s\n' 'Hint: Run `okx auth login` to re-authenticate.' >&2
-      exit 1
-      ;;
-    invalid-auth-config)
-      printf '%s\n' 'Error: Failed to parse config.toml: Invalid TOML document' >&2
-      printf '%s\n' 'Hint: Or re-run: okx config init' >&2
-      exit 1
-      ;;
-    network)
-      printf '%s\n' 'Error: NetworkError: fetch failed ECONNREFUSED NETWORK_STDERR_CANARY' >&2
-      exit 1
-      ;;
-  esac
-fi
+case "$FAKE_TRADE_KIT_MODE" in
+  old)
+    version="1.3.1"
+    ;;
+  malformed)
+    printf '%s\n' '{not-json'
+    exit 0
+    ;;
+  missing-capability)
+    printf '%s\n' '{"version":"1.4.2","modules":[{"commands":[{"toolName":"market_get_ticker"}]}]}'
+    exit 0
+    ;;
+  *)
+    version="1.4.2"
+    ;;
+esac
 
-if [ "$1 $2" = "status --json" ]; then
-  case "$FAKE_TRADE_KIT_MODE" in
-    oauth-ready)
-      printf '%s\n' '{"status":"logged_in","scopes":["live:trade","demo:trade","market:read"]}'
-      exit 0
-      ;;
-    oauth-live-only)
-      printf '%s\n' '{"status":"logged_in","scopes":["live:trade","demo:read"]}'
-      exit 0
-      ;;
-    oauth-demo-only)
-      printf '%s\n' '{"status":"logged_in","scopes":["demo:trade","live:read"]}'
-      exit 0
-      ;;
-    oauth-scope-missing)
-      printf '%s\n' '{"status":"logged_in","scopes":["live:read","demo:read"]}'
-      exit 0
-      ;;
-    oauth-not-logged-in)
-      printf '%s\n' '{"status":"not_logged_in","scopes":[]}'
-      exit 0
-      ;;
-    oauth-malformed)
-      printf '%s\n' '{not-json'
-      exit 0
-      ;;
-  esac
-fi
-
-printf '%s\n' 'unexpected fake TradeKit invocation' >&2
-exit 70
+printf '%s\n' "{\"version\":\"$version\",\"modules\":[{\"commands\":[{\"toolName\":\"market_get_ticker\"},{\"toolName\":\"spot_place_order\"},{\"toolName\":\"market_get_instruments\"},{\"toolName\":\"account_get_config\"},{\"toolName\":\"swap_get_leverage\"},{\"toolName\":\"swap_set_leverage\"},{\"toolName\":\"swap_place_order\"},{\"toolName\":\"swap_close_position\"},{\"toolName\":\"futures_get_leverage\"},{\"toolName\":\"futures_set_leverage\"},{\"toolName\":\"futures_place_order\"},{\"toolName\":\"futures_close_position\"},{\"toolName\":\"event_browse\"},{\"toolName\":\"event_get_series\"},{\"toolName\":\"event_get_events\"},{\"toolName\":\"event_get_markets\"},{\"toolName\":\"event_place_order\"},{\"toolName\":\"option_get_instruments\"},{\"toolName\":\"option_get_greeks\"},{\"toolName\":\"option_place_order\"}]}]}"
 "#,
     )
     .unwrap();
@@ -143,36 +55,15 @@ fn run_readiness(
     log: &Path,
     mode: &str,
     classes: &[&str],
-) -> std::process::Output {
-    run_readiness_in(home, bin, log, mode, classes, "configured")
-}
-
-#[cfg(unix)]
-fn run_readiness_in(
-    home: &Path,
-    bin: &Path,
-    log: &Path,
-    mode: &str,
-    classes: &[&str],
     environment: &str,
 ) -> std::process::Output {
     let mut cmd = common::onchainos();
     common::scrubbed(&mut cmd, home)
-        // `probe_local` intentionally checks bounded per-user npm locations in
-        // addition to PATH. Isolate those locations from the developer machine
-        // so the missing-runtime case remains deterministic when `okx` is
-        // installed under ~/.local/bin.
         .env("HOME", home)
         .env("PATH", bin)
         .env("FAKE_TRADE_KIT_MODE", mode)
         .env("FAKE_TRADE_KIT_LOG", log)
-        .env("OKX_AUTH_BIN", bin.join("okx"))
-        .args([
-            "agent",
-            "trade-kit-readiness",
-            "--environment",
-            environment,
-        ]);
+        .args(["agent", "trade-kit-readiness", "--environment", environment]);
     for class in classes {
         cmd.args(["--asset-class", class]);
     }
@@ -183,22 +74,10 @@ fn data_from_success(output: &std::process::Output) -> Value {
     common::assert_ok_and_extract_data(output)
 }
 
-fn assert_not_exposed(output: &std::process::Output, home: &Path, canary: &str) {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let audit_path = home.join("audit.jsonl");
-    assert!(
-        audit_path.is_file(),
-        "expected CLI audit log at {audit_path:?}"
-    );
-    let audit = fs::read_to_string(audit_path).unwrap();
-    assert!(!stdout.contains(canary), "stdout leaked {canary}");
-    assert!(!stderr.contains(canary), "stderr leaked {canary}");
-    assert!(!audit.contains(canary), "audit log leaked {canary}");
-}
-
-fn assert_v2_shape(data: &Value) {
-    assert_eq!(data["schemaVersion"], 2);
+fn assert_v3_local_shape(data: &Value) {
+    assert_eq!(data["schemaVersion"], 3);
+    assert_eq!(data["scope"], "local_compatibility");
+    assert_eq!(data["authenticationChecked"], false);
     assert!(data["checkedAt"].as_str().is_some());
     assert!(data["assetClasses"].is_array());
     assert!(data["assetChecks"].is_array());
@@ -211,284 +90,109 @@ fn assert_v2_shape(data: &Value) {
 
 #[cfg(unix)]
 #[test]
-fn missing_cli_returns_missing_without_spawning() {
+fn missing_cli_returns_local_missing_without_spawning() {
     let (_guard, home) = common::fresh_home("trade-kit-readiness-missing");
     let bin = home.join("empty-bin");
     fs::create_dir_all(&bin).unwrap();
     let log = home.join("must-not-exist.log");
 
-    let data = data_from_success(&run_readiness(&home, &bin, &log, "ready", &["spot"]));
-    assert_v2_shape(&data);
+    let data = data_from_success(&run_readiness(
+        &home,
+        &bin,
+        &log,
+        "ready",
+        &["spot"],
+        "live",
+    ));
+    assert_v3_local_shape(&data);
     assert_eq!(data["readiness"], "missing");
-    assert_eq!(data["ready"], false);
     assert_eq!(data["reason"], "cli_missing");
-    assert_eq!(data["assetChecks"][0]["readiness"], "missing");
     assert_eq!(
         data["remediation"]["install"],
         "npm install -g @okx_ai/okx-trade-cli@latest"
     );
-    assert!(!log.exists(), "missing CLI must not spawn a child");
+    assert!(!log.exists());
 }
 
 #[cfg(unix)]
 #[test]
-fn multi_asset_probe_deduplicates_and_uses_one_account_call() {
-    for mode in ["oauth-ready", "api-key-ready"] {
-        let (_guard, home) = common::fresh_home(&format!("trade-kit-readiness-{mode}"));
-        let (bin, log) = install_fake_trade_kit(&home);
-
-        let output = run_readiness(&home, &bin, &log, mode, &["spot", "perp", "spot"]);
-        let data = data_from_success(&output);
-        assert_v2_shape(&data);
-        assert_eq!(data["assetClasses"], serde_json::json!(["spot", "perp"]));
-        assert_eq!(data["readiness"], "ready", "mode={mode}");
-        assert_eq!(data["ready"], true, "mode={mode}");
-        assert_eq!(data["reason"], "ready", "mode={mode}");
-        assert_eq!(data["version"], "1.4.2", "mode={mode}");
-        assert!(data["remediation"].is_null(), "mode={mode}");
-        assert_eq!(data["assetChecks"].as_array().unwrap().len(), 2);
-        assert!(data["assetChecks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|check| check["ready"] == true && check["readiness"] == "ready"));
-
-        assert_not_exposed(&output, &home, "AUTH_STDOUT_CANARY");
-        let calls = fs::read_to_string(log).unwrap();
-        let expected = if mode == "oauth-ready" {
-            vec![
-                "update=false args=list-tools --json",
-                "update=false args=account config --json",
-                "update=false args=status --json",
-            ]
-        } else {
-            vec![
-                "update=false args=list-tools --json",
-                "update=false args=account config --json",
-            ]
-        };
-        assert_eq!(calls.lines().collect::<Vec<_>>(), expected, "mode={mode}");
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn oauth_readiness_requires_the_scope_for_the_selected_environment() {
-    for (mode, environment, ready) in [
-        ("oauth-live-only", "live", true),
-        ("oauth-live-only", "demo", false),
-        ("oauth-demo-only", "demo", true),
-        ("oauth-demo-only", "live", false),
-        ("oauth-scope-missing", "live", false),
-        ("oauth-not-logged-in", "live", false),
-    ] {
-        let (_guard, home) =
-            common::fresh_home(&format!("trade-kit-oauth-{mode}-{environment}"));
-        let (bin, log) = install_fake_trade_kit(&home);
-        let output = run_readiness_in(&home, &bin, &log, mode, &["spot"], environment);
-        let data = data_from_success(&output);
-        assert_eq!(data["environment"], environment);
-        assert_eq!(data["ready"], ready, "mode={mode} env={environment}");
-        if ready {
-            assert_eq!(data["reason"], "ready");
-        } else {
-            assert_eq!(data["reason"], "oauth_trade_scope_required");
-        }
-        assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 3);
-        let calls = fs::read_to_string(&log).unwrap();
-        assert!(
-            calls.contains(&format!("args=account config --json --{environment}")),
-            "mode={mode} env={environment} calls={calls}"
-        );
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn api_key_readiness_uses_and_proves_the_selected_environment() {
-    for environment in ["live", "demo"] {
-        let (_guard, home) = common::fresh_home(&format!("trade-kit-ak-{environment}"));
-        let (bin, log) = install_fake_trade_kit(&home);
-        let data = data_from_success(&run_readiness_in(
-            &home,
-            &bin,
-            &log,
-            "api-key-ready",
-            &["spot"],
-            environment,
-        ));
-        assert_eq!(data["ready"], true, "env={environment}");
-        assert_eq!(data["environment"], environment);
-        let calls = fs::read_to_string(&log).unwrap();
-        assert_eq!(calls.lines().count(), 2);
-        assert!(calls.contains(&format!(
-            "args=account config --json --{environment}"
-        )));
-        assert!(!calls.contains("args=status --json"));
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn configured_oauth_mode_requires_both_trade_scopes() {
-    for (mode, ready) in [("oauth-ready", true), ("oauth-live-only", false)] {
-        let (_guard, home) = common::fresh_home(&format!("trade-kit-oauth-configured-{mode}"));
+fn compatible_runtime_is_ready_without_any_private_or_auth_probe() {
+    for environment in ["configured", "live", "demo"] {
+        let (_guard, home) = common::fresh_home(&format!("trade-kit-local-ready-{environment}"));
         let (bin, log) = install_fake_trade_kit(&home);
         let data = data_from_success(&run_readiness(
             &home,
             &bin,
             &log,
-            mode,
-            &["spot"],
+            "ready",
+            &["spot", "perp", "spot"],
+            environment,
         ));
-        assert_eq!(data["ready"], ready, "mode={mode}");
+        assert_v3_local_shape(&data);
+        assert_eq!(data["assetClasses"], serde_json::json!(["spot", "perp"]));
+        assert_eq!(data["readiness"], "ready");
+        assert_eq!(data["reason"], "ready");
+        assert_eq!(data["version"], "1.4.2");
+        assert!(data["remediation"].is_null());
+        assert!(data["assetChecks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|check| check["ready"] == true));
+
+        let calls = fs::read_to_string(&log).unwrap();
+        assert_eq!(calls, "update=false args=list-tools --json\n");
+        assert!(!calls.contains("account config"));
+        assert!(!calls.contains("auth status"));
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn exit_zero_without_exact_trade_permission_is_not_ready() {
-    for mode in ["read-only", "near-match-permission"] {
-        let (_guard, home) = common::fresh_home(&format!("trade-kit-permission-{mode}"));
-        let (bin, log) = install_fake_trade_kit(&home);
-        let output = run_readiness(&home, &bin, &log, mode, &["spot"]);
-        let data = data_from_success(&output);
-        assert_v2_shape(&data);
-        assert_eq!(data["readiness"], "needs_configuration", "mode={mode}");
-        assert_eq!(data["reason"], "trade_permission_required", "mode={mode}");
-        assert_eq!(data["ready"], false, "mode={mode}");
-        assert_eq!(data["remediation"]["oauth"], "okx auth login --manual");
-        assert_eq!(data["remediation"]["apiKey"], "okx config init");
-        assert_not_exposed(&output, &home, "ACCOUNT_DATA_CANARY");
-        assert_eq!(fs::read_to_string(log).unwrap().lines().count(), 2);
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn successful_private_call_with_missing_permission_is_unknown_not_logged_out() {
-    let (_guard, home) = common::fresh_home("trade-kit-missing-permission");
-    let (bin, log) = install_fake_trade_kit(&home);
-    let output = run_readiness(&home, &bin, &log, "missing-permission", &["spot"]);
-    let data = data_from_success(&output);
-    assert_v2_shape(&data);
-    assert_eq!(data["readiness"], "verification_unknown");
-    assert_eq!(data["reason"], "permission_response_invalid");
-    assert!(data["remediation"].get("oauth").is_none());
-    assert!(data["remediation"].get("apiKey").is_none());
-    assert!(data["remediation"]["retry"].is_string());
-    assert_not_exposed(&output, &home, "ACCOUNT_DATA_CANARY");
-}
-
-#[cfg(unix)]
-#[test]
-fn unauthenticated_cli_returns_oauth_and_api_key_guidance_without_leaking_stderr() {
-    let (_guard, home) = common::fresh_home("trade-kit-readiness-auth-required");
-    let (bin, log) = install_fake_trade_kit(&home);
-
-    let output = run_readiness(&home, &bin, &log, "auth-required", &["spot"]);
-    let data = data_from_success(&output);
-    assert_v2_shape(&data);
-    assert_eq!(data["readiness"], "needs_configuration");
-    assert_eq!(data["ready"], false);
-    assert_eq!(data["reason"], "auth_required");
-    assert_eq!(data["remediation"]["oauth"], "okx auth login --manual");
-    assert_eq!(data["remediation"]["apiKey"], "okx config init");
-    assert_not_exposed(&output, &home, "AUTH_STDERR_CANARY");
-    assert_eq!(fs::read_to_string(log).unwrap().lines().count(), 2);
-}
-
-#[cfg(unix)]
-#[test]
-fn invalid_auth_configuration_states_return_setup_guidance_instead_of_retry_only() {
-    for mode in [
-        "invalid-oauth-token",
-        "empty-oauth-token",
-        "oauth-helper-error",
-        "invalid-auth-config",
+fn old_or_capability_incomplete_runtime_is_locally_incompatible() {
+    for (mode, classes, reason) in [
+        ("old", vec!["spot"], "upgrade_required"),
+        (
+            "missing-capability",
+            vec!["spot", "perp"],
+            "capability_missing",
+        ),
     ] {
-        let (_guard, home) = common::fresh_home(&format!("trade-kit-readiness-{mode}"));
+        let (_guard, home) = common::fresh_home(&format!("trade-kit-local-{mode}"));
         let (bin, log) = install_fake_trade_kit(&home);
-
-        let output = run_readiness(&home, &bin, &log, mode, &["spot"]);
-        let data = data_from_success(&output);
-        assert_v2_shape(&data);
-        assert_eq!(data["readiness"], "needs_configuration", "mode={mode}");
-        assert_eq!(data["reason"], "auth_required", "mode={mode}");
-        assert_eq!(data["remediation"]["oauth"], "okx auth login --manual");
-        assert_eq!(data["remediation"]["apiKey"], "okx config init");
+        let data = data_from_success(&run_readiness(&home, &bin, &log, mode, &classes, "demo"));
+        assert_v3_local_shape(&data);
+        assert_eq!(data["readiness"], "incompatible");
+        assert_eq!(data["reason"], reason);
+        assert_eq!(
+            data["remediation"]["upgrade"],
+            "npm install -g @okx_ai/okx-trade-cli@latest"
+        );
+        assert_eq!(fs::read_to_string(log).unwrap().lines().count(), 1);
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn old_cli_is_incompatible_before_auth_probe() {
-    let (_guard, home) = common::fresh_home("trade-kit-readiness-old");
+fn inconclusive_local_discovery_never_claims_auth_failure_or_blocks() {
+    let (_guard, home) = common::fresh_home("trade-kit-local-malformed");
     let (bin, log) = install_fake_trade_kit(&home);
-
-    let data = data_from_success(&run_readiness(&home, &bin, &log, "old", &["spot"]));
-    assert_v2_shape(&data);
-    assert_eq!(data["readiness"], "incompatible");
-    assert_eq!(data["reason"], "upgrade_required");
-    assert_eq!(data["version"], "1.3.1");
-    assert_eq!(
-        data["remediation"]["upgrade"],
-        "npm install -g @okx_ai/okx-trade-cli@latest"
-    );
-    assert_eq!(fs::read_to_string(log).unwrap().lines().count(), 1);
-}
-
-#[cfg(unix)]
-#[test]
-fn missing_capability_is_incompatible_before_auth_probe() {
-    let (_guard, home) = common::fresh_home("trade-kit-readiness-capability");
-    let (bin, log) = install_fake_trade_kit(&home);
-
     let data = data_from_success(&run_readiness(
         &home,
         &bin,
         &log,
-        "missing-capability",
-        &["spot", "perp"],
+        "malformed",
+        &["spot"],
+        "live",
     ));
-    assert_v2_shape(&data);
-    assert_eq!(data["readiness"], "incompatible");
-    assert_eq!(data["reason"], "capability_missing");
-    assert!(data["assetChecks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|check| check["readiness"] == "incompatible"));
-    assert_eq!(fs::read_to_string(log).unwrap().lines().count(), 1);
-}
-
-#[cfg(unix)]
-#[test]
-fn malformed_discovery_is_unknown_before_auth_probe() {
-    let (_guard, home) = common::fresh_home("trade-kit-readiness-malformed");
-    let (bin, log) = install_fake_trade_kit(&home);
-
-    let data = data_from_success(&run_readiness(&home, &bin, &log, "malformed", &["spot"]));
-    assert_v2_shape(&data);
+    assert_v3_local_shape(&data);
     assert_eq!(data["readiness"], "verification_unknown");
     assert_eq!(data["reason"], "discovery_failed");
+    assert!(data["remediation"].is_null());
+    let encoded = serde_json::to_string(&data).unwrap();
+    assert!(!encoded.contains("auth_probe"));
+    assert!(!encoded.contains("auth_required"));
     assert_eq!(fs::read_to_string(log).unwrap().lines().count(), 1);
-}
-
-#[cfg(unix)]
-#[test]
-fn network_failure_is_unknown_not_misreported_as_logged_out() {
-    let (_guard, home) = common::fresh_home("trade-kit-readiness-network");
-    let (bin, log) = install_fake_trade_kit(&home);
-
-    let output = run_readiness(&home, &bin, &log, "network", &["spot"]);
-    let data = data_from_success(&output);
-    assert_v2_shape(&data);
-    assert_eq!(data["readiness"], "verification_unknown");
-    assert_eq!(data["reason"], "auth_probe_unavailable");
-    assert!(data["remediation"].get("oauth").is_none());
-    assert!(data["remediation"].get("apiKey").is_none());
-    assert_not_exposed(&output, &home, "NETWORK_STDERR_CANARY");
 }
 
 #[test]
@@ -497,77 +201,29 @@ fn asset_class_is_required_and_aliases_are_rejected_before_probe() {
     let output = common::scrubbed(&mut common::onchainos(), &home)
         .args(["agent", "trade-kit-readiness"])
         .output()
-        .expect("run readiness without a class");
+        .unwrap();
     common::assert_error_contains(&output, &["--asset-class"]);
 
     for class in ["defi", "futures", "options", "SPOT", "unknown"] {
-        let (_guard, home) = common::fresh_home(&format!("trade-kit-readiness-invalid-{class}"));
+        let (_guard, home) = common::fresh_home(&format!("trade-kit-invalid-{class}"));
         let output = common::scrubbed(&mut common::onchainos(), &home)
             .args(["agent", "trade-kit-readiness", "--asset-class", class])
             .output()
-            .expect("run unsupported readiness class");
+            .unwrap();
         common::assert_error_contains(
             &output,
             &["asset class must be spot, perp, prediction, or option"],
         );
     }
-
-    let (_guard, home) = common::fresh_home("trade-kit-readiness-invalid-environment");
-    let output = common::scrubbed(&mut common::onchainos(), &home)
-        .args([
-            "agent",
-            "trade-kit-readiness",
-            "--asset-class",
-            "spot",
-            "--environment",
-            "paper",
-        ])
-        .output()
-        .expect("run unsupported readiness environment");
-    common::assert_error_contains(&output, &["environment must be configured, live, or demo"]);
 }
 
 #[test]
-fn legacy_plugin_check_cannot_claim_trade_kit_runtime_readiness() {
-    let (_guard, home) = common::fresh_home("trade-kit-legacy-plugin-check");
-    let output = common::scrubbed(&mut common::onchainos(), &home)
-        .args([
-            "agent",
-            "autotrade-consent-set",
-            "--job-id",
-            "job-1",
-            "--mode",
-            "plugin-ready-check",
-            "--agent-id",
-            "agent-1",
-            "--plugin",
-            "trade-kit",
-        ])
-        .output()
-        .expect("run legacy plugin readiness check");
-    common::assert_error_contains(
-        &output,
-        &[
-            "Trade Kit readiness requires an asset class",
-            "onchainos agent trade-kit-readiness --asset-class",
-        ],
-    );
-}
-
-#[test]
-fn signal_playbook_gates_every_delivery_and_never_auto_replays_blocked_work() {
+fn signal_playbook_uses_final_command_as_the_only_authentication_authority() {
     let playbook = include_str!("../../skills/okx-ai/references/task-subscription-signal.md");
-    let command = "onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>";
-    let gate = playbook
-        .find(command)
-        .expect("signal playbook must invoke the typed Trade Kit gate");
-    let route = playbook
-        .find("onchainos agent subscription-route-set")
-        .expect("signal playbook route-set command");
-    assert!(gate < route, "readiness must run before route persistence");
-    assert!(playbook.contains("Run it on **every delivery**"));
-    assert!(playbook.contains("`data.readiness == \"ready\"`"));
-    assert!(playbook.contains("Non-Trade-Kit routes never run this command"));
-    assert!(playbook.contains("preserve and display the deliverable"));
-    assert!(playbook.contains("MUST NOT automatically replay"));
+    assert!(playbook.contains("local compatibility only"));
+    assert!(playbook.contains("never checks authentication"));
+    assert!(playbook.contains("do not run it on every delivery"));
+    assert!(playbook.contains("exactly one authority"));
+    assert!(playbook.contains("never automatically retry or replay"));
+    assert!(!playbook.contains("auth_probe_unavailable"));
 }

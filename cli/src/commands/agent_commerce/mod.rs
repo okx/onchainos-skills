@@ -179,6 +179,10 @@ pub enum AgentCommand {
         /// User-authorized signal-entry order policy.
         #[arg(long = "autotrade-order-policy")]
         autotrade_order_policy: Option<String>,
+        /// Execution fields that the selected service requires the subscriber
+        /// to confirm. Repeat once per canonical field.
+        #[arg(long = "autotrade-required-field")]
+        autotrade_required_fields: Vec<String>,
         #[arg(long, default_value = "")]
         format: String,
         /// Legacy compatibility input. Create-time device selection is rejected.
@@ -355,6 +359,39 @@ pub enum AgentCommand {
         /// DISPUTED/COMPLETED/CLOSED/FAILED).
         #[arg(long, value_parser = task::user::subscription_ops::parse_status_filter)]
         status: Option<i32>,
+    },
+
+    /// List subscription and one-time tasks for the current User identity.
+    #[command(name = "my-tasks")]
+    MyTasks {
+        /// Task type to include.
+        #[arg(
+            long = "task-type",
+            value_enum,
+            default_value_t = task::user::my_tasks::MyTaskType::All
+        )]
+        task_type: task::user::my_tasks::MyTaskType,
+        /// Backend grouping: 0=all, 1=active, 2=terminal.
+        #[arg(
+            long = "status-type",
+            default_value_t = 0,
+            value_parser = clap::value_parser!(u8).range(0..=2)
+        )]
+        status_type: u8,
+        /// One-based page number.
+        #[arg(
+            long,
+            default_value_t = 1,
+            value_parser = clap::value_parser!(u32).range(1..)
+        )]
+        page: u32,
+        /// Rows per task-type page.
+        #[arg(
+            long = "page-size",
+            default_value_t = 10,
+            value_parser = clap::value_parser!(u32).range(1..=100)
+        )]
+        page_size: u32,
     },
 
     /// Aggregated non-terminal tasks across **all agents under the current
@@ -595,9 +632,9 @@ pub enum AgentCommand {
         autotrade: String,
     },
 
-    /// Verify the selected Trade Kit runtime before any consent/grant/order
-    /// step. Returns a typed ready/not-ready result without exposing credentials
-    /// or child-process output.
+    /// Check deterministic local Trade Kit CLI/version/capability compatibility.
+    /// Never checks authentication, account permissions, network availability,
+    /// or trading availability.
     #[command(name = "trade-kit-readiness")]
     TradeKitReadiness {
         /// Repeatable: spot | perp | prediction | option.
@@ -839,6 +876,10 @@ pub enum AgentCommand {
     AutotradeWatchPrecheck {
         #[arg(long = "job-id")]
         job_id: String,
+        /// Require an explicit review of an existing local execution policy
+        /// before restoring this subscription's scoped watch.
+        #[arg(long = "review-existing", default_value_t = false)]
+        review_existing: bool,
     },
 
     /// Ask whether to raise the cap after a successful over-cap one-shot.
@@ -1428,6 +1469,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             autotrade_environment,
             autotrade_margin_mode,
             autotrade_order_policy,
+            autotrade_required_fields,
             format,
             exclude_device,
         } => {
@@ -1451,6 +1493,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     autotrade_environment,
                     autotrade_margin_mode,
                     autotrade_order_policy,
+                    autotrade_required_fields,
                     format,
                     exclude_device,
                 },
@@ -1602,6 +1645,24 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::MySubscriptions { role, status } => {
             task::user::run_task(T::MySubscriptions { role, status }, ctx).await
+        }
+
+        AgentCommand::MyTasks {
+            task_type,
+            status_type,
+            page,
+            page_size,
+        } => {
+            task::user::run_task(
+                T::MyTasks {
+                    task_type,
+                    status_type,
+                    page,
+                    page_size,
+                },
+                ctx,
+            )
+            .await
         }
 
         AgentCommand::ActiveTasks {
@@ -1986,8 +2047,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::AutotradeWatchPrecheck { job_id } => {
-            let result = task::user::scoped_watch_autotrade_precheck(&job_id).await?;
+        AgentCommand::AutotradeWatchPrecheck {
+            job_id,
+            review_existing,
+        } => {
+            let result = if review_existing {
+                task::user::scoped_watch_autotrade_precheck_for_review(&job_id).await?
+            } else {
+                task::user::scoped_watch_autotrade_precheck(&job_id).await?
+            };
             crate::output::success(result);
             Ok(())
         }
@@ -2292,13 +2360,21 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 let asset_class = signal_type
                     .parse::<crate::asset_class::AssetClass>()
                     .map_err(anyhow::Error::msg)?;
-                let precheck = task::user::scoped_watch_autotrade_precheck(&job_id).await?;
-                task::user::bind_subscription_restore_consent_context(
+                let precheck =
+                    task::user::scoped_watch_autotrade_precheck_for_review(&job_id).await?;
+                let restore_context = task::user::bind_subscription_restore_consent_context(
                     &precheck,
                     &job_id,
                     &agent_id,
                     asset_class,
                 )?;
+                let mut effective_required_fields = required_fields;
+                for field in restore_context.required_fields {
+                    if !effective_required_fields.contains(&field) {
+                        effective_required_fields.push(field);
+                    }
+                }
+                let seed_consent = task::common::autotrade::consent::load_consent(&job_id)?;
                 continuation::start_or_update(
                     Some(StartBinding {
                         job_id: &job_id,
@@ -2308,7 +2384,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         origin,
                         signal_type,
                         original_delivery_id: delivery_id.as_deref(),
-                        required_fields: Some(&required_fields),
+                        required_fields: Some(&effective_required_fields),
+                        seed_consent: seed_consent.as_ref(),
                     }),
                     &job_id,
                     &agent_id,
@@ -2338,7 +2415,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         .signal_type
                         .parse::<crate::asset_class::AssetClass>()
                         .map_err(anyhow::Error::msg)?;
-                    let precheck = task::user::scoped_watch_autotrade_precheck(&job_id).await?;
+                    let precheck =
+                        task::user::scoped_watch_autotrade_precheck_for_review(&job_id).await?;
                     task::user::bind_subscription_restore_consent_context(
                         &precheck,
                         &job_id,

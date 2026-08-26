@@ -74,6 +74,11 @@ continuation jobId, or the existing-subscription receive-and-watch flow, run thi
 onchainos agent autotrade-watch-precheck --job-id <X>
 ```
 
+When the current user explicitly asks to **restore** or **resume** an existing subscription, add
+`--review-existing` on this first gate call. This makes a complete local policy enter one bounded review
+before watch resumes. Do not add it for the just-created `listen to <subscription title>` continuation,
+ordinary first-time receipt setup, dispatch re-entry, or the fresh gate run after a completed review.
+
 Run it exactly once for that scoped entry. For an ACTIVE executable subscription it either verifies an
 existing local policy or returns bounded restore-configuration context before watch begins.
 Do **not** run it for a global watch, any watch re-entry after dispatch, a wake, or any CLI `[Watch]`
@@ -85,10 +90,12 @@ Branch only on the command's `data` object:
 
 - `watchAllowed == true` → continue the original entry at §Banner, then run the scoped watch. This covers
   non-subscription jobs, non-Active/non-receiving subscriptions, non-executable services, subscriptions
-  with live local policy. None of these states opens an authorization card.
+  with a current complete local policy. None of these states opens an authorization card.
 - `watchAllowed == false` with `reason == "configuration_required"` → do not emit §Banner and do not
   start watch yet. Follow **Restore configuration** below. This is a natural-language configuration
-  question, never an A/B/C card.
+  question, never an A/B/C card. This also covers a legacy/incomplete active policy or stale Trade Kit
+  grant when `authorizationRefreshRequired:true`, and an explicit restore review when
+  `configurationReviewRequired:true`.
 - `watchAllowed == false` with `reason == "consent_unreadable"` → do not watch and do not run
   `repairCommand` automatically. Explain that the local authorization record must be reset first and show the
   returned command for explicit user approval.
@@ -109,6 +116,29 @@ prose. Automatic execution is the default; only the user's explicit opt-out
 selects `manual`. A new restore still requires one natural-language confirmation of that default before
 consent is written. Ignore unrelated service parameters such as slippage here.
 
+When `authorizationRefreshRequired:true`, `existingConsent` is a bounded trusted snapshot of the old local
+policy. Display its existing mode/settings for review, ask only for returned or description-selected missing
+fields, and require one explicit confirmation before writing. Do not copy snapshot values into command flags:
+the CLI seeds the continuation directly from the trusted consent file. Start with the persisted `auto` or
+`manual` mode unless the current user explicitly changes it. The completed `consentCommand` is intentionally
+a full policy write so consent and grant are regenerated together.
+
+When `configurationReviewRequired:true`, render `existingConsent` as a short localized semantic list before
+asking for confirmation. Show only business settings that apply or already have values, using user-facing
+labels rather than JSON field names:
+
+- execution mode: `auto` = automatic execution; `manual` = manual confirmation;
+- amount per signal and per-signal cap, with the saved quote currency;
+- Trade Kit environment: `live` = live trading; `demo` = simulated trading;
+- margin mode: `cross` = cross margin; `isolated` = isolated margin;
+- order policy: `market` = market order; `signal_price_limit` = limit order at the signal price.
+
+Never display schema version, job binding, timestamps, file paths, raw enum names, absent non-applicable
+fields, or any credential material. Then ask the user to either confirm restoring with the displayed
+configuration or state the settings they want to change. A confirmation must affirm the displayed mode;
+a modification may include any recognized setting, not only a missing one. The continuation is seeded from
+the trusted local file, so unchanged values must not be reconstructed from the rendered text.
+
 - If `continuationId` is absent, start one job-bound record using the first exact value in `assetClasses`:
 
   ```bash
@@ -125,12 +155,14 @@ consent is written. Ignore unrelated service parameters such as slippage here.
   Add a `--required-field` when the ASP description asks the user to choose that setting. When the
   description identifies Trade Kit as the execution tool, always add `environment` and `orderPolicy`, and
   also add `marginMode` for `perp`, even if the prose does not phrase them as subscriber inputs. Field
-  applicability may come from the description; values never do. Add value flags only when the current
-  user's restore request explicitly supplied them. If that request explicitly opts out of automatic
-  execution, start as `manual`; otherwise start as `auto`. Add `--confirm-mode` only when the current user
-  message explicitly selected or affirmed that mode. A bare restore request starts the default `auto`
-  binding without this flag, so `mode` remains in `missingFields` and is confirmed in the natural-language
-  follow-up.
+  applicability may come from the description; values never do. Include every field returned in the
+  precheck's `requiredFields`; the CLI also enforces those canonical fields if omitted. Add value flags only
+  when the current user's restore request explicitly supplied them. If that request explicitly opts out of
+  automatic execution, start as `manual`; for a refresh use `existingConsent.mode`; otherwise start as
+  `auto`. Add `--confirm-mode` only when the current user message explicitly selected or affirmed that mode.
+  A bare new restore starts the default `auto`; a bare refresh retains the persisted mode. Start either
+  binding without `--confirm-mode`, so `mode` remains in `missingFields` and is confirmed in the
+  natural-language follow-up.
 - If `continuationId` is present, never start another record or re-derive fields. It is the authoritative
   short-lived job binding for this configuration attempt. When the current user message supplies requested
   values, resume with the exact ID and only those explicitly user-authored flags. An explicit switch to
@@ -150,8 +182,8 @@ consent is written. Ignore unrelated service parameters such as slippage here.
 - When an existing continuation has no `missingFields`, resume it once with its exact ID and no value flags
   to recover the bounded `consentCommand`; do not ask the user again.
 - If the continuation result has `complete:true`, run its exact `consentCommand`; never reconstruct it.
-  Then re-enter this authorization gate for the same job. It must now return `reason:"consent_active"`
-  before §Banner and scoped watch.
+  Then re-enter this authorization gate for the same job **without** `--review-existing`. It must now return
+  `reason:"consent_active"` before §Banner and scoped watch.
 - Otherwise ask once, in the user's language, for only `missingFields` plus corrections named in
   `validationErrors`, then end the turn. Do not show choices, suggest values from the ASP, start watch, or
   create an A2A decision. A later restore in a new session recovers the same continuation through precheck.

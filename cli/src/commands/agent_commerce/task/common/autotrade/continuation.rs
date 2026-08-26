@@ -10,9 +10,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::amount::Decimal;
-use super::consent::{MarginMode, OrderPolicy, QUOTE_WHITELIST};
-use super::trade_kit::TradeEnvironment;
+use super::consent::{ConsentFile, ConsentMode, MarginMode, OrderPolicy, QUOTE_WHITELIST};
 use super::grants::job_id_is_safe;
+use super::trade_kit::TradeEnvironment;
 
 const VERSION: u32 = 4;
 const TTL_SECS: u64 = 30 * 60;
@@ -127,6 +127,10 @@ pub struct StartBinding<'a> {
     /// which user-authored values remain missing; they never supply values or
     /// grant authorization. Valid only for subscription restoration.
     pub required_fields: Option<&'a [String]>,
+    /// Trusted existing policy used only to prefill an upgrade/repair attempt.
+    /// The continuation still requires an explicit mode confirmation and never
+    /// treats these values as a new authorization by itself.
+    pub seed_consent: Option<&'a ConsentFile>,
 }
 
 #[derive(Debug, Default)]
@@ -274,6 +278,18 @@ fn validate_binding(binding: &StartBinding<'_>) -> anyhow::Result<()> {
         }
         (_, None) => {}
     }
+    match (binding.origin, binding.seed_consent) {
+        (Origin::SubscriptionRestore, Some(consent)) => {
+            if consent.job_id != binding.job_id || consent.mode == ConsentMode::Decline {
+                anyhow::bail!("restore seed consent does not match the requested authorization");
+            }
+        }
+        (Origin::SubscriptionRestore, None) => {}
+        (_, Some(_)) => {
+            anyhow::bail!("seed consent is valid only for subscription restoration")
+        }
+        (_, None) => {}
+    }
     Ok(())
 }
 
@@ -399,6 +415,7 @@ pub fn start_or_update(
                 anyhow::bail!("--continuation-id cannot create a new continuation");
             }
             let now = now_secs();
+            let seed = binding.seed_consent;
             (
                 ConsentContinuation {
                     version: VERSION,
@@ -414,12 +431,12 @@ pub fn start_or_update(
                         Some(fields) => normalize_required_fields(fields)?,
                         None => default_required_fields(binding.selected_mode, binding.origin),
                     },
-                    trade_amount_u: None,
-                    cap_u: None,
-                    quote_token: None,
-                    trade_environment: None,
-                    margin_mode: None,
-                    order_policy: None,
+                    trade_amount_u: seed.and_then(|consent| consent.trade_amount_u.clone()),
+                    cap_u: seed.and_then(|consent| consent.cap_u.clone()),
+                    quote_token: seed.and_then(|consent| consent.quote_token.clone()),
+                    trade_environment: seed.and_then(|consent| consent.trade_environment),
+                    margin_mode: seed.and_then(|consent| consent.margin_mode),
+                    order_policy: seed.and_then(|consent| consent.order_policy),
                     created_at: now,
                     expires_at: now.saturating_add(TTL_SECS),
                 },
@@ -649,6 +666,7 @@ mod tests {
                 signal_type: "spot",
                 original_delivery_id: Some("delivery-1"),
                 required_fields: None,
+                seed_consent: None,
             };
             let first = start_or_update(
                 Some(start),
@@ -705,6 +723,7 @@ mod tests {
                 signal_type: "spot",
                 original_delivery_id: None,
                 required_fields: None,
+                seed_consent: None,
             };
             let first = start_or_update(
                 Some(start),
@@ -754,6 +773,7 @@ mod tests {
                     signal_type: "spot",
                     original_delivery_id: Some("delivery-1"),
                     required_fields: None,
+                    seed_consent: None,
                 }),
                 "job-1",
                 "7",
@@ -797,6 +817,7 @@ mod tests {
                     signal_type: "spot",
                     original_delivery_id: None,
                     required_fields: None,
+                    seed_consent: None,
                 }),
                 "job-1",
                 "7",
@@ -826,6 +847,7 @@ mod tests {
                     signal_type: "spot",
                     original_delivery_id: None,
                     required_fields: Some(&required),
+                    seed_consent: None,
                 }),
                 "job-1",
                 "7",
@@ -882,6 +904,7 @@ mod tests {
                     signal_type: "perp",
                     original_delivery_id: None,
                     required_fields: Some(&required),
+                    seed_consent: None,
                 }),
                 "job-1",
                 "7",
@@ -944,6 +967,7 @@ mod tests {
                     signal_type: "spot",
                     original_delivery_id: None,
                     required_fields: Some(&required),
+                    seed_consent: None,
                 }),
                 "job-1",
                 "7",
@@ -974,6 +998,70 @@ mod tests {
     }
 
     #[test]
+    fn subscription_restore_prefills_trusted_legacy_consent_and_builds_full_reauthorization() {
+        with_home(|| {
+            super::super::consent::write_consent_policy_with_settings(
+                "job-1",
+                ConsentMode::Auto,
+                Some("100"),
+                Some("10"),
+                Some("usdt"),
+                Some(TradeEnvironment::Live),
+                None,
+                None,
+                3600,
+            )
+            .unwrap();
+            let mut seed = super::super::consent::load_consent("job-1")
+                .unwrap()
+                .unwrap();
+            seed.version = super::super::consent::CONSENT_VERSION - 1;
+            let required = vec!["environment".to_string(), "orderPolicy".to_string()];
+            let first = start_or_update(
+                Some(StartBinding {
+                    job_id: "job-1",
+                    agent_id: "7",
+                    selected_mode: SelectedMode::Auto,
+                    mode_confirmed: false,
+                    origin: Origin::SubscriptionRestore,
+                    signal_type: "spot",
+                    original_delivery_id: None,
+                    required_fields: Some(&required),
+                    seed_consent: Some(&seed),
+                }),
+                "job-1",
+                "7",
+                None,
+                None,
+                ExplicitValues::default(),
+            )
+            .unwrap();
+            assert_eq!(first.missing_fields, ["mode", "orderPolicy"]);
+
+            let completed = start_or_update(
+                None,
+                "job-1",
+                "7",
+                Some(&first.continuation_id),
+                Some(SelectedMode::Auto),
+                ExplicitValues {
+                    order_policy: Some("market"),
+                    ..ExplicitValues::default()
+                },
+            )
+            .unwrap();
+            assert!(completed.complete);
+            let command = completed.consent_command.unwrap();
+            assert!(command.contains("--mode auto"));
+            assert!(command.contains("--trade-amount 10"));
+            assert!(command.contains("--cap 100"));
+            assert!(command.contains("--quote usdt"));
+            assert!(command.contains("--environment live"));
+            assert!(command.contains("--order-policy market"));
+        });
+    }
+
+    #[test]
     fn restore_mode_confirmation_survives_an_invalid_value_in_the_same_reply() {
         with_home(|| {
             let required = vec!["tradeAmount".to_string()];
@@ -987,6 +1075,7 @@ mod tests {
                     signal_type: "spot",
                     original_delivery_id: None,
                     required_fields: Some(&required),
+                    seed_consent: None,
                 }),
                 "job-1",
                 "7",
@@ -1031,6 +1120,7 @@ mod tests {
                 signal_type: "spot",
                 original_delivery_id: None,
                 required_fields: None,
+                seed_consent: None,
             };
             let first = start_or_update(
                 Some(start),
@@ -1051,6 +1141,7 @@ mod tests {
                 signal_type: "spot",
                 original_delivery_id: None,
                 required_fields: None,
+                seed_consent: None,
             };
             assert!(start_or_update(
                 Some(duplicate),

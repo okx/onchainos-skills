@@ -42,6 +42,62 @@ use common::{
 use serde_json::Value;
 use std::fs;
 
+#[test]
+fn my_tasks_help_documents_defaults_and_filters() {
+    let output = onchainos()
+        .args(["agent", "my-tasks", "--help"])
+        .output()
+        .expect("run my-tasks help");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "--task-type <TASK_TYPE>",
+        "[default: all]",
+        "possible values: all, subscription, one-time",
+        "--status-type <STATUS_TYPE>",
+        "--page <PAGE>",
+        "--page-size <PAGE_SIZE>",
+        "[default: 10]",
+    ] {
+        assert!(stdout.contains(expected), "help missing {expected:?}: {stdout}");
+    }
+
+    let parsed = onchainos()
+        .args([
+            "agent",
+            "my-tasks",
+            "--task-type",
+            "one-time",
+            "--status-type",
+            "2",
+            "--page",
+            "2",
+            "--page-size",
+            "10",
+            "--help",
+        ])
+        .output()
+        .expect("parse representative my-tasks arguments");
+    assert_eq!(parsed.status.code(), Some(0));
+}
+
+#[test]
+fn my_tasks_rejects_invalid_ranges() {
+    for args in [
+        ["agent", "my-tasks", "--status-type", "3"],
+        ["agent", "my-tasks", "--page", "0"],
+        ["agent", "my-tasks", "--page-size", "0"],
+        ["agent", "my-tasks", "--page-size", "101"],
+    ] {
+        let output = onchainos()
+            .args(args)
+            .output()
+            .expect("run invalid my-tasks arguments");
+        assert_ne!(output.status.code(), Some(0), "accepted {args:?}");
+    }
+}
+
 /// Run `agent validate-listing` offline in an isolated `ONCHAINOS_HOME` sandbox
 /// and return the parsed raw `{ pass, findings }` JSON. Asserts exit 0 (the CSV
 /// `exit_code` for every validate-listing row): validate-listing surfaces findings

@@ -304,6 +304,8 @@ impl ConsentSnapshotStatus {
 pub struct ConsentSnapshot {
     pub status: ConsentSnapshotStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<ConsentMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cap_u: Option<String>,
@@ -327,6 +329,7 @@ impl ConsentSnapshot {
     fn not_set() -> Self {
         Self {
             status: ConsentSnapshotStatus::NotSet,
+            version: None,
             mode: None,
             cap_u: None,
             trade_amount_u: None,
@@ -460,6 +463,7 @@ pub fn consent_snapshot(job_id: &str) -> ConsentSnapshot {
     match load_consent(job_id) {
         Ok(Some(file)) => ConsentSnapshot {
             status: ConsentSnapshotStatus::Active,
+            version: Some(file.version),
             mode: Some(file.mode),
             cap_u: file.cap_u,
             trade_amount_u: file.trade_amount_u,
@@ -999,6 +1003,7 @@ mod tests {
                 consent_snapshot("job1"),
                 ConsentSnapshot {
                     status: ConsentSnapshotStatus::NotSet,
+                    version: None,
                     mode: None,
                     cap_u: None,
                     trade_amount_u: None,

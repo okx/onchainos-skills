@@ -47,7 +47,7 @@ When the user has multiple active tasks, every routing decision **must** anchor 
 
 - **Always confirm `jobId` before acting**. If ambiguous → ask which task or render an `active-tasks` numbered list. Never assume the most-recent task is the one they mean.
 - **Track each task's state independently**. Don't apply task A's context to task B.
-- **Echo the `jobId` in every reply that touches a task** — `<title> (Job <shortId>)` is the standard prefix.
+- **For task-scoped routing or action replies, echo the `jobId`** — `<title> (Job <shortId>)` is the standard prefix. This does not apply to task-list responses, which use the exact schemas in §Task list without added `jobId` fields.
 
 See [`entry-points.md`](./entry-points.md#multi-task-context-management) for the full deep-dive.
 
@@ -55,13 +55,16 @@ See [`entry-points.md`](./entry-points.md#multi-task-context-management) for the
 
 ## Task list / "what am I working on"
 
-When the user asks for **their tasks list without a specific jobId**, the user session answers directly (do NOT 6-step forward). Triggers: `my tasks` / `tasks I accepted` / `what am I working on` / `list my tasks` / `active tasks` / `show all my tasks` / `task list`.
+When the user asks for **their task list without a specific jobId**, the user session answers directly (do NOT 6-step forward). Triggers include `my tasks` / `what am I working on` / `list my tasks` / `active tasks` / `ongoing tasks` / `show all my tasks` / `task list` / `ended tasks` / `subscription tasks` / `one-time tasks` and semantically equivalent wording in any language.
 
-**Action — pick the right CLI by intent**:
-- **All non-terminal tasks across accounts**: `onchainos agent active-tasks` — use for "what am I working on" / "active tasks".
-- **Tasks tied to a specific agent**: `onchainos agent tasks --agent-id <agentId> [--status <s>] [--page <n>] [--limit <m>]` — historical + active for that agent's role.
+Run `onchainos agent my-tasks --task-type <type> --status-type <status> --page 1`, choosing each parameter independently:
 
-Render as numbered list. ❌ Do NOT 6-step forward. ❌ Do NOT mix with "decision list".
+| Parameter | User intent → value |
+|---|---|
+| `<type>` | all → `all`; subscription → `subscription`; one-time → `one-time` |
+| `<status>` | all → `0`; active → `1`; ended → `2` |
+
+Render and paginate per [`task-user-playbook.md` §Unified My Tasks](task-user-playbook.md#unified-my-tasks). `active-tasks` is reserved for the task-scoped sub-session routing flow at the top of this file; do not use it for a list-only request or mix this flow with the decision list.
 
 ⚠️ **"all my tasks" / "show all tasks"** map to the caller's own tasks (→ this section). There is no public marketplace pool to browse.
 
@@ -154,7 +157,7 @@ Triggers:
 
 | Trigger | Action |
 |---|---|
-| `my subscriptions` / `subscription list` / `what am I subscribed to` | `onchainos agent my-subscriptions --role buyer` → render per [`task-user-playbook.md` §My Subscriptions](task-user-playbook.md). User session answers directly (do NOT 6-step forward). |
+| `my subscriptions` / `subscription list` / `what am I subscribed to` / `ongoing subscriptions` / `active subscriptions` / `ended subscriptions` | Use §Task list with scope `subscription`; map generic requests to `all`, ongoing/active to `active`, and ended to `ended`. |
 | `subscription detail` / `show this subscription` | `onchainos agent subscribe-detail <jobId>` (id = the row's `jobId`) → render per [`task-user-playbook.md` §Subscription Detail](task-user-playbook.md). |
 | `device list` / `list my logged-in devices` / `which devices are online` | `onchainos agent device-list` → render per [`task-user-playbook.md` §Device List](task-user-playbook.md). |
 | `start receiving X on this device` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — fresh-read; `deviceList:null` already means default-all, so report already receiving without a write; otherwise union → overwrite → re-read. |
@@ -164,4 +167,4 @@ Triggers:
 | `receive signals` / `start receiving signals` / `are you receiving signals` / `resume watching subscribed services` / `continue receiving signals` / `resume subscription` / `restore subscription`, plus semantically equivalent wording in any language and the prompted `listen to <subscription title>` form from a just-created/rendered buyer-subscription context | [`task-user-playbook.md` §Signal-receipt watch entry](task-user-playbook.md) — when an ACTIVE buyer subscription is in current focus, treat even a bare restore/resume-subscription request as receipt + watch; resolve one subscription, ensure this device can receive, run authorization precheck before reading backlog, then enter sticky scoped watch. Multiple ACTIVE subscriptions require a choice; none stops without global fallback. |
 | `listen for task messages` / `watch task` with no specific task | [`task-user-playbook.md` §Listen entry](task-user-playbook.md) — confirm exactly one task ("Only one task can be watched at a time") → turn on this-device receipt → enter watch flow through the existing-subscription scoped-watch authorization gate. |
 
-⚠️ Disambig — `my subscriptions` vs `my tasks`: subscriptions → `my-subscriptions`; tasks → `active-tasks` / `tasks` (§Task list). Do NOT mix. **Device routing is a subscription concept** — it governs A2A subscription-service message delivery only (never one-shot tasks), buyer side only. Do NOT route these to `task-asp.md` or any ASP/provider rendering.
+⚠️ **Device routing is subscription-only** — it governs A2A subscription-service message delivery, never one-time tasks, and remains buyer-side only. Do NOT route these list intents to `task-asp.md` or any ASP/provider rendering.

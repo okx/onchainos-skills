@@ -286,6 +286,13 @@ async fn run() {
                                 }
                                 Err(e) => e,
                             };
+                            let e = match e.downcast::<output::CliDuplicateSubscription>() {
+                                Ok(blocked) => {
+                                    output::error_data(blocked.data);
+                                    std::process::exit(1);
+                                }
+                                Err(e) => e,
+                            };
                             match e.downcast::<commands::sink::CodedError>() {
                                 Ok(c) => {
                                     output::error_coded_details(

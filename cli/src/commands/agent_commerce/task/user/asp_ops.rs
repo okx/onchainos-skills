@@ -285,6 +285,96 @@ fn compact_task_service_select_response(resp: serde_json::Value) -> serde_json::
     serde_json::Value::Object(compact)
 }
 
+fn apply_existing_subscription_annotations(
+    compact: &mut serde_json::Value,
+    existing: &[super::subscription_ops::ExistingSubscriptionSummary],
+) {
+    let mut blocking_services = 0_u64;
+    if let Some(services) = compact.get_mut("services").and_then(|value| value.as_array_mut()) {
+        for service in services {
+            if service.get("supportSubscription").and_then(|value| value.as_bool()) != Some(true) {
+                continue;
+            }
+            let service_id = service.get("serviceId").and_then(|value| value.as_str()).unwrap_or("");
+            service["existingSubscription"] =
+                super::subscription_ops::existing_subscription_for_service(existing, service_id)
+                    .map(|item| {
+                        blocking_services += 1;
+                        serde_json::to_value(item).unwrap_or(serde_json::Value::Null)
+                    })
+                    .unwrap_or(serde_json::Value::Null);
+        }
+    }
+    compact["subscriptionCheck"] = serde_json::json!({
+        "status": "checked",
+        "blockingServiceCount": blocking_services,
+    });
+}
+
+fn service_scalar_string(service: &serde_json::Value, key: &str) -> Option<String> {
+    let value = service.get(key)?;
+    value.as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| value.as_i64().map(|value| value.to_string()))
+        .or_else(|| value.as_u64().map(|value| value.to_string()))
+}
+
+fn build_duplicate_subscription_resolution(
+    compact: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let selected = compact.get("services")?.as_array()?.first()
+        .filter(|service| !service["existingSubscription"].is_null())?;
+    let existing = selected.get("existingSubscription")?;
+    let current_service_id = service_scalar_string(selected, "serviceId").unwrap_or_default();
+    let service_name = service_scalar_string(selected, "serviceName")
+        .unwrap_or_else(|| current_service_id.clone());
+    let job_id = service_scalar_string(existing, "jobId").unwrap_or_default();
+    let can_restore = existing.get("restoreListeningAvailable")
+        .and_then(|value| value.as_bool()).unwrap_or(false);
+
+    let base = format!(
+        "Service \"{service_name}\" already has a subscription task, jobId: {job_id}. It cannot be created again."
+    );
+    let prompt = if can_restore {
+        format!("{base} Would you like to restore listening?")
+    } else {
+        base
+    };
+
+    let mut resolution = serde_json::Map::new();
+    resolution.insert("userFacingPrompt".to_string(), serde_json::Value::String(prompt));
+    if can_restore {
+        resolution.insert(
+            "nextAfterUserChoice".to_string(),
+            serde_json::json!(["restore-listening"]),
+        );
+    }
+    Some(serde_json::Value::Object(resolution))
+}
+
+fn minimize_selected_duplicate_service(compact: &mut serde_json::Value) {
+    let Some(selected) = compact.get_mut("services")
+        .and_then(|value| value.as_array_mut())
+        .and_then(|services| services.first_mut())
+        .and_then(|service| service.as_object_mut()) else {
+        return;
+    };
+    selected.retain(|key, _| matches!(
+        key.as_str(),
+        "providerAgentId" | "serviceId" | "serviceName" | "serviceType"
+            | "supportSubscription" | "existingSubscription"
+    ));
+}
+
+fn apply_duplicate_subscription_resolution(compact: &mut serde_json::Value) {
+    if let Some(resolution) = build_duplicate_subscription_resolution(compact) {
+        compact["duplicateSubscription"] = resolution;
+        minimize_selected_duplicate_service(compact);
+    }
+}
+
 fn service_match_data_from_stdout(stdout: &[u8]) -> Result<serde_json::Value> {
     let value: serde_json::Value = serde_json::from_slice(stdout)?;
     if value.get("ok").and_then(|v| v.as_bool()) == Some(true)
@@ -298,7 +388,11 @@ fn service_match_data_from_stdout(stdout: &[u8]) -> Result<serde_json::Value> {
     Ok(value)
 }
 
-pub async fn handle_task_service_select(args: &ServiceMatchArgs, format: &str) -> Result<()> {
+pub async fn handle_task_service_select(
+    client: &mut TaskApiClient,
+    args: &ServiceMatchArgs,
+    format: &str,
+) -> Result<()> {
     let mut cmd = Command::new(std::env::current_exe()?);
     cmd.arg("agent").arg("service-match");
 
@@ -362,7 +456,27 @@ pub async fn handle_task_service_select(args: &ServiceMatchArgs, format: &str) -
         }
     }
 
-    let compact = compact_task_service_select_response(data);
+    let mut compact = compact_task_service_select_response(data);
+    let has_subscription_service = compact.get("services")
+        .and_then(|value| value.as_array())
+        .map(|services| services.iter().any(|service| {
+            service.get("supportSubscription").and_then(|value| value.as_bool()) == Some(true)
+        }))
+        .unwrap_or(false);
+    if has_subscription_service {
+        let buyer_agent_id = args.agentic_id.as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!(
+                "--agentic-id is required to check existing subscriptions before selecting a subscription service"
+            ))?;
+        let existing =
+            super::subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
+                client,
+                buyer_agent_id,
+            ).await?;
+        apply_existing_subscription_annotations(&mut compact, &existing);
+        apply_duplicate_subscription_resolution(&mut compact);
+    }
     if format.eq_ignore_ascii_case("json") || format.is_empty() {
         crate::output::success(compact);
     } else {
@@ -924,13 +1038,13 @@ mod tests {
                         {"interval": "month", "fee": "0.1"}
                     ],
                     "autoTradePreflight": {
-                        "schemaVersion": 2,
+                        "schemaVersion": 3,
                         "isTradingSignal": true,
                         "assetClasses": ["spot"],
                         "tools": [{
                             "displayName": "Trade Kit",
                             "readiness": "verification_unknown",
-                            "reason": "authorization_not_checked",
+                            "reason": "local_compatibility_not_checked",
                             "checkedAt": null
                         }],
                         "reminders": [],
@@ -955,7 +1069,7 @@ mod tests {
         assert!(compact.get("debug").is_none());
 
         assert_eq!(svc["serviceDescription"], json!("Please provide the target market before subscribing."));
-        assert_eq!(svc["autoTradePreflight"]["schemaVersion"], json!(2));
+        assert_eq!(svc["autoTradePreflight"]["schemaVersion"], json!(3));
         assert_eq!(svc["autoTradePreflight"]["assetClasses"], json!(["spot"]));
         assert_eq!(
             svc["autoTradePreflight"]["tools"][0]["readiness"],
@@ -963,7 +1077,7 @@ mod tests {
         );
         assert_eq!(
             svc["autoTradePreflight"]["tools"][0]["reason"],
-            json!("authorization_not_checked")
+            json!("local_compatibility_not_checked")
         );
         assert!(svc.get("feeAmount").is_none());
         assert_eq!(svc["supportSubscription"], json!(true));
@@ -1029,7 +1143,7 @@ mod tests {
                     "freeTrial": 24,
                     "subscription": [{"interval": "MONTH", "fee": "99"}],
                     "autoTradePreflight": {
-                        "schemaVersion": 2,
+                        "schemaVersion": 3,
                         "isTradingSignal": true,
                         "assetClasses": ["spot"],
                         "explicitTools": ["trade_kit"],
@@ -1039,7 +1153,7 @@ mod tests {
                             "tool": "trade_kit",
                             "displayName": "Trade Kit",
                             "readiness": "verification_unknown",
-                            "reason": "authorization_not_checked",
+                            "reason": "local_compatibility_not_checked",
                             "checkedAt": null
                         }],
                         "reminders": [],
@@ -1081,10 +1195,10 @@ mod tests {
         assert_eq!(svc["securityRate"], json!(5));
         assert_eq!(svc["feedbackRate"], json!(100));
         assert_eq!(svc["soldCount"], json!(11));
-        assert_eq!(svc["autoTradePreflight"]["schemaVersion"], json!(2));
+        assert_eq!(svc["autoTradePreflight"]["schemaVersion"], json!(3));
         assert_eq!(
             svc["autoTradePreflight"]["tools"][0]["reason"],
-            json!("authorization_not_checked")
+            json!("local_compatibility_not_checked")
         );
         assert!(svc["autoTradePreflight"]["tools"][0]["checkedAt"].is_null());
         assert_eq!(
@@ -1159,6 +1273,89 @@ mod tests {
         let compact = super::compact_task_service_select_response(resp);
 
         assert_eq!(compact["matchStatus"], json!("no_online_service"));
+    }
+
+    fn duplicate_service(status: i64, restore: bool) -> serde_json::Value {
+        json!({
+            "matchStatus": "matched",
+            "services": [{
+                "providerAgentId": "9967",
+                "serviceId": "svc-trade",
+                "serviceName": "Trade kit",
+                "serviceType": "A2A",
+                "supportSubscription": true,
+                "subscriptionInfo": {"feeAmount": "0.1"},
+                "serviceDescription": "trading signals",
+                "autoTradePreflight": {"schemaVersion": 3},
+                "existingSubscription": {
+                    "jobId": "job-42",
+                    "serviceId": "svc-trade",
+                    "providerAgentId": "9967",
+                    "status": status,
+                    "statusName": if status == 1 { "ACTIVE" } else { "REJECTED" },
+                    "restoreListeningAvailable": restore
+                }
+            }]
+        })
+    }
+
+    #[test]
+    fn duplicate_resolution_only_offers_restore_and_minimizes_selected_service() {
+        let mut compact = duplicate_service(1, true);
+        let resolution = super::build_duplicate_subscription_resolution(&compact)
+            .expect("duplicate resolution");
+        assert_eq!(
+            resolution["nextAfterUserChoice"],
+            json!(["restore-listening"])
+        );
+        assert!(resolution["userFacingPrompt"].as_str().unwrap().contains("jobId: job-42"));
+        assert!(resolution["userFacingPrompt"].as_str().unwrap().contains("restore listening"));
+        assert!(resolution.get("scenario").is_none());
+        assert!(resolution.get("alternativeServices").is_none());
+
+        super::minimize_selected_duplicate_service(&mut compact);
+        let selected = compact["services"][0].as_object().unwrap();
+        assert!(selected.get("subscriptionInfo").is_none());
+        assert!(selected.get("serviceDescription").is_none());
+        assert!(selected.get("autoTradePreflight").is_none());
+        assert!(selected.get("existingSubscription").is_some());
+    }
+
+    #[test]
+    fn duplicate_resolution_without_restore_has_no_follow_up_action() {
+        let rejected = duplicate_service(3, false);
+        let resolution = super::build_duplicate_subscription_resolution(&rejected)
+            .expect("duplicate resolution");
+        assert!(resolution.get("nextAfterUserChoice").is_none());
+        assert!(!resolution["userFacingPrompt"].as_str().unwrap().contains("restore listening"));
+        assert!(resolution.get("scenario").is_none());
+        assert!(resolution.get("alternativeServices").is_none());
+    }
+
+    #[test]
+    fn subscription_annotations_report_checked_null_and_blocking_rows() {
+        let existing = vec![super::super::subscription_ops::ExistingSubscriptionSummary {
+            job_id: "job-42".to_string(),
+            service_id: "svc-trade".to_string(),
+            provider_agent_id: "9967".to_string(),
+            status_name: "ACTIVE".to_string(),
+            restore_listening_available: true,
+        }];
+        let mut compact = json!({
+            "services": [
+                {"serviceId": "svc-trade", "supportSubscription": true},
+                {"serviceId": "svc-other", "supportSubscription": true},
+                {"serviceId": "one-shot", "supportSubscription": false}
+            ]
+        });
+
+        super::apply_existing_subscription_annotations(&mut compact, &existing);
+
+        assert_eq!(compact["subscriptionCheck"]["status"], "checked");
+        assert_eq!(compact["subscriptionCheck"]["blockingServiceCount"], 1);
+        assert_eq!(compact["services"][0]["existingSubscription"]["jobId"], "job-42");
+        assert!(compact["services"][1]["existingSubscription"].is_null());
+        assert!(compact["services"][2].get("existingSubscription").is_none());
     }
 
     #[test]
