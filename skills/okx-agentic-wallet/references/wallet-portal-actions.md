@@ -36,7 +36,7 @@ The following are **trigger conditions** — when any is met, the Agent **MUST**
 
 ### New user login (`isNew: true`)
 
-Handled in [Wallet Authentication step 2](wallet.md) — output the **Policy Settings template** (above) only. Do NOT output any wallet-export guidance on new-user login, regardless of `loginType`.
+Handled in [Wallet Authentication step 2](wallet.md) — when `isNew: true`, output the **Policy Settings template** (above), regardless of `loginType`.
 
 ### New account via `wallet add`
 
