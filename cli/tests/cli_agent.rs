@@ -286,7 +286,7 @@ fn validate_listing_a2a_two_paragraph_non_subscription_passes() {
 fn validate_listing_a2a_subscription_paragraph_count_not_checked() {
     let result = validate_listing(
         "asp",
-        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]"#,
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceGuide":"Choose a market and submit your budget.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]"#,
     );
     assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
     assert!(

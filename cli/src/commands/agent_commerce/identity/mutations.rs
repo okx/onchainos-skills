@@ -45,11 +45,10 @@ use super::signing::{
 use super::socket::{open_identity_subscription, IdentitySubscription};
 use super::utils::{
     build_precheck, collect_owned_agents, ensure_asp_has_avatar, ensure_asp_has_service,
-    identity_ws_url,
-    normalize_bcp47, normalize_role, normalize_role_code, normalize_singleton_object,
-    role_token_from_value, role_to_wire,
-    parse_agent_unsigned, parse_services, parse_stars_arg, reconstruct_post_url_for_log,
-    redact_token_for_debug, require_non_empty, trim_or_empty, validate_avatar_image, wallet_client,
+    identity_ws_url, normalize_bcp47, normalize_role, normalize_role_code,
+    normalize_singleton_object, parse_agent_unsigned, parse_service_deltas, parse_services,
+    parse_stars_arg, reconstruct_post_url_for_log, redact_token_for_debug, require_non_empty,
+    role_to_wire, role_token_from_value, trim_or_empty, validate_avatar_image, wallet_client,
 };
 
 const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -125,7 +124,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     // Description requirements differ by role:
     //   - asp: core searchable field → required.
     //   - user / evaluator: optional; omitted = on-chain ProfileDescription:"",
-    //     rendered by the skill as "(not set)". See references/register.md.
+    //     rendered by the skill as "(not set)". See references/identity-register.md.
     let profile_description = if normalized_role == "asp" {
         require_non_empty(args.description.as_deref(), "--description")?.to_string()
     } else {
@@ -437,17 +436,14 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     // carries ONLY the entries to change, each tagged with an `operation`:
     //   • `create` — a brand-new service, NO `id` (+ the other fields)
     //   • `update` — change an existing service, carries its `id` (+ fields)
-    //   • `delete` — remove an existing service, carries its `id` (+ fields)
+    //   • `delete` — remove an existing service, carries only its `id`
     // The backend applies the delta against the current on-chain services, so
     // the CLI no longer fetches the existing list or sends full coverage. When
     // the user changes no service this call, `services` is omitted entirely
     // (omission no longer means "clear all").
     if args.service.is_some() {
-        let services = parse_services(args.service.as_deref())?;
-        card.insert(
-            "services".into(),
-            serde_json::to_value(&services).context("failed to serialize services list")?,
-        );
+        let services = parse_service_deltas(args.service.as_deref())?;
+        card.insert("services".into(), Value::Array(services));
     }
 
     let body = json!({

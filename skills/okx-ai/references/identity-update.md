@@ -1,37 +1,43 @@
-# Update flow — `update #N`
+# Update an Agent identity
 
-> **Rejected listing → update the same agent, never create new.** QA failure (§4 of register.md) or review rejection (`approvalStatus`/`approvalDisplayStatus: 5`): fix path is `agent update` on the existing id → re-activate. Never offer a new agent as remedy; only create if user explicitly insists after steer.
+Use for changes to an existing Agent's name, description, picture, or services.
 
----
+## Necessity check
 
-1. **`agent get-agents --agent-ids <id>` FIRST — before collecting ANY change** → render the current detail card (identity-invariants.md §Verbatim-render contract). Never start editing from the user's words alone; always fetch current state first.
-   - **Service `id` lookup (ASP, on demand only):** an existing service's `id` is needed ONLY to `update` or `delete` it. **When — and only when — the user asks to modify or remove an existing service**, run `agent service-list --agent-id <id>` to get that `id`. **Skip it** for agent-level edits (name / description / picture) and for **adding** a new service (a `create` entry has no id). If services aren't being touched, never call `service-list`.
-2. **Ownership check:** returned `ownerAddress` ≠ current wallet → STOP: "This agent doesn't belong to your current wallet."
-3. **Collect changes** one field per turn. If the changed field is a service **endpoint**, apply the same rules as register.md §6 (must be `https://`, publicly reachable, ≤512 chars). **Never proactively offer or guide service deletion** — only build a `delete` entry (step 6) when the user *explicitly* asks to remove a service; otherwise deletion is never raised. **Do NOT run `validate-listing` while collecting** — QA is a single batch pass that happens in step 4 *after* all changes are gathered (never per-field, never per-service).
-4. **QA — single batch pass, semantic checks identical to register.md §4.** role = asp AND a QA-governed field changed (**QA-governed = the agent `name`, the agent `description`, or any service `create`/`update` entry** — a name-only change still triggers the pass) → after ALL changes are collected, run `validate-listing` **exactly once**, validating **ONLY this call's `create` + `update` service entries** (NOT `delete` entries, NOT unchanged services — there is nothing to validate in those): `--role asp --name <new-or-current> --description <new-or-current> --service '[… ONLY the create + update entries, WITHOUT the operation/id keys …]'`. If no service is created/updated this call (e.g. name-only or delete-only change) → pass `--service '[]'` (name/description QA only). Then follow register.md §4 steps 2–4 verbatim: always run the step-4 semantic checks and merge with CLI findings; only when both `pass:true` AND no semantic issues → skip the findings card; otherwise render the findings card (advisory `severity:"suggest"` item — the A2A total-length `D2` — as a suggestion; CLI `severity:"block"` items — URL `D6` (A2A only; an A2MCP description may carry its `curl` example's endpoint URL), test marker `U1`, empty description `D1` — must be corrected before the diff card, as must the separate skill-layer A2MCP request-description completeness block; paragraph count is never validated), applying no `fix` yet → follow register.md §4 step-3 confirmation branching: advisory-only cards show **1. skip suggestions / submit original** first, then **2. apply suggestion**, then **3. revise myself**; cards with any blocking item use the blocking correction choices and do not offer skip for blockers; never show a separate two-choice prompt for advisory-only content → apply or collect values per that choice → **never re-run `validate-listing`**. user / evaluator skip QA. **A2MCP request description (blocking, inherited from register §4):** for every `operation:"create"` / `operation:"update"` entry with `serviceType == "A2MCP"`, run the register §4 A2MCP four-item completeness check (contract-address exemption applies — if `serviceDescription` contains a `0x`+40-hex contract address, skip the check and pass) — otherwise **block** the update (do NOT advance to the step-5 diff card) if the `serviceDescription` is missing any of: what the service does / parameter spec / request method / CURL request example, showing the same rejection reason + user suggestion (identity-invariants.md §A2MCP `serviceDescription` structure — no copyable template). Register and update use the same rule and copy — including the strict one-line `;`-separated per-parameter format `<name>(<type>, required/optional): <meaning>`, the per-line bracketed label prefix `[Service Description]` / `[Parameter Spec]` / `[Request Method]` / `[Request Example]` (keep the user's if present, supplement if absent), the request-method verb/tool-name-only rule on line `3.` (an HTTP verb POST/GET/… or a bare MCP tool name — no URL, no path; strip any URL/path the user pastes down to the verb), the working CURL example on line `4.` using the real endpoint (identity-invariants.md §A2MCP `serviceDescription` structure — *Request-example* bullet), and the "proactively normalize a present-but-malformed param spec, then confirm with the user (never silently store it)" behavior (identity-invariants.md §A2MCP `serviceDescription` structure); `delete` entries and unchanged services are not validated. Resolved values then flow into the step-5 diff card.
-5. **Update Diff card** (identity-invariants.md §Card skeleton (diff variant) — 3 columns `| Field | Current | New |`, unchanged → `(unchanged)`, changed New cell bold, real before→after values). Show each service delta as its own row — **added** (Current `(none)`), **modified** (before→after), **removed** (New `(removed)`, so the user explicitly sees and confirms a deletion). A pricing change surfaces both the single `Fee` (non-zero `N USDT`, zero = localized `Free`, or `—`) and the monthly `Subscription` (non-zero `N USDT / month`, zero = localized `Free`, or `—`); apply the zero mapping independently to both Current and New. For an existing A2A service the billing model stays fixed, so only the active model's price moves in the diff (the other row stays `—`). A free-trial toggle on a subscription service shows its **own** `Free trial` row — separate from the `Subscription` row, never merged into it — flipping `3 days` ⇄ `—` (display per identity-invariants.md §Lexicon (Free trial)). Wait for **1** / confirm; no `agent update` before confirm.
-6. **`--service` = DELTA, never full coverage.** Send **only the services that change**, each tagged with `operation`; unchanged services are **omitted** (omitting a service no longer deletes it). Build each entry as:
-   - **add a service** → `"operation":"create"` — a brand-new service, with all fields per register.md §3 Step 2 (**collect basics + type first, then pricing/endpoint tailored to the type — per the two-sub-step Step-2 rule**; A2A: per-call `fee` XOR monthly `subscription` — exactly one, never both, follow up only to fill a gap; A2MCP: single `fee` only, no subscription).
-   - **modify a service** → `"operation":"update"` — targets an existing service via its `id` (from the on-demand `agent service-list` in step 1), plus the full new field values (including pricing).
-   - **remove a service** → `"operation":"delete"` — targets an existing service via its `id` (from the on-demand `agent service-list` in step 1).
+1. Run `get-agents` before collecting any change and render the current `card[]`.
+2. End if the identity does not belong to the current wallet.
+3. Run `service-list` for an existing service update/delete to obtain its `id`.
 
-   **Pricing edits (A2A) — the billing model is FIXED; only its price is editable.** An existing A2A service's model (per-call vs subscription) is chosen at creation and **cannot be switched by an update** — you may NOT turn a per-call service into a subscription one or vice versa. From the step-1 `agent service-list`, read the service's current model and keep it; both fields are always transmitted, so the empty side only **mirrors** the existing model, it never flips:
-   - **per-call service** → an update may change only the single `fee` (a new number); always send `subscription:[]` to preserve the model.
-   - **subscription service** → an update may change the monthly `subscription` fee and/or toggle the **3-day free trial**; always send `fee:""` (empty string — the "no single price" marker) to preserve the model. **Free trial:** only when the user explicitly asks, ask the fixed yes/no "Offer a 3-day free trial?" — turn it **on** by sending `freeTrial:"72"`, turn it **off** by **omitting** `freeTrial` entirely (never `""` / `"0"`). Don't proactively raise it. `freeTrial` is subscription-only — never on a per-call A2A or A2MCP.
+## Commands
 
-   **If the user asks to switch the billing model** (per-call ↔ subscription on an existing service), do NOT build a switch delta and do NOT flip the model. Explain (localized) that a service's billing model is fixed once created and can't be changed — to offer the other model they should **add a new service** (`operation:create`) with that model, and optionally remove the old one (`operation:delete`). The CLI does not block a model flip — the **backend** rejects it — so the orchestration is the only guard; never construct one. A2MCP never carries `subscription`.
+Use the commands named in this file; load `identity-cli-reference.md` before execution.
 
-   > Note: a create entry still picks its model freely (single XOR subscription per register.md §3 Step 2) — the fixed-model rule applies only to `update` of an already-created service.
+## Workflow
 
-   Example — change the per-call fee of an existing single-model service #7 (model preserved): `--service '[{"operation":"update","id":"7","serviceName":"…","serviceDescription":"…","serviceType":"A2A","fee":"12","subscription":[]}]'`
+1. **Collect.** For service changes, follow `identity-service-contract.md` §Collect and route.
+2. **Validate.** For ASP changes, follow `identity-validate-listing.md` Update mode.
+3. **Review.** Show changed fields with their current and new values. For services, follow
+   `identity-service-contract.md` §Display.
+4. **Confirm.** Obtain fresh explicit confirmation for the final diff.
+5. **Execute.** Run `agent update` once and render the response.
 
-   Example — change the monthly fee of an existing subscription-model service #7 (model preserved): `--service '[{"operation":"update","id":"7","serviceName":"…","serviceDescription":"…","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"12"}]}]'`
+## Service delta examples
 
-   Example — turn ON the 3-day free trial for subscription service #7: `--service '[{"operation":"update","id":"7","serviceName":"…","serviceDescription":"…","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"12"}],"freeTrial":"72"}]'` (to turn it OFF, resend the same entry **without** the `freeTrial` key)
+After QA and confirmation, use the matching service delta:
 
-   Example — mixed A2MCP edit + delete: `--service '[{"operation":"update","id":"7","serviceName":"…","serviceDescription":"…","serviceType":"A2MCP","fee":"12","endpoint":"https://…"},{"operation":"delete","id":"9","serviceName":"…","serviceDescription":"…","serviceType":"A2A","fee":"5"}]'`
+```bash
+# Create: A2MCP
+onchainos agent update --agent-id 42 --service '[{"operation":"create","serviceName":"Price Feed","serviceDescription":"Returns token price quotes\nsymbol(string, required): token symbol\nGET\ncurl https://<your-deployed-host>/price?symbol=ETH","serviceType":"A2MCP","fee":"10","endpoint":"https://<your-deployed-host>/price"}]'
 
-   **No-op guard:** if nothing changed (no agent field, no service entry) → "No changes to submit." Don't call `agent update`; re-enter update Q&A. `--description ""` does NOT clear a description. Post-update:
-   - `agent.approvalStatus == 2` (WS push payload, if the field is present) → "Update saved. Under review — once approved it will go live automatically. No further action needed." If the `agent` key or `approvalStatus` field is absent (WS push timed out or field not returned), fall through to the standard update success line per §10 update template.
-   - step-1 detail showed `approvalDisplayStatus == 5` (not auto-resubmitted) → "Update saved — not yet resubmitted. Say 'activate #\<id\>' to send it for review."
-   - else → "Update saved." **Output this line verbatim — the else branch MUST NOT append any status explanation.**
+# Update: A2A subscription
+onchainos agent update --agent-id 42 --service '[{"operation":"update","id":"7","serviceName":"Market Signals","serviceDescription":"Provides market signals for onchain traders","serviceGuide":"Choose a market and submit your risk limit.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"12"}]}]'
+
+# Delete
+onchainos agent update --agent-id 42 --service '[{"operation":"delete","id":"9"}]'
+```
+
+## Result
+
+On success, emit `Update saved.`
+
+On CLI error or non-success, load `identity-errors.md`.

@@ -12,8 +12,11 @@ use serde::Serialize;
 use crate::commands::Context;
 
 use super::args::ValidateListingArgs;
-use super::models::AgentService;
-use super::utils::{display_width, is_plain_number, is_positive_integer, normalize_role};
+use super::models::{AgentService, ServiceOperation};
+use super::utils::{
+    display_width, is_plain_number, is_positive_integer, normalize_role,
+    SERVICE_GUIDE_MAX_DISPLAY_WIDTH,
+};
 
 // ─── CLI entry point (hidden — not shown in --help) ─────────────────────────
 
@@ -61,7 +64,12 @@ mod fe {
     pub const FE17: &str = "The subscription billing setup is invalid: A2MCP doesn't support subscriptions, and an A2A service must use exactly one of pay-per-use or monthly subscription \u{2014} you can't leave both empty or fill in both. Pick one billing mode for your A2A service: set a pay-per-use fee, or set a monthly subscription (leave fee as an empty string \"\" when using subscription); for A2MCP, remove the subscription field. Then resubmit.";
     pub const FE18: &str = "Subscriptions currently support monthly billing only, but a different interval was provided. Set the subscription tier's interval to \"month\" (weekly, yearly, and other intervals aren't supported yet), then resubmit.";
     pub const FE19: &str = "The subscription price must be a plain number, but the current value contains units, symbols, or non-numeric text. Enter each tier's price as a number only (e.g., 10) \u{2014} denominated in USDT by default, up to 6 decimal places, no symbols or extra text. Then resubmit.";
-    pub const FE20: &str = "The free-trial setup is invalid: freeTrial can only be configured on monthly-subscription services and must be a positive integer number of hours; A2MCP and pay-per-use services can't offer a trial. To enable a trial on a monthly subscription, set freeTrial to \"72\" (a fixed 3 days); otherwise omit the freeTrial field entirely (don't set \"\" or \"0\"). Then resubmit.";
+    pub const FE20: &str = "The free-trial setup is invalid: freeTrial can only be configured on monthly-subscription A2A services and must be a positive integer number of hours; A2MCP and pay-per-use services can't offer a trial. Guided writes use \"72\" (3 days); preserve another positive integer only when writing back a legacy service. Otherwise omit freeTrial entirely (don't set \"\" or \"0\"). Then resubmit.";
+    pub fn service_guide_too_long(service_name: &str) -> String {
+        format!(
+            "The service guide for [{service_name}] exceeds the length limit. Shorten it to no more than 1,000 full-width Chinese/Japanese characters or 2,000 Latin characters, then resubmit."
+        )
+    }
     /// FE-21 (必填 / 长度) — SPLIT per sub-check, because the two are not
     /// interchangeable: D1 is a BLOCKING missing-required-field, D2 is ADVISORY
     /// over-length. The former single sentence told an ASP who had written 1001
@@ -177,6 +185,7 @@ fn parse_services_lenient(raw: &str) -> std::result::Result<Vec<AgentService>, (
             for s in &mut services {
                 s.service_name = s.service_name.trim().to_string();
                 s.service_description = s.service_description.trim().to_string();
+                s.service_guide = s.service_guide.trim().to_string();
                 s.fee = s.fee.trim().to_string();
                 s.service_type = s.service_type.trim().to_string();
                 s.endpoint = s.endpoint.as_ref().map(|e| e.trim().to_string());
@@ -246,7 +255,7 @@ pub(crate) fn run_validation(
     // (register.md §3 Step 2c) and is never mechanically counted here, so the
     // pricing model no longer affects validation. A2MCP is unchanged — only
     // prohibited content runs for it. The SEMANTIC
-    // service-description quality check (FE-23) stays advisory in the skill layer.
+    // service-description quality check stays advisory in the skill layer.
 
     let pass = !findings.iter().any(|f| f.severity == "block");
     ValidationResult { pass, findings }
@@ -401,6 +410,17 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
     // ── Pricing (U4/P1..P6) — single fee XOR subscription ────────────────
     check_pricing(index, svc, is_a2mcp, is_a2a, findings);
 
+    if svc.operation != Some(ServiceOperation::Delete)
+        && !svc.service_guide.is_empty()
+        && display_width(&svc.service_guide) > SERVICE_GUIDE_MAX_DISPLAY_WIDTH
+    {
+        findings.push(Finding::block(
+            &format!("service[{index}].serviceGuide"),
+            "G2",
+            &fe::service_guide_too_long(&svc.service_name),
+        ));
+    }
+
     // ── Description on servicedescription: FE-21 (required/length) + FE-22
     // (prohibited content). Always run: an empty / blank A2A description is a
     // missing required field (handled inside check_service_description).
@@ -502,7 +522,7 @@ fn check_pricing(
                 findings.push(Finding::block(&sub_field, "P5", fe::FE19));
             }
         }
-        // Free trial is subscription-only; must be a positive integer (hours).
+        // Free trial is subscription-only and must be a positive integer hour count.
         if !trial.is_empty() {
             if !has_subscription {
                 findings.push(Finding::block(&trial_field, "P7", fe::FE20));

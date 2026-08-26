@@ -189,7 +189,7 @@ fn subscription_interval_other_than_month_fails_p4() {
     // `month` is the only billing period the product supports today.
     for interval in &["year", "week", "day"] {
         let service = format!(
-            "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"{interval}\",\"fee\":\"10\"}}]}}]"
+            "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"{interval}\",\"fee\":\"10\"}}]}}]"
         );
         let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
         let c = codes(&r);
@@ -208,7 +208,7 @@ fn subscription_interval_month_is_case_insensitive_no_p4() {
     // `eq_ignore_ascii_case` + trim: "Month" / " MONTH " are accepted.
     for interval in &["Month", " MONTH "] {
         let service = format!(
-            "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"{interval}\",\"fee\":\"10\"}}]}}]"
+            "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"{interval}\",\"fee\":\"10\"}}]}}]"
         );
         let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
         assert!(!codes(&r).contains(&"P4".to_string()), "interval={interval} got {:?}", codes(&r));
@@ -225,7 +225,7 @@ fn subscription_tier_fee_not_plain_number_fails_p5() {
     // Covers: currency token, negotiation wording, empty tier fee, 7 decimals.
     for tier_fee in &["10 USDT", "面议", "", "1.1234567"] {
         let service = format!(
-            "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"{tier_fee}\"}}]}}]"
+            "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"{tier_fee}\"}}]}}]"
         );
         let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
         let c = codes(&r);
@@ -256,7 +256,7 @@ fn subscription_tier_fee_edge_values_pass_p5() {
     // decimals are all plain numbers → no P5.
     for tier_fee in &["10", "0", "0.123456"] {
         let service = format!(
-            "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"{tier_fee}\"}}]}}]"
+            "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"{tier_fee}\"}}]}}]"
         );
         let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
         assert!(!codes(&r).contains(&"P5".to_string()), "tier fee={tier_fee} got {:?}", codes(&r));
@@ -302,26 +302,27 @@ fn a2a_subscription_only_passes() {
     // pricing findings, no P2/P6.
     let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
     let service = format!(
-        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}]}}]"
+        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}]}}]"
     );
     let r = run_validation("asp", Some("Agent Name"), Some("A helpful agent."), Some(&service));
     let c = codes(&r);
     assert!(!c.contains(&"P2".to_string()), "unexpected P2; got {:?}", c);
     assert!(!c.contains(&"P6".to_string()), "unexpected P6; got {:?}", c);
+    assert!(r.pass, "got {:?}", c);
 }
 
 #[test]
 fn a2a_subscription_with_valid_free_trial_passes() {
-    // A subscription-priced A2A with a positive integer freeTrial (hours) is
-    // valid → no P7/P8.
+    // A subscription-priced A2A with a positive-integer trial is valid → no P7/P8.
     let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
     let service = format!(
-        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}],\"freeTrial\":\"72\"}}]"
+        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}],\"freeTrial\":\"72\"}}]"
     );
     let r = run_validation("asp", Some("Agent Name"), Some("A helpful agent."), Some(&service));
     let c = codes(&r);
     assert!(!c.contains(&"P7".to_string()), "unexpected P7; got {:?}", c);
     assert!(!c.contains(&"P8".to_string()), "unexpected P8; got {:?}", c);
+    assert!(r.pass, "got {:?}", c);
 }
 
 #[test]
@@ -339,8 +340,7 @@ fn a2a_free_trial_without_subscription_fails_p7() {
 
 #[test]
 fn a2a_free_trial_non_integer_fails_p8() {
-    // freeTrial must be a positive integer number of hours: a decimal / zero is
-    // flagged P8.
+    // A non-integer duration is flagged P8.
     let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
     let service = format!(
         "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}],\"freeTrial\":\"24.5\"}}]"
@@ -348,6 +348,17 @@ fn a2a_free_trial_non_integer_fails_p8() {
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"P8".to_string()), "got {:?}", codes(&r));
     assert!(!r.pass);
+}
+
+#[test]
+fn a2a_free_trial_legacy_positive_integer_passes_p8() {
+    let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
+    let service = format!(
+        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}],\"freeTrial\":\"24\"}}]"
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(!codes(&r).contains(&"P8".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "got {:?}", codes(&r));
 }
 
 #[test]
@@ -1048,7 +1059,7 @@ fn description_two_parts_non_subscription_passes_no_d1() {
 #[test]
 fn description_two_parts_subscription_passes_no_d1() {
     // Same 2-paragraph shape on a SUBSCRIPTION-priced A2A service → also no D1.
-    let service = "[{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Daily signals across DEX.\\nDelivered as structured signals; copy-trading supported.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
+    let service = "[{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Daily signals across DEX.\\nDelivered as structured signals; copy-trading supported.\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
     let r = run_validation("asp", Some("Agent Name"), Some("A helpful agent."), Some(service));
     assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
     assert!(r.pass, "got {:?}", codes(&r));
@@ -1059,7 +1070,7 @@ fn description_three_parts_subscription_passes_no_d1() {
     // Billing model no longer affects the description rules: a 3-paragraph body on
     // a subscription service is accepted exactly like the 2-paragraph one above —
     // there is no paragraph-count rule to branch on.
-    let service = "[{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Daily signals across DEX.\\nNothing to provide.\\nDelivered as structured signals.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
+    let service = "[{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Daily signals across DEX.\\nNothing to provide.\\nDelivered as structured signals.\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
     let r = run_validation("asp", Some("Agent Name"), None, Some(service));
     assert!(!codes(&r).contains(&"D1".to_string()), "got {:?}", codes(&r));
     assert!(r.pass, "got {:?}", codes(&r));
@@ -1645,4 +1656,101 @@ fn non_https_endpoint_fails_t4() {
     assert_eq!(ep_findings.len(), 1, "expected one endpoint finding, got {:?}", codes(&r));
     assert_eq!(ep_findings[0].code, "T4");
     assert_eq!(ep_findings[0].message, super::fe::FE11);
+}
+
+#[test]
+fn a2a_subscription_allows_missing_or_blank_service_guide() {
+    for guide_fragment in ["", ",\"serviceGuide\":\"   \""] {
+        let service = format!(
+            "[{{\"serviceName\":\"Signal Service\",\"serviceDescription\":\"Provides trading signals.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}]{guide_fragment}}}]"
+        );
+        let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+        assert!(!codes(&r).iter().any(|code| code.starts_with('G')), "got {:?}", codes(&r));
+        assert!(r.pass, "got {:?}", codes(&r));
+    }
+}
+
+#[test]
+fn service_guide_is_optional_for_all_a2a_pricing_and_a2mcp() {
+    let a2a = svc("Signal Service", "Provides trading signals.", "A2A", "10", None);
+    let a2a_blank = r#"[{"serviceName":"Signal Service","serviceDescription":"Provides trading signals.","serviceGuide":"   ","serviceType":"A2A","fee":"10","subscription":[]}]"#;
+    let a2mcp = svc(
+        "Pricing Service",
+        "Returns token prices.",
+        "A2MCP",
+        "10",
+        Some("https://example.com/mcp"),
+    );
+    for service in [a2a.as_str(), a2a_blank] {
+        assert!(!codes(&run_validation("asp", Some("Agent Name"), None, Some(service)))
+            .iter().any(|code| code.starts_with('G')));
+    }
+    assert!(!codes(&run_validation("asp", Some("Agent Name"), None, Some(&a2mcp)))
+        .iter().any(|code| code.starts_with('G')));
+}
+
+#[test]
+fn a2a_subscription_with_service_guide_passes_guide_check() {
+    let service = "[{\"serviceName\":\"Signal Service\",\"serviceDescription\":\"Provides trading signals.\",\"serviceGuide\":\"Choose a market and submit your risk limit.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}]}]";
+    let r = run_validation("asp", Some("Agent Name"), None, Some(service));
+    assert!(!codes(&r).iter().any(|code| code.starts_with('G')), "got {:?}", codes(&r));
+    assert!(r.pass, "got {:?}", codes(&r));
+}
+
+#[test]
+fn service_guide_display_width_limit_has_exact_boundaries() {
+    for (guide, should_block) in [
+        ("x".repeat(2000), false),
+        ("x".repeat(2001), true),
+        ("中".repeat(1000), false),
+        ("中".repeat(1001), true),
+    ] {
+        let service = serde_json::json!([{
+            "serviceName": "Signal Service",
+            "serviceDescription": "Provides trading signals.",
+            "serviceGuide": guide,
+            "serviceType": "A2A",
+            "fee": "",
+            "subscription": [{"interval": "month", "fee": "10"}]
+        }])
+        .to_string();
+        let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+        let finding = r.findings.iter().find(|f| f.code == "G2");
+        assert_eq!(finding.is_some(), should_block, "unexpected G2 state");
+        assert_eq!(r.pass, !should_block, "got {:?}", codes(&r));
+        if let Some(finding) = finding {
+            assert_eq!(finding.field, "service[0].serviceGuide");
+            assert_eq!(finding.severity, "block");
+            assert_eq!(
+                finding.message,
+                super::fe::service_guide_too_long("Signal Service")
+            );
+        }
+    }
+}
+
+#[test]
+fn delete_service_bypasses_service_guide_length_check() {
+    let service = serde_json::json!([{
+        "operation": "delete",
+        "id": "9",
+        "serviceName": "Signal Service",
+        "serviceDescription": "Provides trading signals.",
+        "serviceGuide": "x".repeat(2001),
+        "serviceType": "A2A",
+        "fee": "",
+        "subscription": [{"interval": "month", "fee": "10"}]
+    }])
+    .to_string();
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(!codes(&r).contains(&"G2".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn a2a_subscription_delete_bypasses_optional_service_guide_checks() {
+    let service = "[{\"operation\":\"delete\",\"id\":\"9\",\"serviceName\":\"Signal Service\",\"serviceDescription\":\"Provides trading signals.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}],\"freeTrial\":\"24\"}]";
+    let r = run_validation("asp", Some("Agent Name"), None, Some(service));
+    assert!(!codes(&r).iter().any(|code| code.starts_with('G')), "got {:?}", codes(&r));
+    assert!(!codes(&r).contains(&"P8".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "got {:?}", codes(&r));
 }

@@ -4,12 +4,14 @@
 //! here are deliberately small and dependency-light.
 
 use anyhow::{anyhow, bail, Context as _, Result};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::commands::Context;
 use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
 
 use super::models::{AgentCard, AgentService, ServiceOperation};
+
+pub(super) const SERVICE_GUIDE_MAX_DISPLAY_WIDTH: usize = 2_000;
 
 // ─── HTTP client ──────────────────────────────────────────────────────────
 
@@ -158,6 +160,37 @@ pub(super) fn parse_services(raw: Option<&str>) -> Result<Vec<AgentService>> {
         .collect::<Result<Vec<_>>>()
 }
 
+/// Parse update-only service deltas. Delete directives are canonicalized to
+/// `{operation, id}`; create/update entries use the full service contract.
+pub(super) fn parse_service_deltas(raw: Option<&str>) -> Result<Vec<Value>> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    let entries: Vec<Value> =
+        serde_json::from_str(raw).context("failed to parse --service as JSON array")?;
+    entries
+        .into_iter()
+        .map(|entry| {
+            if entry.get("operation").and_then(Value::as_str) == Some("delete") {
+                let id = entry
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| {
+                        anyhow!("invalid --service: operation 'delete' requires an id")
+                    })?;
+                return Ok(json!({ "operation": "delete", "id": id }));
+            }
+
+            let service: AgentService =
+                serde_json::from_value(entry).context("failed to parse --service entry")?;
+            serde_json::to_value(normalize_service(service)?)
+                .context("failed to serialize --service entry")
+        })
+        .collect()
+}
+
 pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentService> {
     if service
         .id
@@ -172,15 +205,19 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
     }
     service.service_name = service.service_name.trim().to_string();
     service.service_description = service.service_description.trim().to_string();
+    service.service_guide = service.service_guide.trim().to_string();
     service.fee = service.fee.trim().to_string();
     service.service_type = service.service_type.trim().to_ascii_uppercase();
     service.endpoint = service
         .endpoint
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    // `freeTrial` hours: trim; an EMPTY string and an ABSENT key are equivalent —
+    // `freeTrial`: trim; an EMPTY string and an ABSENT key are equivalent —
     // both mean "no trial" — so collapse "" to None. The field is then omitted
     // from the wire payload, and a missing `freeTrial` is read as no trial.
+    // A non-empty value is validated below as a positive integer number of
+    // hours so legacy services can be written back unchanged. The guided
+    // product flow still creates only the fixed 72-hour trial.
     service.free_trial = service
         .free_trial
         .map(|value| value.trim().to_string())
@@ -191,6 +228,15 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
     }
     if service.service_description.is_empty() {
         bail!("missing required field in --service: serviceDescription");
+    }
+    if service.operation != Some(ServiceOperation::Delete)
+        && !service.service_guide.is_empty()
+        && display_width(&service.service_guide) > SERVICE_GUIDE_MAX_DISPLAY_WIDTH
+    {
+        bail!(
+            "The service guide for [{}] exceeds the length limit. Shorten it to no more than 1,000 full-width Chinese/Japanese characters or 2,000 Latin characters, then resubmit.",
+            service.service_name
+        );
     }
     // Normalize subscription tiers: trim, canonicalize the interval case, and
     // drop fully-blank entries (a stray `[{}]` must not count as pricing).
@@ -246,9 +292,8 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
             // An empty `fee` is the explicit "no single price" marker (the
             // subscription model); it is forwarded verbatim as `""`. The CLI
             // never fabricates a price from it.
-            // freeTrial: a free-trial duration in HOURS, valid ONLY on a
-            // subscription-priced A2A service (a non-empty `subscription`). When
-            // present it must be a positive integer number of hours.
+            // freeTrial: a positive integer number of hours, valid ONLY on a
+            // subscription-priced A2A service (a non-empty `subscription`).
             if let Some(trial) = service.free_trial.as_deref() {
                 if !has_subscription {
                     bail!("invalid --service for A2A: freeTrial is only allowed on a subscription-priced service");
@@ -521,7 +566,7 @@ pub(super) fn ensure_asp_has_service(card: &AgentCard) -> Result<()> {
 }
 
 /// ASPs MUST carry an uploaded avatar — there is no default fallback (see
-/// references/register.md §5). user / evaluator may keep the default
+/// references/identity-register.md §5). user / evaluator may keep the default
 /// (empty `--picture` → on-chain default image), so the check is ASP-only.
 /// The skill uploads the image first (`agent upload`) and passes the returned
 /// CDN URL as `--picture`; this gate is the CLI backstop if it doesn't.
@@ -536,7 +581,7 @@ pub(super) fn ensure_asp_has_avatar(card: &AgentCard) -> Result<()> {
 /// `(label, mime)` for a supported format (PNG / JPEG / WebP) or `None` for
 /// anything else. Detection is content-based — a `.png`-renamed PDF still maps
 /// to `None`, because extensions are attacker-controlled and reqwest never sees
-/// the path anyway. Keep the accepted set in sync with references/register.md §5.
+/// the path anyway. Keep the accepted set in sync with references/identity-register.md §5.
 pub(super) fn detect_image_kind(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
     // PNG: 89 50 4E 47 0D 0A 1A 0A
     if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
@@ -679,9 +724,8 @@ fn for_each_agent_row(v: &mut Value, mut f: impl FnMut(&mut Value)) {
     }
 }
 
-/// Map the raw `status` (int or string) to its canonical English label per
-/// `identity-invariants.md §Lexicon`. `1`/`active` → active, `2` → not listed,
-/// `3`/`4`/`5` → unavailable. Unknown → `None`.
+/// Map the raw `status` (int or string) to its stable English display label.
+/// `1`/`active` → active, `2` → not listed, `3`/`4`/`5` → unavailable. Unknown → `None`.
 fn status_label(status: &Value) -> Option<&'static str> {
     let key = match status {
         Value::Number(n) => n.as_u64().map(|n| n.to_string())?,
@@ -807,8 +851,7 @@ fn enrich_agent_row(row: &mut Value) {
 
 // ─── `card`: ordered, ready-to-render detail-card rows ────────────────────
 //
-// Mirrors `skills/okx-ai/references/identity-invariants.md §Card skeleton` +
-// `references/identity-discover.md §detail` exactly:
+// Mirrors `skills/okx-ai/references/identity-discover.md §detail` exactly:
 // one ordered `{ "label": <canonical-English>, "value": <string> }` row per
 // visible field, omitting a row when its value is unavailable (same omit
 // rules the skill uses today). Service rows are ASP-ONLY — the
@@ -929,7 +972,7 @@ fn unpriced_fee_label(is_a2mcp: bool) -> String {
 }
 
 /// Format a single ASP service into its card value string, mirroring
-/// references/discover.md §detail's `<ServiceName> — <Type>, <Fee or free>[, <Endpoint>]`.
+/// references/identity-discover.md §detail's `<ServiceName> — <Type>, <Fee or free>[, <Endpoint>]`.
 /// A subscription-priced A2A service shows its monthly tier(s) in the fee slot
 /// (`<N> USDT / month`) instead of a single-purchase price.
 /// `Type` maps `A2MCP`→"API service" / `A2A`→"agent-to-agent" (verbatim
@@ -986,7 +1029,7 @@ fn format_service_value(service: &Value) -> Option<String> {
     Some(format!("{name} — {}", segments.join(", ")))
 }
 
-/// Assemble the ordered `card` array per references/discover.md §detail.
+/// Assemble the ordered `card` array per references/identity-discover.md §detail.
 fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     let mut card: Vec<Value> = Vec::new();
 
@@ -1096,10 +1139,10 @@ fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
 // Labels are canonical English; the skill localizes them. All formatting
 // (truncation, ★ stars, A2A fee, type labels, `—` fallbacks) is done HERE so
 // the skill renders the table by simply laying out cells. Mirrors:
-//   • references/discover.md   §list         → `build_agent_list_cells`
-//   • references/discover.md   §service-list → `build_service_cells`
-//   • references/discover.md   §search       → `build_search_table`
-//   • references/reputation.md §feedback-list → `build_feedback_cells`
+//   • references/identity-discover.md   §list          → `build_agent_list_cells`
+//   • references/identity-discover.md   §service-list  → `build_service_cells`
+//   • skills/okx-guide/references/registered-home.md §2 → `build_search_table`
+//   • references/identity-reviews.md    §feedback-list → `build_feedback_cells`
 // All builders are additive: raw fields + existing `card`/labels stay intact.
 // The `cells` insert is an intentional unconditional overwrite — see the
 // overwrite NOTE in the `agent get` row-enrichment section above.
@@ -1133,7 +1176,7 @@ fn read_agent_id(map: &serde_json::Map<String, Value>) -> Option<String> {
 
 // ─── §1 agent-list row cells ──────────────────────────────────────────────
 //
-// Columns (references/discover.md §list), in order:
+// Columns (references/identity-discover.md §list), in order:
 //   Agent ID | Name | Role | Status | Approval status | Rating
 // Mirrors §1's rules: Name truncate-20; Role/Status via computed labels;
 // Approval status via approval_label, with `Review failed (reason: <remark>)`
@@ -1229,7 +1272,7 @@ pub(super) use precheck::{build_precheck, collect_owned_agents};
 // ─── §6 search-result table ────────────────────────────────────────────
 //
 // Search uses a DIFFERENT backend schema than
-// `agent get`. Columns (references/discover.md §search Field mapping), in order:
+// `agent get`. Columns (skills/okx-guide/references/registered-home.md §2), in order:
 //   Agent ID | Name | Sold Count | Rating | Min price | Top service
 // Critical schema differences handled HERE:
 //   • Rating source is `feedbackRate`, a backend 0–100 score converted to
@@ -1390,8 +1433,10 @@ pub(super) fn build_search_table(v: &Value) -> Value {
 
 // ─── §4 service-list row cells ────────────────────────────────────────────
 //
-// Columns (references/discover.md §service-list), in order:
+// Cells (references/identity-discover.md §service-list), in order:
 //   # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description
+// Read-only service-list never exposes Service guide for any service type;
+// serviceGuide is handled only by the guided register/update flows.
 // service-list returns PascalCase keys
 // (`ServiceName` / `ServiceType` / `Fee` / `Endpoint`); we read tolerantly.
 // Type: A2MCP → "API service", A2A → "agent-to-agent" (verbatim otherwise).
@@ -1400,7 +1445,7 @@ pub(super) fn build_search_table(v: &Value) -> Value {
 // monthly tier `<n> USDT / month`, or `—` when there is none (or A2MCP). Free
 // trial: `<n> days`/`hours` when a subscription trial is set, else `—` (single
 // fee / A2MCP never have one). Endpoint: `—` for A2A, the URL for A2MCP.
-// Description: truncated per references/discover.md §service-list (≤ 80 chars).
+// Description: truncated per references/identity-discover.md §service-list (≤ 80 chars).
 fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     let Value::Object(s) = service else {
         return None;
@@ -1453,7 +1498,6 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     let description = first_str(s, &["serviceDescription", "ServiceDescription", "servicedescription"])
         .map(|d| truncate_name(d, 80))
         .unwrap_or_else(|| "—".to_string());
-
     Some(vec![
         cell("#", index.to_string()),
         cell("Name", name),
@@ -1514,7 +1558,7 @@ fn add_service_cells_to_node(node: &mut Value) {
 
 // ─── §5 feedback-list row cells ───────────────────────────────────────────
 //
-// references/reputation.md §feedback-list is a prose entry per review, not a strict
+// references/identity-reviews.md §feedback-list is a prose entry per review rather than a strict
 // table, but we surface the same fields as ordered cells so the skill can lay
 // them out directly. Fields (per §feedback-list):
 //   Score (`★ <score>` — score is ALREADY a 0.00–5.00 float, set by
