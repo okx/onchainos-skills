@@ -195,7 +195,7 @@ normalizes fields for the create-task / create-subscribe playbooks, and preserve
 First search:
 
 ```
-agent task-service-select [--keywords <kw>...] [--asp-agent-id <id>] [--asp-name <name>] [--service-name <name>] [--min-payment-token-amount <amount>] [--max-payment-token-amount <amount>] [--agentic-id <buyerAgentId>] --limit 1 --format json
+agent task-service-select [--keywords <kw>...] [--asp-agent-id <id>] [--asp-name <name>] [--service-name <name>] [--service-id <id>] [--min-payment-token-amount <amount>] [--max-payment-token-amount <amount>] [--agentic-id <buyerAgentId>] --limit 1 --format json
 ```
 
 For the initial search, pass the user's original utterance verbatim to
