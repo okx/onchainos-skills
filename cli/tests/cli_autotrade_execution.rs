@@ -15,15 +15,11 @@ if [ "$1 $2" = "list-tools --json" ]; then
   printf '%s\n' '{"version":"1.4.2","modules":[{"commands":[{"toolName":"market_get_ticker"},{"toolName":"market_get_instruments"},{"toolName":"account_get_config"},{"toolName":"spot_place_order"},{"toolName":"swap_get_leverage"},{"toolName":"swap_set_leverage"},{"toolName":"swap_place_order"},{"toolName":"swap_close_position"},{"toolName":"futures_get_leverage"},{"toolName":"futures_set_leverage"},{"toolName":"futures_place_order"},{"toolName":"futures_close_position"},{"toolName":"event_browse"},{"toolName":"event_get_series"},{"toolName":"event_get_events"},{"toolName":"event_get_markets"},{"toolName":"event_place_order"},{"toolName":"option_get_instruments"},{"toolName":"option_get_greeks"},{"toolName":"option_place_order"}]}]}'
   exit 0
 fi
-if [ "$1 $2 $3" = "account config --json" ]; then
-  if [ "$FAKE_OKX_MODE" = "not_ready" ]; then
-    printf '%s\n' '[{"perm":"read_only"}]'
-  else
-    printf '%s\n' '[{"perm":"trade"}]'
-  fi
-  exit 0
-fi
 case "$FAKE_OKX_MODE" in
+  auth_error)
+    echo "Error: HTTP 401 from OKX: API key doesn't exist" >&2
+    exit 1
+    ;;
   nonzero_structured)
     echo '{"ok":false,"error":"post-run failure"}'
     exit 7
@@ -546,7 +542,7 @@ fn completed_trade_kit_commands_preserve_receipts_and_safe_failure_details() {
         "delivery-option",
         "delivery-event",
         "delivery-close",
-        "delivery-not-ready",
+        "delivery-auth-error",
     ] {
         write_context(&home, delivery);
     }
@@ -603,7 +599,12 @@ fn completed_trade_kit_commands_preserve_receipts_and_safe_failure_details() {
             ])
             .output()
             .unwrap();
-        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "delivery={delivery} mode={mode}\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         parse_stdout_json(&output)
     };
 
@@ -706,14 +707,18 @@ fn completed_trade_kit_commands_preserve_receipts_and_safe_failure_details() {
     assert_eq!(close_result["data"]["status"], "submitted");
     assert_eq!(close_result["data"]["receipt"]["ordId"], "42");
 
-    let not_ready = run(
-        "delivery-not-ready",
-        "not_ready",
+    let auth_error = run(
+        "delivery-auth-error",
+        "auth_error",
         r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
     );
-    assert_eq!(not_ready["data"]["status"], "failed_before_submit");
-    assert!(not_ready["data"]["reason"]
+    assert_eq!(auth_error["data"]["status"], "failed_before_submit");
+    assert_eq!(
+        auth_error["data"]["failureCategory"],
+        "authentication_required"
+    );
+    assert!(auth_error["data"]["reason"]
         .as_str()
         .unwrap_or_default()
-        .contains("trade_permission_required"));
+        .contains("API key doesn't exist"));
 }

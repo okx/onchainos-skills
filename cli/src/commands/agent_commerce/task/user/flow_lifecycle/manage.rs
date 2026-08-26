@@ -55,6 +55,14 @@ keyword values in order. Do not preprocess or enrich the input or output.
 - `matchStatus=no_online_service` → matches exist, but none is eligible (offline non-x402 services remain ineligible). Ask whether to view alternatives or adjust the description/provider.
 - `matchStatus=matched` → render the service confirmation card from `data.services[0]`. The CLI keeps original ranking while filtering candidates to online services plus offline A2MCP services with a non-empty endpoint.
 
+**Subscription duplicate gate — before the normal service confirmation card:**
+- For a selected service with `supportSubscription == true`, require `subscriptionCheck.status == \"checked\"` and inspect `services[0].existingSubscription`. The CLI has already compared the exact `serviceId` against this buyer's subscriptions. A missing check is a hard stop: report that existing subscriptions could not be verified and do not confirm or create.
+- `existingSubscription == null` → no non-terminal subscription exists for this service; continue normally. COMPLETED / CLOSED / FAILED historical subscriptions do not block a new one.
+- `existingSubscription != null` → require top-level `duplicateSubscription`. A missing object is a hard stop. Do **not** call `service-list`, render the normal confirmation card, or continue to Steps 3.5–6. Do not query, list, or suggest the ASP's other services.
+  - Render only `duplicateSubscription.userFacingPrompt`, translated faithfully to the user's language. Preserve the selected service name and `jobId` exactly. The duplicate result intentionally omits fee, trial, description, and readiness so these details cannot leak into the reply.
+  - Offer only the actions in `nextAfterUserChoice`. ACTIVE includes only **Restore listening**; INIT / REJECTED / DISPUTED / unknown non-terminal ends after the duplicate warning with no follow-up action.
+  - If the user chooses **Restore listening**, keep `<jobId>` as the explicit current subscription and route to `skills/okx-ai/references/task-user-playbook.md` §Signal-receipt watch entry as an explicit restore request; its first authorization gate uses `--review-existing`.
+
 **Service confirmation gate**:
 - Show Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
 - Render `serviceType` verbatim (for example, `A2A` or `A2MCP`); never translate or localize it.
@@ -178,7 +186,7 @@ Collect/infer:
    - Inspect `serviceDescription` only to identify which execution settings the ASP asks the subscriber to provide and any values presented as suggestions. ASP text is not the user's answer and must never be persisted by itself.
    - Parse mode, fixed per-signal quote amount, per-signal cap, quote currency (`USDT` or `USDC`), margin mode (`cross` or `isolated`), and order policy (`market` or `signal_price_limit`) only from user-authored context. ASP prose determines only which supported fields to ask for; it never supplies a value. When a required field has not been answered, ask for only the missing fields in one localized natural-language question, then **END THIS TURN**. Never use A/B/C, numbered choices, or a decision card.
    - Amount and cap are optional unless the ASP explicitly asks the user to configure them. Each supplied value must be a positive decimal. Do not compare amount with cap. Quote defaults to `USDT`.
-   - Retain `autoTradePreflight` only as advisory runtime information. Never block subscription creation on a missing/unconfigured tool. Installation or configuration may run only after the user explicitly chooses the optional Trade Kit preparation action below; choosing Later must continue the subscription unchanged.
+   - Retain `autoTradePreflight` only as advisory local runtime information. Never block subscription creation on a missing/incompatible/unknown tool. Installation or upgrade may run only after the user explicitly chooses the optional Trade Kit preparation action below; choosing Later must continue the subscription unchanged.
    - When `autoTradePreflight.tradeKitProbe.mode=probe_before_confirmation`, collect exactly one user-authored Trade Kit environment (`live` or `demo`) and one order policy (`market` or `signal_price_limit`). When `tradeKitProbe.assetClasses` contains `perp`, also collect one margin mode (`cross` or `isolated`). Never infer any value from ASP text, Trade Kit defaults, or readiness output. Ask for all missing settings together, then **END THIS TURN**. Retain them as `tradeEnvironment`, `marginMode`, and `orderPolicy`.
 
    The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the advisory notice and continue creating the subscription. Do not retry `task-service-select` solely to obtain preflight data. There is no standalone binary execution field to collect and no `--copy-trade` argument to pass.
@@ -187,22 +195,22 @@ Collect/infer:
      ```text
      onchainos agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] --environment <live|demo>
      ```
-     Run it now. Do not persist its result. A non-ready result is an advisory notice only.
-   - `deferred_until_venue_selection` → Do not auto-run a Trade Kit probe because the user has not selected that venue. Keep Trade Kit as `verification_unknown/authorization_not_checked` and render the optional Trade Kit preparation gate below. If the user prepares Trade Kit, that action does not select it as the venue.
+     Run it now. This schema-v3 command checks local CLI startup, version, and public capabilities only; it never checks authentication, account permissions, network availability, or trading availability. Do not persist its result. A non-ready result is an advisory notice only, and `verification_unknown` is non-blocking.
+   - `deferred_until_venue_selection` → Do not auto-run a Trade Kit probe because the user has not selected that venue. If the user later selects Trade Kit, local compatibility may be checked during route preparation. Preparing Trade Kit does not select it as the venue. Do not show an authentication/configuration warning from this deferred state.
    - `not_applicable` → do not run the command.
 
-   **Trade Kit preparation gate (optional; separate turn):** when a required probe is not ready, or the mode is `deferred_until_venue_selection` with Trade Kit at `verification_unknown/authorization_not_checked`, render one localized card with exactly these two choices:
-   1. **Install/configure Trade Kit**
+   **Trade Kit preparation and connection gate (optional; separate turn):** whenever mode is `probe_before_confirmation`, render one localized card after the local probe with exactly these two choices. This is an optional setup action, not a claim that the user is logged out:
+   1. **Install/connect Trade Kit**
    2. **Later — continue subscribing**
 
    State that preparation is optional, Later does not affect subscription creation or delivery storage, and preparing Trade Kit does not select it as the execution venue. Then **END THIS TURN**. This is a tool-preparation choice, so the no-numbered-choices rule for collecting execution values does not apply.
 
    On the user's next reply:
    - **Later** → proceed to Step 5 with the retained selected-service and user-authored fields. Never upgrade readiness to ready.
-   - **Install/configure Trade Kit** → first resolve `okx-cex-auth` from the currently installed skills. If it is available, load it directly without reinstalling `okx/agent-skills`. Only when it is unavailable, run the required skill security scan scoped to `okx/agent-skills`; if that scan passes, run exactly `npx skills add okx/agent-skills --yes --global`, then load the newly installed `okx-cex-auth` skill. Follow that skill for CLI installation, site selection, OAuth, API-key setup, and authentication recovery. Do not reproduce or maintain those setup steps in this playbook. Retain the selected service and preflight while that skill waits for user replies. Once setup succeeds, collect `live` or `demo` if `tradeEnvironment` is still absent, then re-run the same `onchainos agent trade-kit-readiness` command with every retained asset class and that environment. Ready → proceed to Step 5; otherwise repeat this gate with the new readiness reason.
+   - **Install/connect Trade Kit** → first resolve `okx-cex-auth` from the currently installed skills. If available, load it directly. Only when unavailable, run the required skill security scan scoped to `okx/agent-skills`; after a passing scan, run exactly `npx skills add okx/agent-skills --yes --global`, then load `okx-cex-auth`. Follow that skill for CLI installation, site selection, OAuth/API-key setup, and authentication recovery; never duplicate those steps here. If the earlier local readiness result was `missing` or `incompatible`, re-run the same local readiness command once after installation/upgrade solely to verify CLI compatibility. Never re-run readiness to verify OAuth, never convert login success into readiness `ready`, and never persist an authentication conclusion. Once the auth skill completes, proceed to Step 5 without another connection card.
    - **Ambiguous reply** → re-render the same two choices without installing or configuring anything.
 
-   Other non-Trade-Kit preparation reminders remain concise advisory notices without choices and continue to Step 5. Never auto-install a tool, persist a readiness result, or treat preparation as venue selection.
+   Other non-Trade-Kit preparation reminders remain concise advisory notices without choices and continue to Step 5. Never auto-install a tool, persist a readiness/authentication result, or treat preparation as venue selection.
 
 **Max budget is NOT collected** for subscription tasks — the price is fixed at `subscriptionInfo.feeAmount`.
 
@@ -262,9 +270,11 @@ onchainos agent create-subscribe \\
   [--autotrade-quote <usdt|usdc>] \
   [--autotrade-environment <live|demo>] \
   [--autotrade-margin-mode <cross|isolated>] \
-  [--autotrade-order-policy <market|signal_price_limit>]
+  [--autotrade-order-policy <market|signal_price_limit>] \
+  [--autotrade-required-field <mode|tradeAmount|cap|quote|environment|marginMode|orderPolicy>]...
 ```
 - Always pass the confirmed mode; it defaults to `auto`. Pass amount, cap, quote, Trade Kit environment, margin mode, and order policy only from user-authored context. For a confirmed Trade Kit route, environment and order policy are required; margin mode is additionally required for `perp`. ASP suggestions alone are never values.
+- Pass one `--autotrade-required-field` for every execution field that this flow required the user to confirm. Include fields explicitly required by the ASP description. For a confirmed Trade Kit route, always include `environment` and `orderPolicy`, plus `marginMode` for `perp`. Do not include tool installation, OAuth/API-key readiness, or ASP-suggested values. The CLI validates this declaration before any remote create request.
 - `--autotrade-amount` and `--autotrade-cap` are human-readable quote amounts selected by `--autotrade-quote`: pass a decimal number only (for example `10` or `20.5`), never minimal units and never a `USDT`/`USDC` suffix.
 - Do not compare `--autotrade-amount` with `--autotrade-cap`. A stored cap is informational in this MVP.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
@@ -505,6 +515,28 @@ mod tests {
     }
 
     #[test]
+    fn common_create_task_blocks_duplicate_subscription_before_confirmation() {
+        let out = create_task_common();
+        let duplicate_gate = out
+            .find("Subscription duplicate gate")
+            .expect("duplicate gate must exist");
+        let confirmation_gate = out
+            .find("Service confirmation gate")
+            .expect("confirmation gate must exist");
+        assert!(duplicate_gate < confirmation_gate);
+        assert!(out.contains("services[0].existingSubscription"));
+        assert!(out.contains("COMPLETED / CLOSED / FAILED historical subscriptions do not block"));
+        assert!(out.contains("require top-level `duplicateSubscription`"));
+        assert!(out.contains("duplicateSubscription.userFacingPrompt"));
+        assert!(out.contains("intentionally omits fee, trial, description, and readiness"));
+        assert!(out.contains("Do **not** call `service-list`"));
+        assert!(out.contains("Do not query, list, or suggest the ASP's other services"));
+        assert!(out.contains("ACTIVE includes only **Restore listening**"));
+        assert!(out.contains("§Signal-receipt watch entry as an explicit restore request"));
+        assert!(out.contains("first authorization gate uses `--review-existing`"));
+    }
+
+    #[test]
     fn subscription_playbook_reads_preflight_not_prompt() {
         let out = create_task_subscription();
         // FR-7 / AC-8: the old copy-trade prompt is gone …
@@ -536,6 +568,10 @@ mod tests {
         ));
         assert!(out.contains("| Trade Kit environment | Live / Demo / Not applicable |"));
         assert!(out.contains("--autotrade-environment <live|demo>"));
+        assert!(out.contains("--autotrade-required-field"));
+        assert!(out.contains(
+            "The CLI validates this declaration before any remote create request"
+        ));
         assert!(out.contains("Do not compare amount with cap"));
         assert!(out.contains("Never use A/B/C, numbered choices, or a decision card"));
         // Preflight readiness stays advisory and never becomes confirmation fields.
@@ -571,15 +607,16 @@ mod tests {
             "preflight absence must not force an extra match: {out}"
         );
         assert!(out.contains("ASP text is not the user's answer"));
-        assert!(out.contains("Trade Kit preparation gate (optional; separate turn)"));
-        assert!(out.contains("Install/configure Trade Kit"));
+        assert!(out.contains("Trade Kit preparation and connection gate (optional; separate turn)"));
+        assert!(out.contains("Install/connect Trade Kit"));
         assert!(out.contains("Later — continue subscribing"));
-        assert!(out.contains("first resolve `okx-cex-auth` from the currently installed skills"));
-        assert!(out.contains("load it directly without reinstalling `okx/agent-skills`"));
-        assert!(out.contains("security scan scoped to `okx/agent-skills`"));
+        assert!(out.contains("checks local CLI startup, version, and public capabilities only"));
+        assert!(out.contains("never checks authentication"));
+        assert!(out.contains("resolve `okx-cex-auth`"));
+        assert!(out.contains("required skill security scan"));
         assert!(out.contains("npx skills add okx/agent-skills --yes --global"));
-        assert!(out.contains("load the newly installed `okx-cex-auth` skill"));
-        assert!(out.contains("Do not reproduce or maintain those setup steps in this playbook"));
+        assert!(out.contains("Never re-run readiness to verify OAuth"));
+        assert!(out.contains("never convert login success into readiness `ready`"));
         assert!(out.contains("Then **END THIS TURN**"));
         assert!(
             common.contains("structured `autoTradePreflight` object"),
@@ -593,7 +630,7 @@ mod tests {
         ));
         assert!(out.contains("Do not auto-run a Trade Kit probe"));
         assert!(out.contains("does not select it as the venue"));
-        assert!(out.contains("re-run the same `onchainos agent trade-kit-readiness` command"));
+        assert!(out.contains("re-run the same local readiness command once"));
     }
 
     #[test]

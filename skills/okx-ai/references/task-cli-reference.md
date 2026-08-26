@@ -9,7 +9,7 @@
 ## Contents
 
 - **Common (any role)**: `common context` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
-- **User**: `create-task` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `complete` · `reject` · `close` · `claim-auto-refund` · `set-asp` · `task-attach`
+- **User**: `create-task` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `complete` · `reject` · `close` · `claim-auto-refund` · `set-asp` · `task-attach`
 - **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
 - **ASP**: `apply` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
@@ -223,7 +223,23 @@ conditions.
 | `searchAfter` | string | Cursor for alternatives / next page |
 | `hasMore` | bool | Whether more services are available |
 | `unmatchReason` | string/null | Backend no-match reason when present |
-| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, serviceId, serviceName, serviceDescription, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, autoTradePreflight}` |
+| `subscriptionCheck` | object | Present when a matched result contains a subscription service: `{status:"checked", blockingServiceCount}` |
+| `duplicateSubscription` | object | Present when the selected service has a blocking non-terminal subscription. Contains the exact minimal `userFacingPrompt` and optional `nextAfterUserChoice`; only ACTIVE offers `restore-listening`. |
+| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, serviceId, serviceName, serviceDescription, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, existingSubscription, autoTradePreflight}`. `existingSubscription` is added only to subscription services and is `null` when no non-terminal duplicate exists. |
+
+For a matched subscription service, `--agentic-id <buyerAgentId>` is mandatory because the command performs
+the duplicate-subscription check before returning a selectable result. A blocking
+`existingSubscription` contains `jobId`, `serviceId`, `providerAgentId`, `statusName`, and
+`restoreListeningAvailable`. Only `ACTIVE` sets `restoreListeningAvailable:true`; known terminal states
+(`COMPLETED`, `CLOSED`, `FAILED`) are excluded and therefore do not prevent a new subscription. An unknown
+future status fails closed as non-terminal. If the check cannot complete, the command fails and the caller
+must not show the subscription confirmation card or call `create-subscribe`.
+
+When `duplicateSubscription` is present, the selected duplicate service is reduced to the fields needed
+for this decision, so fee, trial, description, and readiness are absent. Render only the localized
+`userFacingPrompt`. Do not call `service-list` or query, list, or suggest the ASP's other services.
+`nextAfterUserChoice` is present only for ACTIVE and then contains only `restore-listening`; other
+non-terminal states end after the duplicate warning.
 
 Use `services[0]` as the recommended service for the confirmation card. Offer alternatives only when
 `hasMore == true` and `searchAfter` is a non-empty string. If the user then asks to change, call
@@ -274,16 +290,16 @@ service fee; for subscription services pass `subscriptionInfo.feeAmount` as
 Render the service provider as `Agent <providerAgentId>(<providerAgentName>)`; degrade to
 `Agent <providerAgentId>` when `providerAgentName` is empty or missing.
 
-**Output — per-service `autoTradePreflight` schema version 2 (local, deterministic):** each
+**Output — per-service `autoTradePreflight` schema version 3 (local, deterministic):** each
 `data.recommendations[].services[]` carries an `autoTradePreflight` object computed locally at match
 time (no extra network call):
 
-- `schemaVersion:2`
+- `schemaVersion:3`
 - `isTradingSignal` (bool; advisory classification, not an execution authorization)
 - `assetClasses` (⊆ `spot|perp|prediction|option|defi`; `[]` when undetermined)
 - `explicitTools[]`, `selectionRequired`, and `advisoryOnly:true`
 - `tools[]` = `{ tool, displayName, pluginId?, readiness, reason, checkedAt }`, where readiness is one
-  of `ready|missing|verification_unknown|needs_configuration|incompatible`; a local snapshot has
+  of `ready|missing|verification_unknown|incompatible`; a local snapshot has
   `checkedAt:null`
 - `reminders[]` = bilingual (`messageEn`+`messageZh`), `blocking:false`, de-duplicated install/config hints
 - `tradeKitProbe` = `{mode, assetClasses}`; mode is
@@ -291,9 +307,10 @@ time (no extra network call):
 - `evidence[]` = stable diagnostic codes only (never raw text/secrets)
 
 The match-time preflight never reads configuration or credential state and never invokes Trade Kit.
-An installed `okx` CLI is therefore `verification_unknown` with reason `authorization_not_checked`,
-never `ready`. After service selection, `probe_before_confirmation` applies only when Trade Kit is an
-explicit or sole candidate; run one batch `agent trade-kit-readiness` probe before confirmation.
+An installed `okx` CLI is therefore `verification_unknown` with reason
+`local_compatibility_not_checked`, never `ready`. This field says nothing about authentication. After
+service selection, `probe_before_confirmation` applies only when Trade Kit is an explicit or sole
+candidate; run one batch `agent trade-kit-readiness` probe before confirmation.
 Generic multi-venue services use `deferred_until_venue_selection`; their first real delivery probes only
 if Trade Kit is actually selected. `not_applicable` never probes. All outcomes remain advisory and
 subscription creation remains non-blocking.
@@ -320,6 +337,42 @@ agent status <jobId> [--agent-id <id>]
 |---|---|---|---|
 | `<jobId>` | Yes | - | Task ID (positional) |
 | `--agent-id` | No | auto-resolved | Caller's agentId |
+
+### my-tasks
+
+List subscription and one-time tasks for the current account's User identity.
+
+```text
+agent my-tasks [--task-type <all|subscription|one-time>] [--status-type <0|1|2>] [--page <n>] [--page-size <n>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--task-type` | No | `all` | Include both task types, subscriptions only, or one-time tasks only |
+| `--status-type` | No | `0` | `0` all counts with active rows, `1` active, `2` terminal |
+| `--page` | No | `1` | One-based page applied independently to each requested task type |
+| `--page-size` | No | `10` | Rows per requested task type; range `1..=100` |
+
+Representative `data` for `--task-type all --status-type 0`:
+
+```json
+{
+  "query": {"taskType":"all","statusType":0,"page":1,"pageSize":10},
+  "summary": {
+    "subscription": {"all":12,"active":3},
+    "oneTime": {"all":8,"active":2}
+  },
+  "subscriptions": {
+    "statusType":1,"page":1,"pageSize":10,"total":3,"totalNoCondition":12,"hasNext":false,
+    "thisDeviceId":"device-id","thisDeviceName":"MacBook Pro","list":[]
+  },
+  "oneTimeTasks": {
+    "statusType":1,"page":1,"pageSize":10,"total":2,"totalNoCondition":8,"hasNext":false,"list":[]
+  }
+}
+```
+
+Summaries use `active` for status `1` and `ended` for `2`; unrequested sections are omitted. Sections preserve backend totals and pagination, with `hasNext` derived from `total`, `page`, and `pageSize`. Subscription rows reuse `my-subscriptions` enrichment. One-time rows retain backend fields and add `state_machine.rs::Status` as `statusName`; unknown codes become `status_<n>`.
 
 ### tasks
 
@@ -494,6 +547,7 @@ agent create-subscribe \
   [--autotrade-environment <live|demo>] \
   [--autotrade-margin-mode <cross|isolated>] \
   [--autotrade-order-policy <market|signal_price_limit>] \
+  [--autotrade-required-field <field>]... \
   [--format json]
 ```
 
@@ -515,10 +569,15 @@ agent create-subscribe \
 | `--autotrade-environment` | For confirmed Trade Kit routes | - | User-authorized target: `live` or `demo`; never inferred or defaulted |
 | `--autotrade-margin-mode` | For confirmed Trade Kit `perp` routes | - | User-authorized margin mode: `cross` or `isolated` |
 | `--autotrade-order-policy` | For confirmed Trade Kit routes | - | User-authorized order construction: `market` or `signal_price_limit` |
+| `--autotrade-required-field` | No (repeatable) | - | Declare a field the current flow required the user to confirm: `mode`, `tradeAmount`, `cap`, `quote`, `environment`, `marginMode`, or `orderPolicy`. Before any remote create request, the CLI rejects declarations whose matching value is missing. |
+
+The caller derives this declaration from `autoTradePreflight` and the ASP description; the CLI does not reinterpret ASP prose. A confirmed Trade Kit route declares `environment` and `orderPolicy`, plus `marginMode` for `perp`. Fields merely suggested by the ASP and local tool readiness are not declarations.
 
 > **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
 
 > **Insufficient-balance output:** when under-funded, `create-subscribe` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs` and puts `markdownImage` under option 1. If missing, show `balanceWarning`.
+
+> **Duplicate-subscription output:** immediately before any provider-confirmation, signing, create, or broadcast request, the CLI fresh-reads the buyer's subscriptions for the exact `serviceId`. A non-terminal match exits with `{ok:false,data:{blockedReason:"duplicate-subscription",existingSubscription,userFacingPrompt,nextAfterUserChoice?}}`. Render only the localized `userFacingPrompt`; it always includes `jobId` and the explicit duplicate-creation block, and deliberately omits fee, trial, status, description, and readiness. `nextAfterUserChoice` is present only when the existing status is `ACTIVE` and then contains only `restore-listening`; otherwise there is no follow-up action. Do not query or suggest the ASP's other services. A failed precheck is fail-closed and sends no create request. This write-boundary check is intentionally repeated even when `task-service-select` already checked, closing the confirmation-to-create race.
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
@@ -675,16 +734,12 @@ agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<
 
 ### trade-kit-readiness
 
-Check the selected Trade Kit runtime before confirmation when directed by `autoTradePreflight`, and
-again before every Trade Kit delivery. The command runs one bounded machine-readable discovery,
-enforces the minimum OAuth-capable version and each requested class's capabilities, then runs at most
-one private read-only account check for the batch. A non-empty account `perm` must contain the exact
-comma-separated token `trade`. An OAuth response may return an empty `perm`; only then the command
-checks the native `okx-auth status --json` result and requires `live:trade` or `demo:trade` for the selected environment.
-It never falls back from a non-trading AK permission set to a stale OAuth session. Trade Kit itself
-selects complete AK credentials first or OAuth otherwise. Partial/invalid AK configuration follows
-that upstream AK-first behavior. OnchainOS never
-reads, returns, logs, or persists credentials or private account output.
+Check deterministic local Trade Kit compatibility before confirmation when directed by
+`autoTradePreflight`, during initial Trade Kit route preparation, or after an explicit install/upgrade.
+The command runs exactly one bounded `okx list-tools --json`, verifies CLI startup and the minimum
+compatible version, and checks each requested class's public command capabilities. It never calls a
+private/account endpoint and never checks or infers authentication, account permissions, network
+availability, or trading availability. Do not run it on every delivery or for a compatible cached route.
 
 ```
 agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] [--environment <configured|live|demo>]
@@ -692,30 +747,32 @@ agent trade-kit-readiness --asset-class <class> [--asset-class <class> ...] [--e
 
 `--asset-class` is required and repeatable; accepted canonical values are `spot`, `perp`,
 `prediction`, and `option`. Repeated values are de-duplicated in caller order. `--environment` defaults
-to `configured` for compatibility, but execution flows must pass `live` or `demo` explicitly and use the
-matching Trade Kit flag. In configured OAuth mode, both `live:trade` and `demo:trade` are required because
-the effective environment is otherwise opaque. The schema-version-2
-response includes `environment`, `readiness`, compatibility `ready`, stable `reason`, `checkedAt`, `version`,
-`missingCapabilities`, `remediation`, and `assetChecks[]`. Branch on
-`data.readiness == "ready"`, not process status; all requested classes must be ready.
+to `configured` for compatibility and is echoed as route context; it is not used for an authentication
+probe. Execution flows must still pass `live` or `demo` explicitly to the final target command. The
+schema-version-3 response includes `scope:"local_compatibility"`,
+`authenticationChecked:false`, `environment`, `readiness`, compatibility `ready`, stable `reason`,
+`checkedAt`, `version`, `missingCapabilities`, `remediation`, and `assetChecks[]`.
 
-`agent autotrade-execute` enforces the same gate again for Trade Kit immediately before spawning the
-order command. It derives the asset class from the supported `spot|swap|futures|option|event place`
-command and requires exactly one explicit `--live` or `--demo`; a non-ready result is persisted as
-`failed_before_submit` and the order process is not started. The gateway also canonicalizes split
+`agent autotrade-execute` does not repeat readiness. It validates the supported
+`spot|swap|futures|option|event` operation, persisted consent/grant/amount/settings, explicit
+`--live`/`--demo`, command shape, and idempotency, then spawns exactly one final Trade Kit command.
+That target command is the sole authority for authentication and actual trading availability. The
+gateway also canonicalizes split
 `--tpOrdPx -1` / `--slOrdPx -1` argv pairs to the Trade Kit-compatible equals form before spawn. Completed
 non-zero commands expose a bounded, redacted reason in both the persisted outcome and scoped AI-session
 notification. Conclusive local argument failures or explicit venue rejections are `failed_before_submit`;
 opaque, timeout, or transport failures remain `unknown_after_submit` and are never automatically retried.
 
-The five states are `ready`, `missing`, `verification_unknown`, `needs_configuration`, and
-`incompatible`. Authentication absence or a valid account response without exact `trade` permission is
-`needs_configuration`. Timeouts, network failures, and malformed private responses are
-`verification_unknown` and must never be reported as logged out. Missing/incompatible results expose fixed
-install/upgrade remediation. Subscription creation is never blocked. A delivery with any non-ready result
-must remain visible and receive one concise advisory, but it opens no choice card and starts no install,
-configuration, retry, or re-probe; execution stops before route persistence, consent, grant, or order, and
-readiness recovery never auto-replays that delivery.
+The local states are `ready`, `missing`, `verification_unknown`, and `incompatible`.
+`verification_unknown` means only that local discovery was inconclusive; it is non-blocking and must
+never be reported as logged out, unauthenticated, or lacking trade permission. Missing/incompatible
+results expose fixed install/upgrade remediation. Authentication errors come only from the final target
+command and are persisted as its concrete sanitized result. A conclusive Trade Kit authentication failure
+is `status:"failed_before_submit"` with the optional
+`failureCategory:"authentication_required"`; other failures omit `failureCategory`. This category is the
+only execution-time trigger for the Connect Trade Kit / Later recovery interaction. Connecting delegates
+site selection and OAuth/API-key recovery to `okx-cex-auth`, but never reruns readiness and never retries
+or replays the terminal delivery. No failed or unknown delivery is automatically retried or replayed.
 
 ### autotrade-grant-check
 
@@ -1095,21 +1152,27 @@ description and any live restore continuation needed to collect user-authored co
 starts watch, pushes a card, or converts ASP prose into authorization.
 
 ```bash
-agent autotrade-watch-precheck --job-id <jobId>
+agent autotrade-watch-precheck --job-id <jobId> [--review-existing]
 ```
 
 Output `data` includes `watchAllowed`, `shouldPromptAuthorization:false`, and a stable `reason`. Missing
 policy returns `watchAllowed:false`, `reason:"configuration_required"`,
 `shouldPromptConfiguration:true`, the canonical job/agent/asset binding, and untrusted
-`serviceDescription`. A live restore attempt also returns its `continuationId`, `requiredFields`, and
-`missingFields`. An unreadable consent record returns `watchAllowed:false`,
+`serviceDescription`. A legacy/incomplete active policy or stale Trade Kit grant returns the same gate plus
+`authorizationRefreshRequired:true`, bounded `existingConsent`, `refreshReasons`, and canonical Trade Kit
+`requiredFields`/`missingFields`. A live restore attempt also returns its `continuationId`, `requiredFields`,
+and `missingFields`. On an explicit restore/resume, `--review-existing` makes a complete active policy return
+the same bounded flow with `configurationReviewRequired:true` and `existingConsent`, so the user can review
+or change it before watch resumes. Omit the flag after that review is completed. An unreadable consent record returns `watchAllowed:false`,
 `reason:"consent_unreadable"`, and a user-confirmable `repairCommand`.
 
 ### autotrade-consent-continue (internal)
 
 Short-lived configuration command used by subscription restoration and retained for older in-flight
 delivery decisions. The record binds `continuationId`, job, buyer agent, selected mode, signal type,
-original delivery ID, required fields, and explicit values. It is separate from consent and pending/A2A
+original delivery ID, required fields, and explicit values. For an active-policy refresh, the CLI seeds the
+record from trusted existing consent, still requires explicit mode confirmation, and emits a full consent
+write so consent and grant are regenerated together. It is separate from consent and pending/A2A
 state: it cannot authorize or execute a trade. Start/resume revalidates the canonical Active subscription;
 successful `autotrade-consent-set`, `pause`, or explicit `--cancel` consumes the record.
 The first call may return `validationErrors` while still persisting the safe mode/job/origin binding;

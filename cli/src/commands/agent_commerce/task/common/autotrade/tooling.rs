@@ -7,8 +7,8 @@
 //!
 //! Safety model (FR-5 / org GR_RESTRICTED_FILE_ACCESS, GR_DATA_LEAKAGE): readiness
 //! probes inspect ONLY presence of skill dirs and executables — never credential
-//! or configuration state. An installed Trade Kit is therefore unverified, never
-//! ready. `evidence[]` carries only fixed
+//! or configuration state. An installed Trade Kit therefore requires a bounded
+//! local compatibility probe after selection. `evidence[]` carries only fixed
 //! diagnostic codes, never raw description text.
 //!
 //! This module is ORTHOGONAL to [`super::schema::SignalType`] (the venue/wire
@@ -127,7 +127,6 @@ pub enum Readiness {
     Ready,
     Missing,
     VerificationUnknown,
-    NeedsConfiguration,
     Incompatible,
 }
 
@@ -139,8 +138,7 @@ pub enum ToolReadinessReason {
     Ready,
     CliMissing,
     PluginMissing,
-    AuthorizationNotChecked,
-    ConfigurationRequired,
+    LocalCompatibilityNotChecked,
     Incompatible,
 }
 
@@ -149,7 +147,6 @@ pub enum ToolReadinessReason {
 #[serde(rename_all = "snake_case")]
 pub enum ReminderKind {
     InstallPlugin,
-    ConfigureTool,
     ChooseAtFirstSignal,
     ReadinessAdvisory,
 }
@@ -684,10 +681,11 @@ impl ToolInventory {
             (ExecutionTool::TradeKit, Readiness::Missing) => ToolReadinessReason::CliMissing,
             (_, Readiness::Missing) => ToolReadinessReason::PluginMissing,
             (ExecutionTool::TradeKit, Readiness::VerificationUnknown) => {
-                ToolReadinessReason::AuthorizationNotChecked
+                ToolReadinessReason::LocalCompatibilityNotChecked
             }
-            (_, Readiness::VerificationUnknown) => ToolReadinessReason::AuthorizationNotChecked,
-            (_, Readiness::NeedsConfiguration) => ToolReadinessReason::ConfigurationRequired,
+            (_, Readiness::VerificationUnknown) => {
+                ToolReadinessReason::LocalCompatibilityNotChecked
+            }
             (_, Readiness::Incompatible) => ToolReadinessReason::Incompatible,
         }
     }
@@ -748,7 +746,7 @@ pub fn build_preflight_from_classes(
 /// a built preflight into the `asp-match` response `Value` fails.
 pub fn degraded_preflight() -> AutoTradePreflight {
     AutoTradePreflight {
-        schema_version: 2,
+        schema_version: 3,
         is_trading_signal: false,
         asset_classes: Vec::new(),
         explicit_tools: Vec::new(),
@@ -826,9 +824,6 @@ fn assemble(
                         merge_reminder(&mut reminders, ReminderKind::InstallPlugin, Some(tool), c);
                     }
                 }
-                Readiness::NeedsConfiguration => {
-                    merge_reminder(&mut reminders, ReminderKind::ConfigureTool, Some(tool), c);
-                }
                 Readiness::Ready | Readiness::VerificationUnknown | Readiness::Incompatible => {}
             }
         } else {
@@ -837,8 +832,8 @@ fn assemble(
             selection_required = true;
             merge_reminder(&mut reminders, ReminderKind::ChooseAtFirstSignal, None, c);
             // Readiness advisory (non-blocking): when EVERY candidate for this
-            // class is not ready (missing / needs-configuration), add one merged
-            // hint that the user may install/configure ANY ONE of them now, or
+            // class lacks confirmed local compatibility, add one merged hint
+            // that the user may prepare ANY ONE of them now, or
             // wait for the first real signal to choose. If at least one candidate
             // is already ready, no advisory is added — we do not nudge installing
             // a redundant backup venue; the full `tools[].readiness` already shows
@@ -850,7 +845,7 @@ fn assemble(
                 merge_reminder(&mut reminders, ReminderKind::ReadinessAdvisory, None, c);
                 // The summary advisory alone is not actionable enough. Surface
                 // one non-blocking preparation reminder per unavailable
-                // candidate so the user may install/configure any one now.
+                // candidate so the user may prepare any one now.
                 // This still does NOT select a venue or persist a preference;
                 // the first real signal owns that decision.
                 for tool in &effective {
@@ -859,14 +854,6 @@ fn assemble(
                             merge_reminder(
                                 &mut reminders,
                                 ReminderKind::InstallPlugin,
-                                Some(*tool),
-                                c,
-                            );
-                        }
-                        Readiness::NeedsConfiguration => {
-                            merge_reminder(
-                                &mut reminders,
-                                ReminderKind::ConfigureTool,
                                 Some(*tool),
                                 c,
                             );
@@ -888,7 +875,7 @@ fn assemble(
     }
 
     AutoTradePreflight {
-        schema_version: 2,
+        schema_version: 3,
         is_trading_signal,
         asset_classes: classes.to_vec(),
         explicit_tools: explicit.to_vec(),
@@ -1019,13 +1006,6 @@ fn render_messages(
                 )
             }
         }
-        ReminderKind::ConfigureTool => (
-            format!("Sign in to or configure Trade Kit (run `okx auth login` or `okx config init`) before executing {label} signals."),
-            // zh gloss: Sign in to or configure Trade Kit before executing signals.
-            format!(
-                "\u{6267}\u{884c} {label} \u{4fe1}\u{53f7}\u{524d}\u{ff0c}\u{8bf7}\u{5148}\u{767b}\u{5f55}\u{6216}\u{914d}\u{7f6e} Trade Kit (\u{8fd0}\u{884c} okx auth login \u{6216} okx config init)\u{3002}"
-            ),
-        ),
         ReminderKind::ChooseAtFirstSignal => (
             format!(
                 "Multiple execution venues are available for {label}; choose one when the first real signal arrives."
@@ -1455,28 +1435,27 @@ mod tests {
             serde_json::json!("verification_unknown")
         );
 
-        // Option is Trade-Kit-only. Local matching stays network-free and marks
-        // auth unknown, while the deterministic directive requires a real probe
-        // after service selection and before subscription confirmation.
+        // Option is Trade-Kit-only. Local matching stays process/network-free
+        // while the deterministic directive requires a local compatibility
+        // probe after service selection and before subscription confirmation.
         let pf = build_preflight(
             "\u{3010}Options Signal\u{3011} buy BTC call option, strike 70000",
             &inv,
         );
         assert_eq!(pf.asset_classes, vec![AssetClass::Option]);
         let wire = serde_json::to_value(&pf).unwrap();
-        assert_eq!(wire["schemaVersion"], 2);
+        assert_eq!(wire["schemaVersion"], 3);
         assert_eq!(wire["tools"][0]["readiness"], "verification_unknown");
-        assert_eq!(wire["tools"][0]["reason"], "authorization_not_checked");
+        assert_eq!(
+            wire["tools"][0]["reason"],
+            "local_compatibility_not_checked"
+        );
         assert!(wire["tools"][0]["checkedAt"].is_null());
         assert_eq!(wire["tradeKitProbe"]["mode"], "probe_before_confirmation");
         assert_eq!(
             wire["tradeKitProbe"]["assetClasses"],
             serde_json::json!(["option"])
         );
-        assert!(pf
-            .reminders
-            .iter()
-            .all(|r| r.kind != ReminderKind::ConfigureTool));
         assert!(pf.reminders.is_empty());
     }
 
@@ -1599,7 +1578,7 @@ mod tests {
         // (1) CLI absent → Missing
         assert_eq!(readiness(""), serde_json::json!("missing"));
 
-        // (2) CLI present, no config → authorization has not been checked.
+        // (2) CLI present → authentication is outside this local snapshot.
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("okx"), b"#!/bin/sh\n").unwrap();
@@ -1725,7 +1704,7 @@ mod tests {
     #[test]
     fn reminders_readiness_advisory_multi_venue() {
         // (1) generic Prediction; Polymarket missing + Trade Kit installed with no
-        //     real auth probe → Trade Kit is unknown. Do not infer auth state or
+        //     local compatibility probe → Trade Kit is unknown. Do not infer auth state or
         //     probe while the venue is still unselected.
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
@@ -1754,10 +1733,6 @@ mod tests {
             .reminders
             .iter()
             .any(|r| r.kind == ReminderKind::ReadinessAdvisory));
-        assert!(pf
-            .reminders
-            .iter()
-            .all(|r| r.kind != ReminderKind::ConfigureTool));
         assert_eq!(
             pf.reminders
                 .iter()
@@ -1849,7 +1824,7 @@ mod tests {
     fn degraded_preflight_shape() {
         let pf = degraded_preflight();
         let wire = serde_json::to_value(&pf).unwrap();
-        assert_eq!(wire["schemaVersion"], 2);
+        assert_eq!(wire["schemaVersion"], 3);
         assert_eq!(wire["tradeKitProbe"]["mode"], "not_applicable");
         assert!(!pf.is_trading_signal);
         assert!(pf.asset_classes.is_empty());

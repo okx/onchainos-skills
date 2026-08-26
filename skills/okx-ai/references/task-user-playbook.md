@@ -26,7 +26,8 @@
 | Switch provider / stop task | "switch provider / stop task" | [`task-user-actions.md`](task-user-actions.md) §3 |
 | View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
 | Designated-provider x402 | "send a request to this endpoint" | [`task-user-actions-publish.md`](task-user-actions-publish.md) §5 |
-| Subscription task ops | "auto-renew / trial cancel / reject delivery / apply for refund / claim refund / my subscriptions / subscription charge / subscription cost" | §Subscription below |
+| Subscription task list | "my subscriptions / subscription list / ongoing subscriptions / active subscriptions / ended subscriptions" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Task list → §Unified My Tasks. User-initiated lists use `my-tasks --task-type subscription`, never `my-subscriptions`. |
+| Subscription task ops | "auto-renew / trial cancel / reject delivery / apply for refund / claim refund / subscription charge / subscription cost" | §Subscription below |
 | Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
 | Re-submit / nudge | "re-submit / nudge" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
 | Task list / status / close / decision list | "my tasks / view decisions / close task" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
@@ -47,7 +48,7 @@
 | `useTrial` | `subscriptionInfo.supportTrial == true` from `task-service-select` → auto `true`; otherwise `false`. Display hours from `subscriptionInfo.freeTrial` field | **auto-filled, do NOT ask user** |
 | `autoRenew` | ask user explicitly before form — no default | 0=off, 1=on |
 | Automatic signal execution | Defaults to `auto`. Inspect the ASP description only to learn which supported settings to ask about; persist mode/amount/cap/quote/environment/margin mode/order policy only from the user's reply. An explicit opt-out becomes `manual`. Amount and cap are optional positive decimals, quote defaults to `USDT`, Trade Kit environment is `live`/`demo`, margin mode is `cross`/`isolated`, and order policy is `market`/`signal_price_limit`. Ask missing fields in one natural-language question without choices. Never render execution mode, per-signal amount, per-signal cap, margin mode, or order policy as confirmation-form rows; the existing Trade Kit environment row is the only display exception. None of these values belongs in `serviceParams`. | **local execution configuration; not an ASP business parameter** |
-| Signal preflight | Retain schema-v2 `autoTradePreflight` as advisory information. A non-ready or authorization-not-checked Trade Kit produces one optional two-choice preparation card: install/configure Trade Kit, or Later and continue subscribing. On prepare, load `okx-cex-auth` directly when already installed. Only when unavailable, scope the required security scan to `okx/agent-skills`, install it after a passing scan, and load `okx-cex-auth`. Delegate all CLI/OAuth/API-key setup to that skill and re-run readiness afterward. Never auto-install or block subscription creation; other tool reminders remain concise notices. | **optional preparation; not a subscription input** |
+| Signal preflight | Retain schema-v3 `autoTradePreflight` as advisory local information. When Trade Kit is explicit or the sole candidate, run local-only schema-v3 readiness and offer the optional Install/connect Trade Kit or Later card. On Install/connect, load `okx-cex-auth` (install `okx/agent-skills` only after its required security scan when absent) and delegate CLI/site/OAuth/API-key setup to it. Readiness never verifies authentication; only re-run it after an install/upgrade to verify local compatibility. Never auto-install or block subscription creation. | **optional preparation; not a subscription input** |
 | `serviceTokenAmount` | from `task-service-select` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
 
 Read `autoTradeConfigured` from the JSON success envelope. When it is `true`, no additional execution-
@@ -96,7 +97,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 - `[Watch]` block present → read `skills/okx-ai/references/watch-core.md` and enter its Watch generation. A returned notification, deliverable, or empty poll does **not** end the turn; dispatch the complete batch and re-enter the same scoped command until `watch-core.md` says to stop or a `decision_request` requires the user's reply.
 - No `[Watch]` block → **end this turn immediately**.
 
-🛑 This Watch handoff is the **last non-Watch action in the creation flow** — once entered, `watch-core.md` owns the rest of the turn, including every required dispatch and re-entry. Do not run unrelated creation commands after the handoff, and do not confuse "last creation action" with permission to stop after the first watch result. On the `sub_created` event the agent only sends the subscription notification and starts the watch — it does NOT re-scan the description for DApp names, does NOT auto-install any plugin, and does NOT pre-select a tool. Tool install/config is surfaced up-front (before subscribing) as the non-blocking schema-v2 `autoTradePreflight`; the visible install/config flow runs only if the user explicitly chooses an action. A fresh Trade Kit probe also runs on every delivery that actually resolves to Trade Kit. A failed delivery remains visible and execution-blocked; restoring readiness never auto-replays it, while future deliveries continue normally.
+🛑 This Watch handoff is the **last non-Watch action in the creation flow** — once entered, `watch-core.md` owns the rest of the turn, including every required dispatch and re-entry. Do not run unrelated creation commands after the handoff, and do not confuse "last creation action" with permission to stop after the first watch result. On the `sub_created` event the agent only sends the subscription notification and starts the watch — it does NOT re-scan the description for DApp names, does NOT auto-install any plugin, and does NOT pre-select a tool. Local tool preparation is surfaced up-front (before subscribing) as the non-blocking schema-v3 `autoTradePreflight`; the visible Install/connect flow runs only if the user explicitly chooses it and delegates authentication to `okx-cex-auth`. Trade Kit readiness is not repeated on every delivery or for a compatible cached route. Authentication and trading availability are decided only by the final target command. A failed delivery remains visible and is never auto-replayed, while future deliveries continue normally.
 
 ### Subscription management (user-initiated)
 
@@ -156,7 +157,9 @@ authorized lifecycle/progress action unless the user explicitly made it conditio
    §Existing-subscription scoped-watch authorization gate before the banner or any watch call. Only after
    the gate passes, emit the canonical banner and run
    `okx-a2a user watch --json --job-id <jobId>`. Keep the jobId sticky for every re-entry. Never substitute
-   global watch or claim that starting watch proves a new signal already exists.
+   global watch or claim that starting watch proves a new signal already exists. For an explicit
+   restore/resume request, the first gate must use `--review-existing`; omit that flag for a just-created
+   subscription continuation and after the user has completed the bounded review.
 
 ### Restore execution-configuration reply
 
@@ -166,15 +169,23 @@ turn. Run `autotrade-consent-continue --job-id <sameJobId> --agent-id <sameAgent
 --continuation-id <exactId>` with only `--trade-amount`, `--cap`, `--quote`, `--environment`,
 `--margin-mode`, or `--order-policy` values explicitly authored
 in this reply. If the user explicitly disables automatic execution, add `--mode manual`; if they affirm
-the displayed automatic default, add `--mode auto`. Supplying the mode on resume records the user's
+the displayed automatic default, add `--mode auto`. For a refresh, affirming the displayed existing mode
+adds that exact `--mode`. Supplying the mode on resume records the user's
 confirmation; never treat the continuation's default `auto` value as confirmation. Never infer a value or
 authorization from ASP prose.
+
+For `authorizationRefreshRequired:true` or `configurationReviewRequired:true`, show the bounded existing
+policy as the localized semantic list defined in `watch-core.md`, then ask the user to confirm the displayed
+configuration or state any settings to change. Do not turn `existingConsent` into value flags: the CLI
+preloads it from the trusted local file. Use the returned full `consentCommand` unchanged so consent and its
+automatic-execution grant are written together.
 
 If `validationErrors` or `missingFields` remains, ask once for only those fields in natural language and
 end the turn. If complete, run the exact returned `consentCommand`, then resume the same subscription at
 §Signal-receipt watch entry step 2 so receipt state and the canonical authorization gate are fresh-read
-before watch. Never show A/B/C options or create a delivery-time authorization decision. A generic amount
-or currency message without the preceding bound prompt is not sufficient authority to update consent.
+before watch; that post-review gate must omit `--review-existing`. Never show A/B/C options or create a
+delivery-time authorization decision. A generic amount or currency message without the preceding bound
+prompt is not sufficient authority to update consent.
 
 ### Pause auto copy-trade
 
@@ -232,11 +243,100 @@ Key rules:
 - `claim-auto-refund` is only valid when status = Rejected AND the ASP response window has passed.
 - If the ASP files a dispute, the user must wait for the Dispute Manager's ruling (follows the existing on-chain dispute resolution flow).
 
-## My Subscriptions (buyer view)
+## Unified My Tasks
 
-Trigger: `my subscriptions` / `subscription list` / `what am I subscribed to`. Routing entry: [`task-user-intent-routing.md`](task-user-intent-routing.md).
+Routing entry: [`task-user-intent-routing.md` §Task list](task-user-intent-routing.md#task-list--what-am-i-working-on).
 
-Command: `onchainos agent my-subscriptions --role buyer` → JSON `{ "list": [ … ], "thisDeviceId": <String|null>, "thisDeviceName": <String|null> }`; also run `onchainos agent device-list` for the complete logged-in device table. Render exactly **one row per subscription**. **Render every column below—never drop Provider or Billing Period, and keep Next Charge as one derived date, not a period range. Then append one column per real device.**
+### Response contract (non-negotiable)
+
+Build each list response from the current successful `my-tasks` result in this exact order:
+
+1. The matching opening summary below, using only `summary`.
+2. The requested subscription section, using §Buyer Subscription Renderer, or its prescribed empty state.
+3. The requested one-time section, using the exact five-column table below, or its prescribed empty state.
+4. A next-page notice only for a returned section whose `hasNext` is `true`.
+
+Every non-empty section is a Markdown table, even when it contains one row or the subscription table is
+wide. A bullet list, prose summary, status breakdown, partial enumeration, or “and N more” replacement is
+not this contract.
+
+The data boundary is the current CLI result: use `summary` for counts and each section's current `list`,
+`page`, `total`, and `hasNext` for rows and pagination. The required `device-list` call may enrich only the
+current subscription rows. Never merge rows or counts from earlier tool results, prior pages, conversation
+history, or another status filter; never derive task groups, combined totals, or status counts from rows.
+For `status-type=0`, display the active rows returned by the CLI.
+
+### Opening summary
+
+Begin with exactly one matching template, translated faithfully when the user's language is not English.
+
+For `task-type=all`:
+
+| `status-type` | Opening copy |
+|---|---|
+| `0` | `Subscription tasks: {subscription.all} total, {subscription.active} ongoing. One-time tasks: {oneTime.all} total, {oneTime.active} ongoing. Ongoing tasks are shown first. You can ask to view ended tasks at any time.` |
+| `1` | `Ongoing subscription tasks: {subscription.active}. Ongoing one-time tasks: {oneTime.active}.` |
+| `2` | `Ended subscription tasks: {subscription.ended}. Ended one-time tasks: {oneTime.ended}.` |
+
+For a single task type, set `{label}` to `subscription tasks` with `count=summary.subscription`, or `one-time tasks` with `count=summary.oneTime`:
+
+| `status-type` | Opening copy |
+|---|---|
+| `0` | `{label}: {count.all} total, {count.active} ongoing. Ongoing tasks are shown first. You can ask to view ended tasks at any time.` |
+| `1` | `Ongoing {label}: {count.active}.` |
+| `2` | `Ended {label}: {count.ended}.` |
+
+Replace placeholders only with CLI values; use zero only when returned explicitly.
+
+### Sections and rows
+
+Render every requested section; omit only unrequested task types:
+
+The schemas below are the complete, mandatory list-row contract. They override generic task-reply rules,
+and their field-specific localization rules are authoritative. Use §Buyer Subscription Renderer for
+subscriptions and the five-column table below for one-time tasks; generic task-scoped `jobId` prefixes or
+fields do not apply to list responses.
+
+- `subscriptions`: if empty, say no matching subscription tasks; otherwise show `Subscription tasks` and pass the complete section to §Buyer Subscription Renderer.
+- `oneTimeTasks`: if empty, say no matching one-time tasks; otherwise show `One-time tasks (page {page}, {total} total)` and render this exact table:
+
+| # | Service | Agent ID | Price | Status |
+|---|---|---|---|---|
+| 1 | `{title}` | `Agent#{providerAgentId}`, or localized `Unspecified provider` when absent | `{tokenAmount} {tokenSymbol}` | localized `{statusName}` |
+
+Translate the CLI's canonical `statusName` to the user's locked language. Use this English mapping as the source:
+
+| `statusName` | English display |
+|---|---|
+| `init` | `Initializing` |
+| `created` | `Awaiting acceptance` |
+| `accepted` | `In progress` |
+| `submitted` | `Awaiting review` |
+| `rejected` | `Deliverable rejected` |
+| `disputed` | `Evaluation in progress` |
+| `admin_stopped` | `Stopped by platform` |
+| `completed` | `Completed` |
+| `close` | `Closed` |
+| `expired` | `Expired` |
+| `failed` | `Refunded` |
+
+`failed` means refunded, not a generic failure. Render `status_<n>` as `Unknown status (<n>)` or its faithful translation. If `statusName` is absent or malformed, render `—`; never infer from numeric `status`.
+
+### Independent pagination
+
+Retain the latest `statusType`, `pageSize`, and each section's `page` and `hasNext`:
+
+- An initial list or changed filter makes one `my-tasks` call at page 1. Render that result without increasing `pageSize` or fetching another page. A section's `total` reports available matches; it does not authorize loading or rendering all of them.
+- Bare `next page`: advance the only list with `hasNext=true`; if both qualify, ask which type; if neither qualifies, say all matching tasks are shown. Without prior list context, ask which task list to continue.
+- For an explicit task type and page direction/number, call `my-tasks` for that type, preserve the filter and page size, and change only that type's page. Never go below page 1.
+- If the user asks to advance both types, make two type-specific calls.
+- A changed task type or all/active/ended filter starts at page 1; `View ended tasks` selects `status-type=2`.
+
+Render only the advanced section in its prescribed shape; do not repeat the opening summary or untouched section. Offer another page only when its returned `hasNext` is true.
+
+## Buyer Subscription Renderer
+
+Use this renderer for unified task lists, direct subscription reads, and post-login subscription display. For user-initiated lists, input is the `my-tasks.subscriptions` section. Internal flows may supply the equivalent `my-subscriptions` payload, but that compatibility source never selects the command for a user-initiated list. Also run `onchainos agent device-list` for the complete device table. Render exactly **one row per subscription** and every column below; keep Next Charge as one derived date, then append one column per real device.
 
 Immediately above the table, render this localized legend:
 
@@ -248,7 +348,7 @@ The device columns below are illustrative — replace them with the user's **act
 |---|------|--------|------|------|---------|---------|------|------|------|
 | 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {nextCharge} | {autoRenew==1?"✓":"✗"} | {billingPeriod} | {deviceCell} | {deviceCell} |
 
-- **Status**: render CLI `statusName` verbatim (`ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>`). Billing Period distinguishes trial from paid (`trialType==1` → `Trial Period`).
+- **Status**: `statusName` is an explicit localization exception. Render the CLI value verbatim (`ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>`). Billing Period distinguishes trial from paid (`trialType==1` → `Trial Period`).
 - **Fee**: render the `serviceTokenAmount` string verbatim; never convert it to float. The CLI provides only `serviceTokenAddress`, not a token symbol.
 - **Billing Period**: `trialType==1` → `Trial Period`; else positive integer `periodIndex` → `Billing Period {periodIndex}`; else null/non-positive → `—`.
 - **Next Charge** (derive; no CLI field): `statusName != "ACTIVE"` → `—`; else `trialType==1` → prefer `trialEndTime`, fall back to legacy `trailEndTime` (AC-17), render as the trial-conversion charge date, or `Date Unavailable` if both are absent; else `autoRenew==1` → `subEndTime`; `autoRenew==0` → `No Renewal`. Render epoch seconds as a date.
@@ -265,13 +365,13 @@ The device columns below are illustrative — replace them with the user's **act
 
 **Trigger (entry layer):** a newly completed wallet login, not a standalone OKX.AI free-text intent and not `wallet status`. [`wallet.md`](../../okx-agentic-wallet/references/wallet.md) owns the single entry point: step 3 after a successful login poll. Do **NOT** add trigger words to `SKILL.md` for this display.
 
-**Programmatic data source (mandatory).** A successful `wallet login --phase poll` may return the already-aggregated snapshot at `data.postLoginSubscriptions`: `subscriptions` is the exact buyer `my-subscriptions` payload; `devices` is the complete `device-list` payload (or `null` on device-query failure). `wallet status` never returns this field. Consume the poll snapshot directly. **Never issue a follow-up `my-subscriptions` or `device-list` command in the login flow.** User-initiated §My Subscriptions remains a separate command flow.
+**Programmatic data source (mandatory).** A successful `wallet login --phase poll` may return the already-aggregated snapshot at `data.postLoginSubscriptions`: `subscriptions` is the exact buyer `my-subscriptions` payload; `devices` is the complete `device-list` payload (or `null` on device-query failure). `wallet status` never returns this field. Consume the poll snapshot directly. **Never issue a follow-up `my-subscriptions` or `device-list` command in the login flow.** User-initiated task/subscription listing uses §Unified My Tasks and remains a separate command flow.
 
 **New-device default routing (login only).** After resolving a non-empty User `agenticId` and before the login heartbeat, the CLI checks whether this device already exists in the complete device table, then always sends the heartbeat regardless of whether that optional probe succeeded. A device proved new gets production/pre-release-isolated durable state, is registered, then is added to every subscription's explicit `deviceList` by fresh-list union and batched overwrite (≤100 items per request); `deviceList:null` remains null because it already means default-all. Progress is persisted after each confirmed batch and the state becomes `completed` before rendering, so retries touch only unfinished jobs and cleanup failure cannot re-enable a later manual opt-out. The CLI returns `postLoginSubscriptions` only after routing succeeds, so the table never appears before the new device is configured. An already-registered device without pending work is never rewritten on re-login. If `agenticId` is unavailable or the pre-heartbeat probe fails, the heartbeat still registers/refreshes the device, but automatic routing and the table are safely suppressed.
 
 **Zero-disturb (mandatory).** The CLI omits `data.postLoginSubscriptions` when the subscription lookup errors (no OKX.AI identity, transport/auth failure), times out, or returns an empty list. When absent, output **nothing** OKX.AI-related — no table, no opening line, no 💡 hint, no error, no mention that a check ran. The login flow concludes normally. Never surface the attempt.
 
-**Non-empty render.** Reuse §My Subscriptions **as-is**: the same one-row-per-subscription dynamic device-column matrix, actual device names, device ordering and disambiguation, tri-state cell mapping, `thisDeviceReceives` authority, legend, and mandatory degraded render when `device-list` fails/empty. Only the surrounding copy below differs.
+**Non-empty render.** Reuse §Buyer Subscription Renderer **as-is**: the same one-row-per-subscription dynamic device-column matrix, actual device names, device ordering and disambiguation, tri-state cell mapping, `thisDeviceReceives` authority, legend, and mandatory degraded render when `device-list` fails/empty. Only the surrounding copy below differs.
 
 - **Surrounding copy.** Precede the legend and table with this English line verbatim or translate it faithfully per §Localization:
 
@@ -332,7 +432,7 @@ Trigger: `device list` / `list my logged-in devices` / `which devices are online
 - **Device**: readable `deviceName`; if empty, show raw `deviceId` / a count, never fabricate. Append `(This Device)` when `isThisDevice==true`.
 - **Last Online**: render `lastOnlineLocal` **verbatim**; never re-convert or parse `lastOnlineTime`.
 - **Received Subscription Messages**: join each `deviceId` with subscription `deviceList` from `my-subscriptions`. `null` matches every logged-in buyer device; `[]` matches none; non-empty uses membership. List subscriptions received, or show Yes/No for a specific subscription.
-- Empty list (`list: []`) → tell the user no devices are currently listable. If the command errors (endpoint not live yet / transport), see the degraded render in §My Subscriptions / §Subscription Detail — state that device info is temporarily unavailable rather than presenting a partial picture as complete.
+- Empty list (`list: []`) → tell the user no devices are currently listable. If the command errors (endpoint not live yet / transport), see the degraded render in §Buyer Subscription Renderer / §Subscription Detail — state that device info is temporarily unavailable rather than presenting a partial picture as complete.
 
 ## Create-subscribe device routing
 

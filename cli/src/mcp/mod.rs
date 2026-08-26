@@ -923,6 +923,19 @@ fn err(e: anyhow::Error) -> Result<String, String> {
         return Err(serde_json::to_string(&payload).unwrap_or_else(|_| c.message.clone()));
     }
 
+    if let Some(blocked) = e.downcast_ref::<crate::output::CliDuplicateSubscription>() {
+        let mut payload = serde_json::json!({
+            "ok": false,
+            "data": blocked.data,
+        });
+        if !events.is_empty() {
+            payload["notifications"] = serde_json::Value::Array(events);
+        }
+        return Err(
+            serde_json::to_string(&payload).unwrap_or_else(|_| blocked.to_string())
+        );
+    }
+
     // `CodedError` carries a machine code + optional field; surface the same
     // structured envelope the CLI prints via `output::error_coded`, so MCP
     // callers can distinguish validation failures (invalid_input, etc.).

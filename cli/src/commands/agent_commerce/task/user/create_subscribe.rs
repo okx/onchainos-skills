@@ -42,6 +42,7 @@ pub struct CreateSubscribeParams {
     pub autotrade_environment: Option<String>,
     pub autotrade_margin_mode: Option<String>,
     pub autotrade_order_policy: Option<String>,
+    pub autotrade_required_fields: Vec<String>,
     pub format: String,
     pub exclude_device: Option<Vec<String>>,
 }
@@ -88,7 +89,39 @@ impl CreateSubscribeParams {
         if self.description.chars().count() > MAX_DESCRIPTION_CHARS {
             bail!("--description exceeds {MAX_DESCRIPTION_CHARS} characters");
         }
-        self.autotrade_config()?;
+        let autotrade_config = self.autotrade_config()?;
+        self.validate_required_autotrade_fields(&autotrade_config)?;
+        Ok(())
+    }
+
+    fn validate_required_autotrade_fields(
+        &self,
+        config: &SubscriptionAutoTradeConfig,
+    ) -> Result<()> {
+        let mut missing = Vec::new();
+        for field in &self.autotrade_required_fields {
+            let present = match field.as_str() {
+                "mode" => self.autotrade_mode.is_some(),
+                "tradeAmount" => config.amount.is_some(),
+                "cap" => config.cap.is_some(),
+                "quote" => true,
+                "environment" => config.environment.is_some(),
+                "marginMode" => config.margin_mode.is_some(),
+                "orderPolicy" => config.order_policy.is_some(),
+                _ => bail!(
+                    "--autotrade-required-field must be one of: mode | tradeAmount | cap | quote | environment | marginMode | orderPolicy"
+                ),
+            };
+            if !present && !missing.contains(field) {
+                missing.push(field.clone());
+            }
+        }
+        if !missing.is_empty() {
+            bail!(
+                "missing required automatic execution fields: {}",
+                missing.join(", ")
+            );
+        }
         Ok(())
     }
 
@@ -245,6 +278,30 @@ fn build_create_success(
     envelope
 }
 
+fn build_duplicate_subscription_block(
+    service_id: &str,
+    existing: &super::subscription_ops::ExistingSubscriptionSummary,
+) -> serde_json::Value {
+    let base = format!(
+        "Service {service_id} already has a subscription task, jobId: {}. It cannot be created again.",
+        existing.job_id
+    );
+    let prompt = if existing.restore_listening_available {
+        format!("{base} Would you like to restore listening?")
+    } else {
+        base
+    };
+    let mut block = serde_json::json!({
+        "blockedReason": "duplicate-subscription",
+        "userFacingPrompt": prompt,
+        "existingSubscription": existing,
+    });
+    if existing.restore_listening_available {
+        block["nextAfterUserChoice"] = serde_json::json!(["restore-listening"]);
+    }
+    block
+}
+
 pub async fn handle_create_subscribe(
     client: &mut TaskApiClient,
     params: CreateSubscribeParams,
@@ -256,7 +313,8 @@ pub async fn handle_create_subscribe(
         || params.autotrade_quote.is_some()
         || params.autotrade_environment.is_some()
         || params.autotrade_margin_mode.is_some()
-        || params.autotrade_order_policy.is_some();
+        || params.autotrade_order_policy.is_some()
+        || !params.autotrade_required_fields.is_empty();
     let autotrade_config = params.autotrade_config()?;
 
     let json_mode = params.format.eq_ignore_ascii_case("json");
@@ -268,6 +326,23 @@ pub async fn handle_create_subscribe(
     let user_agent_id = select_subscription_agent_id(&user_agent_id, "")?;
     if DEBUG_LOG {
         eprintln!("[create-subscribe] user identity check passed (agentId: {user_agent_id})");
+    }
+
+    // Repeat the selection-time check immediately before the write path to
+    // close the confirmation-to-create race. Read or parse failures propagate,
+    // so no balance, signing, confirmation, create, or broadcast call follows.
+    let existing_subscriptions =
+        super::subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
+            client,
+            &user_agent_id,
+        ).await?;
+    if let Some(existing) = super::subscription_ops::existing_subscription_for_service(
+        &existing_subscriptions,
+        &params.service_id,
+    ) {
+        return Err(crate::output::CliDuplicateSubscription {
+            data: build_duplicate_subscription_block(&params.service_id, existing),
+        }.into());
     }
 
     if let Some(warning) = subscribe_balance_warning(
@@ -557,6 +632,7 @@ mod tests {
                 autotrade_environment,
                 autotrade_margin_mode,
                 autotrade_order_policy,
+                autotrade_required_fields,
                 format,
                 exclude_device,
             } => {
@@ -578,11 +654,46 @@ mod tests {
                 assert!(autotrade_environment.is_none());
                 assert!(autotrade_margin_mode.is_none());
                 assert!(autotrade_order_policy.is_none());
+                assert!(autotrade_required_fields.is_empty());
                 assert_eq!(format, "");
                 assert!(exclude_device.is_none());
             }
             _ => panic!("expected CreateSubscribe"),
         }
+    }
+
+    #[test]
+    fn duplicate_block_only_offers_restore_for_active_subscription() {
+        let active = super::super::subscription_ops::ExistingSubscriptionSummary {
+            job_id: "job-active".to_string(),
+            service_id: "svc-1".to_string(),
+            provider_agent_id: "asp-1".to_string(),
+            status_name: "ACTIVE".to_string(),
+            restore_listening_available: true,
+        };
+        let active = super::build_duplicate_subscription_block("svc-1", &active);
+        assert_eq!(active["blockedReason"], "duplicate-subscription");
+        assert_eq!(active["existingSubscription"]["jobId"], "job-active");
+        assert!(active["userFacingPrompt"].as_str().unwrap().contains("jobId: job-active"));
+        assert!(active["userFacingPrompt"].as_str().unwrap().contains("cannot be created again"));
+        assert!(!active["userFacingPrompt"].as_str().unwrap().contains("ACTIVE"));
+        assert_eq!(
+            active["nextAfterUserChoice"],
+            serde_json::json!(["restore-listening"])
+        );
+
+        let rejected = super::super::subscription_ops::ExistingSubscriptionSummary {
+            job_id: "job-rejected".to_string(),
+            service_id: "svc-1".to_string(),
+            provider_agent_id: "asp-1".to_string(),
+            status_name: "REJECTED".to_string(),
+            restore_listening_available: false,
+        };
+        let rejected = super::build_duplicate_subscription_block("svc-1", &rejected);
+        assert!(rejected.get("nextAfterUserChoice").is_none());
+        assert!(!rejected["userFacingPrompt"].as_str().unwrap().contains("Restore listening"));
+        assert!(!rejected["userFacingPrompt"].as_str().unwrap().contains("REJECTED"));
+        assert!(rejected.get("serviceId").is_none());
     }
 
     #[test]
@@ -691,6 +802,7 @@ mod tests {
             autotrade_environment: None,
             autotrade_margin_mode: None,
             autotrade_order_policy: None,
+            autotrade_required_fields: Vec::new(),
             format: "json".to_string(),
             exclude_device: None,
         }
@@ -821,6 +933,7 @@ mod tests {
             autotrade_environment: None,
             autotrade_margin_mode: None,
             autotrade_order_policy: None,
+            autotrade_required_fields: Vec::new(),
             format: "json".to_string(),
             exclude_device: None,
         };
@@ -855,6 +968,9 @@ mod tests {
             "--autotrade-environment", "demo",
             "--autotrade-margin-mode", "cross",
             "--autotrade-order-policy", "market",
+            "--autotrade-required-field", "environment",
+            "--autotrade-required-field", "orderPolicy",
+            "--autotrade-required-field", "marginMode",
         ]);
         let super::super::TaskCommand::CreateSubscribe {
             autotrade_mode,
@@ -864,6 +980,7 @@ mod tests {
             autotrade_environment,
             autotrade_margin_mode,
             autotrade_order_policy,
+            autotrade_required_fields,
             ..
         } = cli.cmd else {
             panic!("expected CreateSubscribe");
@@ -875,6 +992,59 @@ mod tests {
         assert_eq!(autotrade_environment.as_deref(), Some("demo"));
         assert_eq!(autotrade_margin_mode.as_deref(), Some("cross"));
         assert_eq!(autotrade_order_policy.as_deref(), Some("market"));
+        assert_eq!(
+            autotrade_required_fields,
+            ["environment", "orderPolicy", "marginMode"]
+        );
+    }
+
+    #[test]
+    fn create_validation_rejects_missing_declared_autotrade_fields() {
+        let mut params = params_fixture(None);
+        params.autotrade_environment = Some("demo".to_string());
+        params.autotrade_required_fields = vec![
+            "environment".to_string(),
+            "orderPolicy".to_string(),
+            "marginMode".to_string(),
+        ];
+
+        let error = params
+            .validate()
+            .expect_err("missing declared execution settings must block creation");
+        assert_eq!(
+            error.to_string(),
+            "missing required automatic execution fields: orderPolicy, marginMode"
+        );
+    }
+
+    #[test]
+    fn create_validation_rejects_unknown_required_autotrade_field() {
+        let mut params = params_fixture(None);
+        params.autotrade_required_fields = vec!["leverage".to_string()];
+
+        assert!(params
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("--autotrade-required-field must be one of"));
+    }
+
+    #[test]
+    fn create_validation_enforces_asp_required_amount_and_cap() {
+        let mut params = params_fixture(None);
+        params.autotrade_required_fields = vec![
+            "tradeAmount".to_string(),
+            "cap".to_string(),
+            "tradeAmount".to_string(),
+        ];
+        assert_eq!(
+            params.validate().unwrap_err().to_string(),
+            "missing required automatic execution fields: tradeAmount, cap"
+        );
+
+        params.autotrade_amount = Some("10".to_string());
+        params.autotrade_cap = Some("100".to_string());
+        assert!(params.validate().is_ok());
     }
 
     #[test]

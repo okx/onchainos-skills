@@ -109,8 +109,6 @@ pub enum DegradeReason {
     MissingTradeAmount,
     /// The selected execution tool is not installed locally.
     ToolMissing,
-    /// The selected execution tool exists but is not configured/authenticated.
-    ToolNeedsConfiguration,
     /// Current market price is outside the signal's entry interval.
     EntryOutsideRange,
     /// Parsed successfully, but the current runtime supports only one take-profit level.
@@ -145,7 +143,6 @@ impl DegradeReason {
             DegradeReason::LookupOff => "lookup_off",
             DegradeReason::MissingTradeAmount => "missing_trade_amount",
             DegradeReason::ToolMissing => "tool_missing",
-            DegradeReason::ToolNeedsConfiguration => "tool_needs_configuration",
             DegradeReason::EntryOutsideRange => "entry_outside_range",
             DegradeReason::MultipleTakeProfitUnsupported => "multiple_take_profit_unsupported",
             DegradeReason::SchemaVersionTooNew => "schema_version_too_new",

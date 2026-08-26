@@ -28,6 +28,7 @@ pub mod flow;
 mod flow_lifecycle;
 pub(crate) use flow_lifecycle::{try_recover_from_temp_file, route_subscription_delivery_to_skill};
 mod flow_negotiate;
+pub(crate) mod my_tasks;
 pub(crate) mod negotiate;
 mod query;
 mod reject;
@@ -152,6 +153,10 @@ pub enum TaskCommand {
         /// User-authorized signal-entry order policy.
         #[arg(long = "autotrade-order-policy")]
         autotrade_order_policy: Option<String>,
+        /// Execution fields that the selected service requires the subscriber
+        /// to confirm. Repeat once per canonical field.
+        #[arg(long = "autotrade-required-field")]
+        autotrade_required_fields: Vec<String>,
         /// Output format: "json" for raw JSON
         #[arg(long, default_value = "")]
         format: String,
@@ -352,6 +357,13 @@ pub enum TaskCommand {
         role: subscription_ops::SubscriptionRole,
         status: Option<i32>,
     },
+    /// List subscription and one-time tasks for the current User identity.
+    MyTasks {
+        task_type: my_tasks::MyTaskType,
+        status_type: u8,
+        page: u32,
+        page_size: u32,
+    },
     /// Show total monthly cost of active subscriptions.
     #[command(name = "subscribe-cost")]
     SubscribeCost {},
@@ -416,6 +428,8 @@ struct PostLoginExecutableService {
     description: String,
     description_source: &'static str,
     asset_classes: Vec<crate::asset_class::AssetClass>,
+    explicit_tools:
+        Vec<crate::commands::agent_commerce::task::common::autotrade::tooling::ExecutionTool>,
 }
 
 fn executable_service_from_description(
@@ -437,7 +451,50 @@ fn executable_service_from_description(
         description: description.to_string(),
         description_source,
         asset_classes: classified.classes,
+        explicit_tools: classified.explicit,
     })
+}
+
+fn requires_trade_kit(executable: &PostLoginExecutableService) -> bool {
+    use crate::commands::agent_commerce::task::common::autotrade::tooling::ExecutionTool;
+
+    executable.explicit_tools.contains(&ExecutionTool::TradeKit)
+        || executable
+            .asset_classes
+            .contains(&crate::asset_class::AssetClass::Option)
+}
+
+fn trade_kit_required_fields(executable: &PostLoginExecutableService) -> Vec<&'static str> {
+    if !requires_trade_kit(executable) {
+        return Vec::new();
+    }
+    let mut fields = vec!["environment", "orderPolicy"];
+    if executable
+        .asset_classes
+        .contains(&crate::asset_class::AssetClass::Perp)
+    {
+        fields.push("marginMode");
+    }
+    fields
+}
+
+fn missing_snapshot_fields(
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+    required_fields: &[&'static str],
+) -> Vec<&'static str> {
+    required_fields
+        .iter()
+        .copied()
+        .filter(|field| match *field {
+            "tradeAmount" => snapshot.trade_amount_u.is_none(),
+            "cap" => snapshot.cap_u.is_none(),
+            "quote" => snapshot.quote_token.is_none(),
+            "environment" => snapshot.trade_environment.is_none(),
+            "marginMode" => snapshot.margin_mode.is_none(),
+            "orderPolicy" => snapshot.order_policy.is_none(),
+            _ => true,
+        })
+        .collect()
 }
 
 fn post_login_executable_service(
@@ -609,7 +666,8 @@ fn compose_scoped_watch_autotrade_precheck(
     job_id: &str,
     agent_id: &str,
     subscription: Option<&serde_json::Value>,
-    consent_status: crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus,
+    consent_snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+    grant_refresh_required: bool,
 ) -> serde_json::Value {
     let executable = subscription.and_then(post_login_executable_service);
     compose_scoped_watch_autotrade_precheck_with_executable(
@@ -617,7 +675,8 @@ fn compose_scoped_watch_autotrade_precheck(
         agent_id,
         subscription,
         executable.as_ref(),
-        consent_status,
+        consent_snapshot,
+        grant_refresh_required,
     )
 }
 
@@ -626,7 +685,8 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
     agent_id: &str,
     subscription: Option<&serde_json::Value>,
     executable: Option<&PostLoginExecutableService>,
-    consent_status: crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus,
+    consent_snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+    grant_refresh_required: bool,
 ) -> serde_json::Value {
     use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
     use crate::commands::agent_commerce::task::common::state_machine::SubStatus;
@@ -680,16 +740,65 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
         });
     };
 
-    match consent_status {
-        ConsentSnapshotStatus::Active => serde_json::json!({
-            "jobId": job_id,
-            "agentId": agent_id,
-            "applicable": true,
-            "watchAllowed": true,
-            "shouldPromptAuthorization": false,
-            "reason": "consent_active",
-            "consentStatus": consent_status,
-        }),
+    match consent_snapshot.status {
+        ConsentSnapshotStatus::Active => {
+            let required_fields = trade_kit_required_fields(executable);
+            let missing_fields = missing_snapshot_fields(consent_snapshot, &required_fields);
+            let legacy_consent = consent_snapshot
+                .version
+                .map(|version| {
+                    version
+                        < crate::commands::agent_commerce::task::common::autotrade::consent::CONSENT_VERSION
+                })
+                .unwrap_or(true);
+            let refresh_required = consent_snapshot.mode
+                != Some(crate::commands::agent_commerce::task::common::autotrade::consent::ConsentMode::Decline)
+                && (legacy_consent || !missing_fields.is_empty() || grant_refresh_required);
+            if refresh_required {
+                let mut refresh_reasons = Vec::new();
+                if legacy_consent {
+                    refresh_reasons.push("legacy_consent");
+                }
+                if !missing_fields.is_empty() {
+                    refresh_reasons.push("missing_required_fields");
+                }
+                if grant_refresh_required {
+                    refresh_reasons.push("stale_trade_kit_grant");
+                }
+                serde_json::json!({
+                    "jobId": job_id,
+                    "agentId": agent_id,
+                    "applicable": true,
+                    "watchAllowed": false,
+                    "shouldPromptAuthorization": false,
+                    "shouldPromptConfiguration": true,
+                    "authorizationRefreshRequired": true,
+                    "reason": "configuration_required",
+                    "consentStatus": consent_snapshot.status,
+                    "title": subscription
+                        .get("title")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default(),
+                    "serviceDescription": executable.description.chars().take(4096).collect::<String>(),
+                    "descriptionSource": executable.description_source,
+                    "assetClasses": executable.asset_classes,
+                    "requiredFields": required_fields,
+                    "missingFields": missing_fields,
+                    "existingConsent": consent_snapshot,
+                    "refreshReasons": refresh_reasons,
+                })
+            } else {
+                serde_json::json!({
+                    "jobId": job_id,
+                    "agentId": agent_id,
+                    "applicable": true,
+                    "watchAllowed": true,
+                    "shouldPromptAuthorization": false,
+                    "reason": "consent_active",
+                    "consentStatus": consent_snapshot.status,
+                })
+            }
+        }
         ConsentSnapshotStatus::NotSet => serde_json::json!({
             "jobId": job_id,
             "agentId": agent_id,
@@ -698,7 +807,7 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
             "shouldPromptAuthorization": false,
             "shouldPromptConfiguration": true,
             "reason": "configuration_required",
-            "consentStatus": consent_status,
+            "consentStatus": consent_snapshot.status,
             "title": subscription
                 .get("title")
                 .and_then(serde_json::Value::as_str)
@@ -714,7 +823,7 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
             "watchAllowed": false,
             "shouldPromptAuthorization": false,
             "reason": "consent_unreadable",
-            "consentStatus": consent_status,
+            "consentStatus": consent_snapshot.status,
             "repairCommand": format!(
                 "onchainos agent autotrade-consent-set --job-id {job_id} --mode pause"
             ),
@@ -722,11 +831,43 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
     }
 }
 
+fn compose_existing_consent_review(
+    job_id: &str,
+    agent_id: &str,
+    subscription: &serde_json::Value,
+    executable: &PostLoginExecutableService,
+    consent_snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> serde_json::Value {
+    let required_fields = trade_kit_required_fields(executable);
+    serde_json::json!({
+        "jobId": job_id,
+        "agentId": agent_id,
+        "applicable": true,
+        "watchAllowed": false,
+        "shouldPromptAuthorization": false,
+        "shouldPromptConfiguration": true,
+        "configurationReviewRequired": true,
+        "reason": "configuration_required",
+        "consentStatus": consent_snapshot.status,
+        "title": subscription
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default(),
+        "serviceDescription": executable.description.chars().take(4096).collect::<String>(),
+        "descriptionSource": executable.description_source,
+        "assetClasses": executable.asset_classes,
+        "requiredFields": required_fields,
+        "missingFields": [],
+        "existingConsent": consent_snapshot,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PreDeliveryConsentContext {
     pub agent_id: String,
     pub asset_class: crate::asset_class::AssetClass,
     pub title: String,
+    pub required_fields: Vec<String>,
 }
 
 /// Bind a restore-configuration continuation to the canonical authenticated
@@ -742,6 +883,20 @@ pub(crate) fn bind_subscription_restore_consent_context(
         .get("reason")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("missing_reason");
+    let consent_status = precheck
+        .get("consentStatus")
+        .and_then(serde_json::Value::as_str);
+    let valid_restore_state = consent_status == Some("not_set")
+        || (consent_status == Some("active")
+            && precheck
+                .get("authorizationRefreshRequired")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true))
+        || (consent_status == Some("active")
+            && precheck
+                .get("configurationReviewRequired")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true));
     if precheck
         .get("watchAllowed")
         .and_then(serde_json::Value::as_bool)
@@ -751,10 +906,7 @@ pub(crate) fn bind_subscription_restore_consent_context(
             .and_then(serde_json::Value::as_bool)
             != Some(true)
         || reason != "configuration_required"
-        || precheck
-            .get("consentStatus")
-            .and_then(serde_json::Value::as_str)
-            != Some("not_set")
+        || !valid_restore_state
     {
         anyhow::bail!(
             "subscription restore configuration is not allowed for this subscription (reason: {reason})"
@@ -800,6 +952,14 @@ pub(crate) fn bind_subscription_restore_consent_context(
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        required_fields: precheck
+            .get("requiredFields")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_string)
+            .collect(),
     })
 }
 
@@ -875,6 +1035,7 @@ pub(crate) fn bind_pre_delivery_consent_context(
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        required_fields: Vec::new(),
     })
 }
 
@@ -883,6 +1044,19 @@ pub(crate) fn bind_pre_delivery_consent_context(
 /// executable Active subscription with no local consent returns the ASP
 /// description and any live bounded configuration continuation before watch.
 pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serde_json::Value> {
+    scoped_watch_autotrade_precheck_inner(job_id, false).await
+}
+
+pub(crate) async fn scoped_watch_autotrade_precheck_for_review(
+    job_id: &str,
+) -> Result<serde_json::Value> {
+    scoped_watch_autotrade_precheck_inner(job_id, true).await
+}
+
+async fn scoped_watch_autotrade_precheck_inner(
+    job_id: &str,
+    review_existing: bool,
+) -> Result<serde_json::Value> {
     use crate::commands::agent_commerce::task::common::autotrade::{
         self, consent, grants, profile,
     };
@@ -956,14 +1130,18 @@ pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serd
         }
     }
 
-    let consent_status = consent::consent_snapshot(job_id).status;
+    let consent_snapshot = consent::consent_snapshot(job_id);
+    let grant_refresh_required = resolved_executable.as_ref().is_some_and(requires_trade_kit)
+        && consent_snapshot.mode == Some(consent::ConsentMode::Auto)
+        && (grants::check_grant(job_id, "trade_kit", "buy", "1").is_err()
+            || grants::check_grant(job_id, "trade_kit", "sell", "1").is_err());
 
     // A scoped watch must not surface authorization cards left pending by the
     // retired delivery-time flow after an executable policy is already active.
     // This changes only those exact control decisions to handled; notification
     // history and unrelated decisions remain untouched.
     if resolved_executable.is_some()
-        && consent_status == consent::ConsentSnapshotStatus::Active
+        && consent_snapshot.status == consent::ConsentSnapshotStatus::Active
     {
         crate::commands::agent_commerce::task::common::okx_a2a::mark_retired_autotrade_decisions_handled(
             job_id,
@@ -975,8 +1153,26 @@ pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serd
         &snapshot.agent_id,
         subscription,
         resolved_executable.as_ref(),
-        consent_status,
+        &consent_snapshot,
+        grant_refresh_required,
     );
+    if review_existing
+        && result.get("reason").and_then(serde_json::Value::as_str) == Some("consent_active")
+        && matches!(
+            consent_snapshot.mode,
+            Some(consent::ConsentMode::Auto | consent::ConsentMode::Manual)
+        )
+    {
+        if let (Some(subscription), Some(executable)) = (subscription, resolved_executable.as_ref()) {
+            result = compose_existing_consent_review(
+                job_id,
+                &snapshot.agent_id,
+                subscription,
+                executable,
+                &consent_snapshot,
+            );
+        }
+    }
     if result.get("reason").and_then(serde_json::Value::as_str)
         == Some("configuration_required")
     {
@@ -1305,19 +1501,19 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 title, provider, attachments, endpoint, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount,
             }).await,
-        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment, autotrade_margin_mode, autotrade_order_policy, format, exclude_device } => {
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment, autotrade_margin_mode, autotrade_order_policy, autotrade_required_fields, format, exclude_device } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
                 service_id, use_trial, service_params, service_token_amount, service_token_address,
                 auto_renew, title, description, provider_agent_id, service_description, service_interval,
                 autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment,
-                autotrade_margin_mode, autotrade_order_policy, format, exclude_device,
+                autotrade_margin_mode, autotrade_order_policy, autotrade_required_fields, format, exclude_device,
             }).await
         }
         TaskCommand::AspMatch { job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
             asp_ops::handle_asp_match(&mut client, &job_id, provider_agent_id.as_deref(), payment_token_amount, page, agent_id.as_deref(), &format).await,
         TaskCommand::TaskServiceSelect(args) =>
-            asp_ops::handle_task_service_select(&args.service_match, &args.format).await,
+            asp_ops::handle_task_service_select(&mut client, &args.service_match, &args.format).await,
         TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, agent_id } =>
             asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), agent_id.as_deref()).await,
         TaskCommand::ResetAsp { job_id, agent_id } =>
@@ -1380,6 +1576,14 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::MySubscriptions { role, status } => {
             subscription_ops::handle_my_subscriptions(&mut client, role, status).await
         }
+        TaskCommand::MyTasks {
+            task_type,
+            status_type,
+            page,
+            page_size,
+        } => {
+            my_tasks::handle_my_tasks(&mut client, task_type, status_type, page, page_size).await
+        }
         TaskCommand::SubscribeCost {} =>
             subscription_ops::handle_subscribe_cost(&mut client).await,
 
@@ -1390,8 +1594,29 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 mod post_login_tests {
     use super::*;
     use crate::asset_class::AssetClass;
-    use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
+    use crate::commands::agent_commerce::task::common::autotrade::consent::{
+        ConsentMode, ConsentSnapshot, ConsentSnapshotStatus, MarginMode, OrderPolicy,
+        CONSENT_VERSION,
+    };
+    use crate::commands::agent_commerce::task::common::autotrade::trade_kit::TradeEnvironment;
     use serde_json::json;
+
+    fn consent_snapshot(status: ConsentSnapshotStatus) -> ConsentSnapshot {
+        let active = status == ConsentSnapshotStatus::Active;
+        ConsentSnapshot {
+            status,
+            version: active.then_some(CONSENT_VERSION),
+            mode: active.then_some(ConsentMode::Auto),
+            cap_u: active.then(|| "100".to_string()),
+            trade_amount_u: active.then(|| "10".to_string()),
+            quote_token: active.then(|| "usdt".to_string()),
+            trade_environment: active.then_some(TradeEnvironment::Live),
+            margin_mode: active.then_some(MarginMode::Cross),
+            order_policy: active.then_some(OrderPolicy::Market),
+            created_at: active.then_some(1),
+            expires_at: active.then_some(u64::MAX),
+        }
+    }
 
     #[test]
     fn empty_subscriptions_produce_no_post_login_block() {
@@ -1491,8 +1716,6 @@ mod post_login_tests {
 
     #[test]
     fn scoped_watch_precheck_uses_a_recovered_service_description() {
-        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
-
         let mut subscription = active_executable_subscription();
         subscription
             .as_object_mut()
@@ -1508,7 +1731,8 @@ mod post_login_tests {
             "user-1",
             Some(&subscription),
             Some(&executable),
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
         assert_eq!(result["watchAllowed"], false);
         assert_eq!(result["shouldPromptAuthorization"], false);
@@ -1531,14 +1755,13 @@ mod post_login_tests {
 
     #[test]
     fn scoped_watch_precheck_returns_bounded_restore_configuration() {
-        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
-
         let subscription = active_executable_subscription();
         let result = compose_scoped_watch_autotrade_precheck(
             "job-watch",
             "user-1",
             Some(&subscription),
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
         assert_eq!(result["applicable"], true);
         assert_eq!(result["watchAllowed"], false);
@@ -1558,7 +1781,8 @@ mod post_login_tests {
             "job-watch",
             "user-1",
             Some(&active_executable_subscription()),
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
         let bound = bind_subscription_restore_consent_context(
             &precheck,
@@ -1593,7 +1817,8 @@ mod post_login_tests {
             "job-watch",
             "user-1",
             Some(&active_executable_subscription()),
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
         assert!(
             bind_pre_delivery_consent_context(
@@ -1612,7 +1837,8 @@ mod post_login_tests {
             "job-watch",
             "user-1",
             Some(&active_executable_subscription()),
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
         for result in [
             bind_pre_delivery_consent_context(&precheck, "job-other", "user-1", AssetClass::Spot),
@@ -1629,7 +1855,8 @@ mod post_login_tests {
             "job-watch",
             "user-1",
             Some(&active_executable_subscription()),
-            ConsentSnapshotStatus::Active,
+            &consent_snapshot(ConsentSnapshotStatus::Active),
+            false,
         );
         let error =
             bind_pre_delivery_consent_context(&precheck, "job-watch", "user-1", AssetClass::Spot)
@@ -1639,14 +1866,13 @@ mod post_login_tests {
 
     #[test]
     fn scoped_watch_precheck_allows_existing_live_consent() {
-        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
-
         let subscription = active_executable_subscription();
         let result = compose_scoped_watch_autotrade_precheck(
             "job-watch",
             "user-1",
             Some(&subscription),
-            ConsentSnapshotStatus::Active,
+            &consent_snapshot(ConsentSnapshotStatus::Active),
+            false,
         );
         assert_eq!(result["watchAllowed"], true);
         assert_eq!(result["shouldPromptAuthorization"], false);
@@ -1655,15 +1881,111 @@ mod post_login_tests {
     }
 
     #[test]
-    fn scoped_watch_precheck_blocks_unreadable_consent() {
-        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
+    fn explicit_restore_can_review_and_modify_existing_live_consent() {
+        let subscription = active_executable_subscription();
+        let executable = post_login_executable_service(&subscription).unwrap();
+        let snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        let result = compose_existing_consent_review(
+            "job-watch",
+            "user-1",
+            &subscription,
+            &executable,
+            &snapshot,
+        );
 
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["shouldPromptConfiguration"], true);
+        assert_eq!(result["configurationReviewRequired"], true);
+        assert_eq!(result["reason"], "configuration_required");
+        assert_eq!(result["missingFields"], json!([]));
+        assert_eq!(result["existingConsent"]["mode"], "auto");
+        assert_eq!(result["existingConsent"]["tradeAmountU"], "10");
+
+        bind_subscription_restore_consent_context(
+            &result,
+            "job-watch",
+            "user-1",
+            AssetClass::Spot,
+        )
+        .expect("review must remain bound to the canonical subscription");
+    }
+
+    #[test]
+    fn scoped_watch_precheck_requires_confirmation_for_legacy_consent() {
+        let subscription = active_executable_subscription();
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.version = Some(CONSENT_VERSION - 1);
+        let result = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            &snapshot,
+            false,
+        );
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["reason"], "configuration_required");
+        assert_eq!(result["authorizationRefreshRequired"], true);
+        assert_eq!(result["existingConsent"]["version"], CONSENT_VERSION - 1);
+        assert_eq!(result["refreshReasons"], json!(["legacy_consent"]));
+        let bound = bind_subscription_restore_consent_context(
+            &result,
+            "job-watch",
+            "user-1",
+            AssetClass::Spot,
+        )
+        .expect("legacy active consent must enter bounded restore");
+        assert!(bound.required_fields.is_empty());
+    }
+
+    #[test]
+    fn scoped_watch_precheck_requires_missing_trade_kit_settings_and_grant_refresh() {
+        let mut subscription = active_executable_subscription();
+        subscription["serviceDescription"] =
+            json!("Trade Kit perp trading signals with LONG and SHORT entries");
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.trade_environment = None;
+        snapshot.margin_mode = None;
+        snapshot.order_policy = None;
+        let result = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            &snapshot,
+            true,
+        );
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["authorizationRefreshRequired"], true);
+        assert_eq!(
+            result["requiredFields"],
+            json!(["environment", "orderPolicy", "marginMode"])
+        );
+        assert_eq!(result["missingFields"], result["requiredFields"]);
+        assert_eq!(
+            result["refreshReasons"],
+            json!(["missing_required_fields", "stale_trade_kit_grant"])
+        );
+        let bound = bind_subscription_restore_consent_context(
+            &result,
+            "job-watch",
+            "user-1",
+            AssetClass::Perp,
+        )
+        .expect("incomplete active consent must enter bounded restore");
+        assert_eq!(
+            bound.required_fields,
+            ["environment", "orderPolicy", "marginMode"]
+        );
+    }
+
+    #[test]
+    fn scoped_watch_precheck_blocks_unreadable_consent() {
         let subscription = active_executable_subscription();
         let result = compose_scoped_watch_autotrade_precheck(
             "job-watch",
             "user-1",
             Some(&subscription),
-            ConsentSnapshotStatus::Unreadable,
+            &consent_snapshot(ConsentSnapshotStatus::Unreadable),
+            false,
         );
         assert_eq!(result["watchAllowed"], false);
         assert_eq!(result["shouldPromptAuthorization"], false);
@@ -1673,13 +1995,12 @@ mod post_login_tests {
 
     #[test]
     fn scoped_watch_precheck_does_not_gate_non_subscription_or_read_only_jobs() {
-        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
-
         let non_subscription = compose_scoped_watch_autotrade_precheck(
             "job-regular",
             "user-1",
             None,
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
         assert_eq!(non_subscription["watchAllowed"], true);
         assert_eq!(non_subscription["reason"], "not_subscription");
@@ -1694,7 +2015,8 @@ mod post_login_tests {
             "job-news",
             "user-1",
             Some(&read_only),
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
         assert_eq!(read_only_result["watchAllowed"], true);
         assert_eq!(read_only_result["reason"], "non_executable_service");
