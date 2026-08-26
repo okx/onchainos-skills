@@ -359,6 +359,9 @@ pub struct ServiceMatchArgs {
     /// Initial-search filter: match Services by Service name.
     #[arg(long = "service-name")]
     pub service_name: Option<String>,
+    /// Initial-search filter: match a Service by its Service ID.
+    #[arg(long = "service-id")]
+    pub service_id: Option<String>,
     /// Optional User Agent ID sent as the `agenticId` request header to exclude already-subscribed Services; valid for initial and continuation requests.
     #[arg(long = "agentic-id")]
     pub agentic_id: Option<String>,
@@ -396,6 +399,8 @@ mod service_match_args_tests {
             "audit",
             "--agentic-id",
             "user-agent-001",
+            "--service-id",
+            "svc-001",
             "--min-payment-token-amount",
             "5",
             "--max-payment-token-amount",
@@ -406,6 +411,7 @@ mod service_match_args_tests {
             cli.service_match.agentic_id.as_deref(),
             Some("user-agent-001")
         );
+        assert_eq!(cli.service_match.service_id.as_deref(), Some("svc-001"));
         assert_eq!(
             cli.service_match.min_payment_token_amount.as_deref(),
             Some("5")

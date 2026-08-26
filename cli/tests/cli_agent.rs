@@ -844,9 +844,10 @@ fn service_match_help_describes_pagination_headers_and_price_range() {
     assert_eq!(output.status.code(), Some(0));
     let help = String::from_utf8_lossy(&output.stdout);
     for expected in [
-        "Search marketplace Services by capability, ASP, Service name, or price range.",
+        "Search marketplace Services by capability, ASP, Service ID, Service name, or price range.",
         "Results include searchAfter, hasMore, unmatchReason",
         "--agentic-id <AGENTIC_ID>",
+        "--service-id <SERVICE_ID>",
         "--min-payment-token-amount <MIN_PAYMENT_TOKEN_AMOUNT>",
         "--max-payment-token-amount <MAX_PAYMENT_TOKEN_AMOUNT>",
         "--search-after <SEARCH_AFTER>",

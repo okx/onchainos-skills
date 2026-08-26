@@ -320,6 +320,9 @@ pub async fn handle_task_service_select(args: &ServiceMatchArgs, format: &str) -
     if let Some(value) = args.service_name.as_deref().filter(|s| !s.is_empty()) {
         cmd.arg("--service-name").arg(value);
     }
+    if let Some(value) = args.service_id.as_deref().filter(|s| !s.is_empty()) {
+        cmd.arg("--service-id").arg(value);
+    }
     if let Some(value) = args
         .min_payment_token_amount
         .as_deref()
@@ -1174,6 +1177,8 @@ mod tests {
             "2864",
             "--service-name",
             "A2A Task Collaboration",
+            "--service-id",
+            "svc-001",
             "--agentic-id",
             "1695",
             "--limit",
@@ -1193,6 +1198,7 @@ mod tests {
                     args.service_match.service_name.as_deref(),
                     Some("A2A Task Collaboration")
                 );
+                assert_eq!(args.service_match.service_id.as_deref(), Some("svc-001"));
                 assert_eq!(args.service_match.agentic_id.as_deref(), Some("1695"));
                 assert_eq!(args.service_match.limit, 1);
                 assert_eq!(args.format, "json");
