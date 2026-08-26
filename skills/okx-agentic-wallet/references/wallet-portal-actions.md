@@ -56,7 +56,5 @@ e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I i
 For any account type, output the following copy verbatim as the complete response:
 
 > Export your seed phrase in the OKX Wallet extension or app.
->
 > Please note: After export, your wallet will be permanently unlinked from your social account, and the Agent will no longer be able to operate it.
->
 > Before exporting, move your assets to a secure address and stop any active tasks. After exporting, back up your seed phrase securely and never share it with anyone.
