@@ -2,11 +2,11 @@
 
 > Load when: new user login (`isNew: true`), after `wallet add`, the user asks about Policy / spending limits / whitelist, or the user asks to export wallet / mnemonic / migrate / import a hardware wallet.
 
-Policy configuration **must be completed by the user on the Web portal** — the Agent only detects the scenario, explains the risk, gives the jump link, and outputs the verbatim Policy Settings template below. Wallet export is **done by the user in the OKX Wallet extension or app** (not on the Web portal); the Agent only outputs the verbatim export copy below and never performs the export itself. The Agent must **never** display any mnemonic phrase, seed phrase, or private key content in the conversation.
+Policy configuration must be completed by the user on the Web portal. The Agent only detects the scenario, explains the risk, gives the jump link, and outputs the verbatim template below. The Agent must **never** display any mnemonic phrase or private key content in the conversation.
 
 ## Templates
 
-**IMPORTANT**: Print the matching template verbatim. For the **Policy Settings** template, the link and trailing navigation sentence are chosen by `loginType` (from `wallet status`, or the `login` response) — the table has an `email` row and an `ak` row. Row selection is **internal — never explain it to the user**: pick the row by `loginType` and render it directly (do NOT add phrases like "Google login uses the email flow"). If `loginType` is unknown or unrecognized, run `onchainos wallet status` first and treat it as `email`. The **Wallet Export** copy (in Trigger flows below) is identical for every account type — no `loginType` branch.
+**IMPORTANT**: Print the matching template verbatim. For the **Policy Settings** template, the link and trailing navigation sentence are chosen by `loginType` (from `wallet status`, or the `login` response) — the table has an `email` row and an `ak` row. Row selection is **internal — never explain it to the user**: pick the row by `loginType` and render it directly (do NOT add phrases like "Google login uses the email flow"). If `loginType` is unknown or unrecognized, run `onchainos wallet status` first and treat it as `email`.
 
 ### Template: Policy Settings
 
@@ -53,7 +53,7 @@ e.g., "How do I set a spending limit?", "What's my daily limit?", "How to config
 
 e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I import my wallet into a hardware wallet?"
 
-Output the following copy **verbatim** as the complete response, **identical for every account type** (`email`, `ak`, `google`, `apple`, or empty/unknown) — there is no account-type branch and no "not supported" case, so do NOT run `wallet status` to route on `loginType` here:
+For any account type, output the following copy verbatim as the complete response:
 
 > Export your seed phrase in the OKX Wallet extension or app.
 >
