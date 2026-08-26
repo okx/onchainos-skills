@@ -555,7 +555,12 @@ pub(super) fn build_gs_first_time_prompt(
          Token list: {}",
         token_list_json(unsigned)
     );
-    crate::output::CliConfirming { message, next, scene: Some("gs_first_time".into()) }.into()
+    crate::output::CliConfirming {
+        message,
+        next,
+        scene: Some("gs_first_time".into()),
+    }
+    .into()
 }
 
 /// REENABLE_ONLY: Gas Station was explicitly disabled by the user earlier. Backend overwrites
@@ -581,7 +586,12 @@ pub(super) fn build_gs_reenable_prompt(
          Token list: {}",
         token_list_json(unsigned)
     );
-    crate::output::CliConfirming { message, next, scene: Some("gs_reenable".into()) }.into()
+    crate::output::CliConfirming {
+        message,
+        next,
+        scene: Some("gs_reenable".into()),
+    }
+    .into()
 }
 
 /// Call-site adapter for the `sign_and_broadcast` (contract-call / send via TxParams)
@@ -727,7 +737,12 @@ pub(super) fn build_gs_token_selection_prompt(
          Token list: {}",
         token_list_json(unsigned)
     );
-    crate::output::CliConfirming { message, next, scene: Some("gs_token_switch".into()) }.into()
+    crate::output::CliConfirming {
+        message,
+        next,
+        scene: Some("gs_token_switch".into()),
+    }
+    .into()
 }
 
 // ── Gas Station Phase 1 dispatch ───────────────────────────────────────────

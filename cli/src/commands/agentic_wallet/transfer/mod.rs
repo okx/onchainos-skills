@@ -2,17 +2,19 @@ use anyhow::{bail, Context, Result};
 use base64::Engine;
 use serde_json::{json, Value};
 
-use crate::token_alias::validate_address_for_chain;
-use crate::validators::{validate_amount, validate_non_negative_integer};
 use crate::keyring_store;
 use crate::output;
+use crate::token_alias::validate_address_for_chain;
+use crate::validators::{validate_amount, validate_non_negative_integer};
 use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
 use crate::wallet_store::{self, AddressInfo, WalletsJson};
 
 use super::auth::{ensure_tokens_refreshed, format_api_error};
 use super::common::handle_confirming_error;
 
+pub(super) mod bitcoin;
 mod gas_station;
+pub(super) mod sui;
 use gas_station::*;
 
 // ── resolve_address ───────────────────────────────────────────────────
@@ -86,8 +88,7 @@ fn sign_and_build_extra_data(
     mev_protection: bool,
     force: bool,
 ) -> Result<String> {
-    let signing_seed =
-        crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, session_key)?;
+    let signing_seed = crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, session_key)?;
     let signing_seed_b64 = base64::engine::general_purpose::STANDARD.encode(signing_seed);
 
     let mut msg_for_sign_map = serde_json::Map::new();
@@ -97,8 +98,7 @@ fn sign_and_build_extra_data(
         msg_for_sign_map.insert("signature".into(), json!(sig));
     }
     if !unsigned.auth_hash_for7702.is_empty() {
-        let sig =
-            crate::crypto::ed25519_sign_hex(&unsigned.auth_hash_for7702, &signing_seed_b64)?;
+        let sig = crate::crypto::ed25519_sign_hex(&unsigned.auth_hash_for7702, &signing_seed_b64)?;
         msg_for_sign_map.insert("authSignatureFor7702".into(), json!(sig));
     }
     if !unsigned.unsigned_tx_hash.is_empty() {
@@ -349,7 +349,11 @@ pub(super) async fn sign_and_broadcast(
             tx.aa_dex_token_amount,
             tx.jito_unsigned_tx,
             trace_ref,
-            if tx.enable_gas_station { Some(true) } else { None },
+            if tx.enable_gas_station {
+                Some(true)
+            } else {
+                None
+            },
             tx.gas_token_address,
             tx.relayer_id,
         )
@@ -416,7 +420,13 @@ pub(super) async fn sign_and_broadcast(
                         // with structured error so plugin's outer caller (agent) can run
                         // `wallet gas-station setup` then re-invoke the plugin command.
                         return Err(force_setup_required_for_tx_params(
-                            false, is_contract_call, chain, from, &tx, &addr_info, &unsigned,
+                            false,
+                            is_contract_call,
+                            chain,
+                            from,
+                            &tx,
+                            &addr_info,
+                            &unsigned,
                         ));
                     }
                     return Err(build_gs_first_time_prompt(&addr_info, &unsigned));
@@ -424,7 +434,13 @@ pub(super) async fn sign_and_broadcast(
                 GsPhase1Decision::Reenable => {
                     if force {
                         return Err(force_setup_required_for_tx_params(
-                            true, is_contract_call, chain, from, &tx, &addr_info, &unsigned,
+                            true,
+                            is_contract_call,
+                            chain,
+                            from,
+                            &tx,
+                            &addr_info,
+                            &unsigned,
                         ));
                     }
                     return Err(build_gs_reenable_prompt(&addr_info, &unsigned));
@@ -926,7 +942,8 @@ pub async fn batch_sign_and_broadcast(
     let mut broadcast_elements: Vec<crate::wallet_api::BatchBroadcastElement> =
         Vec::with_capacity(unsigned_responses.len());
     for unsigned in &unsigned_responses {
-        let msg_for_sign = build_batch_element_msg_for_sign(unsigned, &signing_seed, &session_cert)?;
+        let msg_for_sign =
+            build_batch_element_msg_for_sign(unsigned, &signing_seed, &session_cert)?;
 
         let mut extra_data_obj = if unsigned.extra_data.is_object() {
             unsigned.extra_data.clone()
@@ -1010,7 +1027,6 @@ pub async fn batch_sign_and_broadcast(
     }
 }
 
-
 // ── send ─────────────────────────────────────────────────────────────
 
 /// onchainos wallet send
@@ -1048,8 +1064,7 @@ pub(super) async fn cmd_send(
     }
 
     // ── First-phase call: let backend decide ──
-    let access_token =
-        crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
+    let access_token = crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
     let wallets = crate::wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
     let chain_entry = super::chain::get_chain_by_real_chain_index(chain)
@@ -1076,7 +1091,13 @@ pub(super) async fn cmd_send(
             amt,
             contract_token,
             session_cert,
-            None, None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None, // enable_gas_station
             None, // gas_token_address
             None, // relayer_id
@@ -1111,8 +1132,16 @@ pub(super) async fn cmd_send(
             || !unsigned.unsigned_tx_hash.is_empty()
         {
             return handle_gs_auto_sign_broadcast(
-                &mut client, &access_token, &account_id, &addr_info, &session,
-                &unsigned, force, recipient, amt, contract_token,
+                &mut client,
+                &access_token,
+                &account_id,
+                &addr_info,
+                &session,
+                &unsigned,
+                force,
+                recipient,
+                amt,
+                contract_token,
             )
             .await;
         }
@@ -1120,8 +1149,14 @@ pub(super) async fn cmd_send(
             GsPhase1Decision::FirstTime => {
                 if force {
                     return Err(force_setup_required_for_send(
-                        false, chain, from, recipient, amt, contract_token,
-                        &addr_info, &unsigned,
+                        false,
+                        chain,
+                        from,
+                        recipient,
+                        amt,
+                        contract_token,
+                        &addr_info,
+                        &unsigned,
                     ));
                 }
                 return Err(build_gs_first_time_prompt(&addr_info, &unsigned));
@@ -1129,8 +1164,14 @@ pub(super) async fn cmd_send(
             GsPhase1Decision::Reenable => {
                 if force {
                     return Err(force_setup_required_for_send(
-                        true, chain, from, recipient, amt, contract_token,
-                        &addr_info, &unsigned,
+                        true,
+                        chain,
+                        from,
+                        recipient,
+                        amt,
+                        contract_token,
+                        &addr_info,
+                        &unsigned,
                     ));
                 }
                 return Err(build_gs_reenable_prompt(&addr_info, &unsigned));
@@ -1421,26 +1462,25 @@ mod tests {
         let mut w = make_test_wallets();
         assert!(resolve_address(&w, None, "tempo").is_err());
 
-        let (acct_id, info) =
-            resolve_address_with_refresh(&mut w, None, "tempo", || async {
-                let mut fresh = make_test_wallets();
-                fresh
-                    .accounts_map
-                    .get_mut("acc-1")
-                    .unwrap()
-                    .address_list
-                    .push(AddressInfo {
-                        account_id: "acc-1".to_string(),
-                        address: "0xTempoAddr".to_string(),
-                        chain_index: "4217".to_string(),
-                        chain_name: "tempo".to_string(),
-                        address_type: "eoa".to_string(),
-                        chain_path: "m/44/60/0/0/0".to_string(),
-                    });
-                Ok(fresh)
-            })
-            .await
-            .unwrap();
+        let (acct_id, info) = resolve_address_with_refresh(&mut w, None, "tempo", || async {
+            let mut fresh = make_test_wallets();
+            fresh
+                .accounts_map
+                .get_mut("acc-1")
+                .unwrap()
+                .address_list
+                .push(AddressInfo {
+                    account_id: "acc-1".to_string(),
+                    address: "0xTempoAddr".to_string(),
+                    chain_index: "4217".to_string(),
+                    chain_name: "tempo".to_string(),
+                    address_type: "eoa".to_string(),
+                    chain_path: "m/44/60/0/0/0".to_string(),
+                });
+            Ok(fresh)
+        })
+        .await
+        .unwrap();
 
         assert_eq!(acct_id, "acc-1");
         assert_eq!(info.address, "0xTempoAddr");
@@ -1591,7 +1631,18 @@ mod tests {
 
     #[tokio::test]
     async fn cmd_send_rejects_decimal_amt() {
-        let result = cmd_send("1.5", "0xRecipient", "1", None, None, false, None, None, false).await;
+        let result = cmd_send(
+            "1.5",
+            "0xRecipient",
+            "1",
+            None,
+            None,
+            false,
+            None,
+            None,
+            false,
+        )
+        .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("--amount"));
     }
@@ -1608,7 +1659,18 @@ mod tests {
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_chain() {
-        let result = cmd_send("100", "0xRecipient", "", None, None, false, None, None, false).await;
+        let result = cmd_send(
+            "100",
+            "0xRecipient",
+            "",
+            None,
+            None,
+            false,
+            None,
+            None,
+            false,
+        )
+        .await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1706,9 +1768,7 @@ mod tests {
     async fn cmd_contract_call_rejects_missing_input_and_unsigned() {
         let result = cmd_contract_call(
             "0xTo", "1", "0", None, None, None, None, None, None, false, None, false, None, None,
-            false,
-            None,
-            None,
+            false, None, None,
         )
         .await;
         assert!(result.is_err());
@@ -1845,8 +1905,14 @@ mod tests {
             "authSignatureFor7702 must be present + non-empty when authHashFor7702 returned, got: {msg}"
         );
         // sessionCert + unsignedTxHash branches still populated as before.
-        assert_eq!(obj.get("sessionCert").and_then(|v| v.as_str()), Some("cert-xxx"));
-        assert_eq!(obj.get("unsignedTxHash").and_then(|v| v.as_str()), Some("0xaa"));
+        assert_eq!(
+            obj.get("sessionCert").and_then(|v| v.as_str()),
+            Some("cert-xxx")
+        );
+        assert_eq!(
+            obj.get("unsignedTxHash").and_then(|v| v.as_str()),
+            Some("0xaa")
+        );
     }
 
     #[test]

@@ -4,7 +4,7 @@ description: "Use OKX.AI to find and use tasks/services, manage tasks and subscr
 license: MIT
 metadata:
   author: okx
-  version: "4.4.18-beta"
+  version: "4.5.1"
   homepage: "https://web3.okx.com"
 ---
 
@@ -12,7 +12,7 @@ metadata:
 
 Single entry point for the OKX AI agent economy: ERC-8004 identity, the task marketplace, live task
 monitoring, and agent-to-agent communication readiness. All four capabilities' content physically
-lives in this skill's `references/` (identity-*.md / task-*.md / watch-*.md / chat-*.md). 
+lives in this skill's `references/` (identity-*.md / task-*.md / watch-*.md / chat-*.md).
 
 ## Inbound envelope activation (highest priority — before anything below)
 

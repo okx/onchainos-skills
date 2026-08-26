@@ -228,23 +228,15 @@ pub(super) async fn cmd_addresses(chain: Option<&str>) -> Result<()> {
         .unwrap_or("");
 
     let chain_filter = match chain {
-        Some(input) => {
-            let entry = super::chain::get_chain_by_real_chain_index(input)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("unsupported chain: {input}"))?;
-            let ci = entry["chainIndex"]
-                .as_str()
-                .map(|s| s.to_string())
-                .or_else(|| entry["chainIndex"].as_i64().map(|n| n.to_string()))
-                .ok_or_else(|| anyhow::anyhow!("unsupported chain: {input}"))?;
-            Some(ci)
-        }
+        Some(input) => Some(super::chain_profile::resolve(input).await?.chain_index),
         None => None,
     };
 
     let mut xlayer = Vec::new();
     let mut evm = Vec::new();
     let mut solana = Vec::new();
+    let mut bitcoin = Vec::new();
+    let mut sui = Vec::new();
 
     for addr in &entry.address_list {
         if let Some(ref filter) = chain_filter {
@@ -258,6 +250,8 @@ pub(super) async fn cmd_addresses(chain: Option<&str>) -> Result<()> {
             "chainName": addr.chain_name,
         });
         match addr.chain_index.as_str() {
+            "0" => bitcoin.push(item),
+            "784" => sui.push(item),
             "196" => xlayer.push(item),
             "501" => solana.push(item),
             _ => evm.push(item),
@@ -270,6 +264,8 @@ pub(super) async fn cmd_addresses(chain: Option<&str>) -> Result<()> {
         "xlayer": xlayer,
         "evm": evm,
         "solana": solana,
+        "bitcoin": bitcoin,
+        "sui": sui,
     }));
     Ok(())
 }

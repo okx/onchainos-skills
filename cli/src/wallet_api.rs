@@ -618,7 +618,7 @@ pub struct GasStationToken {
     pub context: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BroadcastResponse {
     #[serde(default, deserialize_with = "nullable_string")]
@@ -785,11 +785,9 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
-            if self.doh.should_failover_on_response(&resp) {
-                if self.doh.handle_failure().await {
-                    self.rebuild_http_client()?;
-                    return self.post_public(path, body).await;
-                }
+            if self.doh.should_failover_on_response(&resp) && self.doh.handle_failure().await {
+                self.rebuild_http_client()?;
+                return self.post_public(path, body).await;
             }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
@@ -826,11 +824,9 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
-            if self.doh.should_failover_on_response(&resp) {
-                if self.doh.handle_failure().await {
-                    self.rebuild_http_client()?;
-                    return self.get_no_okheaders(path).await;
-                }
+            if self.doh.should_failover_on_response(&resp) && self.doh.handle_failure().await {
+                self.rebuild_http_client()?;
+                return self.get_no_okheaders(path).await;
             }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
@@ -928,13 +924,11 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
-            if self.doh.should_failover_on_response(&resp) {
-                if self.doh.handle_failure().await {
-                    self.rebuild_http_client()?;
-                    return self
-                        .post_authed_with_headers_once(path, access_token, body, extra_headers)
-                        .await;
-                }
+            if self.doh.should_failover_on_response(&resp) && self.doh.handle_failure().await {
+                self.rebuild_http_client()?;
+                return self
+                    .post_authed_with_headers_once(path, access_token, body, extra_headers)
+                    .await;
             }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
@@ -947,6 +941,7 @@ impl WalletApiClient {
         access_token: &str,
         body: &Value,
         extra_headers: Option<&[(&str, &str)]>,
+        unknown_result_message: &str,
     ) -> Result<Value> {
         let effective = self.effective_base_url();
         let url = format!("{}{}", effective.trim_end_matches('/'), path);
@@ -981,12 +976,29 @@ impl WalletApiClient {
                 if self.doh.is_proxy() {
                     let _ = self.rebuild_http_client();
                 }
-                return Err(e).context("Network error during broadcast — transaction was NOT sent. Safe to retry the same command.");
+                return Err(e).context(unknown_result_message.to_string());
             }
             Err(e) => return Err(e).context("request failed"),
         };
         self.doh.cache_direct_if_needed();
         self.handle_response(resp).await
+    }
+
+    /// Posts an authenticated mutation without replay and returns its response payload.
+    pub async fn post_authed_mutation_no_retry(
+        &mut self,
+        path: &str,
+        access_token: &str,
+        body: &Value,
+    ) -> Result<Value> {
+        self.post_authed_no_retry_with_headers(
+                path,
+                access_token,
+                body,
+                None,
+                "Network result is unknown for this state-changing request. Query authoritative state before retrying.",
+            )
+            .await
     }
 
     /// POST multipart/form-data with Bearer accessToken.
@@ -1167,11 +1179,9 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
-            if self.doh.should_failover_on_response(&resp) {
-                if self.doh.handle_failure().await {
-                    self.rebuild_http_client()?;
-                    return self.get_public(path, query).await;
-                }
+            if self.doh.should_failover_on_response(&resp) && self.doh.handle_failure().await {
+                self.rebuild_http_client()?;
+                return self.get_public(path, query).await;
             }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
@@ -1261,13 +1271,11 @@ impl WalletApiClient {
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
-            if self.doh.should_failover_on_response(&resp) {
-                if self.doh.handle_failure().await {
-                    self.rebuild_http_client()?;
-                    return self
-                        .get_authed_with_headers_once(path, access_token, query, extra_headers)
-                        .await;
-                }
+            if self.doh.should_failover_on_response(&resp) && self.doh.handle_failure().await {
+                self.rebuild_http_client()?;
+                return self
+                    .get_authed_with_headers_once(path, access_token, query, extra_headers)
+                    .await;
             }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
@@ -1711,6 +1719,7 @@ impl WalletApiClient {
                 access_token,
                 &body,
                 trace_headers,
+                "Broadcast result is unknown. Query transaction status before attempting another broadcast.",
             )
             .await?;
         let arr = data
@@ -1740,6 +1749,7 @@ impl WalletApiClient {
                 access_token,
                 &body,
                 trace_headers,
+                "Batch broadcast result is unknown. Query transaction status before attempting another broadcast.",
             )
             .await?;
         let arr = data

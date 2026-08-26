@@ -13,8 +13,8 @@ set -e
 #     compares with local version, installs/upgrades if needed.
 #   - --beta: fetches all tags, finds the latest version (including
 #     pre-releases) by semver, and installs it.
-#   - Caches the last check timestamp. Skips GitHub API calls if
-#     checked within the last 12 hours.
+#   - Every invocation checks the requested release channel. Automatic
+#     update throttling is handled by `onchainos preflight` / `upgrade --throttle`.
 #
 # Supported platforms:
 #   macOS  : x86_64 (Intel), arm64 (Apple Silicon)
@@ -26,8 +26,6 @@ REPO="okx/onchainos-skills"
 BINARY="onchainos"
 INSTALL_DIR="$HOME/.local/bin"
 CACHE_DIR="$HOME/.onchainos"
-CACHE_FILE="$CACHE_DIR/last_check"
-CACHE_TTL=43200  # 12 hours in seconds
 
 # ── Parse arguments ──────────────────────────────────────────
 BETA_MODE=false
@@ -61,21 +59,6 @@ get_target() {
       ;;
     *) echo "Unsupported OS" >&2; exit 1 ;;
   esac
-}
-
-# ── Cache helpers ────────────────────────────────────────────
-is_cache_fresh() {
-  [ -f "$CACHE_FILE" ] || return 1
-  cached_ts=$(head -1 "$CACHE_FILE" 2>/dev/null)
-  [ -z "$cached_ts" ] && return 1
-  now=$(date +%s)
-  elapsed=$((now - cached_ts))
-  [ "$elapsed" -lt "$CACHE_TTL" ]
-}
-
-write_cache() {
-  mkdir -p "$CACHE_DIR"
-  date +%s > "$CACHE_FILE"
 }
 
 # ── Version helpers ──────────────────────────────────────────
@@ -433,22 +416,11 @@ main() {
       if [ ! -d "$CACHE_DIR/workflows" ]; then
         sync_workflows "v${local_ver}"
       fi
-      write_cache
       finish_install
       return 0
     fi
   else
     # ── Stable mode ──
-
-    # Fast path: binary exists and was checked recently — skip API call
-    if [ -n "$local_ver" ] && is_cache_fresh; then
-      # Ensure workflows exist even on cache-hit fast path
-      if [ ! -d "$CACHE_DIR/workflows" ]; then
-        sync_workflows "v${local_ver}"
-      fi
-      finish_install
-      return 0
-    fi
 
     latest_stable=$(get_latest_stable_version)
 
@@ -460,7 +432,6 @@ main() {
       if [ ! -d "$CACHE_DIR/workflows" ]; then
         sync_workflows "v${local_ver}"
       fi
-      write_cache
       finish_install
       return 0
     else
@@ -472,7 +443,6 @@ main() {
         if [ ! -d "$CACHE_DIR/workflows" ]; then
           sync_workflows "v${local_ver}"
         fi
-        write_cache
         finish_install
         return 0
       fi
@@ -485,7 +455,6 @@ main() {
 
   install_binary "v${target_ver}"
   sync_workflows "v${target_ver}"
-  write_cache
   ensure_in_path
   finish_install
 }

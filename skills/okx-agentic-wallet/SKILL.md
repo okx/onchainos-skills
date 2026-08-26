@@ -1,10 +1,10 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill whenever the user wants to use OKX Onchain OS / onchainos CLI / agentic wallet for wallet state or on-chain actions. Triggers: onchainos, Onchain OS wallet, agentic wallet; wallet login/status/account/address/balance/holdings/deposit/receive/send/transfer; on-chain swap/DEX trade/buy/sell/convert; bridge; Gas Station; contract calls; transaction history/status; signing; approvals; wallet export/policy; token or DApp security checks; or audit log."
+description: "Use this skill whenever the user wants to use OKX Onchain OS / onchainos CLI / agentic wallet for wallet state or on-chain actions. Triggers: onchainos, Onchain OS wallet, agentic wallet; wallet login/status/account/address/balance/holdings/deposit/receive/send/transfer; on-chain swap/DEX trade/buy/sell/convert; bridge; Gas Station; contract calls; transaction history/status; Bitcoin UTXOs, BRC-20, inscriptions; signing; approvals; wallet export/policy; token or DApp security checks; or audit log."
 license: MIT
 metadata:
   author: okx
-  version: "4.4.18-beta"
+  version: "4.5.1"
   homepage: "https://web3.okx.com"
 ---
 
@@ -19,9 +19,10 @@ Match the user intent to a row, then **read that row's linked file first** — i
 | User Intent | Reference |
 | --- | --- |
 | Sign in / connect / social login (Google / Apple / Email) / logout; add / switch account; login status | [wallet](references/wallet.md) |
-| My wallet address / QR code; check my (logged-in) balance / holdings | [wallet](references/wallet.md) |
-| Send / transfer native or ERC-20 / SPL tokens | [wallet](references/wallet.md) |
-| Call a contract (approve / deposit / withdraw / custom function) | [wallet](references/wallet.md) |
+| My wallet address / QR code; check my (logged-in) balance / holdings, including BTC or a BRC-20 ticker | [wallet](references/wallet.md) |
+| Bitcoin UTXO-specific queries, management, or FAQ / definitions | [utxo-cli-reference](references/utxo-cli-reference.md) |
+| Send / transfer native, ERC-20, SPL, BTC, BRC-20, or SUI tokens | [wallet](references/wallet.md) |
+| Call a contract (approve / deposit / withdraw / custom function), including a SUI PTB | [wallet](references/wallet.md) |
 | Transaction history / tx detail / order status; sign a message (personalSign / EIP-712) | [wallet](references/wallet.md) |
 | Policy / spending limit / whitelist; export wallet / mnemonic; MEV protection for a contract-call; third-party Solana plugin write pre-flight | [wallet](references/wallet.md) |
 | Apple-login wallet differs from the OKX Wallet App / "missing" balance; rename a wallet or account; how transaction signing works (TEE) | [account-faq](references/account-faq.md) |
@@ -31,7 +32,7 @@ Match the user intent to a row, then **read that row's linked file first** — i
 | Limit order: buy dip / take profit / stop loss / buy above; cancel / list / resume limit (strategy) orders | [strategy](references/strategy.md) |
 | Broadcast a signed / raw tx; estimate gas price / gas-limit; simulate a tx; track a broadcast order | [gateway](references/gateway.md) |
 | A given public address's balance / holdings / total value (`0xAbc…` / a Solana address) | [portfolio](references/portfolio.md) |
-| Token / honeypot (蜜罐 / 貔貅) safety; DApp / URL phishing; tx or signature pre-check; check / list / revoke token approvals (ERC-20 / Permit2) | [security](references/security.md) |
+| Token / honeypot safety; DApp / URL phishing; tx or signature pre-check; check / list / revoke token approvals (ERC-20 / Permit2) | [security](references/security.md) |
 | Export / locate audit log, view command history | [audit-log](references/audit-log.md) |
 
 ---
@@ -43,8 +44,8 @@ At the start of each thread, complete the checks in [_shared/preflight.md](_shar
 ## Build the Command
 
 1. **Read the matched row's linked file first** (per the Intent Routing table) — it carries the flow and the commands you need. Never guess subcommand, flag, or file names.
-2. **When you need exact flags, defaults, or return-field schemas** that the domain file doesn't spell out, run `onchainos <group> <subcommand> --help` (the CLI is the source of truth), or load that domain's `-cli-reference.md` when the flow needs it (each domain file lists its own deeper files at the bottom). Don't load it up front.
-3. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below.
+2. **Learn exact syntax from the CLI, not from memory.** Run `onchainos --help` for command groups and `onchainos <group> <subcommand> --help` for exact flags and defaults. Load the matched domain's `-cli-reference.md` only when its return-field schema or examples are needed.
+3. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below. For native BTC, direct BRC-20, and SUI transfers, follow the chain-specific confirmation flow; a BRC-20 transfer inscription confirms before signing and broadcast.
 
 ## Chain Name Support
 

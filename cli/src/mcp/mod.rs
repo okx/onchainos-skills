@@ -881,6 +881,26 @@ fn err(e: anyhow::Error) -> Result<String, String> {
     // Always drain so events don't leak into the next tool call.
     let events = crate::payment_notify::drain_events();
 
+    if let Some(c) =
+        e.downcast_ref::<crate::commands::agentic_wallet::common::WalletPreviewConfirming>()
+    {
+        let mut payload = serde_json::json!({
+            "confirming": true,
+            "scene": c.scene.clone(),
+            "preview": c.preview.clone(),
+        });
+        if !c.message.is_empty() {
+            payload["message"] = serde_json::Value::String(c.message.clone());
+        }
+        if !c.next.is_empty() {
+            payload["next"] = serde_json::Value::String(c.next.clone());
+        }
+        if !events.is_empty() {
+            payload["notifications"] = serde_json::Value::Array(events);
+        }
+        return Err(serde_json::to_string(&payload).unwrap_or_else(|_| c.message.clone()));
+    }
+
     // `CliConfirming` carries structured `message` / `next` fields; surface
     // them as a JSON payload so the agent can parse them (matches the CLI
     // `output::confirming` shape). Empty strings are omitted so first-charge
@@ -890,6 +910,9 @@ fn err(e: anyhow::Error) -> Result<String, String> {
         let mut payload = serde_json::json!({ "confirming": true });
         if !c.message.is_empty() {
             payload["message"] = serde_json::Value::String(c.message.clone());
+        }
+        if let Some(scene) = &c.scene {
+            payload["scene"] = serde_json::Value::String(scene.clone());
         }
         if !c.next.is_empty() {
             payload["next"] = serde_json::Value::String(c.next.clone());
@@ -912,6 +935,12 @@ fn err(e: anyhow::Error) -> Result<String, String> {
         if let Some(f) = &c.field {
             payload["errorField"] = serde_json::Value::String(f.clone());
         }
+        if let Some(data) = &c.data {
+            payload["data"] = data.clone();
+        }
+        if let Some(next_steps) = &c.next_steps {
+            payload["nextSteps"] = next_steps.clone();
+        }
         if !events.is_empty() {
             payload["notifications"] = serde_json::Value::Array(events);
         }
@@ -924,6 +953,60 @@ fn err(e: anyhow::Error) -> Result<String, String> {
     } else {
         let payload = serde_json::json!({ "error": base, "notifications": events });
         Err(serde_json::to_string(&payload).unwrap_or(base))
+    }
+}
+
+#[cfg(test)]
+mod output_contract_tests {
+    use super::*;
+
+    #[test]
+    fn confirming_error_preserves_btc_preview() {
+        let error: anyhow::Error =
+            crate::commands::agentic_wallet::common::WalletPreviewConfirming {
+                message: "review".to_string(),
+                next: "onchainos wallet send --force".to_string(),
+                scene: "btc_inscription".to_string(),
+                preview: serde_json::json!({"inputs": ["a:0"]}),
+            }
+            .into();
+        let payload: serde_json::Value = serde_json::from_str(&err(error).unwrap_err()).unwrap();
+        assert_eq!(payload["confirming"], true);
+        assert_eq!(payload["scene"], "btc_inscription");
+        assert_eq!(payload["preview"]["inputs"][0], "a:0");
+    }
+
+    #[test]
+    fn shared_confirming_error_has_no_wallet_preview() {
+        let error: anyhow::Error = crate::output::CliConfirming {
+            message: "review".to_string(),
+            next: "re-run with --force".to_string(),
+            scene: None,
+        }
+        .into();
+        let payload: serde_json::Value = serde_json::from_str(&err(error).unwrap_err()).unwrap();
+        assert!(payload.get("preview").is_none());
+    }
+
+    #[test]
+    fn coded_error_preserves_facts_and_read_only_steps() {
+        let error: anyhow::Error = crate::commands::sink::CodedError::new(
+            "INSUFFICIENT_AVAILABLE",
+            None,
+            "insufficient",
+        )
+        .with_data(serde_json::json!({"availableBalance": "1"}))
+        .with_next_steps(serde_json::json!({
+            "queryUnavailableUtxos": "onchainos wallet utxo unavailable --chain bitcoin"
+        }))
+        .into();
+        let payload: serde_json::Value = serde_json::from_str(&err(error).unwrap_err()).unwrap();
+        assert_eq!(payload["errorCode"], "INSUFFICIENT_AVAILABLE");
+        assert_eq!(payload["data"]["availableBalance"], "1");
+        assert!(payload["nextSteps"]["queryUnavailableUtxos"]
+            .as_str()
+            .unwrap()
+            .contains("utxo unavailable --chain bitcoin"));
     }
 }
 
