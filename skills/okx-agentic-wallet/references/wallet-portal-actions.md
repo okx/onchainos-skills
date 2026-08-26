@@ -1,26 +1,12 @@
 # Portal Actions — Policy Settings & Wallet Export
 
-> Load when: new user login (`isNew: true`), after `wallet add`, the user asks about Policy / spending limits / whitelist, or the user asks to export wallet / mnemonic / migrate.
+> Load when: new user login (`isNew: true`), after `wallet add`, the user asks about Policy / spending limits / whitelist, or the user asks to export wallet / mnemonic / migrate / import a hardware wallet.
 
-Policy configuration and wallet export **must be completed by the user on the Web portal**. The Agent only detects the scenario, explains the risk, gives the jump link, and outputs the verbatim template below. The Agent must **never** display any mnemonic phrase or private key content in the conversation.
+Policy configuration **must be completed by the user on the Web portal** — the Agent only detects the scenario, explains the risk, gives the jump link, and outputs the verbatim Policy Settings template below. Wallet export is **done by the user in the OKX Wallet extension or app** (not on the Web portal); the Agent only outputs the verbatim export copy below and never performs the export itself. The Agent must **never** display any mnemonic phrase, seed phrase, or private key content in the conversation.
 
 ## Templates
 
-**IMPORTANT**: Print the matching template verbatim. The link and trailing navigation sentence are chosen by `loginType` (from `wallet status`, or the `login` response) — the table has an `email` row and an `ak` row. Row selection is **internal — never explain it to the user**: pick the row by `loginType` and render it directly (do NOT add phrases like "Google login uses the email flow"). If `loginType` is unknown or unrecognized, run `onchainos wallet status` first and treat it as `email`.
-
-**Wallet export — Google / Apple:** when `loginType` is `google` or `apple`, reply with exactly this notice, verbatim, as the complete response:
-> Wallet export is currently not supported for accounts logged in with Google or Apple. It will be supported in a future update.
-
-### Template: Wallet Export
-
-> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. Go to Wallet Export → {export_url}
->
-> {export_hint}
-
-| `loginType` | `{export_url}` | `{export_hint}` |
-|---|---|---|
-| `email` | `https://web3.okx.com` | Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Export Wallet" from the dropdown menu. |
-| `ak` | `https://web3.okx.com/onchainos/dev-portal` | Log in the Developer Portal using a plugin wallet or the OKX Wallet App that manages your API Key, and click Agentic Wallet → Wallet Export. |
+**IMPORTANT**: Print the matching template verbatim. For the **Policy Settings** template, the link and trailing navigation sentence are chosen by `loginType` (from `wallet status`, or the `login` response) — the table has an `email` row and an `ak` row. Row selection is **internal — never explain it to the user**: pick the row by `loginType` and render it directly (do NOT add phrases like "Google login uses the email flow"). If `loginType` is unknown or unrecognized, run `onchainos wallet status` first and treat it as `email`. The **Wallet Export** copy (in Trigger flows below) is identical for every account type — no `loginType` branch.
 
 ### Template: Policy Settings
 
@@ -50,7 +36,7 @@ The following are **trigger conditions** — when any is met, the Agent **MUST**
 
 ### New user login (`isNew: true`)
 
-Handled in [Wallet Authentication step 2](wallet.md) — output the **Policy Settings template** followed by the **Wallet Export template** (above).
+Handled in [Wallet Authentication step 2](wallet.md) — output the **Policy Settings template** (above) only. Do NOT output any wallet-export guidance on new-user login, regardless of `loginType`.
 
 ### New account via `wallet add`
 
@@ -67,4 +53,10 @@ e.g., "How do I set a spending limit?", "What's my daily limit?", "How to config
 
 e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I import my wallet into a hardware wallet?"
 
-Run `onchainos wallet status` (confirms login, surfaces `accountId`, and gives `loginType`). **Only** when `loginType` is `google` or `apple`, output the **Google/Apple notice** (above). For every other value (`email`, `ak`, or empty/unknown), output the **Wallet Export template** (above).
+Output the following copy **verbatim** as the complete response, **identical for every account type** (`email`, `ak`, `google`, `apple`, or empty/unknown) — there is no account-type branch and no "not supported" case, so do NOT run `wallet status` to route on `loginType` here:
+
+> Export your seed phrase in the OKX Wallet extension or app.
+>
+> Please note: After export, your wallet will be permanently unlinked from your social account, and the Agent will no longer be able to operate it.
+>
+> Before exporting, move your assets to a secure address and stop any active tasks. After exporting, back up your seed phrase securely and never share it with anyone.
