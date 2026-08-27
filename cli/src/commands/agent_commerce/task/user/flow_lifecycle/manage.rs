@@ -45,11 +45,11 @@ Step 3 -- Search-intent parsing and service selection
 For the initial search, pass the user's original utterance verbatim to [`intent-keyword-extraction.md`], then use its output unchanged as `<args>` in:
 
 ```bash
-onchainos agent task-service-select <args> --agentic-id <buyerAgentId> --service-id <sid> --limit 1 --format json
+onchainos agent task-service-select <args> --agentic-id <buyerAgentId> --sid <sid> --limit 1 --format json
 ```
 
 Serialize `keywords` exactly like `service-match`: emit `--keywords` once, followed by all extracted
-keyword values in order. For `--service-id`, prefer the extracted value; otherwise use the user-selected `sid`
+keyword values in order. For `--sid`, prefer the extracted value; otherwise use the user-selected `sid`
 retained in context, not that Service's `serviceId`. Omit it when neither exists, and never infer it. Do not
 otherwise preprocess or enrich the input or output.
 
@@ -256,7 +256,7 @@ Step 6 -- Publish subscription (create-subscribe)
 
 ```bash
 onchainos agent create-subscribe \\
-  --service-id <sid> \\
+  --service-id <serviceId> \\
   --use-trial <true|false> \\
   --service-token-amount \"<subscriptionInfo.feeAmount>\" \\
   --service-token-address \"<feeToken>\" \\
@@ -348,7 +348,7 @@ Step 6 -- Publish regular (create-task)
 onchainos agent create-task \\
   --description \"<description>\" --title \"<title>\" \\
   --budget <budget> --max-budget <max_budget> --currency <USDT|USDG> \\
-  --provider <agentId> --service-id <sid> --payment-mode <escrow|x402> \\
+  --provider <agentId> --service-id <serviceId> --payment-mode <escrow|x402> \\
   [--service-params \"<params>\"] [--service-token-address <addr>] [--service-token-amount <amt>]
 ```
 - `--provider`, `--service-id`, `--payment-mode` required. Payment mode: A2A→escrow, A2MCP→x402.

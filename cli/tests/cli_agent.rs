@@ -903,7 +903,7 @@ fn service_match_help_describes_pagination_headers_and_price_range() {
         "Search marketplace Services by capability, ASP, Service ID, Service name, or price range.",
         "Results include searchAfter, hasMore, unmatchReason",
         "--agentic-id <AGENTIC_ID>",
-        "--service-id <SERVICE_ID>",
+        "--sid <SERVICE_ID>",
         "--min-payment-token-amount <MIN_PAYMENT_TOKEN_AMOUNT>",
         "--max-payment-token-amount <MAX_PAYMENT_TOKEN_AMOUNT>",
         "--search-after <SEARCH_AFTER>",

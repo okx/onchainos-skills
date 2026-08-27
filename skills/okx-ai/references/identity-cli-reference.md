@@ -77,7 +77,7 @@ never a display column.
 ### `agent service-match`
 
 ```text
-agent service-match [--keywords <k...>] [--asp-agent-id <id>] [--asp-name <name>] [--service-name <name>] [--agentic-id <id>] [--min-payment-token-amount <n>] [--max-payment-token-amount <n>] [--limit <1..10>]
+agent service-match [--keywords <k...>] [--asp-agent-id <id>] [--asp-name <name>] [--service-name <name>] [--sid <sid>] [--agentic-id <id>] [--min-payment-token-amount <n>] [--max-payment-token-amount <n>] [--limit <1..10>]
 agent service-match --search-after <cursor> [--agentic-id <id>] [--limit <1..10>]
 ```
 

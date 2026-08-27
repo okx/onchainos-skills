@@ -415,7 +415,7 @@ pub async fn handle_task_service_select(
         cmd.arg("--service-name").arg(value);
     }
     if let Some(value) = args.service_id.as_deref().filter(|s| !s.is_empty()) {
-        cmd.arg("--service-id").arg(value);
+        cmd.arg("--sid").arg(value);
     }
     if let Some(value) = args
         .min_payment_token_amount
