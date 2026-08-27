@@ -4,7 +4,7 @@ description: "For discovering and managing OKX-aggregated DeFi products and posi
 license: MIT
 metadata:
   author: okx
-  version: "4.8.2-beta"
+  version: "4.8.3-beta"
   homepage: "https://web3.okx.com"
 ---
 

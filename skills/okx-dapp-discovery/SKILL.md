@@ -5,7 +5,7 @@ description: "For discovering DApps and routing protocol requests to OKX plugins
 license: MIT
 metadata:
   author: okx
-  version: "4.8.2-beta"
+  version: "4.8.3-beta"
   homepage: "https://web3.okx.com"
 ---
 
