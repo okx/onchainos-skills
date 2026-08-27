@@ -76,6 +76,7 @@ fn build_request(args: &ServiceMatchArgs) -> Result<Value> {
     let asp_agent_id = trimmed(args.asp_agent_id.as_deref());
     let asp_name = trimmed(args.asp_name.as_deref());
     let service_name = trimmed(args.service_name.as_deref());
+    let service_id = trimmed(args.service_id.as_deref());
     let search_after = trimmed(args.search_after.as_deref());
     let min_payment_token_amount = args
         .min_payment_token_amount
@@ -107,6 +108,7 @@ fn build_request(args: &ServiceMatchArgs) -> Result<Value> {
         || asp_agent_id.is_some()
         || asp_name.is_some()
         || service_name.is_some()
+        || service_id.is_some()
         || min_payment_token_amount.is_some()
         || max_payment_token_amount.is_some();
 
@@ -131,6 +133,7 @@ fn build_request(args: &ServiceMatchArgs) -> Result<Value> {
         insert_string(&mut body, "aspAgentId", asp_agent_id);
         insert_string(&mut body, "aspName", asp_name);
         insert_string(&mut body, "serviceName", service_name);
+        insert_string(&mut body, "sid", service_id);
         if let Some(amount) = min_payment_token_amount {
             body.insert("minPaymentTokenAmount".into(), Value::Number(amount));
         }
@@ -172,6 +175,7 @@ mod tests {
             asp_agent_id: None,
             asp_name: None,
             service_name: None,
+            service_id: Some(" svc-001 ".into()),
             agentic_id: Some("user-agent-001".into()),
             min_payment_token_amount: Some("5.25".into()),
             max_payment_token_amount: Some("10.50".into()),
@@ -218,6 +222,8 @@ mod tests {
         let input = args();
         let body = build_request(&input).unwrap();
         assert_eq!(body["keywords"], json!(["smart contract", "audit"]));
+        assert_eq!(body["sid"], json!("svc-001"));
+        assert!(body.get("serviceId").is_none());
         assert!(body.get("agenticId").is_none());
         assert_eq!(
             agentic_id_header(&input),
@@ -234,6 +240,7 @@ mod tests {
     fn continuation_request_contains_only_cursor_and_limit() {
         let mut input = args();
         input.keywords.clear();
+        input.service_id = None;
         input.min_payment_token_amount = None;
         input.max_payment_token_amount = None;
         input.search_after = Some(" next ".into());
@@ -247,6 +254,7 @@ mod tests {
     fn agentic_id_only_request_sends_limit_in_body() {
         let mut input = args();
         input.keywords.clear();
+        input.service_id = None;
         input.min_payment_token_amount = None;
         input.max_payment_token_amount = None;
         assert_eq!(build_request(&input).unwrap(), json!({"limit":3}));
@@ -284,6 +292,7 @@ mod tests {
 
         let mut input = args();
         input.keywords.clear();
+        input.service_id = None;
         input.agentic_id = None;
         input.min_payment_token_amount = None;
         input.max_payment_token_amount = None;

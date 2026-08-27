@@ -45,11 +45,13 @@ Step 3 -- Search-intent parsing and service selection
 For the initial search, pass the user's original utterance verbatim to [`intent-keyword-extraction.md`], then use its output unchanged as `<args>` in:
 
 ```bash
-onchainos agent task-service-select <args> --agentic-id <buyerAgentId> --limit 1 --format json
+onchainos agent task-service-select <args> --agentic-id <buyerAgentId> --service-id <sid> --limit 1 --format json
 ```
 
 Serialize `keywords` exactly like `service-match`: emit `--keywords` once, followed by all extracted
-keyword values in order. Do not preprocess or enrich the input or output.
+keyword values in order. For `--service-id`, prefer the extracted value; otherwise use the user-selected `sid`
+retained in context, not that Service's `serviceId`. Omit it when neither exists, and never infer it. Do not
+otherwise preprocess or enrich the input or output.
 
 - `matchStatus=no_match` → if `asp-agent-id` was supplied, say that the specified ASP has no matching service; otherwise say that no matching service was found. Ask the user to adjust the description or specify/change the provider.
 - `matchStatus=no_online_service` → matches exist, but none is eligible (offline non-x402 services remain ineligible). Ask whether to view alternatives or adjust the description/provider.

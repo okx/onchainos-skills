@@ -25,7 +25,11 @@ The extraction object is internal; convert non-null fields to the flags in
 `identity-cli-reference.md`, emit `--keywords` once, and preserve keyword order. Example extraction:
 
 ```text
-{"asp-agent-id":null,"asp-name":null,"service-name":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["analyze this wallet","generate a report"]}
+# Extraction:
+{"asp-agent-id":null,"asp-name":null,"service-name":null,"service-id":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["analyze this wallet","generate a report"]}
+
+# CLI:
+onchainos agent service-match --keywords "analyze this wallet" "generate a report" --limit 5
 ```
 
 ### Rendering (blocking)
