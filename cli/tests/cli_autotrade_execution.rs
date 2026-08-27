@@ -1,8 +1,11 @@
 mod common;
 
 use common::{fresh_home, onchainos, parse_stdout_json, scrubbed};
+use fs2::FileExt;
 use serde_json::json;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::process::Stdio;
+use std::time::Duration;
 
 #[cfg(unix)]
 fn write_fake_okx(path: &std::path::Path) {
@@ -82,8 +85,8 @@ fn write_context(home: &std::path::Path, delivery_id: &str) -> serde_json::Value
 }
 
 #[test]
-fn later_consent_delivery_is_queued_without_a_terminal_skip() {
-    let (_guard, home) = fresh_home("cli_autotrade_delivery_fifo");
+fn unconfigured_deliveries_are_saved_as_terminal_skips_without_decisions() {
+    let (_guard, home) = fresh_home("cli_autotrade_unconfigured_delivery");
     write_context(&home, "delivery-first");
     write_context(&home, "delivery-second");
     let empty_path = home.join("empty-path");
@@ -111,19 +114,229 @@ fn later_consent_delivery_is_queued_without_a_terminal_skip() {
 
     let first = request("delivery-first");
     assert!(first.status.success());
+    let first_result = parse_stdout_json(&first);
+    assert_eq!(first_result["data"]["decision"], false);
+    assert_eq!(first_result["data"]["decisionPushed"], false);
+    assert_eq!(first_result["data"]["status"], "skipped");
+    assert_eq!(
+        first_result["data"]["reason"],
+        "execution_policy_not_configured"
+    );
+    assert_eq!(first_result["data"]["terminal"], true);
+
     let second = request("delivery-second");
     assert!(second.status.success());
     let result = parse_stdout_json(&second);
-    assert_eq!(result["data"]["status"], "queued");
-    assert_eq!(result["data"]["activeDeliveryId"], "delivery-first");
-    assert_eq!(result["data"]["queuePosition"], 2);
-    assert_eq!(result["data"]["terminal"], false);
-    assert!(!home
+    assert_eq!(result["data"]["decision"], false);
+    assert_eq!(result["data"]["decisionPushed"], false);
+    assert_eq!(result["data"]["status"], "skipped");
+    assert_eq!(result["data"]["terminal"], true);
+    assert!(home
+        .join("autotrade/outcomes/job1/delivery-first.json")
+        .exists());
+    assert!(home
         .join("autotrade/outcomes/job1/delivery-second.json")
         .exists());
-    assert!(!home
+    assert!(home
+        .join("autotrade/execution-latch/job1/delivery-first")
+        .exists());
+    assert!(home
         .join("autotrade/execution-latch/job1/delivery-second")
         .exists());
+}
+
+#[test]
+fn manual_policy_is_rechecked_after_waiting_for_the_delivery_queue() {
+    let (_guard, home) = fresh_home("cli_autotrade_policy_race");
+    write_context(&home, "delivery-policy-race");
+    let empty_path = home.join("empty-path");
+    fs::create_dir_all(&empty_path).unwrap();
+
+    let mut set_manual = onchainos();
+    let output = scrubbed(&mut set_manual, &home)
+        .env("PATH", &empty_path)
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job1",
+            "--agent-id",
+            "8315",
+            "--mode",
+            "manual",
+            "--trade-amount",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let queue_root = home.join("autotrade/delivery-queue");
+    fs::create_dir_all(&queue_root).unwrap();
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(queue_root.join("job1.lock"))
+        .unwrap();
+    lock_file.lock_exclusive().unwrap();
+
+    let mut request = std::process::Command::new(env!("CARGO_BIN_EXE_onchainos"));
+    let mut child = request
+        .env_remove("OKX_API_KEY")
+        .env_remove("OKX_ACCESS_KEY")
+        .env_remove("OKX_SECRET_KEY")
+        .env_remove("OKX_PASSPHRASE")
+        .env_remove("OKX_BASE_URL")
+        .env_remove("OKX_DOH_BINARY_PATH")
+        .env("ONCHAINOS_HOME", &home)
+        .env("PATH", &empty_path)
+        .args([
+            "agent",
+            "autotrade-consent-request",
+            "--job-id",
+            "job1",
+            "--agent-id",
+            "8315",
+            "--delivery-id",
+            "delivery-policy-race",
+            "--signal-type",
+            "spot",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "manual request should be waiting on the delivery queue lock"
+    );
+
+    let mut set_auto = onchainos();
+    let output = scrubbed(&mut set_auto, &home)
+        .env("PATH", &empty_path)
+        .args([
+            "agent",
+            "autotrade-consent-set",
+            "--job-id",
+            "job1",
+            "--agent-id",
+            "8315",
+            "--mode",
+            "auto",
+            "--trade-amount",
+            "1",
+            "--cap",
+            "10",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    lock_file.unlock().unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let data = parse_stdout_json(&output)["data"].clone();
+    assert_eq!(data["decision"], false);
+    assert_eq!(data["decisionPushed"], false);
+    assert_eq!(data["status"], "policy_ready");
+    assert_eq!(data["reason"], "policy_changed_before_decision");
+    assert_eq!(data["consentMode"], "auto");
+    assert!(!home.join("autotrade/delivery-queue/job1.json").exists());
+    assert!(!home.join("autotrade/pending/job1.json").exists());
+}
+
+#[test]
+fn declined_paused_and_expired_policies_skip_without_mode_decisions() {
+    let (_guard, home) = fresh_home("cli_autotrade_inactive_policy_delivery");
+    let empty_path = home.join("empty-path");
+    fs::create_dir_all(&empty_path).unwrap();
+
+    let set_policy = |args: &[&str]| {
+        let mut command = onchainos();
+        let output = scrubbed(&mut command, &home)
+            .env("PATH", &empty_path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+    };
+    let request = |delivery_id: &str| {
+        write_context(&home, delivery_id);
+        let mut command = onchainos();
+        let output = scrubbed(&mut command, &home)
+            .env("PATH", &empty_path)
+            .args([
+                "agent",
+                "autotrade-consent-request",
+                "--job-id",
+                "job1",
+                "--agent-id",
+                "8315",
+                "--delivery-id",
+                delivery_id,
+                "--signal-type",
+                "spot",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let data = parse_stdout_json(&output)["data"].clone();
+        assert_eq!(data["decisionPushed"], false);
+        assert_eq!(data["status"], "skipped");
+        assert_eq!(data["reason"], "execution_policy_not_configured");
+        assert_eq!(data["terminal"], true);
+    };
+
+    set_policy(&[
+        "agent",
+        "autotrade-consent-set",
+        "--job-id",
+        "job1",
+        "--agent-id",
+        "8315",
+        "--mode",
+        "decline",
+    ]);
+    request("delivery-declined");
+
+    set_policy(&[
+        "agent",
+        "autotrade-consent-set",
+        "--job-id",
+        "job1",
+        "--agent-id",
+        "8315",
+        "--mode",
+        "auto",
+    ]);
+    set_policy(&[
+        "agent",
+        "autotrade-consent-set",
+        "--job-id",
+        "job1",
+        "--mode",
+        "pause",
+    ]);
+    request("delivery-paused");
+
+    set_policy(&[
+        "agent",
+        "autotrade-consent-set",
+        "--job-id",
+        "job1",
+        "--agent-id",
+        "8315",
+        "--mode",
+        "auto",
+    ]);
+    let consent_path = home.join("autotrade/consent/job1.json");
+    let mut consent: serde_json::Value =
+        serde_json::from_slice(&fs::read(&consent_path).unwrap()).unwrap();
+    consent["expiresAt"] = json!(1);
+    write_json(&consent_path, &consent);
+    request("delivery-expired");
 }
 
 #[test]

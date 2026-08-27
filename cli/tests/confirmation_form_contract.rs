@@ -55,3 +55,12 @@ fn skill_playbooks_delegate_optional_trade_kit_setup_to_agent_skills() {
     assert!(PUBLISH_ACTIONS.contains("delegate"));
     assert!(PUBLISH_ACTIONS.contains("CLI/site/OAuth/API-key setup to that skill"));
 }
+
+#[test]
+fn refund_requires_a_user_authored_reason_before_reject() {
+    assert!(USER_PLAYBOOK.contains("A refund reason must be explicitly authored by the user"));
+    assert!(USER_PLAYBOOK.contains("ask for the reason and end the turn without running `reject`"));
+    assert!(USER_PLAYBOOK.contains(
+        "Never use the refund request itself, a default, an example, or model-generated text as the reason"
+    ));
+}

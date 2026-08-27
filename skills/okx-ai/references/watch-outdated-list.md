@@ -16,6 +16,13 @@ okx-a2a user outdated-list --json
 
 Returns the set of `decision_request` items the user has **not yet `check`ed** (i.e. watch has already surfaced them but the user never committed a reply). These items stay in the outstanding-decisions queue until `okx-a2a user check --todo-ids …` commits a decision. (Notifications are not included — watch consumes them on return and they have no outstanding state.)
 
+Before rendering, inspect only each item's `llmContent` for either exact token
+`--source-event "autotrade_consent"` or `--source-event "autotrade_config_required"`. For every exact match, run
+`okx-a2a user check --todo-ids <item.id> --json`, remove it from the display set, and never execute its
+`llmContent`. These source events are retired delivery-time execution-mode/configuration cards. Do not apply this filter
+to any other `autotrade_*` event. If no items remain, tell the user there are no pending decisions and end
+the turn.
+
 ## Rendering — batch, not per-item
 
 Unlike watch's per-item flow, render **all returned items in a single assistant message**:

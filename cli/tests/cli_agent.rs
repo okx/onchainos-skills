@@ -528,7 +528,7 @@ fn validate_listing_a2a_suggest_and_block_together_blocks() {
 // ══════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn autotrade_pause_needs_only_job_id_and_keeps_existing_output() {
+fn autotrade_pause_needs_only_job_id_and_clears_execution_policy() {
     let (_home, dir) = fresh_home("cli_agent_autotrade_pause");
     let job_id = "job_pause_zh";
 
@@ -562,11 +562,10 @@ fn autotrade_pause_needs_only_job_id_and_keeps_existing_output() {
         .join("autotrade")
         .join("consent")
         .join(format!("{job_id}.json"));
-    let consent: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&consent_path).expect("pause must persist manual policy"),
-    )
-    .expect("parse paused policy");
-    assert_eq!(consent["mode"], "manual");
+    assert!(
+        !consent_path.exists(),
+        "pause must leave the subscription without an execution policy"
+    );
 
     for store in ["grants", "pending"] {
         assert!(
@@ -794,17 +793,14 @@ fn autotrade_auto_accepts_missing_cap_and_authorizes_any_positive_amount() {
 }
 
 #[test]
-fn autotrade_consent_request_suppresses_first_time_card_for_existing_policy() {
+fn autotrade_consent_request_suppresses_mode_card_for_auto_policy() {
     let (_home, dir) = fresh_home("cli_agent_autotrade_consent_request_existing_policy");
 
-    for (job_id, mode, extra_args) in [
-        (
-            "job_auto",
-            "auto",
-            vec!["--cap", "10", "--trade-amount", "1"],
-        ),
-        ("job_manual", "manual", Vec::new()),
-    ] {
+    for (job_id, mode, extra_args) in [(
+        "job_auto",
+        "auto",
+        vec!["--cap", "10", "--trade-amount", "1"],
+    )] {
         let mut set = onchainos();
         scrubbed(&mut set, &dir);
         let mut set_args = vec![
@@ -842,7 +838,7 @@ fn autotrade_consent_request_suppresses_first_time_card_for_existing_policy() {
 
         assert_eq!(data["decision"], false);
         assert_eq!(data["decisionPushed"], false);
-        assert_eq!(data["reason"], "consent_already_configured");
+        assert_eq!(data["reason"], "auto_authorization_already_persisted");
         assert_eq!(data["jobId"], job_id);
         assert_eq!(data["deliveryId"], "msg:delivery-1");
         assert_eq!(data["consentMode"], mode);

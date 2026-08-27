@@ -1,7 +1,7 @@
 //! Durable FIFO serialization for deliveries that need a user decision.
 //!
-//! A later delivery is never declared terminal merely because an earlier A/B/C
-//! card is still open. It waits here until the active delivery reaches a durable
+//! A later delivery is never declared terminal merely because an earlier manual
+//! decision is still open. It waits here until the active delivery reaches a durable
 //! execution/report outcome, then resumes in its exact originating Job Session.
 
 use std::fs::OpenOptions;
@@ -186,8 +186,8 @@ pub fn enqueue(job_id: &str, delivery_id: &str) -> Result<EnqueueResult> {
     {
         if index == 0 {
             let front = &mut queue.entries[index];
-            // A replay of the same consent request must not push a second
-            // A/B/C card or turn user think-time back into processing. A
+            // A replay of the same manual request must not push a second
+            // decision or turn user think-time back into processing. A
             // queued-resume ACK leaves its exact attempt here; consume that
             // marker once so only the resumed worker may present the card.
             let claimed_resume = front.state == EntryState::Processing
@@ -248,7 +248,7 @@ pub fn contains_delivery(job_id: &str, delivery_id: &str) -> Result<bool> {
         .any(|entry| entry.delivery_id == delivery_id))
 }
 
-/// Record that the visible A/B/C or manual decision is now the intentional
+/// Record that the visible manual decision is now the intentional
 /// blocker. A watchdog must never treat user think-time as a crashed worker.
 pub fn mark_awaiting_decision(job_id: &str, delivery_id: &str) -> Result<()> {
     let _lock = acquire_lock(job_id)?;
@@ -474,6 +474,19 @@ pub fn reconcile_terminal(job_id: &str, delivery_id: &str) -> Result<bool> {
 
 /// Remove one terminal delivery and wake exactly the next FIFO entry.
 pub fn complete_and_advance(job_id: &str, delivery_id: &str) -> Result<bool> {
+    let should_dispatch = remove_terminal_and_promote(job_id, delivery_id)?;
+    if should_dispatch {
+        dispatch_front(job_id, Duration::from_secs(1))
+    } else {
+        Ok(false)
+    }
+}
+
+/// Release a queue entry before any decision was presented. This is used when
+/// the policy changes while a manual delivery is being admitted: the current
+/// worker re-evaluates that delivery under the new policy, while the next
+/// decision-requiring delivery is promoted normally.
+pub fn release_unpresented(job_id: &str, delivery_id: &str) -> Result<bool> {
     let should_dispatch = remove_terminal_and_promote(job_id, delivery_id)?;
     if should_dispatch {
         dispatch_front(job_id, Duration::from_secs(1))

@@ -228,7 +228,16 @@ fn read_queue() -> Result<Queue> {
     if raw.trim().is_empty() {
         return Ok(Queue::default());
     }
-    Ok(serde_json::from_str::<Queue>(&raw).unwrap_or_default())
+    let mut queue = serde_json::from_str::<Queue>(&raw).unwrap_or_default();
+    // Delivery-time execution-mode/configuration prompts were removed in
+    // 4.8.x. Absorb locally persisted cards from older binaries so list, pick,
+    // cancel, and auto-promotion cannot surface or extend them after an upgrade.
+    queue.entries.retain(|entry| {
+        !crate::commands::agent_commerce::task::common::autotrade::is_retired_mode_configuration_decision(
+            entry.source_event.as_deref(),
+        )
+    });
+    Ok(queue)
 }
 
 /// P1-B idempotency helper for `next-action`: returns `true` when the queue
@@ -811,6 +820,16 @@ fn request_prompt_inner(
     source_event: Option<String>,
     print_ok: bool,
 ) -> Result<()> {
+    if crate::commands::agent_commerce::task::common::autotrade::is_retired_mode_configuration_decision(
+        source_event.as_deref(),
+    ) {
+        // Backward-compatible no-op for old Skills or binaries that still try
+        // to push a retired execution-mode/configuration prompt.
+        if print_ok {
+            println!("OK");
+        }
+        return Ok(());
+    }
     let to_agent_id = sanitize_to_agent(to_agent_id, &agent_id);
     let user_content = user_content.replace("\\n", "\n");
     let cli_mode = is_cli_mode();
@@ -1819,6 +1838,11 @@ fn role_short_label(role: &str) -> &str {
 /// from a queue entry — embed all of them up front so the LLM passes them
 /// verbatim to `resolve-with-sessionkey`.
 fn foreground_autotrade_candidate_guidance(source_event: &str) -> &'static str {
+    if crate::commands::agent_commerce::task::common::autotrade::is_retired_mode_configuration_decision(
+        Some(source_event),
+    ) {
+        return "";
+    }
     if !crate::commands::agent_commerce::task::common::autotrade::consent_reply::is_candidate_source(
         source_event,
     ) {
@@ -1828,6 +1852,11 @@ fn foreground_autotrade_candidate_guidance(source_event: &str) -> &'static str {
 }
 
 fn foreground_autotrade_candidate_flag(source_event: &str) -> &'static str {
+    if crate::commands::agent_commerce::task::common::autotrade::is_retired_mode_configuration_decision(
+        Some(source_event),
+    ) {
+        return "";
+    }
     if crate::commands::agent_commerce::task::common::autotrade::consent_reply::is_candidate_source(
         source_event,
     ) {
@@ -2125,8 +2154,9 @@ fn indent(s: &str, prefix: &str) -> String {
 #[cfg(test)]
 mod sanitize_tests {
     use super::{
-        decision_relay_post_action, resolve_llm_content_cli, resolve_llm_content_prompt_user,
-        sanitize_to_agent, trusted_autotrade_session_key, PendingEntry, Status,
+        decision_relay_post_action, read_queue, resolve_llm_content_cli,
+        resolve_llm_content_prompt_user, request_prompt_inner, sanitize_to_agent,
+        trusted_autotrade_session_key, write_queue_atomic, PendingEntry, Queue, Status,
     };
     use chrono::Utc;
 
@@ -2192,15 +2222,17 @@ mod sanitize_tests {
     }
 
     #[test]
-    fn autotrade_decisions_use_foreground_candidate_json_without_direct_consent_set() {
-        for content in [
-            resolve_llm_content_cli(&decision_entry()),
-            resolve_llm_content_prompt_user(&decision_entry()),
-        ] {
-            assert!(content.contains("--autotrade-candidate-json"));
-            assert!(content.contains("strict compact JSON"));
-            assert!(content.contains("Do not call `autotrade-consent-set` directly"));
-            assert!(content.contains("one number is `tradeAmount` only"));
+    fn retired_policy_decisions_never_request_candidate_extraction() {
+        for source in ["autotrade_consent", "autotrade_config_required"] {
+            let mut entry = decision_entry();
+            entry.source_event = Some(source.to_string());
+            for content in [
+                resolve_llm_content_cli(&entry),
+                resolve_llm_content_prompt_user(&entry),
+            ] {
+                assert!(!content.contains("--autotrade-candidate-json"));
+                assert!(!content.contains("strict compact JSON"));
+            }
         }
     }
 
@@ -2215,6 +2247,65 @@ mod sanitize_tests {
             assert!(!content.contains("--autotrade-candidate-json"));
             assert!(!content.contains("strict compact JSON"));
         }
+    }
+
+    #[test]
+    fn legacy_autotrade_mode_cards_are_absorbed_from_the_local_queue() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("pending-v2-retired-mode-test");
+        std::fs::create_dir_all(&root).unwrap();
+        let home = tempfile::tempdir_in(root).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+
+        let retired = decision_entry();
+        let mut retired_config = decision_entry();
+        retired_config.job_id = "job-config".to_string();
+        retired_config.source_event = Some("autotrade_config_required".to_string());
+        let mut regular = decision_entry();
+        regular.job_id = "job-regular".to_string();
+        regular.source_event = Some("job_submitted".to_string());
+        write_queue_atomic(&Queue {
+            entries: vec![retired, retired_config, regular],
+        })
+        .unwrap();
+
+        let loaded = read_queue().unwrap();
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(loaded.entries[0].job_id, "job-regular");
+
+        request_prompt_inner(
+            "job-new".to_string(),
+            "user".to_string(),
+            "8315".to_string(),
+            None,
+            "retired mode card".to_string(),
+            "retired".to_string(),
+            None,
+            Some("autotrade_consent".to_string()),
+            false,
+        )
+        .unwrap();
+        request_prompt_inner(
+            "job-config-new".to_string(),
+            "user".to_string(),
+            "8315".to_string(),
+            None,
+            "retired configuration card".to_string(),
+            "retired".to_string(),
+            None,
+            Some("autotrade_config_required".to_string()),
+            false,
+        )
+        .unwrap();
+        let loaded_after_request = read_queue().unwrap();
+        assert_eq!(loaded_after_request.entries.len(), 1);
+        assert_eq!(loaded_after_request.entries[0].job_id, "job-regular");
+        std::env::remove_var("ONCHAINOS_HOME");
     }
 
     #[test]

@@ -1137,13 +1137,18 @@ async fn scoped_watch_autotrade_precheck_inner(
             || grants::check_grant(job_id, "trade_kit", "sell", "1").is_err());
 
     // A scoped watch must not surface authorization cards left pending by the
-    // retired delivery-time flow after an executable policy is already active.
+    // retired delivery-time flow, regardless of whether a replacement policy
+    // has already been configured.
     // This changes only those exact control decisions to handled; notification
     // history and unrelated decisions remain untouched.
     if resolved_executable.is_some()
         && consent_snapshot.status == consent::ConsentSnapshotStatus::Active
     {
         crate::commands::agent_commerce::task::common::okx_a2a::mark_retired_autotrade_decisions_handled(
+            job_id,
+        )?;
+    } else if resolved_executable.is_some() {
+        crate::commands::agent_commerce::task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(
             job_id,
         )?;
     }

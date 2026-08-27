@@ -306,6 +306,15 @@ That is the **entire** assistant message — not a part of it, the whole thing. 
 
 ### `kind == decision_request`
 
+#### Retired auto-trade mode-card guard
+
+Before rendering, inspect only `llmContent` for either exact token
+`--source-event "autotrade_consent"` or `--source-event "autotrade_config_required"`. These source events are retired. On an exact match, run
+`okx-a2a user check --todo-ids <item.id> --json`, do not render `userContent`, do not execute
+`llmContent`, and do not schedule a wake. Continue dispatching the remaining returned items in order;
+after the batch, re-enter the exact originating global or scoped watch command. Do not apply this guard
+to any other `autotrade_*` event.
+
 #### Active-watch origin guard
 
 When this item was returned by an active watch call, remember that exact originating command for the
