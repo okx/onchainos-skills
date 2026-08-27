@@ -1552,12 +1552,32 @@ fn notification(outcome: &ExecutionOutcome) -> String {
             outcome.reason.as_deref().unwrap_or("no verifiable transaction receipt was returned")
         ),
         (user_lang::Lang::Zh, OutcomeStatus::Skipped) => format!(
-            "{zh_label} 本次交付物未执行交易。原因: {}。",
-            outcome.reason.as_deref().unwrap_or("信号不满足执行条件")
+            "{zh_label} {}",
+            if outcome.reason.as_deref()
+                == Some(super::EXECUTION_POLICY_NOT_CONFIGURED_REASON)
+            {
+                "本次交付物已保存，但没有执行交易，因为该订阅当前没有有效的跟单执行策略。如需恢复或更新，请告诉我“更新这个订阅的跟单执行策略”。"
+                    .to_string()
+            } else {
+                format!(
+                    "本次交付物未执行交易。原因: {}。",
+                    outcome.reason.as_deref().unwrap_or("信号不满足执行条件")
+                )
+            }
         ),
         (user_lang::Lang::En, OutcomeStatus::Skipped) => format!(
-            "{en_label} No trade was executed for this delivery. Reason: {}.",
-            outcome.reason.as_deref().unwrap_or("the signal was not eligible for execution")
+            "{en_label} {}",
+            if outcome.reason.as_deref()
+                == Some(super::EXECUTION_POLICY_NOT_CONFIGURED_REASON)
+            {
+                "The deliverable was saved, but no trade was executed because this subscription has no active copy-trade execution policy. To restore or update it, tell me: “Update this subscription's copy-trade execution policy.”"
+                    .to_string()
+            } else {
+                format!(
+                    "No trade was executed for this delivery. Reason: {}.",
+                    outcome.reason.as_deref().unwrap_or("the signal was not eligible for execution")
+                )
+            }
         ),
         (user_lang::Lang::Zh, OutcomeStatus::FailedBeforeExecution) => format!(
             "{zh_label} 交付物处理失败，未启动交易。原因: {}。系统不会自动下单重试。",
@@ -2163,6 +2183,40 @@ mod tests {
         write_outcome(&path, &outcome).unwrap();
         assert!(!index.exists());
         assert!(path.exists(), "terminal outcome remains an idempotency tombstone");
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn unconfigured_policy_skip_notification_invites_an_explicit_policy_update() {
+        let _guard = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = test_tempdir();
+        std::env::set_var("ONCHAINOS_HOME", temp.path());
+        user_lang::record_from_user_text("job-unconfigured-notice", "update this subscription");
+        let outcome = ExecutionOutcome {
+            version: OUTCOME_VERSION,
+            job_id: "job-unconfigured-notice".to_string(),
+            delivery_id: "delivery-1".to_string(),
+            venue: String::new(),
+            action: String::new(),
+            amount: String::new(),
+            execution_mode: ExecutionMode::Auto,
+            status: OutcomeStatus::Skipped,
+            receipt: None,
+            reason: Some(super::super::EXECUTION_POLICY_NOT_CONFIGURED_REASON.to_string()),
+            failure_category: None,
+            notification_pending: true,
+            notification_attempts: 0,
+            next_notification_attempt_at: 0,
+            created_at: now_secs(),
+            updated_at: now_secs(),
+        };
+
+        let rendered = notification(&outcome);
+        assert!(rendered.contains("deliverable was saved"));
+        assert!(rendered.contains("no active copy-trade execution policy"));
+        assert!(rendered.contains("Update this subscription's copy-trade execution policy"));
         std::env::remove_var("ONCHAINOS_HOME");
     }
 

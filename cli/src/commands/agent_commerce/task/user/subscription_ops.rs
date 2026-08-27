@@ -150,6 +150,11 @@ pub async fn handle_subscribe_cancel(client: &mut TaskApiClient, sub_id: &str) -
     println!("  subId:  {sub_id}");
     println!("  txHash: {tx_hash}");
 
+    // A card created by a pre-upgrade delivery must not resurface from the
+    // outstanding queue after cancellation. This clears only the retired
+    // delivery-time mode selector and leaves unrelated decisions untouched.
+    let _ = okx_a2a::mark_retired_autotrade_mode_decisions_handled(sub_id);
+
     if super::content::is_cli_mode() {
         println!();
         println!("{}", super::content::scoped_watch_handoff(sub_id));

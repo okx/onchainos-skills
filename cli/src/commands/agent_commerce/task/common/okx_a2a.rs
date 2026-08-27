@@ -506,6 +506,48 @@ fn retired_autotrade_todo_ids(value: &serde_json::Value, job_id: &str) -> Vec<St
         .map(str::to_string).collect()
 }
 
+fn retired_autotrade_mode_todo_ids(value: &serde_json::Value, job_id: &str) -> Vec<String> {
+    pending_user_attention_items(value).into_iter().flatten()
+        .filter(|item| item.get("jobId").and_then(serde_json::Value::as_str) == Some(job_id))
+        .filter(|item| item.get("kind").and_then(serde_json::Value::as_str) == Some("decision_request"))
+        .filter(|item| item.get("status").and_then(serde_json::Value::as_str) == Some("pending"))
+        .filter(|item| {
+            item.get("llmContent")
+                .and_then(serde_json::Value::as_str)
+                .and_then(decision_source_event)
+                .is_some_and(|event| {
+                    crate::commands::agent_commerce::task::common::autotrade::is_retired_mode_configuration_decision(
+                        Some(event),
+                    )
+                })
+        })
+        .filter_map(|item| item.get("id").and_then(serde_json::Value::as_str))
+        .map(str::to_string).collect()
+}
+
+fn mark_todo_ids_handled(todo_ids: Vec<String>) -> Result<usize> {
+    if todo_ids.is_empty() { return Ok(0); }
+    let joined = todo_ids.join(",");
+    let check = npm_cli_command("okx-a2a", &["user", "check", "--todo-ids", &joined, "--json"]).output()
+        .map_err(|error| anyhow::anyhow!("spawn failed: {error}"))?;
+    if !check.status.success() {
+        anyhow::bail!("okx-a2a user check exit {}: {}", check.status, String::from_utf8_lossy(&check.stderr));
+    }
+    Ok(todo_ids.len())
+}
+
+pub fn mark_retired_autotrade_mode_decisions_handled(job_id: &str) -> Result<usize> {
+    if job_id.trim().is_empty() { anyhow::bail!("job id is required"); }
+    let list = npm_cli_command("okx-a2a", &["user", "outdated-list"]).output()
+        .map_err(|error| anyhow::anyhow!("spawn failed: {error}"))?;
+    if !list.status.success() {
+        anyhow::bail!("okx-a2a user outdated-list exit {}: {}", list.status, String::from_utf8_lossy(&list.stderr));
+    }
+    let json: serde_json::Value = serde_json::from_slice(&list.stdout)
+        .map_err(|error| anyhow::anyhow!("user outdated-list stdout not valid JSON: {error}"))?;
+    mark_todo_ids_handled(retired_autotrade_mode_todo_ids(&json, job_id))
+}
+
 pub fn mark_retired_autotrade_decisions_handled(job_id: &str) -> Result<usize> {
     if job_id.trim().is_empty() { anyhow::bail!("job id is required"); }
     let list = npm_cli_command("okx-a2a", &["user", "outdated-list"]).output()
@@ -515,15 +557,7 @@ pub fn mark_retired_autotrade_decisions_handled(job_id: &str) -> Result<usize> {
     }
     let json: serde_json::Value = serde_json::from_slice(&list.stdout)
         .map_err(|error| anyhow::anyhow!("user outdated-list stdout not valid JSON: {error}"))?;
-    let todo_ids = retired_autotrade_todo_ids(&json, job_id);
-    if todo_ids.is_empty() { return Ok(0); }
-    let joined = todo_ids.join(",");
-    let check = npm_cli_command("okx-a2a", &["user", "check", "--todo-ids", &joined, "--json"]).output()
-        .map_err(|error| anyhow::anyhow!("spawn failed: {error}"))?;
-    if !check.status.success() {
-        anyhow::bail!("okx-a2a user check exit {}: {}", check.status, String::from_utf8_lossy(&check.stderr));
-    }
-    Ok(todo_ids.len())
+    mark_todo_ids_handled(retired_autotrade_todo_ids(&json, job_id))
 }
 
 /// Bridge equivalent: `xmtp_sessions_query '{jobId, myAgentId, toAgentId}'`
@@ -952,6 +986,32 @@ pub fn file_download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_mode_cleanup_matches_only_mode_and_configuration_cards() {
+        let item = |id: &str, job_id: &str, event: &str| {
+            serde_json::json!({
+                "id": id,
+                "jobId": job_id,
+                "kind": "decision_request",
+                "status": "pending",
+                "llmContent": format!("resolve --source-event \"{event}\"")
+            })
+        };
+        let payload = serde_json::json!({
+            "items": [
+                item("consent", "job1", "autotrade_consent"),
+                item("config", "job1", "autotrade_config_required"),
+                item("manual", "job1", "autotrade_manual_signal"),
+                item("other-job", "job2", "autotrade_consent")
+            ]
+        });
+
+        assert_eq!(
+            retired_autotrade_mode_todo_ids(&payload, "job1"),
+            vec!["consent".to_string(), "config".to_string()]
+        );
+    }
 
     #[test]
     fn user_notify_content_appends_media_path() {

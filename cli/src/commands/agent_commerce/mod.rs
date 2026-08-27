@@ -768,8 +768,9 @@ pub enum AgentCommand {
         cancel: bool,
     },
 
-    /// Queue and push a delivery's consent/manual decision. The CLI adds a
-    /// bounded canonical delivery summary before the unchanged choices.
+    /// Compatibility entry point for delivery policy handling. A persisted
+    /// manual policy may push its per-delivery decision; an unconfigured
+    /// policy is reported as a terminal skip and never selects a mode.
     #[command(name = "autotrade-consent-request", hide = true)]
     AutotradeConsentRequest {
         #[arg(long = "job-id")]
@@ -2066,11 +2067,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             delivery_id,
             signal_type,
         } => {
-            use task::common::autotrade::{card, consent, delivery_queue};
+            use task::common::autotrade::{card, consent, delivery_queue, executor};
             let signal_type = signal_type
                 .parse::<crate::asset_class::AssetClass>()
                 .map_err(anyhow::Error::msg)?;
-            if consent::load_consent(&job_id)?
+            let policy = consent::load_consent(&job_id)?;
+            if policy
+                .as_ref()
                 .is_some_and(|policy| policy.mode == consent::ConsentMode::Auto)
             {
                 crate::output::success(serde_json::json!({
@@ -2078,9 +2081,36 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     "decisionPushed": false,
                     "status": "policy_ready",
                     "reason": "auto_authorization_already_persisted",
+                    "jobId": job_id,
                     "deliveryId": delivery_id,
+                    "consentMode": "auto",
                     "terminal": false,
-                    "guidance": "Do not ask A/B/C again. Re-read this delivery, run the normal grant/readiness checks, and execute only through autotrade-execute if eligible.",
+                    "guidance": "Re-read this delivery, run the normal grant/readiness checks, and execute only through autotrade-execute if eligible.",
+                }));
+                return Ok(());
+            }
+            if policy.as_ref().is_none_or(|policy| {
+                policy.mode == consent::ConsentMode::Decline
+            }) {
+                let outcome = executor::report_delivery(
+                    &job_id,
+                    &delivery_id,
+                    "skipped",
+                    task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                )?;
+                let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(
+                    &job_id,
+                );
+                crate::output::success(serde_json::json!({
+                    "decision": false,
+                    "decisionPushed": false,
+                    "status": "skipped",
+                    "reason": task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                    "jobId": job_id,
+                    "deliveryId": delivery_id,
+                    "terminal": true,
+                    "outcome": outcome,
+                    "guidance": "The deliverable was saved and no transaction was submitted. Tell the user that this subscription has no active execution policy and that they can explicitly ask to restore or update its copy-trade execution policy. Do not create an execution-mode decision for this delivery.",
                 }));
                 return Ok(());
             }
@@ -2105,7 +2135,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         "reason": "delivery_already_processing_or_awaiting_decision",
                         "deliveryId": delivery_id,
                         "terminal": false,
-                        "guidance": "Do not push another A/B/C card and do not submit an order. The durable delivery queue already owns this delivery.",
+                        "guidance": "Do not push another manual decision and do not submit an order. The durable delivery queue already owns this delivery.",
                     }));
                     return Ok(());
                 }
@@ -2126,6 +2156,52 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     return Ok(());
                 }
             };
+            // The policy may have changed while enqueue waited on another
+            // delivery or local lock. Re-read it before binding/pushing a
+            // manual card so pause/auto updates cannot leave a stale prompt.
+            let policy = match consent::load_consent(&job_id)? {
+                Some(policy) if policy.mode == consent::ConsentMode::Manual => policy,
+                Some(policy) if policy.mode == consent::ConsentMode::Auto => {
+                    delivery_queue::release_unpresented(&job_id, &delivery_id).map_err(|e| {
+                        anyhow::anyhow!("delivery decision queue release failed: {e}")
+                    })?;
+                    crate::output::success(serde_json::json!({
+                        "decision": false,
+                        "decisionPushed": false,
+                        "status": "policy_ready",
+                        "reason": "policy_changed_before_decision",
+                        "jobId": job_id,
+                        "deliveryId": delivery_id,
+                        "consentMode": "auto",
+                        "terminal": false,
+                        "guidance": "The execution policy changed before a manual decision was presented. Re-read this delivery and continue only through the normal grant/readiness checks and autotrade-execute gateway.",
+                    }));
+                    return Ok(());
+                }
+                _ => {
+                    let outcome = executor::report_delivery(
+                        &job_id,
+                        &delivery_id,
+                        "skipped",
+                        task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                    )?;
+                    let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(
+                        &job_id,
+                    );
+                    crate::output::success(serde_json::json!({
+                        "decision": false,
+                        "decisionPushed": false,
+                        "status": "skipped",
+                        "reason": task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                        "jobId": job_id,
+                        "deliveryId": delivery_id,
+                        "terminal": true,
+                        "outcome": outcome,
+                        "guidance": "The execution policy changed before a manual decision was presented. The deliverable was saved and no transaction was submitted. Invite the user to explicitly restore or update this subscription's copy-trade execution policy.",
+                    }));
+                    return Ok(());
+                }
+            };
             // The queue serializes deliveries; the pending pointer binds the
             // visible card/reply to the active one only.
             match consent::activate_delivery_context_exclusive(&job_id, &delivery_id)
@@ -2140,23 +2216,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     );
                 }
             }
-            let decision = match consent::load_consent(&job_id)? {
-                Some(policy) if policy.mode == consent::ConsentMode::Manual => {
-                    card::make_manual_signal_decision(
-                        &delivery_id,
-                        signal_type.as_str(),
-                        &job_id,
-                        &agent_id,
-                        policy.trade_amount_u.as_deref(),
-                    )
-                }
-                _ => card::make_first_time_decision(
-                    &delivery_id,
-                    signal_type.as_str(),
-                    &job_id,
-                    &agent_id,
-                ),
-            };
+            let decision = card::make_manual_signal_decision(
+                &delivery_id,
+                signal_type.as_str(),
+                &job_id,
+                &agent_id,
+                policy.trade_amount_u.as_deref(),
+            );
             delivery_queue::mark_awaiting_decision(&job_id, &delivery_id)
                 .map_err(|e| anyhow::anyhow!("delivery decision queue update failed: {e}"))?;
             match task::common::pending_v2::push_decision_direct(
@@ -2486,6 +2552,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 grants::clear_grant(&job_id);
                 consent::clear_pending_signal(&job_id);
                 task::common::autotrade::continuation::clear(&job_id);
+                let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(
+                    &job_id,
+                );
                 crate::output::success(
                     serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id}),
                 );

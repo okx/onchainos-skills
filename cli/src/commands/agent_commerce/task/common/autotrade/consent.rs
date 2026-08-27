@@ -156,8 +156,8 @@ pub fn pending_delivery_decision_summary(job_id: &str, lang: Lang) -> Option<Str
 }
 
 /// Result of atomically binding an outstanding user decision to a delivery.
-/// A different pending delivery is never overwritten: doing so would let an
-/// A/B/C reply authorize the wrong signal.
+/// A different pending delivery is never overwritten: doing so could let a
+/// decision reply authorize the wrong signal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeliveryActivation {
     Activated(DeliveryContext),
@@ -423,7 +423,7 @@ fn now_secs() -> u64 {
 /// Load + validate the consent record for `job_id`.
 ///
 /// Returns `Ok(None)` when there is no record OR the record has **expired**
-/// (both ⇒ treat as first-time and re-ask). Returns `Err` only for a
+/// (both mean execution is not configured). Returns `Err` only for a
 /// present-but-broken record (unreadable / version-too-new / job mismatch), which
 /// the pipeline fails closed on. `Ok(Some(_))` is a live, valid record.
 pub fn load_consent(job_id: &str) -> Result<Option<ConsentFile>, ConsentError> {
@@ -450,7 +450,7 @@ pub fn load_consent(job_id: &str) -> Result<Option<ConsentFile>, ConsentError> {
     {
         return Err(ConsentError(CONSENT_UNREADABLE));
     }
-    // Expired ⇒ re-ask (first-time), not a hard error.
+    // Expired ⇒ execution is no longer configured, not a hard error.
     if file.expires_at <= now_secs() {
         return Ok(None);
     }
@@ -811,7 +811,7 @@ pub fn load_delivery_context(job_id: &str, delivery_id: &str) -> anyhow::Result<
     Ok(context)
 }
 
-/// Bind the A/B/C decision to one previously registered delivery. This pointer
+/// Bind a delivery decision to one previously registered delivery. This pointer
 /// is what makes a reply recoverable when it arrives in a fresh model session.
 pub fn activate_delivery_context(
     job_id: &str,
@@ -825,8 +825,8 @@ pub fn activate_delivery_context(
 }
 
 /// Atomically bind the first delivery awaiting consent without replacing a
-/// different outstanding delivery. This is the production entry point for the
-/// A/B/C card; `activate_delivery_context` remains available for migration and
+/// different outstanding delivery. This is the production entry point for
+/// manual decisions; `activate_delivery_context` remains available for migration and
 /// focused tests that intentionally replace the pointer.
 pub fn activate_delivery_context_exclusive(
     job_id: &str,
@@ -912,8 +912,9 @@ pub fn clear_pending_delivery(job_id: &str, delivery_id: &str) {
     }
 }
 /// Pause auto copy-trade for this job: delete the consent record so `evaluate_consent`
-/// falls back to `FirstTime` — the next signal re-shows the three-way prompt. Best-effort
-/// (already-absent is fine). Grant file + pending signal are cleared by the caller.
+/// falls back to `FirstTime`. Later signals are saved and reported as not executed until
+/// the user explicitly restores or updates the policy. Best-effort (already-absent is
+/// fine). Grant file + pending signal are cleared by the caller.
 pub fn clear_consent(job_id: &str) {
     if let Ok(path) = consent_path(job_id) {
         let _ = std::fs::remove_file(path);
@@ -1297,8 +1298,8 @@ mod tests {
     #[test]
     fn decline_maps_to_declined_decision() {
         with_home(|| {
-            // A Decline record maps to ConsentDecision::Declined; the pipeline re-asks on it
-            // (C rejects only the current signal, not the whole subscription).
+            // A Decline record maps to ConsentDecision::Declined; the delivery
+            // pipeline saves the artifact and reports a terminal skip.
             write_consent("job1", ConsentMode::Decline, None, None, 3600).unwrap();
             assert_eq!(
                 evaluate_consent("job1", None).unwrap(),
@@ -1319,7 +1320,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_consent_pauses_back_to_first_time() {
+    fn clear_consent_pauses_to_unconfigured_state() {
         with_home(|| {
             // Auto authorized within cap → auto-executes.
             write_consent("job1", ConsentMode::Auto, Some("10"), None, 3600).unwrap();
@@ -1327,8 +1328,8 @@ mod tests {
                 evaluate_consent("job1", Some(&dec("5"))).unwrap(),
                 ConsentDecision::AutoAllow
             );
-            // Pause ("暂停自动跟单"): clearing the consent record reverts to FirstTime,
-            // so the next signal re-shows the three-way prompt.
+            // Pause ("暂停自动跟单"): clearing the consent record reverts to
+            // FirstTime, which the delivery pipeline handles as a saved skip.
             clear_consent("job1");
             assert!(load_consent("job1").unwrap().is_none());
             assert_eq!(

@@ -190,8 +190,8 @@ prompt is not sufficient authority to update consent.
 ### Pause auto copy-trade
 
 This is a latency-sensitive local authorization toggle owned by the user session. Clear automatic
-execution authorization for **that one subscription** so a later actionable signal requests execution
-configuration again:
+execution authorization for **that one subscription**. Later actionable signals remain saved but are
+reported as not executed until the user explicitly restores or updates the execution policy:
 
 ```bash
 onchainos agent autotrade-consent-set --job-id <jobId> --mode pause
@@ -204,6 +204,9 @@ onchainos agent autotrade-consent-set --job-id <jobId> --mode pause
 - Success returns the existing `consentMode:"pause"`, `cleared:true`, and `jobId` fields. Tell the user
   that automatic execution is paused while the subscription and signal receipt remain active.
 - Pausing automatic execution does not cancel the subscription or disable signal receipt.
+- Never ask for a new execution mode when a delivery arrives. If the user later asks to restore or update
+  the policy, route through §Signal-receipt watch entry and its scoped-watch authorization gate; collect
+  only the required policy fields in natural language.
 
 **Device-routing safety flows (must be encoded as copy/behavior):**
 - **Tri-state contract (never collapse):** `deviceList:null` or a missing field = historical/unconfigured routing, so **all logged-in buyer devices receive by default**; `deviceList:[]` = the buyer explicitly selected no receiving device; a non-empty array = only those device ids receive. The CLI's `thisDeviceReceives` already applies this contract for the buyer view. Never use truthiness or `unwrap_or_default`-style reasoning that makes `null` and `[]` equivalent.
@@ -217,6 +220,11 @@ onchainos agent autotrade-consent-set --job-id <jobId> --mode pause
 > The `reject` command is unified — it auto-detects subscription vs regular task by `jobType`.
 > 🛑 `claim-auto-refund` is NOT the entry point — NEVER call it directly for a refund intent. It is only used in Step 3 after ASP timeout.
 <!-- retention: Keep arbitration-family action aliases for input recognition. Route them directly to reject without a legacy-role rename prompt; these are task actions, not the Evaluator role. -->
+
+**Reason gate (blocking):** A refund reason must be explicitly authored by the user. If the user only
+requests refund/rejection/cancellation, ask for the reason and end the turn without running `reject`.
+Pass an explicit user-authored reason verbatim.
+Never use the refund request itself, a default, an example, or model-generated text as the reason.
 
 When the user is unhappy with a delivery (subscription or regular task):
 

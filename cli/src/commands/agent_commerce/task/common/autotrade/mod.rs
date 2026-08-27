@@ -28,6 +28,21 @@ pub(crate) mod trade_kit;
 
 pub const DEFAULT_AUTOTRADE_TTL_SEC: u64 = 31_536_000;
 
+/// Terminal skip reason used when a delivery arrives without a live execution
+/// policy. The outcome notifier renders this code as localized guidance for
+/// restoring or updating the subscription's execution policy.
+pub const EXECUTION_POLICY_NOT_CONFIGURED_REASON: &str = "execution_policy_not_configured";
+
+/// Delivery-time mode/configuration prompts removed from the current flow.
+/// Replies from older releases are retained only long enough to fail closed;
+/// they must never write policy or produce another configuration card.
+pub const RETIRED_MODE_CONFIGURATION_EVENTS: &[&str] =
+    &["autotrade_consent", "autotrade_config_required"];
+
+pub fn is_retired_mode_configuration_decision(source_event: Option<&str>) -> bool {
+    source_event.is_some_and(|event| RETIRED_MODE_CONFIGURATION_EVENTS.contains(&event))
+}
+
 pub const RETIRED_DELIVERY_DECISION_EVENTS: &[&str] = &[
     "autotrade_consent",
     "autotrade_consent_pre_delivery",

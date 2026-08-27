@@ -205,9 +205,9 @@ executes a transaction.
 
 ## Consent and amount decision
 
-After extracting the quote amount for the current delivery, inspect `consentSnapshot` before deciding
-whether more user input is required. The first actionable delivery may show one bounded A/B/C mode
-decision; later clarification remains natural-language and asks only for missing fields.
+After extracting the quote amount for the current delivery, inspect `consentSnapshot`. A delivery never
+selects or changes the subscription's execution mode. Missing, declined, paused, or expired execution
+policy is a terminal skip for that delivery, not a reason to create a mode-selection decision.
 
 - `status=unreadable`: fail closed. Notify that local execution authorization cannot be read and do not
   execute or replace the policy from inferred conversation.
@@ -226,41 +226,27 @@ decision; later clarification remains natural-language and asks only for missing
   status with `autotrade-delivery-report`. Any other
   denial is not authorization: explain the reason and request explicit re-authorization instead of
   bypassing it.
-- `status=active, mode=manual`: do not show the first-time A/B/C card. Call the same CLI-owned decision
-  gate shown below (`autotrade-consent-request`). It detects the persisted manual policy and renders the
+- `status=active, mode=manual`: call the CLI-owned `autotrade-consent-request` decision gate. It detects
+  the persisted manual policy and renders the
   existing localized two-way `--source-event autotrade_manual_signal` decision (execute this delivery /
   skip), including the stored amount and corresponding deliverable summary. The gate serializes concurrent
   decision-requiring deliveries in FIFO order. If execution is chosen without an amount, re-request the
   same decision with an amount.
   Build the normal manual argv without `--autotrade-job`, then execute it through the same bridge with
   `--execution-mode manual`; the bridge reports the terminal result to the UI session.
-- `status=active, mode=decline` or `status=not_set`: first look only for exact user-authored automatic-
-  execution settings retained from the final confirmed subscription setup. Never infer them from
-  service/ASP/deliverable text.
-  - When a complete confirmed automatic policy already exists (`mode=auto`, fixed per-signal quote amount,
-    per-signal cap, and quote currency), require amount <= cap, persist it with the fully-qualified command
-    below, and continue this retained delivery without another mode card:
+- `status=active, mode=decline` or `status=not_set`: never recover or infer authorization from prior
+  conversation, service/ASP text, or the deliverable. Preserve the artifact and run exactly:
 
-    ```bash
-    onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <agentId> \
-      --mode auto --trade-amount <amount> --cap <cap> --quote <usdt|usdc>
-    ```
+  ```bash
+  onchainos agent autotrade-delivery-report --job-id <jobId> --delivery-id <deliveryId> \
+    --status skipped --reason execution_policy_not_configured
+  ```
 
-    Replace every placeholder from the current runtime context and the user's explicit settings before
-    execution. Never omit the `agent` command group, `--job-id`, or `--agent-id`, and never invoke the
-    nonexistent top-level form `onchainos autotrade-consent-set`.
-  - Otherwise, push the mode decision exactly once. The CLI deterministically adds a bounded canonical
-    deliverable summary to the decision card, followed by a blank line and the unchanged A/B/C copy:
-
-    ```bash
-    onchainos agent autotrade-consent-request --job-id <jobId> --agent-id <agentId> \
-      --delivery-id <deliveryId> --signal-type <spot|perp|prediction|option|defi>
-    ```
-
-    The command owns the localized decision copy: A = execute this delivery and enable bounded automatic
-    execution; B = execute this delivery once; C = skip this delivery. Do not send a separate signal-summary
-    notification or place raw deliverable prose in `userContent`, and do not send a second decision request
-    for the same retained delivery.
+  The CLI pushes a localized notice that the deliverable was saved and no trade was executed, and invites
+  the user to explicitly restore or update this subscription's copy-trade execution policy. Do not call
+  `autotrade-consent-request`, do not create an execution-mode decision, and do not configure a policy from
+  this delivery. A later explicit restore/update request belongs to `task-user-playbook.md` §Signal-receipt
+  watch entry and `watch-core.md` §Existing-subscription scoped-watch authorization gate.
 
 If another decision-requiring signal arrives while one delivery is awaiting a reply or terminal handling,
 the command returns `status=queued` and does not create a skipped outcome or execution latch. End that turn.
@@ -274,8 +260,8 @@ durably before model work. New envelopes must match both persisted values. An un
 accepted only for a persisted pre-version queue entry. A missing ACK retries only the Job Session wake-up
 message; it never retries a transaction. Duplicate, stale, or future-attempt resume messages are absorbed.
 `awaiting_decision` is a distinct durable state with no processing watchdog, so user think-time cannot be
-mistaken for a crashed worker. Replaying the same consent request while that card is open returns
-`status=decision_pending` and must not push another A/B/C card. A legacy `processing` entry with no timestamp
+mistaken for a crashed worker. Replaying the same manual request while that card is open returns
+`status=decision_pending` and must not push another manual card. A legacy `processing` entry with no timestamp
 is migrated from durable facts: an execution latch/outcome takes priority; otherwise a matching pending
 pointer becomes `awaiting_decision`, and an unowned entry becomes `resume_pending`.
 
@@ -289,36 +275,14 @@ The decision relay is routed back to the trusted provider Job Session recorded w
 `backup:<jobId>` session is compatibility fallback only when no trusted context exists.
 `onchainos agent autotrade-consent-set` never parses, queues, or replays a signal.
 
-### Reply continuation after the A/B/C mode decision
+### Retired execution-mode decisions
 
-The decision uses `--source-event autotrade_consent`:
-
-Current clients handle the user's free-form reply in the foreground decision resolver. The foreground
-model extracts only a candidate JSON object; the CLI strictly validates it. Incomplete values are saved
-synchronously under the local `autotrade/pending-config` store and trigger the same existing localized
-missing-field prompt. A complete unambiguous policy is written synchronously to consent + grants before
-the resolver returns, while the pending delivery context remains available for the subscription session.
-Ambiguous candidates receive one canonical confirmation before any authorization is written. The
-resolver then relays a normalized A/B/C reply so the subscription session can re-read and re-validate the
-saved delivery. Never parse arbitrary user language inside the CLI, infer a cap from a lone amount, or
-report a successfully persisted policy as “still processing.”
-
-- A with complete fixed amount, cap, and quote: persist `mode=auto` with the fully-qualified command above
-  and continue the retained delivery.
-- A with missing values: use `pending-decisions-v2 request --source-event autotrade_config_required` with
-  one localized natural-language prompt listing only the missing automatic-policy fields. Never show
-  A/B/C again for this delivery. Combine later replies only with explicit values retained in this same
-  pending configuration.
-- B with an amount: persist `mode=manual --trade-amount <amount>` with
-  `onchainos agent autotrade-consent-set --job-id <jobId> --agent-id <agentId>`, then execute this delivery
-  through `autotrade-execute --execution-mode manual`.
-- B without an amount: use `autotrade_config_required` to ask only for this delivery's amount. Preserve the
-  selected manual mode; never ask for an automatic cap and never show A/B/C again.
-- C or a clear natural-language skip: execute nothing, write no new consent, and retain the saved artifact.
-- Ambiguous mode replies re-request the same A/B/C decision; parameter clarifications re-request only the
-  still-missing fields.
-
-A legacy in-flight `autotrade_consent` relay from an older client follows the same continuation rules.
+`--source-event autotrade_consent` and `--source-event autotrade_config_required` are retired. Current
+clients absorb locally queued and outstanding cards from older releases. If a legacy relay still reaches
+a subscription session, do not interpret its reply as authorization, do not execute, and never recreate
+or extend either card. Preserve the artifact, report the delivery as
+`skipped` with reason `execution_policy_not_configured`, and invite the user to explicitly restore or update
+the subscription's execution policy through the normal scoped-watch authorization flow.
 
 ## Cache behavior examples
 

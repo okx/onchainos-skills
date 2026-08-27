@@ -2015,24 +2015,25 @@ pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
     }
 }
 
-/// Directly runs `onchainos agent reject` in-process. The rejection reason
-/// is expected on `ctx.data` (forwarded from `next-action --data` by the
-/// `user_decision_job_submitted` router after the LLM extracts it from
-/// the relayed user reply); falls back to "did not meet acceptance
-/// criteria" when absent. Iron rules from the previous LLM-driven version
-/// ("don't send a message to the ASP about the rejection") become moot —
-/// Rust just broadcasts and returns.
+fn user_authored_rejection_reason(data: Option<&str>) -> Option<&str> {
+    data.map(str::trim).filter(|reason| !reason.is_empty())
+}
+
+/// Directly runs `onchainos agent reject` in-process with the rejection reason
+/// forwarded from the user's reply. Missing reasons are blocked before I/O.
 ///
 /// Failure path: standard cli_failed instruction (push decision to user).
 pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
 
-    let reason = ctx
-        .data
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("did not meet acceptance criteria");
+    let Some(reason) = user_authored_rejection_reason(ctx.data) else {
+        return format!(
+            "[reject_review] blocked: missing user-authored rejection reason; no task mutation occurred.\n\n\
+             Re-ask with `onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {} --source-event reject_reason_required --user-content \"Please provide the rejection reason.\" --list-label \"[Reject {}] rejection reason\"`; preserve the current `--to-agent-id` when present, then end the turn.\n",
+            ctx.agent_id, ctx.short_id
+        );
+    };
 
     let mut client = TaskApiClient::new();
     match super::super::reject::handle_reject(&mut client, job_id, reason).await {
@@ -2165,6 +2166,40 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_authored_rejection_reason_rejects_missing_or_blank_values() {
+        assert_eq!(user_authored_rejection_reason(None), None);
+        assert_eq!(user_authored_rejection_reason(Some("  \n\t ")), None);
+        assert_eq!(
+            user_authored_rejection_reason(Some("  quality not met  ")),
+            Some("quality not met")
+        );
+    }
+
+    #[tokio::test]
+    async fn reject_review_without_reason_blocks_before_broadcast() {
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id: "0xabc",
+            agent_id: "426",
+            short_id: "0xabc",
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: None,
+            data: None,
+        };
+
+        let out = reject_review(&ctx).await;
+        assert!(out.contains("missing user-authored rejection reason"));
+        assert!(out.contains("--source-event reject_reason_required"));
+        assert!(out.contains("--user-content \"Please provide the rejection reason.\""));
+        assert!(!out.contains("<localized reason"));
+        assert!(!out.contains("did not meet acceptance criteria"));
+        assert!(!out.contains("cli_failed"));
+    }
 
     struct EnvVarGuard {
         key: &'static str,
