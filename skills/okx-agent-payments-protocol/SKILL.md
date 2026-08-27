@@ -4,7 +4,7 @@ description: "For agent payments and paid endpoints via x402, MPP, payment links
 license: MIT
 metadata:
   author: okx
-  version: "4.8.1-beta"
+  version: "4.8.2-beta"
   homepage: "https://web3.okx.com"
 ---
 
