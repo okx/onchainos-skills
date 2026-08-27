@@ -155,7 +155,7 @@ Every modification is confirmed individually (Universal confirmation rule). Afte
 
 | User action | Handling |
 |---|---|
-| Confirm & publish | Run `create-task` (regular) / `create-subscribe` (subscription) **without** any `descriptionSummary` — the field no longer exists |
+| Confirm & publish | Run `create-task` for a regular task. For a subscription, first run `onchainos agent gate-check --role user`; run `create-subscribe` only when it returns `ready: true`, otherwise stop. Run both create commands **without** any `descriptionSummary` — the field no longer exists. |
 | Edit description | Re-parse search intent and **immediately re-run `task-service-select`**; the re-match may change the recommended service/provider and may **switch the branch** (subscription ↔ regular) — re-render the matching card |
 | Edit service params | Update in place → re-render |
 | Edit budget / max-budget (regular, pre-create only) | Validate without auto-adjusting the other field → separately confirm concrete value(s) → update existing fields → re-render without budget rows |
