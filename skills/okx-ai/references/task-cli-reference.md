@@ -202,7 +202,7 @@ For the initial search, pass the user's original utterance verbatim to
 [`intent-keyword-extraction.md`](intent-keyword-extraction.md), then use its output as the base
 `task-service-select` arguments. Use the canonical
 `service-match` argument shape: emit `--keywords` at most once, followed by all extracted keyword
-values in their original order. For `--service-id`, prefer the extracted value; otherwise use the
+values in their original order. For `--sid`, prefer the extracted value; otherwise use the
 user-selected Service's `sid` retained in context, not its `serviceId`. Omit it when neither exists, and
 never infer it. Always use `--limit 1` for this initial recommendation; do not proactively fetch multiple
 services.

@@ -363,7 +363,7 @@ pub struct ServiceListArgs {
     /// backend-side filter, used to fetch a single service's detail
     /// (including its `serviceGuide`) without pulling the agent's full
     /// service page. Omitted → the backend returns all services.
-    #[arg(long = "service-id")]
+    #[arg(long = "sid")]
     pub service_id: Option<String>,
 }
 
@@ -422,7 +422,7 @@ mod service_match_args_tests {
             "audit",
             "--agentic-id",
             "user-agent-001",
-            "--service-id",
+            "--sid",
             "svc-001",
             "--min-payment-token-amount",
             "5",
