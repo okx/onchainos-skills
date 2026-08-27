@@ -26,7 +26,7 @@ The extraction object is internal; convert non-null fields to the flags in
 
 ```text
 # Extraction:
-{"asp-agent-id":null,"asp-name":null,"service-name":null,"service-id":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["analyze this wallet","generate a report"]}
+{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["analyze this wallet","generate a report"]}
 
 # CLI:
 onchainos agent service-match --keywords "analyze this wallet" "generate a report" --limit 5

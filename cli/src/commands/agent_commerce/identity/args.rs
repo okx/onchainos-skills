@@ -363,7 +363,7 @@ pub struct ServiceListArgs {
     /// backend-side filter, used to fetch a single service's detail
     /// (including its `serviceGuide`) without pulling the agent's full
     /// service page. Omitted → the backend returns all services.
-    #[arg(long = "sid")]
+    #[arg(long = "service-id")]
     pub service_id: Option<String>,
 }
 
@@ -383,7 +383,7 @@ pub struct ServiceMatchArgs {
     #[arg(long = "service-name")]
     pub service_name: Option<String>,
     /// Initial-search filter: match a Service by its Service ID.
-    #[arg(long = "service-id")]
+    #[arg(long = "sid")]
     pub service_id: Option<String>,
     /// Optional User Agent ID sent as the `agenticId` request header to exclude already-subscribed Services; valid for initial and continuation requests.
     #[arg(long = "agentic-id")]
