@@ -1,12 +1,15 @@
 # Initial Service-Match Argument Extraction
 
-Extract the requested service or ASP's capabilities and matching attributes from the user's original utterance.
+Extract explicit service/ASP selectors, price bounds, and capability-focused search keywords from the user's
+original utterance.
 
 ## Output contract
 
 Use only the exact original utterance and ignore all surrounding context. If it cannot be isolated reliably,
-return empty fields. Do not translate, paraphrase, summarize, or add information, except for reductions
-explicitly defined below.
+return empty fields. Preserve the source language and never add inferred capabilities, synonyms, examples,
+or related concepts. Lossless grammatical compression is allowed only as defined below: remove request
+wrappers and function words, and reorder the user's own words when necessary to form a concise service-search
+phrase without changing meaning.
 
 Return only one valid JSON object matching this structure:
 
@@ -15,83 +18,35 @@ type ExtractionResult = {
   "asp-agent-id": string | null;
   "asp-name": string | null;
   "service-name": string | null;
+  "service-id": string | null;
   "min-payment-token-amount": number | null;
   "max-payment-token-amount": number | null;
   "keywords": string[]; // 0–10 items
 };
 ```
 
-Always include every field. Use `null` for an absent scalar and `[]` when no keyword exists.
-
-1. `asp-agent-id`: explicit Agent/ASP ID
-2. `asp-name`: explicit Agent/ASP name
-3. `service-name`: explicit service name
-4. `min-payment-token-amount`: explicit lower price bound
-5. `max-payment-token-amount`: explicit upper price bound
-6. `keywords`: up to 10 capability phrases
-
-Use these exact field names in the JSON object.
-
-Apply these rules in order; an earlier rule overrides a later one.
+Always include every field. Use `null` for an absent scalar and `[]` when no keyword exists. Apply the rules
+below in order; an earlier rule overrides a later one. Populate dedicated scalar fields before extracting
+`keywords`; content captured by a scalar field must never be repeated in `keywords`.
 
 ### 1. Extract explicit names and IDs
 
 - Agent/ASP ID → `asp-agent-id`
 - Agent/ASP name → `asp-name`
 - Service name → `service-name`
-- Service ID → preserve verbatim as one `keywords` item because no `serviceId` field exists
+- Service ID → `service-id`
 
-Extract a name or ID only when source-language labeling or grammar identifies it unambiguously. Preserve
-names and service IDs verbatim, excluding surrounding labels, quotation marks, and delimiters. Do not
-repeat `asp-agent-id`, `asp-name`, or `service-name` in `keywords`.
+Extract a name or ID only when explicitly identified by source-language labeling or grammar. Preserve its
+value verbatim but remove labels, quotes, angle brackets, delimiters, surrounding whitespace, and an adjacent
+`#`. A capability description is not a name. Do not repeat extracted names or IDs in `keywords`.
 
-A capability or deliverable description is not a name unless explicit naming grammar identifies it as one.
+For `use <service name>, Agent/ASP ID is <ID>` or `use <service name>, Service ID is <ID>`, extract both
+values. Examples: `Agent #1960` → `asp-agent-id: "1960"`; `serviceId=svc-7` →
+`service-id: "svc-7"`.
 
-For the structure `use <service name>, Agent/ASP ID is <ID>`, always extract both `service-name` and
-`asp-agent-id` accurately, excluding the angle brackets and surrounding whitespace.
+Never infer an ID from an unlabeled number, name, URL, address, hash, capability, or topic.
 
-For `asp-agent-id`, return only the ID value: remove an adjacent `Agent`/`ASP` label and `#` separator, but keep
-the complete value following a separate ID label. For example, `Agent #1960` yields `1960`, while
-`agentId: ASP-009` yields `ASP-009`.
-
-Never infer an ID from a platform or brand name, domain, URL, email-like value, wallet or contract address,
-transaction hash, capability, topic, ordinary token, or unlabeled number.
-
-### 2. Extract matching units into `keywords`
-
-Never expand the user's wording with inferred subtopics, synonyms, examples, or related terms that do not appear in the original utterance.
-
-Keep only units describing what the service or ASP must do, provide, or be:
-
-- Capability or function
-- Subject or topic
-- Purpose or output
-- Capability scope, such as a required technology, language, region, asset, data type, integration, or
-  format
-- Matching attribute, such as quality, rating, status, availability, popularity, sales volume, qualitative
-  price, category, role, service type, or ordering
-
-Each item must be one concise, independently matchable semantic unit. Split combined expressions when
-their parts remain meaningful and useful for matching independently. Keep a unit intact when splitting
-would make it generic, incomplete, or different from the user's intent.
-
-Extract semantic phrases, not tokens: split only when every resulting phrase remains complete and
-independently narrows the candidate service set.
-
-### 3. Remove non-matching text
-
-Exclude:
-
-- User behavior or workflow intent, such as finding, browsing, comparing, viewing, recommending, buying,
-  using, subscribing, publishing, creating, or switching
-- Marketplace-location phrases
-- Generic entity or workflow words with no matching meaning
-- Relational or grammatical wrappers with no matching meaning
-
-Retain an action when it describes a required service capability or purpose; remove it when it only
-describes the user's marketplace behavior. These exclusions never override an explicit value from rule 1.
-
-### 4. Extract price bounds
+### 2. Extract price bounds
 
 - Lower-bound wording (`above`, `greater than`, `no less than`, `at least`, `>`, `>=`) →
   `min-payment-token-amount`
@@ -99,33 +54,58 @@ describes the user's marketplace behavior. These exclusions never override an ex
   `max-payment-token-amount`
 - An explicit range sets both fields
 
-Use only explicit numeric values and exclude their price phrases from `keywords`. Keep qualitative price
-attributes in `keywords` without inferring a number; reduce ranking wording to its core attribute when
-appropriate, such as `cheapest` → `cheap`.
+Use only explicit numeric values. Exclude numeric and qualitative price wording from `keywords`; never infer
+a numeric bound from terms such as `cheap` or `cheapest`.
 
-### 5. Finalize `keywords`
+### 3. Extract service `keywords`
 
-- Remove exact or semantically redundant duplicates.
-- If more than 10 items remain, prioritize service IDs, capabilities, subjects, purposes, outputs, scopes,
-  then matching attributes.
-- Return selected items in their first-appearance order.
-- Only trim wrappers or apply reductions explicitly defined above.
+Return the smallest set of high-information phrases that fully expresses the requested service without the
+discarded conversation. Prefer one complete phrase over several broad fragments.
+
+- Keep capabilities, subjects, purposes, outputs, and required technical or domain scopes.
+- Extrinsic service metadata is never a `keyword`: discard anything describing a listing or provider's
+  current state, reputation, adoption, commercial performance, or ranking rather than what the service does.
+  This includes online/offline status, availability, ratings/reviews, popularity, sales volume, price, and
+  ordering. If an attribute can change without changing the service's inputs, behavior, supported scope, or
+  outputs, treat it as metadata. Keep capability-defining properties such as `real-time monitoring`,
+  `multilingual support`, or `JSON output`.
+- Use only positive requirements. For `not X, but Y`, rejected or unnecessary capabilities, keep Y only.
+- Build the core phrase by attaching its subject, object, platform, asset, technology, or other dependent
+  modifier: `Move contract auditing`, `BTC options volatility analysis`, `Polymarket copy-trading strategy`.
+- Remove wrappers such as `find`, `I need`, `a service that can`, `帮我找`, and `我需要`. Reorder only
+  the user's words to form a natural phrase; do not translate, add synonyms, generalize, or invent content.
+- Split only independent capabilities, deliverables, or scopes that remain useful for matching alone, such
+  as `smart-money wallet monitoring` and `copy-trading signal delivery`.
+- Never split a modifier from what it qualifies, an object from its action, or a platform from its
+  platform-specific capability. When uncertain, keep the phrase intact.
+
+Exclude marketplace behavior, generic service/entity words, background about an unsuitable current service,
+politeness, urgency, and grammatical filler. Retain an action only when it describes a required capability.
+
+### 4. Finalize `keywords`
+
+- Remove redundant phrases and prefer 1–5 items; never split or pad to produce more keywords.
+- Order capabilities and outputs first, then independent scopes.
+- Keep at most 10 items, dropping broad or low-impact scopes first.
+- Drop any item whose removal would not broaden or change the intended results; merge any phrase that is
+  ambiguous without its modifier.
 
 ## Examples
 
 | Original utterance | Output |
 |---|---|
-| `Find ASP named Alpha Risk Guard, agentId: 2374, for Move contract auditing` | `{"asp-agent-id":"2374","asp-name":"Alpha Risk Guard","service-name":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["Move","contract auditing"]}` |
-| `Search for service “Cross-chain Bridge Risk Radar Pro”, serviceId=svc_CN-7, with rating above 90%` | `{"asp-agent-id":null,"asp-name":null,"service-name":"Cross-chain Bridge Risk Radar Pro","min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["svc_CN-7","rating above 90%"]}` |
-| `Find a market analysis service priced between 8 and 20` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"min-payment-token-amount":8,"max-payment-token-amount":20,"keywords":["market analysis"]}` |
-| `Find Agent#1960 for BTC options volatility analysis, cheapest first` | `{"asp-agent-id":"1960","asp-name":null,"service-name":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["BTC options","volatility analysis","cheap"]}` |
-| `我想使用< 高波动主流币跟单信号 >，Agent ID 是 8136` | `{"asp-agent-id":"8136","asp-name":null,"service-name":"高波动主流币跟单信号","min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":[]}` |
-| `Subscribe to a Polymarket copy-trading strategy` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["Polymarket","copy-trading strategy"]}` |
-| `Find a highly rated, online, cheapest Agent` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["highly rated","online","cheap"]}` |
+| `Find ASP named Alpha Risk Guard, agentId: 2374, for Move contract auditing` | `{"asp-agent-id":"2374","asp-name":"Alpha Risk Guard","service-name":null,"service-id":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["Move contract auditing"]}` |
+| `Search for service “Cross-chain Bridge Risk Radar Pro”, serviceId=svc_CN-7, with rating above 90%` | `{"asp-agent-id":null,"asp-name":null,"service-name":"Cross-chain Bridge Risk Radar Pro","service-id":"svc_CN-7","min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":[]}` |
+| `Find a market analysis service priced between 8 and 20` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"service-id":null,"min-payment-token-amount":8,"max-payment-token-amount":20,"keywords":["market analysis"]}` |
+| `Find Agent#1960 for BTC options volatility analysis, cheapest first` | `{"asp-agent-id":"1960","asp-name":null,"service-name":null,"service-id":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["BTC options volatility analysis"]}` |
+| `我想使用 < 高波动主流币跟单信号 >，Service ID 是 36563` | `{"asp-agent-id":null,"asp-name":null,"service-name":"高波动主流币跟单信号","service-id":"36563","min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":[]}` |
+| `Subscribe to a Polymarket copy-trading strategy` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"service-id":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["Polymarket copy-trading strategy"]}` |
+| `帮我找一个好评、销量高、在线，能实时监控聪明钱钱包并推送 Solana 跟单信号的服务` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"service-id":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["聪明钱钱包实时监控","Solana 跟单信号推送"]}` |
+| `不要通用行情分析，我需要 ETH 链上巨鲸异动预警` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"service-id":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["ETH 链上巨鲸异动预警"]}` |
 
 ## Validation
 
-Before returning, verify the six-field schema, explicit identifiers, price-bound mapping, and an ordered,
-deduplicated, source-language `keywords` array of no more than 10 items. Every keyword must be traceable to
-the original utterance, independently useful for matching, and free of workflow or generic terms. If this
-validation fails, re-extract once from the original utterance only; if it still fails, return `keywords: []`.
+Verify the seven-field schema, explicit identifiers, price bounds, and no more than 10 ordered, deduplicated,
+source-language keywords. Each keyword must be traceable to the utterance and useful for matching; modifiers
+must stay attached, rejected intent must be absent, and no scalar-field or extrinsic service metadata may
+appear in `keywords`. If validation fails twice, return `keywords: []`.
