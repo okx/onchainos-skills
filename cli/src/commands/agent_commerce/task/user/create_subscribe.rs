@@ -443,15 +443,36 @@ pub async fn handle_create_subscribe(
         eprintln!("[create-subscribe] subId={sub_id}, bizType={biz_type}");
     }
 
-    // Step 4 + 5: sign uopData → broadcast (reuses the standard task broadcast endpoint)
-    let tx_hash = signing::sign_uop_and_broadcast(
-        client, uop_data, &account_id, &address, &sub_id, biz_type, &user_agent_id, None,
-    ).await?;
+    // Bind the subscription job to the current AI runtime before broadcast.
+    // The on-chain creation event can be consumed while broadcast is still
+    // returning, so the provider mapping must already exist at that point.
+    let provider_prebind = common::a2a_binding::bind_job_provider_to_current_runtime(&sub_id).await;
 
-    // The jobId exists only after create + broadcast. Persist the MVP default
-    // policy together with any final user-authored setup into the same local
-    // files used by runtime execution. A write failure cannot roll back the
-    // subscription.
+    // Step 4 + 5: sign uopData → broadcast (reuses the standard task broadcast endpoint)
+    let tx_hash = match signing::sign_uop_and_broadcast(
+        client,
+        uop_data,
+        &account_id,
+        &address,
+        &sub_id,
+        biz_type,
+        &user_agent_id,
+        None,
+    )
+    .await
+    {
+        Ok(tx_hash) => tx_hash,
+        Err(err) => {
+            if let Some(prebind) = &provider_prebind {
+                prebind.rollback_if_created().await;
+            }
+            return Err(err);
+        }
+    };
+
+    // Persist the MVP default policy only after create + broadcast succeeds,
+    // together with any final user-authored setup in the same local files used
+    // by runtime execution. A write failure cannot roll back the subscription.
     let autotrade_configured = match persist_subscription_autotrade(&sub_id, &autotrade_config) {
         Ok(()) => true,
         Err(err) => {
@@ -779,6 +800,41 @@ mod tests {
                 .to_string()
                 .contains("create-time device selection is unsupported"),
             "unexpected error: {error}"
+        );
+    }
+
+    // The backend create response is the first point where the subscription has
+    // a jobId. Bind that job to the current runtime before broadcasting so the
+    // on-chain creation event cannot race ahead of local provider routing.
+    #[test]
+    fn create_subscribe_binds_job_provider_before_broadcast() {
+        let source = include_str!("create_subscribe.rs");
+        let handler = source
+            .split_once("pub async fn handle_create_subscribe")
+            .expect("create-subscribe handler must exist")
+            .1
+            .split_once("#[cfg(test)]")
+            .expect("handler must precede its tests")
+            .0;
+
+        let job_id = handler
+            .find("let sub_id = create_resp[\"jobId\"]")
+            .expect("handler must read jobId from the create response");
+        let bind = handler
+            .find("bind_job_provider_to_current_runtime(&sub_id)")
+            .expect("handler must bind the subscription job to the current runtime");
+        let broadcast = handler
+            .find("signing::sign_uop_and_broadcast(")
+            .expect("handler must broadcast the subscription transaction");
+        let rollback = handler
+            .find("prebind.rollback_if_created().await")
+            .expect("handler must roll back a newly-created binding when broadcast fails");
+
+        assert!(job_id < bind, "jobId must be resolved before bind-current");
+        assert!(bind < broadcast, "bind-current must run before broadcast");
+        assert!(
+            broadcast < rollback,
+            "broadcast failure handling must be able to roll back the pre-bind"
         );
     }
 
