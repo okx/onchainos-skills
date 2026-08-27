@@ -1,6 +1,6 @@
 {
   "name": "onchainos-skills",
-  "version": "4.8.1-beta",
+  "version": "4.8.2-beta",
   "description": "onchainos skills for AI coding assistants — token search, market data, wallet balance, swap execution, and transaction broadcasting across 20+ chains",
   "keywords": [
     "claude-code",

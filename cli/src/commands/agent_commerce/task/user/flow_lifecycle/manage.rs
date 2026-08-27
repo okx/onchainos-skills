@@ -223,7 +223,7 @@ Collect/infer:
 Step 5 -- Subscription confirmation form
 ================================================
 
-Execution mode, per-signal amount, per-signal cap, margin mode, and order policy are internal execution configuration. Never render them as rows in this or any other confirmation form. Continue retaining the user-authored values for the Step 6 `--autotrade-*` arguments.
+The confirmation form has exactly the seven product-facing rows below. Execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode, order policy, and any other execution setting are internal execution configuration. Never append, merge, or render them as rows in this or any other confirmation form, even when they appear in the user request, service description, retained context, or service usage guide. Continue retaining the user-authored values for the Step 6 `--autotrade-*` arguments.
 
 | Field | Value |
 |---|---|
@@ -234,7 +234,6 @@ Execution mode, per-signal amount, per-signal cap, margin mode, and order policy
 | Service price | <subscriptionInfo.feeAmount> <feeTokenSymbol> / month |
 | Trial | Yes (<subscriptionInfo.freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial`) |
 | Auto-renew | On / Off |
-| Trade Kit environment | Live / Demo / Not applicable |
 
 > Confirm? Once confirmed, the subscription will be created on-chain.
 
@@ -314,7 +313,7 @@ For regular tasks, collect Currency internally but do not show it in the confirm
 Step 5 -- Regular confirmation form
 ================================================
 
-Never add execution mode, per-signal amount, or per-signal cap to this or any other confirmation form.
+Never add execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode, order policy, or any other execution setting to this or any other confirmation form.
 
 | Field | Value |
 |---|---|
@@ -565,10 +564,34 @@ mod tests {
         assert!(!out.contains("| Signal execution |"));
         assert!(!out.contains("| Per-signal amount |"));
         assert!(!out.contains("| Per-signal cap |"));
+        assert!(!out.contains("| Trade Kit environment |"));
+        assert!(out.contains("exactly the seven product-facing rows below"));
+        for expected_row in [
+            "| Title |",
+            "| Description |",
+            "| Provider |",
+            "| Service params |",
+            "| Service price |",
+            "| Trial |",
+            "| Auto-renew |",
+        ] {
+            assert!(out.contains(expected_row), "missing confirmation row {expected_row}");
+        }
+        let form = out
+            .split("Step 5 -- Subscription confirmation form")
+            .nth(1)
+            .expect("subscription confirmation section")
+            .split("> Confirm?")
+            .next()
+            .expect("subscription confirmation table");
+        assert_eq!(
+            form.lines().filter(|line| line.starts_with("| ")).count(),
+            8,
+            "confirmation table must contain one header plus exactly seven product rows"
+        );
         assert!(out.contains(
             "Continue retaining the user-authored values for the Step 6 `--autotrade-*` arguments"
         ));
-        assert!(out.contains("| Trade Kit environment | Live / Demo / Not applicable |"));
         assert!(out.contains("--autotrade-environment <live|demo>"));
         assert!(out.contains("--autotrade-required-field"));
         assert!(out.contains(
@@ -642,7 +665,7 @@ mod tests {
         assert!(!out.contains("| Per-signal amount |"));
         assert!(!out.contains("| Per-signal cap |"));
         assert!(out.contains(
-            "Never add execution mode, per-signal amount, or per-signal cap to this or any other confirmation form"
+            "Never add execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode, order policy, or any other execution setting to this or any other confirmation form"
         ));
     }
 

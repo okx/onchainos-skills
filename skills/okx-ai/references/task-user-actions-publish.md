@@ -82,11 +82,12 @@ Display as a single `| Field | Value |` table with exactly these **5** fields in
 | 4 | Service Parameters | Agent-inferred | `None` when empty |
 | 5 | Service Price | task-service-select `feeAmount` + `feeTokenSymbol` | Zero (number or numeric string) → localized `Free`; otherwise `<feeAmount> <symbol>`; **omit the row when `feeAmount` is absent** |
 
-If attachments present, add an Attachments row.
+If attachments are present, list them below the table; never add an Attachments row.
 
-Execution mode, per-signal amount, and per-signal cap are internal execution configuration. Never add them
-to this or any other confirmation form, even when they appear in the user request, service description, or
-retained context.
+Execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode,
+order policy, and any other execution setting are internal execution configuration. Never add them to this
+or any other confirmation form, even when they appear in the user request, service description, retained
+context, or service usage guide.
 
 Initialize internal `budget` and `max-budget` from the selected service `feeAmount`; a zero service fee produces `budget=0` and `max-budget=0` and remains publishable. Never ask for them initially and never show them in this card. Continue collecting and validating Payment Currency internally for A2A and x402, but do not show it because Service Price already includes the currency. A user may explicitly edit budget fields to zero before `create-task`, subject to `max-budget >= budget`; validate and confirm the proposed values separately, then re-render this card without budget rows.
 
@@ -111,7 +112,7 @@ Do not query, list, or suggest the ASP's other services. Offer only `nextAfterUs
 DISPUTED / unknown non-terminal subscriptions end after the duplicate warning. Known terminal history
 (`COMPLETED` / `CLOSED` / `FAILED`) does not block a new subscription.
 
-Display as a single `| Field | Value |` table with these **7 base fields** in order (drop `Summary`, `Service`, `Service desc`, and the old binary execution switch):
+Display as a single `| Field | Value |` table with exactly these **7 fields** in order (drop `Summary`, `Service`, `Service desc`, and the old binary execution switch). Do not append or merge any other row:
 
 | # | Field | Source | Render Rule |
 |---|---|---|---|
@@ -123,13 +124,14 @@ Display as a single `| Field | Value |` table with these **7 base fields** in or
 | 6 | Trial | task-service-select `subscriptionInfo.supportTrial/freeTrial` | A positive `freeTrial` → `Yes (<freeTrial> hours free)`; otherwise `No` |
 | 7 | Auto-Renew | Explicit user choice; no default | `On` or `Off` |
 
-Execution mode, per-signal amount, and per-signal cap are internal execution configuration. Never add them
-to this or any other confirmation form, even for a trading-signal subscription. Automatic execution remains
-the default. The ASP description may define which fields to ask about, but only user-authored replies supply
+Execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode,
+order policy, and any other execution setting are internal execution configuration. Never add them to this
+or any other confirmation form, even for a trading-signal subscription. Automatic execution remains the
+default. The ASP description may define which fields to ask about, but only user-authored replies supply
 persisted values. Ask any ASP-required missing fields in one natural-language question without a choice card,
 retain the answers outside the form, and pass them through the existing `--autotrade-*` arguments.
 
-If attachments present, add an Attachments row.
+If attachments are present, list them below the table; never add an Attachments row.
 
 Before displaying this confirmation table, verify the **Service Usage Guide gate** above has already
 run for the selected service (run it now if not — backstop), then inspect advisory local readiness. When

@@ -8,6 +8,7 @@ fn skill_confirmation_templates_never_expose_execution_configuration() {
         "| Signal Execution |",
         "| Per-Signal Amount |",
         "| Per-Signal Cap |",
+        "| Trade Kit Environment |",
     ] {
         assert!(
             !PUBLISH_ACTIONS.contains(forbidden_row),
@@ -15,21 +16,20 @@ fn skill_confirmation_templates_never_expose_execution_configuration() {
         );
     }
 
-    assert!(PUBLISH_ACTIONS.contains(
-        "Never add them\n\
-to this or any other confirmation form"
-    ));
+    assert!(PUBLISH_ACTIONS.contains("Do not append or merge any other row"));
+    assert!(PUBLISH_ACTIONS.contains("list them below the table; never add an Attachments row"));
+    assert!(PUBLISH_ACTIONS.contains("Trade Kit environment, margin mode"));
     assert!(PUBLISH_ACTIONS.contains("pass them through the existing `--autotrade-*` arguments"));
     assert!(PUBLISH_ACTIONS.contains(
         "that\n\
 returned form is the sole field authority"
     ));
     assert!(PUBLISH_ACTIONS.contains(
-        "Appendix A is\n\
-only a fallback render contract for a direct route"
+        "Appendix A\n\
+is only a fallback render contract for a direct route"
     ));
     assert!(USER_PLAYBOOK.contains(
-        "Never render execution mode, per-signal amount, per-signal cap, margin mode, or order policy as confirmation-form rows"
+        "Never render execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode, order policy, or any other execution setting as a confirmation-form row"
     ));
     assert!(USER_PLAYBOOK.contains(
         "persist mode/amount/cap/quote/environment/margin mode/order policy only from the user's reply"
@@ -49,7 +49,9 @@ fn skill_playbooks_delegate_optional_trade_kit_setup_to_agent_skills() {
         assert!(playbook.contains("security scan"));
     }
 
-    assert!(PUBLISH_ACTIONS.contains("re-run it only after install/upgrade"));
+    assert!(PUBLISH_ACTIONS.contains("re-run it"));
+    assert!(PUBLISH_ACTIONS.contains("only after install/upgrade and never to verify OAuth"));
     assert!(PUBLISH_ACTIONS.contains("never to verify OAuth"));
-    assert!(PUBLISH_ACTIONS.contains("delegate CLI/site/OAuth/API-key setup to that skill"));
+    assert!(PUBLISH_ACTIONS.contains("delegate"));
+    assert!(PUBLISH_ACTIONS.contains("CLI/site/OAuth/API-key setup to that skill"));
 }

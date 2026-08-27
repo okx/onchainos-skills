@@ -1,6 +1,6 @@
 {
   "name": "onchainos-skills",
-  "version": "4.8.1-beta",
+  "version": "4.8.2-beta",
   "skills": [
     "./skills/"
   ],
