@@ -371,23 +371,17 @@ ensure_in_path() {
 
 # ── Optional companion tools ─────────────────────────────────
 # okx-a2a environment readiness is owned by `okx-a2a doctor --fix`; this hook
-# only keeps the CLI package itself current and hands the rest to doctor.
+# installs the latest CLI package and hands the rest to doctor.
 # Every step is best-effort and SILENT on failure: installing onchainos must
 # never fail or spam because of okx-a2a.
 finish_install() {
-  command -v okx-a2a >/dev/null 2>&1 || return 0
   command -v npm >/dev/null 2>&1 || return 0
 
   echo ""
-  echo "Detected okx-a2a. Ensuring the A2A environment (non-fatal)..."
+  echo "Installing the latest okx-a2a and ensuring the A2A environment (non-fatal)..."
 
   before_ver=$(okx-a2a --version 2>/dev/null || true)
-
-  # Beta builds are intentionally preserved (same semantics as doctor).
-  case "$before_ver" in
-    *beta*) ;;
-    *) npm i -g @okxweb3/a2a-node@latest >/dev/null 2>&1 || true ;;
-  esac
+  npm i -g @okxweb3/a2a-node@latest >/dev/null 2>&1 || true
 
   # A running daemon keeps executing the OLD code after the package dir is
   # replaced, and doctor cannot tell it is stale once the package is already
