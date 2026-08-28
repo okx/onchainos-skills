@@ -30,6 +30,7 @@ use super::super::user_lang::Lang;
 use super::amount::Decimal;
 use super::grants::job_id_is_safe;
 use super::trade_kit::TradeEnvironment;
+use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
 
 /// The current consent-file schema version.
 pub const CONSENT_VERSION: u32 = 3;
@@ -39,7 +40,11 @@ pub const CONSENT_VERSION: u32 = 3;
 /// The deliverable itself remains untrusted market data. This record only proves
 /// which local artifact and stable delivery id were admitted by the CLI, so a
 /// user-decision relay can safely resume after the original model turn ended.
-pub const DELIVERY_CONTEXT_VERSION: u32 = 1;
+pub const DELIVERY_CONTEXT_VERSION: u32 = 2;
+
+fn legacy_subscription_trade_path() -> SubscriptionTradePath {
+    SubscriptionTradePath::LegacyWrapper
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -54,6 +59,10 @@ pub struct DeliveryContext {
     pub saved_path: String,
     pub deliverable_type: String,
     pub received_at_ms: u64,
+    /// Execution path is fixed when the delivery is first admitted. Missing
+    /// values belong to v1 contexts and deliberately retain legacy behavior.
+    #[serde(default = "legacy_subscription_trade_path")]
+    pub execution_path: SubscriptionTradePath,
 }
 
 fn bounded_json_after_marker(raw: &str) -> Option<serde_json::Value> {
@@ -781,6 +790,46 @@ pub fn register_delivery_context(
     deliverable_type: &str,
     received_at_ms: u64,
 ) -> anyhow::Result<DeliveryContext> {
+    register_delivery_context_with_path(
+        job_id,
+        agent_id,
+        provider_agent_id,
+        origin_session_key,
+        delivery_id,
+        saved_path,
+        deliverable_type,
+        received_at_ms,
+        SubscriptionTradePath::LegacyWrapper,
+    )
+}
+
+/// Register a newly admitted delivery with its resolved, immutable execution
+/// path. Runtime feature-switch changes apply only to later deliveries.
+#[allow(clippy::too_many_arguments)]
+pub fn register_delivery_context_with_path(
+    job_id: &str,
+    agent_id: &str,
+    provider_agent_id: &str,
+    origin_session_key: Option<&str>,
+    delivery_id: &str,
+    saved_path: &str,
+    deliverable_type: &str,
+    received_at_ms: u64,
+    execution_path: SubscriptionTradePath,
+) -> anyhow::Result<DeliveryContext> {
+    let path = delivery_context_path(job_id, delivery_id)?;
+    if path.exists() {
+        let existing = load_delivery_context(job_id, delivery_id)?;
+        if existing.agent_id != agent_id
+            || existing.provider_agent_id != provider_agent_id
+            || existing.delivery_id != delivery_id
+            || existing.saved_path != saved_path
+            || existing.deliverable_type != deliverable_type
+        {
+            anyhow::bail!("delivery context identity mismatch");
+        }
+        return Ok(existing);
+    }
     let context = DeliveryContext {
         version: DELIVERY_CONTEXT_VERSION,
         job_id: job_id.to_string(),
@@ -791,8 +840,8 @@ pub fn register_delivery_context(
         saved_path: saved_path.to_string(),
         deliverable_type: deliverable_type.to_string(),
         received_at_ms,
+        execution_path,
     };
-    let path = delivery_context_path(job_id, delivery_id)?;
     let body = serde_json::to_vec_pretty(&context)?;
     crate::home::write_secure(&path, &body)?;
     Ok(context)
@@ -802,7 +851,7 @@ pub fn load_delivery_context(job_id: &str, delivery_id: &str) -> anyhow::Result<
     let path = delivery_context_path(job_id, delivery_id)?;
     let raw = std::fs::read(&path)?;
     let context: DeliveryContext = serde_json::from_slice(&raw)?;
-    if context.version != DELIVERY_CONTEXT_VERSION
+    if !(1..=DELIVERY_CONTEXT_VERSION).contains(&context.version)
         || context.job_id != job_id
         || context.delivery_id != delivery_id
     {
@@ -879,7 +928,7 @@ pub fn load_pending_delivery_context(job_id: &str) -> anyhow::Result<Option<Deli
     }
     let raw = std::fs::read(&path)?;
     let context: DeliveryContext = serde_json::from_slice(&raw)?;
-    if context.version != DELIVERY_CONTEXT_VERSION || context.job_id != job_id {
+    if !(1..=DELIVERY_CONTEXT_VERSION).contains(&context.version) || context.job_id != job_id {
         anyhow::bail!("pending delivery context mismatch");
     }
     Ok(Some(context))
@@ -1234,6 +1283,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(saved.delivery_id, "msg:abc123");
+            assert_eq!(saved.execution_path, SubscriptionTradePath::LegacyWrapper);
             assert_eq!(
                 saved.origin_session_key.as_deref(),
                 Some("job:job1:my:1506:to:8779")
@@ -1244,6 +1294,59 @@ mod tests {
             assert_eq!(active, saved);
             assert_eq!(load_pending_delivery_context("job1").unwrap(), Some(saved));
             assert!(activate_delivery_context("job1", "msg:missing").is_err());
+        });
+    }
+
+    #[test]
+    fn delivery_execution_path_is_pinned_and_v1_contexts_remain_legacy() {
+        with_home(|| {
+            let direct = register_delivery_context_with_path(
+                "job1",
+                "1506",
+                "8779",
+                None,
+                "msg:direct",
+                "/tmp/direct.txt",
+                "text",
+                1234,
+                SubscriptionTradePath::AgentDirect,
+            )
+            .unwrap();
+            assert_eq!(direct.execution_path, SubscriptionTradePath::AgentDirect);
+
+            let replay = register_delivery_context_with_path(
+                "job1",
+                "1506",
+                "8779",
+                Some("a-new-session-must-not-change-the-path"),
+                "msg:direct",
+                "/tmp/direct.txt",
+                "text",
+                9999,
+                SubscriptionTradePath::LegacyWrapper,
+            )
+            .unwrap();
+            assert_eq!(replay.execution_path, SubscriptionTradePath::AgentDirect);
+            assert_eq!(replay.received_at_ms, 1234);
+
+            let v1 = serde_json::json!({
+                "version": 1,
+                "jobId": "job1",
+                "agentId": "1506",
+                "providerAgentId": "8779",
+                "deliveryId": "msg:v1",
+                "savedPath": "/tmp/v1.txt",
+                "deliverableType": "text",
+                "receivedAtMs": 1234
+            });
+            let path = delivery_context_path("job1", "msg:v1").unwrap();
+            crate::home::write_secure(&path, v1.to_string().as_bytes()).unwrap();
+            assert_eq!(
+                load_delivery_context("job1", "msg:v1")
+                    .unwrap()
+                    .execution_path,
+                SubscriptionTradePath::LegacyWrapper
+            );
         });
     }
 

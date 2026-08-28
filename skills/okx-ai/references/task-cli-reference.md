@@ -755,6 +755,35 @@ schema-version-3 response includes `scope:"local_compatibility"`,
 `authenticationChecked:false`, `environment`, `readiness`, compatibility `ready`, stable `reason`,
 `checkedAt`, `version`, `missingCapabilities`, `remediation`, and `assetChecks[]`.
 
+Active-subscription deliveries default to `executionPath:"agent_direct"`: the Agent reads
+`task-subscription-signal-direct.md`, chooses the compatible Skill/plugin, and uses the two internal
+coordination commands below around exactly one normal tool call. Set
+`ONCHAINOS_USE_LEGACY_AUTOTRADE_WRAPPER=1` (or `true`) before admitting a new delivery to use the retained
+wrapper instead. The chosen path is persisted per delivery, so changing the environment never changes an
+in-flight or replayed delivery.
+
+### autotrade-direct-claim / autotrade-direct-finalize
+
+Internal exactly-once coordination for the default Agent-direct path. These commands validate persisted
+consent and record terminal outcomes; they do not classify a signal, build parameters, select a venue,
+wrap a target command, or retry it.
+
+```bash
+agent autotrade-direct-claim --job-id <jobId> --delivery-id <deliveryId> \
+  --amount <persistedPolicyAmount> [--execution-mode <auto|manual|one_time>]
+
+agent autotrade-direct-finalize --job-id <jobId> --delivery-id <deliveryId> \
+  --status <submitted|failed_before_submit|unknown_after_submit> --tool-id <safeToolId> \
+  [--receipt-id <orderOrTransactionId>] [--reason <safeReason>]
+```
+
+Claim only immediately before the single money-moving call and proceed only when `data.allowed:true`.
+`submitted` requires a concrete tool-documented receipt ID. A repeated claim never authorizes another
+call; a repeated finalize returns the original durable outcome. Neither command permits crossing to the
+legacy path.
+
+### autotrade-execute (retained legacy path)
+
 `agent autotrade-execute` does not repeat readiness. It validates the supported
 `spot|swap|futures|option|event` operation, persisted consent/grant/amount/settings, explicit
 `--live`/`--demo`, command shape, and idempotency, then spawns exactly one final Trade Kit command.
@@ -1227,12 +1256,13 @@ agent autotrade-consent-set --job-id <jobId> --mode <mode> [--agent-id <agentId>
 | `--environment` | For `environment-set`; optional for policy writes | - | User-authorized Trade Kit target: `live` or `demo`; omission preserves an existing value |
 | `--margin-mode` | No | - | User-authorized Trade Kit margin mode: `cross` or `isolated`; omission preserves an existing value |
 | `--order-policy` | No | - | User-authorized order policy: `market` or `signal_price_limit`; omission preserves an existing value |
-| `--tool` | No | - | Deprecated and rejected; model routes are stored with `subscription-route-set` |
+| `--tool` | No | - | Deprecated and rejected; the legacy wrapper stores routes with `subscription-route-set`, while the default direct path selects the tool per delivery |
 
 ### subscription-route-set / subscription-route-clear
 
-Internal commands used by `task-subscription-signal.md` to cache bounded routing identifiers per
-subscription and asset class. They never store order fields or commands.
+Internal commands used only by the retained `legacy_wrapper` path in `task-subscription-signal.md` to
+cache bounded routing identifiers per subscription and asset class. The default `agent_direct` path never
+calls them. They never store order fields or commands.
 
 ```bash
 agent subscription-route-set --job-id <jobId> --asset-class <spot|perp|prediction|option|defi> --skill-id <id> [--plugin-id <id>] [--protocol <id>] [--requirement <token> ...] --delivery-id <id>

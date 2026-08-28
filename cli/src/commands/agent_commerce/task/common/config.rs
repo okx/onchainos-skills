@@ -10,6 +10,8 @@
 //!    (or `crate::commands::agent_commerce::task::common::config::FOO`).
 //! 3. Typically wire it as `if config::FOO { hint_keep } else { hint_delete }` — a two-way string selector.
 
+use serde::{Deserialize, Serialize};
+
 /// Whether terminal task states (`completed` / `refunded` / `close` / `dispute_resolved`) keep the
 /// sub session history.
 ///
@@ -28,6 +30,47 @@ const KEEP_CONVERSATION_ON_TERMINAL_DEFAULT: bool = false;
 
 fn parse_bool(s: &str) -> bool {
     s.eq_ignore_ascii_case("true") || s == "1"
+}
+
+/// Runtime kill switch for Active-subscription trade execution.
+///
+/// New deliveries use the model-selected direct Skill/tool path by default. Setting
+/// `ONCHAINOS_USE_LEGACY_AUTOTRADE_WRAPPER=1` (or `true`) admits subsequent deliveries
+/// through the retained `autotrade-execute` wrapper instead. The resolved value is
+/// persisted in each delivery context, so changing the environment never changes an
+/// already-admitted delivery or causes cross-path fallback after a failed submission.
+pub const LEGACY_AUTOTRADE_WRAPPER_ENV: &str = "ONCHAINOS_USE_LEGACY_AUTOTRADE_WRAPPER";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubscriptionTradePath {
+    AgentDirect,
+    LegacyWrapper,
+}
+
+impl SubscriptionTradePath {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AgentDirect => "agent_direct",
+            Self::LegacyWrapper => "legacy_wrapper",
+        }
+    }
+}
+
+impl Default for SubscriptionTradePath {
+    fn default() -> Self {
+        Self::AgentDirect
+    }
+}
+
+pub fn subscription_trade_path() -> SubscriptionTradePath {
+    if std::env::var(LEGACY_AUTOTRADE_WRAPPER_ENV)
+        .is_ok_and(|value| parse_bool(value.trim()))
+    {
+        SubscriptionTradePath::LegacyWrapper
+    } else {
+        SubscriptionTradePath::AgentDirect
+    }
 }
 
 pub fn keep_conversation_on_terminal() -> bool {
@@ -66,3 +109,36 @@ pub fn is_cli_mode() -> bool {
 /// Bump rule: only +1 when the task protocol (state machine / envelope schema / payload schema)
 /// changes in a **backwards-incompatible** way; pure bug fixes / copy tweaks must not bump it.
 pub const TASK_MIN_VERSION: u32 = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subscription_trade_path_defaults_direct_and_only_truthy_switches_to_legacy() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = std::env::var_os(LEGACY_AUTOTRADE_WRAPPER_ENV);
+
+        std::env::remove_var(LEGACY_AUTOTRADE_WRAPPER_ENV);
+        assert_eq!(subscription_trade_path(), SubscriptionTradePath::AgentDirect);
+
+        for value in ["1", "true", "TRUE"] {
+            std::env::set_var(LEGACY_AUTOTRADE_WRAPPER_ENV, value);
+            assert_eq!(
+                subscription_trade_path(),
+                SubscriptionTradePath::LegacyWrapper
+            );
+        }
+        for value in ["0", "false", "", "legacy", "yes"] {
+            std::env::set_var(LEGACY_AUTOTRADE_WRAPPER_ENV, value);
+            assert_eq!(subscription_trade_path(), SubscriptionTradePath::AgentDirect);
+        }
+
+        match previous {
+            Some(value) => std::env::set_var(LEGACY_AUTOTRADE_WRAPPER_ENV, value),
+            None => std::env::remove_var(LEGACY_AUTOTRADE_WRAPPER_ENV),
+        }
+    }
+}

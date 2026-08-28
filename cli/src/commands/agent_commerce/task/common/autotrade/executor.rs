@@ -29,7 +29,7 @@ const MAX_TIMEOUT_SEC: u64 = 600;
 const ONE_TIME_PERMIT_VERSION: u32 = 1;
 const ONE_TIME_PERMIT_TTL_SEC: u64 = 15 * 60;
 const NOTICE_REF_VERSION: u32 = 1;
-const EXECUTION_LATCH_VERSION: u32 = 1;
+const EXECUTION_LATCH_VERSION: u32 = 2;
 const TERMINAL_JOURNAL_VERSION: u32 = 1;
 const GLOBAL_RETRY_BUDGET: Duration = Duration::from_millis(300);
 const INITIAL_NOTIFY_TIMEOUT: Duration = Duration::from_secs(1);
@@ -67,6 +67,13 @@ struct ExecutionLatch {
     delivery_id: String,
     phase: ExecutionPhase,
     updated_at: u64,
+    /// Present only for the Agent-direct path. It binds finalization to the
+    /// exact persisted policy amount without encoding or inspecting a target
+    /// venue command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    direct_amount: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    direct_execution_mode: Option<ExecutionMode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +189,19 @@ pub struct ExecuteRequest<'a> {
     pub timeout_sec: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectClaimResult {
+    pub allowed: bool,
+    pub status: String,
+    pub job_id: String,
+    pub delivery_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amount: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -293,6 +313,47 @@ fn reserve_execution(job_id: &str, delivery_id: &str) -> Result<bool> {
                 delivery_id: delivery_id.to_string(),
                 phase: ExecutionPhase::Reserved,
                 updated_at: now_secs(),
+                direct_amount: None,
+                direct_execution_mode: None,
+            })?)?;
+            file.sync_all()?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn reserve_direct_execution(
+    job_id: &str,
+    delivery_id: &str,
+    amount: &str,
+    execution_mode: ExecutionMode,
+) -> Result<bool> {
+    let path = latch_path(job_id, delivery_id)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(path) {
+        Ok(mut file) => {
+            file.write_all(&serde_json::to_vec_pretty(&ExecutionLatch {
+                version: EXECUTION_LATCH_VERSION,
+                job_id: job_id.to_string(),
+                delivery_id: delivery_id.to_string(),
+                // The claim is issued immediately before the external tool call.
+                // Treat an interruption after this point conservatively as an
+                // unknown submission; never cross-path retry it.
+                phase: ExecutionPhase::Spawned,
+                updated_at: now_secs(),
+                direct_amount: Some(amount.to_string()),
+                direct_execution_mode: Some(execution_mode),
             })?)?;
             file.sync_all()?;
             Ok(true)
@@ -307,6 +368,9 @@ fn update_execution_phase(
     delivery_id: &str,
     phase: ExecutionPhase,
 ) -> Result<()> {
+    let existing = read_execution_latch(job_id, delivery_id)?;
+    let direct_amount = existing.as_ref().and_then(|latch| latch.direct_amount.clone());
+    let direct_execution_mode = existing.and_then(|latch| latch.direct_execution_mode);
     crate::home::write_secure(
         &latch_path(job_id, delivery_id)?,
         &serde_json::to_vec_pretty(&ExecutionLatch {
@@ -315,24 +379,30 @@ fn update_execution_phase(
             delivery_id: delivery_id.to_string(),
             phase,
             updated_at: now_secs(),
+            direct_amount,
+            direct_execution_mode,
         })?,
     )?;
     Ok(())
 }
 
-fn read_execution_phase(job_id: &str, delivery_id: &str) -> Result<Option<ExecutionPhase>> {
+fn read_execution_latch(job_id: &str, delivery_id: &str) -> Result<Option<ExecutionLatch>> {
     let path = latch_path(job_id, delivery_id)?;
     if !path.exists() {
         return Ok(None);
     }
     let latch: ExecutionLatch = serde_json::from_slice(&std::fs::read(path)?)?;
-    if latch.version != EXECUTION_LATCH_VERSION
+    if !(1..=EXECUTION_LATCH_VERSION).contains(&latch.version)
         || latch.job_id != job_id
         || latch.delivery_id != delivery_id
     {
         bail!("execution latch mismatch");
     }
-    Ok(Some(latch.phase))
+    Ok(Some(latch))
+}
+
+fn read_execution_phase(job_id: &str, delivery_id: &str) -> Result<Option<ExecutionPhase>> {
+    Ok(read_execution_latch(job_id, delivery_id)?.map(|latch| latch.phase))
 }
 
 pub(crate) fn recovery_state(job_id: &str, delivery_id: &str) -> Result<RecoveryState> {
@@ -1362,6 +1432,216 @@ fn safe_text(value: &str) -> String {
     reason
 }
 
+fn safe_metadata_token(value: &str, max_chars: usize) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= max_chars
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':' | '/'))
+}
+
+fn authorize_direct(
+    job_id: &str,
+    delivery_id: &str,
+    amount: &str,
+    execution_mode: ExecutionMode,
+) -> Result<String> {
+    let normalized = Decimal::parse(amount)
+        .context("invalid direct execution amount")?
+        .to_plain_string();
+    if normalized == "0" {
+        bail!("direct execution amount must be positive");
+    }
+    let policy = consent::load_consent(job_id)
+        .map_err(|error| anyhow::anyhow!(error.0))?
+        .context("copy-trade consent is missing or expired")?;
+    match (execution_mode, policy.mode) {
+        (ExecutionMode::Auto, consent::ConsentMode::Auto) => {
+            let stored = policy
+                .trade_amount_u
+                .as_deref()
+                .context("automatic execution policy amount is missing")?;
+            if Decimal::parse(stored)?.to_plain_string() != normalized {
+                bail!("execution amount does not match the persisted policy");
+            }
+            if let Some(cap) = policy.cap_u.as_deref() {
+                if !Decimal::parse(&normalized)?.le(&Decimal::parse(cap)?) {
+                    bail!("execution amount exceeds the persisted policy cap");
+                }
+            }
+        }
+        (ExecutionMode::Manual, consent::ConsentMode::Manual) => {
+            let stored = policy
+                .trade_amount_u
+                .as_deref()
+                .context("manual execution policy amount is missing")?;
+            if Decimal::parse(stored)?.to_plain_string() != normalized {
+                bail!("execution amount does not match the persisted manual policy");
+            }
+        }
+        (ExecutionMode::OneTime, consent::ConsentMode::Auto) => {
+            validate_one_time_permit(job_id, delivery_id, &normalized)?;
+        }
+        (ExecutionMode::Auto, consent::ConsentMode::Manual) => {
+            bail!("automatic execution is not authorized by the manual policy")
+        }
+        (ExecutionMode::Manual, consent::ConsentMode::Auto) => {
+            bail!("manual execution requires an explicit manual policy")
+        }
+        (ExecutionMode::OneTime, consent::ConsentMode::Manual) => {
+            bail!("one-time execution requires an active auto policy")
+        }
+        (_, consent::ConsentMode::Decline) => bail!("copy-trade execution is declined"),
+    }
+    Ok(normalized)
+}
+
+/// Reserve one Agent-direct delivery immediately before its selected Skill/tool
+/// performs the money-moving call. This enforces persisted authorization and
+/// exactly-once admission without inspecting or wrapping the target command.
+pub fn claim_direct(
+    job_id: &str,
+    delivery_id: &str,
+    amount: &str,
+    execution_mode: ExecutionMode,
+) -> Result<DirectClaimResult> {
+    use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
+
+    let context = consent::load_delivery_context(job_id, delivery_id)
+        .context("trusted delivery context is unavailable")?;
+    if context.execution_path != SubscriptionTradePath::AgentDirect {
+        bail!("delivery is pinned to the legacy execution wrapper");
+    }
+    let normalized = authorize_direct(job_id, delivery_id, amount, execution_mode)?;
+    let path = outcome_path(job_id, delivery_id)?;
+    if read_outcome(&path)?.is_some() {
+        return Ok(DirectClaimResult {
+            allowed: false,
+            status: "terminal".to_string(),
+            job_id: job_id.to_string(),
+            delivery_id: delivery_id.to_string(),
+            amount: Some(normalized),
+            reason: Some("delivery already has a terminal outcome".to_string()),
+        });
+    }
+    if !reserve_direct_execution(job_id, delivery_id, &normalized, execution_mode)? {
+        return Ok(DirectClaimResult {
+            allowed: false,
+            status: "already_claimed".to_string(),
+            job_id: job_id.to_string(),
+            delivery_id: delivery_id.to_string(),
+            amount: Some(normalized),
+            reason: Some(
+                "an earlier direct execution may have started; do not retry or use the legacy wrapper"
+                    .to_string(),
+            ),
+        });
+    }
+    Ok(DirectClaimResult {
+        allowed: true,
+        status: "claimed".to_string(),
+        job_id: job_id.to_string(),
+        delivery_id: delivery_id.to_string(),
+        amount: Some(normalized),
+        reason: None,
+    })
+}
+
+/// Persist a selected Skill/tool's documented terminal result. The coordinator
+/// accepts only bounded metadata; it never parses, rewrites, or executes the
+/// target command and never attempts a cross-path fallback.
+pub fn finalize_direct(
+    job_id: &str,
+    delivery_id: &str,
+    status: &str,
+    tool_id: &str,
+    receipt_id: Option<&str>,
+    reason: Option<&str>,
+) -> Result<ExecutionOutcome> {
+    use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
+
+    let context = consent::load_delivery_context(job_id, delivery_id)
+        .context("trusted delivery context is unavailable")?;
+    if context.execution_path != SubscriptionTradePath::AgentDirect {
+        bail!("delivery is pinned to the legacy execution wrapper");
+    }
+    if !safe_metadata_token(tool_id, 128) {
+        bail!("direct execution tool id is invalid");
+    }
+    let path = outcome_path(job_id, delivery_id)?;
+    if let Some(mut outcome) = read_outcome(&path)? {
+        if outcome.notification_pending {
+            notify_and_persist(&path, &mut outcome, false, Some(INITIAL_NOTIFY_TIMEOUT));
+        }
+        return Ok(outcome);
+    }
+    let latch = read_execution_latch(job_id, delivery_id)?
+        .context("direct execution was not claimed")?;
+    let amount = latch
+        .direct_amount
+        .context("direct execution claim amount is unavailable")?;
+    let execution_mode = latch
+        .direct_execution_mode
+        .context("direct execution claim mode is unavailable")?;
+    let (status, receipt, reason) = match status {
+        "submitted" => {
+            let receipt_id = receipt_id.context("submitted direct execution requires a receipt id")?;
+            if !safe_metadata_token(receipt_id, 256) {
+                bail!("direct execution receipt id is invalid");
+            }
+            (
+                OutcomeStatus::Submitted,
+                Some(serde_json::json!({ "receiptId": receipt_id })),
+                None,
+            )
+        }
+        "failed_before_submit" => (
+            OutcomeStatus::FailedBeforeSubmit,
+            None,
+            Some(safe_child_text(
+                reason.unwrap_or("selected tool rejected the trade before submission"),
+            )),
+        ),
+        "unknown_after_submit" => (
+            OutcomeStatus::UnknownAfterSubmit,
+            None,
+            Some(safe_child_text(
+                reason.unwrap_or("selected tool returned an unknown submission state"),
+            )),
+        ),
+        _ => bail!(
+            "direct execution status must be submitted, failed_before_submit, or unknown_after_submit"
+        ),
+    };
+    let failure_category = if tool_id == "trade_kit" {
+        failure_category_for("trade_kit", status, reason.as_deref())
+    } else {
+        None
+    };
+    let now = now_secs();
+    persist_and_notify(
+        &path,
+        ExecutionOutcome {
+            version: OUTCOME_VERSION,
+            job_id: job_id.to_string(),
+            delivery_id: delivery_id.to_string(),
+            venue: format!("agent_direct/{tool_id}"),
+            action: "execute".to_string(),
+            amount,
+            execution_mode,
+            status,
+            receipt,
+            reason,
+            failure_category,
+            notification_pending: true,
+            notification_attempts: 0,
+            next_notification_attempt_at: 0,
+            created_at: now,
+            updated_at: now,
+        },
+    )
+}
+
 fn make_outcome(
     request: &ExecuteRequest<'_>,
     amount: String,
@@ -1643,10 +1923,15 @@ fn notify_and_persist(
 }
 
 pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
+    use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
+
     let context = consent::load_delivery_context(request.job_id, request.delivery_id)
         .context("trusted delivery context is unavailable")?;
     if context.job_id != request.job_id || context.delivery_id != request.delivery_id {
         bail!("trusted delivery context mismatch");
+    }
+    if context.execution_path != SubscriptionTradePath::LegacyWrapper {
+        bail!("delivery is pinned to Agent-direct execution");
     }
     let outcome_path = outcome_path(request.job_id, request.delivery_id)?;
     if !reserve_execution(request.job_id, request.delivery_id)? {
@@ -2756,6 +3041,162 @@ mod tests {
         assert_eq!(
             recovery_state("job-phase", "delivery-1").unwrap(),
             RecoveryState::SubmissionUnknown
+        );
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn direct_claim_is_amount_bound_exactly_once_and_finalize_is_idempotent() {
+        use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
+
+        let _guard = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = test_tempdir();
+        std::env::set_var("ONCHAINOS_HOME", temp.path());
+        consent::register_delivery_context_with_path(
+            "job-direct",
+            "7",
+            "8",
+            Some("session:test"),
+            "delivery-1",
+            "/tmp/signal.txt",
+            "text",
+            1,
+            SubscriptionTradePath::AgentDirect,
+        )
+        .unwrap();
+        consent::write_consent_with_trade_amount(
+            "job-direct",
+            consent::ConsentMode::Auto,
+            Some("20"),
+            Some("10"),
+            Some("USDT"),
+            3600,
+        )
+        .unwrap();
+
+        assert!(claim_direct("job-direct", "delivery-1", "11", ExecutionMode::Auto)
+            .unwrap_err()
+            .to_string()
+            .contains("does not match"));
+        let claimed =
+            claim_direct("job-direct", "delivery-1", "10.0", ExecutionMode::Auto).unwrap();
+        assert!(claimed.allowed);
+        assert_eq!(claimed.status, "claimed");
+        assert_eq!(claimed.amount.as_deref(), Some("10"));
+        assert_eq!(
+            recovery_state("job-direct", "delivery-1").unwrap(),
+            RecoveryState::SubmissionUnknown
+        );
+
+        let duplicate =
+            claim_direct("job-direct", "delivery-1", "10", ExecutionMode::Auto).unwrap();
+        assert!(!duplicate.allowed);
+        assert_eq!(duplicate.status, "already_claimed");
+
+        let submitted = finalize_direct(
+            "job-direct",
+            "delivery-1",
+            "submitted",
+            "okx-cex-trade",
+            Some("order:123"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(submitted.status, OutcomeStatus::Submitted);
+        assert_eq!(submitted.venue, "agent_direct/okx-cex-trade");
+        assert_eq!(submitted.amount, "10");
+        assert_eq!(submitted.receipt.as_ref().unwrap()["receiptId"], "order:123");
+
+        let replay = finalize_direct(
+            "job-direct",
+            "delivery-1",
+            "failed_before_submit",
+            "okx-cex-trade",
+            None,
+            Some("must not overwrite the submitted result"),
+        )
+        .unwrap();
+        assert_eq!(replay.status, OutcomeStatus::Submitted);
+        assert_eq!(
+            recovery_state("job-direct", "delivery-1").unwrap(),
+            RecoveryState::TerminalOutcome
+        );
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn direct_coordinator_refuses_a_legacy_delivery() {
+        let _guard = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = test_tempdir();
+        std::env::set_var("ONCHAINOS_HOME", temp.path());
+        consent::register_delivery_context(
+            "job-legacy",
+            "7",
+            "8",
+            None,
+            "delivery-1",
+            "/tmp/signal.txt",
+            "text",
+            1,
+        )
+        .unwrap();
+        consent::write_consent_with_trade_amount(
+            "job-legacy",
+            consent::ConsentMode::Auto,
+            Some("20"),
+            Some("10"),
+            Some("USDT"),
+            3600,
+        )
+        .unwrap();
+        assert!(claim_direct("job-legacy", "delivery-1", "10", ExecutionMode::Auto)
+            .unwrap_err()
+            .to_string()
+            .contains("legacy execution wrapper"));
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn legacy_wrapper_refuses_an_agent_direct_delivery() {
+        use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
+
+        let _guard = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = test_tempdir();
+        std::env::set_var("ONCHAINOS_HOME", temp.path());
+        consent::register_delivery_context_with_path(
+            "job-direct-no-fallback",
+            "7",
+            "8",
+            None,
+            "delivery-1",
+            "/tmp/signal.txt",
+            "text",
+            1,
+            SubscriptionTradePath::AgentDirect,
+        )
+        .unwrap();
+        let error = execute(ExecuteRequest {
+            job_id: "job-direct-no-fallback",
+            delivery_id: "delivery-1",
+            venue: "dex",
+            action: "buy",
+            amount: "10",
+            execution_mode: ExecutionMode::Auto,
+            command_json: r#"["swap","execute"]"#,
+            timeout_sec: 1,
+        })
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("Agent-direct execution"));
+        assert_eq!(
+            recovery_state("job-direct-no-fallback", "delivery-1").unwrap(),
+            RecoveryState::NoExecution
         );
         std::env::remove_var("ONCHAINOS_HOME");
     }

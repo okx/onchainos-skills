@@ -823,6 +823,46 @@ pub enum AgentCommand {
         timeout_sec: u64,
     },
 
+    /// Reserve an Agent-direct delivery immediately before the selected
+    /// Skill/tool performs its money-moving call. This command validates local
+    /// authorization and idempotency but never accepts or executes target argv.
+    #[command(name = "autotrade-direct-claim", hide = true)]
+    AutotradeDirectClaim {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long = "delivery-id")]
+        delivery_id: String,
+        /// Exact persisted policy amount used as authorization metadata.
+        #[arg(long)]
+        amount: String,
+        /// auto | manual | one_time
+        #[arg(long = "execution-mode", default_value = "auto")]
+        execution_mode: String,
+    },
+
+    /// Persist the documented result returned by an Agent-selected Skill/tool.
+    /// This command records bounded metadata only and never reinterprets or
+    /// executes the target command.
+    #[command(name = "autotrade-direct-finalize", hide = true)]
+    AutotradeDirectFinalize {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long = "delivery-id")]
+        delivery_id: String,
+        /// submitted | failed_before_submit | unknown_after_submit
+        #[arg(long)]
+        status: String,
+        /// Bounded identifier of the selected Skill/tool.
+        #[arg(long = "tool-id")]
+        tool_id: String,
+        /// Concrete order/transaction identifier; required for submitted.
+        #[arg(long = "receipt-id")]
+        receipt_id: Option<String>,
+        /// Concise user-safe terminal reason; never raw tool output.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+
     /// Retry only pending UI notifications; never retries a trade command.
     #[command(name = "autotrade-outcome-flush", hide = true)]
     AutotradeOutcomeFlush {
@@ -2269,6 +2309,42 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 },
             )
             .await?;
+            crate::output::success(outcome);
+            Ok(())
+        }
+
+        AgentCommand::AutotradeDirectClaim {
+            job_id,
+            delivery_id,
+            amount,
+            execution_mode,
+        } => {
+            let result = task::common::autotrade::executor::claim_direct(
+                &job_id,
+                &delivery_id,
+                &amount,
+                task::common::autotrade::executor::ExecutionMode::parse(&execution_mode)?,
+            )?;
+            crate::output::success(result);
+            Ok(())
+        }
+
+        AgentCommand::AutotradeDirectFinalize {
+            job_id,
+            delivery_id,
+            status,
+            tool_id,
+            receipt_id,
+            reason,
+        } => {
+            let outcome = task::common::autotrade::executor::finalize_direct(
+                &job_id,
+                &delivery_id,
+                &status,
+                &tool_id,
+                receipt_id.as_deref(),
+                reason.as_deref(),
+            )?;
             crate::output::success(outcome);
             Ok(())
         }
