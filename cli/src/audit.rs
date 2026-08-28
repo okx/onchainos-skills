@@ -511,6 +511,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AutotradeConsentContinue { .. } => "autotrade-consent-continue".into(),
         AgentCommand::AutotradeConsentRequest { .. } => "autotrade-consent-request".into(),
         AgentCommand::AutotradeExecute { .. } => "autotrade-execute".into(),
+        AgentCommand::AutotradeDirectClaim { .. } => "autotrade-direct-claim".into(),
+        AgentCommand::AutotradeDirectFinalize { .. } => "autotrade-direct-finalize".into(),
         AgentCommand::AutotradeOnceAuthorize { .. } => "autotrade-once-authorize".into(),
         AgentCommand::AutotradeOutcomeFlush { .. } => "autotrade-outcome-flush".into(),
         AgentCommand::AutotradeDeliveryReport { .. } => "autotrade-delivery-report".into(),

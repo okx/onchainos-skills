@@ -105,7 +105,7 @@ This ensures the deliverable data is not lost when the system event interrupts t
 
 ## Auto-Trade Execution
 
-> **Tool readiness is hinted at `task-service-select` time and re-checked on every real signal.** Subscription creation never silently installs a plugin or grants trading authority. When `next-action` returns `active_subscription_signal`, follow [`task-subscription-signal.md`](task-subscription-signal.md); it owns model classification, cached routing, visible setup, authorization, and tool execution.
+> **Tool readiness is hinted at `task-service-select` time and re-checked on every real signal.** Subscription creation never silently installs a plugin or grants trading authority. When `next-action` returns `active_subscription_signal`, follow the reference selected by runtime `executionPath`: [`task-subscription-signal-direct.md`](task-subscription-signal-direct.md) for the default `agent_direct` path, or [`task-subscription-signal.md`](task-subscription-signal.md) for the retained `legacy_wrapper` path. The signal flow owns model classification, visible setup, authorization, and tool execution.
 
 > **Manual-path independence:** every deliverable is saved before routing. Skipping installation or
 > automatic execution never hides the original file; a later explicit user request may route it through
@@ -114,7 +114,7 @@ This ensures the deliverable data is not lost when the system event interrupts t
 For both ordinary `deliverableType: text` and legacy text carrying an `autotrade:` metadata line, the CLI
 first confirms exact Active subscription status and returns `active_subscription_signal`. It deliberately
 does not parse fields or select an execution command. Read and follow
-[`task-subscription-signal.md`](task-subscription-signal.md) in the same turn. The local route cache is
+the execution-path-specific signal reference in the same turn. Only the legacy path uses a local route cache; it is
 a hint only, never trading consent.
 
 **Pause auto copy-trade is owned by the user session.** Route requests such as "pause auto copy-trading"

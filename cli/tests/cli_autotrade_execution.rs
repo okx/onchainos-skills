@@ -84,6 +84,128 @@ fn write_context(home: &std::path::Path, delivery_id: &str) -> serde_json::Value
     context
 }
 
+fn write_direct_context(home: &std::path::Path, delivery_id: &str) {
+    write_json(
+        &home.join(format!(
+            "autotrade/delivery-context/job1/{delivery_id}.json"
+        )),
+        &json!({
+            "version": 2,
+            "jobId": "job1",
+            "agentId": "8315",
+            "providerAgentId": "8779",
+            "originSessionKey": "job:job1:my:8315:to:8779",
+            "deliveryId": delivery_id,
+            "savedPath": "/tmp/signal.txt",
+            "deliverableType": "text",
+            "receivedAtMs": 1,
+            "executionPath": "agent_direct"
+        }),
+    );
+}
+
+#[test]
+fn direct_claim_and_finalize_are_wired_and_never_cross_to_the_legacy_wrapper() {
+    let (_guard, home) = fresh_home("cli_autotrade_direct_execution");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    for delivery_id in ["delivery-direct", "delivery-no-fallback"] {
+        write_direct_context(&home, delivery_id);
+    }
+    write_json(
+        &home.join("autotrade/consent/job1.json"),
+        &json!({
+            "version": 3,
+            "jobId": "job1",
+            "mode": "auto",
+            "capU": "20",
+            "tradeAmountU": "10",
+            "quoteToken": "usdt",
+            "createdAt": now,
+            "expiresAt": now + 3600
+        }),
+    );
+
+    let run = |args: &[&str]| {
+        let mut command = onchainos();
+        scrubbed(&mut command, &home).args(args).output().unwrap()
+    };
+    let claimed = run(&[
+        "agent",
+        "autotrade-direct-claim",
+        "--job-id",
+        "job1",
+        "--delivery-id",
+        "delivery-direct",
+        "--amount",
+        "10.0",
+    ]);
+    assert!(claimed.status.success());
+    let claimed = parse_stdout_json(&claimed);
+    assert_eq!(claimed["data"]["allowed"], true);
+    assert_eq!(claimed["data"]["status"], "claimed");
+    assert_eq!(claimed["data"]["amount"], "10");
+
+    let finalized = run(&[
+        "agent",
+        "autotrade-direct-finalize",
+        "--job-id",
+        "job1",
+        "--delivery-id",
+        "delivery-direct",
+        "--status",
+        "submitted",
+        "--tool-id",
+        "okx-cex-trade",
+        "--receipt-id",
+        "order:42",
+    ]);
+    assert!(finalized.status.success());
+    let finalized = parse_stdout_json(&finalized);
+    assert_eq!(finalized["data"]["status"], "submitted");
+    assert_eq!(finalized["data"]["venue"], "agent_direct/okx-cex-trade");
+    assert_eq!(finalized["data"]["receipt"]["receiptId"], "order:42");
+
+    let duplicate = run(&[
+        "agent",
+        "autotrade-direct-claim",
+        "--job-id",
+        "job1",
+        "--delivery-id",
+        "delivery-direct",
+        "--amount",
+        "10",
+    ]);
+    assert!(duplicate.status.success());
+    let duplicate = parse_stdout_json(&duplicate);
+    assert_eq!(duplicate["data"]["allowed"], false);
+    assert_eq!(duplicate["data"]["status"], "terminal");
+
+    let legacy = run(&[
+        "agent",
+        "autotrade-execute",
+        "--job-id",
+        "job1",
+        "--delivery-id",
+        "delivery-no-fallback",
+        "--venue",
+        "dex",
+        "--action",
+        "buy",
+        "--amount",
+        "10",
+        "--command-json",
+        r#"["swap","execute","--readable-amount","10"]"#,
+    ]);
+    assert!(!legacy.status.success());
+    assert!(parse_stdout_json(&legacy)["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Agent-direct execution"));
+}
+
 #[test]
 fn unconfigured_deliveries_are_saved_as_terminal_skips_without_decisions() {
     let (_guard, home) = fresh_home("cli_autotrade_unconfigured_delivery");

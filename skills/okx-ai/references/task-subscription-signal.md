@@ -1,6 +1,8 @@
 # Active Subscription Signal — Model Route
 
-This reference applies only when `next-action` returns `[Current action] active_subscription_signal`.
+This retained legacy reference applies only when `next-action` returns
+`[Current action] active_subscription_signal` and runtime context carries
+`executionPath:"legacy_wrapper"`.
 The CLI has already saved the deliverable and confirmed that the subscription is exactly Active. It has
 not classified the text, selected a venue, installed a plugin, or authorized a trade.
 
