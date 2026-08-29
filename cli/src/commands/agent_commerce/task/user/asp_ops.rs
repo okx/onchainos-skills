@@ -6,6 +6,7 @@
 //! - `user-reject` — user rejects current ASP
 
 use anyhow::{bail, Result};
+use sha2::{Digest, Sha256};
 use std::process::Command;
 use std::time::Duration;
 
@@ -90,6 +91,26 @@ fn copy_field(
     }
 }
 
+fn add_service_guide_hash(
+    target: &mut serde_json::Map<String, serde_json::Value>,
+    source: &serde_json::Value,
+) {
+    let Some(guide) = source
+        .get("serviceGuide")
+        .and_then(serde_json::Value::as_str)
+        .filter(|guide| !guide.trim().is_empty())
+    else {
+        return;
+    };
+    target.insert(
+        "serviceGuideHash".to_string(),
+        serde_json::Value::String(format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(guide.as_bytes()))
+        )),
+    );
+}
+
 fn compact_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
     let subscription_info = build_subscription_info(&service);
     let support_subscription = !subscription_info.is_null();
@@ -99,6 +120,7 @@ fn compact_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
         "serviceName",
         "serviceType",
         "serviceDescription",
+        "serviceGuide",
         "feeToken",
         "feeTokenSymbol",
         "endpoint",
@@ -106,6 +128,7 @@ fn compact_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
     ] {
         copy_field(&mut compact, &service, key);
     }
+    add_service_guide_hash(&mut compact, service);
     if !support_subscription {
         copy_field(&mut compact, &service, "feeAmount");
     }
@@ -216,12 +239,14 @@ fn compact_task_service_for_ai(service: &serde_json::Value) -> serde_json::Value
         "serviceName",
         "serviceType",
         "serviceDescription",
+        "serviceGuide",
         "feeToken",
         "feeTokenSymbol",
         "endpoint",
     ] {
         copy_field(&mut compact, service, key);
     }
+    add_service_guide_hash(&mut compact, service);
     if !support_subscription {
         copy_field(&mut compact, service, "feeAmount");
     }
@@ -1030,6 +1055,7 @@ mod tests {
                     "serviceName": "Quick Moment",
                     "serviceType": "A2A",
                     "serviceDescription": "Please provide the target market before subscribing.",
+                    "serviceGuide": "Choose the amount and slippage, then confirm.",
                     "feeAmount": "100",
                     "feeToken": "0xToken",
                     "feeTokenSymbol": "USDT",
@@ -1072,6 +1098,13 @@ mod tests {
         assert!(compact.get("debug").is_none());
 
         assert_eq!(svc["serviceDescription"], json!("Please provide the target market before subscribing."));
+        assert_eq!(
+            svc["serviceGuide"],
+            json!("Choose the amount and slippage, then confirm.")
+        );
+        assert!(svc["serviceGuideHash"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
         assert_eq!(svc["autoTradePreflight"]["schemaVersion"], json!(3));
         assert_eq!(svc["autoTradePreflight"]["assetClasses"], json!(["spot"]));
         assert_eq!(
@@ -1139,6 +1172,7 @@ mod tests {
                     "serviceName": "A2A Task Collaboration",
                     "serviceType": "A2A",
                     "serviceDescription": "Coordinate task scope and acceptance.",
+                    "serviceGuide": "Ask for amount type, amount, and risk settings in order.",
                     "feeAmount": "99",
                     "feeToken": "0xToken",
                     "feeTokenSymbol": "USDT",
@@ -1189,6 +1223,13 @@ mod tests {
         assert_eq!(svc["providerAgentId"], json!("2864"));
         assert_eq!(svc["providerAgentName"], json!("Onchain Task Copilot"));
         assert_eq!(svc["serviceId"], json!("svc-1"));
+        assert_eq!(
+            svc["serviceGuide"],
+            json!("Ask for amount type, amount, and risk settings in order.")
+        );
+        assert!(svc["serviceGuideHash"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
         assert_eq!(svc["online"], json!(true));
         assert_eq!(svc["supportSubscription"], json!(true));
         assert_eq!(svc["subscriptionInfo"]["interval"], json!("MONTH"));

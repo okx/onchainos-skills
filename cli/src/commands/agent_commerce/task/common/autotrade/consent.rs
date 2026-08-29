@@ -21,10 +21,12 @@
 //! single source of truth exposed through `autotrade-grant-check`, so the
 //! Skill-selected execution tool enforces the same client-side cap.
 
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::super::user_lang::Lang;
 use super::amount::Decimal;
@@ -33,7 +35,667 @@ use super::trade_kit::TradeEnvironment;
 use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
 
 /// The current consent-file schema version.
-pub const CONSENT_VERSION: u32 = 3;
+pub const CONSENT_VERSION: u32 = 5;
+
+pub type DynamicConsentSettings = BTreeMap<String, Value>;
+
+const MAX_DYNAMIC_SETTINGS_BYTES: usize = 16 * 1024;
+const MAX_DYNAMIC_SETTING_COUNT: usize = 64;
+const MAX_DYNAMIC_SETTING_KEY_LEN: usize = 64;
+const MAX_DYNAMIC_SETTING_STRING_LEN: usize = 1024;
+const MAX_DYNAMIC_SETTING_DEPTH: usize = 4;
+const MAX_DYNAMIC_SETTING_COLLECTION_LEN: usize = 64;
+
+const RESERVED_CONSENT_FIELDS: [&str; 16] = [
+    "version",
+    "jobId",
+    "mode",
+    "capU",
+    "tradeAmountU",
+    "quoteToken",
+    "tradeEnvironment",
+    "marginMode",
+    "orderPolicy",
+    "authMode",
+    "serviceGuideHash",
+    "requiredFields",
+    "extra",
+    "createdAt",
+    "expiresAt",
+    "status",
+];
+
+/// Stable, product-defined fields that remain flat in the consent object. New,
+/// service-specific fields belong under `extra` instead of being added here.
+const KNOWN_FLAT_SETTING_FIELDS: [&str; 18] = [
+    "tradeAmountMode",
+    "tradeAmountRatio",
+    "tradeAmountBasis",
+    "leverageMode",
+    "leverage",
+    "maxLeverage",
+    "takeProfitRatio",
+    "stopLossRatio",
+    "slippage",
+    "maxAutoSlippage",
+    "gasLevel",
+    "mevProtection",
+    "orderSize",
+    "sellShares",
+    "orderType",
+    // Compatibility aliases written by earlier 4.8.4-beta builds.
+    "tradeAmountType",
+    "tradeAmountPercent",
+    "serviceGuideHash",
+];
+
+const EXTRA_FIELD_TYPES: [&str; 7] = [
+    "boolean", "integer", "decimal", "string", "enum", "array", "object",
+];
+const EXTRA_FIELD_METADATA: [&str; 9] = [
+    "label",
+    "type",
+    "value",
+    "description",
+    "constraints",
+    "options",
+    "appliesWhen",
+    "confirmedAt",
+    "unit",
+];
+
+fn dynamic_setting_key_is_safe(key: &str) -> bool {
+    let mut chars = key.chars();
+    matches!(chars.next(), Some(first) if first.is_ascii_alphabetic())
+        && key.len() <= MAX_DYNAMIC_SETTING_KEY_LEN
+        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
+        && !RESERVED_CONSENT_FIELDS.contains(&key)
+}
+
+pub fn validate_dynamic_setting_name(key: &str) -> anyhow::Result<()> {
+    if !KNOWN_FLAT_SETTING_FIELDS.contains(&key) && !dynamic_setting_key_is_safe(key) {
+        anyhow::bail!("invalid or reserved dynamic consent setting key: {key}");
+    }
+    if dynamic_setting_key_is_sensitive(key) {
+        anyhow::bail!("credentials must not be stored in consent settings: {key}");
+    }
+    Ok(())
+}
+
+fn bounded_nonempty_text(value: &Value, field: &str, max_chars: usize) -> anyhow::Result<()> {
+    let Some(value) = value.as_str() else {
+        anyhow::bail!("{field} must be a string");
+    };
+    if value.trim().is_empty() {
+        anyhow::bail!("{field} must not be empty");
+    }
+    if value.chars().count() > max_chars || value.chars().any(char::is_control) {
+        anyhow::bail!("{field} is invalid or too long");
+    }
+    Ok(())
+}
+
+fn validate_string_or_string_array(value: &Value, field: &str) -> anyhow::Result<()> {
+    match value {
+        Value::String(_) => bounded_nonempty_text(value, field, 64),
+        Value::Array(values) if !values.is_empty() => {
+            if values.len() > MAX_DYNAMIC_SETTING_COLLECTION_LEN {
+                anyhow::bail!("{field} contains too many values");
+            }
+            for value in values {
+                bounded_nonempty_text(value, field, 64)?;
+            }
+            Ok(())
+        }
+        _ => anyhow::bail!("{field} must be a string or non-empty string array"),
+    }
+}
+
+fn validate_extra_field_value(field_type: &str, value: &Value, field: &str) -> anyhow::Result<()> {
+    if value.is_null() {
+        anyhow::bail!("extra.{field}.value is required and must not be null");
+    }
+    let valid = match field_type {
+        "boolean" => value.is_boolean(),
+        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        "decimal" => value
+            .as_str()
+            .is_some_and(|raw| Decimal::parse(raw).is_ok()),
+        "string" | "enum" => value.is_string(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        _ => false,
+    };
+    if !valid {
+        anyhow::bail!("extra.{field}.value does not match type {field_type}");
+    }
+    validate_dynamic_setting_value(value, 0)
+}
+
+fn validate_extra_constraints(
+    field: &str,
+    field_type: &str,
+    value: &Value,
+    constraints: &serde_json::Map<String, Value>,
+) -> anyhow::Result<()> {
+    for key in constraints.keys() {
+        if !matches!(
+            key.as_str(),
+            "min" | "max" | "minExclusive" | "maxExclusive" | "minLength" | "maxLength"
+        ) {
+            anyhow::bail!("unsupported extra.{field}.constraints field: {key}");
+        }
+    }
+    if matches!(field_type, "integer" | "decimal") {
+        let actual = decimal_setting_value(value, &format!("extra.{field}.value"))?;
+        for key in ["min", "max", "minExclusive", "maxExclusive"] {
+            let Some(limit) = constraints.get(key) else {
+                continue;
+            };
+            let limit = decimal_setting_value(limit, &format!("extra.{field}.constraints.{key}"))?;
+            let valid = match key {
+                "min" => limit.le(&actual),
+                "max" => actual.le(&limit),
+                "minExclusive" => limit.le(&actual) && limit != actual,
+                "maxExclusive" => actual.le(&limit) && actual != limit,
+                _ => unreachable!(),
+            };
+            if !valid {
+                anyhow::bail!("extra.{field}.value violates {key}");
+            }
+        }
+    } else if constraints
+        .keys()
+        .any(|key| matches!(key.as_str(), "min" | "max" | "minExclusive" | "maxExclusive"))
+    {
+        anyhow::bail!("numeric constraints require integer or decimal type for extra.{field}");
+    }
+
+    let length = match value {
+        Value::String(value) => Some(value.chars().count() as u64),
+        Value::Array(value) => Some(value.len() as u64),
+        Value::Object(value) => Some(value.len() as u64),
+        _ => None,
+    };
+    for key in ["minLength", "maxLength"] {
+        let Some(limit) = constraints.get(key) else {
+            continue;
+        };
+        let Some(limit) = limit.as_u64() else {
+            anyhow::bail!("extra.{field}.constraints.{key} must be a non-negative integer");
+        };
+        let Some(length) = length else {
+            anyhow::bail!("length constraints require string, array, or object type for extra.{field}");
+        };
+        let valid = if key == "minLength" {
+            length >= limit
+        } else {
+            length <= limit
+        };
+        if !valid {
+            anyhow::bail!("extra.{field}.value violates {key}");
+        }
+    }
+    Ok(())
+}
+
+fn validate_extra_field(field: &str, value: &Value) -> anyhow::Result<()> {
+    if !dynamic_setting_key_is_safe(field) || dynamic_setting_key_is_sensitive(field) {
+        anyhow::bail!("invalid or reserved extra consent field: {field}");
+    }
+    let Value::Object(metadata) = value else {
+        anyhow::bail!("extra.{field} must be an object");
+    };
+    for key in metadata.keys() {
+        if !EXTRA_FIELD_METADATA.contains(&key.as_str()) {
+            anyhow::bail!("unsupported extra.{field} metadata field: {key}");
+        }
+    }
+    let label = metadata
+        .get("label")
+        .ok_or_else(|| anyhow::anyhow!("extra.{field}.label is required"))?;
+    bounded_nonempty_text(label, &format!("extra.{field}.label"), 128)?;
+    let field_type = metadata
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("extra.{field}.type is required"))?;
+    if !EXTRA_FIELD_TYPES.contains(&field_type) {
+        anyhow::bail!(
+            "extra.{field}.type must be one of: {}",
+            EXTRA_FIELD_TYPES.join(" | ")
+        );
+    }
+    let confirmed_value = metadata
+        .get("value")
+        .ok_or_else(|| anyhow::anyhow!("extra.{field}.value is required"))?;
+    validate_extra_field_value(field_type, confirmed_value, field)?;
+
+    if let Some(description) = metadata.get("description") {
+        if !description.is_null() {
+            bounded_nonempty_text(description, &format!("extra.{field}.description"), 1024)?;
+        }
+    }
+    if let Some(unit) = metadata.get("unit") {
+        if !unit.is_null() {
+            bounded_nonempty_text(unit, &format!("extra.{field}.unit"), 64)?;
+        }
+    }
+    if let Some(constraints) = metadata.get("constraints") {
+        if !constraints.is_null() {
+            let Value::Object(constraints) = constraints else {
+                anyhow::bail!("extra.{field}.constraints must be an object or null");
+            };
+            validate_extra_constraints(field, field_type, confirmed_value, constraints)?;
+        }
+    }
+    if let Some(options) = metadata.get("options") {
+        if !options.is_null() {
+            let Value::Array(options) = options else {
+                anyhow::bail!("extra.{field}.options must be an array or null");
+            };
+            if options.is_empty() || options.len() > MAX_DYNAMIC_SETTING_COLLECTION_LEN {
+                anyhow::bail!("extra.{field}.options must be a non-empty bounded array");
+            }
+            if field_type != "enum" {
+                anyhow::bail!("extra.{field}.options is only valid for enum fields");
+            }
+            if options.iter().any(|option| !option.is_string()) {
+                anyhow::bail!("extra.{field}.options entries must be strings");
+            }
+            if !options.iter().any(|option| option == confirmed_value) {
+                anyhow::bail!("extra.{field}.value must be listed in options");
+            }
+        }
+    }
+    if let Some(applies_when) = metadata.get("appliesWhen") {
+        if !applies_when.is_null() {
+            let Value::Object(applies_when) = applies_when else {
+                anyhow::bail!("extra.{field}.appliesWhen must be an object or null");
+            };
+            for key in applies_when.keys() {
+                if !matches!(key.as_str(), "venue" | "operation") {
+                    anyhow::bail!("unsupported extra.{field}.appliesWhen field: {key}");
+                }
+            }
+            for (key, value) in applies_when {
+                validate_string_or_string_array(
+                    value,
+                    &format!("extra.{field}.appliesWhen.{key}"),
+                )?;
+            }
+        }
+    }
+    if let Some(confirmed_at) = metadata.get("confirmedAt") {
+        if !confirmed_at.is_null() && confirmed_at.as_u64().is_none() {
+            anyhow::bail!("extra.{field}.confirmedAt must be a non-negative integer or null");
+        }
+    }
+    Ok(())
+}
+
+fn validate_extra_settings(value: &Value, allow_removals: bool) -> anyhow::Result<()> {
+    let Value::Object(fields) = value else {
+        anyhow::bail!("extra must be a JSON object");
+    };
+    if fields.len() > MAX_DYNAMIC_SETTING_COUNT {
+        anyhow::bail!("extra contains too many fields");
+    }
+    for (field, value) in fields {
+        if allow_removals && value.is_null() {
+            if !dynamic_setting_key_is_safe(field) || dynamic_setting_key_is_sensitive(field) {
+                anyhow::bail!("invalid or reserved extra consent field: {field}");
+            }
+            continue;
+        }
+        validate_extra_field(field, value)?;
+    }
+    Ok(())
+}
+
+fn dynamic_setting_key_is_sensitive(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    [
+        "password",
+        "passphrase",
+        "privatekey",
+        "secretkey",
+        "apikey",
+        "accesstoken",
+        "refreshtoken",
+        "credential",
+        "jwt",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn validate_dynamic_setting_value(value: &Value, depth: usize) -> anyhow::Result<()> {
+    if depth > MAX_DYNAMIC_SETTING_DEPTH {
+        anyhow::bail!("dynamic consent setting exceeds maximum nesting depth");
+    }
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) => Ok(()),
+        Value::String(value) => {
+            if value.chars().count() > MAX_DYNAMIC_SETTING_STRING_LEN {
+                anyhow::bail!("dynamic consent setting string is too long");
+            }
+            if value.chars().any(char::is_control) {
+                anyhow::bail!("dynamic consent setting contains control characters");
+            }
+            Ok(())
+        }
+        Value::Array(values) => {
+            if values.len() > MAX_DYNAMIC_SETTING_COLLECTION_LEN {
+                anyhow::bail!("dynamic consent setting array is too large");
+            }
+            for value in values {
+                validate_dynamic_setting_value(value, depth + 1)?;
+            }
+            Ok(())
+        }
+        Value::Object(values) => {
+            if values.len() > MAX_DYNAMIC_SETTING_COLLECTION_LEN {
+                anyhow::bail!("dynamic consent setting object is too large");
+            }
+            for (key, value) in values {
+                if !dynamic_setting_key_is_safe(key) || dynamic_setting_key_is_sensitive(key) {
+                    anyhow::bail!("invalid dynamic consent setting key: {key}");
+                }
+                validate_dynamic_setting_value(value, depth + 1)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_dynamic_settings_impl(
+    settings: &DynamicConsentSettings,
+    allow_removals: bool,
+) -> anyhow::Result<()> {
+    if settings.len() > MAX_DYNAMIC_SETTING_COUNT {
+        anyhow::bail!("too many dynamic consent settings");
+    }
+    if serde_json::to_vec(settings)?.len() > MAX_DYNAMIC_SETTINGS_BYTES {
+        anyhow::bail!("dynamic consent settings are too large");
+    }
+    for (key, value) in settings {
+        if key == "extra" {
+            if value.is_null() {
+                continue;
+            }
+            validate_extra_settings(value, allow_removals)?;
+            continue;
+        }
+        if key == "requiredFields" {
+            let Value::Array(fields) = value else {
+                anyhow::bail!("requiredFields must be an array");
+            };
+            if fields.len() > MAX_DYNAMIC_SETTING_COUNT {
+                anyhow::bail!("requiredFields contains too many fields");
+            }
+            for field in fields {
+                let Some(field) = field.as_str() else {
+                    anyhow::bail!("requiredFields entries must be strings");
+                };
+                validate_required_field_name(field)?;
+            }
+            continue;
+        }
+        if !KNOWN_FLAT_SETTING_FIELDS.contains(&key.as_str()) {
+            anyhow::bail!("unknown top-level consent setting {key}; put service-specific fields under extra");
+        }
+        validate_dynamic_setting_name(key)?;
+        validate_dynamic_setting_value(value, 0)?;
+        if value.is_null() {
+            continue;
+        }
+        match key.as_str() {
+            "tradeAmountMode" => match value.as_str() {
+                Some("fixed_amount" | "available_balance_ratio") => {}
+                _ => anyhow::bail!(
+                    "tradeAmountMode must be one of: fixed_amount | available_balance_ratio"
+                ),
+            },
+            "tradeAmountRatio" => {
+                let ratio = decimal_setting_value(value, "tradeAmountRatio")?;
+                if ratio.is_zero() || !ratio.le(&Decimal::parse("1")?) {
+                    anyhow::bail!("tradeAmountRatio must be greater than 0 and at most 1");
+                }
+            }
+            "tradeAmountBasis" => match value.as_str() {
+                Some("notional" | "margin") => {}
+                _ => anyhow::bail!("tradeAmountBasis must be one of: notional | margin"),
+            },
+            "leverageMode" => match value.as_str() {
+                Some("keep_account" | "fixed" | "signal_capped") => {}
+                _ => anyhow::bail!(
+                    "leverageMode must be one of: keep_account | fixed | signal_capped"
+                ),
+            },
+            "leverage" | "maxLeverage" | "orderSize" | "sellShares" => {
+                let amount = decimal_setting_value(value, key)?;
+                if amount.is_zero() {
+                    anyhow::bail!("{key} must be greater than 0");
+                }
+            }
+            "mevProtection" if !value.is_boolean() => {
+                anyhow::bail!("mevProtection must be a boolean")
+            }
+            "orderType" => {
+                bounded_nonempty_text(value, "orderType", 32)?;
+            }
+            "serviceGuideHash" => {
+                let valid = value.as_str().is_some_and(|value| {
+                    value.strip_prefix("sha256:").is_some_and(|digest| {
+                        digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    })
+                });
+                if !valid {
+                    anyhow::bail!("serviceGuideHash must be sha256:<64 lowercase-or-uppercase hex characters>");
+                }
+            }
+            "tradeAmountType" => match value.as_str() {
+                Some("fixed" | "percentage") => {}
+                _ => anyhow::bail!("tradeAmountType must be one of: fixed | percentage"),
+            },
+            "tradeAmountPercent" => {
+                let percentage = decimal_setting_value(value, "tradeAmountPercent")?;
+                if percentage.is_zero() || !percentage.le(&Decimal::parse("100")?) {
+                    anyhow::bail!("tradeAmountPercent must be greater than 0 and at most 100");
+                }
+            }
+            "takeProfitRatio" | "stopLossRatio" => {
+                let ratio = decimal_setting_value(value, key)?;
+                if ratio.is_zero() {
+                    anyhow::bail!("{key} must be greater than 0");
+                }
+            }
+            _ => {}
+        }
+    }
+    if settings.contains_key("tradeAmountMode") && settings.contains_key("tradeAmountType") {
+        anyhow::bail!("use tradeAmountMode; do not combine it with legacy tradeAmountType");
+    }
+    if settings.contains_key("tradeAmountRatio") && settings.contains_key("tradeAmountPercent") {
+        anyhow::bail!("use tradeAmountRatio; do not combine it with legacy tradeAmountPercent");
+    }
+    match settings.get("leverageMode").and_then(Value::as_str) {
+        Some("fixed") if !settings.contains_key("leverage") => {
+            anyhow::bail!("leverage is required when leverageMode=fixed")
+        }
+        Some("signal_capped") if !settings.contains_key("maxLeverage") => {
+            anyhow::bail!("maxLeverage is required when leverageMode=signal_capped")
+        }
+        Some("keep_account")
+            if settings.contains_key("leverage") || settings.contains_key("maxLeverage") =>
+        {
+            anyhow::bail!("leverage and maxLeverage are not valid when leverageMode=keep_account")
+        }
+        None if settings.contains_key("leverage") || settings.contains_key("maxLeverage") => {
+            anyhow::bail!("leverageMode is required when leverage or maxLeverage is present")
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub fn validate_dynamic_settings(settings: &DynamicConsentSettings) -> anyhow::Result<()> {
+    validate_dynamic_settings_impl(settings, false)
+}
+
+fn validate_dynamic_setting_updates(settings: &DynamicConsentSettings) -> anyhow::Result<()> {
+    validate_dynamic_settings_impl(settings, true)
+}
+
+pub fn validate_required_field_name(field: &str) -> anyhow::Result<()> {
+    let core = matches!(
+        field,
+        "mode"
+            | "tradeAmount"
+            | "tradeAmountU"
+            | "cap"
+            | "quote"
+            | "environment"
+            | "marginMode"
+            | "orderPolicy"
+            | "authMode"
+    );
+    if core || KNOWN_FLAT_SETTING_FIELDS.contains(&field) {
+        return Ok(());
+    }
+    if let Some(extra) = field.strip_prefix("extra.") {
+        return validate_dynamic_setting_name(extra);
+    }
+    anyhow::bail!("unknown required consent field: {field}")
+}
+
+pub fn dynamic_setting_present(settings: &DynamicConsentSettings, field: &str) -> bool {
+    if let Some(extra_field) = field.strip_prefix("extra.") {
+        return settings
+            .get("extra")
+            .and_then(Value::as_object)
+            .is_some_and(|extra| extra.contains_key(extra_field));
+    }
+    settings.get(field).is_some_and(|value| !value.is_null())
+}
+
+fn decimal_setting_value(value: &Value, field: &str) -> anyhow::Result<Decimal> {
+    let raw = value
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| value.as_number().map(ToString::to_string))
+        .ok_or_else(|| anyhow::anyhow!("{field} must be a decimal string or number"))?;
+    Decimal::parse(&raw).map_err(|_| anyhow::anyhow!("{field} must be a valid decimal"))
+}
+
+pub fn dynamic_decimal_setting(
+    settings: &DynamicConsentSettings,
+    field: &str,
+) -> anyhow::Result<Option<Decimal>> {
+    settings
+        .get(field)
+        .map(|value| decimal_setting_value(value, field))
+        .transpose()
+}
+
+pub fn uses_percentage_amount(settings: &DynamicConsentSettings) -> bool {
+    settings.get("tradeAmountMode").and_then(Value::as_str)
+        == Some("available_balance_ratio")
+        || settings.get("tradeAmountType").and_then(Value::as_str) == Some("percentage")
+}
+
+pub fn validate_amount_policy(
+    trade_amount_u: Option<&str>,
+    settings: &DynamicConsentSettings,
+) -> anyhow::Result<()> {
+    match settings.get("tradeAmountMode").and_then(Value::as_str) {
+        Some("fixed_amount") if trade_amount_u.is_none() => {
+            anyhow::bail!("tradeAmountU is required when tradeAmountMode=fixed_amount")
+        }
+        Some("available_balance_ratio") if !settings.contains_key("tradeAmountRatio") => {
+            anyhow::bail!(
+                "tradeAmountRatio is required when tradeAmountMode=available_balance_ratio"
+            )
+        }
+        None if settings.contains_key("tradeAmountRatio") => {
+            anyhow::bail!(
+                "tradeAmountMode=available_balance_ratio is required when tradeAmountRatio is present"
+            )
+        }
+        _ => {}
+    }
+    match settings.get("tradeAmountType").and_then(Value::as_str) {
+        Some("fixed") if trade_amount_u.is_none() => {
+            anyhow::bail!("tradeAmountU is required when tradeAmountType=fixed")
+        }
+        Some("percentage") if !settings.contains_key("tradeAmountPercent") => {
+            anyhow::bail!("tradeAmountPercent is required when tradeAmountType=percentage")
+        }
+        None if settings.contains_key("tradeAmountPercent") => {
+            anyhow::bail!(
+                "tradeAmountType=percentage is required when tradeAmountPercent is present"
+            )
+        }
+        _ => Ok(()),
+    }
+}
+
+pub fn parse_dynamic_settings_json(
+    input: Option<&str>,
+    flag: &str,
+) -> anyhow::Result<DynamicConsentSettings> {
+    let Some(input) = input else {
+        return Ok(DynamicConsentSettings::new());
+    };
+    if input.len() > MAX_DYNAMIC_SETTINGS_BYTES {
+        anyhow::bail!("{flag} is too large");
+    }
+    let value: Value =
+        serde_json::from_str(input).map_err(|_| anyhow::anyhow!("{flag} must be a JSON object"))?;
+    let Value::Object(values) = value else {
+        anyhow::bail!("{flag} must be a JSON object");
+    };
+    let settings = values.into_iter().collect::<DynamicConsentSettings>();
+    validate_dynamic_setting_updates(&settings)?;
+    Ok(settings)
+}
+
+pub(crate) fn merge_dynamic_settings(
+    target: &mut DynamicConsentSettings,
+    updates: &DynamicConsentSettings,
+) {
+    for (key, value) in updates {
+        if value.is_null() {
+            target.remove(key);
+        } else if key == "extra" {
+            let mut merged = target
+                .get(key)
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(updates) = value.as_object() {
+                for (field, update) in updates {
+                    if update.is_null() {
+                        merged.remove(field);
+                    } else {
+                        merged.insert(field.clone(), update.clone());
+                    }
+                }
+            }
+            if merged.is_empty() {
+                target.remove(key);
+            } else {
+                target.insert(key.clone(), Value::Object(merged));
+            }
+        } else {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+}
 
 /// Versioned, trusted metadata for a saved Active-subscription delivery.
 ///
@@ -180,10 +842,39 @@ pub enum DeliveryActivation {
 pub enum ConsentMode {
     /// Auto-execute within `capU` (buy-side); over-cap re-asks.
     Auto,
-    /// Never auto-execute; surface the command for the user to run each time.
+    /// Legacy on-disk value. It is treated as notify-only and never authorizes
+    /// a per-delivery execution decision.
     Manual,
     /// Do not execute; notify only.
     Decline,
+}
+
+/// User-selected credential source for Trade Kit commands.
+///
+/// This stores only the source choice. OAuth tokens and API-key material remain
+/// owned by Trade Kit and are never copied into the consent file.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TradeKitAuthMode {
+    OAuth,
+    ApiKey,
+}
+
+impl TradeKitAuthMode {
+    pub fn parse(value: &str) -> anyhow::Result<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "oauth" => Ok(Self::OAuth),
+            "api_key" | "api-key" => Ok(Self::ApiKey),
+            _ => anyhow::bail!("auth mode must be one of: oauth | api_key"),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OAuth => "oauth",
+            Self::ApiKey => "api_key",
+        }
+    }
 }
 
 /// User-authorized margin mode for Trade Kit derivative orders.
@@ -242,7 +933,7 @@ impl OrderPolicy {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ConsentFile {
     /// Versions newer than [`CONSENT_VERSION`] are rejected as unreadable.
     pub version: u32,
@@ -278,6 +969,16 @@ pub struct ConsentFile {
     /// as absent and must never silently fall back to a market order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_policy: Option<OrderPolicy>,
+    /// User-selected Trade Kit credential source. Older consent files predate
+    /// this field and must ask once before their next Trade Kit execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<TradeKitAuthMode>,
+    /// User-confirmed, tool-specific execution settings. These fields remain
+    /// flat in the JSON document and are preserved even when this CLI version
+    /// does not know their business semantics. Core authorization fields above
+    /// are reserved and can never be shadowed here.
+    #[serde(default, flatten)]
+    pub dynamic_settings: DynamicConsentSettings,
     /// seconds since epoch.
     pub created_at: u64,
     /// seconds since epoch.
@@ -329,6 +1030,12 @@ pub struct ConsentSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order_policy: Option<OrderPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<TradeKitAuthMode>,
+    /// Complete validated tool-specific business settings, flattened into the
+    /// model-facing snapshot just as they are in the consent file.
+    #[serde(flatten)]
+    pub dynamic_settings: DynamicConsentSettings,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
@@ -346,6 +1053,8 @@ impl ConsentSnapshot {
             trade_environment: None,
             margin_mode: None,
             order_policy: None,
+            auth_mode: None,
+            dynamic_settings: DynamicConsentSettings::new(),
             created_at: None,
             expires_at: None,
         }
@@ -380,6 +1089,88 @@ pub fn quote_token(job_id: &str) -> String {
 pub const CONSENT_UNREADABLE: &str = "consent_unreadable";
 pub const CONSENT_VERSION_TOO_NEW: &str = "consent_version_too_new";
 pub const CONSENT_JOB_MISMATCH: &str = "consent_job_mismatch";
+
+fn persisted_required_fields_are_complete(file: &ConsentFile) -> bool {
+    let Some(fields) = file
+        .dynamic_settings
+        .get("requiredFields")
+        .and_then(Value::as_array)
+    else {
+        return true;
+    };
+    fields.iter().all(|field| {
+        let Some(field) = field.as_str() else {
+            return false;
+        };
+        match field {
+            "mode" => true,
+            "tradeAmount" | "tradeAmountU" => file.trade_amount_u.is_some(),
+            "cap" => file.cap_u.is_some(),
+            "quote" => file.quote_token.is_some(),
+            "environment" => file.trade_environment.is_some(),
+            "marginMode" => file.margin_mode.is_some(),
+            "orderPolicy" => file.order_policy.is_some(),
+            "authMode" => file.auth_mode.is_some(),
+            other => dynamic_setting_present(&file.dynamic_settings, other),
+        }
+    })
+}
+
+fn inferred_extra_type(value: &Value) -> &'static str {
+    match value {
+        Value::Bool(_) => "boolean",
+        Value::Number(number) if number.is_i64() || number.is_u64() => "integer",
+        Value::Number(_) => "decimal",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+        Value::Null => "string",
+    }
+}
+
+/// Earlier local builds stored every guide-defined setting at the top level.
+/// Move only those unknown fields into typed `extra` entries in memory so the
+/// unpublished schema refinement does not discard an already user-confirmed
+/// value. Stable fields and their compatibility aliases remain flat.
+fn migrate_legacy_flat_settings(file: &mut ConsentFile) {
+    let legacy_keys = file
+        .dynamic_settings
+        .keys()
+        .filter(|key| {
+            !KNOWN_FLAT_SETTING_FIELDS.contains(&key.as_str())
+                && !matches!(key.as_str(), "requiredFields" | "extra")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if legacy_keys.is_empty() {
+        return;
+    }
+    let mut extra = file
+        .dynamic_settings
+        .get("extra")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for key in legacy_keys {
+        if let Some(mut value) = file.dynamic_settings.remove(&key) {
+            let field_type = inferred_extra_type(&value);
+            if value.as_number().is_some_and(|number| {
+                number.as_i64().is_none() && number.as_u64().is_none()
+            }) {
+                value = Value::String(value.to_string());
+            }
+            extra.entry(key.clone()).or_insert_with(|| {
+                serde_json::json!({
+                    "label": key,
+                    "type": field_type,
+                    "value": value,
+                })
+            });
+        }
+    }
+    file.dynamic_settings
+        .insert("extra".to_string(), Value::Object(extra));
+}
 
 /// A hard consent read failure (present-but-broken record). Distinct from the
 /// normal "no record / declined / manual / auto" states carried by
@@ -445,13 +1236,22 @@ pub fn load_consent(job_id: &str) -> Result<Option<ConsentFile>, ConsentError> {
         return Ok(None);
     }
     let raw = std::fs::read_to_string(&path).map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
-    let file: ConsentFile =
+    let mut file: ConsentFile =
         serde_json::from_str(&raw).map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
     if file.version > CONSENT_VERSION {
         return Err(ConsentError(CONSENT_VERSION_TOO_NEW));
     }
     if file.job_id != job_id {
         return Err(ConsentError(CONSENT_JOB_MISMATCH));
+    }
+    migrate_legacy_flat_settings(&mut file);
+    if validate_dynamic_settings(&file.dynamic_settings).is_err()
+        || file.dynamic_settings.values().any(Value::is_null)
+        || validate_amount_policy(file.trade_amount_u.as_deref(), &file.dynamic_settings)
+            .is_err()
+        || !persisted_required_fields_are_complete(&file)
+    {
+        return Err(ConsentError(CONSENT_UNREADABLE));
     }
     if file
         .trade_environment
@@ -480,6 +1280,8 @@ pub fn consent_snapshot(job_id: &str) -> ConsentSnapshot {
             trade_environment: file.trade_environment,
             margin_mode: file.margin_mode,
             order_policy: file.order_policy,
+            auth_mode: file.auth_mode,
+            dynamic_settings: file.dynamic_settings,
             created_at: Some(file.created_at),
             expires_at: Some(file.expires_at),
         },
@@ -586,6 +1388,7 @@ pub fn write_consent_policy(
         trade_environment,
         None,
         None,
+        None,
         ttl_sec,
     )
 }
@@ -602,6 +1405,38 @@ pub fn write_consent_policy_with_settings(
     trade_environment: Option<TradeEnvironment>,
     margin_mode: Option<MarginMode>,
     order_policy: Option<OrderPolicy>,
+    auth_mode: Option<TradeKitAuthMode>,
+    ttl_sec: u64,
+) -> anyhow::Result<()> {
+    write_consent_policy_with_dynamic_settings(
+        job_id,
+        mode,
+        cap_u,
+        trade_amount_u,
+        quote,
+        trade_environment,
+        margin_mode,
+        order_policy,
+        auth_mode,
+        None,
+        ttl_sec,
+    )
+}
+
+/// Persist the complete local execution policy and merge user-confirmed,
+/// tool-specific settings. `null` values remove an existing dynamic setting;
+/// all other values remain flat in the consent JSON and model snapshot.
+pub fn write_consent_policy_with_dynamic_settings(
+    job_id: &str,
+    mode: ConsentMode,
+    cap_u: Option<&str>,
+    trade_amount_u: Option<&str>,
+    quote: Option<&str>,
+    trade_environment: Option<TradeEnvironment>,
+    margin_mode: Option<MarginMode>,
+    order_policy: Option<OrderPolicy>,
+    auth_mode: Option<TradeKitAuthMode>,
+    dynamic_updates: Option<&DynamicConsentSettings>,
     ttl_sec: u64,
 ) -> anyhow::Result<()> {
     if !job_id_is_safe(job_id) {
@@ -665,6 +1500,17 @@ pub fn write_consent_policy_with_settings(
     });
     let margin_mode = margin_mode.or_else(|| existing.as_ref().and_then(|c| c.margin_mode));
     let order_policy = order_policy.or_else(|| existing.as_ref().and_then(|c| c.order_policy));
+    let auth_mode = auth_mode.or_else(|| existing.as_ref().and_then(|c| c.auth_mode));
+    let mut dynamic_settings = existing
+        .as_ref()
+        .map(|consent| consent.dynamic_settings.clone())
+        .unwrap_or_default();
+    if let Some(updates) = dynamic_updates {
+        validate_dynamic_setting_updates(updates)?;
+        merge_dynamic_settings(&mut dynamic_settings, updates);
+    }
+    validate_dynamic_settings(&dynamic_settings)?;
+    validate_amount_policy(trade_amount_u.as_deref(), &dynamic_settings)?;
 
     let created_at = now_secs();
     let file = ConsentFile {
@@ -677,9 +1523,14 @@ pub fn write_consent_policy_with_settings(
         trade_environment,
         margin_mode,
         order_policy,
+        auth_mode,
+        dynamic_settings,
         created_at,
         expires_at: created_at + ttl_sec,
     };
+    if !persisted_required_fields_are_complete(&file) {
+        anyhow::bail!("requiredFields contains a setting without a confirmed value");
+    }
 
     let path = consent_path(job_id).map_err(|d| anyhow::anyhow!("{}", d.0))?;
     let body = serde_json::to_string_pretty(&file)?;
@@ -716,9 +1567,33 @@ pub fn write_trade_settings(
     trade_environment: Option<TradeEnvironment>,
     margin_mode: Option<MarginMode>,
     order_policy: Option<OrderPolicy>,
+    auth_mode: Option<TradeKitAuthMode>,
 ) -> anyhow::Result<ConsentFile> {
-    if trade_environment.is_none() && margin_mode.is_none() && order_policy.is_none() {
-        anyhow::bail!("at least one Trade Kit setting is required");
+    write_trade_settings_with_dynamic(
+        job_id,
+        trade_environment,
+        margin_mode,
+        order_policy,
+        auth_mode,
+        None,
+    )
+}
+
+pub fn write_trade_settings_with_dynamic(
+    job_id: &str,
+    trade_environment: Option<TradeEnvironment>,
+    margin_mode: Option<MarginMode>,
+    order_policy: Option<OrderPolicy>,
+    auth_mode: Option<TradeKitAuthMode>,
+    dynamic_updates: Option<&DynamicConsentSettings>,
+) -> anyhow::Result<ConsentFile> {
+    if trade_environment.is_none()
+        && margin_mode.is_none()
+        && order_policy.is_none()
+        && auth_mode.is_none()
+        && dynamic_updates.is_none_or(DynamicConsentSettings::is_empty)
+    {
+        anyhow::bail!("at least one consent setting is required");
     }
     if trade_environment.is_some_and(|environment| !environment.is_explicit()) {
         anyhow::bail!("trade environment must be live or demo");
@@ -735,6 +1610,18 @@ pub fn write_trade_settings(
     }
     if let Some(value) = order_policy {
         file.order_policy = Some(value);
+    }
+    if let Some(value) = auth_mode {
+        file.auth_mode = Some(value);
+    }
+    if let Some(updates) = dynamic_updates {
+        validate_dynamic_setting_updates(updates)?;
+        merge_dynamic_settings(&mut file.dynamic_settings, updates);
+        validate_dynamic_settings(&file.dynamic_settings)?;
+    }
+    validate_amount_policy(file.trade_amount_u.as_deref(), &file.dynamic_settings)?;
+    if !persisted_required_fields_are_complete(&file) {
+        anyhow::bail!("requiredFields contains a setting without a confirmed value");
     }
     let path = consent_path(job_id).map_err(|error| anyhow::anyhow!(error.0))?;
     let body = serde_json::to_string_pretty(&file)?;
@@ -1061,6 +1948,8 @@ mod tests {
                     trade_environment: None,
                     margin_mode: None,
                     order_policy: None,
+                    auth_mode: None,
+                    dynamic_settings: DynamicConsentSettings::new(),
                     created_at: None,
                     expires_at: None,
                 }
@@ -1092,6 +1981,323 @@ mod tests {
             assert_eq!(snapshot.order_policy, None);
             assert!(snapshot.created_at.is_some());
             assert!(snapshot.expires_at.is_some());
+        });
+    }
+
+    #[test]
+    fn stable_settings_remain_flat_and_extra_reaches_the_snapshot() {
+        with_home(|| {
+            let settings = parse_dynamic_settings_json(
+                Some(
+                    r#"{"leverageMode":"fixed","leverage":"2","mevProtection":true,"slippage":"0.5","extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3}}}"#,
+                ),
+                "--settings-json",
+            )
+            .unwrap();
+            write_consent_policy_with_dynamic_settings(
+                "job1",
+                ConsentMode::Auto,
+                Some("50"),
+                Some("12.5"),
+                Some("USDC"),
+                None,
+                None,
+                None,
+                None,
+                Some(&settings),
+                3600,
+            )
+            .unwrap();
+
+            let snapshot_json = serde_json::to_value(consent_snapshot("job1")).unwrap();
+            assert_eq!(snapshot_json["leverage"], serde_json::json!("2"));
+            assert_eq!(snapshot_json["mevProtection"], serde_json::json!(true));
+            assert_eq!(snapshot_json["slippage"], serde_json::json!("0.5"));
+            assert_eq!(
+                snapshot_json["extra"]["maxConcurrentPositions"]["value"],
+                serde_json::json!(3)
+            );
+            assert!(snapshot_json.get("dynamicSettings").is_none());
+
+            let raw = std::fs::read_to_string(consent_path("job1").unwrap()).unwrap();
+            let persisted: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(persisted["leverage"], serde_json::json!("2"));
+            assert_eq!(
+                persisted["extra"]["maxConcurrentPositions"]["type"],
+                serde_json::json!("integer")
+            );
+            assert!(persisted.get("dynamicSettings").is_none());
+        });
+    }
+
+    #[test]
+    fn extra_requires_label_type_value_and_validates_optional_metadata() {
+        for raw in [
+            r#"{"extra":{"foo":{"type":"integer","value":1}}}"#,
+            r#"{"extra":{"foo":{"label":"Foo","value":1}}}"#,
+            r#"{"extra":{"foo":{"label":"Foo","type":"integer"}}}"#,
+            r#"{"extra":{"foo":{"label":"Foo","type":"integer","value":"1"}}}"#,
+        ] {
+            assert!(parse_dynamic_settings_json(Some(raw), "--settings-json").is_err());
+        }
+
+        let settings = parse_dynamic_settings_json(
+            Some(
+                r#"{"extra":{"orderUrgency":{"label":"Order urgency","type":"enum","value":"fast","description":null,"unit":null,"constraints":null,"options":["normal","fast"],"appliesWhen":{"venue":"hyperliquid","operation":["open","close"]},"confirmedAt":1787900000}}}"#,
+            ),
+            "--settings-json",
+        )
+        .unwrap();
+        assert!(dynamic_setting_present(&settings, "extra.orderUrgency"));
+
+        let precise_identifier = parse_dynamic_settings_json(
+            Some(
+                r#"{"extra":{"strategyInstanceId":{"label":"Strategy instance ID","type":"string","value":"90071992547409931234567890"}}}"#,
+            ),
+            "--settings-json",
+        )
+        .unwrap();
+        assert_eq!(
+            precise_identifier["extra"]["strategyInstanceId"]["value"],
+            serde_json::json!("90071992547409931234567890")
+        );
+    }
+
+    #[test]
+    fn extra_updates_merge_without_dropping_existing_fields() {
+        with_home(|| {
+            let first = parse_dynamic_settings_json(
+                Some(
+                    r#"{"extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3}}}"#,
+                ),
+                "--settings-json",
+            )
+            .unwrap();
+            write_consent_policy_with_dynamic_settings(
+                "job1",
+                ConsentMode::Manual,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(&first),
+                3600,
+            )
+            .unwrap();
+            let second = parse_dynamic_settings_json(
+                Some(
+                    r#"{"extra":{"orderUrgency":{"label":"Order urgency","type":"enum","value":"fast","options":["normal","fast"]}}}"#,
+                ),
+                "--settings-json",
+            )
+            .unwrap();
+            write_trade_settings_with_dynamic("job1", None, None, None, None, Some(&second))
+                .unwrap();
+
+            let stored = load_consent("job1").unwrap().unwrap();
+            assert!(dynamic_setting_present(
+                &stored.dynamic_settings,
+                "extra.maxConcurrentPositions"
+            ));
+            assert!(dynamic_setting_present(
+                &stored.dynamic_settings,
+                "extra.orderUrgency"
+            ));
+        });
+    }
+
+    #[test]
+    fn legacy_v5_unknown_flat_setting_migrates_to_typed_extra_in_memory() {
+        with_home(|| {
+            let raw = serde_json::json!({
+                "version": 5,
+                "jobId": "job1",
+                "mode": "manual",
+                "legacyRiskBucket": 3,
+                "createdAt": now_secs(),
+                "expiresAt": now_secs() + 3600,
+            });
+            crate::home::write_secure(
+                &consent_path("job1").unwrap(),
+                serde_json::to_string_pretty(&raw).unwrap().as_bytes(),
+            )
+            .unwrap();
+
+            let stored = load_consent("job1").unwrap().unwrap();
+            assert_eq!(stored.version, 5);
+            assert_eq!(
+                stored.dynamic_settings["extra"]["legacyRiskBucket"],
+                serde_json::json!({
+                    "label": "legacyRiskBucket",
+                    "type": "integer",
+                    "value": 3,
+                })
+            );
+            assert!(!stored.dynamic_settings.contains_key("legacyRiskBucket"));
+        });
+    }
+
+    #[test]
+    fn required_fields_and_service_guide_hash_are_validated_and_persisted() {
+        with_home(|| {
+            let settings = parse_dynamic_settings_json(
+                Some(
+                    r#"{"serviceGuideHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","requiredFields":["tradeAmountMode","tradeAmountBasis","extra.maxConcurrentPositions"],"tradeAmountMode":"fixed_amount","tradeAmountBasis":"margin","extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3}}}"#,
+                ),
+                "--settings-json",
+            )
+            .unwrap();
+            write_consent_policy_with_dynamic_settings(
+                "job1",
+                ConsentMode::Auto,
+                Some("100"),
+                Some("10"),
+                Some("USDT"),
+                None,
+                None,
+                None,
+                None,
+                Some(&settings),
+                3600,
+            )
+            .unwrap();
+            let snapshot = serde_json::to_value(consent_snapshot("job1")).unwrap();
+            assert_eq!(snapshot["requiredFields"][0], "tradeAmountMode");
+            assert_eq!(snapshot["requiredFields"][1], "tradeAmountBasis");
+            assert_eq!(snapshot["tradeAmountBasis"], "margin");
+            assert_eq!(snapshot["serviceGuideHash"], settings["serviceGuideHash"]);
+        });
+    }
+
+    #[test]
+    fn dynamic_settings_cannot_shadow_core_or_store_credentials() {
+        for raw in [
+            r#"{"authMode":"oauth"}"#,
+            r#"{"apiKey":"secret"}"#,
+            r#"{"createdAt":1}"#,
+        ] {
+            assert!(parse_dynamic_settings_json(Some(raw), "--settings-json").is_err());
+        }
+    }
+
+    #[test]
+    fn canonical_percentage_and_risk_overrides_are_validated() {
+        let settings = parse_dynamic_settings_json(
+            Some(
+                r#"{"tradeAmountMode":"available_balance_ratio","tradeAmountRatio":"0.125","takeProfitRatio":"20","stopLossRatio":"5"}"#,
+            ),
+            "--settings-json",
+        )
+        .unwrap();
+        validate_amount_policy(None, &settings).unwrap();
+        assert!(uses_percentage_amount(&settings));
+        assert_eq!(
+            dynamic_decimal_setting(&settings, "tradeAmountRatio")
+                .unwrap()
+                .unwrap()
+                .to_plain_string(),
+            "0.125"
+        );
+
+        let missing_type = parse_dynamic_settings_json(
+            Some(r#"{"tradeAmountRatio":"0.25"}"#),
+            "--settings-json",
+        )
+        .unwrap();
+        assert!(validate_amount_policy(None, &missing_type).is_err());
+        assert!(parse_dynamic_settings_json(
+            Some(r#"{"tradeAmountMode":"available_balance_ratio","tradeAmountRatio":"1.01"}"#),
+            "--settings-json",
+        )
+        .is_err());
+        assert!(parse_dynamic_settings_json(
+            Some(r#"{"takeProfitRatio":"0"}"#),
+            "--settings-json",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn null_dynamic_setting_removes_an_existing_value() {
+        with_home(|| {
+            let initial = parse_dynamic_settings_json(
+                Some(r#"{"leverageMode":"fixed","leverage":"2","slippage":"0.5"}"#),
+                "--settings-json",
+            )
+            .unwrap();
+            write_consent_policy_with_dynamic_settings(
+                "job1",
+                ConsentMode::Manual,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(&initial),
+                3600,
+            )
+            .unwrap();
+            let removal = parse_dynamic_settings_json(
+                Some(r#"{"slippage":null}"#),
+                "--settings-json",
+            )
+            .unwrap();
+            write_trade_settings_with_dynamic("job1", None, None, None, None, Some(&removal))
+                .unwrap();
+
+            let stored = load_consent("job1").unwrap().unwrap();
+            assert!(!stored.dynamic_settings.contains_key("slippage"));
+            assert_eq!(stored.dynamic_settings["leverage"], serde_json::json!("2"));
+        });
+    }
+
+    #[test]
+    fn null_extra_entry_removes_only_the_named_dynamic_field() {
+        with_home(|| {
+            let initial = parse_dynamic_settings_json(
+                Some(
+                    r#"{"extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3},"orderUrgency":{"label":"Order urgency","type":"enum","value":"fast","options":["normal","fast"]}}}"#,
+                ),
+                "--settings-json",
+            )
+            .unwrap();
+            write_consent_policy_with_dynamic_settings(
+                "job1",
+                ConsentMode::Manual,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(&initial),
+                3600,
+            )
+            .unwrap();
+
+            let removal = parse_dynamic_settings_json(
+                Some(r#"{"extra":{"orderUrgency":null}}"#),
+                "--settings-json",
+            )
+            .unwrap();
+            write_trade_settings_with_dynamic("job1", None, None, None, None, Some(&removal))
+                .unwrap();
+
+            let stored = load_consent("job1").unwrap().unwrap();
+            assert!(dynamic_setting_present(
+                &stored.dynamic_settings,
+                "extra.maxConcurrentPositions"
+            ));
+            assert!(!dynamic_setting_present(
+                &stored.dynamic_settings,
+                "extra.orderUrgency"
+            ));
         });
     }
 
@@ -1149,6 +2355,7 @@ mod tests {
                 Some(TradeEnvironment::Live),
                 Some(MarginMode::Cross),
                 Some(OrderPolicy::SignalPriceLimit),
+                Some(TradeKitAuthMode::OAuth),
             )
             .unwrap();
             assert_eq!(updated.mode, before.mode);
@@ -1162,6 +2369,48 @@ mod tests {
             assert_eq!(snapshot.trade_environment, Some(TradeEnvironment::Live));
             assert_eq!(snapshot.margin_mode, Some(MarginMode::Cross));
             assert_eq!(snapshot.order_policy, Some(OrderPolicy::SignalPriceLimit));
+            assert_eq!(snapshot.auth_mode, Some(TradeKitAuthMode::OAuth));
+        });
+    }
+
+    #[test]
+    fn legacy_consent_without_auth_mode_is_readable_and_can_be_upgraded() {
+        with_home(|| {
+            let path = consent_path("job1").unwrap();
+            let now = now_secs();
+            let legacy = serde_json::json!({
+                "version": 3,
+                "jobId": "job1",
+                "mode": "auto",
+                "capU": "50",
+                "tradeAmountU": "10",
+                "quoteToken": "usdt",
+                "tradeEnvironment": "live",
+                "marginMode": "cross",
+                "orderPolicy": "market",
+                "createdAt": now,
+                "expiresAt": now + 3600
+            });
+            crate::home::write_secure(&path, serde_json::to_string_pretty(&legacy).unwrap().as_bytes())
+                .unwrap();
+
+            let legacy_snapshot = consent_snapshot("job1");
+            assert_eq!(legacy_snapshot.version, Some(3));
+            assert_eq!(legacy_snapshot.auth_mode, None);
+
+            let upgraded = write_trade_settings(
+                "job1",
+                None,
+                None,
+                None,
+                Some(TradeKitAuthMode::OAuth),
+            )
+            .unwrap();
+            assert_eq!(upgraded.version, CONSENT_VERSION);
+            assert_eq!(upgraded.auth_mode, Some(TradeKitAuthMode::OAuth));
+            assert_eq!(upgraded.trade_environment, Some(TradeEnvironment::Live));
+            assert_eq!(upgraded.margin_mode, Some(MarginMode::Cross));
+            assert_eq!(upgraded.order_policy, Some(OrderPolicy::Market));
         });
     }
 

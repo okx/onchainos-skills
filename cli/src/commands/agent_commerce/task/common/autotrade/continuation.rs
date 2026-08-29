@@ -10,17 +10,21 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::amount::Decimal;
-use super::consent::{ConsentFile, ConsentMode, MarginMode, OrderPolicy, QUOTE_WHITELIST};
+use super::consent::{
+    self, ConsentFile, ConsentMode, DynamicConsentSettings, MarginMode, OrderPolicy,
+    QUOTE_WHITELIST,
+};
 use super::grants::job_id_is_safe;
 use super::trade_kit::TradeEnvironment;
 
-const VERSION: u32 = 4;
+const VERSION: u32 = 5;
 const TTL_SECS: u64 = 30 * 60;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SelectedMode {
     Auto,
+    #[serde(rename = "notify_only", alias = "manual")]
     Manual,
 }
 
@@ -28,8 +32,8 @@ impl SelectedMode {
     pub fn parse(value: &str) -> anyhow::Result<Self> {
         match value {
             "auto" => Ok(Self::Auto),
-            "manual" => Ok(Self::Manual),
-            _ => anyhow::bail!("--mode must be one of: auto | manual"),
+            "notify_only" | "notify-only" | "manual" | "decline" => Ok(Self::Manual),
+            _ => anyhow::bail!("--mode must be one of: auto | notify_only"),
         }
     }
 }
@@ -70,6 +74,13 @@ pub struct ConsentContinuation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub original_delivery_id: Option<String>,
     pub required_fields: Vec<String>,
+    /// Hash of the current ASP guide that this attempt reconciles. A resolved
+    /// blank guide deliberately stores no hash; an unresolved guide preserves
+    /// the existing consent metadata instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_guide_hash: Option<String>,
+    #[serde(default)]
+    pub service_guide_hash_resolved: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trade_amount_u: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,32 +93,40 @@ pub struct ConsentContinuation {
     pub margin_mode: Option<MarginMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order_policy: Option<OrderPolicy>,
+    #[serde(default, skip_serializing_if = "DynamicConsentSettings::is_empty")]
+    pub dynamic_settings: DynamicConsentSettings,
     created_at: u64,
     expires_at: u64,
 }
 
 impl ConsentContinuation {
     pub fn missing_fields(&self) -> Vec<String> {
+        if self.selected_mode == SelectedMode::Manual {
+            return if self.origin == Origin::SubscriptionRestore && !self.mode_confirmed {
+                vec!["mode".to_string()]
+            } else {
+                Vec::new()
+            };
+        }
         let mut missing: Vec<String> = self
             .required_fields
             .iter()
             .filter(|field| match field.as_str() {
-                "tradeAmount" | "cap" | "quote"
-                    if self.selected_mode == SelectedMode::Manual =>
-                {
-                    false
-                }
+                "mode" => self.origin == Origin::SubscriptionRestore && !self.mode_confirmed,
                 "tradeAmount" => self.trade_amount_u.is_none(),
                 "cap" => self.cap_u.is_none(),
                 "quote" => self.quote_token.is_none(),
                 "environment" => self.trade_environment.is_none(),
                 "marginMode" => self.margin_mode.is_none(),
                 "orderPolicy" => self.order_policy.is_none(),
-                _ => true,
+                other => !consent::dynamic_setting_present(&self.dynamic_settings, other),
             })
             .cloned()
             .collect();
-        if self.origin == Origin::SubscriptionRestore && !self.mode_confirmed {
+        if self.origin == Origin::SubscriptionRestore
+            && !self.mode_confirmed
+            && !missing.iter().any(|field| field == "mode")
+        {
             missing.insert(0, "mode".to_string());
         }
         missing
@@ -127,9 +146,13 @@ pub struct StartBinding<'a> {
     /// which user-authored values remain missing; they never supply values or
     /// grant authorization. Valid only for subscription restoration.
     pub required_fields: Option<&'a [String]>,
+    /// Current guide metadata from the authenticated restore precheck.
+    pub service_guide_hash: Option<&'a str>,
+    pub service_guide_hash_resolved: bool,
     /// Trusted existing policy used only to prefill an upgrade/repair attempt.
-    /// The continuation still requires an explicit mode confirmation and never
-    /// treats these values as a new authorization by itself.
+    /// The continuation normally still requires an explicit mode confirmation;
+    /// a guide-only refresh may preserve the already-authorized mode. Seeded
+    /// values never become a new authorization by themselves.
     pub seed_consent: Option<&'a ConsentFile>,
 }
 
@@ -141,6 +164,7 @@ pub struct ExplicitValues<'a> {
     pub trade_environment: Option<&'a str>,
     pub margin_mode: Option<&'a str>,
     pub order_policy: Option<&'a str>,
+    pub dynamic_settings: DynamicConsentSettings,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -208,8 +232,7 @@ fn default_required_fields(mode: SelectedMode, origin: Origin) -> Vec<String> {
                 .collect()
         }
         (SelectedMode::Auto, Origin::SubscriptionRestore) => Vec::new(),
-        (SelectedMode::Manual, Origin::Delivery) => vec!["tradeAmount".to_string()],
-        (SelectedMode::Manual, Origin::PreDelivery | Origin::SubscriptionRestore) => Vec::new(),
+        (SelectedMode::Manual, _) => Vec::new(),
     }
 }
 
@@ -223,9 +246,10 @@ fn normalize_required_fields(values: &[String]) -> anyhow::Result<Vec<String>> {
             "environment" | "tradeEnvironment" | "trade_environment" => "environment",
             "marginMode" | "margin_mode" => "marginMode",
             "orderPolicy" | "order_policy" => "orderPolicy",
-            _ => anyhow::bail!(
-                "--required-field must be one of: tradeAmount | cap | quote | environment | marginMode | orderPolicy"
-            ),
+            other => {
+                consent::validate_required_field_name(other)?;
+                other
+            }
         };
         if !normalized.iter().any(|existing| existing == field) {
             normalized.push(field.to_string());
@@ -310,6 +334,16 @@ fn normalize_quote(value: &str) -> anyhow::Result<String> {
     Ok(value)
 }
 
+fn shell_arg(value: &str) -> String {
+    if value.bytes().all(|byte| {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':' | b'/')
+    }) {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
+}
+
 fn read_live(job_id: &str) -> anyhow::Result<Option<ConsentContinuation>> {
     let path = continuation_path(job_id)?;
     if !path.exists() {
@@ -384,6 +418,9 @@ pub fn start_or_update(
                 || file.origin != binding.origin
                 || file.signal_type != binding.signal_type
                 || file.original_delivery_id.as_deref() != binding.original_delivery_id
+                || (binding.service_guide_hash_resolved
+                    && (!file.service_guide_hash_resolved
+                        || file.service_guide_hash.as_deref() != binding.service_guide_hash))
             {
                 anyhow::bail!("a different live consent continuation already exists for this job");
             }
@@ -416,6 +453,19 @@ pub fn start_or_update(
             }
             let now = now_secs();
             let seed = binding.seed_consent;
+            let mut dynamic_settings = seed
+                .map(|consent| consent.dynamic_settings.clone())
+                .unwrap_or_default();
+            dynamic_settings.remove("requiredFields");
+            if binding.service_guide_hash_resolved {
+                dynamic_settings.remove("serviceGuideHash");
+                if let Some(hash) = binding.service_guide_hash {
+                    dynamic_settings.insert(
+                        "serviceGuideHash".to_string(),
+                        serde_json::Value::String(hash.to_string()),
+                    );
+                }
+            }
             (
                 ConsentContinuation {
                     version: VERSION,
@@ -431,12 +481,15 @@ pub fn start_or_update(
                         Some(fields) => normalize_required_fields(fields)?,
                         None => default_required_fields(binding.selected_mode, binding.origin),
                     },
+                    service_guide_hash: binding.service_guide_hash.map(str::to_string),
+                    service_guide_hash_resolved: binding.service_guide_hash_resolved,
                     trade_amount_u: seed.and_then(|consent| consent.trade_amount_u.clone()),
                     cap_u: seed.and_then(|consent| consent.cap_u.clone()),
                     quote_token: seed.and_then(|consent| consent.quote_token.clone()),
                     trade_environment: seed.and_then(|consent| consent.trade_environment),
                     margin_mode: seed.and_then(|consent| consent.margin_mode),
                     order_policy: seed.and_then(|consent| consent.order_policy),
+                    dynamic_settings,
                     created_at: now,
                     expires_at: now.saturating_add(TTL_SECS),
                 },
@@ -526,6 +579,21 @@ pub fn start_or_update(
             }),
         }
     }
+    if !values.dynamic_settings.is_empty() {
+        consent::merge_dynamic_settings(&mut candidate.dynamic_settings, &values.dynamic_settings);
+    }
+    if validation_errors.is_empty() && candidate.missing_fields().is_empty() {
+        if let Err(error) = consent::validate_amount_policy(
+            candidate.trade_amount_u.as_deref(),
+            &candidate.dynamic_settings,
+        ) {
+            validation_errors.push(ValidationError {
+                field: "tradeAmountType".to_string(),
+                code: "invalid_amount_policy".to_string(),
+                message: error.to_string(),
+            });
+        }
+    }
     let file = if validation_errors.is_empty() {
         write_record(&candidate)?;
         candidate
@@ -548,44 +616,56 @@ pub fn start_or_update(
             .order_policy
             .map(|value| format!(" --order-policy {}", value.as_str()))
             .unwrap_or_default();
+        let mut persisted_settings = file.dynamic_settings.clone();
+        let persisted_required_fields = file
+            .required_fields
+            .iter()
+            .filter(|field| {
+                !(file.selected_mode == SelectedMode::Manual
+                    && matches!(field.as_str(), "tradeAmount" | "cap" | "quote"))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !persisted_required_fields.is_empty() {
+            persisted_settings.insert(
+                "requiredFields".to_string(),
+                serde_json::to_value(&persisted_required_fields)
+                    .expect("validated required fields must serialize"),
+            );
+        }
+        let dynamic_settings = if persisted_settings.is_empty() {
+            String::new()
+        } else {
+            let json = serde_json::to_string(&persisted_settings)
+                .expect("validated consent settings must serialize");
+            format!(" --settings-json {}", shell_arg(&json))
+        };
         match file.selected_mode {
-        SelectedMode::Auto => {
-            let amount = file
-                .trade_amount_u
-                .as_deref()
-                .map(|value| format!(" --trade-amount {value}"))
-                .unwrap_or_default();
-            let cap = file
-                .cap_u
-                .as_deref()
-                .map(|value| format!(" --cap {value}"))
-                .unwrap_or_default();
-            let quote = file
-                .quote_token
-                .as_deref()
-                .map(|value| format!(" --quote {value}"))
-                .unwrap_or_default();
-            format!(
-                "onchainos agent autotrade-consent-set --job-id {} --agent-id {} --mode auto{amount}{cap}{quote}{environment}{margin_mode}{order_policy}",
+            SelectedMode::Auto => {
+                let amount = file
+                    .trade_amount_u
+                    .as_deref()
+                    .map(|value| format!(" --trade-amount {value}"))
+                    .unwrap_or_default();
+                let cap = file
+                    .cap_u
+                    .as_deref()
+                    .map(|value| format!(" --cap {value}"))
+                    .unwrap_or_default();
+                let quote = file
+                    .quote_token
+                    .as_deref()
+                    .map(|value| format!(" --quote {value}"))
+                    .unwrap_or_default();
+                format!(
+                    "onchainos agent autotrade-consent-set --job-id {} --agent-id {} --mode auto{amount}{cap}{quote}{environment}{margin_mode}{order_policy}{dynamic_settings}",
+                    file.job_id, file.agent_id
+                )
+            }
+            SelectedMode::Manual => format!(
+                "onchainos agent autotrade-consent-set --job-id {} --agent-id {} --mode notify_only",
                 file.job_id, file.agent_id
-            )
-        }
-        SelectedMode::Manual => {
-            let amount = file
-                .trade_amount_u
-                .as_deref()
-                .map(|value| format!(" --trade-amount {value}"))
-                .unwrap_or_default();
-            let quote = file
-                .quote_token
-                .as_deref()
-                .map(|value| format!(" --quote {value}"))
-                .unwrap_or_default();
-            format!(
-                "onchainos agent autotrade-consent-set --job-id {} --agent-id {} --mode manual{amount}{quote}{environment}{margin_mode}{order_policy}",
-                file.job_id, file.agent_id
-            )
-        }
+            ),
         }
     });
 
@@ -666,6 +746,8 @@ mod tests {
                 signal_type: "spot",
                 original_delivery_id: Some("delivery-1"),
                 required_fields: None,
+                service_guide_hash: None,
+                service_guide_hash_resolved: false,
                 seed_consent: None,
             };
             let first = start_or_update(
@@ -705,7 +787,7 @@ mod tests {
             assert_eq!(
                 completed.consent_command.as_deref(),
                 Some(
-                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --trade-amount 10 --cap 20 --quote usdc"
+                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --trade-amount 10 --cap 20 --quote usdc --settings-json '{\"requiredFields\":[\"tradeAmount\",\"cap\",\"quote\"]}'"
                 )
             );
         });
@@ -723,6 +805,8 @@ mod tests {
                 signal_type: "spot",
                 original_delivery_id: None,
                 required_fields: None,
+                service_guide_hash: None,
+                service_guide_hash_resolved: false,
                 seed_consent: None,
             };
             let first = start_or_update(
@@ -773,6 +857,8 @@ mod tests {
                     signal_type: "spot",
                     original_delivery_id: Some("delivery-1"),
                     required_fields: None,
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
                     seed_consent: None,
                 }),
                 "job-1",
@@ -817,6 +903,8 @@ mod tests {
                     signal_type: "spot",
                     original_delivery_id: None,
                     required_fields: None,
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
                     seed_consent: None,
                 }),
                 "job-1",
@@ -847,6 +935,8 @@ mod tests {
                     signal_type: "spot",
                     original_delivery_id: None,
                     required_fields: Some(&required),
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
                     seed_consent: None,
                 }),
                 "job-1",
@@ -877,7 +967,7 @@ mod tests {
             assert_eq!(
                 completed.consent_command.as_deref(),
                 Some(
-                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --trade-amount 12.5 --quote usdt"
+                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --trade-amount 12.5 --quote usdt --settings-json '{\"requiredFields\":[\"tradeAmount\",\"quote\"]}'"
                 )
             );
         });
@@ -904,6 +994,8 @@ mod tests {
                     signal_type: "perp",
                     original_delivery_id: None,
                     required_fields: Some(&required),
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
                     seed_consent: None,
                 }),
                 "job-1",
@@ -947,14 +1039,14 @@ mod tests {
             assert_eq!(
                 completed.consent_command.as_deref(),
                 Some(
-                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --trade-amount 10 --cap 100 --quote usdt --environment demo --margin-mode cross --order-policy signal_price_limit"
+                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --trade-amount 10 --cap 100 --quote usdt --environment demo --margin-mode cross --order-policy signal_price_limit --settings-json '{\"requiredFields\":[\"tradeAmount\",\"cap\",\"quote\",\"environment\",\"marginMode\",\"orderPolicy\"]}'"
                 )
             );
         });
     }
 
     #[test]
-    fn subscription_restore_can_switch_to_manual_without_missing_auto_fields() {
+    fn subscription_restore_can_switch_to_notify_only_without_auto_fields() {
         with_home(|| {
             let required = vec!["tradeAmount".to_string(), "cap".to_string()];
             let first = start_or_update(
@@ -967,6 +1059,8 @@ mod tests {
                     signal_type: "spot",
                     original_delivery_id: None,
                     required_fields: Some(&required),
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
                     seed_consent: None,
                 }),
                 "job-1",
@@ -991,9 +1085,159 @@ mod tests {
             assert_eq!(
                 completed.consent_command.as_deref(),
                 Some(
-                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode manual"
+                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode notify_only"
                 )
             );
+        });
+    }
+
+    #[test]
+    fn subscription_restore_collects_dynamic_required_settings() {
+        with_home(|| {
+            let required = vec![
+                "leverageMode".to_string(),
+                "leverage".to_string(),
+                "slippage".to_string(),
+                "extra.maxConcurrentPositions".to_string(),
+            ];
+            let first = start_or_update(
+                Some(StartBinding {
+                    job_id: "job-1",
+                    agent_id: "7",
+                    selected_mode: SelectedMode::Auto,
+                    mode_confirmed: true,
+                    origin: Origin::SubscriptionRestore,
+                    signal_type: "perp",
+                    original_delivery_id: None,
+                    required_fields: Some(&required),
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
+                    seed_consent: None,
+                }),
+                "job-1",
+                "7",
+                None,
+                None,
+                ExplicitValues::default(),
+            )
+            .unwrap();
+            assert_eq!(
+                first.missing_fields,
+                [
+                    "leverageMode",
+                    "leverage",
+                    "slippage",
+                    "extra.maxConcurrentPositions"
+                ]
+            );
+
+            let dynamic_settings = consent::parse_dynamic_settings_json(
+                Some(
+                    r#"{"leverageMode":"fixed","leverage":"2","slippage":"0.5","extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3}}}"#,
+                ),
+                "--settings-json",
+            )
+            .unwrap();
+            let completed = start_or_update(
+                None,
+                "job-1",
+                "7",
+                Some(&first.continuation_id),
+                None,
+                ExplicitValues {
+                    dynamic_settings,
+                    ..ExplicitValues::default()
+                },
+            )
+            .unwrap();
+            assert!(completed.complete);
+            let command = completed.consent_command.unwrap();
+            assert!(command.contains(r#""leverageMode":"fixed""#));
+            assert!(command.contains(r#""maxConcurrentPositions""#));
+        });
+    }
+
+    #[test]
+    fn guide_refresh_replaces_metadata_and_prunes_one_obsolete_extra_field() {
+        with_home(|| {
+            let initial = consent::parse_dynamic_settings_json(
+                Some(
+                    &serde_json::json!({
+                        "serviceGuideHash": format!("sha256:{}", "a".repeat(64)),
+                        "requiredFields": ["extra.legacyRiskBucket"],
+                        "extra": {
+                            "legacyRiskBucket": {
+                                "label": "Legacy risk bucket",
+                                "type": "string",
+                                "value": "medium"
+                            },
+                            "retainedSetting": {
+                                "label": "Retained setting",
+                                "type": "boolean",
+                                "value": true
+                            }
+                        }
+                    })
+                    .to_string(),
+                ),
+                "--settings-json",
+            )
+            .unwrap();
+            consent::write_consent_policy_with_dynamic_settings(
+                "job-1",
+                ConsentMode::Auto,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(&initial),
+                3600,
+            )
+            .unwrap();
+            let seed = consent::load_consent("job-1").unwrap().unwrap();
+            let required = vec!["extra.newRiskBucket".to_string()];
+            let updates = consent::parse_dynamic_settings_json(
+                Some(
+                    r#"{"extra":{"legacyRiskBucket":null,"newRiskBucket":{"label":"New risk bucket","type":"enum","value":"high","options":["medium","high"]}}}"#,
+                ),
+                "--settings-json",
+            )
+            .unwrap();
+            let new_hash = format!("sha256:{}", "b".repeat(64));
+            let result = start_or_update(
+                Some(StartBinding {
+                    job_id: "job-1",
+                    agent_id: "7",
+                    selected_mode: SelectedMode::Auto,
+                    mode_confirmed: true,
+                    origin: Origin::SubscriptionRestore,
+                    signal_type: "spot",
+                    original_delivery_id: None,
+                    required_fields: Some(&required),
+                    service_guide_hash: Some(&new_hash),
+                    service_guide_hash_resolved: true,
+                    seed_consent: Some(&seed),
+                }),
+                "job-1",
+                "7",
+                None,
+                None,
+                ExplicitValues {
+                    dynamic_settings: updates,
+                    ..ExplicitValues::default()
+                },
+            )
+            .unwrap();
+
+            assert!(result.complete);
+            let command = result.consent_command.unwrap();
+            assert!(command.contains(&new_hash));
+            assert!(command.contains("extra.newRiskBucket"));
+            assert!(command.contains("retainedSetting"));
+            assert!(!command.contains("legacyRiskBucket"));
         });
     }
 
@@ -1007,6 +1251,7 @@ mod tests {
                 Some("10"),
                 Some("usdt"),
                 Some(TradeEnvironment::Live),
+                None,
                 None,
                 None,
                 3600,
@@ -1027,6 +1272,8 @@ mod tests {
                     signal_type: "spot",
                     original_delivery_id: None,
                     required_fields: Some(&required),
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
                     seed_consent: Some(&seed),
                 }),
                 "job-1",
@@ -1075,6 +1322,8 @@ mod tests {
                     signal_type: "spot",
                     original_delivery_id: None,
                     required_fields: Some(&required),
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
                     seed_consent: None,
                 }),
                 "job-1",
@@ -1109,6 +1358,50 @@ mod tests {
     }
 
     #[test]
+    fn restore_required_mode_uses_confirmation_state_instead_of_dynamic_settings() {
+        with_home(|| {
+            let required = vec!["mode".to_string()];
+            let first = start_or_update(
+                Some(StartBinding {
+                    job_id: "job-1",
+                    agent_id: "7",
+                    selected_mode: SelectedMode::Auto,
+                    mode_confirmed: false,
+                    origin: Origin::SubscriptionRestore,
+                    signal_type: "perp",
+                    original_delivery_id: None,
+                    required_fields: Some(&required),
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
+                    seed_consent: None,
+                }),
+                "job-1",
+                "7",
+                None,
+                None,
+                ExplicitValues::default(),
+            )
+            .unwrap();
+            assert_eq!(first.missing_fields, ["mode"]);
+            assert!(!first.complete);
+
+            let completed = start_or_update(
+                None,
+                "job-1",
+                "7",
+                Some(&first.continuation_id),
+                Some(SelectedMode::Auto),
+                ExplicitValues::default(),
+            )
+            .unwrap();
+            assert!(completed.mode_confirmed);
+            assert!(completed.missing_fields.is_empty());
+            assert!(completed.complete);
+            assert!(completed.consent_command.is_some());
+        });
+    }
+
+    #[test]
     fn existing_continuation_rejects_start_or_resume_without_exact_id() {
         with_home(|| {
             let start = StartBinding {
@@ -1120,6 +1413,8 @@ mod tests {
                 signal_type: "spot",
                 original_delivery_id: None,
                 required_fields: None,
+                service_guide_hash: None,
+                service_guide_hash_resolved: false,
                 seed_consent: None,
             };
             let first = start_or_update(
@@ -1141,6 +1436,8 @@ mod tests {
                 signal_type: "spot",
                 original_delivery_id: None,
                 required_fields: None,
+                service_guide_hash: None,
+                service_guide_hash_resolved: false,
                 seed_consent: None,
             };
             assert!(start_or_update(

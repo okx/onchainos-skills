@@ -58,38 +58,6 @@ pub fn is_retired_delivery_decision(source_event: Option<&str>) -> bool {
     source_event.is_some_and(|event| RETIRED_DELIVERY_DECISION_EVENTS.contains(&event))
 }
 
-pub fn ensure_default_auto(job_id: &str, ttl_sec: u64) -> anyhow::Result<bool> {
-    if let Some(existing) = consent::load_consent(job_id)? {
-        match existing.mode {
-            consent::ConsentMode::Auto => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|duration| duration.as_secs())
-                    .unwrap_or(0);
-                grants::write_auto_grant(job_id, existing.expires_at.saturating_sub(now).max(1))?;
-            }
-            consent::ConsentMode::Manual | consent::ConsentMode::Decline => {
-                grants::clear_grant(job_id);
-            }
-        }
-        return Ok(false);
-    }
-    consent::write_consent_with_trade_amount(
-        job_id,
-        consent::ConsentMode::Auto,
-        None,
-        None,
-        Some(consent::DEFAULT_QUOTE),
-        ttl_sec,
-    )?;
-    if let Err(error) = grants::write_auto_grant(job_id, ttl_sec) {
-        consent::clear_consent(job_id);
-        grants::clear_grant(job_id);
-        return Err(error);
-    }
-    Ok(true)
-}
-
 // ── Stable audit action names ────────────────────────────────────────────
 //
 // One source of truth for the audit-log action strings referenced by

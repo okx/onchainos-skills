@@ -154,7 +154,7 @@ pub enum AgentCommand {
         service_description: String,
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
-        /// Explicit user-confirmed automatic signal execution (`auto`).
+        /// Explicit signal handling mode (`auto` or `notify_only`).
         #[arg(long = "autotrade-mode")]
         autotrade_mode: Option<String>,
         /// Fixed quote amount used for every delivered signal.
@@ -179,8 +179,23 @@ pub enum AgentCommand {
         /// User-authorized signal-entry order policy.
         #[arg(long = "autotrade-order-policy")]
         autotrade_order_policy: Option<String>,
+        /// User-selected Trade Kit credential source.
+        #[arg(long = "autotrade-auth-mode")]
+        autotrade_auth_mode: Option<String>,
+        /// User-confirmed settings as one JSON object. Stable product fields
+        /// stay flat; unknown fields must use typed entries under `extra`.
+        #[arg(long = "autotrade-settings-json")]
+        autotrade_settings_json: Option<String>,
         /// Execution fields that the selected service requires the subscriber
-        /// to confirm. Repeat once per canonical field.
+        /// to confirm. Repeat per field. Core names and matching value flags:
+        /// mode (--autotrade-mode), tradeAmount (--autotrade-amount),
+        /// cap (--autotrade-cap), quote (--autotrade-quote), environment
+        /// (--autotrade-environment), marginMode (--autotrade-margin-mode),
+        /// orderPolicy (--autotrade-order-policy), authMode
+        /// (--autotrade-auth-mode). Stable fields use their top-level name;
+        /// unknown fields use extra.<key> and a typed object in
+        /// --autotrade-settings-json. tradeAmountU is accepted only as a
+        /// deprecated alias for the public tradeAmount name.
         #[arg(long = "autotrade-required-field")]
         autotrade_required_fields: Vec<String>,
         #[arg(long, default_value = "")]
@@ -683,15 +698,16 @@ pub enum AgentCommand {
         ttl_sec: u64,
     },
 
-    /// [consent flow, 2026-07-17] Persist the buyer's auto-trade consent for a
-    /// subscription (auto/manual/decline + per-trade cap). This command persists
+    /// Persist the buyer's subscription signal policy (`auto` or notify-only)
+    /// plus applicable automatic settings. This command persists
     /// policy only; the model session retains and executes the current delivery.
     #[command(name = "autotrade-consent-set")]
     AutotradeConsentSet {
         #[arg(long = "job-id")]
         job_id: String,
-        /// `auto` | `manual` | `decline` | `pause` | `cap-adjust` |
+        /// `auto` | `notify_only` | `pause` | `cap-adjust` |
         /// `environment-set` | `settings-update` | `plugin-ready-check`.
+        /// Legacy `manual` and `decline` inputs normalize to notify-only.
         #[arg(long)]
         mode: String,
         /// Optional per-trade cap in quote-stablecoin units (USDT by default).
@@ -729,6 +745,12 @@ pub enum AgentCommand {
         /// User-authorized order policy (`market` or `signal_price_limit`).
         #[arg(long = "order-policy")]
         order_policy: Option<String>,
+        /// User-selected Trade Kit credential source (`oauth` or `api_key`).
+        #[arg(long = "auth-mode")]
+        auth_mode: Option<String>,
+        /// User-confirmed stable flat settings and typed `extra` entries.
+        #[arg(long = "settings-json")]
+        settings_json: Option<String>,
     },
 
     /// Continue a short-lived, job-bound execution configuration flow.
@@ -764,13 +786,16 @@ pub enum AgentCommand {
         margin_mode: Option<String>,
         #[arg(long = "order-policy")]
         order_policy: Option<String>,
+        /// User-confirmed stable flat settings and typed `extra` entries.
+        #[arg(long = "settings-json")]
+        settings_json: Option<String>,
         #[arg(long, default_value_t = false)]
         cancel: bool,
     },
 
-    /// Compatibility entry point for delivery policy handling. A persisted
-    /// manual policy may push its per-delivery decision; an unconfigured
-    /// policy is reported as a terminal skip and never selects a mode.
+    /// Compatibility entry point for delivery policy handling. Only an active
+    /// automatic policy may continue; every non-auto policy is notify-only and
+    /// reported as a terminal skip without a per-delivery decision.
     #[command(name = "autotrade-consent-request", hide = true)]
     AutotradeConsentRequest {
         #[arg(long = "job-id")]
@@ -812,8 +837,8 @@ pub enum AgentCommand {
         /// Exact persisted policy amount.
         #[arg(long)]
         amount: String,
-        /// `auto` for persisted grant execution; `manual` for the persisted
-        /// manual policy; `one_time` for an exact over-cap permit.
+        /// `auto` for persisted grant execution; `one_time` for an exact
+        /// over-cap permit. `manual` is accepted only to fail closed for legacy callers.
         #[arg(long = "execution-mode", default_value = "auto")]
         execution_mode: String,
         /// JSON array containing only the target CLI's argv (no program/shell).
@@ -832,10 +857,14 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long = "delivery-id")]
         delivery_id: String,
-        /// Exact persisted policy amount used as authorization metadata.
+        /// Resolved quote amount used as authorization metadata.
         #[arg(long)]
         amount: String,
-        /// auto | manual | one_time
+        /// Current tool-account available quote amount. Required when the
+        /// persisted policy uses a percentage amount.
+        #[arg(long = "available-amount")]
+        available_amount: Option<String>,
+        /// auto | one_time (`manual` is legacy and rejected by authorization)
         #[arg(long = "execution-mode", default_value = "auto")]
         execution_mode: String,
     },
@@ -1510,6 +1539,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             autotrade_environment,
             autotrade_margin_mode,
             autotrade_order_policy,
+            autotrade_auth_mode,
+            autotrade_settings_json,
             autotrade_required_fields,
             format,
             exclude_device,
@@ -1534,6 +1565,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     autotrade_environment,
                     autotrade_margin_mode,
                     autotrade_order_policy,
+                    autotrade_auth_mode,
+                    autotrade_settings_json,
                     autotrade_required_fields,
                     format,
                     exclude_device,
@@ -2103,14 +2136,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::AutotradeConsentRequest {
             job_id,
-            agent_id,
+            agent_id: _,
             delivery_id,
-            signal_type,
+            signal_type: _,
         } => {
-            use task::common::autotrade::{card, consent, delivery_queue, executor};
-            let signal_type = signal_type
-                .parse::<crate::asset_class::AssetClass>()
-                .map_err(anyhow::Error::msg)?;
+            use task::common::autotrade::{consent, executor};
             let policy = consent::load_consent(&job_id)?;
             if policy
                 .as_ref()
@@ -2129,159 +2159,24 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }));
                 return Ok(());
             }
-            if policy.as_ref().is_none_or(|policy| {
-                policy.mode == consent::ConsentMode::Decline
-            }) {
-                let outcome = executor::report_delivery(
-                    &job_id,
-                    &delivery_id,
-                    "skipped",
-                    task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
-                )?;
-                let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(
-                    &job_id,
-                );
-                crate::output::success(serde_json::json!({
-                    "decision": false,
-                    "decisionPushed": false,
-                    "status": "skipped",
-                    "reason": task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
-                    "jobId": job_id,
-                    "deliveryId": delivery_id,
-                    "terminal": true,
-                    "outcome": outcome,
-                    "guidance": "The deliverable was saved and no transaction was submitted. Tell the user that this subscription has no active execution policy and that they can explicitly ask to restore or update its copy-trade execution policy. Do not create an execution-mode decision for this delivery.",
-                }));
-                return Ok(());
-            }
-            // Bind the user decision to a CLI-admitted delivery before pushing
-            // the card. The reply may arrive in a fresh model session, so relying
-            // on conversational memory alone is unsafe and loses savedPath.
-            let delivery_context = match delivery_queue::enqueue(&job_id, &delivery_id)
-                .map_err(|e| anyhow::anyhow!("delivery decision queue unavailable: {e}"))?
-            {
-                delivery_queue::EnqueueResult::Active {
-                    context,
-                    already_present: false,
-                } => context,
-                delivery_queue::EnqueueResult::Active {
-                    already_present: true,
-                    ..
-                } => {
-                    crate::output::success(serde_json::json!({
-                        "decision": false,
-                        "decisionPushed": false,
-                        "status": "decision_pending",
-                        "reason": "delivery_already_processing_or_awaiting_decision",
-                        "deliveryId": delivery_id,
-                        "terminal": false,
-                        "guidance": "Do not push another manual decision and do not submit an order. The durable delivery queue already owns this delivery.",
-                    }));
-                    return Ok(());
-                }
-                delivery_queue::EnqueueResult::Queued {
-                    active_delivery_id,
-                    position,
-                } => {
-                    crate::output::success(serde_json::json!({
-                        "decision": false,
-                        "decisionPushed": false,
-                        "status": "queued",
-                        "reason": "awaiting_prior_user_decision",
-                        "deliveryId": delivery_id,
-                        "activeDeliveryId": active_delivery_id,
-                        "queuePosition": position,
-                        "terminal": false,
-                    }));
-                    return Ok(());
-                }
-            };
-            // The policy may have changed while enqueue waited on another
-            // delivery or local lock. Re-read it before binding/pushing a
-            // manual card so pause/auto updates cannot leave a stale prompt.
-            let policy = match consent::load_consent(&job_id)? {
-                Some(policy) if policy.mode == consent::ConsentMode::Manual => policy,
-                Some(policy) if policy.mode == consent::ConsentMode::Auto => {
-                    delivery_queue::release_unpresented(&job_id, &delivery_id).map_err(|e| {
-                        anyhow::anyhow!("delivery decision queue release failed: {e}")
-                    })?;
-                    crate::output::success(serde_json::json!({
-                        "decision": false,
-                        "decisionPushed": false,
-                        "status": "policy_ready",
-                        "reason": "policy_changed_before_decision",
-                        "jobId": job_id,
-                        "deliveryId": delivery_id,
-                        "consentMode": "auto",
-                        "terminal": false,
-                        "guidance": "The execution policy changed before a manual decision was presented. Re-read this delivery and continue only through the normal grant/readiness checks and autotrade-execute gateway.",
-                    }));
-                    return Ok(());
-                }
-                _ => {
-                    let outcome = executor::report_delivery(
-                        &job_id,
-                        &delivery_id,
-                        "skipped",
-                        task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
-                    )?;
-                    let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(
-                        &job_id,
-                    );
-                    crate::output::success(serde_json::json!({
-                        "decision": false,
-                        "decisionPushed": false,
-                        "status": "skipped",
-                        "reason": task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
-                        "jobId": job_id,
-                        "deliveryId": delivery_id,
-                        "terminal": true,
-                        "outcome": outcome,
-                        "guidance": "The execution policy changed before a manual decision was presented. The deliverable was saved and no transaction was submitted. Invite the user to explicitly restore or update this subscription's copy-trade execution policy.",
-                    }));
-                    return Ok(());
-                }
-            };
-            // The queue serializes deliveries; the pending pointer binds the
-            // visible card/reply to the active one only.
-            match consent::activate_delivery_context_exclusive(&job_id, &delivery_id)
-                .map_err(|e| anyhow::anyhow!("delivery context unavailable: {e}"))?
-            {
-                consent::DeliveryActivation::Activated(_)
-                | consent::DeliveryActivation::AlreadyPending(_) => {}
-                consent::DeliveryActivation::Conflict(pending) => {
-                    anyhow::bail!(
-                        "delivery queue/pending pointer mismatch: active {}",
-                        pending.delivery_id
-                    );
-                }
-            }
-            let decision = card::make_manual_signal_decision(
+            let outcome = executor::report_delivery(
+                &job_id,
                 &delivery_id,
-                signal_type.as_str(),
-                &job_id,
-                &agent_id,
-                policy.trade_amount_u.as_deref(),
-            );
-            delivery_queue::mark_awaiting_decision(&job_id, &delivery_id)
-                .map_err(|e| anyhow::anyhow!("delivery decision queue update failed: {e}"))?;
-            match task::common::pending_v2::push_decision_direct(
-                &job_id,
-                "user",
-                &agent_id,
-                Some(&delivery_context.provider_agent_id),
-                &decision.user_content,
-                &card::decision_list_label(&decision),
-                &decision.source_event,
-            ) {
-                Ok(()) => crate::output::success(serde_json::json!({
-                    "decision": true,
-                    "decisionPushed": true,
-                    "sourceEvent": decision.source_event,
-                    "deliveryId": delivery_id,
-                })),
-                Err(_) => crate::output::success(decision),
-            }
+                "skipped",
+                task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+            )?;
+            let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(&job_id);
+            crate::output::success(serde_json::json!({
+                "decision": false,
+                "decisionPushed": false,
+                "status": "skipped",
+                "reason": task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                "jobId": job_id,
+                "deliveryId": delivery_id,
+                "terminal": true,
+                "outcome": outcome,
+                "guidance": "The deliverable was saved and no transaction was submitted. This subscription is notify-only because it has no active automatic execution policy. Do not create a per-delivery execution decision. The user may explicitly update the subscription for future automatic execution.",
+            }));
             Ok(())
         }
 
@@ -2317,12 +2212,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             job_id,
             delivery_id,
             amount,
+            available_amount,
             execution_mode,
         } => {
             let result = task::common::autotrade::executor::claim_direct(
                 &job_id,
                 &delivery_id,
                 &amount,
+                available_amount.as_deref(),
                 task::common::autotrade::executor::ExecutionMode::parse(&execution_mode)?,
             )?;
             crate::output::success(result);
@@ -2438,11 +2335,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             environment,
             margin_mode,
             order_policy,
+            settings_json,
             cancel,
         } => {
             use task::common::autotrade::continuation::{
                 self, ExplicitValues, Origin, SelectedMode, StartBinding,
             };
+            use task::common::autotrade::consent;
             if cancel {
                 if mode.is_some()
                     || origin.is_some()
@@ -2456,6 +2355,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     || environment.is_some()
                     || margin_mode.is_some()
                     || order_policy.is_some()
+                    || settings_json.is_some()
                 {
                     anyhow::bail!("--cancel does not accept configuration arguments");
                 }
@@ -2482,10 +2382,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 trade_environment: environment.as_deref(),
                 margin_mode: margin_mode.as_deref(),
                 order_policy: order_policy.as_deref(),
+                dynamic_settings: consent::parse_dynamic_settings_json(
+                    settings_json.as_deref(),
+                    "--settings-json",
+                )?,
             };
 
             let result = if continuation_id.is_none() {
-                let selected_mode = selected_mode
+                let mut selected_mode = selected_mode
                     .ok_or_else(|| anyhow::anyhow!("--mode is required when starting"))?;
                 let origin = origin
                     .as_deref()
@@ -2511,10 +2415,23 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     asset_class,
                 )?;
                 let mut effective_required_fields = required_fields;
-                for field in restore_context.required_fields {
-                    if !effective_required_fields.contains(&field) {
-                        effective_required_fields.push(field);
+                for field in &restore_context.required_fields {
+                    if !effective_required_fields.contains(field) {
+                        effective_required_fields.push(field.clone());
                     }
+                }
+                let mut mode_confirmed = confirm_mode;
+                if restore_context.preserve_existing_mode && !confirm_mode {
+                    selected_mode = restore_context
+                        .existing_mode
+                        .as_deref()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "guide refresh cannot preserve a missing execution mode"
+                            )
+                        })
+                        .and_then(SelectedMode::parse)?;
+                    mode_confirmed = true;
                 }
                 let seed_consent = task::common::autotrade::consent::load_consent(&job_id)?;
                 continuation::start_or_update(
@@ -2522,11 +2439,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         job_id: &job_id,
                         agent_id: &agent_id,
                         selected_mode,
-                        mode_confirmed: confirm_mode,
+                        mode_confirmed,
                         origin,
                         signal_type,
                         original_delivery_id: delivery_id.as_deref(),
                         required_fields: Some(&effective_required_fields),
+                        service_guide_hash: restore_context.service_guide_hash.as_deref(),
+                        service_guide_hash_resolved: restore_context
+                            .service_guide_hash_resolved,
                         seed_consent: seed_consent.as_ref(),
                     }),
                     &job_id,
@@ -2559,12 +2479,22 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         .map_err(anyhow::Error::msg)?;
                     let precheck =
                         task::user::scoped_watch_autotrade_precheck_for_review(&job_id).await?;
-                    task::user::bind_subscription_restore_consent_context(
+                    let restore_context = task::user::bind_subscription_restore_consent_context(
                         &precheck,
                         &job_id,
                         &agent_id,
                         asset_class,
                     )?;
+                    if restore_context.service_guide_hash_resolved
+                        && (!existing.service_guide_hash_resolved
+                            || existing.service_guide_hash.as_deref()
+                                != restore_context.service_guide_hash.as_deref())
+                    {
+                        continuation::clear(&job_id);
+                        anyhow::bail!(
+                            "service guide changed during configuration; restart the restore flow"
+                        );
+                    }
                 }
                 continuation::start_or_update(
                     None,
@@ -2592,6 +2522,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             environment,
             margin_mode,
             order_policy,
+            auth_mode,
+            settings_json,
         } => {
             use task::common::autotrade::{consent, grants};
             let trade_environment = environment
@@ -2610,6 +2542,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .as_deref()
                 .map(consent::OrderPolicy::parse)
                 .transpose()?;
+            let auth_mode = auth_mode
+                .as_deref()
+                .map(consent::TradeKitAuthMode::parse)
+                .transpose()?;
+            let dynamic_settings = consent::parse_dynamic_settings_json(
+                settings_json.as_deref(),
+                "--settings-json",
+            )?;
             if tool.is_some() {
                 anyhow::bail!("--tool is deprecated; use subscription-route-set");
             }
@@ -2621,6 +2561,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     || environment.is_some()
                     || margin_mode.is_some()
                     || order_policy.is_some()
+                    || auth_mode.is_some()
+                    || settings_json.is_some()
                 {
                     anyhow::bail!("pause does not accept policy arguments");
                 }
@@ -2646,6 +2588,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     || quote.is_some()
                     || margin_mode.is_some()
                     || order_policy.is_some()
+                    || auth_mode.is_some()
+                    || settings_json.is_some()
                 {
                     anyhow::bail!("environment-set accepts only --environment");
                 }
@@ -2661,21 +2605,22 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }
             if mode == "settings-update" {
                 if cap.is_some() || trade_amount.is_some() || plugin.is_some() || quote.is_some() {
-                    anyhow::bail!(
-                        "settings-update accepts only --environment, --margin-mode, and --order-policy"
-                    );
+                    anyhow::bail!("settings-update accepts only execution settings");
                 }
-                let policy = consent::write_trade_settings(
+                let policy = consent::write_trade_settings_with_dynamic(
                     &job_id,
                     trade_environment,
                     margin_mode,
                     order_policy,
+                    auth_mode,
+                    Some(&dynamic_settings),
                 )?;
                 crate::output::success(serde_json::json!({
                     "consentMode": policy.mode,
                     "tradeEnvironment": policy.trade_environment.map(|value| value.as_str()),
                     "marginMode": policy.margin_mode.map(|value| value.as_str()),
                     "orderPolicy": policy.order_policy.map(|value| value.as_str()),
+                    "authMode": policy.auth_mode.map(|value| value.as_str()),
                     "replayed": false
                 }));
                 return Ok(());
@@ -2687,6 +2632,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     || environment.is_some()
                     || margin_mode.is_some()
                     || order_policy.is_some()
+                    || auth_mode.is_some()
+                    || settings_json.is_some()
                 {
                     anyhow::bail!("plugin-ready-check accepts only --plugin");
                 }
@@ -2723,6 +2670,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     || environment.is_some()
                     || margin_mode.is_some()
                     || order_policy.is_some()
+                    || auth_mode.is_some()
+                    || settings_json.is_some()
                 {
                     anyhow::bail!("cap-adjust accepts only --cap");
                 }
@@ -2760,10 +2709,23 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }
             let mode_enum = match mode.as_str() {
                 "auto" => consent::ConsentMode::Auto,
-                "manual" => consent::ConsentMode::Manual,
-                "decline" => consent::ConsentMode::Decline,
-                _ => anyhow::bail!("unsupported --mode"),
+                "notify_only" | "notify-only" | "manual" | "decline" => {
+                    consent::ConsentMode::Decline
+                }
+                _ => anyhow::bail!("unsupported --mode; use auto or notify_only"),
             };
+            if mode_enum == consent::ConsentMode::Decline
+                && (cap.is_some()
+                    || trade_amount.is_some()
+                    || quote.is_some()
+                    || environment.is_some()
+                    || margin_mode.is_some()
+                    || order_policy.is_some()
+                    || auth_mode.is_some()
+                    || settings_json.is_some())
+            {
+                anyhow::bail!("notify_only does not accept automatic execution settings");
+            }
             let effective_amount = trade_amount.as_deref().or_else(|| {
                 if mode_enum == consent::ConsentMode::Auto {
                     cap.as_deref()
@@ -2771,7 +2733,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     None
                 }
             });
-            consent::write_consent_policy_with_settings(
+            consent::write_consent_policy_with_dynamic_settings(
                 &job_id,
                 mode_enum,
                 cap.as_deref(),
@@ -2780,6 +2742,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 trade_environment,
                 margin_mode,
                 order_policy,
+                auth_mode,
+                Some(&dynamic_settings),
                 ttl_sec,
             )?;
             let persisted_policy = consent::load_consent(&job_id)?;
@@ -2792,7 +2756,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .and_then(|policy| policy.margin_mode)
                 .map(|value| value.as_str());
             let persisted_order_policy = persisted_policy
+                .as_ref()
                 .and_then(|policy| policy.order_policy)
+                .map(|value| value.as_str());
+            let persisted_auth_mode = persisted_policy
+                .and_then(|policy| policy.auth_mode)
                 .map(|value| value.as_str());
             match mode_enum {
                 consent::ConsentMode::Auto => grants::write_auto_grant(&job_id, ttl_sec)?,
@@ -2804,11 +2772,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::autotrade::continuation::clear(&job_id);
             crate::output::success(
                 serde_json::json!({
-                    "consentMode": mode,
+                    "consentMode": if mode_enum == consent::ConsentMode::Auto { "auto" } else { "notify_only" },
                     "cap": cap,
                     "tradeEnvironment": persisted_environment,
                     "marginMode": persisted_margin_mode,
                     "orderPolicy": persisted_order_policy,
+                    "authMode": persisted_auth_mode,
                     "replayed": false
                 }),
             );
