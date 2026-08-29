@@ -62,7 +62,7 @@ Use only at the ASP QA gate. Read `{pass, findings[]}`; each finding has `field`
 |---|---|---|
 | `agent get-my-agents` | `[--role <role>] [--owner-address <address>] [--page <n>] [--page-size <n>]` | `list[]`, including display-ready `cells[]` |
 | `agent get-agents` | `--agent-ids <id[,id...]>` | bare agent array, each with display-ready `card[]` |
-| `agent service-list` | `--agent-id <id> [--service-id <uuid>]` | service rows with raw `id` plus display-ready `cells[]`; `serviceGuide` when present |
+| `agent service-list` | `--agent-id <id> [--service-id <uuid>]` | service rows with raw `id` plus display-ready `cells[]`; `serviceGuide` and CLI-derived `serviceGuideHash` when present |
 | `agent feedback-list` | `--agent-id <id> [--page <n>] [--page-size <1..50>]` | `average`, `items[]` or `list[]`, normalized 0–5 scores |
 
 Use service `id` only to build an update/delete delta; never display it. Render `card[]`/`cells[]`

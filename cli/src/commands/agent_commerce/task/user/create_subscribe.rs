@@ -9,7 +9,7 @@ use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agent_commerce::task::common::autotrade::{
     amount::Decimal,
-    consent::{self, MarginMode, OrderPolicy},
+    consent::{self, DynamicConsentSettings, MarginMode, OrderPolicy, TradeKitAuthMode},
     grants,
     trade_kit::TradeEnvironment,
 };
@@ -42,6 +42,8 @@ pub struct CreateSubscribeParams {
     pub autotrade_environment: Option<String>,
     pub autotrade_margin_mode: Option<String>,
     pub autotrade_order_policy: Option<String>,
+    pub autotrade_auth_mode: Option<String>,
+    pub autotrade_settings_json: Option<String>,
     pub autotrade_required_fields: Vec<String>,
     pub format: String,
     pub exclude_device: Option<Vec<String>>,
@@ -49,6 +51,9 @@ pub struct CreateSubscribeParams {
 
 const MAX_TITLE_CHARS: usize = 64;
 const MAX_DESCRIPTION_CHARS: usize = 4096;
+const TRADE_AMOUNT_REQUIRED_FIELD: &str = "tradeAmount";
+const TRADE_AMOUNT_INTERNAL_ALIAS: &str = "tradeAmountU";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SubscriptionAutoTradeConfig {
     mode: consent::ConsentMode,
@@ -58,9 +63,24 @@ struct SubscriptionAutoTradeConfig {
     environment: Option<TradeEnvironment>,
     margin_mode: Option<MarginMode>,
     order_policy: Option<OrderPolicy>,
+    auth_mode: Option<TradeKitAuthMode>,
+    dynamic_settings: DynamicConsentSettings,
 }
 
 impl CreateSubscribeParams {
+    fn autotrade_requested(&self) -> bool {
+        self.autotrade_mode.is_some()
+            || self.autotrade_amount.is_some()
+            || self.autotrade_cap.is_some()
+            || self.autotrade_quote.is_some()
+            || self.autotrade_environment.is_some()
+            || self.autotrade_margin_mode.is_some()
+            || self.autotrade_order_policy.is_some()
+            || self.autotrade_auth_mode.is_some()
+            || self.autotrade_settings_json.is_some()
+            || !self.autotrade_required_fields.is_empty()
+    }
+
     fn validate(&self) -> Result<()> {
         if self.exclude_device.is_some() {
             bail!("create-time device selection is unsupported; create the subscription for all logged-in devices, then adjust receiving devices with subscribe-device-update");
@@ -89,7 +109,26 @@ impl CreateSubscribeParams {
         if self.description.chars().count() > MAX_DESCRIPTION_CHARS {
             bail!("--description exceeds {MAX_DESCRIPTION_CHARS} characters");
         }
+        if self.autotrade_requested() && self.autotrade_mode.is_none() {
+            bail!("--autotrade-mode is required when configuring signal execution; choose auto or notify_only");
+        }
         let autotrade_config = self.autotrade_config()?;
+        if autotrade_config.mode == consent::ConsentMode::Decline
+            && (self.autotrade_amount.is_some()
+                || self.autotrade_cap.is_some()
+                || self.autotrade_quote.is_some()
+                || self.autotrade_environment.is_some()
+                || self.autotrade_margin_mode.is_some()
+                || self.autotrade_order_policy.is_some()
+                || self.autotrade_auth_mode.is_some()
+                || self.autotrade_settings_json.is_some()
+                || self
+                    .autotrade_required_fields
+                    .iter()
+                    .any(|field| field != "mode"))
+        {
+            bail!("notify_only does not accept automatic execution settings");
+        }
         self.validate_required_autotrade_fields(&autotrade_config)?;
         Ok(())
     }
@@ -99,27 +138,39 @@ impl CreateSubscribeParams {
         config: &SubscriptionAutoTradeConfig,
     ) -> Result<()> {
         let mut missing = Vec::new();
-        for field in &self.autotrade_required_fields {
-            let present = match field.as_str() {
+        let mut used_internal_trade_amount_alias = false;
+        for declared_field in &self.autotrade_required_fields {
+            let field = canonical_required_autotrade_field(declared_field);
+            used_internal_trade_amount_alias |= declared_field == TRADE_AMOUNT_INTERNAL_ALIAS;
+            let present = match field {
                 "mode" => self.autotrade_mode.is_some(),
-                "tradeAmount" => config.amount.is_some(),
+                TRADE_AMOUNT_REQUIRED_FIELD => config.amount.is_some(),
                 "cap" => config.cap.is_some(),
                 "quote" => true,
                 "environment" => config.environment.is_some(),
                 "marginMode" => config.margin_mode.is_some(),
                 "orderPolicy" => config.order_policy.is_some(),
-                _ => bail!(
-                    "--autotrade-required-field must be one of: mode | tradeAmount | cap | quote | environment | marginMode | orderPolicy"
-                ),
+                "authMode" => config.auth_mode.is_some(),
+                other => consent::dynamic_setting_present(&config.dynamic_settings, other),
             };
-            if !present && !missing.contains(field) {
-                missing.push(field.clone());
+            if !present && !missing.iter().any(|missing_field| missing_field == field) {
+                missing.push(field.to_string());
             }
         }
         if !missing.is_empty() {
+            let alias_hint = if used_internal_trade_amount_alias
+                && missing
+                    .iter()
+                    .any(|field| field == TRADE_AMOUNT_REQUIRED_FIELD)
+            {
+                " (tradeAmountU is an internal consent field; use tradeAmount with --autotrade-required-field)"
+            } else {
+                ""
+            };
             bail!(
-                "missing required automatic execution fields: {}",
-                missing.join(", ")
+                "missing required automatic execution fields: {}{}",
+                missing.join(", "),
+                alias_hint
             );
         }
         Ok(())
@@ -127,10 +178,16 @@ impl CreateSubscribeParams {
 
     fn autotrade_config(&self) -> Result<SubscriptionAutoTradeConfig> {
         let mode = match self.autotrade_mode.as_deref() {
-            None => consent::ConsentMode::Auto,
+            None => consent::ConsentMode::Decline,
             Some(mode) if mode.eq_ignore_ascii_case("auto") => consent::ConsentMode::Auto,
-            Some(mode) if mode.eq_ignore_ascii_case("manual") => consent::ConsentMode::Manual,
-            Some(_) => bail!("--autotrade-mode must be one of: auto | manual"),
+            Some(mode)
+                if mode.eq_ignore_ascii_case("notify_only")
+                    || mode.eq_ignore_ascii_case("notify-only")
+                    || mode.eq_ignore_ascii_case("manual") =>
+            {
+                consent::ConsentMode::Decline
+            }
+            Some(_) => bail!("--autotrade-mode must be one of: auto | notify_only"),
         };
         let amount = parse_optional_positive_decimal(
             self.autotrade_amount.as_deref(),
@@ -162,6 +219,31 @@ impl CreateSubscribeParams {
             .as_deref()
             .map(OrderPolicy::parse)
             .transpose()?;
+        let auth_mode = self
+            .autotrade_auth_mode
+            .as_deref()
+            .map(TradeKitAuthMode::parse)
+            .transpose()?;
+        let mut dynamic_settings = consent::parse_dynamic_settings_json(
+            self.autotrade_settings_json.as_deref(),
+            "--autotrade-settings-json",
+        )?;
+        if !self.autotrade_required_fields.is_empty() {
+            let mut required_fields = Vec::new();
+            for field in &self.autotrade_required_fields {
+                let field = canonical_required_autotrade_field(field).to_string();
+                consent::validate_required_field_name(&field)?;
+                if !required_fields.contains(&field) {
+                    required_fields.push(field);
+                }
+            }
+            dynamic_settings.insert(
+                "requiredFields".to_string(),
+                serde_json::to_value(required_fields)?,
+            );
+            consent::validate_dynamic_settings(&dynamic_settings)?;
+        }
+        consent::validate_amount_policy(amount.as_deref(), &dynamic_settings)?;
 
         Ok(SubscriptionAutoTradeConfig {
             mode,
@@ -171,7 +253,16 @@ impl CreateSubscribeParams {
             environment,
             margin_mode,
             order_policy,
+            auth_mode,
+            dynamic_settings,
         })
+    }
+}
+
+fn canonical_required_autotrade_field(field: &str) -> &str {
+    match field {
+        TRADE_AMOUNT_INTERNAL_ALIAS => TRADE_AMOUNT_REQUIRED_FIELD,
+        other => other,
     }
 }
 
@@ -191,7 +282,7 @@ fn persist_subscription_autotrade(
     job_id: &str,
     config: &SubscriptionAutoTradeConfig,
 ) -> Result<()> {
-    consent::write_consent_policy_with_settings(
+    consent::write_consent_policy_with_dynamic_settings(
         job_id,
         config.mode,
         config.cap.as_deref(),
@@ -200,6 +291,8 @@ fn persist_subscription_autotrade(
         config.environment,
         config.margin_mode,
         config.order_policy,
+        config.auth_mode,
+        Some(&config.dynamic_settings),
         super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
     )?;
     let grant_result = match config.mode {
@@ -307,14 +400,7 @@ pub async fn handle_create_subscribe(
     params: CreateSubscribeParams,
 ) -> Result<()> {
     params.validate()?;
-    let autotrade_requested = params.autotrade_mode.is_some()
-        || params.autotrade_amount.is_some()
-        || params.autotrade_cap.is_some()
-        || params.autotrade_quote.is_some()
-        || params.autotrade_environment.is_some()
-        || params.autotrade_margin_mode.is_some()
-        || params.autotrade_order_policy.is_some()
-        || !params.autotrade_required_fields.is_empty();
+    let autotrade_requested = params.autotrade_requested();
     let autotrade_config = params.autotrade_config()?;
 
     let json_mode = params.format.eq_ignore_ascii_case("json");
@@ -470,15 +556,19 @@ pub async fn handle_create_subscribe(
         }
     };
 
-    // Persist the MVP default policy only after create + broadcast succeeds,
-    // together with any final user-authored setup in the same local files used
-    // by runtime execution. A write failure cannot roll back the subscription.
-    let autotrade_configured = match persist_subscription_autotrade(&sub_id, &autotrade_config) {
-        Ok(()) => true,
-        Err(err) => {
-            eprintln!("[autotrade] subscription created, but execution configuration could not be persisted: {err}");
-            false
+    // Persist an execution policy only after an explicit mode choice. A plain
+    // subscription has no local execution authorization and remains notify-only.
+    // A write failure cannot roll back the already-created subscription.
+    let autotrade_configured = if autotrade_requested {
+        match persist_subscription_autotrade(&sub_id, &autotrade_config) {
+            Ok(()) => true,
+            Err(err) => {
+                eprintln!("[autotrade] subscription created, but execution configuration could not be persisted: {err}");
+                false
+            }
         }
+    } else {
+        false
     };
 
     // Persist only bounded classifier output. Failure is advisory: the
@@ -653,6 +743,8 @@ mod tests {
                 autotrade_environment,
                 autotrade_margin_mode,
                 autotrade_order_policy,
+                autotrade_auth_mode,
+                autotrade_settings_json,
                 autotrade_required_fields,
                 format,
                 exclude_device,
@@ -669,12 +761,14 @@ mod tests {
                 assert_eq!(service_params, "");
                 assert_eq!(service_interval, "month");
                 assert!(autotrade_mode.is_none());
+                assert!(autotrade_settings_json.is_none());
                 assert!(autotrade_amount.is_none());
                 assert!(autotrade_cap.is_none());
                 assert!(autotrade_quote.is_none());
                 assert!(autotrade_environment.is_none());
                 assert!(autotrade_margin_mode.is_none());
                 assert!(autotrade_order_policy.is_none());
+                assert!(autotrade_auth_mode.is_none());
                 assert!(autotrade_required_fields.is_empty());
                 assert_eq!(format, "");
                 assert!(exclude_device.is_none());
@@ -838,6 +932,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn create_subscribe_validates_required_fields_before_remote_work() {
+        let source = include_str!("create_subscribe.rs");
+        let handler = source
+            .split_once("pub async fn handle_create_subscribe")
+            .expect("create-subscribe handler must exist")
+            .1
+            .split_once("#[cfg(test)]")
+            .expect("handler must precede its tests")
+            .0;
+
+        let local_validation = handler
+            .find("params.validate()?;")
+            .expect("required-field validation must be part of the create handler");
+        let first_remote_boundary = handler
+            .find("ensure_tokens_refreshed().await")
+            .expect("create handler must refresh the remote session");
+
+        assert!(
+            local_validation < first_remote_boundary,
+            "required-field failures must return before authentication, remote create, signing, or broadcast"
+        );
+    }
+
     fn params_fixture(provider: Option<&str>) -> super::CreateSubscribeParams {
         super::CreateSubscribeParams {
             service_id: "svc".to_string(),
@@ -858,6 +976,8 @@ mod tests {
             autotrade_environment: None,
             autotrade_margin_mode: None,
             autotrade_order_policy: None,
+            autotrade_auth_mode: None,
+            autotrade_settings_json: None,
             autotrade_required_fields: Vec::new(),
             format: "json".to_string(),
             exclude_device: None,
@@ -989,6 +1109,8 @@ mod tests {
             autotrade_environment: None,
             autotrade_margin_mode: None,
             autotrade_order_policy: None,
+            autotrade_auth_mode: None,
+            autotrade_settings_json: None,
             autotrade_required_fields: Vec::new(),
             format: "json".to_string(),
             exclude_device: None,
@@ -1024,9 +1146,11 @@ mod tests {
             "--autotrade-environment", "demo",
             "--autotrade-margin-mode", "cross",
             "--autotrade-order-policy", "market",
+            "--autotrade-auth-mode", "oauth",
             "--autotrade-required-field", "environment",
             "--autotrade-required-field", "orderPolicy",
             "--autotrade-required-field", "marginMode",
+            "--autotrade-required-field", "authMode",
         ]);
         let super::super::TaskCommand::CreateSubscribe {
             autotrade_mode,
@@ -1036,6 +1160,7 @@ mod tests {
             autotrade_environment,
             autotrade_margin_mode,
             autotrade_order_policy,
+            autotrade_auth_mode,
             autotrade_required_fields,
             ..
         } = cli.cmd else {
@@ -1048,15 +1173,45 @@ mod tests {
         assert_eq!(autotrade_environment.as_deref(), Some("demo"));
         assert_eq!(autotrade_margin_mode.as_deref(), Some("cross"));
         assert_eq!(autotrade_order_policy.as_deref(), Some("market"));
+        assert_eq!(autotrade_auth_mode.as_deref(), Some("oauth"));
         assert_eq!(
             autotrade_required_fields,
-            ["environment", "orderPolicy", "marginMode"]
+            ["environment", "orderPolicy", "marginMode", "authMode"]
         );
+    }
+
+    #[test]
+    fn cli_create_subscribe_help_documents_required_field_contract() {
+        let help = match TestCli::try_parse_from(["test", "create-subscribe", "--help"]) {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("--help must exit through clap"),
+        };
+
+        for expected in [
+            "mode (--autotrade-mode)",
+            "tradeAmount (--autotrade-amount)",
+            "cap (--autotrade-cap)",
+            "quote (--autotrade-quote)",
+            "environment",
+            "--autotrade-environment",
+            "marginMode (--autotrade-margin-mode)",
+            "orderPolicy (--autotrade-order-policy)",
+            "authMode",
+            "--autotrade-auth-mode",
+            "tradeAmountU",
+            "deprecated alias",
+        ] {
+            assert!(
+                help.contains(expected),
+                "help must contain {expected:?}: {help}"
+            );
+        }
     }
 
     #[test]
     fn create_validation_rejects_missing_declared_autotrade_fields() {
         let mut params = params_fixture(None);
+        params.autotrade_mode = Some("auto".to_string());
         params.autotrade_environment = Some("demo".to_string());
         params.autotrade_required_fields = vec![
             "environment".to_string(),
@@ -1074,20 +1229,75 @@ mod tests {
     }
 
     #[test]
-    fn create_validation_rejects_unknown_required_autotrade_field() {
+    fn create_validation_accepts_user_confirmed_dynamic_required_field() {
         let mut params = params_fixture(None);
-        params.autotrade_required_fields = vec!["leverage".to_string()];
+        params.autotrade_mode = Some("auto".to_string());
+        params.autotrade_required_fields = vec![
+            "leverageMode".to_string(),
+            "leverage".to_string(),
+            "extra.maxConcurrentPositions".to_string(),
+        ];
 
-        assert!(params
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("--autotrade-required-field must be one of"));
+        assert_eq!(
+            params.validate().unwrap_err().to_string(),
+            "missing required automatic execution fields: leverageMode, leverage, extra.maxConcurrentPositions"
+        );
+        params.autotrade_settings_json = Some(
+            r#"{"leverageMode":"fixed","leverage":"2","extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3}}}"#
+                .to_string(),
+        );
+        assert!(params.validate().is_ok());
+        let settings = params.autotrade_config().unwrap().dynamic_settings;
+        assert_eq!(settings["leverage"], serde_json::json!("2"));
+        assert_eq!(
+            settings["extra"]["maxConcurrentPositions"]["value"],
+            serde_json::json!(3)
+        );
+        assert_eq!(
+            settings["requiredFields"],
+            serde_json::json!([
+                "leverageMode",
+                "leverage",
+                "extra.maxConcurrentPositions"
+            ])
+        );
+    }
+
+    #[test]
+    fn create_validation_persists_fixed_margin_amount_basis() {
+        let mut params = params_fixture(None);
+        params.autotrade_mode = Some("auto".to_string());
+        params.autotrade_amount = Some("10".to_string());
+        params.autotrade_required_fields = vec![
+            "tradeAmount".to_string(),
+            "tradeAmountMode".to_string(),
+            "tradeAmountBasis".to_string(),
+        ];
+        params.autotrade_settings_json = Some(
+            r#"{"tradeAmountMode":"fixed_amount","tradeAmountBasis":"margin"}"#.to_string(),
+        );
+
+        assert!(params.validate().is_ok());
+        let config = params.autotrade_config().unwrap();
+        assert_eq!(config.amount.as_deref(), Some("10"));
+        assert_eq!(
+            config.dynamic_settings["tradeAmountMode"],
+            serde_json::json!("fixed_amount")
+        );
+        assert_eq!(
+            config.dynamic_settings["tradeAmountBasis"],
+            serde_json::json!("margin")
+        );
+        assert_eq!(
+            config.dynamic_settings["requiredFields"],
+            serde_json::json!(["tradeAmount", "tradeAmountMode", "tradeAmountBasis"])
+        );
     }
 
     #[test]
     fn create_validation_enforces_asp_required_amount_and_cap() {
         let mut params = params_fixture(None);
+        params.autotrade_mode = Some("auto".to_string());
         params.autotrade_required_fields = vec![
             "tradeAmount".to_string(),
             "cap".to_string(),
@@ -1104,20 +1314,79 @@ mod tests {
     }
 
     #[test]
-    fn autotrade_config_accepts_partial_fields_and_defaults_auto_usdt() {
+    fn create_validation_accepts_public_trade_amount_required_field() {
+        let mut params = params_fixture(None);
+        params.autotrade_mode = Some("auto".to_string());
+        params.autotrade_amount = Some("100".to_string());
+        params.autotrade_required_fields = vec![TRADE_AMOUNT_REQUIRED_FIELD.to_string()];
+
+        assert!(params.validate().is_ok());
+    }
+
+    #[test]
+    fn create_validation_normalizes_internal_trade_amount_alias() {
+        assert_eq!(
+            canonical_required_autotrade_field(TRADE_AMOUNT_INTERNAL_ALIAS),
+            TRADE_AMOUNT_REQUIRED_FIELD
+        );
+
+        let mut params = params_fixture(None);
+        params.autotrade_mode = Some("auto".to_string());
+        params.autotrade_amount = Some("100".to_string());
+        params.autotrade_required_fields = vec![TRADE_AMOUNT_INTERNAL_ALIAS.to_string()];
+
+        assert!(params.validate().is_ok());
+    }
+
+    #[test]
+    fn create_validation_reports_public_trade_amount_name_when_missing() {
+        let mut params = params_fixture(None);
+        params.autotrade_mode = Some("auto".to_string());
+        params.autotrade_required_fields = vec![TRADE_AMOUNT_REQUIRED_FIELD.to_string()];
+
+        assert_eq!(
+            params.validate().unwrap_err().to_string(),
+            "missing required automatic execution fields: tradeAmount"
+        );
+    }
+
+    #[test]
+    fn create_validation_deduplicates_alias_and_explains_internal_name() {
+        let mut params = params_fixture(None);
+        params.autotrade_mode = Some("auto".to_string());
+        params.autotrade_required_fields = vec![
+            TRADE_AMOUNT_INTERNAL_ALIAS.to_string(),
+            TRADE_AMOUNT_REQUIRED_FIELD.to_string(),
+        ];
+
+        assert_eq!(
+            params.validate().unwrap_err().to_string(),
+            "missing required automatic execution fields: tradeAmount (tradeAmountU is an internal consent field; use tradeAmount with --autotrade-required-field)"
+        );
+    }
+
+    #[test]
+    fn autotrade_config_requires_explicit_mode_for_execution_fields() {
         let mut params = params_fixture(None);
         params.autotrade_amount = Some("20".to_string());
+        assert_eq!(
+            params.validate().unwrap_err().to_string(),
+            "--autotrade-mode is required when configuring signal execution; choose auto or notify_only"
+        );
+    }
+
+    #[test]
+    fn autotrade_config_without_execution_fields_is_notify_only_and_not_requested() {
+        let params = params_fixture(None);
         let config = params.autotrade_config().unwrap();
-        assert_eq!(config.mode, consent::ConsentMode::Auto);
-        assert_eq!(config.amount.as_deref(), Some("20"));
-        assert_eq!(config.cap, None);
-        assert_eq!(config.quote, "usdt");
-        assert_eq!(config.environment, None);
+        assert_eq!(config.mode, consent::ConsentMode::Decline);
+        assert!(!params.autotrade_requested());
     }
 
     #[test]
     fn autotrade_config_rejects_non_explicit_trade_environment() {
         let mut params = params_fixture(None);
+        params.autotrade_mode = Some("auto".to_string());
         params.autotrade_environment = Some("configured".to_string());
         assert!(params
             .validate()
@@ -1147,18 +1416,24 @@ mod tests {
     }
 
     #[test]
-    fn autotrade_config_preserves_explicit_manual_and_user_values() {
+    fn autotrade_config_maps_legacy_manual_to_notify_only() {
         let mut params = params_fixture(None);
         params.autotrade_mode = Some("manual".to_string());
-        params.autotrade_amount = Some("25.00".to_string());
-        params.autotrade_cap = Some("10".to_string());
-        params.autotrade_quote = Some("USDC".to_string());
 
         let config = params.autotrade_config().unwrap();
-        assert_eq!(config.mode, consent::ConsentMode::Manual);
-        assert_eq!(config.amount.as_deref(), Some("25"));
-        assert_eq!(config.cap.as_deref(), Some("10"));
-        assert_eq!(config.quote, "usdc");
+        assert_eq!(config.mode, consent::ConsentMode::Decline);
+        assert!(params.validate().is_ok());
+    }
+
+    #[test]
+    fn notify_only_rejects_automatic_execution_settings() {
+        let mut params = params_fixture(None);
+        params.autotrade_mode = Some("notify_only".to_string());
+        params.autotrade_amount = Some("25".to_string());
+        assert_eq!(
+            params.validate().unwrap_err().to_string(),
+            "notify_only does not accept automatic execution settings"
+        );
     }
 
     #[test]
@@ -1184,6 +1459,8 @@ mod tests {
             environment: Some(TradeEnvironment::Demo),
             margin_mode: Some(MarginMode::Cross),
             order_policy: Some(OrderPolicy::Market),
+            auth_mode: Some(TradeKitAuthMode::OAuth),
+            dynamic_settings: DynamicConsentSettings::new(),
         };
         persist_subscription_autotrade("job-subscribe-auto", &config).unwrap();
 
@@ -1195,6 +1472,7 @@ mod tests {
         assert_eq!(stored.cap_u.as_deref(), Some("50"));
         assert_eq!(stored.quote_token.as_deref(), Some("usdt"));
         assert_eq!(stored.trade_environment, config.environment);
+        assert_eq!(stored.auth_mode, config.auth_mode);
         assert_eq!(stored.margin_mode, config.margin_mode);
         assert_eq!(stored.order_policy, config.order_policy);
         assert!(grants::check_grant("job-subscribe-auto", "dex", "buy", "50").is_ok());

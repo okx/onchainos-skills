@@ -136,6 +136,23 @@ impl Decimal {
         Ok(value.floor_to(PCT_ABS_SCALE))
     }
 
+    /// `self * ratio`, floored to 8 decimal places. A ratio is expressed in
+    /// `[0, 1]` form (for example `0.25` = 25%).
+    pub fn ratio_to_absolute(
+        holding: &Decimal,
+        ratio: &Decimal,
+    ) -> Result<Decimal, AmountError> {
+        let mantissa = holding
+            .mantissa
+            .checked_mul(ratio.mantissa)
+            .ok_or(AmountError::Overflow)?;
+        let scale = holding
+            .scale
+            .checked_add(ratio.scale)
+            .ok_or(AmountError::Overflow)?;
+        Ok(Decimal { mantissa, scale }.floor_to(PCT_ABS_SCALE))
+    }
+
     /// `pct / 100` exact (FR-6 ratio for `defi redeem --ratio`; AC-7: `12.5 ⇒ 0.125`).
     pub fn pct_to_ratio(pct: &Decimal) -> Result<Decimal, AmountError> {
         // /100 == add 2 to the scale.
@@ -236,6 +253,14 @@ mod tests {
         let pct = Decimal::parse("33.333333333").unwrap();
         let got = Decimal::pct_to_absolute(&holding, &pct).unwrap();
         assert_eq!(got.to_plain_string(), "0.33333333");
+    }
+
+    #[test]
+    fn ratio_to_absolute_uses_zero_to_one_ratio() {
+        let holding = Decimal::parse("400.8").unwrap();
+        let ratio = Decimal::parse("0.25").unwrap();
+        let got = Decimal::ratio_to_absolute(&holding, &ratio).unwrap();
+        assert_eq!(got.to_plain_string(), "100.2");
     }
 
     #[test]
