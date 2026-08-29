@@ -27,14 +27,13 @@ fn build_decision(
     decision: &str,
     reason: &str,
     next_action: Value,
-    action: impl Into<String>,
+    _action: impl Into<String>,
 ) -> Map<String, Value> {
     let mut out = Map::new();
     out.insert("phase".to_string(), Value::String(phase.to_string()));
     out.insert("decision".to_string(), Value::String(decision.to_string()));
     out.insert("reason".to_string(), Value::String(reason.to_string()));
     out.insert("nextAction".to_string(), next_action);
-    out.insert("action".to_string(), Value::String(action.into()));
     out
 }
 
@@ -378,51 +377,56 @@ mod tests {
     use super::*;
 
     #[test]
-    fn login_required_action_resumes_preparation_with_the_same_service() {
-        let output = build_decision(PHASE_LOGIN_VALIDATION, "blocked", "login_required", next_action("login", true), LOGIN_ACTION);
-        let action = output["action"]
-            .as_str()
-            .expect("login-check output must include an action");
+    fn login_required_decision_omits_action() {
+        let output = build_decision(
+            PHASE_LOGIN_VALIDATION,
+            "blocked",
+            "login_required",
+            next_action("login", true),
+            LOGIN_ACTION,
+        );
 
         assert_eq!(output["phase"], "login_validation");
         assert_eq!(output["decision"], "blocked");
         assert_eq!(output["reason"], "login_required");
         assert_eq!(output["nextAction"][0]["id"], "login");
         assert_eq!(output["nextAction"][0]["recommend"], true);
-        assert!(action.contains("okx-agentic-wallet skill"));
-        assert!(action.contains("same sid"));
-        assert!(action.contains("Do not rerun service-match"));
-        assert!(!action.contains("ask the user to retry"));
+        assert!(output.get("action").is_none());
     }
 
     #[test]
-    fn unknown_service_type_action_identifies_the_field_and_blocks_creation() {
-        let output = build_decision(PHASE_SERVICE_VALIDATION, "blocked", "unsupported_service_type", next_action("stop", true), UNKNOWN_SERVICE_TYPE_ACTION);
-        let action = output["action"]
-            .as_str()
-            .expect("service-type-check output must include an action");
+    fn unknown_service_type_decision_omits_action() {
+        let output = build_decision(
+            PHASE_SERVICE_VALIDATION,
+            "blocked",
+            "unsupported_service_type",
+            next_action("stop", true),
+            UNKNOWN_SERVICE_TYPE_ACTION,
+        );
 
         assert_eq!(output["phase"], "service_validation");
         assert_eq!(output["decision"], "blocked");
         assert_eq!(output["reason"], "unsupported_service_type");
         assert_eq!(output["nextAction"][0]["id"], "stop");
-        assert!(action.contains("data.payload.serviceType"));
-        assert!(action.contains("unsupported for task creation"));
-        assert!(action.contains("Do not call create-task or create-subscribe"));
-        assert!(!action.starts_with("Say "));
+        assert!(output.get("action").is_none());
     }
 
     #[test]
-    fn emit_shape_uses_action_phase_and_payload_terms() {
-        let mut output = build_decision(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), ready_action());
+    fn emit_shape_uses_phase_next_action_and_payload_without_action() {
+        let mut output = build_decision(
+            PHASE_CREATION,
+            "ready",
+            "all_checks_passed",
+            next_action("open_create_playbook", true),
+            ready_action(),
+        );
         output.insert("payload".to_string(), json!({"serviceId": "svc-1"}));
 
         assert_eq!(output["phase"], "creation");
         assert_eq!(output["decision"], "ready");
         assert_eq!(output["reason"], "all_checks_passed");
         assert_eq!(output["nextAction"][0]["id"], "open_create_playbook");
-        assert!(output["action"].as_str().unwrap().contains("data.payload"));
-        assert!(!output["action"].as_str().unwrap().contains("branch="));
+        assert!(output.get("action").is_none());
         assert_eq!(output["payload"]["serviceId"], "svc-1");
         assert!(output.get("status").is_none());
         assert!(output.get("playbook").is_none());
