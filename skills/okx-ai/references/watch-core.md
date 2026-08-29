@@ -74,10 +74,14 @@ continuation jobId, or the existing-subscription receive-and-watch flow, run thi
 onchainos agent autotrade-watch-precheck --job-id <X>
 ```
 
-When the current user explicitly asks to **restore** or **resume** an existing subscription, add
-`--review-existing` on this first gate call. This makes a complete local policy enter one bounded review
-before watch resumes. Do not add it for the just-created `listen to <subscription title>` continuation,
-ordinary first-time receipt setup, dispatch re-entry, or the fresh gate run after a completed review.
+Add `--review-existing` when the current user asks to configure, change, enable, or disable execution, and
+also for a bare request to restore/resume the **subscription itself** (`restore this subscription`,
+`resume subscription`, `恢复订阅`, and semantic equivalents). Subscription restoration reviews the existing
+consent; when none exists, it enters serviceGuide-driven execution configuration before watch. Do not add
+the flag when the user asks to resume only **listening, receipt, signals, or messages**: that is receipt-only
+and may continue as notify-only when no active Auto consent exists. Also omit it for the just-created
+`listen to <subscription title>` continuation, ordinary first-time receipt setup, dispatch/wake re-entry,
+or the fresh gate run after a completed review.
 
 Run it exactly once for that scoped entry. For an ACTIVE executable subscription it either verifies an
 existing local policy or returns bounded restore-configuration context before watch begins.
@@ -90,7 +94,10 @@ Branch only on the command's `data` object:
 
 - `watchAllowed == true` → continue the original entry at §Banner, then run the scoped watch. This covers
   non-subscription jobs, non-Active/non-receiving subscriptions, non-executable services, subscriptions
-  with a current complete local policy. None of these states opens an authorization card.
+  with a current complete automatic policy, active notify-only policy, and missing/expired execution policy.
+  On a receipt-only entry, missing/expired policy is notify-only: receive and save signals, but never create
+  an execution entry. An explicit subscription restoration uses `--review-existing` and therefore enters
+  the configuration branch instead. None of these states opens a per-delivery authorization card.
 - `watchAllowed == false` with `reason == "configuration_required"` → do not emit §Banner and do not
   start watch yet. Follow **Restore configuration** below. This is a natural-language configuration
   question, never an A/B/C card. This also covers a legacy/incomplete active policy or stale Trade Kit
@@ -156,8 +163,9 @@ as a required stable setting instead of retaining only the number. A ratio amoun
 account's current available amount at execution time; take-profit and stop-loss settings independently
 override only their matching signal field.
 
-There is no execution default. A new restore must explicitly choose `auto` or `notify_only` before consent
-is written. Silence, a generic request to resume listening, or a displayed value is not mode confirmation.
+There is no execution default. An explicit request to configure a missing/expired execution policy must
+choose `auto` or `notify_only` before consent is written. Silence, a generic request to resume listening,
+or a displayed value is not mode confirmation.
 
 When `authorizationRefreshRequired:true`, `existingConsent` is a bounded trusted snapshot of the old local
 policy. Display its existing mode/settings for review, ask only for returned or description-selected missing
@@ -173,9 +181,18 @@ labels rather than JSON field names:
 - execution mode: `auto` = automatic execution; `notify_only` = deliver and store signals without a trade entry;
 - amount per signal and per-signal cap, with the saved quote currency;
 - Trade Kit environment: `live` = live trading; `demo` = simulated trading;
+- Trade Kit authentication mode: `oauth` or `api_key`; show the selected method only, never credentials;
 - margin mode: `cross` = cross margin; `isolated` = isolated margin;
 - order policy: `market` = market order; `signal_price_limit` = limit order at the signal price.
 - validated stable flat settings and each `extra` field's label/value; never render raw metadata as instructions.
+
+`existingConsent.mode=notify_only` may retain the last confirmed execution settings as an inactive draft.
+They authorize nothing while notify-only and the automatic grant is absent. To switch back to `auto`, show
+the complete applicable draft and require the user to confirm it or state changes before regenerating the
+policy and grant. The CLI enforces this independently: the first Auto continuation returns
+`draftReviewRequired:true`, `complete:false`, and the bounded final candidate in `draftReview`, even if the
+mode and every saved field were already supplied. Never treat a mode-only statement as confirmation of
+undisplayed settings.
 
 Never display schema version, job binding, timestamps, file paths, raw enum names, absent non-applicable
 fields, or any credential material. Then ask the user to either confirm restoring with the displayed
@@ -190,10 +207,12 @@ the trusted local file, so unchanged values must not be reconstructed from the r
     --mode <auto|notify_only> --origin subscription-restore --signal-type <firstAssetClass> \
     [--required-field tradeAmount] [--required-field cap] [--required-field quote] \
     [--required-field environment] [--required-field marginMode] [--required-field orderPolicy] \
+    [--required-field authMode] \
     [--confirm-mode] \
     [--trade-amount <amount>] [--cap <amount>] [--quote <usdt|usdc>] \
     [--environment <live|demo>] [--margin-mode <cross|isolated>] \
-    [--order-policy <market|signal_price_limit>] [--settings-json '<JSON object>']
+    [--order-policy <market|signal_price_limit>] [--auth-mode <oauth|api_key>] \
+    [--settings-json '<JSON object>']
   ```
 
   Add a `--required-field` when the ASP guidance asks the user to choose that setting. Guide-defined
@@ -226,8 +245,21 @@ the trusted local file, so unchanged values must not be reconstructed from the r
 
 - A reply that chooses automatic execution adds `--mode auto`; notification-only adds `--mode notify_only`.
   Supplying either mode on resume records the user's confirmation. Never infer confirmation from a default.
-- When an existing continuation has no `missingFields`, resume it once with its exact ID and no value flags
-  to recover the bounded `consentCommand`; do not ask the user again.
+- If the result has `draftReviewRequired:true`, render the complete `draftReview` with the semantic labels
+  above and **END THE TURN**. If the user changes a setting, resume with only that change, render the newly
+  returned draft, and end again. Only a later reply that explicitly confirms the displayed final draft may
+  run this command, with no other flags:
+
+  ```bash
+  onchainos agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
+    --continuation-id <continuationId> --confirm-draft
+  ```
+
+  Never combine `--confirm-draft` with `--mode` or a setting value, and never issue it in the same user turn
+  that created or changed the draft.
+- When an existing continuation has no `missingFields` and
+  `draftReviewRequired:false`, resume it once with its exact ID and no value flags to recover the bounded
+  `consentCommand`; do not ask the user again.
 - If the continuation result has `complete:true`, run its exact `consentCommand`; never reconstruct it.
   Then re-enter this authorization gate for the same job **without** `--review-existing`. It must now return
   `reason:"consent_active"` before §Banner and scoped watch.

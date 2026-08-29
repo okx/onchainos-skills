@@ -854,9 +854,10 @@ pub enum ConsentMode {
 /// This stores only the source choice. OAuth tokens and API-key material remain
 /// owned by Trade Kit and are never copied into the consent file.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub enum TradeKitAuthMode {
+    #[serde(rename = "oauth", alias = "o_auth")]
     OAuth,
+    #[serde(rename = "api_key")]
     ApiKey,
 }
 
@@ -1445,6 +1446,9 @@ pub fn write_consent_policy_with_dynamic_settings(
     if ttl_sec == 0 {
         anyhow::bail!("--ttl-sec must be > 0");
     }
+    // Best-effort compatibility read. This intentionally retains the historical
+    // behavior of allowing a valid new write to replace a broken old record.
+    let existing = load_consent(job_id).ok().flatten();
     let cap_u = match mode {
         ConsentMode::Auto => cap_u
             .map(|cap| {
@@ -1460,12 +1464,9 @@ pub fn write_consent_policy_with_dynamic_settings(
             if cap_u.is_some() {
                 anyhow::bail!("--cap is only valid with --mode auto");
             }
-            None
+            existing.as_ref().and_then(|consent| consent.cap_u.clone())
         }
     };
-    // Best-effort compatibility read. This intentionally retains the historical
-    // behavior of allowing a valid new write to replace a broken old record.
-    let existing = load_consent(job_id).ok().flatten();
     let trade_amount_u = match trade_amount_u {
         Some(amount) => {
             let parsed = Decimal::parse(amount)
@@ -1906,6 +1907,26 @@ mod tests {
 
     fn dec(s: &str) -> Decimal {
         Decimal::parse(s).unwrap()
+    }
+
+    #[test]
+    fn trade_kit_auth_mode_uses_canonical_oauth_and_reads_legacy_value() {
+        assert_eq!(
+            serde_json::to_string(&TradeKitAuthMode::OAuth).unwrap(),
+            r#""oauth""#
+        );
+        assert_eq!(
+            serde_json::from_str::<TradeKitAuthMode>(r#""oauth""#).unwrap(),
+            TradeKitAuthMode::OAuth
+        );
+        assert_eq!(
+            serde_json::from_str::<TradeKitAuthMode>(r#""o_auth""#).unwrap(),
+            TradeKitAuthMode::OAuth
+        );
+        assert_eq!(
+            serde_json::to_string(&TradeKitAuthMode::ApiKey).unwrap(),
+            r#""api_key""#
+        );
     }
 
     /// Set ONCHAINOS_HOME to an isolated temp dir for the duration of a test.

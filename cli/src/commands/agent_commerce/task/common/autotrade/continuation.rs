@@ -12,12 +12,12 @@ use serde::{Deserialize, Serialize};
 use super::amount::Decimal;
 use super::consent::{
     self, ConsentFile, ConsentMode, DynamicConsentSettings, MarginMode, OrderPolicy,
-    QUOTE_WHITELIST,
+    TradeKitAuthMode, QUOTE_WHITELIST,
 };
 use super::grants::job_id_is_safe;
 use super::trade_kit::TradeEnvironment;
 
-const VERSION: u32 = 5;
+const VERSION: u32 = 6;
 const TTL_SECS: u64 = 30 * 60;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +69,17 @@ pub struct ConsentContinuation {
     pub selected_mode: SelectedMode,
     #[serde(default)]
     pub mode_confirmed: bool,
+    /// The restore started from a persisted notify-only policy. This is kept
+    /// separate from `selected_mode` so a later switch to Auto cannot silently
+    /// reuse the inactive execution draft.
+    #[serde(default)]
+    seeded_from_notify_only: bool,
+    /// Auto restoration from notify-only requires a second, draft-specific
+    /// confirmation after the complete candidate has been rendered.
+    #[serde(default)]
+    draft_review_required: bool,
+    #[serde(default)]
+    draft_review_confirmed: bool,
     pub origin: Origin,
     pub signal_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,6 +104,8 @@ pub struct ConsentContinuation {
     pub margin_mode: Option<MarginMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order_policy: Option<OrderPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<TradeKitAuthMode>,
     #[serde(default, skip_serializing_if = "DynamicConsentSettings::is_empty")]
     pub dynamic_settings: DynamicConsentSettings,
     created_at: u64,
@@ -100,6 +113,69 @@ pub struct ConsentContinuation {
 }
 
 impl ConsentContinuation {
+    fn draft_review_pending(&self) -> bool {
+        self.draft_review_required && !self.draft_review_confirmed
+    }
+
+    fn review_draft(&self) -> serde_json::Value {
+        let mut draft = serde_json::Map::new();
+        draft.insert(
+            "mode".to_string(),
+            serde_json::Value::String("auto".to_string()),
+        );
+        for (key, value) in [
+            (
+                "tradeAmountU",
+                self.trade_amount_u
+                    .as_ref()
+                    .map(|value| serde_json::Value::String(value.clone())),
+            ),
+            (
+                "capU",
+                self.cap_u
+                    .as_ref()
+                    .map(|value| serde_json::Value::String(value.clone())),
+            ),
+            (
+                "quoteToken",
+                self.quote_token
+                    .as_ref()
+                    .map(|value| serde_json::Value::String(value.clone())),
+            ),
+            (
+                "tradeEnvironment",
+                self.trade_environment.map(|value| {
+                    serde_json::Value::String(value.as_str().to_string())
+                }),
+            ),
+            (
+                "marginMode",
+                self.margin_mode
+                    .map(|value| serde_json::Value::String(value.as_str().to_string())),
+            ),
+            (
+                "orderPolicy",
+                self.order_policy
+                    .map(|value| serde_json::Value::String(value.as_str().to_string())),
+            ),
+            (
+                "authMode",
+                self.auth_mode
+                    .map(|value| serde_json::Value::String(value.as_str().to_string())),
+            ),
+        ] {
+            if let Some(value) = value {
+                draft.insert(key.to_string(), value);
+            }
+        }
+        for (key, value) in &self.dynamic_settings {
+            if !matches!(key.as_str(), "requiredFields" | "serviceGuideHash") {
+                draft.insert(key.clone(), value.clone());
+            }
+        }
+        serde_json::Value::Object(draft)
+    }
+
     pub fn missing_fields(&self) -> Vec<String> {
         if self.selected_mode == SelectedMode::Manual {
             return if self.origin == Origin::SubscriptionRestore && !self.mode_confirmed {
@@ -119,6 +195,7 @@ impl ConsentContinuation {
                 "environment" => self.trade_environment.is_none(),
                 "marginMode" => self.margin_mode.is_none(),
                 "orderPolicy" => self.order_policy.is_none(),
+                "authMode" => self.auth_mode.is_none(),
                 other => !consent::dynamic_setting_present(&self.dynamic_settings, other),
             })
             .cloned()
@@ -164,7 +241,9 @@ pub struct ExplicitValues<'a> {
     pub trade_environment: Option<&'a str>,
     pub margin_mode: Option<&'a str>,
     pub order_policy: Option<&'a str>,
+    pub auth_mode: Option<&'a str>,
     pub dynamic_settings: DynamicConsentSettings,
+    pub confirm_draft: bool,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -183,6 +262,11 @@ pub struct ContinuationResult {
     pub missing_fields: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub validation_errors: Vec<ValidationError>,
+    /// True only while an inactive notify-only draft still needs an explicit,
+    /// separate confirmation before it can become an Auto policy.
+    pub draft_review_required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft_review: Option<serde_json::Value>,
     pub complete: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub consent_command: Option<String>,
@@ -194,6 +278,21 @@ pub struct ValidationError {
     pub field: String,
     pub code: String,
     pub message: String,
+}
+
+/// Exact, normalized Auto policy presented to the final consent writer.
+/// A live continuation is the one-time permit; this view prevents callers from
+/// changing any confirmed execution field between review and persistence.
+pub struct AutoConsentWrite<'a> {
+    pub agent_id: &'a str,
+    pub trade_amount_u: Option<&'a str>,
+    pub cap_u: Option<&'a str>,
+    pub quote_token: Option<&'a str>,
+    pub trade_environment: Option<TradeEnvironment>,
+    pub margin_mode: Option<MarginMode>,
+    pub order_policy: Option<OrderPolicy>,
+    pub auth_mode: Option<TradeKitAuthMode>,
+    pub dynamic_settings: &'a DynamicConsentSettings,
 }
 
 fn now_secs() -> u64 {
@@ -304,7 +403,7 @@ fn validate_binding(binding: &StartBinding<'_>) -> anyhow::Result<()> {
     }
     match (binding.origin, binding.seed_consent) {
         (Origin::SubscriptionRestore, Some(consent)) => {
-            if consent.job_id != binding.job_id || consent.mode == ConsentMode::Decline {
+            if consent.job_id != binding.job_id {
                 anyhow::bail!("restore seed consent does not match the requested authorization");
             }
         }
@@ -344,6 +443,27 @@ fn shell_arg(value: &str) -> String {
     }
 }
 
+fn persisted_dynamic_settings(file: &ConsentContinuation) -> DynamicConsentSettings {
+    let mut settings = file.dynamic_settings.clone();
+    let required_fields = file
+        .required_fields
+        .iter()
+        .filter(|field| {
+            !(file.selected_mode == SelectedMode::Manual
+                && matches!(field.as_str(), "tradeAmount" | "cap" | "quote"))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if !required_fields.is_empty() {
+        settings.insert(
+            "requiredFields".to_string(),
+            serde_json::to_value(required_fields)
+                .expect("validated required fields must serialize"),
+        );
+    }
+    settings
+}
+
 fn read_live(job_id: &str) -> anyhow::Result<Option<ConsentContinuation>> {
     let path = continuation_path(job_id)?;
     if !path.exists() {
@@ -351,11 +471,23 @@ fn read_live(job_id: &str) -> anyhow::Result<Option<ConsentContinuation>> {
     }
     let raw = std::fs::read_to_string(&path)
         .map_err(|_| anyhow::anyhow!("consent continuation is unreadable"))?;
-    let file: ConsentContinuation = serde_json::from_str(&raw)
+    let mut file: ConsentContinuation = serde_json::from_str(&raw)
         .map_err(|_| anyhow::anyhow!("consent continuation is unreadable"))?;
     if file.version > VERSION || file.job_id != job_id {
         anyhow::bail!("consent continuation is unreadable");
     }
+    // Version 5 and earlier had no code-level draft confirmation barrier. A
+    // live Auto restoration from those versions is conservatively migrated to
+    // require review so an in-flight continuation cannot bypass this fix.
+    if file.version < VERSION
+        && file.origin == Origin::SubscriptionRestore
+        && file.selected_mode == SelectedMode::Auto
+    {
+        file.seeded_from_notify_only = true;
+        file.draft_review_required = true;
+        file.draft_review_confirmed = false;
+    }
+    file.version = VERSION;
     if file.expires_at <= now_secs() {
         let _ = std::fs::remove_file(path);
         return Ok(None);
@@ -403,6 +535,19 @@ pub fn start_or_update(
     selected_mode: Option<SelectedMode>,
     values: ExplicitValues<'_>,
 ) -> anyhow::Result<ContinuationResult> {
+    let has_setting_updates = values.trade_amount_u.is_some()
+        || values.cap_u.is_some()
+        || values.quote_token.is_some()
+        || values.trade_environment.is_some()
+        || values.margin_mode.is_some()
+        || values.order_policy.is_some()
+        || values.auth_mode.is_some()
+        || !values.dynamic_settings.is_empty();
+    if values.confirm_draft && (selected_mode.is_some() || has_setting_updates) {
+        anyhow::bail!(
+            "--confirm-draft must be a separate resume after the final draft is displayed"
+        );
+    }
     if start
         .as_ref()
         .is_some_and(|binding| binding.job_id != job_id || binding.agent_id != agent_id)
@@ -453,6 +598,11 @@ pub fn start_or_update(
             }
             let now = now_secs();
             let seed = binding.seed_consent;
+            let seeded_from_notify_only = seed.is_some_and(|consent| {
+                matches!(consent.mode, ConsentMode::Manual | ConsentMode::Decline)
+            });
+            let draft_review_required = seeded_from_notify_only
+                && binding.selected_mode == SelectedMode::Auto;
             let mut dynamic_settings = seed
                 .map(|consent| consent.dynamic_settings.clone())
                 .unwrap_or_default();
@@ -474,6 +624,9 @@ pub fn start_or_update(
                     agent_id: binding.agent_id.to_string(),
                     selected_mode: binding.selected_mode,
                     mode_confirmed: binding.mode_confirmed,
+                    seeded_from_notify_only,
+                    draft_review_required,
+                    draft_review_confirmed: false,
                     origin: binding.origin,
                     signal_type: binding.signal_type.to_string(),
                     original_delivery_id: binding.original_delivery_id.map(str::to_string),
@@ -489,6 +642,7 @@ pub fn start_or_update(
                     trade_environment: seed.and_then(|consent| consent.trade_environment),
                     margin_mode: seed.and_then(|consent| consent.margin_mode),
                     order_policy: seed.and_then(|consent| consent.order_policy),
+                    auth_mode: seed.and_then(|consent| consent.auth_mode),
                     dynamic_settings,
                     created_at: now,
                     expires_at: now.saturating_add(TTL_SECS),
@@ -498,6 +652,10 @@ pub fn start_or_update(
         }
         (None, None) => anyhow::bail!("no live consent continuation for this job"),
     };
+
+    if is_new && values.confirm_draft {
+        anyhow::bail!("--confirm-draft requires an existing continuation");
+    }
 
     // Persist a newly selected mode/binding before validating optional values.
     // A bad amount/cap/quote must not erase the user's A/B choice, while those
@@ -513,11 +671,31 @@ pub fn start_or_update(
         }
         base.selected_mode = selected_mode;
         base.mode_confirmed = true;
+        if base.seeded_from_notify_only {
+            base.draft_review_required = selected_mode == SelectedMode::Auto;
+            base.draft_review_confirmed = false;
+        }
         // Persist the safe user-selected mode even if a value supplied in the
         // same reply fails validation. Invalid values themselves remain absent.
         write_record(&base)?;
     }
+    if has_setting_updates && base.draft_review_required {
+        // Any attempted change invalidates an earlier confirmation, even when
+        // the supplied value later fails validation. The old draft must not be
+        // authorized after the user has expressed different intent.
+        base.draft_review_confirmed = false;
+        write_record(&base)?;
+    }
     let mut candidate = base.clone();
+    if values.confirm_draft {
+        if !base.draft_review_pending() {
+            anyhow::bail!("there is no pending execution draft to confirm");
+        }
+        if !base.missing_fields().is_empty() {
+            anyhow::bail!("cannot confirm an incomplete execution draft");
+        }
+        candidate.draft_review_confirmed = true;
+    }
     let mut validation_errors = Vec::new();
     if let Some(value) = values.trade_amount_u {
         match parse_positive(value, "--trade-amount") {
@@ -579,6 +757,16 @@ pub fn start_or_update(
             }),
         }
     }
+    if let Some(value) = values.auth_mode {
+        match TradeKitAuthMode::parse(value) {
+            Ok(value) => candidate.auth_mode = Some(value),
+            Err(error) => validation_errors.push(ValidationError {
+                field: "authMode".to_string(),
+                code: "invalid_auth_mode".to_string(),
+                message: error.to_string(),
+            }),
+        }
+    }
     if !values.dynamic_settings.is_empty() {
         consent::merge_dynamic_settings(&mut candidate.dynamic_settings, &values.dynamic_settings);
     }
@@ -602,7 +790,11 @@ pub fn start_or_update(
     };
 
     let missing_fields = file.missing_fields();
-    let complete = validation_errors.is_empty() && missing_fields.is_empty();
+    let draft_review_required = file.draft_review_pending();
+    let draft_review = draft_review_required.then(|| file.review_draft());
+    let complete = validation_errors.is_empty()
+        && missing_fields.is_empty()
+        && !draft_review_required;
     let consent_command = complete.then(|| {
         let environment = file
             .trade_environment
@@ -616,23 +808,11 @@ pub fn start_or_update(
             .order_policy
             .map(|value| format!(" --order-policy {}", value.as_str()))
             .unwrap_or_default();
-        let mut persisted_settings = file.dynamic_settings.clone();
-        let persisted_required_fields = file
-            .required_fields
-            .iter()
-            .filter(|field| {
-                !(file.selected_mode == SelectedMode::Manual
-                    && matches!(field.as_str(), "tradeAmount" | "cap" | "quote"))
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        if !persisted_required_fields.is_empty() {
-            persisted_settings.insert(
-                "requiredFields".to_string(),
-                serde_json::to_value(&persisted_required_fields)
-                    .expect("validated required fields must serialize"),
-            );
-        }
+        let auth_mode = file
+            .auth_mode
+            .map(|value| format!(" --auth-mode {}", value.as_str()))
+            .unwrap_or_default();
+        let persisted_settings = persisted_dynamic_settings(&file);
         let dynamic_settings = if persisted_settings.is_empty() {
             String::new()
         } else {
@@ -658,8 +838,8 @@ pub fn start_or_update(
                     .map(|value| format!(" --quote {value}"))
                     .unwrap_or_default();
                 format!(
-                    "onchainos agent autotrade-consent-set --job-id {} --agent-id {} --mode auto{amount}{cap}{quote}{environment}{margin_mode}{order_policy}{dynamic_settings}",
-                    file.job_id, file.agent_id
+                    "onchainos agent autotrade-consent-set --job-id {} --agent-id {} --mode auto --continuation-id {}{amount}{cap}{quote}{environment}{margin_mode}{order_policy}{auth_mode}{dynamic_settings}",
+                    file.job_id, file.agent_id, file.continuation_id
                 )
             }
             SelectedMode::Manual => format!(
@@ -681,6 +861,8 @@ pub fn start_or_update(
         required_fields: file.required_fields,
         missing_fields,
         validation_errors,
+        draft_review_required,
+        draft_review,
         complete,
         consent_command,
     })
@@ -697,6 +879,80 @@ pub fn clear(job_id: &str) {
     if let Ok(path) = continuation_path(job_id) {
         let _ = std::fs::remove_file(path);
     }
+}
+
+/// Validate the final Auto write against the exact completed continuation.
+/// This performs no writes and never consumes the continuation.
+pub fn validate_auto_write(
+    job_id: &str,
+    continuation_id: &str,
+    write: &AutoConsentWrite<'_>,
+) -> anyhow::Result<()> {
+    let file = load_for_resume(job_id, write.agent_id, continuation_id)?;
+    if file.selected_mode != SelectedMode::Auto {
+        anyhow::bail!("confirmed continuation is not an automatic execution policy");
+    }
+    let missing_fields = file.missing_fields();
+    if !missing_fields.is_empty() || file.draft_review_pending() {
+        anyhow::bail!("automatic execution draft has not been fully confirmed");
+    }
+
+    let normalized_amount = write
+        .trade_amount_u
+        .map(|value| parse_positive(value, "--trade-amount"))
+        .transpose()?;
+    let normalized_cap = write
+        .cap_u
+        .map(|value| parse_positive(value, "--cap"))
+        .transpose()?;
+    let normalized_quote = write.quote_token.map(normalize_quote).transpose()?;
+    let expected_settings = persisted_dynamic_settings(&file);
+
+    let mut mismatched = Vec::new();
+    if normalized_amount != file.trade_amount_u {
+        mismatched.push("tradeAmount");
+    }
+    if normalized_cap != file.cap_u {
+        mismatched.push("cap");
+    }
+    if normalized_quote != file.quote_token {
+        mismatched.push("quote");
+    }
+    if write.trade_environment != file.trade_environment {
+        mismatched.push("environment");
+    }
+    if write.margin_mode != file.margin_mode {
+        mismatched.push("marginMode");
+    }
+    if write.order_policy != file.order_policy {
+        mismatched.push("orderPolicy");
+    }
+    if write.auth_mode != file.auth_mode {
+        mismatched.push("authMode");
+    }
+    if write.dynamic_settings != &expected_settings {
+        mismatched.push("settings");
+    }
+    if !mismatched.is_empty() {
+        anyhow::bail!(
+            "final automatic execution settings do not match the confirmed draft: {}",
+            mismatched.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Consume an already validated continuation after both consent and grant have
+/// been written. Missing/mismatched records fail so a permit cannot be replayed.
+pub fn consume_auto_write(
+    job_id: &str,
+    agent_id: &str,
+    continuation_id: &str,
+) -> anyhow::Result<()> {
+    load_for_resume(job_id, agent_id, continuation_id)?;
+    std::fs::remove_file(continuation_path(job_id)?)
+        .map_err(|_| anyhow::anyhow!("failed to consume automatic execution permit"))?;
+    Ok(())
 }
 
 pub fn cancel(job_id: &str, agent_id: &str, continuation_id: &str) -> anyhow::Result<()> {
@@ -718,6 +974,7 @@ pub fn cancel(job_id: &str, agent_id: &str, continuation_id: &str) -> anyhow::Re
 
 #[cfg(test)]
 mod tests {
+    use super::super::consent::ConsentMode;
     use super::*;
 
     fn with_home<F: FnOnce()>(f: F) {
@@ -732,6 +989,210 @@ mod tests {
         f();
         std::env::remove_var("ONCHAINOS_HOME");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn completed_auto_continuation() -> ContinuationResult {
+        let required = vec![
+            "tradeAmount".to_string(),
+            "cap".to_string(),
+            "quote".to_string(),
+        ];
+        start_or_update(
+            Some(StartBinding {
+                job_id: "job-1",
+                agent_id: "7",
+                selected_mode: SelectedMode::Auto,
+                mode_confirmed: true,
+                origin: Origin::SubscriptionRestore,
+                signal_type: "spot",
+                original_delivery_id: None,
+                required_fields: Some(&required),
+                service_guide_hash: None,
+                service_guide_hash_resolved: false,
+                seed_consent: None,
+            }),
+            "job-1",
+            "7",
+            None,
+            None,
+            ExplicitValues {
+                trade_amount_u: Some("10"),
+                cap_u: Some("20"),
+                quote_token: Some("usdt"),
+                ..ExplicitValues::default()
+            },
+        )
+        .unwrap()
+    }
+
+    fn completed_auto_settings() -> DynamicConsentSettings {
+        consent::parse_dynamic_settings_json(
+            Some(r#"{"requiredFields":["tradeAmount","cap","quote"]}"#),
+            "--settings-json",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn final_auto_write_requires_exact_confirmed_settings() {
+        with_home(|| {
+            let completed = completed_auto_continuation();
+            assert!(completed.complete);
+            let settings = completed_auto_settings();
+            let exact = AutoConsentWrite {
+                agent_id: "7",
+                trade_amount_u: Some("10.0"),
+                cap_u: Some("20.00"),
+                quote_token: Some("USDT"),
+                trade_environment: None,
+                margin_mode: None,
+                order_policy: None,
+                auth_mode: None,
+                dynamic_settings: &settings,
+            };
+            validate_auto_write("job-1", &completed.continuation_id, &exact).unwrap();
+
+            let tampered = AutoConsentWrite {
+                trade_amount_u: Some("11"),
+                ..exact
+            };
+            let error = validate_auto_write(
+                "job-1",
+                &completed.continuation_id,
+                &tampered,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("tradeAmount"));
+        });
+    }
+
+    #[test]
+    fn final_auto_write_rejects_dynamic_setting_tampering() {
+        with_home(|| {
+            let completed = completed_auto_continuation();
+            let tampered_settings = consent::parse_dynamic_settings_json(
+                Some(r#"{"requiredFields":["tradeAmount","quote"]}"#),
+                "--settings-json",
+            )
+            .unwrap();
+            let write = AutoConsentWrite {
+                agent_id: "7",
+                trade_amount_u: Some("10"),
+                cap_u: Some("20"),
+                quote_token: Some("usdt"),
+                trade_environment: None,
+                margin_mode: None,
+                order_policy: None,
+                auth_mode: None,
+                dynamic_settings: &tampered_settings,
+            };
+            let error = validate_auto_write("job-1", &completed.continuation_id, &write)
+                .unwrap_err();
+            assert!(error.to_string().contains("settings"));
+        });
+    }
+
+    #[test]
+    fn final_auto_write_rejects_unconfirmed_notify_only_draft() {
+        with_home(|| {
+            consent::write_consent_policy_with_dynamic_settings(
+                "job-1",
+                ConsentMode::Auto,
+                Some("20"),
+                Some("10"),
+                Some("usdt"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                3600,
+            )
+            .unwrap();
+            consent::write_consent_policy_with_dynamic_settings(
+                "job-1",
+                ConsentMode::Decline,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                3600,
+            )
+            .unwrap();
+            let seed = consent::load_consent("job-1").unwrap().unwrap();
+            let required = Vec::new();
+            let pending = start_or_update(
+                Some(StartBinding {
+                    job_id: "job-1",
+                    agent_id: "7",
+                    selected_mode: SelectedMode::Auto,
+                    mode_confirmed: true,
+                    origin: Origin::SubscriptionRestore,
+                    signal_type: "spot",
+                    original_delivery_id: None,
+                    required_fields: Some(&required),
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
+                    seed_consent: Some(&seed),
+                }),
+                "job-1",
+                "7",
+                None,
+                None,
+                ExplicitValues::default(),
+            )
+            .unwrap();
+            assert!(pending.draft_review_required);
+            assert!(!pending.complete);
+
+            let settings = DynamicConsentSettings::new();
+            let write = AutoConsentWrite {
+                agent_id: "7",
+                trade_amount_u: Some("10"),
+                cap_u: Some("20"),
+                quote_token: Some("usdt"),
+                trade_environment: None,
+                margin_mode: None,
+                order_policy: None,
+                auth_mode: None,
+                dynamic_settings: &settings,
+            };
+            let error = validate_auto_write("job-1", &pending.continuation_id, &write)
+                .unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("has not been fully confirmed"));
+        });
+    }
+
+    #[test]
+    fn final_auto_write_consumes_permit_and_rejects_replay() {
+        with_home(|| {
+            let completed = completed_auto_continuation();
+            let settings = completed_auto_settings();
+            let write = AutoConsentWrite {
+                agent_id: "7",
+                trade_amount_u: Some("10"),
+                cap_u: Some("20"),
+                quote_token: Some("usdt"),
+                trade_environment: None,
+                margin_mode: None,
+                order_policy: None,
+                auth_mode: None,
+                dynamic_settings: &settings,
+            };
+            validate_auto_write("job-1", &completed.continuation_id, &write).unwrap();
+            consume_auto_write("job-1", "7", &completed.continuation_id).unwrap();
+            let replay = validate_auto_write("job-1", &completed.continuation_id, &write)
+                .unwrap_err();
+            assert!(replay
+                .to_string()
+                .contains("no live consent continuation"));
+        });
     }
 
     #[test]
@@ -784,11 +1245,13 @@ mod tests {
                 completed.original_delivery_id.as_deref(),
                 Some("delivery-1")
             );
+            let expected = format!(
+                "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --continuation-id {} --trade-amount 10 --cap 20 --quote usdc --settings-json '{{\"requiredFields\":[\"tradeAmount\",\"cap\",\"quote\"]}}'",
+                completed.continuation_id
+            );
             assert_eq!(
                 completed.consent_command.as_deref(),
-                Some(
-                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --trade-amount 10 --cap 20 --quote usdc --settings-json '{\"requiredFields\":[\"tradeAmount\",\"cap\",\"quote\"]}'"
-                )
+                Some(expected.as_str())
             );
         });
     }
@@ -964,11 +1427,13 @@ mod tests {
             )
             .unwrap();
             assert!(completed.complete);
+            let expected = format!(
+                "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --continuation-id {} --trade-amount 12.5 --quote usdt --settings-json '{{\"requiredFields\":[\"tradeAmount\",\"quote\"]}}'",
+                completed.continuation_id
+            );
             assert_eq!(
                 completed.consent_command.as_deref(),
-                Some(
-                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --trade-amount 12.5 --quote usdt --settings-json '{\"requiredFields\":[\"tradeAmount\",\"quote\"]}'"
-                )
+                Some(expected.as_str())
             );
         });
     }
@@ -1036,11 +1501,13 @@ mod tests {
             )
             .unwrap();
             assert!(completed.complete);
+            let expected = format!(
+                "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --continuation-id {} --trade-amount 10 --cap 100 --quote usdt --environment demo --margin-mode cross --order-policy signal_price_limit --settings-json '{{\"requiredFields\":[\"tradeAmount\",\"cap\",\"quote\",\"environment\",\"marginMode\",\"orderPolicy\"]}}'",
+                completed.continuation_id
+            );
             assert_eq!(
                 completed.consent_command.as_deref(),
-                Some(
-                    "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode auto --trade-amount 10 --cap 100 --quote usdt --environment demo --margin-mode cross --order-policy signal_price_limit --settings-json '{\"requiredFields\":[\"tradeAmount\",\"cap\",\"quote\",\"environment\",\"marginMode\",\"orderPolicy\"]}'"
-                )
+                Some(expected.as_str())
             );
         });
     }
@@ -1088,6 +1555,244 @@ mod tests {
                     "onchainos agent autotrade-consent-set --job-id job-1 --agent-id 7 --mode notify_only"
                 )
             );
+        });
+    }
+
+    #[test]
+    fn notify_only_review_can_restore_saved_configuration_to_auto() {
+        with_home(|| {
+            consent::write_consent_policy_with_settings(
+                "job-1",
+                ConsentMode::Auto,
+                Some("100"),
+                Some("10"),
+                Some("usdt"),
+                Some(TradeEnvironment::Demo),
+                Some(MarginMode::Cross),
+                Some(OrderPolicy::Market),
+                Some(TradeKitAuthMode::OAuth),
+                3600,
+            )
+            .unwrap();
+            consent::write_consent_policy_with_settings(
+                "job-1",
+                ConsentMode::Decline,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                3600,
+            )
+            .unwrap();
+            let seed = consent::load_consent("job-1").unwrap().unwrap();
+            assert_eq!(seed.mode, ConsentMode::Decline);
+
+            let required = vec![
+                "tradeAmount".to_string(),
+                "cap".to_string(),
+                "quote".to_string(),
+                "environment".to_string(),
+                "marginMode".to_string(),
+                "orderPolicy".to_string(),
+                "authMode".to_string(),
+            ];
+            let first = start_or_update(
+                Some(StartBinding {
+                    job_id: "job-1",
+                    agent_id: "7",
+                    selected_mode: SelectedMode::Auto,
+                    mode_confirmed: true,
+                    origin: Origin::SubscriptionRestore,
+                    signal_type: "perp",
+                    original_delivery_id: None,
+                    required_fields: Some(&required),
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
+                    seed_consent: Some(&seed),
+                }),
+                "job-1",
+                "7",
+                None,
+                None,
+                ExplicitValues::default(),
+            )
+            .unwrap();
+
+            assert!(!first.complete);
+            assert!(first.draft_review_required);
+            assert!(first.consent_command.is_none());
+            assert_eq!(first.draft_review.as_ref().unwrap()["mode"], "auto");
+            assert_eq!(
+                first.draft_review.as_ref().unwrap()["tradeAmountU"],
+                "10"
+            );
+            assert_eq!(first.draft_review.as_ref().unwrap()["capU"], "100");
+            assert_eq!(first.draft_review.as_ref().unwrap()["authMode"], "oauth");
+            let continuation_id = first.continuation_id.clone();
+
+            let result = start_or_update(
+                None,
+                "job-1",
+                "7",
+                Some(&continuation_id),
+                None,
+                ExplicitValues {
+                    confirm_draft: true,
+                    ..ExplicitValues::default()
+                },
+            )
+            .unwrap();
+
+            assert!(result.complete);
+            assert!(!result.draft_review_required);
+            let command = result.consent_command.unwrap();
+            assert!(command.contains("--mode auto"));
+            assert!(command.contains("--trade-amount 10"));
+            assert!(command.contains("--cap 100"));
+            assert!(command.contains("--quote usdt"));
+            assert!(command.contains("--environment demo"));
+            assert!(command.contains("--margin-mode cross"));
+            assert!(command.contains("--order-policy market"));
+            assert!(command.contains("--auth-mode oauth"));
+
+            let changed = start_or_update(
+                None,
+                "job-1",
+                "7",
+                Some(&continuation_id),
+                None,
+                ExplicitValues {
+                    trade_amount_u: Some("20"),
+                    ..ExplicitValues::default()
+                },
+            )
+            .unwrap();
+            assert!(!changed.complete);
+            assert!(changed.draft_review_required);
+            assert_eq!(changed.draft_review.unwrap()["tradeAmountU"], "20");
+        });
+    }
+
+    #[test]
+    fn incomplete_notify_only_draft_cannot_be_confirmed() {
+        with_home(|| {
+            consent::write_consent_policy_with_settings(
+                "job-1",
+                ConsentMode::Decline,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                3600,
+            )
+            .unwrap();
+            let seed = consent::load_consent("job-1").unwrap().unwrap();
+            let required = vec!["tradeAmount".to_string()];
+            let first = start_or_update(
+                Some(StartBinding {
+                    job_id: "job-1",
+                    agent_id: "7",
+                    selected_mode: SelectedMode::Auto,
+                    mode_confirmed: true,
+                    origin: Origin::SubscriptionRestore,
+                    signal_type: "spot",
+                    original_delivery_id: None,
+                    required_fields: Some(&required),
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
+                    seed_consent: Some(&seed),
+                }),
+                "job-1",
+                "7",
+                None,
+                None,
+                ExplicitValues::default(),
+            )
+            .unwrap();
+            assert_eq!(first.missing_fields, ["tradeAmount"]);
+            let error = start_or_update(
+                None,
+                "job-1",
+                "7",
+                Some(&first.continuation_id),
+                None,
+                ExplicitValues {
+                    confirm_draft: true,
+                    ..ExplicitValues::default()
+                },
+            )
+            .unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("cannot confirm an incomplete execution draft"));
+        });
+    }
+
+    #[test]
+    fn draft_confirmation_cannot_be_combined_with_configuration_changes() {
+        let result = start_or_update(
+            None,
+            "job-1",
+            "7",
+            Some("atc_00000000000000000000000000000000"),
+            None,
+            ExplicitValues {
+                trade_amount_u: Some("20"),
+                confirm_draft: true,
+                ..ExplicitValues::default()
+            },
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must be a separate resume"));
+    }
+
+    #[test]
+    fn legacy_auto_restore_continuation_is_migrated_to_require_draft_review() {
+        with_home(|| {
+            let required = Vec::new();
+            let current = start_or_update(
+                Some(StartBinding {
+                    job_id: "job-1",
+                    agent_id: "7",
+                    selected_mode: SelectedMode::Auto,
+                    mode_confirmed: true,
+                    origin: Origin::SubscriptionRestore,
+                    signal_type: "spot",
+                    original_delivery_id: None,
+                    required_fields: Some(&required),
+                    service_guide_hash: None,
+                    service_guide_hash_resolved: false,
+                    seed_consent: None,
+                }),
+                "job-1",
+                "7",
+                None,
+                None,
+                ExplicitValues::default(),
+            )
+            .unwrap();
+            assert!(current.complete);
+
+            let path = continuation_path("job-1").unwrap();
+            let mut legacy: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            legacy["version"] = serde_json::json!(5);
+            legacy.as_object_mut().unwrap().remove("seededFromNotifyOnly");
+            legacy.as_object_mut().unwrap().remove("draftReviewRequired");
+            legacy.as_object_mut().unwrap().remove("draftReviewConfirmed");
+            std::fs::write(&path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+            let migrated = load_for_resume("job-1", "7", &current.continuation_id).unwrap();
+            assert_eq!(migrated.version, VERSION);
+            assert!(migrated.draft_review_pending());
         });
     }
 

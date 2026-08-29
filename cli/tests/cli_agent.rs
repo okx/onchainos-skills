@@ -37,7 +37,8 @@
 mod common;
 
 use common::{
-    assert_error_contains, fresh_home, onchainos, parse_stdout_json, run_with_retry, scrubbed,
+    assert_error_contains, create_auto_consent_via_continuation, fresh_home, onchainos,
+    parse_stdout_json, run_with_retry, scrubbed,
 };
 use serde_json::Value;
 use std::fs;
@@ -750,22 +751,13 @@ fn autotrade_settings_update_persists_all_trade_kit_choices_without_rewriting_po
 #[test]
 fn autotrade_auto_accepts_missing_cap_and_authorizes_any_positive_amount() {
     let (_home, dir) = fresh_home("cli_agent_autotrade_unbounded_auto");
-    let mut set = onchainos();
-    scrubbed(&mut set, &dir);
-    let set_output = set
-        .args([
-            "agent",
-            "autotrade-consent-set",
-            "--job-id",
-            "job_unbounded_auto",
-            "--agent-id",
-            "8315",
-            "--mode",
-            "auto",
-        ])
-        .output()
-        .expect("persist default auto policy");
-    common::assert_ok_and_extract_data(&set_output);
+    create_auto_consent_via_continuation(
+        &dir,
+        "job_unbounded_auto",
+        "8315",
+        None,
+        None,
+    );
 
     let mut check = onchainos();
     scrubbed(&mut check, &dir);
@@ -796,26 +788,8 @@ fn autotrade_auto_accepts_missing_cap_and_authorizes_any_positive_amount() {
 fn autotrade_consent_request_suppresses_mode_card_for_auto_policy() {
     let (_home, dir) = fresh_home("cli_agent_autotrade_consent_request_existing_policy");
 
-    for (job_id, mode, extra_args) in [(
-        "job_auto",
-        "auto",
-        vec!["--cap", "10", "--trade-amount", "1"],
-    )] {
-        let mut set = onchainos();
-        scrubbed(&mut set, &dir);
-        let mut set_args = vec![
-            "agent",
-            "autotrade-consent-set",
-            "--job-id",
-            job_id,
-            "--agent-id",
-            "8315",
-            "--mode",
-            mode,
-        ];
-        set_args.extend(extra_args);
-        let set_output = set.args(set_args).output().expect("persist consent policy");
-        common::assert_ok_and_extract_data(&set_output);
+    for job_id in ["job_auto"] {
+        create_auto_consent_via_continuation(&dir, job_id, "8315", Some("1"), Some("10"));
 
         let mut request = onchainos();
         scrubbed(&mut request, &dir);
@@ -841,7 +815,7 @@ fn autotrade_consent_request_suppresses_mode_card_for_auto_policy() {
         assert_eq!(data["reason"], "auto_authorization_already_persisted");
         assert_eq!(data["jobId"], job_id);
         assert_eq!(data["deliveryId"], "msg:delivery-1");
-        assert_eq!(data["consentMode"], mode);
+        assert_eq!(data["consentMode"], "auto");
     }
 }
 

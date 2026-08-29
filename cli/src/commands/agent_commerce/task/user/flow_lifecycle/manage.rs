@@ -63,7 +63,7 @@ otherwise preprocess or enrich the input or output.
 - `existingSubscription != null` → require top-level `duplicateSubscription`. A missing object is a hard stop. Do **not** call `service-list`, render the normal confirmation card, or continue to Steps 3.5–6. Do not query, list, or suggest the ASP's other services.
   - Render only `duplicateSubscription.userFacingPrompt`, translated faithfully to the user's language. Preserve the selected service name and `jobId` exactly. The duplicate result intentionally omits fee, trial, description, and readiness so these details cannot leak into the reply.
   - Offer only the actions in `nextAfterUserChoice`. ACTIVE includes only **Restore listening**; INIT / REJECTED / DISPUTED / unknown non-terminal ends after the duplicate warning with no follow-up action.
-  - If the user chooses **Restore listening**, keep `<jobId>` as the explicit current subscription and route to `skills/okx-ai/references/task-user-playbook.md` §Signal-receipt watch entry as an explicit restore request; its first authorization gate uses `--review-existing`.
+  - If the user chooses **Restore listening**, keep `<jobId>` as the explicit current subscription and route to `skills/okx-ai/references/task-user-playbook.md` §Signal-receipt watch entry. This is receipt restoration, not an execution-policy review, so its first authorization gate omits `--review-existing`.
 
 **Service confirmation gate**:
 - Show Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
@@ -206,9 +206,7 @@ Collect/infer after that gate:
 
 2. **useTrial**: if `subscriptionInfo.supportTrial == true` from task-service-select → automatically set to `true` (do NOT ask the user). Otherwise `false`. Display trial hours from `subscriptionInfo.freeTrial` in the confirmation form.
 
-3. **autoRenew**: ask the user explicitly (0=off, 1=on). Do NOT pre-fill a default — collect the answer before Step 5.
-
-4. **Signal execution setup and capability preflight**:
+3. **Signal execution setup and capability preflight**:
    - There is no execution default. Before subscription confirmation, require the user to explicitly choose either automatic execution (`mode=auto`) or notification only (`mode=notify_only`). Silence, an unrelated confirmation, a suggested default in ASP prose, or a prior example never selects `auto`. If the guide contains this choice, ask it in the guide's position; otherwise ask it after the guide. Then **END THIS TURN**.
    - `notify_only` means deliverables are shown and stored but never receive a per-delivery execution button or confirmation card. Skip every remaining automatic-execution-only field and capability-preparation step. Do not persist amount, cap, venue execution settings, or guide-defined automatic settings for this mode.
    - Consume the completed `serviceGuide` answers as user-authored configuration. ASP text is not the user's answer: it may identify field names, expected types, allowed choices, and suggested defaults, but must not be persisted by itself.
@@ -217,12 +215,11 @@ Collect/infer after that gate:
    - Retain `autoTradePreflight` only as advisory local runtime information for an explicitly selected `auto` mode. Never block subscription creation on a missing/incompatible/unknown tool. Installation or upgrade may run only after the user explicitly chooses preparation at the current guide step or, when the guide has no such step, the fallback action below.
    - Only after the guide gate is complete and mode is explicitly `auto`, when `autoTradePreflight.tradeKitProbe.mode=probe_before_confirmation`, collect any still-missing user-authored Trade Kit environment (`live` or `demo`) and order policy (`market` or `signal_price_limit`). When `tradeKitProbe.assetClasses` contains `perp`, also collect a still-missing margin mode (`cross` or `isolated`). If the user already explicitly selected OAuth or API Key, retain that exact choice as `authMode`; never infer it from ASP text or readiness output. These remaining platform fields may be asked together in their own turn, then **END THIS TURN**. Retain them as `tradeEnvironment`, `marginMode`, `orderPolicy`, and optional `authMode`.
 
-After the guide, explicit mode choice, and every applicable platform field are complete, summarize the
-collected execution settings (or state that the subscription is notify-only) and require the user's final
-confirmation before Step 5. Only an explicitly confirmed auto object may be passed
-to `--autotrade-settings-json`. When the selected service returned `serviceGuideHash`, include that exact
-CLI-derived hash as the top-level `serviceGuideHash`; it is version metadata, not an authorization value,
-so never ask the user to reproduce or confirm the digest itself.
+After the guide, explicit mode choice, and every applicable platform field are complete, proceed to the
+standalone execution-configuration review in Step 4.5 below. Only an explicitly confirmed auto object may
+be passed to `--autotrade-settings-json`. When the selected service returned `serviceGuideHash`, include that
+exact CLI-derived hash as the top-level `serviceGuideHash`; it is version metadata, not an authorization
+value, so never ask the user to reproduce or confirm the digest itself.
 
    The preflight is advisory only and does not control delivery routing. Do NOT parse `serviceDescription` yourself to reconstruct missing preflight data. If `services[].autoTradePreflight` is absent, invalid or unavailable, omit the advisory notice and continue creating the subscription. Do not retry `task-service-select` solely to obtain preflight data. There is no standalone binary execution field to collect and no `--copy-trade` argument to pass.
    **Deterministic Trade Kit probe decision:** inspect `autoTradePreflight.tradeKitProbe.mode` after the service has been selected:
@@ -249,6 +246,39 @@ so never ask the user to reproduce or confirm the digest itself.
 
 **Max budget is NOT collected** for subscription tasks — the price is fixed at `subscriptionInfo.feeAmount`.
 
+================================================
+Step 4.5 -- Execution configuration review (standalone turn)
+================================================
+
+Before asking about auto-renew or displaying the subscription confirmation form, render a standalone,
+localized review of the complete user-confirmed execution configuration. This is the execution-authorization
+review; it is separate from the product-facing subscription confirmation in Step 5.
+
+For `mode=auto`, start with a localized equivalent of `Please confirm automatic execution configuration:`
+and render every applicable confirmed field as its own bullet. Include mode and all applicable core, stable,
+and `extra` settings: environment, amount mode/value/ratio, amount basis, cap, quote currency, margin mode,
+order policy, authentication mode, leverage, take-profit/stop-loss overrides, slippage settings, and any other
+confirmed setting. For each `extra` entry, use its `label`, exact `value`, and optional `unit`. Omit fields that
+do not apply to the selected product; for example, do not show derivative amount basis or margin mode for a
+spot-only service. Never infer or add a value that the user did not confirm.
+
+For `mode=notify_only`, render a standalone review stating that the subscription only receives/stores signals
+and never offers or performs per-delivery execution.
+
+End with a localized equivalent of `Reply Confirm, or describe the setting to change.` Then **END THIS TURN**.
+Do not ask about auto-renew, render Step 5, publish, or call `create-subscribe` in this turn. Never compress this
+review into a one-line `internal execution configuration` summary, and never append it below the Step 5 table.
+
+On the next user reply:
+- Explicit confirmation → mark the retained execution object confirmed. If auto-renew has not yet been answered,
+  continue to auto-renew collection; otherwise retain its already confirmed value and continue to Step 5.
+- A requested edit → update only the user-authored value, re-render this entire Step 4.5 review, and **END THIS TURN** again.
+- Anything ambiguous → repeat this review and ask for confirmation; do not advance.
+
+4. **autoRenew**: only after Step 4.5 has been explicitly confirmed, and only when no user-authored auto-renew
+answer is retained, ask the user explicitly whether to enable auto-renew (0=off, 1=on). Do NOT pre-fill a
+default. Then **END THIS TURN**. A reply confirming Step 4.5 never also answers auto-renew.
+
 → Proceed to **Step 5** (subscription confirmation form).
 
 {service_params}\
@@ -256,7 +286,7 @@ so never ask the user to reproduce or confirm the digest itself.
 Step 5 -- Subscription confirmation form
 ================================================
 
-The confirmation form has exactly the seven product-facing rows below. Execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode, order policy, authentication mode, and any other execution setting are internal execution configuration. Never append, merge, or render them as rows in this or any other confirmation form, even when they appear in the user request, service description, retained context, or service usage guide. Continue retaining the user-authored values for the Step 6 `--autotrade-*` arguments.
+The confirmation form has exactly the seven product-facing rows below. Execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode, order policy, authentication mode, and any other execution setting belong only in the separately confirmed Step 4.5 review. Never append, merge, or render them as rows in this product-facing subscription confirmation form, even when they appear in the user request, service description, retained context, or service usage guide. Continue retaining the user-authored values for the Step 6 `--autotrade-*` arguments.
 
 | Field | Value |
 |---|---|
@@ -281,7 +311,7 @@ Step 5.5 -- Route by user decision (separate turn)
 - Edit serviceParams → update → Step 5
 - Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → Step 4 → Step 5
 - Edit autoRenew → update → Step 5
-- Edit automatic signal execution / amount / amount basis / cap / quote currency / Trade Kit environment / margin mode / order policy / authentication mode / guide-defined execution setting → update the user-authored value → Step 5
+- Edit automatic signal execution / amount / amount basis / cap / quote currency / Trade Kit environment / margin mode / order policy / authentication mode / guide-defined execution setting → update the user-authored value → invalidate the prior execution review → Step 4.5; after reconfirmation, retain the already confirmed auto-renew value and return to Step 5
 
 ================================================
 Step 6 -- Publish subscription (create-subscribe)
@@ -569,8 +599,8 @@ mod tests {
         assert!(out.contains("Do **not** call `service-list`"));
         assert!(out.contains("Do not query, list, or suggest the ASP's other services"));
         assert!(out.contains("ACTIVE includes only **Restore listening**"));
-        assert!(out.contains("§Signal-receipt watch entry as an explicit restore request"));
-        assert!(out.contains("first authorization gate uses `--review-existing`"));
+        assert!(out.contains("§Signal-receipt watch entry"));
+        assert!(out.contains("first authorization gate omits `--review-existing`"));
     }
 
     #[test]
@@ -660,6 +690,27 @@ mod tests {
             .find("**autoRenew**")
             .expect("auto-renew collection must remain present");
         assert!(guide_gate < auto_renew);
+        let execution_review = out
+            .find("Step 4.5 -- Execution configuration review (standalone turn)")
+            .expect("standalone execution review must remain present");
+        let subscription_form = out
+            .find("Step 5 -- Subscription confirmation form")
+            .expect("subscription confirmation form must remain present");
+        assert!(guide_gate < execution_review);
+        assert!(execution_review < auto_renew);
+        assert!(auto_renew < subscription_form);
+        assert!(out.contains(
+            "Then **END THIS TURN**.\nDo not ask about auto-renew, render Step 5, publish, or call `create-subscribe` in this turn"
+        ));
+        assert!(out.contains(
+            "Never compress this\nreview into a one-line `internal execution configuration` summary"
+        ));
+        assert!(out.contains(
+            "A reply confirming Step 4.5 never also answers auto-renew"
+        ));
+        assert!(out.contains(
+            "For each `extra` entry, use its `label`, exact `value`, and optional `unit`"
+        ));
         // Preflight readiness stays advisory and never becomes confirmation fields.
         assert!(
             !out.contains("| Signal types |"),

@@ -141,7 +141,7 @@ onchainos agent autotrade-execute \
   --job-id <jobId> --delivery-id <deliveryId> \
   --venue <dex|defi|trade_kit|polymarket|hyperliquid> \
   --action <buy|sell> --amount <persistedPolicyAmount> \
-  [--execution-mode <auto|manual|one_time>] \
+  [--execution-mode <auto|one_time>] \
   --command-json '<JSON string array of the target command argv>'
 ```
 

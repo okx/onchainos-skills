@@ -137,12 +137,27 @@ Display as a single `| Field | Value |` table with exactly these **7 fields** in
 
 Execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode,
 order policy, and any other execution setting are internal execution configuration. Never add them to this
-or any other confirmation form, even for a trading-signal subscription. Automatic execution remains the
+product-facing subscription confirmation form; they belong in the separate execution-configuration review
+described below. Automatic execution remains the
 result of an explicit user choice; it has no default. The other choice is notification only, which skips all
 remaining automatic-only setup and later stores/forwards deliverables without a per-delivery execution entry.
 Their collection sequence is owned exclusively by the **Service Usage Guide gate** above; do not
 define or apply a second batching rule here. Only user-authored replies supply persisted values. Retain the
 confirmed answers outside the form and pass them through the existing `--autotrade-*` arguments.
+
+After the guide and all applicable execution fields are complete, but before asking about auto-renew, render
+the complete execution configuration as a standalone localized review and end the turn. For automatic mode,
+show every applicable confirmed core, stable, and `extra` field as a separate item; render `extra` entries from
+their label, exact value, and optional unit. For notification-only mode, state separately that deliverables are
+received/stored without a per-delivery execution entry. Require an explicit confirmation or edit. Never compress
+this review into one `internal execution configuration` sentence, append it below the subscription table, ask
+about auto-renew in the same turn, or treat the later subscription confirmation as confirmation of this review.
+Any edit invalidates the review and requires the complete updated review to be shown and confirmed again.
+
+Only after that standalone review is explicitly confirmed, ask for auto-renew in a separate turn when it has not
+already been answered. The reply that confirms execution configuration never also answers auto-renew. If an
+execution-setting edit from the later subscription card returns here, retain the previously confirmed auto-renew
+choice and return to the subscription card after the updated execution review is confirmed.
 
 If attachments are present, list them below the table; never add an Attachments row.
 
@@ -176,7 +191,7 @@ Every modification is confirmed individually (Universal confirmation rule). Afte
 | Edit budget / max-budget (regular, pre-create only) | Validate without auto-adjusting the other field → separately confirm concrete value(s) → update existing fields → re-render without budget rows |
 | Edit payment token (regular) | Update in place → re-validate → re-render |
 | Edit auto-renew (subscription) | Update in place → re-render |
-| Edit automatic execution / amount / cap / quote (subscription) | Update user-authored values → re-render |
+| Edit automatic execution / amount / cap / quote or another execution setting (subscription) | Update user-authored values → invalidate the prior execution review → re-render and reconfirm the standalone execution review; retain an already confirmed auto-renew choice |
 | Change provider / service before creation | Re-run `task-service-select` (may switch branch) → discard prior budget/max-budget edits → reset both fields from the newly selected service `feeAmount` → re-render |
 
 **Branch-switch rule (FR-2.5)**: when an edited Description changes the matched service type (subscription ↔ regular), clear the previous branch's type-specific fields. On entry to the regular branch, reset existing `budget` / `max-budget` from the newly selected service fee and collect Payment Currency; for subscription, collect Trial / Auto-Renew. If re-match is empty, follow the `matchStatus` recovery in the common publishing playbook.
