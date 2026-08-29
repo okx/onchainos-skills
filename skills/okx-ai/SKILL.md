@@ -106,11 +106,3 @@ Render `nextAction` as a numbered list. Never invent actions not returned by the
 
 Do not infer progression from human-readable output. Keep backend field names
 inside `payload` unchanged. 
-
-## Task Marketplace
-
-- New user task/subscription: read `identity-discover.md` +
-  `intent-keyword-extraction.md`; show one recommended Service as a confirmation
-  card, stop, and wait for explicit confirmation. Then pass only its numeric
-  `sid` to `task-create-prepare --sid` and route the structured result under
-  **Task progression**.
