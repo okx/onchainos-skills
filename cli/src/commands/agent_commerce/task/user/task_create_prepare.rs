@@ -17,17 +17,11 @@ const PHASE_PAYMENT_VALIDATION: &str = "payment_validation";
 const PHASE_SUBSCRIPTION_VALIDATION: &str = "subscription_validation";
 const PHASE_CREATION: &str = "creation";
 
-const LOGIN_ACTION: &str = "Load the okx-agentic-wallet skill and complete wallet login. After login succeeds, rerun task-create-prepare with the same sid. Do not rerun service-match. If login cannot be completed, stop.";
-const USER_IDENTITY_ACTION: &str = "Load references/identity-register.md and register a User Agent with --role user. Then rerun task-create-prepare with the same sid.";
-const A2MCP_ACTION: &str = "Load okx-agent-payments-protocol skill with data.payload. Do not call create-task or create-subscribe.";
-const UNKNOWN_SERVICE_TYPE_ACTION: &str = "Inform the user that data.payload.serviceType is unsupported for task creation. Do not call create-task or create-subscribe; stop.";
-
 fn build_decision(
     phase: &str,
     decision: &str,
     reason: &str,
     next_action: Value,
-    _action: impl Into<String>,
 ) -> Map<String, Value> {
     let mut out = Map::new();
     out.insert("phase".to_string(), Value::String(phase.to_string()));
@@ -42,10 +36,9 @@ fn emit(
     decision: &str,
     reason: &str,
     next_action: Value,
-    action: impl Into<String>,
     payload: Value,
 ) {
-    let mut out = build_decision(phase, decision, reason, next_action, action);
+    let mut out = build_decision(phase, decision, reason, next_action);
     out.insert("payload".to_string(), payload);
     crate::output::success(Value::Object(out));
 }
@@ -54,36 +47,12 @@ fn next_action(id: &str, recommend: bool) -> Value {
     json!([{"id": id, "recommend": recommend}])
 }
 
-fn ready_action() -> &'static str {
-    "Open references/task-user-actions-create.md at Prepared service entry with data.payload and the original user utterance. Do not rerun service-match or task-create-prepare."
-}
-
-fn duplicate_action(existing: &subscription_ops::ExistingSubscriptionSummary) -> String {
-    if existing.restore_listening_available {
-        format!(
-            "Do not create a duplicate subscription. Ask to restore listening for jobId={}. After explicit confirmation, open references/task-user-playbook.md at Signal-receipt watch with that jobId; otherwise stop.",
-            existing.job_id
-        )
-    } else {
-        format!(
-            "Do not create a duplicate subscription. Say jobId={} blocks creation and listening cannot be restored; stop.",
-            existing.job_id
-        )
-    }
-}
-
 fn duplicate_next_action(existing: &subscription_ops::ExistingSubscriptionSummary) -> &'static str {
     if existing.restore_listening_available {
         "restore_subscription"
     } else {
         "stop"
     }
-}
-
-fn balance_action(warning: &Value) -> String {
-    format!(
-        "Show this warning exactly, then stop: {warning}. After funding, rerun task-create-prepare with the same sid."
-    )
 }
 
 fn scalar_string(value: Option<&Value>) -> Option<String> {
@@ -261,11 +230,21 @@ fn effective_fee(service: &Value) -> Result<f64> {
 }
 
 fn trial_available(service: &Value) -> bool {
-    service
+    let supports_trial = service
         .get("subscriptionInfo")
         .and_then(|info| info.get("supportTrial"))
         .and_then(Value::as_bool)
-        .unwrap_or(false)
+        == Some(true);
+    let has_positive_trial = decimal(
+        service
+            .get("subscriptionInfo")
+            .and_then(|info| info.get("freeTrial")),
+        "subscriptionInfo.freeTrial",
+    )
+    .ok()
+    .flatten()
+    .is_some_and(|value| value > 0.0);
+    supports_trial && has_positive_trial
 }
 
 fn normalize_service(mut service: Value) -> Value {
@@ -292,14 +271,14 @@ pub(crate) async fn handle_task_create_prepare(
     if common::current_account_xlayer_address().is_none()
         || ensure_tokens_refreshed().await.is_err()
     {
-        emit(PHASE_LOGIN_VALIDATION, "blocked", "login_required", next_action("login", true), LOGIN_ACTION, json!({}));
+        emit(PHASE_LOGIN_VALIDATION, "blocked", "login_required", next_action("login", true), json!({}));
         return Ok(());
     }
 
     let user_agent_id = match create::resolve_user_agent().await {
         Ok((agent_id, _)) => agent_id,
         Err(_) => {
-            emit(PHASE_IDENTITY_VALIDATION, "blocked", "user_identity_required", next_action("register_user_agent", true), USER_IDENTITY_ACTION, json!({}));
+            emit(PHASE_IDENTITY_VALIDATION, "blocked", "user_identity_required", next_action("register_user_agent", true), json!({}));
             return Ok(());
         }
     };
@@ -317,11 +296,11 @@ pub(crate) async fn handle_task_create_prepare(
 
     let service_type = required_service_string(&service, "serviceType")?;
     if service_type.eq_ignore_ascii_case("A2MCP") {
-        emit(PHASE_SERVICE_VALIDATION, "blocked", "a2mcp_service", next_action("route_payment_protocol", true), A2MCP_ACTION, service);
+        emit(PHASE_SERVICE_VALIDATION, "blocked", "a2mcp_service", next_action("route_payment_protocol", true), service);
         return Ok(());
     }
     if !service_type.eq_ignore_ascii_case("A2A") {
-        emit(PHASE_SERVICE_VALIDATION, "blocked", "unsupported_service_type", next_action("stop", true), UNKNOWN_SERVICE_TYPE_ACTION, service);
+        emit(PHASE_SERVICE_VALIDATION, "blocked", "unsupported_service_type", next_action("stop", true), service);
         return Ok(());
     }
 
@@ -338,35 +317,37 @@ pub(crate) async fn handle_task_create_prepare(
         if let Some(existing) =
             subscription_ops::existing_subscription_for_service(&existing, &selected_service_id)
         {
-            let action = duplicate_action(existing);
-            emit(PHASE_SUBSCRIPTION_VALIDATION, "blocked", "duplicate_subscription", next_action(duplicate_next_action(existing), true), action, service);
+            emit(PHASE_SUBSCRIPTION_VALIDATION, "blocked", "duplicate_subscription", next_action(duplicate_next_action(existing), true), service);
             return Ok(());
         }
     }
 
     let required = effective_fee(&service)?;
     if trial_available(&service) || required == 0.0 {
-        emit(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), ready_action(), service);
+        emit(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), service);
         return Ok(());
     }
 
     let currency = required_service_string(&service, "feeTokenSymbol")?;
     match common::ensure_sufficient_balance(required, &currency).await {
         Ok(()) => {
-            emit(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), ready_action(), service);
+            emit(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), service);
             Ok(())
         }
         Err(error) => {
-            let insufficient = error
+            let Some(insufficient) = error
                 .downcast_ref::<common::deposit_qr::InsufficientBalanceError>()
-                .cloned();
-            let Some(insufficient) = insufficient else {
+                .cloned()
+            else {
                 return Err(error).context("failed to check the selected Service balance");
             };
             let (warning, _) =
                 common::deposit_qr::balance_warning_json(&insufficient, &user_agent_id).await;
-            let action = balance_action(&warning);
-            emit(PHASE_PAYMENT_VALIDATION, "blocked", "insufficient_balance", next_action("fund_account", true), action, service);
+            let mut payload = service;
+            if let Some(object) = payload.as_object_mut() {
+                object.insert("balanceWarning".to_string(), warning);
+            }
+            emit(PHASE_PAYMENT_VALIDATION, "blocked", "insufficient_balance", next_action("fund_account", true), payload);
             Ok(())
         }
     }
@@ -376,6 +357,40 @@ pub(crate) async fn handle_task_create_prepare(
 mod tests {
     use super::*;
 
+    fn subscription_service(support_trial: bool, free_trial: Value) -> Value {
+        json!({
+            "supportSubscription": true,
+            "subscriptionInfo": {
+                "supportTrial": support_trial,
+                "freeTrial": free_trial
+            }
+        })
+    }
+
+    #[test]
+    fn trial_requires_support_and_positive_free_trial() {
+        assert!(trial_available(&subscription_service(true, json!(7))));
+        assert!(trial_available(&subscription_service(true, json!("7"))));
+        assert!(!trial_available(&subscription_service(true, json!(0))));
+        assert!(!trial_available(&subscription_service(true, Value::Null)));
+        assert!(!trial_available(&subscription_service(false, json!(7))));
+    }
+
+    #[test]
+    fn zero_fee_subscription_is_ready_without_trial() {
+        let service = json!({
+            "supportSubscription": true,
+            "subscriptionInfo": {
+                "supportTrial": false,
+                "freeTrial": 0,
+                "feeAmount": 0
+            }
+        });
+
+        assert!(!trial_available(&service));
+        assert_eq!(effective_fee(&service).unwrap(), 0.0);
+    }
+
     #[test]
     fn login_required_decision_omits_action() {
         let output = build_decision(
@@ -383,7 +398,6 @@ mod tests {
             "blocked",
             "login_required",
             next_action("login", true),
-            LOGIN_ACTION,
         );
 
         assert_eq!(output["phase"], "login_validation");
@@ -401,7 +415,6 @@ mod tests {
             "blocked",
             "unsupported_service_type",
             next_action("stop", true),
-            UNKNOWN_SERVICE_TYPE_ACTION,
         );
 
         assert_eq!(output["phase"], "service_validation");
@@ -418,7 +431,6 @@ mod tests {
             "ready",
             "all_checks_passed",
             next_action("open_create_playbook", true),
-            ready_action(),
         );
         output.insert("payload".to_string(), json!({"serviceId": "svc-1"}));
 
