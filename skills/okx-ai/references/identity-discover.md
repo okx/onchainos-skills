@@ -63,12 +63,12 @@ After confirmation, read the selected Service's numeric `sid` and run:
 onchainos agent task-create-prepare --sid <selected-sid>
 ```
 
-Follow the returned `data.playbook` verbatim. Treat `status` as diagnostic only: do not reconstruct,
-override, or supplement routing model-side. Retain the selected `sid` while the playbook may require
-a retry. Do not run another initial service search unless the playbook explicitly requires it.
+Follow the returned `data.action` verbatim. Treat `phase` as diagnostic only: do not reconstruct,
+override, or supplement routing model-side. Retain the selected `sid` while the action may require
+a retry. Do not run another initial service search unless the action explicitly requires it.
 
 For discovery search, if the user later confirms one displayed Service for commissioning, pass that
-Service's numeric `sid` to the same `task-create-prepare` command and follow its returned `data.playbook`.
+Service's numeric `sid` to the same `task-create-prepare` command and follow its returned `data.action`.
 
 ### Discovery rendering (blocking)
 

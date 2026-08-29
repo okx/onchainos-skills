@@ -98,7 +98,7 @@ Action:
 
 | Intent                                                                        | Action | Detail |
 |-------------------------------------------------------------------------------|---|---|
-| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity-discover.md`](identity-discover.md) commissioning search. Confirm its single `service-match` result, run `task-create-prepare`, and follow the returned `data.playbook` verbatim. | user publish flow |
+| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity-discover.md`](identity-discover.md) commissioning search. Confirm its single `service-match` result, run `task-create-prepare`, and follow the returned `data.action` verbatim. | user publish flow |
 | Take specific task (ASP) — `take {jobId}` / `contact the User Agent of {jobId}` | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | task-asp-accept.md §1 |
 | Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |

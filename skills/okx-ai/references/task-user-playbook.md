@@ -21,7 +21,7 @@
 
 | Intent | Trigger examples | Route to |
 |---|---|---|
-| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`identity-discover.md`](identity-discover.md) commissioning search, then follow the `task-create-prepare` response's `data.playbook` verbatim |
+| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`identity-discover.md`](identity-discover.md) commissioning search, then follow the `task-create-prepare` response's `data.action` verbatim |
 | Add attachment / image | "attach a file/image to a task" | [`task-user-actions.md`](task-user-actions.md) §2 |
 | Stop task | "stop task / close task" | [`task-user-actions.md`](task-user-actions.md) §3 |
 | View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |

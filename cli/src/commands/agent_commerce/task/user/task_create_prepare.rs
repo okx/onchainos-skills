@@ -10,39 +10,37 @@ use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 
 use super::{asp_ops, create, subscription_ops};
 
-const STATUS_LOGIN_REQUIRED: &str = "login_required";
-const STATUS_USER_IDENTITY_REQUIRED: &str = "user_identity_required";
-const STATUS_A2MCP: &str = "a2mcp_service";
-const STATUS_UNKNOWN_SERVICE_TYPE: &str = "unknown_service_type";
-const STATUS_INSUFFICIENT_BALANCE: &str = "insufficient_balance";
-const STATUS_ALREADY_SUBSCRIBED: &str = "already_subscribed";
-const STATUS_READY: &str = "ready";
+const PHASE_LOGIN_CHECK: &str = "login-check";
+const PHASE_USER_IDENTITY_CHECK: &str = "user-identity-check";
+const PHASE_A2MCP_CHECK: &str = "a2mcp-check";
+const PHASE_SERVICE_TYPE_CHECK: &str = "service-type-check";
+const PHASE_BALANCE_CHECK: &str = "balance-check";
+const PHASE_SUBSCRIPTION_CHECK: &str = "subscription-check";
+const PHASE_READY_CHECK: &str = "ready-check";
 
-const LOGIN_PLAYBOOK: &str = "Load the okx-agentic-wallet skill and complete wallet login. After login succeeds, rerun task-create-prepare with the same sid. Do not rerun service-match. If login cannot be completed, stop.";
-const USER_IDENTITY_PLAYBOOK: &str = "Load references/identity-register.md and register a User Agent with --role user. Then rerun task-create-prepare with the same sid.";
-const A2MCP_PLAYBOOK: &str = "Load okx-agent-payments-protocol skill with data.serviceData. Do not call create-task or create-subscribe.";
-const UNKNOWN_SERVICE_TYPE_PLAYBOOK: &str = "Inform the user that data.serviceData.serviceType is unsupported for task creation. Do not call create-task or create-subscribe; stop.";
+const LOGIN_ACTION: &str = "Load the okx-agentic-wallet skill and complete wallet login. After login succeeds, rerun task-create-prepare with the same sid. Do not rerun service-match. If login cannot be completed, stop.";
+const USER_IDENTITY_ACTION: &str = "Load references/identity-register.md and register a User Agent with --role user. Then rerun task-create-prepare with the same sid.";
+const A2MCP_ACTION: &str = "Load okx-agent-payments-protocol skill with data.payload. Do not call create-task or create-subscribe.";
+const UNKNOWN_SERVICE_TYPE_ACTION: &str = "Inform the user that data.payload.serviceType is unsupported for task creation. Do not call create-task or create-subscribe; stop.";
 
-fn decision(status: &str, playbook: impl Into<String>) -> Map<String, Value> {
+fn decision(phase: &str, action: impl Into<String>) -> Map<String, Value> {
     let mut out = Map::new();
-    out.insert("status".to_string(), Value::String(status.to_string()));
-    out.insert("playbook".to_string(), Value::String(playbook.into()));
+    out.insert("phase".to_string(), Value::String(phase.to_string()));
+    out.insert("action".to_string(), Value::String(action.into()));
     out
 }
 
-fn emit(status: &str, playbook: impl Into<String>, service_data: Value) {
-    let mut out = decision(status, playbook);
-    out.insert("serviceData".to_string(), service_data);
+fn emit(phase: &str, action: impl Into<String>, payload: Value) {
+    let mut out = decision(phase, action);
+    out.insert("payload".to_string(), payload);
     crate::output::success(Value::Object(out));
 }
 
-fn ready_playbook(branch: &str) -> String {
-    format!(
-        "Open references/task-user-actions-create.md at Prepared service entry with branch={branch}, data.serviceData, and the original user utterance. Do not rerun service-match or task-create-prepare."
-    )
+fn ready_action() -> &'static str {
+    "Open references/task-user-actions-create.md at Prepared service entry with data.payload and the original user utterance. Do not rerun service-match or task-create-prepare."
 }
 
-fn duplicate_playbook(existing: &subscription_ops::ExistingSubscriptionSummary) -> String {
+fn duplicate_action(existing: &subscription_ops::ExistingSubscriptionSummary) -> String {
     if existing.restore_listening_available {
         format!(
             "Do not create a duplicate subscription. Ask to restore listening for jobId={}. After explicit confirmation, open references/task-user-playbook.md at Signal-receipt watch with that jobId; otherwise stop.",
@@ -56,7 +54,7 @@ fn duplicate_playbook(existing: &subscription_ops::ExistingSubscriptionSummary) 
     }
 }
 
-fn balance_playbook(warning: &Value) -> String {
+fn balance_action(warning: &Value) -> String {
     format!(
         "Show this warning exactly, then stop: {warning}. After funding, rerun task-create-prepare with the same sid."
     )
@@ -264,18 +262,14 @@ pub(crate) async fn handle_task_create_prepare(
     if common::current_account_xlayer_address().is_none()
         || ensure_tokens_refreshed().await.is_err()
     {
-        emit(STATUS_LOGIN_REQUIRED, LOGIN_PLAYBOOK, json!({}));
+        emit(PHASE_LOGIN_CHECK, LOGIN_ACTION, json!({}));
         return Ok(());
     }
 
     let user_agent_id = match create::resolve_user_agent().await {
         Ok((agent_id, _)) => agent_id,
         Err(_) => {
-            emit(
-                STATUS_USER_IDENTITY_REQUIRED,
-                USER_IDENTITY_PLAYBOOK,
-                json!({}),
-            );
+            emit(PHASE_USER_IDENTITY_CHECK, USER_IDENTITY_ACTION, json!({}));
             return Ok(());
         }
     };
@@ -293,13 +287,13 @@ pub(crate) async fn handle_task_create_prepare(
 
     let service_type = required_service_string(&service, "serviceType")?;
     if service_type.eq_ignore_ascii_case("A2MCP") {
-        emit(STATUS_A2MCP, A2MCP_PLAYBOOK, service);
+        emit(PHASE_A2MCP_CHECK, A2MCP_ACTION, service);
         return Ok(());
     }
     if !service_type.eq_ignore_ascii_case("A2A") {
         emit(
-            STATUS_UNKNOWN_SERVICE_TYPE,
-            UNKNOWN_SERVICE_TYPE_PLAYBOOK,
+            PHASE_SERVICE_TYPE_CHECK,
+            UNKNOWN_SERVICE_TYPE_ACTION,
             service,
         );
         return Ok(());
@@ -318,32 +312,22 @@ pub(crate) async fn handle_task_create_prepare(
         if let Some(existing) =
             subscription_ops::existing_subscription_for_service(&existing, &selected_service_id)
         {
-            let playbook = duplicate_playbook(existing);
-            emit(STATUS_ALREADY_SUBSCRIBED, playbook, service);
+            let action = duplicate_action(existing);
+            emit(PHASE_SUBSCRIPTION_CHECK, action, service);
             return Ok(());
         }
     }
 
     let required = effective_fee(&service)?;
     if trial_available(&service) || required == 0.0 {
-        let branch = if support_subscription {
-            "subscription"
-        } else {
-            "regular"
-        };
-        emit(STATUS_READY, ready_playbook(branch), service);
+        emit(PHASE_READY_CHECK, ready_action(), service);
         return Ok(());
     }
 
     let currency = required_service_string(&service, "feeTokenSymbol")?;
     match common::ensure_sufficient_balance(required, &currency).await {
         Ok(()) => {
-            let branch = if support_subscription {
-                "subscription"
-            } else {
-                "regular"
-            };
-            emit(STATUS_READY, ready_playbook(branch), service);
+            emit(PHASE_READY_CHECK, ready_action(), service);
             Ok(())
         }
         Err(error) => {
@@ -355,8 +339,8 @@ pub(crate) async fn handle_task_create_prepare(
             };
             let (warning, _) =
                 common::deposit_qr::balance_warning_json(&insufficient, &user_agent_id).await;
-            let playbook = balance_playbook(&warning);
-            emit(STATUS_INSUFFICIENT_BALANCE, playbook, service);
+            let action = balance_action(&warning);
+            emit(PHASE_BALANCE_CHECK, action, service);
             Ok(())
         }
     }
@@ -367,28 +351,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn login_required_playbook_resumes_preparation_with_the_same_service() {
-        let output = decision(STATUS_LOGIN_REQUIRED, LOGIN_PLAYBOOK);
-        let playbook = output["playbook"]
+    fn login_required_action_resumes_preparation_with_the_same_service() {
+        let output = decision(PHASE_LOGIN_CHECK, LOGIN_ACTION);
+        let action = output["action"]
             .as_str()
-            .expect("login-required output must include a playbook");
+            .expect("login-check output must include an action");
 
-        assert!(playbook.contains("okx-agentic-wallet skill"));
-        assert!(playbook.contains("same sid"));
-        assert!(playbook.contains("Do not rerun service-match"));
-        assert!(!playbook.contains("ask the user to retry"));
+        assert_eq!(output["phase"], "login-check");
+        assert!(output.get("status").is_none());
+        assert!(output.get("playbook").is_none());
+        assert!(action.contains("okx-agentic-wallet skill"));
+        assert!(action.contains("same sid"));
+        assert!(action.contains("Do not rerun service-match"));
+        assert!(!action.contains("ask the user to retry"));
     }
 
     #[test]
-    fn unknown_service_type_playbook_identifies_the_field_and_blocks_creation() {
-        let output = decision(STATUS_UNKNOWN_SERVICE_TYPE, UNKNOWN_SERVICE_TYPE_PLAYBOOK);
-        let playbook = output["playbook"]
+    fn unknown_service_type_action_identifies_the_field_and_blocks_creation() {
+        let output = decision(PHASE_SERVICE_TYPE_CHECK, UNKNOWN_SERVICE_TYPE_ACTION);
+        let action = output["action"]
             .as_str()
-            .expect("unknown-service-type output must include a playbook");
+            .expect("service-type-check output must include an action");
 
-        assert!(playbook.contains("data.serviceData.serviceType"));
-        assert!(playbook.contains("unsupported for task creation"));
-        assert!(playbook.contains("Do not call create-task or create-subscribe"));
-        assert!(!playbook.starts_with("Say "));
+        assert_eq!(output["phase"], "service-type-check");
+        assert!(action.contains("data.payload.serviceType"));
+        assert!(action.contains("unsupported for task creation"));
+        assert!(action.contains("Do not call create-task or create-subscribe"));
+        assert!(!action.starts_with("Say "));
+    }
+
+    #[test]
+    fn emit_shape_uses_action_phase_and_payload_terms() {
+        let mut output = decision(PHASE_READY_CHECK, ready_action());
+        output.insert("payload".to_string(), json!({"serviceId": "svc-1"}));
+
+        assert_eq!(output["phase"], "ready-check");
+        assert!(output["action"].as_str().unwrap().contains("data.payload"));
+        assert!(!output["action"].as_str().unwrap().contains("branch="));
+        assert_eq!(output["payload"]["serviceId"], "svc-1");
+        assert!(output.get("status").is_none());
+        assert!(output.get("playbook").is_none());
+        assert!(output.get("serviceData").is_none());
     }
 }

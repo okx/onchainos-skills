@@ -181,10 +181,10 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
 | `--currency` | Yes | - | `USDT` or `USDG`                            |
 | `--title` | Yes | - | Task title (max 30 chars)                   |
 | `--provider` | Yes | - | Provider agentId; always required |
-| `--service-id` | Yes | - | UUID `serviceId` from `task-create-prepare data.serviceData` |
+| `--service-id` | Yes | - | UUID `serviceId` from `task-create-prepare data.payload` |
 | `--service-params` | No | - | Service input parameters (natural language) |
 | `--service-token-address` | No | - | Service token contract address              |
-| `--service-token-amount` | No | - | Service price from `task-create-prepare data.serviceData.feeAmount` |
+| `--service-token-amount` | No | - | Service price from `task-create-prepare data.payload.feeAmount` |
 | `--endpoint` | No | - | Designated service endpoint URL             |
 | `--file` | No | - | Local file paths to attach (repeatable)     |
 | `--payment-mode` | Yes | - | `escrow`                          |
@@ -215,14 +215,14 @@ current `serviceGuide`. It merges that guide, normalizes the Service, checks exi
 and checks the payable token balance. Current trial eligibility or an effective fee of zero skips the
 balance query.
 
-Every successful response contains exactly `status`, `playbook`, and `serviceData` under `data`.
-`serviceData` is an empty object for `login_required` and `user_identity_required`; for every other
-status it is the complete normalized selected Service. Follow `playbook` verbatim; do not derive the
-next action from `status`. Stable status values are `login_required`, `user_identity_required`,
-`a2mcp_service`, `unknown_service_type`, `insufficient_balance`, `already_subscribed`, and `ready`.
+Every successful response contains exactly `phase`, `action`, and `payload` under `data`.
+`payload` is an empty object for `login-check` and `user-identity-check`; for every other
+phase it is the complete normalized selected Service. Follow `action` verbatim; do not derive the
+next action from `phase`. Stable phase values are `login-check`, `user-identity-check`,
+`a2mcp-check`, `service-type-check`, `balance-check`, `subscription-check`, and `ready-check`.
 
 Invalid/missing Service fields and failed detail/subscription/balance requests are command errors, not
-additional business cases. The returned `playbook` is the sole routing authority.
+additional business cases. The returned `action` is the sole routing authority.
 
 ### task-service-select
 
@@ -577,18 +577,18 @@ agent create-subscribe \
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--service-id` | Yes | - | UUID `serviceId` from `task-create-prepare data.serviceData` |
+| `--service-id` | Yes | - | UUID `serviceId` from `task-create-prepare data.payload` |
 | `--use-trial` | No | false | Start with trial period |
 | `--service-params` | No | `""` | Confirmed Service inputs; omit when empty |
-| `--service-token-amount` | Yes | - | Monthly fee from `task-create-prepare data.serviceData.subscriptionInfo.feeAmount` |
-| `--service-token-address` | Yes | - | Fee token contract address from `task-create-prepare data.serviceData.feeToken` |
+| `--service-token-amount` | Yes | - | Monthly fee from `task-create-prepare data.payload.subscriptionInfo.feeAmount` |
+| `--service-token-address` | Yes | - | Fee token contract address from `task-create-prepare data.payload.feeToken` |
 | `--auto-renew` | Yes | - | 0=off, 1=on |
 | `--title` | Yes | - | Max 64 chars |
 | `--description` | Yes | - | Max 4096 chars |
 | `--file` | No (repeatable) | - | Local file paths to attach; 100 MB limit per file |
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
-| `--service-description` | No | `""` | Exact `task-create-prepare data.serviceData.serviceDescription`; persisted only as bounded routing hints |
-| `--service-interval` | No | `month` | Billing interval from `task-create-prepare data.serviceData.subscriptionInfo.interval` |
+| `--service-description` | No | `""` | Exact `task-create-prepare data.payload.serviceDescription`; persisted only as bounded routing hints |
+| `--service-interval` | No | `month` | Billing interval from `task-create-prepare data.payload.subscriptionInfo.interval` |
 | `--autotrade-mode` | No | `auto` | `auto` or `manual`; an explicit user opt-out uses `manual` |
 | `--autotrade-amount` | No | - | Optional positive human-readable quote amount for each signal |
 | `--autotrade-cap` | No | - | Optional positive per-signal cap metadata; stored but not enforced |

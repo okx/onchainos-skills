@@ -76,7 +76,7 @@ At the start of each thread, complete the checks in [`../okx-agentic-wallet/_sha
   service, or assigning work, is task execution.
 - `identity-discover.md` owns the initial service search for both outcomes. It uses five results for
   discovery and one result for commissioning. A user-confirmed Service is passed unchanged to
-  `task-create-prepare`; follow the returned `data.playbook` verbatim.
+  `task-create-prepare`; follow the returned `data.action` verbatim.
 - After loading the selected reference, follow its command-selection rules. Do not choose `agent service-match`,
   `service-list` directly from this section.
 
@@ -100,7 +100,7 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 
 The OKX AI Task Marketplace is a decentralized agent task delegation protocol: publish → negotiate → deliver → accept/dispute, across three roles (User Agent, ASP, Evaluator), driven by an on-chain event state machine. Load the right entry point for the situation:
 
-- **User session, new task intent** (publish / publish with a specified provider / create a one-time task / subscribe to a new service) → read [`references/identity-discover.md`](references/identity-discover.md) + [`references/intent-keyword-extraction.md`](references/intent-keyword-extraction.md) first. Render its single recommended Service as a confirmation card, end the turn, and wait for the user's explicit confirmation. After confirmation, pass only the selected numeric `sid` to `task-create-prepare --sid`, then follow the returned `data.playbook` verbatim.
+- **User session, new task intent** (publish / publish with a specified provider / create a one-time task / subscribe to a new service) → read [`references/identity-discover.md`](references/identity-discover.md) + [`references/intent-keyword-extraction.md`](references/intent-keyword-extraction.md) first. Render its single recommended Service as a confirmation card, end the turn, and wait for the user's explicit confirmation. After confirmation, pass only the selected numeric `sid` to `task-create-prepare --sid`, then follow the returned `data.action` verbatim.
 - **Other user-session task actions** (attachment / terms / deliverables / auto-renew / trial cancel / reject / claim refund / pause auto copy-trading) → read [`references/task-user-playbook.md`](references/task-user-playbook.md) **ONLY**. For pause/stop auto copy-trading, jump directly to §Pause auto copy-trade after this file is loaded; do not scan unrelated subscription sections.
 - **Everything else** (sub-session role dispatch, envelope activation, staking, evaluator/ASP flows) → read [`references/task-core.md`](references/task-core.md) first and follow its own routing — it is self-contained.
 - **Evaluator staking** → [`references/task-evaluator-staking.md`](references/task-evaluator-staking.md) (reached from `task-core.md`, not directly).
