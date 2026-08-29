@@ -114,12 +114,3 @@ inside `payload` unchanged.
   card, stop, and wait for explicit confirmation. Then pass only its numeric
   `sid` to `task-create-prepare --sid` and route the structured result under
   **Task progression**.
-- Other user task actions: read `task-user-playbook.md` only.
-- Envelopes, sub-session dispatch, evaluator/ASP flows, and staking: read
-  `task-core.md` first. Evaluator staking is reached through that file.
-- `need-user` means register a User Agent. “Add another agent/ASP/User/Client”
-  always means identity management, never `wallet add`.
-- “I want to be an evaluator” without “register” → ask whether to register an
-  Evaluator Agent or open a task dispute; route the answer accordingly.
-- Evaluator aliases route as `evaluator`. Post-create evaluator staking follows
-  `identity-register.md`, §10.
