@@ -10,30 +10,49 @@ use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 
 use super::{asp_ops, create, subscription_ops};
 
-const PHASE_LOGIN_CHECK: &str = "login-check";
-const PHASE_USER_IDENTITY_CHECK: &str = "user-identity-check";
-const PHASE_A2MCP_CHECK: &str = "a2mcp-check";
-const PHASE_SERVICE_TYPE_CHECK: &str = "service-type-check";
-const PHASE_BALANCE_CHECK: &str = "balance-check";
-const PHASE_SUBSCRIPTION_CHECK: &str = "subscription-check";
-const PHASE_READY_CHECK: &str = "ready-check";
+const PHASE_LOGIN_VALIDATION: &str = "login_validation";
+const PHASE_IDENTITY_VALIDATION: &str = "identity_validation";
+const PHASE_SERVICE_VALIDATION: &str = "service_validation";
+const PHASE_PAYMENT_VALIDATION: &str = "payment_validation";
+const PHASE_SUBSCRIPTION_VALIDATION: &str = "subscription_validation";
+const PHASE_CREATION: &str = "creation";
 
 const LOGIN_ACTION: &str = "Load the okx-agentic-wallet skill and complete wallet login. After login succeeds, rerun task-create-prepare with the same sid. Do not rerun service-match. If login cannot be completed, stop.";
 const USER_IDENTITY_ACTION: &str = "Load references/identity-register.md and register a User Agent with --role user. Then rerun task-create-prepare with the same sid.";
 const A2MCP_ACTION: &str = "Load okx-agent-payments-protocol skill with data.payload. Do not call create-task or create-subscribe.";
 const UNKNOWN_SERVICE_TYPE_ACTION: &str = "Inform the user that data.payload.serviceType is unsupported for task creation. Do not call create-task or create-subscribe; stop.";
 
-fn decision(phase: &str, action: impl Into<String>) -> Map<String, Value> {
+fn build_decision(
+    phase: &str,
+    decision: &str,
+    reason: &str,
+    next_action: Value,
+    action: impl Into<String>,
+) -> Map<String, Value> {
     let mut out = Map::new();
     out.insert("phase".to_string(), Value::String(phase.to_string()));
+    out.insert("decision".to_string(), Value::String(decision.to_string()));
+    out.insert("reason".to_string(), Value::String(reason.to_string()));
+    out.insert("nextAction".to_string(), next_action);
     out.insert("action".to_string(), Value::String(action.into()));
     out
 }
 
-fn emit(phase: &str, action: impl Into<String>, payload: Value) {
-    let mut out = decision(phase, action);
+fn emit(
+    phase: &str,
+    decision: &str,
+    reason: &str,
+    next_action: Value,
+    action: impl Into<String>,
+    payload: Value,
+) {
+    let mut out = build_decision(phase, decision, reason, next_action, action);
     out.insert("payload".to_string(), payload);
     crate::output::success(Value::Object(out));
+}
+
+fn next_action(id: &str, recommend: bool) -> Value {
+    json!([{"id": id, "recommend": recommend}])
 }
 
 fn ready_action() -> &'static str {
@@ -51,6 +70,14 @@ fn duplicate_action(existing: &subscription_ops::ExistingSubscriptionSummary) ->
             "Do not create a duplicate subscription. Say jobId={} blocks creation and listening cannot be restored; stop.",
             existing.job_id
         )
+    }
+}
+
+fn duplicate_next_action(existing: &subscription_ops::ExistingSubscriptionSummary) -> &'static str {
+    if existing.restore_listening_available {
+        "restore_subscription"
+    } else {
+        "stop"
     }
 }
 
@@ -259,17 +286,21 @@ pub(crate) async fn handle_task_create_prepare(
     client: &mut TaskApiClient,
     sid: &str,
 ) -> Result<()> {
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG] a2a subscription flow start");
+    }
+
     if common::current_account_xlayer_address().is_none()
         || ensure_tokens_refreshed().await.is_err()
     {
-        emit(PHASE_LOGIN_CHECK, LOGIN_ACTION, json!({}));
+        emit(PHASE_LOGIN_VALIDATION, "blocked", "login_required", next_action("login", true), LOGIN_ACTION, json!({}));
         return Ok(());
     }
 
     let user_agent_id = match create::resolve_user_agent().await {
         Ok((agent_id, _)) => agent_id,
         Err(_) => {
-            emit(PHASE_USER_IDENTITY_CHECK, USER_IDENTITY_ACTION, json!({}));
+            emit(PHASE_IDENTITY_VALIDATION, "blocked", "user_identity_required", next_action("register_user_agent", true), USER_IDENTITY_ACTION, json!({}));
             return Ok(());
         }
     };
@@ -287,15 +318,11 @@ pub(crate) async fn handle_task_create_prepare(
 
     let service_type = required_service_string(&service, "serviceType")?;
     if service_type.eq_ignore_ascii_case("A2MCP") {
-        emit(PHASE_A2MCP_CHECK, A2MCP_ACTION, service);
+        emit(PHASE_SERVICE_VALIDATION, "blocked", "a2mcp_service", next_action("route_payment_protocol", true), A2MCP_ACTION, service);
         return Ok(());
     }
     if !service_type.eq_ignore_ascii_case("A2A") {
-        emit(
-            PHASE_SERVICE_TYPE_CHECK,
-            UNKNOWN_SERVICE_TYPE_ACTION,
-            service,
-        );
+        emit(PHASE_SERVICE_VALIDATION, "blocked", "unsupported_service_type", next_action("stop", true), UNKNOWN_SERVICE_TYPE_ACTION, service);
         return Ok(());
     }
 
@@ -313,21 +340,21 @@ pub(crate) async fn handle_task_create_prepare(
             subscription_ops::existing_subscription_for_service(&existing, &selected_service_id)
         {
             let action = duplicate_action(existing);
-            emit(PHASE_SUBSCRIPTION_CHECK, action, service);
+            emit(PHASE_SUBSCRIPTION_VALIDATION, "blocked", "duplicate_subscription", next_action(duplicate_next_action(existing), true), action, service);
             return Ok(());
         }
     }
 
     let required = effective_fee(&service)?;
     if trial_available(&service) || required == 0.0 {
-        emit(PHASE_READY_CHECK, ready_action(), service);
+        emit(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), ready_action(), service);
         return Ok(());
     }
 
     let currency = required_service_string(&service, "feeTokenSymbol")?;
     match common::ensure_sufficient_balance(required, &currency).await {
         Ok(()) => {
-            emit(PHASE_READY_CHECK, ready_action(), service);
+            emit(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), ready_action(), service);
             Ok(())
         }
         Err(error) => {
@@ -340,7 +367,7 @@ pub(crate) async fn handle_task_create_prepare(
             let (warning, _) =
                 common::deposit_qr::balance_warning_json(&insufficient, &user_agent_id).await;
             let action = balance_action(&warning);
-            emit(PHASE_BALANCE_CHECK, action, service);
+            emit(PHASE_PAYMENT_VALIDATION, "blocked", "insufficient_balance", next_action("fund_account", true), action, service);
             Ok(())
         }
     }
@@ -352,14 +379,16 @@ mod tests {
 
     #[test]
     fn login_required_action_resumes_preparation_with_the_same_service() {
-        let output = decision(PHASE_LOGIN_CHECK, LOGIN_ACTION);
+        let output = build_decision(PHASE_LOGIN_VALIDATION, "blocked", "login_required", next_action("login", true), LOGIN_ACTION);
         let action = output["action"]
             .as_str()
             .expect("login-check output must include an action");
 
-        assert_eq!(output["phase"], "login-check");
-        assert!(output.get("status").is_none());
-        assert!(output.get("playbook").is_none());
+        assert_eq!(output["phase"], "login_validation");
+        assert_eq!(output["decision"], "blocked");
+        assert_eq!(output["reason"], "login_required");
+        assert_eq!(output["nextAction"][0]["id"], "login");
+        assert_eq!(output["nextAction"][0]["recommend"], true);
         assert!(action.contains("okx-agentic-wallet skill"));
         assert!(action.contains("same sid"));
         assert!(action.contains("Do not rerun service-match"));
@@ -368,12 +397,15 @@ mod tests {
 
     #[test]
     fn unknown_service_type_action_identifies_the_field_and_blocks_creation() {
-        let output = decision(PHASE_SERVICE_TYPE_CHECK, UNKNOWN_SERVICE_TYPE_ACTION);
+        let output = build_decision(PHASE_SERVICE_VALIDATION, "blocked", "unsupported_service_type", next_action("stop", true), UNKNOWN_SERVICE_TYPE_ACTION);
         let action = output["action"]
             .as_str()
             .expect("service-type-check output must include an action");
 
-        assert_eq!(output["phase"], "service-type-check");
+        assert_eq!(output["phase"], "service_validation");
+        assert_eq!(output["decision"], "blocked");
+        assert_eq!(output["reason"], "unsupported_service_type");
+        assert_eq!(output["nextAction"][0]["id"], "stop");
         assert!(action.contains("data.payload.serviceType"));
         assert!(action.contains("unsupported for task creation"));
         assert!(action.contains("Do not call create-task or create-subscribe"));
@@ -382,10 +414,13 @@ mod tests {
 
     #[test]
     fn emit_shape_uses_action_phase_and_payload_terms() {
-        let mut output = decision(PHASE_READY_CHECK, ready_action());
+        let mut output = build_decision(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), ready_action());
         output.insert("payload".to_string(), json!({"serviceId": "svc-1"}));
 
-        assert_eq!(output["phase"], "ready-check");
+        assert_eq!(output["phase"], "creation");
+        assert_eq!(output["decision"], "ready");
+        assert_eq!(output["reason"], "all_checks_passed");
+        assert_eq!(output["nextAction"][0]["id"], "open_create_playbook");
         assert!(output["action"].as_str().unwrap().contains("data.payload"));
         assert!(!output["action"].as_str().unwrap().contains("branch="));
         assert_eq!(output["payload"]["serviceId"], "svc-1");

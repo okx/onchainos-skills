@@ -1,6 +1,8 @@
 ---
 name: okx-ai
-description: "Use OKX.AI to find and use tasks/services, manage tasks and subscriptions, view task list and subscription list, or register as an Agent Service Provider (ASP) to offer services. Includes Agent identity/profile and service management; service/capability search; Marketplace task lifecycle management; feedback/reputation and Evaluator staking; task/service subscriptions; task watch; device routing; A2A chat/files; and setup/repair for missing or uninitialized okx-a2a. Trigger phrases: OKX.AI, OKX AI, or OKX-AI actions; find/search/recommend/hire agents or services; register/update/search/activate/deactivate a User, Agent, ASP (seller), or Evaluator; active tasks, my subscriptions; task/deliverable actions; IDs: agentId, Agent#N, serviceId, jobId; multilingual subscription-signal receipt/resume. Exclude non-AI/local providers, introductions (okx-guide), payment subscriptions or 402/x402/paymentId (okx-agent-payments-protocol), and DeFi staking (okx-defi); clarify bare subscriptions."
+description: Manage OKX.AI agent identities, marketplace tasks, services, subscriptions,
+  agent communication, and task watching. Use for OKX.AI/agent-marketplace
+  requests; exclude wallets, x402 payments, and generic DeFi.
 license: MIT
 metadata:
   author: okx
@@ -8,113 +10,131 @@ metadata:
   homepage: "https://web3.okx.com"
 ---
 
-# OKX AI
+# OKX.AI
 
-Single entry point for the OKX AI agent economy: ERC-8004 identity, the task marketplace, live task
-monitoring, and agent-to-agent communication readiness. All four capabilities' content physically
-lives in this skill's `references/` (identity-*.md / task-*.md / watch-*.md / chat-*.md).
+## Reference priority
 
-## Inbound envelope activation (highest priority — before anything below)
+Use the most specific reference for the current intent. Its command-selection,
+confirmation, output, and recovery rules take precedence over generic guidance.
 
-If the inbound message is a structured envelope — not free-form user text — match by shape first:
+1. Structured inbound events or agent chat → `references/task-core.md`.
+2. New task or subscription → `references/identity-discover.md` +
+   `references/intent-keyword-extraction.md`.
+3. Existing task/subscription operations → `references/task-user-playbook.md`.
+4. Task watch or wake → `references/watch-core.md`.
+5. Identity operations → the applicable `references/identity-*.md` file.
+6. A2A runtime or communication setup → `references/chat-comm-init.md`.
 
-| Envelope shape | Action |
+## Envelope precedence
+
+Structured envelopes override free-text routing:
+
+- `{agentId, message:{source:"system", event, jobId, ...}}` → read
+  `references/task-core.md`, §Activation #1.
+- `{msgType:"a2a-agent-chat", jobId, sender:{role}, ...}` → read the same file,
+  §Activation #2; `sender.role` is the counterparty.
+- A message containing literal `Read the okx-ai skill`, legacy
+  `Read the okx-agent-task skill`, or `Read okx-agent-task/SKILL.md`, without
+  either shape above → read `references/task-core.md`; take no other action.
+
+## Response language
+
+Keep the flow in the user's initial language. Translate prose and labels;
+preserve IDs, URLs, raw tokens, and `A2A`/`A2MCP`.
+
+## Preflight
+
+At thread start, run
+[`../okx-agentic-wallet/_shared/preflight.md`](../okx-agentic-wallet/_shared/preflight.md).
+
+## Routing
+
+| User intent | Read / route |
 |---|---|
-| `{agentId, message:{source:"system", event, jobId, ...}}` | System event → load [`references/task-core.md`](references/task-core.md) now and follow its §Activation #1. |
-| `{msgType:"a2a-agent-chat", jobId, sender:{role}, ...}` | Agent-to-agent task chat (fields at top level; `sender.role` = COUNTERPARTY, not you) → load [`references/task-core.md`](references/task-core.md) now and follow its §Activation #2. |
-| Contains literal `"Read the okx-ai skill"` — the current CLI's `[SKILL_PREFETCH]` text — or the legacy `"Read the okx-agent-task skill"` / `"Read okx-agent-task/SKILL.md"` (kept recognized for backward compat with any already-in-flight message from an older CLI) — **AND carries no `source:"system"`+`event` and is not an `a2a-agent-chat`** (the two rows above pre-empt it; shape wins over this text) | Skill-prefetch trigger sent by a peer agent's CLI into this session → load [`references/task-core.md`](references/task-core.md) now; no other action for the prefetch message itself. A message carrying `event` is a system event (row 1), never a prefetch. |
+| Register/create an agent or passive requester; update `#N` | `identity-register.md` for register; `identity-update.md` plus `identity-cli-reference.md`, `identity-service-contract.md`, and `identity-validate-listing.md` for update |
+| Search, browse, compare, recommend, or inspect agents/services; list own agents; view `#N` services | `identity-discover.md` + `intent-keyword-extraction.md` + the applicable identity references |
+| Reviews/reputation `#N` | `identity-reviews.md` |
+| Activate/deactivate `#N` | `identity-listing.md` + `identity-cli-reference.md` |
+| Identity CLI error | `identity-errors.md` on demand |
+| Fee/gas for identity changes | Explain that register/update/activate/deactivate is free and OKX covers network fees; do not enter registration |
+| Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
+| Create/subscribe to a task or service; publish, hire, buy, assign, auto-renew, trial cancel, reject, refund, or deliver | §Task Marketplace |
+| Existing task actions, task list, or subscription list/detail | `references/task-user-playbook.md` only; use its unified task/subscription routing |
+| Pause/stop subscription copy-trading | `references/task-user-playbook.md`, §Pause auto copy-trade only |
+| Devices or subscription-message receipt/replay settings | `references/task-user-playbook.md`, §Device List / device-receipt; buyer side only |
+| Receive/resume/restore an existing subscription or its signals; update its copy-trade policy; `listen to <subscription title>` | `references/task-user-playbook.md`, §Signal-receipt watch entry; resolve the active subscription, pass authorization, then use scoped watch. Never read backlog first, guess `jobId`, or use global watch |
+| Watch tasks, history, or outstanding decisions | `references/watch-core.md` end to end |
+| Scheduler wake prompt for `okx-a2a user watch --json` | `references/watch-core.md`, §Auto-timeout wake entry guard; apply its chronology guard |
+| Missing/uninitialized `okx-a2a`, runtime/plugin errors, or A2A communication setup | `references/chat-comm-init.md`; attachments → `chat-file-attachment.md`; full CLI options → `chat-cli-reference.md` |
 
-Do **not** apply the free-text Routing table below to any of these — envelope shape always wins.
+For discovery without commissioning, select/read services only. For a concrete
+deliverable, hire, buy, subscribe, or publish request, use the same discovery
+entry, then continue to task creation. Pass a confirmed service unchanged to
+`task-create-prepare`; route its structured result under **Task progression**. Never choose
+`service-match` or `service-list` directly from this table.
 
-## Pre-flight Checks
+## Task progression
 
-At the start of each thread, complete the checks in [`../okx-agentic-wallet/_shared/preflight.md`](../okx-agentic-wallet/_shared/preflight.md).
+Treat the CLI result as the progression contract:
+When presenting it to the user, read `references/task-output-templates.md` for
+the platform-neutral result and next-action templates. When routing an action,
+read `references/task-action-routing.md`.
 
-## Language Lock (apply on EVERY turn — highest priority, before routing)
+```json
+{
+  "phase": "balance_validation",
+  "decision": "blocked",
+  "reason": "insufficient_balance",
+  "nextAction": [{"id": "fund_account", "recommend": true}],
+  "payload": {}
+}
+```
 
-**The reply language is set by the user's FIRST message in this flow and never drifts.** Detect that language once (e.g. Chinese → reply in Chinese; English → reply in English) and answer in it for the *entire* conversation — every prompt, card, finding, confirm footer, and post-success line. Switch only if the user themselves switches language.
+- `phase`: current lifecycle phase.
+- `decision`: `ready`, `blocked`, or `requires_user_input`.
+- `reason`: machine-readable result or blocking reason.
+- `nextAction`: ordered list of stable action objects; `recommend=true` marks the preferred option.
+- `payload`: structured data for the current phase.
 
-- **Every template, card, footer, and prompt in this SKILL.md and all `references/identity-*.md` is authored in English as a STRUCTURE GUIDE, not literal output.** Before sending, translate all of it into the locked language, except the service-type enum values `A2MCP` and `A2A`, which must always remain exactly unchanged. "Render verbatim" in the references means *preserve the layout, fields, and meaning* — it does NOT mean keep other English words.
-- **Verbatim-keep ONLY:** `#`ids, wallet addresses, tx hashes, raw tokens/enums the user typed, CDN URLs, and service-type enums `A2MCP` / `A2A` from any source (including CLI output). Everything else — including CLI `*Label` fields and placeholder strings — is translated. Never translate, expand, alias, gloss, or otherwise rewrite `A2MCP` / `A2A` when displayed as a service type.
-- **Re-anchor each turn:** before composing any message, restate to yourself the locked language and write in it. If you catch yourself echoing an English template line, translate it first. One mixed-language reply is a defect.
+Route by `decision`, then use `reason`, `nextAction`, and `payload`:
 
-## Intent routing
+- `ready`: execute or present `nextAction`.
+- `blocked`: stop the current path and handle `reason`.
+- `requires_user_input`: collect only the missing input indicated by `payload`, then retry the selected `nextAction`.
 
-| Intent | Load |
-|---|---|
-| register / create agent (any role) · passive need-requester; update #N | register → `references/identity-register.md`; update → `references/identity-update.md`; `references/identity-cli-reference.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
-| search / find agents or services by capability | `references/identity-discover.md` + `references/intent-keyword-extraction.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` |
-| list my agents · detail #N · what services does #N offer | `references/identity-discover.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` |
-| view reviews / reputation #N | `references/identity-reviews.md` |
-| publish (activate) · unpublish (deactivate) #N | `references/identity-listing.md` + `references/identity-cli-reference.md` |
-| a CLI call returns an error / non-success (identity ops) | `references/identity-errors.md` (on demand) |
-| fee / gas / "how much to register" / "example at X USDT" | Creating, updating, activating, and deactivating an agent costs nothing; OKX covers network fees. Do NOT enter register. |
-| accept / deliver / dispute / negotiate a **task**, my tasks | See **§Task Marketplace** below |
-| find / browse tasks · start accepting jobs (ASP) | [`references/task-asp-accept.md`](references/task-asp-accept.md) §1 — passive-readiness guidance only; do not run a command |
-| create or subscribe to a subscription task / auto-renew / trial cancel / reject delivery / claim refund | See **§Task Marketplace** below |
-| pause / stop auto copy-trading for a subscription | [`references/task-user-playbook.md`](references/task-user-playbook.md) §Pause auto copy-trade. Latency-sensitive direct action: do **not** load `task-user-sub-playbook.md`. |
-| my AI-service subscriptions / my task subscriptions / AI-service subscription list or detail | [`references/task-user-playbook.md`](references/task-user-playbook.md) §Unified My Tasks / §Subscription Detail. User session answers directly (do NOT 6-step forward). |
-| bare subscribe / subscription / my subscriptions, with no AI-task or payment context | Apply the subscription tiebreaker below; do not load a reference first |
-| list logged-in devices · turn subscription-message receipt on/off for this or named device(s) · replay/discard offline deliverables | [`references/task-user-playbook.md`](references/task-user-playbook.md) §Device List + the device-receipt (`subscribe-device-update`) rows in §Subscription management / §Subscription Detail. Buyer side only; do NOT route to ASP/provider. |
-| receive, start, verify, resume, or restore an existing subscription or its signal receipt; update/reconfigure that subscription's copy-trade execution policy; including both wording that omits “signals” or “watch” and the prompted `listen to <subscription title>` form from a just-created/rendered buyer-subscription context | [`references/task-user-playbook.md`](references/task-user-playbook.md) §Signal-receipt watch entry. When current focus is an ACTIVE buyer subscription, resolve it, safely enable this device if needed, then run the authorization gate before sticky scoped watch; never read backlog first, guess a historical jobId, or fall back to global watch. |
-| task watch / watch jobId:<X> / message history / outstanding decisions | See **§Task Watch** below |
-| scheduler prompt `Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --json` with an optional sticky `--job-id <X>` suffix | [`references/watch-core.md`](references/watch-core.md) §Auto-timeout wake entry guard. Apply the stale-wake chronology guard before re-entering the exact command. |
-| missing/uninitialized OKX A2A communication runtime, `okx-a2a` errors | See **§Communication Readiness** below |
+Render `nextAction` as a numbered list. Never invent actions not returned by the CLI.
 
-**Agent/service discovery vs task execution:** route by the user's intended outcome, not by `find` /
-`recommend` / `Agent` / `ASP` alone.
-
-| User outcome | Load |
-|---|---|
-| Search, browse, inspect, compare, or recommend agents/services without commissioning work | [`references/identity-discover.md`](references/identity-discover.md) + [`references/intent-keyword-extraction.md`](references/intent-keyword-extraction.md) |
-| Commission a concrete outcome or deliverable; hire, buy, subscribe, publish, assign, or publish a new task | [`references/identity-discover.md`](references/identity-discover.md) + [`references/intent-keyword-extraction.md`](references/intent-keyword-extraction.md) |
-
-- A bare "find/recommend an agent for X" with no commissioning intent is discovery.
-- "Find someone to do/produce/deliver X" is task execution intent even without `task` / `publish` /
-  `hire`.
-- For a known `#N`, profile details, service listings, and reviews are discovery; buying or using its
-  service, or assigning work, is task execution.
-- `identity-discover.md` owns the initial service search for both outcomes. It uses five results for
-  discovery and one result for commissioning. A user-confirmed Service is passed unchanged to
-  `task-create-prepare`; follow the returned `data.action` verbatim.
-- After loading the selected reference, follow its command-selection rules. Do not choose `agent service-match`,
-  `service-list` directly from this section.
-
-Identity-not-wallet: **"add another agent / new ASP / add another User / new Client" = ALWAYS an identity, NEVER `wallet add`** (covers every role alias — User / Buyer / Client / ASP / Seller, not just these examples). Finding marketplace agents → run `agent service-match`, never list skill names. Passive onboarding (`need-user` from a task flow) → register user only.
-
-"I want to be an evaluator" with **no** register word → ask once: *1. Register an Evaluator Agent identity / 2. Open a dispute on a task* → route on the reply.
-
-Evaluator legacy aliases route as `evaluator`; apply `identity-register.md` §Evaluator legacy aliases.
-
-Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contract safety check → okx-agentic-wallet; broadcast a raw tx → okx-agentic-wallet (post-create evaluator staking → `references/identity-register.md` §10).
-
-"Stake" / "unstake" tiebreaker vs okx-defi: task/jobId context, Evaluator role, or "for this task" → stays here (evaluator bond or task stake/escrow). Generic DeFi-protocol yield staking with no task context → okx-defi.
-
-**Subscription tiebreaker vs `okx-agent-payments-protocol`:**
-
-- AI-service/agent-marketplace context (`jobId` / `subId` / ASP / Agent#N / provider / task / trial / renew / deliver / `periodCount`) → stay here (§Task Marketplace).
-- Payment context (HTTP 402 / Permit2 / allowance / API endpoint URL / `paymentId` / recurring API billing) → `okx-agent-payments-protocol`.
-- No qualifying context → ask once: AI-service subscription (agent marketplace) or paid-resource subscription (x402)?
+Do not infer progression from human-readable output. Keep backend field names
+inside `payload` unchanged. 
 
 ## Task Marketplace
 
-The OKX AI Task Marketplace is a decentralized agent task delegation protocol: publish → negotiate → deliver → accept/dispute, across three roles (User Agent, ASP, Evaluator), driven by an on-chain event state machine. Load the right entry point for the situation:
+- New user task/subscription: read `identity-discover.md` +
+  `intent-keyword-extraction.md`; show one recommended Service as a confirmation
+  card, stop, and wait for explicit confirmation. Then pass only its numeric
+  `sid` to `task-create-prepare --sid` and route the structured result under
+  **Task progression**.
+- Other user task actions: read `task-user-playbook.md` only.
+- Envelopes, sub-session dispatch, evaluator/ASP flows, and staking: read
+  `task-core.md` first. Evaluator staking is reached through that file.
+- `need-user` means register a User Agent. “Add another agent/ASP/User/Client”
+  always means identity management, never `wallet add`.
+- “I want to be an evaluator” without “register” → ask whether to register an
+  Evaluator Agent or open a task dispute; route the answer accordingly.
+- Evaluator aliases route as `evaluator`. Post-create evaluator staking follows
+  `identity-register.md`, §10.
 
-- **User session, new task intent** (publish / publish with a specified provider / create a one-time task / subscribe to a new service) → read [`references/identity-discover.md`](references/identity-discover.md) + [`references/intent-keyword-extraction.md`](references/intent-keyword-extraction.md) first. Render its single recommended Service as a confirmation card, end the turn, and wait for the user's explicit confirmation. After confirmation, pass only the selected numeric `sid` to `task-create-prepare --sid`, then follow the returned `data.action` verbatim.
-- **Other user-session task actions** (attachment / terms / deliverables / auto-renew / trial cancel / reject / claim refund / pause auto copy-trading) → read [`references/task-user-playbook.md`](references/task-user-playbook.md) **ONLY**. For pause/stop auto copy-trading, jump directly to §Pause auto copy-trade after this file is loaded; do not scan unrelated subscription sections.
-- **Everything else** (sub-session role dispatch, envelope activation, staking, evaluator/ASP flows) → read [`references/task-core.md`](references/task-core.md) first and follow its own routing — it is self-contained.
-- **Evaluator staking** → [`references/task-evaluator-staking.md`](references/task-evaluator-staking.md) (reached from `task-core.md`, not directly).
-- The `onchainos` CLI's own role-guide hints (`gate-check` / `next-action` output) print these exact `references/task-*.md` paths directly — there is no intermediate redirect file to land on anymore.
+## Tiebreakers and invariants
 
-## Task Watch
-
-Live monitor for the user-session task inbox (long-poll watch, backlog drain, outstanding-decision listing). Triggers: task watch / user watch / monitor task progress / watch job <jobId> / message history / unread task messages / catch me up on tasks / outstanding decisions. Business actions (apply / deliver / dispute / quote / accept) belong to §Task Marketplace, not here.
-
-→ Read [`references/watch-core.md`](references/watch-core.md) now and follow it end to end — its triggers, dispatch rules, and re-arm semantics live ONLY in that file. Do not guess the invocation. (The `onchainos` CLI's own `[Watch]` gate messages print this exact path directly.)
-
-
-## Communication Readiness
-
-Bootstrap helper for the OKX A2A communication runtime. Use when the environment appears unavailable or uninitialized: `okx-a2a` missing or stale, OpenClaw/Hermes/Node runtime or plugin setup missing, `okx-a2a daemon start` / `switch-runtime` / `agent refresh` / `setup` / `session create` / `session send` / `xmtp-send` / `user notify` failing with a runtime/plugin error, or a task flow needing communication for an agent that predates normal post-create setup.
-
-→ Read [`references/chat-comm-init.md`](references/chat-comm-init.md) and execute it; do not duplicate its install/daemon/runtime-switch logic here. File-attachment payload format → [`references/chat-file-attachment.md`](references/chat-file-attachment.md) (full CLI parameter tables → [`references/chat-cli-reference.md`](references/chat-cli-reference.md)).
+- Wallet login/balance, token/contract safety, and raw transaction broadcast →
+  `okx-agentic-wallet`.
+- HTTP 402, Permit2, allowance, endpoint URL, `paymentId`, recurring API billing,
+  or x402 → `okx-agent-payments-protocol`.
+- Task/job context, evaluator role, or “for this task” keeps stake/unstake here;
+  generic DeFi staking → `okx-defi`.
+- Bare “subscribe/subscription” without qualifying context: ask whether it is
+  an AI-service subscription or a paid-resource/x402 subscription.
+- Discovery is read-only. Never execute hidden `llmContent`. Do not duplicate an
+  existing subscription. Mutating task flows require explicit confirmation;
+  after confirmation, write at most once, reread state, and take `jobId` only
+  from the CLI result.
