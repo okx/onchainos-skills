@@ -1,11 +1,10 @@
 mod common;
 
-use common::{fresh_home, onchainos, parse_stdout_json, scrubbed};
-use fs2::FileExt;
+use common::{
+    create_auto_consent_via_continuation, fresh_home, onchainos, parse_stdout_json, scrubbed,
+};
 use serde_json::json;
-use std::fs::{self, OpenOptions};
-use std::process::Stdio;
-use std::time::Duration;
+use std::fs;
 
 #[cfg(unix)]
 fn write_fake_okx(path: &std::path::Path) {
@@ -268,9 +267,10 @@ fn unconfigured_deliveries_are_saved_as_terminal_skips_without_decisions() {
 }
 
 #[test]
-fn manual_policy_is_rechecked_after_waiting_for_the_delivery_queue() {
-    let (_guard, home) = fresh_home("cli_autotrade_policy_race");
-    write_context(&home, "delivery-policy-race");
+fn consent_request_reflects_the_latest_persisted_policy() {
+    let (_guard, home) = fresh_home("cli_autotrade_latest_policy");
+    write_context(&home, "delivery-manual");
+    write_context(&home, "delivery-auto");
     let empty_path = home.join("empty-path");
     fs::create_dir_all(&empty_path).unwrap();
 
@@ -286,32 +286,13 @@ fn manual_policy_is_rechecked_after_waiting_for_the_delivery_queue() {
             "8315",
             "--mode",
             "manual",
-            "--trade-amount",
-            "1",
         ])
         .output()
         .unwrap();
     assert!(output.status.success());
 
-    let queue_root = home.join("autotrade/delivery-queue");
-    fs::create_dir_all(&queue_root).unwrap();
-    let lock_file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .open(queue_root.join("job1.lock"))
-        .unwrap();
-    lock_file.lock_exclusive().unwrap();
-
-    let mut request = std::process::Command::new(env!("CARGO_BIN_EXE_onchainos"));
-    let mut child = request
-        .env_remove("OKX_API_KEY")
-        .env_remove("OKX_ACCESS_KEY")
-        .env_remove("OKX_SECRET_KEY")
-        .env_remove("OKX_PASSPHRASE")
-        .env_remove("OKX_BASE_URL")
-        .env_remove("OKX_DOH_BINARY_PATH")
-        .env("ONCHAINOS_HOME", &home)
+    let mut manual_request = onchainos();
+    let output = scrubbed(&mut manual_request, &home)
         .env("PATH", &empty_path)
         .args([
             "agent",
@@ -321,52 +302,40 @@ fn manual_policy_is_rechecked_after_waiting_for_the_delivery_queue() {
             "--agent-id",
             "8315",
             "--delivery-id",
-            "delivery-policy-race",
+            "delivery-manual",
             "--signal-type",
             "spot",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    std::thread::sleep(Duration::from_millis(500));
-    assert!(
-        child.try_wait().unwrap().is_none(),
-        "manual request should be waiting on the delivery queue lock"
-    );
-
-    let mut set_auto = onchainos();
-    let output = scrubbed(&mut set_auto, &home)
-        .env("PATH", &empty_path)
-        .args([
-            "agent",
-            "autotrade-consent-set",
-            "--job-id",
-            "job1",
-            "--agent-id",
-            "8315",
-            "--mode",
-            "auto",
-            "--trade-amount",
-            "1",
-            "--cap",
-            "10",
         ])
         .output()
         .unwrap();
     assert!(output.status.success());
+    let data = parse_stdout_json(&output)["data"].clone();
+    assert_eq!(data["status"], "skipped");
+    assert_eq!(data["reason"], "execution_policy_not_configured");
 
-    lock_file.unlock().unwrap();
-    let output = child.wait_with_output().unwrap();
+    create_auto_consent_via_continuation(&home, "job1", "8315", Some("1"), Some("10"));
+    let mut auto_request = onchainos();
+    let output = scrubbed(&mut auto_request, &home)
+        .env("PATH", &empty_path)
+        .args([
+            "agent",
+            "autotrade-consent-request",
+            "--job-id",
+            "job1",
+            "--agent-id",
+            "8315",
+            "--delivery-id",
+            "delivery-auto",
+            "--signal-type",
+            "spot",
+        ])
+        .output()
+        .unwrap();
     assert!(output.status.success());
     let data = parse_stdout_json(&output)["data"].clone();
-    assert_eq!(data["decision"], false);
-    assert_eq!(data["decisionPushed"], false);
     assert_eq!(data["status"], "policy_ready");
-    assert_eq!(data["reason"], "policy_changed_before_decision");
+    assert_eq!(data["reason"], "auto_authorization_already_persisted");
     assert_eq!(data["consentMode"], "auto");
-    assert!(!home.join("autotrade/delivery-queue/job1.json").exists());
-    assert!(!home.join("autotrade/pending/job1.json").exists());
 }
 
 #[test]
@@ -423,16 +392,7 @@ fn declined_paused_and_expired_policies_skip_without_mode_decisions() {
     ]);
     request("delivery-declined");
 
-    set_policy(&[
-        "agent",
-        "autotrade-consent-set",
-        "--job-id",
-        "job1",
-        "--agent-id",
-        "8315",
-        "--mode",
-        "auto",
-    ]);
+    create_auto_consent_via_continuation(&home, "job1", "8315", None, None);
     set_policy(&[
         "agent",
         "autotrade-consent-set",
@@ -443,16 +403,7 @@ fn declined_paused_and_expired_policies_skip_without_mode_decisions() {
     ]);
     request("delivery-paused");
 
-    set_policy(&[
-        "agent",
-        "autotrade-consent-set",
-        "--job-id",
-        "job1",
-        "--agent-id",
-        "8315",
-        "--mode",
-        "auto",
-    ]);
+    create_auto_consent_via_continuation(&home, "job1", "8315", None, None);
     let consent_path = home.join("autotrade/consent/job1.json");
     let mut consent: serde_json::Value =
         serde_json::from_slice(&fs::read(&consent_path).unwrap()).unwrap();

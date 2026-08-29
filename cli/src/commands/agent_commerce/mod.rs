@@ -751,6 +751,10 @@ pub enum AgentCommand {
         /// User-confirmed stable flat settings and typed `extra` entries.
         #[arg(long = "settings-json")]
         settings_json: Option<String>,
+        /// One-time continuation permit required for every `auto` policy write.
+        /// It binds the final write to the exact user-confirmed draft.
+        #[arg(long = "continuation-id")]
+        continuation_id: Option<String>,
     },
 
     /// Continue a short-lived, job-bound execution configuration flow.
@@ -774,6 +778,10 @@ pub enum AgentCommand {
         required_fields: Vec<String>,
         #[arg(long = "confirm-mode", default_value_t = false)]
         confirm_mode: bool,
+        /// Confirm the complete inactive execution draft returned by the
+        /// preceding continuation call. Valid only as a separate resume.
+        #[arg(long = "confirm-draft", default_value_t = false)]
+        confirm_draft: bool,
         #[arg(long = "trade-amount")]
         trade_amount: Option<String>,
         #[arg(long)]
@@ -786,6 +794,9 @@ pub enum AgentCommand {
         margin_mode: Option<String>,
         #[arg(long = "order-policy")]
         order_policy: Option<String>,
+        /// User-selected Trade Kit credential source (`oauth` or `api_key`).
+        #[arg(long = "auth-mode")]
+        auth_mode: Option<String>,
         /// User-confirmed stable flat settings and typed `extra` entries.
         #[arg(long = "settings-json")]
         settings_json: Option<String>,
@@ -2329,12 +2340,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             delivery_id,
             required_fields,
             confirm_mode,
+            confirm_draft,
             trade_amount,
             cap,
             quote,
             environment,
             margin_mode,
             order_policy,
+            auth_mode,
             settings_json,
             cancel,
         } => {
@@ -2349,12 +2362,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     || delivery_id.is_some()
                     || !required_fields.is_empty()
                     || confirm_mode
+                    || confirm_draft
                     || trade_amount.is_some()
                     || cap.is_some()
                     || quote.is_some()
                     || environment.is_some()
                     || margin_mode.is_some()
                     || order_policy.is_some()
+                    || auth_mode.is_some()
                     || settings_json.is_some()
                 {
                     anyhow::bail!("--cancel does not accept configuration arguments");
@@ -2382,13 +2397,18 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 trade_environment: environment.as_deref(),
                 margin_mode: margin_mode.as_deref(),
                 order_policy: order_policy.as_deref(),
+                auth_mode: auth_mode.as_deref(),
                 dynamic_settings: consent::parse_dynamic_settings_json(
                     settings_json.as_deref(),
                     "--settings-json",
                 )?,
+                confirm_draft,
             };
 
             let result = if continuation_id.is_none() {
+                if confirm_draft {
+                    anyhow::bail!("--confirm-draft requires --continuation-id");
+                }
                 let mut selected_mode = selected_mode
                     .ok_or_else(|| anyhow::anyhow!("--mode is required when starting"))?;
                 let origin = origin
@@ -2524,6 +2544,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             order_policy,
             auth_mode,
             settings_json,
+            continuation_id,
         } => {
             use task::common::autotrade::{consent, grants};
             let trade_environment = environment
@@ -2553,6 +2574,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             if tool.is_some() {
                 anyhow::bail!("--tool is deprecated; use subscription-route-set");
             }
+            let auto_continuation_id =
+                auto_write_continuation_id(&mode, continuation_id.as_deref())?;
             if mode == "pause" {
                 if cap.is_some()
                     || trade_amount.is_some()
@@ -2726,18 +2749,33 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             {
                 anyhow::bail!("notify_only does not accept automatic execution settings");
             }
-            let effective_amount = trade_amount.as_deref().or_else(|| {
-                if mode_enum == consent::ConsentMode::Auto {
-                    cap.as_deref()
-                } else {
-                    None
-                }
-            });
+            let auto_write_permit = if mode_enum == consent::ConsentMode::Auto {
+                let continuation_id = auto_continuation_id.expect("required for auto mode");
+                let agent_id = agent_id.as_deref().expect("checked above");
+                task::common::autotrade::continuation::validate_auto_write(
+                    &job_id,
+                    continuation_id,
+                    &task::common::autotrade::continuation::AutoConsentWrite {
+                        agent_id,
+                        trade_amount_u: trade_amount.as_deref(),
+                        cap_u: cap.as_deref(),
+                        quote_token: quote.as_deref(),
+                        trade_environment,
+                        margin_mode,
+                        order_policy,
+                        auth_mode,
+                        dynamic_settings: &dynamic_settings,
+                    },
+                )?;
+                Some((agent_id.to_string(), continuation_id.to_string()))
+            } else {
+                None
+            };
             consent::write_consent_policy_with_dynamic_settings(
                 &job_id,
                 mode_enum,
                 cap.as_deref(),
-                effective_amount,
+                trade_amount.as_deref(),
                 quote.as_deref(),
                 trade_environment,
                 margin_mode,
@@ -2768,8 +2806,16 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     grants::clear_grant(&job_id)
                 }
             }
+            if let Some((agent_id, continuation_id)) = auto_write_permit.as_ref() {
+                task::common::autotrade::continuation::consume_auto_write(
+                    &job_id,
+                    agent_id,
+                    continuation_id,
+                )?;
+            } else {
+                task::common::autotrade::continuation::clear(&job_id);
+            }
             consent::clear_pending_signal(&job_id);
-            task::common::autotrade::continuation::clear(&job_id);
             crate::output::success(
                 serde_json::json!({
                     "consentMode": if mode_enum == consent::ConsentMode::Auto { "auto" } else { "notify_only" },
@@ -3341,6 +3387,23 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     }
 }
 
+fn auto_write_continuation_id<'a>(
+    mode: &str,
+    continuation_id: Option<&'a str>,
+) -> anyhow::Result<Option<&'a str>> {
+    if mode == "auto" {
+        return continuation_id.map(Some).ok_or_else(|| {
+            anyhow::anyhow!(
+                "--continuation-id is required for --mode auto; complete and confirm the execution draft first"
+            )
+        });
+    }
+    if continuation_id.is_some() {
+        anyhow::bail!("--continuation-id is valid only with --mode auto");
+    }
+    Ok(None)
+}
+
 fn tx_failure_label(event: &str) -> &'static str {
     task::common::state_machine::Event::parse(event).failure_label()
 }
@@ -3587,6 +3650,159 @@ fn validate_a2a_file_arg(
     }
     let canonical = serde_json::to_string(&payload)?;
     persist_validated_a2a_spool(pj, &canonical)
+}
+
+#[cfg(test)]
+mod auto_consent_permit_tests {
+    use super::{auto_write_continuation_id, run, AgentCommand};
+
+    fn auto_command(continuation_id: Option<String>) -> AgentCommand {
+        AgentCommand::AutotradeConsentSet {
+            job_id: "job-1".to_string(),
+            mode: "auto".to_string(),
+            cap: None,
+            trade_amount: None,
+            agent_id: Some("7".to_string()),
+            ttl_sec: 3600,
+            plugin: None,
+            tool: None,
+            quote: None,
+            environment: None,
+            margin_mode: None,
+            order_policy: None,
+            auth_mode: None,
+            settings_json: None,
+            continuation_id,
+        }
+    }
+
+    #[test]
+    fn auto_mode_requires_a_continuation_permit() {
+        let error = auto_write_continuation_id("auto", None).unwrap_err();
+        assert!(error.to_string().contains("--continuation-id is required"));
+        assert_eq!(
+            auto_write_continuation_id("auto", Some("atc_0123456789abcdef0123456789abcdef"))
+                .unwrap(),
+            Some("atc_0123456789abcdef0123456789abcdef")
+        );
+    }
+
+    #[test]
+    fn non_auto_modes_keep_their_existing_contract() {
+        for mode in [
+            "notify_only",
+            "pause",
+            "cap-adjust",
+            "environment-set",
+            "settings-update",
+            "plugin-ready-check",
+        ] {
+            assert_eq!(auto_write_continuation_id(mode, None).unwrap(), None);
+            assert!(auto_write_continuation_id(
+                mode,
+                Some("atc_0123456789abcdef0123456789abcdef")
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn final_writer_validates_before_writes_and_consumes_after_grant() {
+        let source = include_str!("mod.rs");
+        let final_writer = source
+            .split_once("let auto_write_permit =")
+            .expect("final Auto writer")
+            .1;
+        let validate = final_writer
+            .find("validate_auto_write")
+            .expect("permit validation");
+        let consent = final_writer
+            .find("write_consent_policy_with_dynamic_settings")
+            .expect("consent write");
+        let grant = final_writer
+            .find("write_auto_grant")
+            .expect("grant write");
+        let consume = final_writer
+            .find("consume_auto_write")
+            .expect("permit consumption");
+        assert!(validate < consent);
+        assert!(consent < grant);
+        assert!(grant < consume);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn final_writer_blocks_bypass_and_consumes_successful_permit() {
+        use crate::commands::agent_commerce::task::common::autotrade::{
+            consent::{self, ConsentMode},
+            continuation::{self, ExplicitValues, Origin, SelectedMode, StartBinding},
+            grants,
+        };
+
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("auto-permit-test-{}", uuid::Uuid::new_v4()));
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        let ctx = crate::commands::Context {
+            config: crate::config::AppConfig::default(),
+            base_url_override: None,
+            chain_override: None,
+        };
+
+        let missing = run(auto_command(None), &ctx).await.unwrap_err();
+        assert!(missing.to_string().contains("--continuation-id is required"));
+        assert!(consent::load_consent("job-1").unwrap().is_none());
+        assert!(grants::check_grant("job-1", "trade_kit", "buy", "1").is_err());
+
+        let required = Vec::new();
+        let completed = continuation::start_or_update(
+            Some(StartBinding {
+                job_id: "job-1",
+                agent_id: "7",
+                selected_mode: SelectedMode::Auto,
+                mode_confirmed: true,
+                origin: Origin::SubscriptionRestore,
+                signal_type: "spot",
+                original_delivery_id: None,
+                required_fields: Some(&required),
+                service_guide_hash: None,
+                service_guide_hash_resolved: false,
+                seed_consent: None,
+            }),
+            "job-1",
+            "7",
+            None,
+            None,
+            ExplicitValues::default(),
+        )
+        .unwrap();
+        assert!(completed.complete);
+
+        run(
+            auto_command(Some(completed.continuation_id.clone())),
+            &ctx,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            consent::load_consent("job-1").unwrap().unwrap().mode,
+            ConsentMode::Auto
+        );
+        assert!(grants::check_grant("job-1", "trade_kit", "buy", "1").is_ok());
+
+        let replay = run(auto_command(Some(completed.continuation_id)), &ctx)
+            .await
+            .unwrap_err();
+        assert!(replay
+            .to_string()
+            .contains("no live consent continuation"));
+
+        std::env::remove_var("ONCHAINOS_HOME");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 #[cfg(test)]

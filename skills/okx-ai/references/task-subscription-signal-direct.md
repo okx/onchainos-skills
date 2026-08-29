@@ -114,7 +114,7 @@ signal, selected a tool, or authorized a money-moving call.
      --job-id <jobId> --delivery-id <deliveryId> \
      --amount <resolvedPolicyAmount> \
      [--available-amount <currentAvailableAmount>] \
-     --execution-mode <auto|manual|one_time>
+     --execution-mode <auto|one_time>
    ```
 
    Pass `--available-amount` exactly when `tradeAmountMode=available_balance_ratio`; the CLI recomputes and verifies

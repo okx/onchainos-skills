@@ -282,12 +282,15 @@ fn persist_subscription_autotrade(
     job_id: &str,
     config: &SubscriptionAutoTradeConfig,
 ) -> Result<()> {
+    // The default quote is an automatic-execution convenience, not a value the
+    // user authorized for a new notify-only policy.
+    let quote = (config.mode == consent::ConsentMode::Auto).then_some(config.quote.as_str());
     consent::write_consent_policy_with_dynamic_settings(
         job_id,
         config.mode,
         config.cap.as_deref(),
         config.amount.as_deref(),
-        Some(&config.quote),
+        quote,
         config.environment,
         config.margin_mode,
         config.order_policy,
@@ -1478,6 +1481,25 @@ mod tests {
         assert!(grants::check_grant("job-subscribe-auto", "dex", "buy", "50").is_ok());
         assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "50").is_ok());
         assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "51").is_ok());
+
+        let notify_only = SubscriptionAutoTradeConfig {
+            mode: consent::ConsentMode::Decline,
+            amount: None,
+            cap: None,
+            quote: consent::DEFAULT_QUOTE.to_string(),
+            environment: None,
+            margin_mode: None,
+            order_policy: None,
+            auth_mode: None,
+            dynamic_settings: DynamicConsentSettings::new(),
+        };
+        persist_subscription_autotrade("job-subscribe-notify", &notify_only).unwrap();
+        let stored = consent::load_consent("job-subscribe-notify")
+            .unwrap()
+            .expect("notify-only consent must exist");
+        assert_eq!(stored.mode, consent::ConsentMode::Decline);
+        assert_eq!(stored.quote_token, None);
+        assert!(grants::check_grant("job-subscribe-notify", "trade_kit", "buy", "1").is_err());
 
         std::env::remove_var("ONCHAINOS_HOME");
         std::fs::remove_dir_all(home).ok();
