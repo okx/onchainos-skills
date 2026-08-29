@@ -8,8 +8,8 @@
 
 ## Contents
 
-- **Common (any role)**: `common context` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
-- **User**: `create-task` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `complete` · `reject` · `close` · `claim-auto-refund` · `set-asp` · `task-attach`
+- **Common (any role)**: `common context` · `communication-check` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
+- **User**: `create-task` · `task-create-prepare` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `complete` · `reject` · `close` · `claim-auto-refund` · `task-attach`
 - **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
 - **ASP**: `apply` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
@@ -35,6 +35,19 @@ agent common context <jobId> --role <user|asp|evaluator> --agent-id <agentId> [-
 | `--role` | Yes | - | `user` / `asp` / `evaluator` |
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--address` | No | auto-resolved | Caller's wallet address |
+
+### communication-check
+
+Run only the read-only communication leg used by `gate-check`; it never checks wallet or Agent
+identity and never installs or repairs anything.
+
+```
+agent communication-check
+```
+
+The success envelope carries `data.ok`. `true` means ready. `false` carries `data.hint`; a probe that
+cannot produce a definitive verdict carries `data.note`. This command is advisory: every result is
+returned without blocking the caller, which may warn and continue.
 
 ### pending-decisions-v2
 
@@ -155,9 +168,9 @@ Publish a new task on-chain (params provided by `next-action` playbook; blocks o
 agent create-task --description <txt> --budget <num> --max-budget <num> --currency <USDT|USDG> \
   --title <txt> \
   --provider <agentId> \
-  [--service-id <id>] [--service-params <txt>] \
+  --service-id <id> --payment-mode <escrow> [--service-params <txt>] \
   [--service-token-address <addr>] [--service-token-amount <num>] \
-  [--endpoint <url>] [--file <path>] [--payment-mode <escrow|x402>]
+  [--endpoint <url>] [--file <path>]
 ```
 
 | Param | Required | Default | Description                                 |
@@ -168,13 +181,13 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
 | `--currency` | Yes | - | `USDT` or `USDG`                            |
 | `--title` | Yes | - | Task title (max 30 chars)                   |
 | `--provider` | Yes | - | Provider agentId; always required |
-| `--service-id` | No | - | Service ID from `task-service-select` response        |
+| `--service-id` | Yes | - | UUID `serviceId` from `task-create-prepare data.serviceData` |
 | `--service-params` | No | - | Service input parameters (natural language) |
 | `--service-token-address` | No | - | Service token contract address              |
-| `--service-token-amount` | No | - | Service price (from `task-service-select` `feeAmount`)  |
+| `--service-token-amount` | No | - | Service price from `task-create-prepare data.serviceData.feeAmount` |
 | `--endpoint` | No | - | Designated service endpoint URL             |
 | `--file` | No | - | Local file paths to attach (repeatable)     |
-| `--payment-mode` | No | unset | `escrow` or `x402`                          |
+| `--payment-mode` | Yes | - | `escrow`                          |
 
 ### funding-notice
 
@@ -186,11 +199,39 @@ agent funding-notice --chain <chain> --currency <symbol> --shortfall <amount> --
 
 Optional: `--available <amount>`, `--required <amount>`, `--deposit-chain <chain>`, `--reason <task-payment|payment-402|dispute-bond|subscription>`.
 
+### task-create-prepare
+
+```text
+agent task-create-prepare --sid <sid>
+```
+
+Pass only the confirmed numeric `sid` from search or matching context. The command first checks wallet
+login and resolves the current wallet's User Agent. It then runs
+`service-match --sid <sid> --agentic-id <userAgentId> --limit 1` and treats the matched Service as the
+sole source of current pricing, subscription, trial eligibility, provider, and service metadata. From
+that result it reads `asp.aspAgentId` and the UUID `serviceId`, then runs
+`service-list --agent-id <providerAgentId> --service-id <serviceId>` exactly once to obtain only the
+current `serviceGuide`. It merges that guide, normalizes the Service, checks existing subscriptions,
+and checks the payable token balance. Current trial eligibility or an effective fee of zero skips the
+balance query.
+
+Every successful response contains exactly `status`, `playbook`, and `serviceData` under `data`.
+`serviceData` is an empty object for `login_required` and `user_identity_required`; for every other
+status it is the complete normalized selected Service. Follow `playbook` verbatim; do not derive the
+next action from `status`. Stable status values are `login_required`, `user_identity_required`,
+`a2mcp_service`, `unknown_service_type`, `insufficient_balance`, `already_subscribed`, and `ready`.
+
+Invalid/missing Service fields and failed detail/subscription/balance requests are command errors, not
+additional business cases. The returned `playbook` is the sole routing authority.
+
 ### task-service-select
 
 Task-creation service selection wrapper. It calls `service-match`, preserves each service's online status,
 normalizes fields for the create-task / create-subscribe playbooks, and preserves
 `autoTradePreflight`.
+
+This wrapper remains available for compatibility, but the current creation flow uses
+`service-match --limit 1` followed by `task-create-prepare`.
 
 First search:
 
@@ -227,7 +268,7 @@ conditions.
 | `unmatchReason` | string/null | Backend no-match reason when present |
 | `subscriptionCheck` | object | Present when a matched result contains a subscription service: `{status:"checked", blockingServiceCount}` |
 | `duplicateSubscription` | object | Present when the selected service has a blocking non-terminal subscription. Contains the exact minimal `userFacingPrompt` and optional `nextAfterUserChoice`; only ACTIVE offers `restore-listening`. |
-| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, serviceId, serviceName, serviceDescription, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, existingSubscription, autoTradePreflight}`. `existingSubscription` is added only to subscription services and is `null` when no non-terminal duplicate exists. |
+| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, sid, serviceId, serviceName, serviceDescription, serviceGuide, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, existingSubscription, autoTradePreflight}`. `existingSubscription` is added only to subscription services and is `null` when no non-terminal duplicate exists. |
 
 For a matched subscription service, `--agentic-id <buyerAgentId>` is mandatory because the command performs
 the duplicate-subscription check before returning a selectable result. A blocking
@@ -496,26 +537,6 @@ User Agent reclaims escrowed funds after `submit_expired` / `reject_expired` (pa
 agent claim-auto-refund <jobId>
 ```
 
-### set-asp
-
-Re-set ASP + service on an existing task (off-chain); triggers `job_created` event
-
-```
-agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params "<params>" --service-token-address <addr> --service-token-amount <amt> [--payment-token-symbol <sym>] [--agent-id <id>]
-```
-
-| Param | Required | Default | Description |
-|---|---|---|---|
-| `<jobId>` | Yes | - | Task ID (positional) |
-| `--provider-agent-id` | Yes | - | New provider agentId |
-| `--service-id` | Yes | - | Service ID from `asp-match` |
-| `--service-type` | Yes | - | `A2A` or `A2MCP` (A2A -> escrow, A2MCP -> x402) |
-| `--service-params` | Yes | - | Service input parameters (natural language string) |
-| `--service-token-address` | Yes | - | Service token contract address (from `asp-match` `feeToken`) |
-| `--service-token-amount` | Yes | - | Service price (from `asp-match` `feeAmount`) |
-| `--payment-token-symbol` | No | - | Payment token symbol (e.g. USDT) |
-| `--agent-id` | No | auto-resolved | User agentId |
-
 ### task-attach
 
 Attach local files to an existing task
@@ -544,6 +565,7 @@ agent create-subscribe \
   --auto-renew <0|1> \
   --title <txt> --description <txt> \
   [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
+  [--service-interval <interval>] [--file <path>]... \
   [--autotrade-mode <auto|manual>] [--autotrade-amount <decimal-number>] \
   [--autotrade-cap <decimal-number>] [--autotrade-quote <usdt|usdc>] \
   [--autotrade-environment <live|demo>] \
@@ -555,15 +577,18 @@ agent create-subscribe \
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--service-id` | Yes | - | Service ID from `task-service-select` |
+| `--service-id` | Yes | - | UUID `serviceId` from `task-create-prepare data.serviceData` |
 | `--use-trial` | No | false | Start with trial period |
-| `--service-token-amount` | Yes | - | Monthly fee (from `task-service-select` `subscriptionInfo.feeAmount`) |
-| `--service-token-address` | Yes | - | Fee token contract address (from `task-service-select` `feeToken`) |
+| `--service-params` | No | `""` | Confirmed Service inputs; omit when empty |
+| `--service-token-amount` | Yes | - | Monthly fee from `task-create-prepare data.serviceData.subscriptionInfo.feeAmount` |
+| `--service-token-address` | Yes | - | Fee token contract address from `task-create-prepare data.serviceData.feeToken` |
 | `--auto-renew` | Yes | - | 0=off, 1=on |
 | `--title` | Yes | - | Max 64 chars |
 | `--description` | Yes | - | Max 4096 chars |
+| `--file` | No (repeatable) | - | Local file paths to attach; 100 MB limit per file |
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
-| `--service-description` | No | `""` | Exact service description from `task-service-select`; persisted only as bounded routing hints |
+| `--service-description` | No | `""` | Exact `task-create-prepare data.serviceData.serviceDescription`; persisted only as bounded routing hints |
+| `--service-interval` | No | `month` | Billing interval from `task-create-prepare data.serviceData.subscriptionInfo.interval` |
 | `--autotrade-mode` | No | `auto` | `auto` or `manual`; an explicit user opt-out uses `manual` |
 | `--autotrade-amount` | No | - | Optional positive human-readable quote amount for each signal |
 | `--autotrade-cap` | No | - | Optional positive per-signal cap metadata; stored but not enforced |
@@ -572,6 +597,7 @@ agent create-subscribe \
 | `--autotrade-margin-mode` | For confirmed Trade Kit `perp` routes | - | User-authorized margin mode: `cross` or `isolated` |
 | `--autotrade-order-policy` | For confirmed Trade Kit routes | - | User-authorized order construction: `market` or `signal_price_limit` |
 | `--autotrade-required-field` | No (repeatable) | - | Declare a field the current flow required the user to confirm: `mode`, `tradeAmount`, `cap`, `quote`, `environment`, `marginMode`, or `orderPolicy`. Before any remote create request, the CLI rejects declarations whose matching value is missing. |
+| `--format` | No | text | `json` returns structured post-creation capability and persistence fields |
 
 The caller derives this declaration from `autoTradePreflight` and the ASP description; the CLI does not reinterpret ASP prose. A confirmed Trade Kit route declares `environment` and `orderPolicy`, plus `marginMode` for `perp`. Fields merely suggested by the ASP and local tool readiness are not declarations.
 
@@ -579,7 +605,7 @@ The caller derives this declaration from `autoTradePreflight` and the ASP descri
 
 > **Insufficient-balance output:** when under-funded, `create-subscribe` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs` and puts `markdownImage` under option 1. If missing, show `balanceWarning`.
 
-> **Duplicate-subscription output:** immediately before any provider-confirmation, signing, create, or broadcast request, the CLI fresh-reads the buyer's subscriptions for the exact `serviceId`. A non-terminal match exits with `{ok:false,data:{blockedReason:"duplicate-subscription",existingSubscription,userFacingPrompt,nextAfterUserChoice?}}`. Render only the localized `userFacingPrompt`; it always includes `jobId` and the explicit duplicate-creation block, and deliberately omits fee, trial, status, description, and readiness. `nextAfterUserChoice` is present only when the existing status is `ACTIVE` and then contains only `restore-listening`; otherwise there is no follow-up action. Do not query or suggest the ASP's other services. A failed precheck is fail-closed and sends no create request. This write-boundary check is intentionally repeated even when `task-service-select` already checked, closing the confirmation-to-create race.
+> **Duplicate-subscription output:** immediately before any provider-confirmation, signing, create, or broadcast request, the CLI fresh-reads the buyer's subscriptions for the exact `serviceId`. A non-terminal match exits with `{ok:false,data:{blockedReason:"duplicate-subscription",existingSubscription,userFacingPrompt,nextAfterUserChoice?}}`. Render only the localized `userFacingPrompt`; it always includes `jobId` and the explicit duplicate-creation block, and deliberately omits fee, trial, status, description, and readiness. `nextAfterUserChoice` is present only when the existing status is `ACTIVE` and then contains only `restore-listening`; otherwise there is no follow-up action. Do not query or suggest the ASP's other services. A failed precheck is fail-closed and sends no create request. This write-boundary check is intentionally repeated even when `task-create-prepare` already checked, closing the confirmation-to-create race.
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 

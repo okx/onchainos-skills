@@ -146,6 +146,9 @@ pub enum AgentCommand {
         title: String,
         #[arg(long)]
         description: String,
+        /// Local file paths to attach to the subscription after creation.
+        #[arg(long = "file")]
+        attachments: Option<Vec<String>>,
         #[arg(long = "provider-agent-id")]
         provider_agent_id: Option<String>,
         /// Exact service description returned by asp-match. Only bounded
@@ -281,6 +284,10 @@ pub enum AgentCommand {
     /// Select task-creation candidate services via service-match
     #[command(name = "task-service-select")]
     TaskServiceSelect(task::user::TaskServiceSelectArgs),
+
+    /// Run deterministic task-creation checks for a selected Service
+    #[command(name = "task-create-prepare")]
+    TaskCreatePrepare(task::user::TaskCreatePrepareArgs),
 
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
     #[command(name = "set-asp")]
@@ -565,6 +572,11 @@ pub enum AgentCommand {
         #[arg(long)]
         role: String,
     },
+
+    /// Advisory read-only check of the local A2A communication runtime.
+    /// A not-ready result is reported in JSON but never blocks the caller.
+    #[command(name = "communication-check")]
+    CommunicationCheck,
 
     /// Prepare-create: validate fields + gate-check + designated-route in one call.
     /// Returns structured JSON for the confirmation form. Does NOT create the task.
@@ -1500,6 +1512,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             auto_renew,
             title,
             description,
+            attachments,
             provider_agent_id,
             service_description,
             service_interval,
@@ -1524,6 +1537,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     auto_renew,
                     title,
                     description,
+                    attachments,
                     provider_agent_id,
                     service_description,
                     service_interval,
@@ -1603,6 +1617,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::TaskServiceSelect(args) => {
             task::user::run_task(T::TaskServiceSelect(args), ctx).await
+        }
+
+        AgentCommand::TaskCreatePrepare(args) => {
+            task::user::run_task(T::TaskCreatePrepare(args), ctx).await
         }
 
         AgentCommand::SetAsp {
@@ -1931,6 +1949,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::MyAgents { role } => task::common::handle_my_agents(role.as_deref()).await,
 
         AgentCommand::GateCheck { role } => task::common::handle_preflight(&role).await,
+
+        AgentCommand::CommunicationCheck => task::common::handle_communication_check().await,
 
         AgentCommand::PrepareCreate {
             description,

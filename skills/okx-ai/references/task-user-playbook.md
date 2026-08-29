@@ -7,7 +7,7 @@
 ## Reading Order
 
 1. **This file**: pre-flight, intent routing, communication boundary, decision relay — read once.
-2. **[`task-user-actions-publish.md`](task-user-actions-publish.md)**: on demand — read when the user wants to publish a task.
+2. **[`task-user-actions-create.md`](task-user-actions-create.md)**: on demand — read when the user wants to publish a task.
 3. **[`task-user-actions.md`](task-user-actions.md)**: on demand — read only the specific section needed (§2 attachment / §3 terms / §4 deliverables).
 4. **[`task-cli-reference.md`](task-cli-reference.md)**: do NOT read full file. Use `grep` for the specific command you need.
 
@@ -21,11 +21,10 @@
 
 | Intent | Trigger examples | Route to |
 |---|---|---|
-| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`task-user-actions-publish.md`](task-user-actions-publish.md) |
+| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`identity-discover.md`](identity-discover.md) commissioning search, then follow the `task-create-prepare` response's `data.playbook` verbatim |
 | Add attachment / image | "attach a file/image to a task" | [`task-user-actions.md`](task-user-actions.md) §2 |
-| Switch provider / stop task | "switch provider / stop task" | [`task-user-actions.md`](task-user-actions.md) §3 |
+| Stop task | "stop task / close task" | [`task-user-actions.md`](task-user-actions.md) §3 |
 | View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
-| Designated-provider x402 | "send a request to this endpoint" | [`task-user-actions-publish.md`](task-user-actions-publish.md) §5 |
 | Subscription task list | "my subscriptions / subscription list / ongoing subscriptions / active subscriptions / ended subscriptions" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Task list → §Unified My Tasks. User-initiated lists use `my-tasks --task-type subscription`, never `my-subscriptions`. |
 | Subscription task ops | "auto-renew / trial cancel / reject delivery / apply for refund / claim refund / subscription charge / subscription cost" | §Subscription below |
 | Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
@@ -39,25 +38,6 @@
 🛑 **Rule:** if `fundingNoticeCommand` exists, run it and follow its output exactly. For `image-notify`, put `markdownImage` under option 1. Never summarize the 4 options/address/gas/resume.
 
 ## Subscription
-
-### Subscription-specific field rules
-
-| Field | Source | Notes |
-|---|---|---|
-| `serviceId` | from `task-service-select` response | auto-filled |
-| `useTrial` | `subscriptionInfo.supportTrial == true` from `task-service-select` → auto `true`; otherwise `false`. Display hours from `subscriptionInfo.freeTrial` field | **auto-filled, do NOT ask user** |
-| `autoRenew` | ask user explicitly before form — no default | 0=off, 1=on |
-| Automatic signal execution | Defaults to `auto`. Inspect the ASP description only to learn which supported settings to ask about; persist mode/amount/cap/quote/environment/margin mode/order policy only from the user's reply. An explicit opt-out becomes `manual`. Amount and cap are optional positive decimals, quote defaults to `USDT`, Trade Kit environment is `live`/`demo`, margin mode is `cross`/`isolated`, and order policy is `market`/`signal_price_limit`. Ask missing fields in one natural-language question without choices. Never render execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode, order policy, or any other execution setting as a confirmation-form row. None of these values belongs in `serviceParams`. | **local execution configuration; not an ASP business parameter** |
-| Signal preflight | Retain schema-v3 `autoTradePreflight` as advisory local information. When Trade Kit is explicit or the sole candidate, run local-only schema-v3 readiness and offer the optional Install/connect Trade Kit or Later card. On Install/connect, load `okx-cex-auth` (install `okx/agent-skills` only after its required security scan when absent) and delegate CLI/site/OAuth/API-key setup to it. Readiness never verifies authentication; only re-run it after an install/upgrade to verify local compatibility. Never auto-install or block subscription creation. | **optional preparation; not a subscription input** |
-| `serviceTokenAmount` | from `task-service-select` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
-
-Read `autoTradeConfigured` from the JSON success envelope. When it is `true`, no additional execution-
-consent question is needed. When it is `false`, the subscription itself still succeeded but local execution
-configuration was not persisted: report the local failure without opening a decision card.
-
-For a `next-action` route, its returned confirmation form is the sole field authority; never merge fields
-from a Skill appendix or other card into it. Use `task-user-actions-publish.md` **Appendix A2** only for a
-direct/fallback subscription route that did not receive a CLI-provided confirmation form.
 
 ### Post-creation: Offline-deliverables question
 

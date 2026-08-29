@@ -34,6 +34,7 @@ mod query;
 mod reject;
 mod reject_apply;
 pub(crate) mod subscription_ops;
+mod task_create_prepare;
 mod x402_flow;
 
 use anyhow::Result;
@@ -56,6 +57,14 @@ pub struct TaskServiceSelectArgs {
     /// Output format: json
     #[arg(long, default_value = "json")]
     pub format: String,
+}
+
+/// Deterministic task-creation checks for a selected Service ID.
+#[derive(Args, Clone, Debug)]
+pub struct TaskCreatePrepareArgs {
+    /// Selected numeric Service `sid` from service search or matching context.
+    #[arg(long = "sid", value_name = "SID")]
+    pub sid: String,
 }
 
 #[derive(Subcommand)]
@@ -122,6 +131,9 @@ pub enum TaskCommand {
         /// Subscription description (max 4096 chars)
         #[arg(long)]
         description: String,
+        /// Local file paths to attach to the subscription after creation.
+        #[arg(long = "file")]
+        attachments: Option<Vec<String>>,
         /// Designated provider agent ID
         #[arg(long = "provider-agent-id")]
         provider_agent_id: Option<String>,
@@ -188,6 +200,9 @@ pub enum TaskCommand {
     /// Select task-creation candidate services via service-match
     #[command(name = "task-service-select")]
     TaskServiceSelect(TaskServiceSelectArgs),
+    /// Prepare task creation from a selected Service ID
+    #[command(name = "task-create-prepare")]
+    TaskCreatePrepare(TaskCreatePrepareArgs),
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
     SetAsp {
         job_id: String,
@@ -1506,11 +1521,11 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 title, provider, attachments, endpoint, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount,
             }).await,
-        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment, autotrade_margin_mode, autotrade_order_policy, autotrade_required_fields, format, exclude_device } => {
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, attachments, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment, autotrade_margin_mode, autotrade_order_policy, autotrade_required_fields, format, exclude_device } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
                 service_id, use_trial, service_params, service_token_amount, service_token_address,
-                auto_renew, title, description, provider_agent_id, service_description, service_interval,
+                auto_renew, title, description, attachments, provider_agent_id, service_description, service_interval,
                 autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment,
                 autotrade_margin_mode, autotrade_order_policy, autotrade_required_fields, format, exclude_device,
             }).await
@@ -1519,6 +1534,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             asp_ops::handle_asp_match(&mut client, &job_id, provider_agent_id.as_deref(), payment_token_amount, page, agent_id.as_deref(), &format).await,
         TaskCommand::TaskServiceSelect(args) =>
             asp_ops::handle_task_service_select(&mut client, &args.service_match, &args.format).await,
+        TaskCommand::TaskCreatePrepare(args) =>
+            task_create_prepare::handle_task_create_prepare(&mut client, &args.sid).await,
         TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, agent_id } =>
             asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), agent_id.as_deref()).await,
         TaskCommand::ResetAsp { job_id, agent_id } =>

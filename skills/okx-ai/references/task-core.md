@@ -132,7 +132,6 @@ When dealing with integer values of any of the fields below, **look up the table
 
 | Intent | Trigger examples | Detail |
 |---|---|---|
-| Publish task | "publish task / create a task" | [`task-user-actions-publish.md`](task-user-actions-publish.md) |
 | Take specific task (ASP) | "take {jobId} / accept task X / take task X / contact the User Agent of {jobId}" — **specific jobId** | [`task-asp-accept.md §1`](task-asp-accept.md) — ASPs are passive; there is no proactive-accept path. Designated tasks arrive via the `JobAspSelected` system event; reply with passive-readiness guidance and wait. **Do NOT directly `apply`** — apply is system-event-triggered only. |
 | Stake (Evaluator) | "I want to stake" | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
 | Re-submit / nudge / change terms | "re-submit / nudge / change currency" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |

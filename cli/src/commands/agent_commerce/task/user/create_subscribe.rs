@@ -32,6 +32,7 @@ pub struct CreateSubscribeParams {
     pub auto_renew: i32,
     pub title: String,
     pub description: String,
+    pub attachments: Option<Vec<String>>,
     pub provider_agent_id: Option<String>,
     pub service_description: String,
     pub service_interval: String,
@@ -88,6 +89,13 @@ impl CreateSubscribeParams {
         }
         if self.description.chars().count() > MAX_DESCRIPTION_CHARS {
             bail!("--description exceeds {MAX_DESCRIPTION_CHARS} characters");
+        }
+        if let Some(ref files) = self.attachments {
+            for file in files {
+                if !std::path::Path::new(file).exists() {
+                    bail!("attachment file not found: {file}");
+                }
+            }
         }
         let autotrade_config = self.autotrade_config()?;
         self.validate_required_autotrade_fields(&autotrade_config)?;
@@ -439,6 +447,12 @@ pub async fn handle_create_subscribe(
     let biz_type = signing::extract_biz_type(&create_resp);
     let uop_data = &create_resp["uopData"];
 
+    if let Some(ref files) = params.attachments {
+        if !files.is_empty() {
+            super::attachments::copy_attachments_to_job(&sub_id, files)?;
+        }
+    }
+
     if DEBUG_LOG {
         eprintln!("[create-subscribe] subId={sub_id}, bizType={biz_type}");
     }
@@ -642,6 +656,7 @@ mod tests {
                 auto_renew,
                 title,
                 description,
+                attachments,
                 provider_agent_id,
                 service_description,
                 service_params,
@@ -664,6 +679,7 @@ mod tests {
                 assert_eq!(auto_renew, "1");
                 assert_eq!(title, "Signal Subscription");
                 assert_eq!(description, "On-chain signal subscription service");
+                assert!(attachments.is_none());
                 assert!(provider_agent_id.is_none());
                 assert_eq!(service_description, "");
                 assert_eq!(service_params, "");
@@ -681,6 +697,41 @@ mod tests {
             }
             _ => panic!("expected CreateSubscribe"),
         }
+    }
+
+    #[test]
+    fn cli_create_subscribe_accepts_repeated_files() {
+        let cli = TestCli::parse_from([
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_attachments",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0x6776",
+            "--auto-renew",
+            "1",
+            "--title",
+            "Subscription with files",
+            "--description",
+            "Subscription request with two supporting files",
+            "--file",
+            "/tmp/brief.pdf",
+            "--file",
+            "/tmp/data.csv",
+        ]);
+
+        let super::super::TaskCommand::CreateSubscribe { attachments, .. } = cli.cmd else {
+            panic!("expected CreateSubscribe");
+        };
+        assert_eq!(
+            attachments,
+            Some(vec![
+                "/tmp/brief.pdf".to_string(),
+                "/tmp/data.csv".to_string(),
+            ])
+        );
     }
 
     #[test]
@@ -848,6 +899,7 @@ mod tests {
             auto_renew: 1,
             title: "t".to_string(),
             description: "d".to_string(),
+            attachments: None,
             provider_agent_id: provider.map(str::to_string),
             service_description: String::new(),
             service_interval: "month".to_string(),
@@ -862,6 +914,19 @@ mod tests {
             format: "json".to_string(),
             exclude_device: None,
         }
+    }
+
+    #[test]
+    fn create_subscribe_rejects_missing_attachment_before_creation() {
+        let mut params = params_fixture(None);
+        params.attachments = Some(vec![
+            "/path/that/does/not/exist/subscription-attachment.pdf".to_string(),
+        ]);
+
+        let error = params
+            .validate()
+            .expect_err("a missing attachment must stop subscription creation");
+        assert!(error.to_string().contains("attachment file not found"));
     }
 
     #[test]
@@ -979,6 +1044,7 @@ mod tests {
             auto_renew: 0,
             title: "Analytics report".to_string(),
             description: "Read-only market report without trading signals".to_string(),
+            attachments: None,
             provider_agent_id: Some("agent-99".to_string()),
             service_description: String::new(),
             service_interval: "month".to_string(),
@@ -1005,6 +1071,8 @@ mod tests {
         assert_eq!(body["providerAgentId"], serde_json::json!("agent-99"));
         assert_eq!(body["description"], params.description);
         assert!(body.get("descriptionSummary").is_none());
+        assert!(body.get("file").is_none());
+        assert!(body.get("attachments").is_none());
     }
 
     #[test]

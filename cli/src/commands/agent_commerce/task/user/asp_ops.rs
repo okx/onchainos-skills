@@ -58,6 +58,12 @@ fn selected_subscription_fee(service: &serde_json::Value) -> Option<serde_json::
 }
 
 fn build_subscription_info(service: &serde_json::Value) -> serde_json::Value {
+    if let Some(info) = service
+        .get("subscriptionInfo")
+        .filter(|value| value.is_object())
+    {
+        return info.clone();
+    }
     let subscription = selected_subscription(service);
     let subscription_fee = selected_subscription_fee(service);
     let support_subscription = subscription.is_some()
@@ -186,7 +192,7 @@ fn offline_x402_service(service: &serde_json::Value) -> bool {
             .is_some_and(|value| !value.trim().is_empty())
 }
 
-fn compact_task_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
+pub(super) fn compact_task_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
     let subscription_info = build_subscription_info(service);
     let support_subscription = !subscription_info.is_null();
     let asp = service.get("asp").unwrap_or(&serde_json::Value::Null);
@@ -212,10 +218,12 @@ fn compact_task_service_for_ai(service: &serde_json::Value) -> serde_json::Value
         }
     }
     for key in [
+        "sid",
         "serviceId",
         "serviceName",
         "serviceType",
         "serviceDescription",
+        "serviceGuide",
         "feeToken",
         "feeTokenSymbol",
         "endpoint",

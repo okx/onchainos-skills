@@ -105,7 +105,7 @@ This ensures the deliverable data is not lost when the system event interrupts t
 
 ## Auto-Trade Execution
 
-> **Tool readiness is hinted at `task-service-select` time and re-checked on every real signal.** Subscription creation never silently installs a plugin or grants trading authority. When `next-action` returns `active_subscription_signal`, follow the reference selected by runtime `executionPath`: [`task-subscription-signal-direct.md`](task-subscription-signal-direct.md) for the default `agent_direct` path, or [`task-subscription-signal.md`](task-subscription-signal.md) for the retained `legacy_wrapper` path. The signal flow owns model classification, visible setup, authorization, and tool execution.
+> **Tool readiness is hinted at `task-create-prepare` time and re-checked on every real signal.** Subscription creation never silently installs a plugin or grants trading authority. When `next-action` returns `active_subscription_signal`, follow the reference selected by runtime `executionPath`: [`task-subscription-signal-direct.md`](task-subscription-signal-direct.md) for the default `agent_direct` path, or [`task-subscription-signal.md`](task-subscription-signal.md) for the retained `legacy_wrapper` path. The signal flow owns model classification, visible setup, authorization, and tool execution.
 
 > **Manual-path independence:** every deliverable is saved before routing. Skipping installation or
 > automatic execution never hides the original file; a later explicit user request may route it through

@@ -4,7 +4,7 @@ description: "Use OKX.AI to find and use tasks/services, manage tasks and subscr
 license: MIT
 metadata:
   author: okx
-  version: "4.8.4-beta"
+  version: "5.8.3-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -49,7 +49,7 @@ At the start of each thread, complete the checks in [`../okx-agentic-wallet/_sha
 | publish (activate) · unpublish (deactivate) #N | `references/identity-listing.md` + `references/identity-cli-reference.md` |
 | a CLI call returns an error / non-success (identity ops) | `references/identity-errors.md` (on demand) |
 | fee / gas / "how much to register" / "example at X USDT" | Creating, updating, activating, and deactivating an agent costs nothing; OKX covers network fees. Do NOT enter register. |
-| publish / accept / deliver / dispute / negotiate a **task**, my tasks, hire agent | See **§Task Marketplace** below |
+| accept / deliver / dispute / negotiate a **task**, my tasks | See **§Task Marketplace** below |
 | find / browse tasks · start accepting jobs (ASP) | [`references/task-asp-accept.md`](references/task-asp-accept.md) §1 — passive-readiness guidance only; do not run a command |
 | create or subscribe to a subscription task / auto-renew / trial cancel / reject delivery / claim refund | See **§Task Marketplace** below |
 | pause / stop auto copy-trading for a subscription | [`references/task-user-playbook.md`](references/task-user-playbook.md) §Pause auto copy-trade. Latency-sensitive direct action: do **not** load `task-user-sub-playbook.md`. |
@@ -67,15 +67,18 @@ At the start of each thread, complete the checks in [`../okx-agentic-wallet/_sha
 | User outcome | Load |
 |---|---|
 | Search, browse, inspect, compare, or recommend agents/services without commissioning work | [`references/identity-discover.md`](references/identity-discover.md) + [`references/intent-keyword-extraction.md`](references/intent-keyword-extraction.md) |
-| Commission a concrete outcome or deliverable; hire, buy, subscribe, publish, assign, or switch a task's provider | [`references/task-user-playbook.md`](references/task-user-playbook.md) |
+| Commission a concrete outcome or deliverable; hire, buy, subscribe, publish, assign, or publish a new task | [`references/identity-discover.md`](references/identity-discover.md) + [`references/intent-keyword-extraction.md`](references/intent-keyword-extraction.md) |
 
 - A bare "find/recommend an agent for X" with no commissioning intent is discovery.
 - "Find someone to do/produce/deliver X" is task execution intent even without `task` / `publish` /
   `hire`.
 - For a known `#N`, profile details, service listings, and reviews are discovery; buying or using its
-  service, assigning work, or switching an existing task's provider is task execution.
+  service, or assigning work, is task execution.
+- `identity-discover.md` owns the initial service search for both outcomes. It uses five results for
+  discovery and one result for commissioning. A user-confirmed Service is passed unchanged to
+  `task-create-prepare`; follow the returned `data.playbook` verbatim.
 - After loading the selected reference, follow its command-selection rules. Do not choose `agent service-match`,
-  `service-list`, or `task-service-select` directly from this section.
+  `service-list` directly from this section.
 
 Identity-not-wallet: **"add another agent / new ASP / add another User / new Client" = ALWAYS an identity, NEVER `wallet add`** (covers every role alias — User / Buyer / Client / ASP / Seller, not just these examples). Finding marketplace agents → run `agent service-match`, never list skill names. Passive onboarding (`need-user` from a task flow) → register user only.
 
@@ -97,7 +100,8 @@ Outbound handoffs: wallet login / balance → okx-agentic-wallet; token / contra
 
 The OKX AI Task Marketplace is a decentralized agent task delegation protocol: publish → negotiate → deliver → accept/dispute, across three roles (User Agent, ASP, Evaluator), driven by an on-chain event state machine. Load the right entry point for the situation:
 
-- **User session, free-form task intent** (publish / publish with a specified provider / attachment / terms / deliverables / **subscription task — subscribe / auto-renew / trial cancel / reject / claim refund / pause auto copy-trading**) → read [`references/task-user-playbook.md`](references/task-user-playbook.md) **ONLY**. ❌ Do NOT additionally read `references/task-core.md` or `references/task-user-sub-playbook.md` — those are for sub sessions and will bloat the context. For pause/stop auto copy-trading, jump directly to §Pause auto copy-trade after this file is loaded; do not scan unrelated subscription sections.
+- **User session, new task intent** (publish / publish with a specified provider / create a one-time task / subscribe to a new service) → read [`references/identity-discover.md`](references/identity-discover.md) + [`references/intent-keyword-extraction.md`](references/intent-keyword-extraction.md) first. Render its single recommended Service as a confirmation card, end the turn, and wait for the user's explicit confirmation. After confirmation, pass only the selected numeric `sid` to `task-create-prepare --sid`, then follow the returned `data.playbook` verbatim.
+- **Other user-session task actions** (attachment / terms / deliverables / auto-renew / trial cancel / reject / claim refund / pause auto copy-trading) → read [`references/task-user-playbook.md`](references/task-user-playbook.md) **ONLY**. For pause/stop auto copy-trading, jump directly to §Pause auto copy-trade after this file is loaded; do not scan unrelated subscription sections.
 - **Everything else** (sub-session role dispatch, envelope activation, staking, evaluator/ASP flows) → read [`references/task-core.md`](references/task-core.md) first and follow its own routing — it is self-contained.
 - **Evaluator staking** → [`references/task-evaluator-staking.md`](references/task-evaluator-staking.md) (reached from `task-core.md`, not directly).
 - The `onchainos` CLI's own role-guide hints (`gate-check` / `next-action` output) print these exact `references/task-*.md` paths directly — there is no intermediate redirect file to land on anymore.

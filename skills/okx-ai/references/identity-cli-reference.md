@@ -69,7 +69,7 @@ Use service `id` only to build an update/delete delta; never display it. Render 
 directly; never rebuild labels from backend enums.
 
 `--service-id` narrows `service-list` to one service — used by the publish flow's Service Usage Guide
-gate (task-user-actions-publish.md) to fetch a single service's `serviceGuide` without pulling the
+gate (task-user-actions-create.md) to fetch a single service's `serviceGuide` without pulling the
 agent's full service page. A provided-but-blank value is rejected with `invalid parameter:
 --service-id must not be blank` (never silently ignored). `serviceGuide` is flow input for that gate,
 never a display column.

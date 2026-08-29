@@ -1313,6 +1313,14 @@ pub async fn handle_preflight(role_raw: &str) -> Result<()> {
     Ok(())
 }
 
+/// Expose only the communication leg of `gate-check`. This command is
+/// advisory: a definitive not-ready verdict remains structured data and does
+/// not turn into a CLI error, so callers may warn and continue their workflow.
+pub async fn handle_communication_check() -> Result<()> {
+    crate::output::success(okx_a2a::communication_gate_json());
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_prepare_create(
     description: Option<&str>,
