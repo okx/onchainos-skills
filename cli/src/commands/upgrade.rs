@@ -1019,6 +1019,12 @@ pub struct PreflightArgs {
     /// Keep the currently running binary unchanged (feature/E2E test mode).
     #[arg(long)]
     pub no_self_update: bool,
+
+    /// Bypass the 12-hour throttle and always perform a fresh online check.
+    ///
+    /// [UNIT: bool]
+    #[arg(long)]
+    pub force: bool,
 }
 
 fn env_disables_self_update() -> bool {
@@ -1122,6 +1128,13 @@ fn compute_drift(effective_cli: &str, skill_version: Option<&str>) -> Option<Str
     }
 }
 
+/// The 12-hour throttle is consulted only when `--force` is absent. `--force`
+/// bypasses it and always runs the full online check — the same throttle-bypass
+/// semantics `UpgradeArgs::force` gives `execute()`.
+pub(super) fn should_consult_throttle(force: bool) -> bool {
+    !force
+}
+
 /// Session-start check: at most once every 12 hours, resolve the latest release,
 /// auto-update the binary, clean up deprecated skills, verify binary integrity,
 /// and report version drift.
@@ -1137,25 +1150,28 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
 
     // Share upgrade's last_check stamp so frequent sessions do not repeatedly
     // hit GitHub or run package-manager cleanup. Local CLI/skill drift can still
-    // be reported without a remote check.
-    if let Ok(home) = crate::home::onchainos_home() {
-        if is_throttled(&home, now_secs) {
-            let drift = compute_drift(current, skill_version);
-            output::success(json!({
-                "status": "fresh",
-                "currentVersion": current,
-                "updated": false,
-                "throttled": true,
-                "selfUpdateDisabled": no_self_update,
-                "binaryIdentity": Value::Null,
-                "integrity": "skipped",
-                "drift": match &drift {
-                    Some(_) => json!({ "skill": skill_version, "cli": current }),
-                    None => Value::Null,
-                },
-                "action": drift,
-            }));
-            return Ok(());
+    // be reported without a remote check. `--force` bypasses the throttle
+    // entirely and always runs the full online check (mirrors `execute()`).
+    if should_consult_throttle(args.force) {
+        if let Ok(home) = crate::home::onchainos_home() {
+            if is_throttled(&home, now_secs) {
+                let drift = compute_drift(current, skill_version);
+                output::success(json!({
+                    "status": "fresh",
+                    "currentVersion": current,
+                    "updated": false,
+                    "throttled": true,
+                    "selfUpdateDisabled": no_self_update,
+                    "binaryIdentity": Value::Null,
+                    "integrity": "skipped",
+                    "drift": match &drift {
+                        Some(_) => json!({ "skill": skill_version, "cli": current }),
+                        None => Value::Null,
+                    },
+                    "action": drift,
+                }));
+                return Ok(());
+            }
         }
     }
 
@@ -1352,8 +1368,9 @@ mod tests {
         artifact_name, compute_drift, current_branch, decide_target, decorate_graduation,
         discover_skill_paths_in, env_disables_self_update, highest_version, is_dev_build_path,
         is_throttled, parse_ls_remote_versions, parse_release_tag_url, record_check,
-        remote_is_trusted_okx, removal_action, reportable_skills, semver_gt, skill_requests_beta,
-        update_one_checkout, DEPRECATED_SKILLS,
+        remote_is_trusted_okx, removal_action, reportable_skills, semver_gt,
+        should_consult_throttle, skill_requests_beta, update_one_checkout, PreflightArgs,
+        DEPRECATED_SKILLS,
     };
     use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
@@ -1805,6 +1822,62 @@ mod tests {
         record_check(tmp.path(), 200_000).unwrap();
         assert!(is_throttled(tmp.path(), 200_000 + 100));
         assert!(!is_throttled(tmp.path(), 200_000 + 13 * 3600));
+    }
+
+    // ── preflight --force: parser surface + throttle-gate bypass ─────────
+
+    #[derive(clap::Parser)]
+    struct ForceTestCli {
+        #[command(flatten)]
+        pf: PreflightArgs,
+    }
+
+    #[test]
+    fn preflight_force_flag_parses_as_true() {
+        use clap::Parser;
+        let cli = ForceTestCli::try_parse_from(["preflight", "--force"]).unwrap();
+        assert!(cli.pf.force);
+    }
+
+    #[test]
+    fn preflight_force_defaults_to_false() {
+        use clap::Parser;
+        // Bare invocation leaves force off.
+        let bare = ForceTestCli::try_parse_from(["preflight"]).unwrap();
+        assert!(!bare.pf.force);
+        // Passing only an unrelated flag also leaves force off.
+        let argv = ["preflight", "--skill-version", "1.0.0"];
+        let only_version = ForceTestCli::try_parse_from(argv).unwrap();
+        assert!(!only_version.pf.force);
+    }
+
+    #[test]
+    fn preflight_force_coexists_with_existing_flags() {
+        use clap::Parser;
+        let argv = [
+            "preflight",
+            "--force",
+            "--no-self-update",
+            "--skill-version",
+            "1.2.3",
+        ];
+        let cli = ForceTestCli::try_parse_from(argv).unwrap();
+        assert!(cli.pf.force);
+        assert!(cli.pf.no_self_update);
+        assert_eq!(cli.pf.skill_version.as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn force_bypasses_throttle_gate_even_with_fresh_stamp() {
+        // A just-written stamp WOULD throttle a normal preflight — this is the
+        // exact predicate the "fresh" early-return depends on...
+        let tmp = TempDir::new().unwrap();
+        record_check(tmp.path(), 1_000).unwrap();
+        assert!(is_throttled(tmp.path(), 1_000 + 11 * 3600));
+        // ...yet the gate treats `--force` as "do not consult the throttle".
+        assert!(!should_consult_throttle(true));
+        // Without `--force`, the gate still consults `is_throttled` as before.
+        assert!(should_consult_throttle(false));
     }
 
     // ── decorate_graduation: machine-readable action hint ───────────────

@@ -28,7 +28,7 @@ pub fn handle_session_cleanup(job_id: &str, print_output: bool) -> Result<()> {
         out.push_str("ℹ️ KEEP_SESSION=true — conversation history retained. No further action needed.\n");
     } else {
         match okx_a2a::session_delete(job_id, None) {
-            Ok(()) => out.push_str(&"OK".to_string()),
+            Ok(()) => out.push_str("OK"),
             Err(e) => out.push_str(&format!("⚠️ sub session delete failed: {e}\n")),
         }
     }
