@@ -710,9 +710,6 @@ pub(super) async fn cmd_balance(
             "totalValueUsd": total_usd,
             "details": data,
         });
-        if profile.is_bitcoin() {
-            let _ = super::utxo::probe_unavailable_brc20_asset_info().await;
-        }
         output::success(result);
         return Ok(());
     }
