@@ -217,11 +217,11 @@ fn identity_read_and_toggle_behavior_is_preserved() {
     let discover = flatten(DISCOVER);
     let listing = flatten(LISTING);
     let reviews = flatten(REVIEWS);
-    assert!(discover.contains("user's original utterance verbatim"));
-    assert!(discover.contains("do not repeat initial-search filters"));
-    assert!(discover.contains("preserving the returned Agent and Service order"));
-    assert!(discover.contains("chain exactly ONE"));
-    assert!(discover.contains("never auto-chain `feedback-list`"));
+    assert!(discover.contains("user's original utterance unchanged"));
+    assert!(discover.contains("Do not repeat initial filters"));
+    assert!(discover.contains("Never reorder, rescore, hide, or invent results"));
+    assert!(discover.contains("run at most one `agent service-list"));
+    assert!(discover.contains("Load `identity-reviews.md` only when the user asks"));
     assert!(listing.contains("card-exempt"));
     assert!(listing.contains("never chase a successful toggle"));
     assert!(reviews.contains("Use the CLI-provided 0.00–5.00 star values directly"));
@@ -318,12 +318,12 @@ fn identity_shared_rules_have_single_owners() {
     assert!(!discover.contains("Never display `serviceGuide`"));
 
     assert!(cli.contains("Use service `id` only to build an update/delete delta; never display it"));
-    assert!(discover.contains(
-        "[identity-cli-reference.md §Read and discovery](identity-cli-reference.md#read-and-discovery)"
-    ));
+    assert!(
+        discover.contains("Command syntax and response fields live in `identity-cli-reference.md`")
+    );
     assert!(!discover.contains("Never display the raw `serviceId`"));
 
-    assert_eq!(discover.matches("do not repeat initial-search filters").count(), 1);
+    assert_eq!(discover.matches("Do not repeat initial filters").count(), 1);
     assert!(!cli.contains("A continuation cannot repeat initial filters"));
 
     assert!(listing.contains("`submitApproval.success: true`"));

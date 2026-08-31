@@ -77,14 +77,19 @@ never a display column.
 ### `agent service-match`
 
 ```text
-agent service-match [--keywords <k...>] [--asp-agent-id <id>] [--asp-name <name>] [--service-name <name>] [--sid <sid>] [--agentic-id <id>] [--min-payment-token-amount <n>] [--max-payment-token-amount <n>] [--limit <1..10>]
+agent service-match [--query-json '<json>'] [--agentic-id <id>] [--limit <1..10>]
 agent service-match --search-after <cursor> [--agentic-id <id>] [--limit <1..10>]
 ```
 
-Initial search accepts at most ten keywords; minimum/maximum are non-negative and minimum must not
-exceed maximum. Read `services[]`, `searchAfter`, `hasMore`, and `unmatchReason`; each service carries
-its `asp` summary and CLI-normalized rating. Continuation behavior is owned by
-[identity-discover.md §Pagination](identity-discover.md#pagination).
+`--query-json` is the preferred initial-search interface and accepts the exact
+object from `intent-keyword-extraction.md`. It cannot be combined with legacy
+initial-search flags or `--search-after`. The CLI rejects unknown fields,
+invalid prices, more than ten keywords, unresolved ambiguity, and unsupported
+constraints. Existing individual filter flags remain available for backward
+compatibility. Read `services[]`, `searchAfter`, `hasMore`, and `unmatchReason`; each service carries
+its `asp` summary and CLI-normalized rating. Search result routing, selection,
+and continuation are owned by
+[identity-discover.md §Service search](identity-discover.md#service-search).
 
 ## Publication
 

@@ -1,7 +1,8 @@
 //! Marketplace service search with a stable output contract.
 
 use anyhow::{bail, Context as _, Result};
-use serde_json::{Map, Number, Value};
+use serde::Deserialize;
+use serde_json::{json, Map, Number, Value};
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::Context;
@@ -28,8 +29,101 @@ pub async fn service_match(args: ServiceMatchArgs, ctx: &Context) -> Result<()> 
         )
         .await?;
     normalize_security_ratings(&mut data);
-    output::success(data);
+    output::success(with_progression_contract(data));
     Ok(())
+}
+
+/// Add the shared Skill/CLI progression contract while preserving the legacy
+/// service-match fields consumed by existing task adapters. `payload` is the
+/// untouched normalized backend result; the duplicate top-level fields are a
+/// temporary compatibility surface and can be removed after all callers read
+/// the contract explicitly.
+fn with_progression_contract(mut data: Value) -> Value {
+    let payload = data.clone();
+    let Some(object) = data.as_object_mut() else {
+        return json!({
+            "phase": "service_selection",
+            "decision": "blocked",
+            "reason": "search_unavailable",
+            "nextAction": [
+                {"id": "retry_search", "recommend": true},
+                {"id": "stop", "recommend": false}
+            ],
+            "payload": payload
+        });
+    };
+
+    let Some(services) = payload.get("services").and_then(Value::as_array) else {
+        object.insert("phase".into(), json!("service_selection"));
+        object.insert("decision".into(), json!("blocked"));
+        object.insert("reason".into(), json!("search_unavailable"));
+        object.insert(
+            "nextAction".into(),
+            json!([
+                {"id": "retry_search", "recommend": true},
+                {"id": "stop", "recommend": false}
+            ]),
+        );
+        object.insert("payload".into(), payload);
+        return data;
+    };
+
+    let mut actions = Vec::new();
+    for service in services {
+        let sid = service.get("sid").and_then(scalar_string);
+        if let Some(sid) = sid {
+            actions.push(json!({
+                "id": "select_service",
+                "recommend": actions.is_empty(),
+                "params": {"sid": sid}
+            }));
+        }
+    }
+
+    let has_more = payload
+        .get("hasMore")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let search_after = payload
+        .get("searchAfter")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if has_more {
+        if let Some(cursor) = search_after {
+            let recommend = actions.is_empty();
+            actions.push(json!({
+                "id": "load_more",
+                "recommend": recommend,
+                "params": {"searchAfter": cursor}
+            }));
+        }
+    }
+    let recommend_refine = actions.is_empty();
+    actions.push(json!({"id": "refine_search", "recommend": recommend_refine}));
+    actions.push(json!({"id": "stop", "recommend": false}));
+
+    let reason = match services.len() {
+        0 => "no_services",
+        1 => "single_service",
+        _ => "multiple_services",
+    };
+    object.insert("phase".into(), json!("service_selection"));
+    object.insert("decision".into(), json!("requires_user_input"));
+    object.insert("reason".into(), json!(reason));
+    object.insert("nextAction".into(), Value::Array(actions));
+    object.insert("payload".into(), payload);
+    data
+}
+
+fn scalar_string(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| value.as_i64().map(|value| value.to_string()))
+        .or_else(|| value.as_u64().map(|value| value.to_string()))
 }
 
 /// Add a ready-to-render rating sourced from the ASP's 0–5 `securityRate`.
@@ -57,52 +151,137 @@ fn trimmed(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SearchQuery {
+    #[serde(default)]
+    keywords: Vec<String>,
+    asp_agent_id: Option<String>,
+    asp_name: Option<String>,
+    service_name: Option<String>,
+    sid: Option<String>,
+    min_payment_token_amount: Option<Number>,
+    max_payment_token_amount: Option<Number>,
+    #[serde(default)]
+    unsupported_constraints: Vec<String>,
+    #[serde(default)]
+    requires_user_input: bool,
+}
+
+impl SearchQuery {
+    fn from_args(args: &ServiceMatchArgs) -> Result<Self> {
+        if let Some(raw) = trimmed(args.query_json.as_deref()) {
+            let has_legacy_filter = !args.keywords.is_empty()
+                || trimmed(args.asp_agent_id.as_deref()).is_some()
+                || trimmed(args.asp_name.as_deref()).is_some()
+                || trimmed(args.service_name.as_deref()).is_some()
+                || trimmed(args.service_id.as_deref()).is_some()
+                || trimmed(args.min_payment_token_amount.as_deref()).is_some()
+                || trimmed(args.max_payment_token_amount.as_deref()).is_some();
+            if has_legacy_filter || trimmed(args.search_after.as_deref()).is_some() {
+                bail!("--query-json cannot be combined with legacy initial-search flags or --search-after");
+            }
+            let query: Self = serde_json::from_str(raw)
+                .context("--query-json must match the service search query schema")?;
+            query.validate()?;
+            return Ok(query);
+        }
+
+        let query = Self {
+            keywords: args.keywords.clone(),
+            asp_agent_id: args.asp_agent_id.clone(),
+            asp_name: args.asp_name.clone(),
+            service_name: args.service_name.clone(),
+            sid: args.service_id.clone(),
+            min_payment_token_amount: args
+                .min_payment_token_amount
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| parse_non_negative_decimal(value, "--min-payment-token-amount"))
+                .transpose()?,
+            max_payment_token_amount: args
+                .max_payment_token_amount
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| parse_non_negative_decimal(value, "--max-payment-token-amount"))
+                .transpose()?,
+            unsupported_constraints: Vec::new(),
+            requires_user_input: false,
+        };
+        query.validate()?;
+        Ok(query)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.keywords.len() > 10 {
+            bail!("service search query accepts at most 10 keywords");
+        }
+        if self.requires_user_input {
+            bail!("service search query requires user clarification");
+        }
+        if !self.unsupported_constraints.is_empty() {
+            bail!(
+                "service search query contains unsupported constraints: {}",
+                self.unsupported_constraints.join(", ")
+            );
+        }
+        validate_amount(
+            self.min_payment_token_amount.as_ref(),
+            "minPaymentTokenAmount",
+        )?;
+        validate_amount(
+            self.max_payment_token_amount.as_ref(),
+            "maxPaymentTokenAmount",
+        )?;
+        if let (Some(min), Some(max)) = (
+            self.min_payment_token_amount
+                .as_ref()
+                .and_then(Number::as_f64),
+            self.max_payment_token_amount
+                .as_ref()
+                .and_then(Number::as_f64),
+        ) {
+            if min > max {
+                bail!("minPaymentTokenAmount must be less than or equal to maxPaymentTokenAmount");
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_amount(value: Option<&Number>, field: &str) -> Result<()> {
+    if value.is_some_and(|number| {
+        !number
+            .as_f64()
+            .is_some_and(|amount| amount.is_finite() && amount >= 0.0)
+    }) {
+        bail!("{field} must be greater than or equal to 0");
+    }
+    Ok(())
+}
+
 fn agentic_id_header(args: &ServiceMatchArgs) -> Option<[(&'static str, &str); 1]> {
     trimmed(args.agentic_id.as_deref()).map(|value| [("agenticId", value)])
 }
 
 fn build_request(args: &ServiceMatchArgs) -> Result<Value> {
-    if args.keywords.len() > 10 {
-        bail!("--keywords accepts at most 10 values");
-    }
-
-    let keywords: Vec<&str> = args
+    let query = SearchQuery::from_args(args)?;
+    let keywords: Vec<&str> = query
         .keywords
         .iter()
         .map(String::as_str)
         .map(str::trim)
         .filter(|keyword| !keyword.is_empty())
         .collect();
-    let asp_agent_id = trimmed(args.asp_agent_id.as_deref());
-    let asp_name = trimmed(args.asp_name.as_deref());
-    let service_name = trimmed(args.service_name.as_deref());
-    let service_id = trimmed(args.service_id.as_deref());
+    let asp_agent_id = trimmed(query.asp_agent_id.as_deref());
+    let asp_name = trimmed(query.asp_name.as_deref());
+    let service_name = trimmed(query.service_name.as_deref());
+    let service_id = trimmed(query.sid.as_deref());
     let search_after = trimmed(args.search_after.as_deref());
-    let min_payment_token_amount = args
-        .min_payment_token_amount
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| parse_non_negative_decimal(value, "--min-payment-token-amount"))
-        .transpose()?;
-    let max_payment_token_amount = args
-        .max_payment_token_amount
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| parse_non_negative_decimal(value, "--max-payment-token-amount"))
-        .transpose()?;
-
-    if let (Some(min), Some(max)) = (
-        min_payment_token_amount.as_ref().and_then(Number::as_f64),
-        max_payment_token_amount.as_ref().and_then(Number::as_f64),
-    ) {
-        if min > max {
-            bail!(
-                "--min-payment-token-amount must be less than or equal to --max-payment-token-amount"
-            );
-        }
-    }
+    let min_payment_token_amount = query.min_payment_token_amount;
+    let max_payment_token_amount = query.max_payment_token_amount;
 
     let has_initial_condition = !keywords.is_empty()
         || asp_agent_id.is_some()
@@ -171,6 +350,7 @@ mod tests {
 
     fn args() -> ServiceMatchArgs {
         ServiceMatchArgs {
+            query_json: None,
             keywords: vec!["smart contract".into(), "audit".into()],
             asp_agent_id: None,
             asp_name: None,
@@ -304,5 +484,80 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("greater than or equal"));
+    }
+
+    #[test]
+    fn structured_query_builds_the_same_backend_request_as_legacy_flags() {
+        let legacy = args();
+        let expected = build_request(&legacy).unwrap();
+        let mut structured = args();
+        structured.query_json = Some(
+            r#"{"keywords":["smart contract","audit"],"sid":"svc-001","minPaymentTokenAmount":5.25,"maxPaymentTokenAmount":10.50}"#.into(),
+        );
+        structured.keywords.clear();
+        structured.service_id = None;
+        structured.min_payment_token_amount = None;
+        structured.max_payment_token_amount = None;
+        assert_eq!(build_request(&structured).unwrap(), expected);
+    }
+
+    #[test]
+    fn structured_query_rejects_ambiguity_unsupported_constraints_and_unknown_fields() {
+        let mut input = args();
+        input.keywords.clear();
+        input.service_id = None;
+        input.min_payment_token_amount = None;
+        input.max_payment_token_amount = None;
+
+        input.query_json = Some(r#"{"requiresUserInput":true}"#.into());
+        assert!(build_request(&input)
+            .unwrap_err()
+            .to_string()
+            .contains("clarification"));
+
+        input.query_json = Some(r#"{"unsupportedConstraints":["online only"]}"#.into());
+        assert!(build_request(&input)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported constraints"));
+
+        input.query_json = Some(r#"{"unknown":"value"}"#.into());
+        assert!(build_request(&input)
+            .unwrap_err()
+            .to_string()
+            .contains("schema"));
+    }
+
+    #[test]
+    fn progression_contract_preserves_legacy_fields_and_adds_selection_actions() {
+        let result = with_progression_contract(json!({
+            "services": [
+                {"sid": 35153, "serviceName": "Alpha"},
+                {"sid": "35154", "serviceName": "Beta"}
+            ],
+            "hasMore": true,
+            "searchAfter": "cursor-1"
+        }));
+
+        assert_eq!(result["reason"], "multiple_services");
+        assert_eq!(result["decision"], "requires_user_input");
+        assert_eq!(result["services"].as_array().unwrap().len(), 2);
+        assert_eq!(result["payload"]["services"].as_array().unwrap().len(), 2);
+        assert_eq!(result["nextAction"][0]["id"], "select_service");
+        assert_eq!(result["nextAction"][0]["params"]["sid"], "35153");
+        assert_eq!(result["nextAction"][2]["id"], "load_more");
+        assert_eq!(result["nextAction"][2]["params"]["searchAfter"], "cursor-1");
+    }
+
+    #[test]
+    fn progression_contract_handles_empty_and_malformed_results() {
+        let empty = with_progression_contract(json!({"services": [], "hasMore": false}));
+        assert_eq!(empty["reason"], "no_services");
+        assert_eq!(empty["nextAction"][0]["id"], "refine_search");
+
+        let malformed = with_progression_contract(json!({"hasMore": false}));
+        assert_eq!(malformed["decision"], "blocked");
+        assert_eq!(malformed["reason"], "search_unavailable");
+        assert_eq!(malformed["nextAction"][0]["id"], "retry_search");
     }
 }
