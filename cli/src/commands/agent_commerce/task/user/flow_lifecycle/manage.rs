@@ -434,13 +434,11 @@ pub(crate) fn attachment_added_cli(
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if file_path.is_empty() {
-        return format!(
-            "[attachment_added_cli] ERROR: filePath missing in --message JSON.\n\n\
+        return "[attachment_added_cli] ERROR: filePath missing in --message JSON.\n\n\
              [Your next action] Notify the user:\n\
              ```bash\n\
              onchainos agent user-notify --content \"<localized: Attachment forwarding failed — file path was not provided. Please retry via task-attach.>\"\n\
-             ```\n"
-        );
+             ```\n".to_string();
     }
 
     let to_agent_id = ctx

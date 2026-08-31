@@ -763,7 +763,7 @@ impl WalletApiClient {
             let url = format!("{}{}", effective.trim_end_matches('/'), path);
 
             if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post_public] url_path={}", &url);
+                eprintln!("[DEBUG][post_public] url_path={}", url);
             }
 
             let resp = match self
@@ -808,7 +808,7 @@ impl WalletApiClient {
             let url = format!("{}{}", effective.trim_end_matches('/'), path);
 
             if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][get_no_okheaders] url_path={}", &url);
+                eprintln!("[DEBUG][get_no_okheaders] url_path={}", url);
             }
 
             let resp = match self.http.get(&url).send().await {
@@ -888,7 +888,7 @@ impl WalletApiClient {
             let url = format!("{}{}", effective.trim_end_matches('/'), path);
 
             if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post_authed] url_path={}", &url);
+                eprintln!("[DEBUG][post_authed] url_path={}", url);
             }
 
             let mut headers = crate::client::ApiClient::jwt_headers(access_token);
@@ -947,7 +947,7 @@ impl WalletApiClient {
         let url = format!("{}{}", effective.trim_end_matches('/'), path);
 
         if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG][post_authed_no_retry] url_path={}", &url);
+            eprintln!("[DEBUG][post_authed_no_retry] url_path={}", url);
         }
 
         let mut headers = crate::client::ApiClient::jwt_headers(access_token);
@@ -1098,7 +1098,7 @@ impl WalletApiClient {
         let raw_text = resp.text().await.context("failed to read response body")?;
 
         if status.as_u16() >= 500 {
-            bail!("Wallet API server error (HTTP {}): {}", status.as_u16(), &raw_text);
+            bail!("Wallet API server error (HTTP {}): {}", status.as_u16(), raw_text);
         }
 
         let body: Value = serde_json::from_str(&raw_text).with_context(|| {
@@ -1159,7 +1159,7 @@ impl WalletApiClient {
             let url = format!("{}{}{}", effective.trim_end_matches('/'), path, query_string);
 
             if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][get_public] url_path={}", &url);
+                eprintln!("[DEBUG][get_public] url_path={}", url);
             }
 
             let resp = match self

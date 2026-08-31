@@ -47,7 +47,7 @@ pub async fn handle_complete(
             Some(vec![
                 format!("jobId={job_id}"),
                 format!("agentId={agent_id}"),
-                format!("paymentMode=escrow"),
+                "paymentMode=escrow".to_string(),
                 format!("txHash={}", result.tx_hash),
             ]),
             None,
@@ -90,7 +90,7 @@ pub async fn handle_complete(
             Some(vec![
                 format!("jobId={job_id}"),
                 format!("agentId={agent_id}"),
-                format!("paymentMode=x402"),
+                "paymentMode=x402".to_string(),
                 format!("txHash={tx_hash}"),
             ]),
             None,

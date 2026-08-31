@@ -257,6 +257,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 ///
 /// The `event_str` parameter accepts both event names (job_created / provider_applied / ...)
 /// and status names (created / submitted / ...), uniformly parsed by state_machine.
+// Each parameter is an independently-optional piece of prefetched event context;
+// bundling them into a struct would just move the same 8 fields one level out.
+#[allow(clippy::too_many_arguments)]
 pub async fn generate_next_action(
     job_id: &str,
     event_str: &str,

@@ -91,7 +91,7 @@ fn copy_field(
 }
 
 fn compact_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
-    let subscription_info = build_subscription_info(&service);
+    let subscription_info = build_subscription_info(service);
     let support_subscription = !subscription_info.is_null();
     let mut compact = serde_json::Map::new();
     for key in [
@@ -104,10 +104,10 @@ fn compact_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
         "endpoint",
         "autoTradePreflight",
     ] {
-        copy_field(&mut compact, &service, key);
+        copy_field(&mut compact, service, key);
     }
     if !support_subscription {
-        copy_field(&mut compact, &service, "feeAmount");
+        copy_field(&mut compact, service, "feeAmount");
     }
     compact.insert(
         "supportSubscription".to_string(),

@@ -403,9 +403,7 @@ fn dispatch_front(job_id: &str, timeout: Duration) -> Result<bool> {
         (delivery_id, attempt)
     };
     let context = consent::load_delivery_context(job_id, &delivery_id)?;
-    if let Err(error) = send_resume(&context, attempt, timeout) {
-        return Err(error);
-    }
+    send_resume(&context, attempt, timeout)?;
     let _lock = acquire_lock(job_id)?;
     let mut queue = read_queue(job_id)?;
     if let Some(front) = queue.entries.first_mut() {

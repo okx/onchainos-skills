@@ -176,12 +176,12 @@ pub async fn handle_start_autorenew(client: &mut TaskApiClient, sub_id: &str) ->
         .await
         .map_err(|e| anyhow::anyhow!("providerConfirmStatus failed: {e}"))?;
 
-    if confirm_resp.is_null() || confirm_resp.as_object().map_or(true, |o| o.is_empty()) {
+    if confirm_resp.is_null() || confirm_resp.as_object().is_none_or(|o| o.is_empty()) {
         bail!("providerConfirmStatus returned empty terms");
     }
 
     let typed_data = &confirm_resp["typedData"];
-    if typed_data.is_null() || typed_data.as_object().map_or(true, |o| o.is_empty()) {
+    if typed_data.is_null() || typed_data.as_object().is_none_or(|o| o.is_empty()) {
         bail!("providerConfirmStatus response missing typedData");
     }
 

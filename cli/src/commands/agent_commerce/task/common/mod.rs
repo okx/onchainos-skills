@@ -552,10 +552,10 @@ pub(crate) async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Val
 /// single entry matching `service_id`. Returns:
 /// - `Ok(Some(entry))` — service-list fetched, entry found
 /// - `Ok(None)`         — service-list fetched, but no entry has this serviceId
-///                        (e.g. User Agent designated a stale / unregistered serviceId)
+///   (e.g. User Agent designated a stale / unregistered serviceId)
 /// - `Err(e)`           — service-list fetch failed entirely (subprocess died,
-///                        backend rejected, JSON parse failed). Callers usually
-///                        want to treat this as "no match" — use `.ok().flatten()`.
+///   backend rejected, JSON parse failed). Callers usually
+///   want to treat this as "no match" — use `.ok().flatten()`.
 ///
 /// Response navigation: scans every group's `list` (`data[*].list[*]`, flattened
 /// by the same logic that `designated_route_inner` uses); the first `serviceId`
@@ -916,22 +916,22 @@ pub async fn designated_route_inner(
                 .collect::<Vec<_>>();
             result["services"] = serde_json::json!(svc_list);
         }
-        return Ok(result);
+        Ok(result)
     } else {
         // No endpoint → A2A path; check online status
         if online_status == 2 {
-            return Ok(serde_json::json!({
+            Ok(serde_json::json!({
                 "route": "error",
                 "errorType": "offline",
                 "providerName": provider_name,
                 "onlineStatus": online_status,
-            }));
+            }))
         } else {
-            return Ok(serde_json::json!({
+            Ok(serde_json::json!({
                 "route": "a2a",
                 "providerName": provider_name,
                 "onlineStatus": online_status,
-            }));
+            }))
         }
     }
 }

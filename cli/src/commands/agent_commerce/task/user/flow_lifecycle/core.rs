@@ -1640,6 +1640,7 @@ pub(crate) async fn deliverable_received_cli(
 /// The two payment modes have completely different post-submit semantics:
 ///   - escrow (1): user must review (approve / reject) via a pending-decision card.
 ///   - x402   (3): funds already paid; just notify + auto-rate; flow ends here.
+///
 /// When `payment_mode` is `None` (rare; prefetch failure) we emit both branches with
 /// a "verify paymentMode first" header so the LLM can disambiguate.
 pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {

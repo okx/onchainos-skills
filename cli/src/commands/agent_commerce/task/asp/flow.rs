@@ -789,6 +789,10 @@ pub async fn generate_next_action(
                 let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenSymbol");
                 render_bailout("designation envelope missing `tokenSymbol`", &user_notify)
             } else {
+                // Restructuring into `else if let Some(..)` would relocate this entire
+                // multi-hundred-line branch; `is_none()` was just checked above, so this
+                // unwrap cannot panic.
+                #[allow(clippy::unnecessary_unwrap)]
                 let user_token_symbol = user_token_symbol_opt.unwrap();
                 // CODE: fetch service catalog and find the designated entry.
                 let matched = crate::commands::agent_commerce::task::common::find_service(agent_id, service_id).await.ok().flatten();
