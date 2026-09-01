@@ -20,7 +20,7 @@ onchainos preflight --force --skill-version <this skill's frontmatter version>
 From the `{ ok, data }` envelope, read `data.status`:
 
 - **`ok` / `updated`** → success: render the template below, using `data.versionAfter`
-  as `{version}` (the on-disk version after preflight — the single version field to display).
+  as `{version}`.
 - **anything else** → not a success: follow `_shared/preflight.md` — show `data.action`
   verbatim. Never render the success template on a non-success status.
 
