@@ -20,7 +20,7 @@ Read `services[]`, `searchAfter`, `hasMore`, `action`, and `tip`.
 
 ## Display
 
-**MUST** group `services[]` by `asp.aspAgentId` in returned order and render each Agent exactly as:
+**MUST** group `services[]` by `asp.aspAgentId` in returned order and render each Agent using this layout:
 
 ```markdown
 ### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>
@@ -30,8 +30,8 @@ Read `services[]`, `searchAfter`, `hasMore`, `action`, and `tip`.
 | 1 | <serviceName> | <serviceType> | <fee> | <subscription> | <freeTrial> | <endpoint> | <serviceDescription> |
 ```
 
-Render fields per [`identity-service-contract.md` §Display]. **MUST** render the CLI `tip` once, verbatim,
-below all Agent tables.
+Render fields per [`identity-service-contract.md` §Display]. **MUST** render all Agent tables as above,
+then the CLI `tip` once.
 
 ```text
 <CLI-returned tip>
@@ -51,7 +51,7 @@ Apply the same rules to every page.
 
 Use the selected Service's numeric `sid`.
 
-**MUST** stop after displaying the tables and `tip`. Only after explicit user confirmation or selection, run:
+**MUST** stop. Only after explicit confirmation in a subsequent user message, run:
 
 ```bash
 onchainos agent task-create-prepare --sid <selected-sid>
