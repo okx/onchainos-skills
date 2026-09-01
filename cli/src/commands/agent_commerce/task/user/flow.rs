@@ -478,6 +478,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             }
         }
         // ─── Subscription lifecycle events ──────────────────────────────────────────────
+        Event::SubOpen => super::flow_lifecycle::subscription::sub_open(&ctx, message),
         Event::SubCreated => super::flow_lifecycle::subscription::sub_created(&ctx, message),
         Event::SubCancel => super::flow_lifecycle::subscription::sub_cancel(&ctx, message),
         Event::SubUserReject => super::flow_lifecycle::subscription::sub_user_reject(&ctx, message),
@@ -1021,7 +1022,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             // Subscription notifications are self-contained display bodies (they call only
             // `user-notify` / `session-cleanup`, no IRON-RULE commands), so skip the shared
             // preamble + xmtp version prefix.
-            "sub_created" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
+            "sub_open" | "sub_created" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
             "sub_trial_into_active" | "sub_renew" | "sub_expire_warn" |
             "sub_complete_notify" | "sub_close_notify" | "sub_failed_notify" |
             "sub_reject_refund_notify"
@@ -1119,7 +1120,8 @@ mod tests {
     }
 
     // Every user-side subscription event renders a display notification, never a decision.
-    const USER_NON_TERMINAL: [&str; 5] = [
+    const USER_NON_TERMINAL: [&str; 6] = [
+        "sub_open",
         "sub_created",
         "sub_trial_into_active",
         "sub_renew",
@@ -1456,6 +1458,22 @@ mod tests {
         )
         .await;
         assert!(out.contains("12.34 USDT"), "amount echoed verbatim: {out}");
+    }
+
+    #[tokio::test]
+    async fn sub_open_is_created_and_waits_for_asp() {
+        let out = run(
+            "sub_open",
+            json!({
+                "event": "sub_open", "jobId": JOB_ID, "trialType": 0,
+                "providerAgentId": "9967", "tokenSymbol": "USDT", "tokenAmount": "12.34"
+            }),
+        )
+        .await;
+        assert!(out.contains("[Subscription Created]"), "created copy: {out}");
+        assert!(out.contains("waiting for the ASP to accept"), "waiting state: {out}");
+        assert!(out.contains("12.34 USDT has been funded"), "funding copy: {out}");
+        assert!(!out.contains("status: Active"), "must not claim active: {out}");
     }
 
     #[tokio::test]

@@ -1318,7 +1318,8 @@ pub async fn generate_next_action(
 
         // sub_asp_agree is the ASP's OWN action (agree refund); the existing action-command
         // flow (subscribe-agree-refund) owns that lifecycle, not this notification path.
-        Event::SubCreated
+        Event::SubOpen
+        | Event::SubCreated
         | Event::SubCancel
         | Event::SubTrialIntoActive
         | Event::SubExpireWarn

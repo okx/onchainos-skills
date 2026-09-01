@@ -424,6 +424,51 @@ pub(crate) fn fmt_epoch(ts: Option<i64>) -> Option<String> {
         .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
 }
 
+/// `sub_open` — subscription create-and-fund confirmed, awaiting ASP action.
+pub fn sub_open_user_notify(
+    job_id: &str,
+    service_name: &str,
+    token_amount: Option<&str>,
+    token_symbol: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "[Subscription Created] Job {job_id} (subscribing to {service_name}) is on-chain and waiting for the ASP to accept."
+    );
+    match (token_amount, token_symbol) {
+        (Some(amount), Some(symbol)) => out.push_str(&format!(
+            " {amount} {symbol} has been funded for the subscription but the subscription is not active yet."
+        )),
+        (Some(amount), None) => out.push_str(&format!(
+            " {amount} has been funded for the subscription but the subscription is not active yet."
+        )),
+        _ => out.push_str(" The subscription is not active yet."),
+    }
+    out
+}
+
+/// Trial variant of `sub_open`; the trial starts only after ASP acceptance.
+pub fn sub_open_trial_user_notify(
+    job_id: &str,
+    service_name: &str,
+    token_amount: Option<&str>,
+    token_symbol: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "[Trial Subscription Created] Job {job_id} (subscribing to {service_name}) is on-chain and waiting for the ASP to accept. The free trial has not started yet."
+    );
+    if let Some(amount) = token_amount {
+        match token_symbol {
+            Some(symbol) => out.push_str(&format!(
+                " If accepted, {amount} {symbol} is the paid-period price after the trial."
+            )),
+            None => out.push_str(&format!(
+                " If accepted, {amount} is the paid-period price after the trial."
+            )),
+        }
+    }
+    out
+}
+
 /// `sub_created` — subscription confirmed, first charge taken (user).
 pub fn sub_created_user_notify(
     job_id: &str,
@@ -938,6 +983,27 @@ mod tests {
             out.contains("next charge date:"),
             "nextChargeAt = subEndTime → clause present: {out}"
         );
+    }
+
+    #[test]
+    fn sub_open_paid_is_created_but_not_active() {
+        let out = sub_open_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
+        assert!(out.starts_with("[Subscription Created]"));
+        assert!(out.contains("waiting for the ASP to accept"));
+        assert!(out.contains("1.5 USDT has been funded"));
+        assert!(out.contains("not active yet"));
+        assert!(!out.contains("First charge"));
+    }
+
+    #[test]
+    fn sub_open_trial_does_not_claim_trial_started() {
+        let out =
+            sub_open_trial_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
+        assert!(out.starts_with("[Trial Subscription Created]"));
+        assert!(out.contains("waiting for the ASP to accept"));
+        assert!(out.contains("free trial has not started yet"));
+        assert!(out.contains("1.5 USDT is the paid-period price"));
+        assert!(!out.contains("Trial Started"));
     }
 
     #[test]

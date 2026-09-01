@@ -310,6 +310,8 @@ pub enum Event {
     WakeupNotify,
 
     // ── Subscription lifecycle (display-class; parse + render + end turn) ──────
+    /// Subscription create-and-fund confirmed; waiting for the designated ASP.
+    SubOpen,
     /// Subscription created on-chain/backend (notifies buyer/user).
     SubCreated,
     /// ASP selected for the subscription (notifies ASP).
@@ -398,6 +400,7 @@ impl Event {
             // Network / restart recovery
             "wakeup_notify"             => Event::WakeupNotify,
             // Subscription lifecycle (display-class)
+            "sub_open"                  => Event::SubOpen,
             "sub_created"               => Event::SubCreated,
             "sub_asp_selected"          => Event::SubAspSelected,
             "sub_cancel"                => Event::SubCancel,
@@ -458,6 +461,7 @@ impl Event {
             Event::DeliverableReceived    => "deliverable_received",
             Event::NegotiateReply         => "negotiate_reply",
             Event::WakeupNotify           => "wakeup_notify",
+            Event::SubOpen                => "sub_open",
             Event::SubCreated             => "sub_created",
             Event::SubAspSelected         => "sub_asp_selected",
             Event::SubCancel              => "sub_cancel",
@@ -555,7 +559,7 @@ pub fn status_when_event(e: &Event) -> Status {
         // Return a placeholder status here — agents must not drive next-action with wakeup_notify.
         Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),
         // Subscription lifecycle is display-only and drives no task status.
-        Event::SubCreated | Event::SubAspSelected | Event::SubCancel
+        Event::SubOpen | Event::SubCreated | Event::SubAspSelected | Event::SubCancel
         | Event::SubUserReject | Event::SubAspAgree | Event::SubAspDispute
         | Event::SubTrialIntoActive | Event::SubRenew | Event::SubExpireWarn
         | Event::SubCompleteNotify | Event::SubCloseNotify
@@ -610,6 +614,8 @@ pub fn parse_status_or_event(s: &str) -> Event {
 pub enum SubStatus {
     /// DB record created, not yet on-chain (transient; client rarely sees this).
     Init,      // -1
+    /// Create-and-fund confirmed; waiting for the designated ASP to accept or decline.
+    Created,   // 0
     /// Subscription active (trial if trialType=1, paid if trialType=0).
     Active,    // 1
     /// User rejected delivery; waiting for ASP response (1-day window).
@@ -620,6 +626,8 @@ pub enum SubStatus {
     Completed, // 6
     /// Terminal: closed (trial cancel / expired / on-chain failure).
     Closed,    // 7
+    /// ASP did not accept before the deadline; refund settlement is pending.
+    Expired,   // 8
     /// Terminal: refund settled (ASP agreed / auto-refund / DM ruled user-wins).
     Failed,    // 9
 }
@@ -628,11 +636,13 @@ impl SubStatus {
     pub fn from_code(code: i64) -> Self {
         match code {
             -1 => SubStatus::Init,
+             0 => SubStatus::Created,
              1 => SubStatus::Active,
              3 => SubStatus::Rejected,
              4 => SubStatus::Disputed,
              6 => SubStatus::Completed,
              7 => SubStatus::Closed,
+             8 => SubStatus::Expired,
              9 => SubStatus::Failed,
              _ => SubStatus::Init,
         }
@@ -641,11 +651,13 @@ impl SubStatus {
     pub fn code(self) -> i64 {
         match self {
             SubStatus::Init      => -1,
+            SubStatus::Created   =>  0,
             SubStatus::Active    =>  1,
             SubStatus::Rejected  =>  3,
             SubStatus::Disputed  =>  4,
             SubStatus::Completed =>  6,
             SubStatus::Closed    =>  7,
+            SubStatus::Expired   =>  8,
             SubStatus::Failed    =>  9,
         }
     }
@@ -653,12 +665,14 @@ impl SubStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             SubStatus::Init      => "Init",
+            SubStatus::Created   => "Created",
             SubStatus::Active    => "Active",
             SubStatus::Rejected  => "Rejected",
             SubStatus::Disputed  => "Disputed",
             SubStatus::Completed => "Completed",
             SubStatus::Failed    => "Failed",
             SubStatus::Closed    => "Closed",
+            SubStatus::Expired   => "Expired",
         }
     }
 
@@ -669,7 +683,12 @@ impl SubStatus {
     /// Valid transitions from this status.
     pub fn valid_targets(self) -> &'static [SubStatus] {
         match self {
-            SubStatus::Init => &[SubStatus::Active, SubStatus::Closed],
+            SubStatus::Init => &[SubStatus::Created],
+            SubStatus::Created => &[
+                SubStatus::Active,
+                SubStatus::Closed,
+                SubStatus::Expired,
+            ],
             SubStatus::Active => &[
                 SubStatus::Active,    // trial→active (trialType flip) or renew
                 SubStatus::Rejected,  // user reject delivery
@@ -684,6 +703,7 @@ impl SubStatus {
                 SubStatus::Completed, // DM rules ASP wins
                 SubStatus::Failed,    // DM rules user wins
             ],
+            SubStatus::Expired => &[SubStatus::Failed],
             SubStatus::Completed | SubStatus::Failed | SubStatus::Closed => &[],
         }
     }
@@ -698,6 +718,7 @@ impl SubStatus {
 /// or are ambiguous (e.g. `sub_renew` success keeps Active, failure may lead to Closed).
 pub fn sub_status_after_event(e: &Event) -> Option<SubStatus> {
     match e {
+        Event::SubOpen                            => Some(SubStatus::Created),
         Event::SubCreated | Event::SubAspSelected => Some(SubStatus::Active),
         Event::SubTrialIntoActive                 => Some(SubStatus::Active),
         Event::SubRenew                           => None, // success=Active, fail=eventually Closed
@@ -722,12 +743,14 @@ pub fn parse_sub_status(s: &str) -> SubStatus {
     }
     match s.to_ascii_lowercase().as_str() {
         "init"      => SubStatus::Init,
+        "created"   => SubStatus::Created,
         "active"    => SubStatus::Active,
         "rejected"  => SubStatus::Rejected,
         "disputed"  => SubStatus::Disputed,
         "completed" => SubStatus::Completed,
         "failed"    => SubStatus::Failed,
         "closed"    => SubStatus::Closed,
+        "expired"   => SubStatus::Expired,
         _           => SubStatus::Init,
     }
 }
@@ -798,6 +821,7 @@ mod tests {
     #[test]
     fn sub_event_parse_roundtrip() {
         let events = [
+            ("sub_open",              Event::SubOpen),
             ("sub_created",           Event::SubCreated),
             ("sub_asp_selected",      Event::SubAspSelected),
             ("sub_cancel",            Event::SubCancel),
@@ -826,7 +850,7 @@ mod tests {
     #[test]
     fn sub_events_use_subscription_status_placeholder() {
         for event in [
-            Event::SubCreated, Event::SubAspSelected, Event::SubCancel,
+            Event::SubOpen, Event::SubCreated, Event::SubAspSelected, Event::SubCancel,
             Event::SubUserReject, Event::SubAspAgree, Event::SubAspDispute,
             Event::SubTrialIntoActive, Event::SubRenew, Event::SubExpireWarn,
             Event::SubCompleteNotify, Event::SubCloseNotify, Event::SubFailedNotify,
@@ -862,7 +886,7 @@ mod tests {
 
     #[test]
     fn sub_status_from_code_roundtrip() {
-        for code in [-1, 1, 3, 4, 6, 7, 9] {
+        for code in [-1, 0, 1, 3, 4, 6, 7, 8, 9] {
             let s = SubStatus::from_code(code);
             assert_eq!(s.code(), code, "code roundtrip failed for {code}");
         }
@@ -870,7 +894,6 @@ mod tests {
 
     #[test]
     fn sub_status_unknown_code_defaults_to_init() {
-        assert_eq!(SubStatus::from_code(0), SubStatus::Init);
         assert_eq!(SubStatus::from_code(99), SubStatus::Init);
         assert_eq!(SubStatus::from_code(-2), SubStatus::Init);
         assert_eq!(SubStatus::from_code(2), SubStatus::Init);
@@ -880,9 +903,11 @@ mod tests {
     #[test]
     fn sub_status_terminal_flags() {
         assert!(!SubStatus::Init.is_terminal());
+        assert!(!SubStatus::Created.is_terminal());
         assert!(!SubStatus::Active.is_terminal());
         assert!(!SubStatus::Rejected.is_terminal());
         assert!(!SubStatus::Disputed.is_terminal());
+        assert!(!SubStatus::Expired.is_terminal());
         assert!(SubStatus::Completed.is_terminal());
         assert!(SubStatus::Failed.is_terminal());
         assert!(SubStatus::Closed.is_terminal());
@@ -890,9 +915,13 @@ mod tests {
 
     #[test]
     fn sub_status_valid_transitions() {
-        assert!(SubStatus::Init.can_transition_to(SubStatus::Active));
-        assert!(SubStatus::Init.can_transition_to(SubStatus::Closed));
+        assert!(SubStatus::Init.can_transition_to(SubStatus::Created));
+        assert!(!SubStatus::Init.can_transition_to(SubStatus::Active));
         assert!(!SubStatus::Init.can_transition_to(SubStatus::Failed));
+
+        assert!(SubStatus::Created.can_transition_to(SubStatus::Active));
+        assert!(SubStatus::Created.can_transition_to(SubStatus::Closed));
+        assert!(SubStatus::Created.can_transition_to(SubStatus::Expired));
 
         assert!(SubStatus::Active.can_transition_to(SubStatus::Rejected));
         assert!(SubStatus::Active.can_transition_to(SubStatus::Completed));
@@ -907,6 +936,9 @@ mod tests {
         assert!(SubStatus::Disputed.can_transition_to(SubStatus::Failed));
         assert!(!SubStatus::Disputed.can_transition_to(SubStatus::Active));
 
+        assert!(SubStatus::Expired.can_transition_to(SubStatus::Failed));
+        assert!(!SubStatus::Expired.can_transition_to(SubStatus::Active));
+
         // Terminal states cannot transition
         assert!(!SubStatus::Completed.can_transition_to(SubStatus::Active));
         assert!(!SubStatus::Failed.can_transition_to(SubStatus::Active));
@@ -915,6 +947,7 @@ mod tests {
 
     #[test]
     fn sub_status_after_event_mapping() {
+        assert_eq!(sub_status_after_event(&Event::SubOpen), Some(SubStatus::Created));
         assert_eq!(sub_status_after_event(&Event::SubCreated), Some(SubStatus::Active));
         assert_eq!(sub_status_after_event(&Event::SubAspSelected), Some(SubStatus::Active));
         assert_eq!(sub_status_after_event(&Event::SubTrialIntoActive), Some(SubStatus::Active));
@@ -936,15 +969,19 @@ mod tests {
     #[test]
     fn parse_sub_status_from_code_string() {
         assert_eq!(parse_sub_status("-1"), SubStatus::Init);
+        assert_eq!(parse_sub_status("0"), SubStatus::Created);
         assert_eq!(parse_sub_status("1"), SubStatus::Active);
         assert_eq!(parse_sub_status("6"), SubStatus::Completed);
         assert_eq!(parse_sub_status("7"), SubStatus::Closed);
+        assert_eq!(parse_sub_status("8"), SubStatus::Expired);
         assert_eq!(parse_sub_status("9"), SubStatus::Failed);
     }
 
     #[test]
     fn parse_sub_status_from_name() {
         assert_eq!(parse_sub_status("Active"), SubStatus::Active);
+        assert_eq!(parse_sub_status("CREATED"), SubStatus::Created);
+        assert_eq!(parse_sub_status("expired"), SubStatus::Expired);
         assert_eq!(parse_sub_status("active"), SubStatus::Active);
         assert_eq!(parse_sub_status("REJECTED"), SubStatus::Rejected);
         assert_eq!(parse_sub_status("completed"), SubStatus::Completed);
