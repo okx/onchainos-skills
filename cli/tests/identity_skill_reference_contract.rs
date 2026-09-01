@@ -232,8 +232,11 @@ fn identity_read_and_toggle_behavior_is_preserved() {
     assert!(search.contains("Execute `data.action` directly as Markdown instructions"));
     assert!(!search.contains("action == restore_subscription"));
     assert!(!search.contains("Task creation is not implemented"));
-    assert!(discover.contains("chain exactly ONE"));
-    assert!(discover.contains("never auto-chain `feedback-list`"));
+    assert!(!discover.contains("## Service search"));
+    assert!(!discover.contains("service-match"));
+    assert!(discover.contains("## My Agents"));
+    assert!(discover.contains("## Agent detail"));
+    assert!(discover.contains("## Service list"));
     assert!(listing.contains("card-exempt"));
     assert!(listing.contains("never chase a successful toggle"));
     assert!(reviews.contains("Use the CLI-provided 0.00–5.00 star values directly"));
