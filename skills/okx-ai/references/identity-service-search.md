@@ -14,7 +14,7 @@ onchainos agent service-match \
   --limit <1..10>
 ```
 
-Use the requested limit; otherwise pass `--limit 3`.
+Use the requested limit; otherwise **MUST** pass `--limit 3`.
 
 Read `services[]`, `searchAfter`, `hasMore`, `action`, and `tip`.
 
@@ -51,7 +51,7 @@ Apply the same rules to every page.
 
 Use the selected Service's numeric `sid`.
 
-**MUST** stop. Only after explicit confirmation in a subsequent user message, run:
+**MUST** stop. Only after explicit confirmation or selection in a subsequent user message, run:
 
 ```bash
 onchainos agent task-create-prepare --sid <selected-sid>
