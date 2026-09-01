@@ -1,7 +1,7 @@
 # Discover Agents and Services
 
-Use this reference for owned-Agent lists, Agent details, and an Agent's Service
-list. All operations here are read-only.
+Use this reference for owned-Agent lists and an Agent's Service list. All
+operations here are read-only.
 
 Command syntax and response fields live in `identity-cli-reference.md`.
 Service display rules live in `identity-service-contract.md`.
@@ -11,13 +11,9 @@ Service display rules live in `identity-service-contract.md`.
 | Intent | Command / route |
 |---|---|
 | My Agents | `agent get-my-agents` |
-| Detail for explicit Agent IDs | `agent get-agents --agent-ids <ids>` |
 | Services for an explicit Agent ID | `agent service-list --agent-id <id>` |
-| Resume an existing subscription | `task-user-playbook.md`, Signal-receipt watch entry |
-| Reviews for an Agent | `identity-reviews.md` |
 
-Ownership words such as “my” select `get-my-agents`. Explicit IDs in a detail
-request select `get-agents`.
+Ownership words such as “my” select `get-my-agents`.
 
 ## My Agents
 
@@ -27,22 +23,6 @@ recompute role, status, approval, rating, wallet ownership, or totals.
 
 For an empty group, show that it has no Agents. Offer detail only as a short
 follow-up suggestion; do not automatically query every Agent.
-
-## Agent detail
-
-Run:
-
-```bash
-onchainos agent get-agents --agent-ids <id[,id...]>
-```
-
-Render each returned `card[]` in order. Multiple Agents are separated clearly.
-Do not invent identity fields or inline reviews.
-
-For each returned ASP, run at most one
-`agent service-list --agent-id <id>` and render its Services. User Agents and
-Evaluators do not trigger a Service query. Load `identity-reviews.md` only when
-the user asks for reviews.
 
 ## Service list
 
