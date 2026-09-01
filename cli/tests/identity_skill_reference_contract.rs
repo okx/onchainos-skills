@@ -4,6 +4,8 @@ const CLI_REFERENCE: &str =
 const REGISTER: &str = include_str!("../../skills/okx-ai/references/identity-register.md");
 const UPDATE: &str = include_str!("../../skills/okx-ai/references/identity-update.md");
 const DISCOVER: &str = include_str!("../../skills/okx-ai/references/identity-discover.md");
+const SERVICE_SEARCH: &str =
+    include_str!("../../skills/okx-ai/references/identity-service-search.md");
 const LISTING: &str = include_str!("../../skills/okx-ai/references/identity-listing.md");
 const REVIEWS: &str = include_str!("../../skills/okx-ai/references/identity-reviews.md");
 const SERVICE_CONTRACT: &str =
@@ -46,8 +48,6 @@ fn identity_cli_reference_preserves_command_contracts() {
         "`agent get-agents`",
         "`agent service-list`",
         "`agent feedback-list`",
-        "agent service-match [--keywords <k...>]",
-        "agent service-match --search-after <cursor>",
         "agent activate --agent-id <id> --preferred-language <BCP-47>",
         "agent deactivate --agent-id <id>",
         "agent search --query <text>",
@@ -62,6 +62,9 @@ fn identity_cli_reference_preserves_command_contracts() {
     }
     assert!(CLI_REFERENCE.contains("Never add `--chain`, `--address`, or undocumented `--format`"));
     assert!(CLI_REFERENCE.contains("`agent consent` (the command does not exist)"));
+    assert!(!CLI_REFERENCE.contains("agent service-match [--keywords"));
+    assert!(SERVICE_SEARCH.contains(r"onchainos agent service-match \"));
+    assert!(SERVICE_SEARCH.contains("onchainos agent service-match --search-after <cursor>"));
 }
 
 #[test]
@@ -215,11 +218,20 @@ fn identity_update_documents_parseable_service_delta_shapes() {
 #[test]
 fn identity_read_and_toggle_behavior_is_preserved() {
     let discover = flatten(DISCOVER);
+    let search = flatten(SERVICE_SEARCH);
     let listing = flatten(LISTING);
     let reviews = flatten(REVIEWS);
-    assert!(discover.contains("user's original utterance verbatim"));
-    assert!(discover.contains("do not repeat initial-search filters"));
-    assert!(discover.contains("preserving the returned Agent and Service order"));
+    assert!(search.contains("user's original utterance"));
+    assert!(search.contains("Use the requested limit; otherwise pass `--limit 3`"));
+    assert_eq!(search.matches("--limit <1..10>").count(), 2);
+    assert!(search.contains("### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>"));
+    assert!(search.contains("| # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description |"));
+    assert!(search.contains("**Must** render every Agent exactly in this format"));
+    assert!(!search.contains("### Other results"));
+    assert!(search.contains("onchainos agent task-create-prepare --sid <selected-sid>"));
+    assert!(search.contains("Execute `data.action` directly as Markdown instructions"));
+    assert!(!search.contains("action == restore_subscription"));
+    assert!(!search.contains("Task creation is not implemented"));
     assert!(discover.contains("chain exactly ONE"));
     assert!(discover.contains("never auto-chain `feedback-list`"));
     assert!(listing.contains("card-exempt"));
@@ -310,20 +322,22 @@ fn optional_a2a_service_guide_and_guided_a2mcp_behavior_are_consistent() {
 fn identity_shared_rules_have_single_owners() {
     let cli = flatten(CLI_REFERENCE);
     let discover = flatten(DISCOVER);
+    let search = flatten(SERVICE_SEARCH);
     let contract = flatten(SERVICE_CONTRACT);
     let errors = flatten(ERRORS);
     let listing = flatten(LISTING);
 
     assert!(contract.contains("`service-list` and `service-match` omit it for every service type"));
     assert!(!discover.contains("Never display `serviceGuide`"));
+    assert!(!search.contains("Never display `serviceGuide`"));
 
     assert!(cli.contains("Use service `id` only to build an update/delete delta; never display it"));
     assert!(discover.contains(
         "[identity-cli-reference.md §Read and discovery](identity-cli-reference.md#read-and-discovery)"
     ));
     assert!(!discover.contains("Never display the raw `serviceId`"));
+    assert!(!search.contains("Never display the raw `serviceId`"));
 
-    assert_eq!(discover.matches("do not repeat initial-search filters").count(), 1);
     assert!(!cli.contains("A continuation cannot repeat initial filters"));
 
     assert!(listing.contains("`submitApproval.success: true`"));
@@ -374,6 +388,7 @@ fn identity_references_do_not_self_bootstrap_runtime_prerequisites() {
     for (name, reference) in [
         ("cli", CLI_REFERENCE),
         ("discover", DISCOVER),
+        ("service-search", SERVICE_SEARCH),
         ("errors", ERRORS),
         ("validate-listing", VALIDATE_LISTING),
         ("listing", LISTING),

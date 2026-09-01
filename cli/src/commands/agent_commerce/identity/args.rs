@@ -385,9 +385,6 @@ pub struct ServiceMatchArgs {
     /// Initial-search filter: match a Service by its Service ID.
     #[arg(long = "sid")]
     pub service_id: Option<String>,
-    /// Optional User Agent ID sent as the `agenticId` request header to exclude already-subscribed Services; valid for initial and continuation requests.
-    #[arg(long = "agentic-id")]
-    pub agentic_id: Option<String>,
     /// Initial-search minimum acceptable Service price; maps to `minPaymentTokenAmount` and must be >= 0.
     #[arg(long = "min-payment-token-amount")]
     pub min_payment_token_amount: Option<String>,
@@ -398,7 +395,7 @@ pub struct ServiceMatchArgs {
     #[arg(long = "search-after")]
     pub search_after: Option<String>,
     /// Requested number of Services, from 1 through 10.
-    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=10))]
+    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(1..=10))]
     pub limit: u8,
 }
 
@@ -414,14 +411,12 @@ mod service_match_args_tests {
     }
 
     #[test]
-    fn accepts_multiple_keywords_and_agentic_id() {
+    fn accepts_multiple_keywords() {
         let cli = TestCli::parse_from([
             "test",
             "--keywords",
             "smart contract",
             "audit",
-            "--agentic-id",
-            "user-agent-001",
             "--sid",
             "svc-001",
             "--min-payment-token-amount",
@@ -430,10 +425,6 @@ mod service_match_args_tests {
             "10",
         ]);
         assert_eq!(cli.service_match.keywords, ["smart contract", "audit"]);
-        assert_eq!(
-            cli.service_match.agentic_id.as_deref(),
-            Some("user-agent-001")
-        );
         assert_eq!(cli.service_match.service_id.as_deref(), Some("svc-001"));
         assert_eq!(
             cli.service_match.min_payment_token_amount.as_deref(),
@@ -443,7 +434,12 @@ mod service_match_args_tests {
             cli.service_match.max_payment_token_amount.as_deref(),
             Some("10")
         );
-        assert_eq!(cli.service_match.limit, 1);
+        assert_eq!(cli.service_match.limit, 3);
+    }
+
+    #[test]
+    fn rejects_removed_agentic_id_argument() {
+        assert!(TestCli::try_parse_from(["test", "--agentic-id", "user-agent-001"]).is_err());
     }
 
     #[test]

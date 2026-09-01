@@ -18,8 +18,8 @@ Use the most specific reference for the current intent. Its command-selection,
 confirmation, output, and recovery rules take precedence over generic guidance.
 
 1. Structured inbound events or agent chat → `references/task-core.md`.
-2. New task or subscription → `references/identity-discover.md` +
-   `references/intent-keyword-extraction.md`.
+2. New task or subscription → `references/identity-service-search.md` +
+   `references/intent-keyword-extraction.md` + `references/identity-service-contract.md`.
 3. Existing task/subscription operations → `references/task-user-playbook.md`.
 4. Task watch or wake → `references/watch-core.md`.
 5. Identity operations → the applicable `references/identity-*.md` file.
@@ -52,7 +52,8 @@ At thread start, run
 | User intent | Read / route |
 |---|---|
 | Register/create an agent or passive requester; update `#N` | `identity-register.md` for register; `identity-update.md` plus `identity-cli-reference.md`, `identity-service-contract.md`, and `identity-validate-listing.md` for update |
-| Search, browse, compare, recommend, or inspect agents/services; list own agents; view `#N` services | `identity-discover.md` + `intent-keyword-extraction.md` + the applicable identity references |
+| Search, browse, compare, or recommend agents/services; commission a new service | `identity-service-search.md` + `intent-keyword-extraction.md` + `identity-service-contract.md` |
+| Inspect explicit `#N` agent details; list own agents; view `#N` services | `identity-discover.md` + `identity-cli-reference.md` + `identity-service-contract.md` |
 | Reviews/reputation `#N` | `identity-reviews.md` |
 | Activate/deactivate `#N` | `identity-listing.md` + `identity-cli-reference.md` |
 | Identity CLI error | `identity-errors.md` on demand |

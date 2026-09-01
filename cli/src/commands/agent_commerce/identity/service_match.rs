@@ -11,23 +11,27 @@ use super::utils::{format_search_rate, wallet_client};
 use super::ServiceMatchArgs;
 
 const SERVICE_MATCH_PATH: &str = "/priapi/v1/aieco/task/asp/service/search";
+const ACTION_RESTORE_SUBSCRIPTION: &str = "restore_subscription";
+const TIP_NO_MATCH: &str =
+    "No matching services were found on OKX.AI. Try another keyword and search again.";
+const TIP_OFFLINE: &str =
+    "This Agent is offline and cannot provide the service right now. Search for another service.";
+const TIP_CONFIRM: &str = "Reply \"confirm\" to use this service.";
+const TIP_MORE: &str = "Tell me which service you want to use, or reply \"show more\".";
+const TIP_NO_MORE: &str =
+    "There are no more matching services. Tell me which service you want to use.";
 
 pub async fn service_match(args: ServiceMatchArgs, ctx: &Context) -> Result<()> {
     let body = build_request(&args)?;
     let access_token = ensure_tokens_refreshed().await?;
-    let extra_headers = agentic_id_header(&args);
     let mut client = wallet_client(ctx)?;
     // Injects `Authorization: Bearer <accessToken>` and retries once with a
     // refreshed token if the backend reports server-side token revocation.
     let mut data = client
-        .post_authed_with_headers(
-            SERVICE_MATCH_PATH,
-            &access_token,
-            &body,
-            extra_headers.as_ref().map(|headers| headers.as_slice()),
-        )
+        .post_authed(SERVICE_MATCH_PATH, &access_token, &body)
         .await?;
     normalize_security_ratings(&mut data);
+    add_flow_metadata(&mut data, &args);
     output::success(data);
     Ok(())
 }
@@ -57,8 +61,50 @@ fn trimmed(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-fn agentic_id_header(args: &ServiceMatchArgs) -> Option<[(&'static str, &str); 1]> {
-    trimmed(args.agentic_id.as_deref()).map(|value| [("agenticId", value)])
+fn add_flow_metadata(data: &mut Value, args: &ServiceMatchArgs) {
+    let Some(object) = data.as_object() else {
+        return;
+    };
+    let services = object
+        .get("services")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let precise_search = trimmed(args.service_id.as_deref()).is_some()
+        || trimmed(args.asp_agent_id.as_deref()).is_some();
+
+    let (action, tip) = if services.is_empty() {
+        (Value::Null, Value::String(TIP_NO_MATCH.to_string()))
+    } else if precise_search && services.iter().any(service_is_offline) {
+        (Value::Null, Value::String(TIP_OFFLINE.to_string()))
+    } else if services.len() == 1 {
+        if precise_search && services[0].get("isSubscribing").and_then(Value::as_bool) == Some(true)
+        {
+            (
+                Value::String(ACTION_RESTORE_SUBSCRIPTION.to_string()),
+                Value::Null,
+            )
+        } else {
+            (Value::Null, Value::String(TIP_CONFIRM.to_string()))
+        }
+    } else if object.get("hasMore").and_then(Value::as_bool) == Some(true) {
+        (Value::Null, Value::String(TIP_MORE.to_string()))
+    } else {
+        (Value::Null, Value::String(TIP_NO_MORE.to_string()))
+    };
+
+    if let Some(object) = data.as_object_mut() {
+        object.insert("action".to_string(), action);
+        object.insert("tip".to_string(), tip);
+    }
+}
+
+fn service_is_offline(service: &Value) -> bool {
+    match service.get("asp").and_then(|asp| asp.get("onlineStatus")) {
+        Some(Value::Number(value)) => value.as_i64() != Some(1),
+        Some(Value::String(value)) => value.trim() != "1",
+        _ => false,
+    }
 }
 
 fn build_request(args: &ServiceMatchArgs) -> Result<Value> {
@@ -176,7 +222,6 @@ mod tests {
             asp_name: None,
             service_name: None,
             service_id: Some(" svc-001 ".into()),
-            agentic_id: Some("user-agent-001".into()),
             min_payment_token_amount: Some("5.25".into()),
             max_payment_token_amount: Some("10.50".into()),
             search_after: None,
@@ -218,17 +263,12 @@ mod tests {
     }
 
     #[test]
-    fn initial_request_excludes_header_only_agentic_id() {
+    fn initial_request_uses_only_search_fields() {
         let input = args();
         let body = build_request(&input).unwrap();
         assert_eq!(body["keywords"], json!(["smart contract", "audit"]));
         assert_eq!(body["sid"], json!("svc-001"));
         assert!(body.get("serviceId").is_none());
-        assert!(body.get("agenticId").is_none());
-        assert_eq!(
-            agentic_id_header(&input),
-            Some([("agenticId", "user-agent-001")])
-        );
         assert_eq!(body["minPaymentTokenAmount"], json!(5.25));
         assert_eq!(body["maxPaymentTokenAmount"], json!(10.50));
         assert_eq!(body["limit"], 3);
@@ -251,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn agentic_id_only_request_sends_limit_in_body() {
+    fn empty_request_sends_default_limit_in_body() {
         let mut input = args();
         input.keywords.clear();
         input.service_id = None;
@@ -293,7 +333,6 @@ mod tests {
         let mut input = args();
         input.keywords.clear();
         input.service_id = None;
-        input.agentic_id = None;
         input.min_payment_token_amount = None;
         input.max_payment_token_amount = None;
         assert_eq!(build_request(&input).unwrap(), json!({"limit":3}));
@@ -304,5 +343,48 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("greater than or equal"));
+    }
+
+    #[test]
+    fn adds_no_match_and_pagination_tips() {
+        let mut no_match = json!({"services": [], "hasMore": false});
+        add_flow_metadata(&mut no_match, &args());
+        assert!(no_match["action"].is_null());
+        assert_eq!(no_match["tip"], TIP_NO_MATCH);
+
+        let mut more = json!({"services": [{}, {}], "hasMore": true});
+        let mut fuzzy_args = args();
+        fuzzy_args.service_id = None;
+        add_flow_metadata(&mut more, &fuzzy_args);
+        assert!(more["action"].is_null());
+        assert_eq!(more["tip"], TIP_MORE);
+
+        more["hasMore"] = json!(false);
+        add_flow_metadata(&mut more, &fuzzy_args);
+        assert_eq!(more["tip"], TIP_NO_MORE);
+    }
+
+    #[test]
+    fn precise_search_handles_offline_and_existing_subscription() {
+        let mut offline = json!({
+            "services": [{"asp": {"onlineStatus": 0}, "isSubscribing": true}],
+            "hasMore": false
+        });
+        add_flow_metadata(&mut offline, &args());
+        assert!(offline["action"].is_null());
+        assert_eq!(offline["tip"], TIP_OFFLINE);
+
+        let mut subscribed = json!({
+            "services": [{"asp": {"onlineStatus": 1}, "isSubscribing": true}],
+            "hasMore": false
+        });
+        add_flow_metadata(&mut subscribed, &args());
+        assert_eq!(subscribed["action"], ACTION_RESTORE_SUBSCRIPTION);
+        assert!(subscribed["tip"].is_null());
+
+        subscribed["services"][0]["isSubscribing"] = json!(false);
+        add_flow_metadata(&mut subscribed, &args());
+        assert!(subscribed["action"].is_null());
+        assert_eq!(subscribed["tip"], TIP_CONFIRM);
     }
 }

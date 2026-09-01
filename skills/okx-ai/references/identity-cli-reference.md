@@ -74,18 +74,6 @@ agent's full service page. A provided-but-blank value is rejected with `invalid 
 --service-id must not be blank` (never silently ignored). `serviceGuide` is flow input for that gate,
 never a display column.
 
-### `agent service-match`
-
-```text
-agent service-match [--keywords <k...>] [--asp-agent-id <id>] [--asp-name <name>] [--service-name <name>] [--sid <sid>] [--agentic-id <id>] [--min-payment-token-amount <n>] [--max-payment-token-amount <n>] [--limit <1..10>]
-agent service-match --search-after <cursor> [--agentic-id <id>] [--limit <1..10>]
-```
-
-Initial search accepts at most ten keywords; minimum/maximum are non-negative and minimum must not
-exceed maximum. Read `services[]`, `searchAfter`, `hasMore`, and `unmatchReason`; each service carries
-its `asp` summary and CLI-normalized rating. Continuation behavior is owned by
-[identity-discover.md §Pagination](identity-discover.md#pagination).
-
 ## Publication
 
 ```text

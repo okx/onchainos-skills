@@ -1,116 +1,13 @@
-# Discover — service-match · list my agents · detail · service-list
+# Discover — list my agents · detail · service-list
 
 ## Routing nuances (decide before calling)
 - "my <descriptor> agents" / any ownership word → **list** = `agent get-my-agents` + client-side group/filter,
   NOT `service-match`. Explicit `#ids` ("detail #42", "#42 #58") → **detail** = `agent get-agents --agent-ids`, NOT service-match.
-- Free-text "find agents/services doing X" with no commissioning intent → **discovery search**.
-- A request to hire, buy, subscribe, publish, assign, or commission a concrete deliverable →
-  **commissioning search**. Preserve that intent through service confirmation; do not downgrade it to
-  browsing just because service search runs first.
 
 For both service-rendering paths, apply visibility from
 [identity-service-contract.md §Display](identity-service-contract.md#display) and raw service-ID
 handling from
 [identity-cli-reference.md §Read and discovery](identity-cli-reference.md#read-and-discovery).
-
----
-
-## Service search
-
-For the initial search, pass the user's original utterance verbatim to
-`intent-keyword-extraction.md`. Do not preprocess or enrich the input or extracted values. Then select
-exactly one of the two modes below from the user's outcome.
-
-### Discovery search
-
-Use the extraction output unchanged in the initial `service-match` form from
-`identity-cli-reference.md` with `--limit 5`.
-
-### Initial-search argument example
-
-The extraction object is internal; convert non-null fields to the flags in
-`identity-cli-reference.md`, emit `--keywords` once, and preserve keyword order. Example extraction:
-
-```text
-# Extraction:
-{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":null,"max-payment-token-amount":null,"keywords":["analyze this wallet","generate a report"]}
-
-# CLI:
-onchainos agent service-match --keywords "analyze this wallet" "generate a report" --limit 5
-```
-
-### Commissioning search
-
-Use the extraction output unchanged in the initial `service-match` form from
-`identity-cli-reference.md`, and request exactly one service:
-
-```text
-onchainos agent service-match <args> --limit 1
-```
-
-An empty `services[]` means no matching service was found; ask the user to adjust the request or
-specify/change the provider. Otherwise render `data.services[0]` as one localized service confirmation
-card containing Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
-Render `serviceType` verbatim and render a zero one-time `feeAmount` as localized `Free`.
-
-Ask the user to confirm the service. Fetch alternatives only when the user explicitly asks to view or
-change the recommendation and the response supplies a usable continuation cursor; use the documented
-`--search-after` form with `--limit 3`.
-
-After confirmation, read the selected Service's numeric `sid` and run:
-
-```text
-onchainos agent task-create-prepare --sid <selected-sid>
-```
-
-Follow the returned `data.action` verbatim. Treat `phase` as diagnostic only: do not reconstruct,
-override, or supplement routing model-side. Retain the selected `sid` while the action may require
-a retry. Do not run another initial service search unless the action explicitly requires it.
-
-For discovery search, if the user later confirms one displayed Service for commissioning, pass that
-Service's numeric `sid` to the same `task-create-prepare` command and follow its returned `data.action`.
-
-### Discovery rendering (blocking)
-
-Group `services[]` by `asp.aspAgentId`, preserving the returned Agent and Service order. Render a
-full Markdown table for the **first returned Agent only**. After that table, render every remaining
-Agent as one compact bullet under an "Other results" heading. The first Agent is determined solely
-by returned order — never score, recommend, filter, or reorder Agents model-side.
-
-Render these blocks in order. The first Agent's §service-list table goes between the two blocks:
-
-```markdown
-### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>
-```
-
-Immediately render the §service-list table without its lead-in line, then render:
-
-```markdown
-### Other results
-
-- **<asp.aspName> (Agent ID: <asp.aspAgentId>):** Rating <asp.rating>, Sold Count <asp.soldCount>; <service 1 name> — <service 1 description>, <service 1 price>[, Free trial <service 1 freeTrial>]; <service 2 name> — <service 2 description>, <service 2 price>[, Free trial <service 2 freeTrial>]
-```
-
-- **First Agent table:** keep the existing §service-list 8-column contents and presentation rules.
-  Populate them from each Service's `serviceName`, `serviceType`, `feeAmount`, `feeTokenSymbol`,
-  `subscription[]`, `freeTrial`, `endpoint`, and `serviceDescription`; number rows from 1. Apply the
-  §service-list all-`—` column omission rule only to the other optional columns.
-- **Other results:** emit one bullet per remaining Agent, in returned order. Within each bullet,
-  append every returned Service in order as `name — description, price`, separated by semicolons.
-  `price` is the populated Fee or Subscription value rendered per §service-list; append the localized
-  Free-trial label and value only when present. Do not show Type, Endpoint, or other `—` placeholders
-  in these compact bullets.
-- The table's `#` column is only a display row number starting from 1.
-
-Render the CLI-normalized `rating` directly.
-
-### Pagination
-
-After each page with `hasMore == true`, append a "more" prompt. On "more", invoke the continuation
-form in `identity-cli-reference.md` with the returned `searchAfter` and `--limit 5`; do not repeat
-initial-search filters. Apply this rule to every continuation page.
-
----
 
 ## list — `agent get-my-agents`
 
