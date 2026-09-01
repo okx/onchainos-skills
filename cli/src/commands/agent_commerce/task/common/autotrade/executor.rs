@@ -2013,9 +2013,14 @@ fn notification(outcome: &ExecutionOutcome) -> String {
         (user_lang::Lang::Zh, OutcomeStatus::Skipped) => format!(
             "{zh_label} {}",
             if outcome.reason.as_deref()
+                == Some(super::GUIDE_EXECUTION_UNAVAILABLE_REASON)
+            {
+                "本次 Signal 已保存，仅接收和展示：该订阅没有有效的本地 Service Guide 与 Guide Consent 执行合约。不会提交订单，旧 execution Consent 不会生效。"
+                    .to_string()
+            } else if outcome.reason.as_deref()
                 == Some(super::EXECUTION_POLICY_NOT_CONFIGURED_REASON)
             {
-                "本次交付物已保存，但没有执行交易，因为该订阅当前没有有效的跟单执行策略。如需恢复或更新，请告诉我“更新这个订阅的跟单执行策略”。"
+                "本次交付物已保存并跳过：固定字段的旧执行策略已退役，不会创建或恢复执行配置。"
                     .to_string()
             } else {
                 format!(
@@ -2027,9 +2032,14 @@ fn notification(outcome: &ExecutionOutcome) -> String {
         (user_lang::Lang::En, OutcomeStatus::Skipped) => format!(
             "{en_label} {}",
             if outcome.reason.as_deref()
+                == Some(super::GUIDE_EXECUTION_UNAVAILABLE_REASON)
+            {
+                "The Signal was saved for receiving/display only: this subscription has no valid local Service Guide + active Guide Consent execution contract. No order was submitted and legacy execution Consent does not apply."
+                    .to_string()
+            } else if outcome.reason.as_deref()
                 == Some(super::EXECUTION_POLICY_NOT_CONFIGURED_REASON)
             {
-                "The deliverable was saved, but no trade was executed because this subscription has no active copy-trade execution policy. To restore or update it, tell me: “Update this subscription's copy-trade execution policy.”"
+                "The deliverable was saved and skipped: the fixed-field legacy execution policy is retired and cannot create or restore execution configuration."
                     .to_string()
             } else {
                 format!(
@@ -2285,14 +2295,41 @@ pub fn report_delivery(
     if context.job_id != job_id || context.delivery_id != delivery_id {
         bail!("trusted delivery context mismatch");
     }
-    let status = match status {
+    let mut status = match status {
         "skipped" => OutcomeStatus::Skipped,
         "failed_before_execution" => OutcomeStatus::FailedBeforeExecution,
         _ => bail!("delivery report status must be skipped or failed_before_execution"),
     };
+    // Older agents can still resume a persisted AgentDirect context after its
+    // Guide Consent disappeared. That is no longer a failed delivery: the
+    // Signal remains useful, but execution is disabled. Normalize both that
+    // stale context and the retired error wording before any latch/outcome is
+    // written so the user never sees "No active execution consent" again.
+    let contract_unavailable = matches!(
+        context.execution_path,
+        crate::commands::agent_commerce::task::common::config::SubscriptionTradePath::AgentDirect
+    ) && !guide::has_active_execution_contract(job_id);
+    let reason = if contract_unavailable || is_retired_execution_consent_reason(reason) {
+        status = OutcomeStatus::Skipped;
+        super::GUIDE_EXECUTION_UNAVAILABLE_REASON.to_string()
+    } else {
+        safe_text(reason)
+    };
     let outcome_path = outcome_path(job_id, delivery_id)?;
     if !reserve_execution(job_id, delivery_id)? {
         if let Some(mut outcome) = read_outcome(&outcome_path)? {
+            let normalize_existing = is_retired_execution_consent_reason(
+                outcome.reason.as_deref().unwrap_or_default(),
+            ) || (contract_unavailable && outcome.status == OutcomeStatus::FailedBeforeExecution);
+            if normalize_existing {
+                outcome.status = OutcomeStatus::Skipped;
+                outcome.reason = Some(super::GUIDE_EXECUTION_UNAVAILABLE_REASON.to_string());
+                outcome.notification_pending = true;
+                outcome.notification_attempts = 0;
+                outcome.next_notification_attempt_at = 0;
+                outcome.updated_at = now_secs();
+                write_outcome(&outcome_path, &outcome)?;
+            }
             if outcome.notification_pending {
                 notify_and_persist(
                     &outcome_path,
@@ -2318,7 +2355,7 @@ pub fn report_delivery(
             execution_mode: ExecutionMode::Auto,
             status,
             receipt: None,
-            reason: Some(safe_text(reason)),
+            reason: Some(reason),
             failure_category: None,
             notification_pending: true,
             notification_attempts: 0,
@@ -2327,6 +2364,14 @@ pub fn report_delivery(
             updated_at: now,
         },
     )
+}
+
+fn is_retired_execution_consent_reason(reason: &str) -> bool {
+    let normalized = reason.to_ascii_lowercase();
+    normalized.contains("active execution consent")
+        || normalized.contains("automatic execution consent")
+        || normalized.contains("copy-trade consent")
+        || normalized.contains("auto-trade consent")
 }
 
 /// Convert an abandoned execution gateway invocation into a durable terminal

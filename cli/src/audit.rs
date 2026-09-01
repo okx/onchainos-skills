@@ -514,6 +514,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AutotradeGuideIntentResolve { .. } => {
             "autotrade-guide-intent-resolve".into()
         }
+        AgentCommand::AutotradeGuideDraftValidate { .. } => "autotrade-guide-draft-validate".into(),
         AgentCommand::AutotradeDirectFinalize { .. } => "autotrade-direct-finalize".into(),
         AgentCommand::AutotradeOnceAuthorize { .. } => "autotrade-once-authorize".into(),
         AgentCommand::AutotradeOutcomeFlush { .. } => "autotrade-outcome-flush".into(),

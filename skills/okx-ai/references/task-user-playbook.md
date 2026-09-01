@@ -47,7 +47,7 @@
 | `serviceId` | from `task-service-select` response | auto-filled |
 | `useTrial` | `subscriptionInfo.supportTrial == true` from `task-service-select` → auto `true`; otherwise `false`. Display hours from `subscriptionInfo.freeTrial` field | **auto-filled, do NOT ask user** |
 | `autoRenew` | ask user explicitly before form — no default | 0=off, 1=on |
-| Guide Consent | Collect only the fields declared by the selected service Guide and its semantic declaration. Never ask for an automatic/notification mode, amount, cap, quote, environment, margin mode, order policy, or credential unless that exact field is declared by the Guide. | **local Guide-defined Consent; not an ASP business parameter** |
+| Guide Consent | The subscribing Agent first derives and locally validates a projection from the selected service Guide; then collect only the Consent fields that projection declares. Never ask for an automatic/notification mode, amount, cap, quote, environment, margin mode, order policy, or credential unless that exact field is declared by the Guide. | **local Guide-defined Consent; ASP supplies Guide text only** |
 | Guide preparation | A setup step runs only at the position and for the bounded tool declared by the Guide. On Install/connect, use the trusted matching Skill; Later remains allowed when the Guide permits it. Never execute ASP-provided commands, auto-install, or block subscription creation on generic readiness. | **optional; Guide-defined only** |
 | `serviceTokenAmount` | from `task-service-select` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
 

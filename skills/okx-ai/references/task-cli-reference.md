@@ -545,7 +545,7 @@ agent create-subscribe \
   --title <txt> --description <txt> \
   [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
   --service-guide '<exact Guide text>' [--service-guide-hash <sha256>] \
-  --autotrade-guide-semantics-json '<Guide semantic declaration>' \
+  --autotrade-guide-semantics-json '<subscriber-local Guide projection>' \
   [--guide-consent-json '<Guide-defined values JSON object>'] \
   [--format json]
 ```
@@ -563,10 +563,18 @@ agent create-subscribe \
 | `--service-description` | No | `""` | Exact service description from `task-service-select`; persisted only as bounded routing hints |
 | `--service-guide` | Required for guide-driven signal execution | - | Exact provider Guide stored locally before broadcast at `ONCHAINOS_HOME/autotrade/guide/<jobId>.md` |
 | `--service-guide-hash` | No | computed locally | Provider SHA-256 for the exact Guide; mismatch fails locally |
-| `--autotrade-guide-semantics-json` | Required for guide-driven signal execution | - | Declarative Guide-defined Consent/Signal fields, conditions, bounded `toolId`, operation, `authorizationParameter`, and bindings; never shell code |
+| `--autotrade-guide-semantics-json` | Required for guide-driven signal execution | - | Subscriber-Agent-derived projection of the exact `--service-guide`: Guide-defined Consent/Signal fields, conditions, bounded `toolId`, operation, `authorizationParameter`, and bindings; never shell code. It is not an ASP companion artifact. |
 | `--guide-consent-json` | No | `{}` | User-confirmed JSON object keyed only by that Guide's `consentFields`. Undeclared or credential-like keys are rejected. |
 
-The Guide semantic declaration, not `autoTradePreflight` or service description, defines every Consent and Signal field. Persist user-confirmed values through `--guide-consent-json`; the CLI validates them against the declaration, writes Guide and prepared Consent Markdown before broadcast, and activates Consent only after broadcast succeeds. Fields merely suggested by the ASP and local tool readiness are not declarations.
+The subscribing Agent derives the semantic projection locally from the exact provider Guide; ASP supplies the Guide text only. Before asking for Guide Consent, validate the candidate without writing state:
+
+```bash
+agent autotrade-guide-draft-validate \
+  --service-guide '<exact Guide text>' [--service-guide-hash <sha256>] \
+  --autotrade-guide-semantics-json '<subscriber-local Guide projection>'
+```
+
+The Guide projection, not `autoTradePreflight` or service description, defines every Consent and Signal field. Persist user-confirmed values through `--guide-consent-json`; `create-subscribe` validates the same projection again, writes Guide and prepared Consent Markdown before broadcast, and activates Consent only after broadcast succeeds. If the Guide is absent, ambiguous, or cannot be projected into a supported bounded tool, create a receive-only subscription without any Guide execution arguments. Fields merely suggested by the ASP and local tool readiness are not declarations.
 
 > **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
 

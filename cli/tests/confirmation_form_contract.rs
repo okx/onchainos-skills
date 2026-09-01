@@ -30,8 +30,9 @@ returned form is the sole field authority"
 is only a fallback render contract for a direct route"
     ));
     assert!(USER_PLAYBOOK.contains(
-        "Collect only the fields declared by the selected service Guide and its semantic declaration"
+        "derives and locally validates a projection from the selected service Guide"
     ));
+    assert!(USER_PLAYBOOK.contains("ASP supplies Guide text only"));
     assert!(!USER_PLAYBOOK.contains("Signal handling mode"));
     assert!(!USER_PLAYBOOK.contains("autoTradeConfigRequested"));
     assert!(USER_PLAYBOOK.contains(

@@ -158,7 +158,9 @@ pub enum AgentCommand {
         /// SHA-256 of the exact service Guide when supplied by the provider.
         #[arg(long = "service-guide-hash")]
         service_guide_hash: Option<String>,
-        /// JSON declaration of Guide-defined consent/signal fields and bounded execution bindings.
+        /// Locally derived projection of the exact Guide: Guide-defined
+        /// consent/signal fields and bounded execution bindings. This is
+        /// Agent-to-CLI input, never an ASP-supplied companion artifact.
         #[arg(long = "autotrade-guide-semantics-json")]
         autotrade_guide_semantics_json: Option<String>,
         /// User-confirmed values keyed exclusively by the matching Guide's
@@ -828,6 +830,22 @@ pub enum AgentCommand {
         /// matching local Guide; this is an extraction result, not the raw Signal.
         #[arg(long = "signal-values-json")]
         signal_values_json: String,
+    },
+
+    /// Validate a subscriber-local semantic projection of the exact provider
+    /// Guide before collecting Guide Consent. This never writes files, creates
+    /// a subscription, or asks the ASP for a second artifact.
+    #[command(name = "autotrade-guide-draft-validate", hide = true)]
+    AutotradeGuideDraftValidate {
+        /// Exact provider Guide returned by service selection.
+        #[arg(long = "service-guide")]
+        service_guide: String,
+        /// Optional SHA-256 of that exact Guide supplied with the service.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// Agent-derived, machine-readable projection of the exact Guide.
+        #[arg(long = "autotrade-guide-semantics-json")]
+        autotrade_guide_semantics_json: String,
     },
 
     /// Persist the documented result returned by an Agent-selected Skill/tool.
@@ -2042,19 +2060,19 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 &job_id,
                 &delivery_id,
                 "skipped",
-                task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                task::common::autotrade::GUIDE_EXECUTION_UNAVAILABLE_REASON,
             )?;
             let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(&job_id);
             crate::output::success(serde_json::json!({
                 "decision": false,
                 "decisionPushed": false,
                 "status": "skipped",
-                "reason": task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                "reason": task::common::autotrade::GUIDE_EXECUTION_UNAVAILABLE_REASON,
                 "jobId": job_id,
                 "deliveryId": delivery_id,
                 "terminal": true,
                 "outcome": outcome,
-                "guidance": "The deliverable was saved and skipped. This retired Consent flow cannot authorize Guide-driven execution; do not create another execution decision.",
+                "guidance": "The Signal remains saved for receive/display only. This retired Consent flow cannot authorize Guide-driven execution; do not create another execution decision.",
             }));
             Ok(())
         }
@@ -2099,6 +2117,28 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 values,
             )?;
             crate::output::success(serde_json::to_value(intent)?);
+            Ok(())
+        }
+
+        AgentCommand::AutotradeGuideDraftValidate {
+            service_guide,
+            service_guide_hash,
+            autotrade_guide_semantics_json,
+        } => {
+            use task::common::autotrade::guide;
+
+            let draft = guide::parse_draft(
+                Some(&service_guide),
+                service_guide_hash.as_deref(),
+                Some(&autotrade_guide_semantics_json),
+            )?
+            .context("Guide draft validation requires Guide text and a locally derived semantic projection")?;
+            crate::output::success(serde_json::json!({
+                "sourceHash": draft.source_hash,
+                "semantics": draft.semantics,
+                "validation": "local_guide_projection_valid",
+                "writesLocalFiles": false,
+            }));
             Ok(())
         }
 

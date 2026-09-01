@@ -58,8 +58,9 @@ internally only), so skip this gate and continue the normal flow.
    advance to the next guide step. Do not append auto-renew, generic execution settings, readiness setup,
    confirmation-form fields, or later guide steps to the same question. After every guide step is answered,
    continue normal field collection for values the guide did not cover; never ask again for a value already
-   answered through the guide. For subscriptions, collect only the Consent fields declared by the Guide
-   and its semantic declaration; do not add a platform execution mode or any fixed trading field after
+   answered through the guide. For subscriptions, first derive and locally validate a projection from the
+   exact Guide, then collect only the Consent fields that projection declares; do not add a platform execution
+   mode or any fixed trading field after
    the Guide. Classify only the current step. If it asks the user to check/install/connect/sign in to/configure
    Trade Kit, handle preparation at that exact position: run the bounded local compatibility probe there
    when applicable, then ask whether the user wants trusted setup assistance or wants to defer and end the
@@ -140,7 +141,7 @@ has collected its declared Consent fields, render those exact user-authored valu
 Consent review and end the turn. Require explicit confirmation or an edit; never add an automatic/
 notification mode, amount, cap, quote, environment, margin mode, order policy, credential, or another
 platform field. Pass the confirmed object unchanged through `--guide-consent-json` with the matching
-Guide semantic declaration.
+subscriber-local Guide projection. ASP supplies only the exact Guide text, never that projection.
 
 Only after that standalone Guide Consent review is explicitly confirmed, ask for auto-renew in a separate
 turn when it has not already been answered. The reply that confirms Guide Consent never also answers

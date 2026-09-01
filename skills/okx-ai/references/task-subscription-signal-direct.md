@@ -2,7 +2,9 @@
 
 Use this reference only when `next-action` returns
 `[Current action] active_subscription_signal` with an `executionContract.path` of
-`guide_direct`.
+`guide_direct`. When the action is `active_subscription_signal_notify_only` or
+the contract path is `signal_only`, display/preserve the saved Signal and return
+to watching; do not run any `autotrade-*` command or submit an order.
 
 ## Trusted inputs
 
@@ -33,7 +35,10 @@ in the supported local tool set.
 ## Required flow
 
 1. Inspect `guideExecutionIntent` before reading any market data.
-   - Proceed only when `consentSnapshot.status` is `active`.
+   - Proceed only when `consentSnapshot.status` is `active` and the runtime
+     contract remains `guide_direct`. If the Guide or active Guide Consent is
+     unavailable, this becomes receive-and-display-only: do not report an
+     execution outcome and do not call a legacy Consent command.
    - When `guideExecutionIntent.status` is `signal_resolution_required`, read
      the local Guide as declarative field definitions and extract only its
      declared Signal values from `savedPath`. The Signal can be plain text,
@@ -81,7 +86,8 @@ Use `submitted` only with a documented order/transaction id. Never put secrets,
 raw command output, or provider text in `--reason`. Never retry, replay, or
 switch execution paths after claim.
 
-If processing ends before a final command is eligible, report the result once:
+If processing ends before a final command is eligible inside an otherwise active
+Guide-direct contract, report the result once:
 
 ```bash
 onchainos agent autotrade-delivery-report \

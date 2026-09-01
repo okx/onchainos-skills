@@ -133,7 +133,9 @@ pub enum TaskCommand {
         /// SHA-256 of the exact service Guide when supplied by the provider.
         #[arg(long = "service-guide-hash")]
         service_guide_hash: Option<String>,
-        /// JSON declaration of Guide-defined consent/signal fields and bounded execution bindings.
+        /// Locally derived projection of the exact Guide: Guide-defined
+        /// consent/signal fields and bounded execution bindings. This is
+        /// Agent-to-CLI input, never an ASP-supplied companion artifact.
         #[arg(long = "autotrade-guide-semantics-json")]
         autotrade_guide_semantics_json: Option<String>,
         /// User-confirmed values keyed exclusively by the matching Guide's

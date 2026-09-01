@@ -362,7 +362,85 @@ fn legacy_consent_request_is_terminal_skip_even_when_an_old_auto_record_exists()
     assert!(output.status.success());
     let data = parse_stdout_json(&output)["data"].clone();
     assert_eq!(data["status"], "skipped");
-    assert_eq!(data["reason"], "execution_policy_not_configured");
+    assert_eq!(data["reason"], "guide_execution_unavailable");
     assert_eq!(data["terminal"], true);
     assert_ne!(data["status"], "policy_ready");
+}
+
+#[test]
+fn guide_draft_validation_accepts_only_a_local_projection_of_the_exact_guide() {
+    let (_guard, home) = fresh_home("cli_autotrade_guide_draft_validation");
+    let source = "Use the incoming instrument and amount only when strategy is armed.";
+    let source_hash = sha256_hex(source.as_bytes());
+    let semantics = json!({
+        "consentFields": [
+            {"key": "strategyArmed", "required": true, "type": "boolean"}
+        ],
+        "signalFields": [
+            {"key": "instId", "required": true, "type": "string"},
+            {"key": "amount", "required": true, "type": "decimal"}
+        ],
+        "execution": {
+            "toolId": "onchainos",
+            "operation": "swap",
+            "authorizationParameter": "amount",
+            "conditions": [
+                {"source": "consent.strategyArmed", "equals": true}
+            ],
+            "bindings": [
+                {"parameter": "instrument", "source": "signal.instId"},
+                {"parameter": "amount", "source": "signal.amount"}
+            ]
+        }
+    });
+    let semantics_json = serde_json::to_string(&semantics).unwrap();
+    let output = run(
+        &home,
+        &[
+            "agent",
+            "autotrade-guide-draft-validate",
+            "--service-guide",
+            source,
+            "--service-guide-hash",
+            &source_hash,
+            "--autotrade-guide-semantics-json",
+            &semantics_json,
+        ],
+    );
+    assert!(output.status.success());
+    let data = parse_stdout_json(&output)["data"].clone();
+    assert_eq!(data["sourceHash"], source_hash);
+    assert_eq!(data["semantics"], semantics);
+    assert_eq!(data["validation"], "local_guide_projection_valid");
+    assert_eq!(data["writesLocalFiles"], false);
+    assert!(!home.join("autotrade/guide").exists());
+}
+
+#[test]
+fn stale_direct_delivery_never_reports_no_active_execution_consent() {
+    let (_guard, home) = fresh_home("cli_autotrade_stale_direct_delivery");
+    let delivery_id = "delivery-stale-direct";
+    let saved_path = home.join("signal.md");
+    fs::write(&saved_path, "raw Signal stays available to the user").unwrap();
+    write_direct_context(&home, delivery_id, &saved_path);
+
+    let output = run(
+        &home,
+        &[
+            "agent",
+            "autotrade-delivery-report",
+            "--job-id",
+            "job1",
+            "--delivery-id",
+            delivery_id,
+            "--status",
+            "failed_before_execution",
+            "--reason",
+            "No active execution consent",
+        ],
+    );
+    assert!(output.status.success());
+    let data = parse_stdout_json(&output)["data"].clone();
+    assert_eq!(data["status"], "skipped");
+    assert_eq!(data["reason"], "guide_execution_unavailable");
 }

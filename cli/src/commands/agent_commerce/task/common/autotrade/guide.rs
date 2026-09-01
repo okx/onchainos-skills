@@ -1,9 +1,10 @@
 //! Locally persisted, guide-driven copy-trading contract.
 //!
 //! A service Guide is provider-supplied text, but it never becomes shell code.
-//! Its companion semantic declaration selects one of the already-supported
-//! execution tools and declaratively maps confirmed consent and signal values to
-//! that tool's parameters.
+//! The subscribing Agent derives a local semantic projection from that exact
+//! Guide. The projection selects one of the already-supported execution tools
+//! and declaratively maps confirmed consent and signal values to that tool's
+//! parameters; it is never a second provider artifact.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -497,6 +498,14 @@ fn load_guide_and_consent(job_id: &str) -> Result<(GuideFile, GuideConsentFile)>
         bail!("service guide and consent do not match")
     }
     Ok((guide, consent))
+}
+
+/// A delivery may enter the Guide-direct execution lifecycle only when its
+/// locally persisted Guide and matching active Guide Consent form one valid
+/// contract. Any missing, stale, or unreadable record is deliberately a
+/// signal-only condition, not an execution error.
+pub fn has_active_execution_contract(job_id: &str) -> bool {
+    load_guide_and_consent(job_id).is_ok()
 }
 
 /// Persist one Guide-declared interpretation of a saved Signal. This accepts a
