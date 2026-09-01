@@ -5,6 +5,7 @@
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::commands::Context;
 use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
@@ -1547,6 +1548,19 @@ fn add_service_cells_to_node(node: &mut Value) {
         index += 1;
         if let Some(cells) = build_service_cells(index, service) {
             if let Value::Object(m) = service {
+                if let Some(guide) = m
+                    .get("serviceGuide")
+                    .and_then(Value::as_str)
+                    .filter(|guide| !guide.trim().is_empty())
+                {
+                    m.insert(
+                        "serviceGuideHash".to_string(),
+                        Value::String(format!(
+                            "sha256:{}",
+                            hex::encode(Sha256::digest(guide.as_bytes()))
+                        )),
+                    );
+                }
                 m.insert("cells".to_string(), Value::Array(cells));
             }
         } else {

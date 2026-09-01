@@ -4,6 +4,7 @@
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
+use std::path::Path;
 
 pub mod tokens {
     // EVM native token placeholder used by OKX APIs
@@ -70,6 +71,86 @@ pub fn assert_ok_and_extract_data(output: &std::process::Output) -> Value {
     );
 
     json["data"].clone()
+}
+
+/// Create an Auto consent through the same continuation contract used by the
+/// product flow. This intentionally never calls `autotrade-consent-set --mode
+/// auto` without the one-time continuation permit.
+pub fn create_auto_consent_via_continuation(
+    home: &Path,
+    job_id: &str,
+    agent_id: &str,
+    trade_amount: Option<&str>,
+    cap: Option<&str>,
+) -> Value {
+    // Starting a subscription-restore continuation performs an authenticated
+    // remote precheck. These downstream integration tests are intentionally
+    // offline, so stage the exact confirmed continuation artifact and exercise
+    // the real permit-bound final writer. Continuation state-machine tests cover
+    // creation, draft review, confirmation, expiry, tampering, and replay.
+    let continuation_id = "atc_0123456789abcdef0123456789abcdef";
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let continuation_path = home
+        .join("autotrade")
+        .join("consent-continuation")
+        .join(format!("{job_id}.json"));
+    std::fs::create_dir_all(continuation_path.parent().unwrap()).unwrap();
+    let mut continuation = serde_json::json!({
+        "version": 6,
+        "continuationId": continuation_id,
+        "jobId": job_id,
+        "agentId": agent_id,
+        "selectedMode": "auto",
+        "modeConfirmed": true,
+        "seededFromNotifyOnly": false,
+        "draftReviewRequired": false,
+        "draftReviewConfirmed": false,
+        "origin": "subscription_restore",
+        "signalType": "spot",
+        "requiredFields": [],
+        "serviceGuideHashResolved": false,
+        "createdAt": now,
+        "expiresAt": now + 300,
+    });
+    if let Some(value) = trade_amount {
+        continuation["tradeAmountU"] = Value::String(value.to_string());
+    }
+    if let Some(value) = cap {
+        continuation["capU"] = Value::String(value.to_string());
+    }
+    std::fs::write(
+        &continuation_path,
+        serde_json::to_vec_pretty(&continuation).unwrap(),
+    )
+    .unwrap();
+
+    let mut final_args = vec![
+        "agent".to_string(),
+        "autotrade-consent-set".to_string(),
+        "--job-id".to_string(),
+        job_id.to_string(),
+        "--agent-id".to_string(),
+        agent_id.to_string(),
+        "--mode".to_string(),
+        "auto".to_string(),
+        "--continuation-id".to_string(),
+        continuation_id.to_string(),
+    ];
+    if let Some(value) = trade_amount {
+        final_args.extend(["--trade-amount".to_string(), value.to_string()]);
+    }
+    if let Some(value) = cap {
+        final_args.extend(["--cap".to_string(), value.to_string()]);
+    }
+    let mut persist = onchainos();
+    let output = scrubbed(&mut persist, home)
+        .args(&final_args)
+        .output()
+        .expect("persist confirmed Auto consent");
+    assert_ok_and_extract_data(&output)
 }
 
 /// Run a command with up to 3 retries on rate-limit (exit code 1 + "Rate limited").

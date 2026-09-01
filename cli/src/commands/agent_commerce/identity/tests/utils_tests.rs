@@ -1131,6 +1131,9 @@ fn add_service_list_cells_preserves_service_guide_in_array_wrapper_shape() {
         svc["serviceGuide"],
         json!("## Summary\nSubscribe checklist body")
     );
+    assert!(svc["serviceGuideHash"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
     assert!(svc.get("cells").is_some());
 }
 
@@ -1149,7 +1152,11 @@ fn add_service_list_cells_preserves_service_guide_in_bare_object_shape() {
     });
     add_service_list_cells(&mut data);
     assert_eq!(data["list"][0]["serviceGuide"], json!("step 1; step 2"));
+    assert!(data["list"][0]["serviceGuideHash"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
     assert!(data["list"][1].get("serviceGuide").is_none());
+    assert!(data["list"][1].get("serviceGuideHash").is_none());
     assert!(data["list"][0].get("cells").is_some());
 }
 

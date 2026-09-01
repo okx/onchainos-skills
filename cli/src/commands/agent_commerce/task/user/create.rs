@@ -12,7 +12,7 @@ use std::time::Duration;
 use crate::audit;
 
 use crate::commands::agent_commerce::task::common::{
-    self, fetch_my_agents_by_role, network::task_api_client::TaskApiClient,
+    self, fetch_my_agents_by_role_strict, network::task_api_client::TaskApiClient,
     payment_mode::PaymentMode, AGENT_ROLE_USER, DEBUG_LOG, XLAYER_CHAIN_ID,
 };
 use crate::commands::agent_commerce::task::signing;
@@ -152,7 +152,7 @@ pub fn validate_budget_decimals(budget: f64) -> Result<()> {
 // ─── Identity check ─────────────────────────────────────────────────────
 
 pub(crate) async fn resolve_user_agent() -> Result<(String, String)> {
-    let agents = fetch_my_agents_by_role("user").await;
+    let agents = fetch_my_agents_by_role_strict("user").await?;
 
     let user = agents.iter()
         .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_USER))

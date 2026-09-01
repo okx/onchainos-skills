@@ -159,7 +159,7 @@ pub enum TaskCommand {
         /// Service billing interval (from asp-match subscription.interval, e.g. "month")
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
-        /// Signal execution mode (`auto` by default; `manual` after explicit opt-out).
+        /// Explicit signal handling mode (`auto` or `notify_only`).
         #[arg(long = "autotrade-mode")]
         autotrade_mode: Option<String>,
         /// Fixed quote-currency amount used for every delivered signal.
@@ -180,8 +180,21 @@ pub enum TaskCommand {
         /// User-authorized signal-entry order policy.
         #[arg(long = "autotrade-order-policy")]
         autotrade_order_policy: Option<String>,
+        /// User-selected Trade Kit credential source.
+        #[arg(long = "autotrade-auth-mode")]
+        autotrade_auth_mode: Option<String>,
+        /// User-confirmed tool-specific settings as one JSON object.
+        #[arg(long = "autotrade-settings-json")]
+        autotrade_settings_json: Option<String>,
         /// Execution fields that the selected service requires the subscriber
-        /// to confirm. Repeat once per canonical field.
+        /// to confirm. Repeat per field. Core names and matching value flags:
+        /// mode (--autotrade-mode), tradeAmount (--autotrade-amount),
+        /// cap (--autotrade-cap), quote (--autotrade-quote), environment
+        /// (--autotrade-environment), marginMode (--autotrade-margin-mode),
+        /// orderPolicy (--autotrade-order-policy), authMode
+        /// (--autotrade-auth-mode). Guide-defined fields must be supplied by
+        /// --autotrade-settings-json. tradeAmountU is accepted only as a
+        /// deprecated alias for the public tradeAmount name.
         #[arg(long = "autotrade-required-field")]
         autotrade_required_fields: Vec<String>,
         /// Output format: "json" for raw JSON
@@ -463,6 +476,11 @@ struct PostLoginExecutableService {
     asset_classes: Vec<crate::asset_class::AssetClass>,
     explicit_tools:
         Vec<crate::commands::agent_commerce::task::common::autotrade::tooling::ExecutionTool>,
+    service_guide: Option<String>,
+    service_guide_hash: Option<String>,
+    /// True only when the current provider catalog resolved this exact service.
+    /// An unavailable catalog must never be mistaken for an empty guide.
+    service_guide_hash_resolved: bool,
 }
 
 fn executable_service_from_description(
@@ -485,7 +503,48 @@ fn executable_service_from_description(
         description_source,
         asset_classes: classified.classes,
         explicit_tools: classified.explicit,
+        service_guide: None,
+        service_guide_hash: None,
+        service_guide_hash_resolved: false,
     })
+}
+
+fn valid_service_guide_hash(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
+fn service_guide_metadata(service: &serde_json::Value) -> (Option<String>, Option<String>) {
+    let guide = service
+        .get("serviceGuide")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
+    let Some(guide) = guide else {
+        return (None, None);
+    };
+    let supplied_hash = service
+        .get("serviceGuideHash")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| valid_service_guide_hash(value))
+        .map(|value| value.to_ascii_lowercase());
+    let hash = supplied_hash.unwrap_or_else(|| {
+        use sha2::Digest;
+        format!("sha256:{}", hex::encode(sha2::Sha256::digest(guide.as_bytes())))
+    });
+    (Some(guide), Some(hash))
+}
+
+fn attach_service_guide(
+    executable: &mut PostLoginExecutableService,
+    service: &serde_json::Value,
+    resolved_from_current_catalog: bool,
+) {
+    let (guide, hash) = service_guide_metadata(service);
+    executable.service_guide = guide;
+    executable.service_guide_hash = hash;
+    executable.service_guide_hash_resolved = resolved_from_current_catalog;
 }
 
 fn requires_trade_kit(executable: &PostLoginExecutableService) -> bool {
@@ -497,37 +556,179 @@ fn requires_trade_kit(executable: &PostLoginExecutableService) -> bool {
             .contains(&crate::asset_class::AssetClass::Option)
 }
 
-fn trade_kit_required_fields(executable: &PostLoginExecutableService) -> Vec<&'static str> {
+fn trade_kit_required_fields(executable: &PostLoginExecutableService) -> Vec<String> {
     if !requires_trade_kit(executable) {
         return Vec::new();
     }
-    let mut fields = vec!["environment", "orderPolicy"];
+    let mut fields = vec!["environment".to_string(), "orderPolicy".to_string()];
     if executable
         .asset_classes
         .contains(&crate::asset_class::AssetClass::Perp)
     {
-        fields.push("marginMode");
+        fields.push("marginMode".to_string());
+    }
+    fields
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ServiceGuideStatus {
+    Unknown,
+    Absent,
+    Current,
+    Unchanged,
+    Baseline,
+    Changed,
+}
+
+impl ServiceGuideStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Absent => "absent",
+            Self::Current => "current",
+            Self::Unchanged => "unchanged",
+            Self::Baseline => "baseline",
+            Self::Changed => "changed",
+        }
+    }
+
+    fn requires_refresh(self) -> bool {
+        matches!(self, Self::Baseline | Self::Changed)
+    }
+}
+
+fn stored_service_guide_hash(
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> Option<&str> {
+    snapshot
+        .dynamic_settings
+        .get("serviceGuideHash")
+        .and_then(serde_json::Value::as_str)
+}
+
+fn service_guide_status(
+    executable: &PostLoginExecutableService,
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> ServiceGuideStatus {
+    if !executable.service_guide_hash_resolved {
+        return ServiceGuideStatus::Unknown;
+    }
+    if snapshot.status
+        != crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus::Active
+    {
+        return if executable.service_guide_hash.is_some() {
+            ServiceGuideStatus::Current
+        } else {
+            ServiceGuideStatus::Absent
+        };
+    }
+    match (
+        stored_service_guide_hash(snapshot),
+        executable.service_guide_hash.as_deref(),
+    ) {
+        (None, None) => ServiceGuideStatus::Absent,
+        (Some(stored), Some(current)) if stored.eq_ignore_ascii_case(current) => {
+            ServiceGuideStatus::Unchanged
+        }
+        (None, Some(_)) => ServiceGuideStatus::Baseline,
+        _ => ServiceGuideStatus::Changed,
+    }
+}
+
+fn persisted_required_fields(
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> Vec<String> {
+    snapshot
+        .dynamic_settings
+        .get("requiredFields")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+fn required_fields_for_precheck(
+    executable: &PostLoginExecutableService,
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+    guide_status: ServiceGuideStatus,
+) -> Vec<String> {
+    let mut fields = trade_kit_required_fields(executable);
+    if !guide_status.requires_refresh() {
+        for field in persisted_required_fields(snapshot) {
+            if !fields.contains(&field) {
+                fields.push(field);
+            }
+        }
     }
     fields
 }
 
 fn missing_snapshot_fields(
     snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
-    required_fields: &[&'static str],
-) -> Vec<&'static str> {
+    required_fields: &[String],
+) -> Vec<String> {
     required_fields
         .iter()
-        .copied()
-        .filter(|field| match *field {
+        .filter(|field| match field.as_str() {
+            "mode" => false,
             "tradeAmount" => snapshot.trade_amount_u.is_none(),
+            "tradeAmountU" => snapshot.trade_amount_u.is_none(),
             "cap" => snapshot.cap_u.is_none(),
             "quote" => snapshot.quote_token.is_none(),
             "environment" => snapshot.trade_environment.is_none(),
             "marginMode" => snapshot.margin_mode.is_none(),
             "orderPolicy" => snapshot.order_policy.is_none(),
-            _ => true,
+            "authMode" => snapshot.auth_mode.is_none(),
+            other => !crate::commands::agent_commerce::task::common::autotrade::consent::dynamic_setting_present(
+                &snapshot.dynamic_settings,
+                other,
+            ),
         })
+        .cloned()
         .collect()
+}
+
+fn add_service_guide_precheck_context(
+    result: &mut serde_json::Value,
+    executable: &PostLoginExecutableService,
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+    status: ServiceGuideStatus,
+) {
+    let Some(object) = result.as_object_mut() else {
+        return;
+    };
+    object.insert(
+        "guideStatus".to_string(),
+        serde_json::Value::String(status.as_str().to_string()),
+    );
+    object.insert(
+        "guideHashResolved".to_string(),
+        serde_json::Value::Bool(executable.service_guide_hash_resolved),
+    );
+    object.insert(
+        "guideRefreshRequired".to_string(),
+        serde_json::Value::Bool(status.requires_refresh()),
+    );
+    if let Some(guide) = executable.service_guide.as_ref() {
+        object.insert(
+            "serviceGuide".to_string(),
+            serde_json::Value::String(guide.chars().take(8192).collect()),
+        );
+    }
+    if let Some(hash) = executable.service_guide_hash.as_ref() {
+        object.insert(
+            "currentServiceGuideHash".to_string(),
+            serde_json::Value::String(hash.clone()),
+        );
+    }
+    if let Some(hash) = stored_service_guide_hash(snapshot) {
+        object.insert(
+            "storedServiceGuideHash".to_string(),
+            serde_json::Value::String(hash.to_string()),
+        );
+    }
 }
 
 fn post_login_executable_service(
@@ -538,55 +739,71 @@ fn post_login_executable_service(
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
-    executable_service_from_description(description, "service_description")
+    let mut executable =
+        executable_service_from_description(description, "service_description")?;
+    attach_service_guide(&mut executable, subscription, false);
+    Some(executable)
 }
 
-/// Resolve the ASP service description for a compact subscription row without
-/// ever treating that prose as authorization. The listing field is canonical
-/// when present. Older rows are enriched from subscription detail, with the
-/// provider's current service catalog as a final read-only fallback.
+/// Resolve the executable description and the provider's current service guide
+/// without ever treating either prose field as authorization. Description
+/// resolution remains backward compatible, while guide freshness is known only
+/// when the current provider catalog resolves the exact service.
 async fn resolve_subscription_executable_service(
     client: &mut TaskApiClient,
     agent_id: &str,
     subscription: &serde_json::Value,
+    resolve_current_guide: bool,
 ) -> Result<Option<PostLoginExecutableService>> {
     let inline_description = subscription
         .get("serviceDescription")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    if let Some(description) = inline_description {
-        return Ok(executable_service_from_description(
-            description,
-            "service_description",
-        ));
+    if !resolve_current_guide {
+        if let Some(description) = inline_description {
+            let Some(mut executable) =
+                executable_service_from_description(description, "service_description")
+            else {
+                return Ok(None);
+            };
+            attach_service_guide(&mut executable, subscription, false);
+            return Ok(Some(executable));
+        }
     }
 
     let job_id = subscription
         .get("jobId")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    if !job_id.is_empty() {
+    let mut detail = None;
+    if inline_description.is_none() && !job_id.is_empty() {
         match subscription_ops::fetch_subscribe_detail_for_agent(client, job_id, agent_id).await {
-            Ok(detail) => {
-                if let Some(description) = detail
-                    .get("serviceDescription")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    return Ok(executable_service_from_description(
-                        description,
-                        "subscription_detail",
-                    ));
-                }
-            }
+            Ok(value) => detail = Some(value),
             Err(error) if cfg!(feature = "debug-log") => {
                 eprintln!(
                     "[DEBUG][watch-precheck] subscription detail unavailable for {job_id}: {error:#}"
                 );
             }
             Err(_) => {}
+        }
+    }
+    if !resolve_current_guide {
+        if let Some(detail) = detail.as_ref() {
+            if let Some(description) = detail
+                .get("serviceDescription")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                let Some(mut executable) =
+                    executable_service_from_description(description, "subscription_detail")
+                else {
+                    return Ok(None);
+                };
+                attach_service_guide(&mut executable, detail, false);
+                return Ok(Some(executable));
+            }
         }
     }
 
@@ -598,21 +815,59 @@ async fn resolve_subscription_executable_service(
         .get("serviceId")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    if provider_agent_id.is_empty() || service_id.is_empty() {
-        return Ok(None);
-    }
-    let service = crate::commands::agent_commerce::task::common::find_service(
-        provider_agent_id,
-        service_id,
-    )
-    .await?;
-    Ok(service
+    let mut catalog_error = None;
+    let catalog_service = if provider_agent_id.is_empty() || service_id.is_empty() {
+        None
+    } else {
+        match crate::commands::agent_commerce::task::common::find_service(
+            provider_agent_id,
+            service_id,
+        )
+        .await
+        {
+            Ok(service) => service,
+            Err(error) => {
+                catalog_error = Some(error);
+                None
+            }
+        }
+    };
+
+    let detail_description = detail
         .as_ref()
         .and_then(|value| value.get("serviceDescription"))
         .and_then(serde_json::Value::as_str)
-        .and_then(|description| {
-            executable_service_from_description(description, "provider_service_catalog")
-        }))
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let catalog_description = catalog_service
+        .as_ref()
+        .and_then(|value| value.get("serviceDescription"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let (description, source) = if let Some(description) = inline_description {
+        (description, "service_description")
+    } else if let Some(description) = detail_description {
+        (description, "subscription_detail")
+    } else if let Some(description) = catalog_description {
+        (description, "provider_service_catalog")
+    } else if let Some(error) = catalog_error {
+        return Err(error);
+    } else {
+        return Ok(None);
+    };
+
+    let Some(mut executable) = executable_service_from_description(description, source) else {
+        return Ok(None);
+    };
+    if let Some(service) = catalog_service.as_ref() {
+        attach_service_guide(&mut executable, service, resolve_current_guide);
+    } else if let Some(detail) = detail.as_ref() {
+        attach_service_guide(&mut executable, detail, false);
+    } else {
+        attach_service_guide(&mut executable, subscription, false);
+    }
+    Ok(Some(executable))
 }
 
 /// Restore bounded execution-profile hints for active executable subscriptions
@@ -665,6 +920,7 @@ async fn add_post_login_autotrade_prechecks(
             client,
             agent_id,
             subscription,
+            false,
         )
         .await
         {
@@ -775,7 +1031,9 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
 
     match consent_snapshot.status {
         ConsentSnapshotStatus::Active => {
-            let required_fields = trade_kit_required_fields(executable);
+            let guide_status = service_guide_status(executable, consent_snapshot);
+            let required_fields =
+                required_fields_for_precheck(executable, consent_snapshot, guide_status);
             let missing_fields = missing_snapshot_fields(consent_snapshot, &required_fields);
             let legacy_consent = consent_snapshot
                 .version
@@ -785,9 +1043,14 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
                 })
                 .unwrap_or(true);
             let refresh_required = consent_snapshot.mode
-                != Some(crate::commands::agent_commerce::task::common::autotrade::consent::ConsentMode::Decline)
-                && (legacy_consent || !missing_fields.is_empty() || grant_refresh_required);
+                == Some(crate::commands::agent_commerce::task::common::autotrade::consent::ConsentMode::Auto)
+                && (legacy_consent
+                    || !missing_fields.is_empty()
+                    || grant_refresh_required
+                    || guide_status.requires_refresh());
             if refresh_required {
+                let authorization_refresh_required =
+                    legacy_consent || !missing_fields.is_empty() || grant_refresh_required;
                 let mut refresh_reasons = Vec::new();
                 if legacy_consent {
                     refresh_reasons.push("legacy_consent");
@@ -798,14 +1061,21 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
                 if grant_refresh_required {
                     refresh_reasons.push("stale_trade_kit_grant");
                 }
-                serde_json::json!({
+                if guide_status.requires_refresh() {
+                    refresh_reasons.push("service_guide_changed");
+                }
+                let guide_refresh_only = guide_status.requires_refresh()
+                    && !legacy_consent
+                    && missing_fields.is_empty()
+                    && !grant_refresh_required;
+                let mut result = serde_json::json!({
                     "jobId": job_id,
                     "agentId": agent_id,
                     "applicable": true,
                     "watchAllowed": false,
                     "shouldPromptAuthorization": false,
                     "shouldPromptConfiguration": true,
-                    "authorizationRefreshRequired": true,
+                    "authorizationRefreshRequired": authorization_refresh_required,
                     "reason": "configuration_required",
                     "consentStatus": consent_snapshot.status,
                     "title": subscription
@@ -819,9 +1089,17 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
                     "missingFields": missing_fields,
                     "existingConsent": consent_snapshot,
                     "refreshReasons": refresh_reasons,
-                })
+                    "modeConfirmationRequired": !guide_refresh_only,
+                });
+                add_service_guide_precheck_context(
+                    &mut result,
+                    executable,
+                    consent_snapshot,
+                    guide_status,
+                );
+                result
             } else {
-                serde_json::json!({
+                let mut result = serde_json::json!({
                     "jobId": job_id,
                     "agentId": agent_id,
                     "applicable": true,
@@ -829,26 +1107,35 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
                     "shouldPromptAuthorization": false,
                     "reason": "consent_active",
                     "consentStatus": consent_snapshot.status,
-                })
+                });
+                add_service_guide_precheck_context(
+                    &mut result,
+                    executable,
+                    consent_snapshot,
+                    guide_status,
+                );
+                result
             }
         }
-        ConsentSnapshotStatus::NotSet => serde_json::json!({
-            "jobId": job_id,
-            "agentId": agent_id,
-            "applicable": true,
-            "watchAllowed": false,
-            "shouldPromptAuthorization": false,
-            "shouldPromptConfiguration": true,
-            "reason": "configuration_required",
-            "consentStatus": consent_snapshot.status,
-            "title": subscription
-                .get("title")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default(),
-            "serviceDescription": executable.description.chars().take(4096).collect::<String>(),
-            "descriptionSource": executable.description_source,
-            "assetClasses": executable.asset_classes,
-        }),
+        ConsentSnapshotStatus::NotSet => {
+            let mut result = serde_json::json!({
+                "jobId": job_id,
+                "agentId": agent_id,
+                "applicable": true,
+                "watchAllowed": true,
+                "shouldPromptAuthorization": false,
+                "shouldPromptConfiguration": false,
+                "reason": crate::commands::agent_commerce::task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                "consentStatus": consent_snapshot.status,
+            });
+            add_service_guide_precheck_context(
+                &mut result,
+                executable,
+                consent_snapshot,
+                service_guide_status(executable, consent_snapshot),
+            );
+            result
+        }
         ConsentSnapshotStatus::Unreadable => serde_json::json!({
             "jobId": job_id,
             "agentId": agent_id,
@@ -864,6 +1151,63 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
     }
 }
 
+fn compose_missing_consent_review(
+    job_id: &str,
+    agent_id: &str,
+    subscription: &serde_json::Value,
+    executable: &PostLoginExecutableService,
+    consent_snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> serde_json::Value {
+    let guide_status = service_guide_status(executable, consent_snapshot);
+    let required_fields =
+        required_fields_for_precheck(executable, consent_snapshot, guide_status);
+    let missing_fields = required_fields.clone();
+    let mut result = serde_json::json!({
+        "jobId": job_id,
+        "agentId": agent_id,
+        "applicable": true,
+        "watchAllowed": false,
+        "shouldPromptAuthorization": false,
+        "shouldPromptConfiguration": true,
+        "configurationRequested": true,
+        "reason": "configuration_required",
+        "consentStatus": consent_snapshot.status,
+        "title": subscription
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default(),
+        "serviceDescription": executable.description.chars().take(4096).collect::<String>(),
+        "descriptionSource": executable.description_source,
+        "assetClasses": executable.asset_classes,
+        "requiredFields": required_fields,
+        "missingFields": missing_fields,
+        "modeConfirmationRequired": true,
+    });
+    add_service_guide_precheck_context(
+        &mut result,
+        executable,
+        consent_snapshot,
+        guide_status,
+    );
+    result
+}
+
+fn normalized_existing_consent(
+    consent_snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> serde_json::Value {
+    use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentMode;
+
+    let mut value = serde_json::to_value(consent_snapshot)
+        .expect("validated consent snapshot must serialize");
+    if matches!(
+        consent_snapshot.mode,
+        Some(ConsentMode::Manual | ConsentMode::Decline)
+    ) {
+        value["mode"] = serde_json::Value::String("notify_only".to_string());
+    }
+    value
+}
+
 fn compose_existing_consent_review(
     job_id: &str,
     agent_id: &str,
@@ -871,8 +1215,10 @@ fn compose_existing_consent_review(
     executable: &PostLoginExecutableService,
     consent_snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
 ) -> serde_json::Value {
-    let required_fields = trade_kit_required_fields(executable);
-    serde_json::json!({
+    let guide_status = service_guide_status(executable, consent_snapshot);
+    let required_fields =
+        required_fields_for_precheck(executable, consent_snapshot, guide_status);
+    let mut result = serde_json::json!({
         "jobId": job_id,
         "agentId": agent_id,
         "applicable": true,
@@ -891,8 +1237,16 @@ fn compose_existing_consent_review(
         "assetClasses": executable.asset_classes,
         "requiredFields": required_fields,
         "missingFields": [],
-        "existingConsent": consent_snapshot,
-    })
+        "existingConsent": normalized_existing_consent(consent_snapshot),
+        "modeConfirmationRequired": true,
+    });
+    add_service_guide_precheck_context(
+        &mut result,
+        executable,
+        consent_snapshot,
+        guide_status,
+    );
+    result
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -901,6 +1255,10 @@ pub(crate) struct PreDeliveryConsentContext {
     pub asset_class: crate::asset_class::AssetClass,
     pub title: String,
     pub required_fields: Vec<String>,
+    pub service_guide_hash: Option<String>,
+    pub service_guide_hash_resolved: bool,
+    pub preserve_existing_mode: bool,
+    pub existing_mode: Option<String>,
 }
 
 /// Bind a restore-configuration continuation to the canonical authenticated
@@ -928,6 +1286,11 @@ pub(crate) fn bind_subscription_restore_consent_context(
         || (consent_status == Some("active")
             && precheck
                 .get("configurationReviewRequired")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true))
+        || (consent_status == Some("active")
+            && precheck
+                .get("guideRefreshRequired")
                 .and_then(serde_json::Value::as_bool)
                 == Some(true));
     if precheck
@@ -993,6 +1356,22 @@ pub(crate) fn bind_subscription_restore_consent_context(
             .filter_map(serde_json::Value::as_str)
             .map(str::to_string)
             .collect(),
+        service_guide_hash: precheck
+            .get("currentServiceGuideHash")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        service_guide_hash_resolved: precheck
+            .get("guideHashResolved")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        preserve_existing_mode: precheck
+            .get("modeConfirmationRequired")
+            .and_then(serde_json::Value::as_bool)
+            == Some(false),
+        existing_mode: precheck
+            .pointer("/existingConsent/mode")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
     })
 }
 
@@ -1069,13 +1448,17 @@ pub(crate) fn bind_pre_delivery_consent_context(
             .unwrap_or_default()
             .to_string(),
         required_fields: Vec::new(),
+        service_guide_hash: None,
+        service_guide_hash_resolved: false,
+        preserve_existing_mode: false,
+        existing_mode: None,
     })
 }
 
 /// First-entry gate for an explicitly scoped watch. Non-subscription jobs and
-/// subscriptions that do not need execution authorization pass through; an
-/// executable Active subscription with no local consent returns the ASP
-/// description and any live bounded configuration continuation before watch.
+/// subscriptions without an active automatic policy pass through as notify-only.
+/// An explicit execution-policy review returns the ASP description and any live
+/// bounded configuration continuation before watch.
 pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serde_json::Value> {
     scoped_watch_autotrade_precheck_inner(job_id, false).await
 }
@@ -1134,6 +1517,7 @@ async fn scoped_watch_autotrade_precheck_inner(
                 &mut client,
                 &snapshot.agent_id,
                 subscription,
+                true,
             )
             .await?;
             if let Some(executable) = resolved_executable.as_ref() {
@@ -1194,21 +1578,38 @@ async fn scoped_watch_autotrade_precheck_inner(
         &consent_snapshot,
         grant_refresh_required,
     );
-    if review_existing
-        && result.get("reason").and_then(serde_json::Value::as_str) == Some("consent_active")
-        && matches!(
-            consent_snapshot.mode,
-            Some(consent::ConsentMode::Auto | consent::ConsentMode::Manual)
-        )
-    {
+    if review_existing {
         if let (Some(subscription), Some(executable)) = (subscription, resolved_executable.as_ref()) {
-            result = compose_existing_consent_review(
-                job_id,
-                &snapshot.agent_id,
-                subscription,
-                executable,
-                &consent_snapshot,
-            );
+            if consent_snapshot.status == consent::ConsentSnapshotStatus::NotSet
+                && result.get("reason").and_then(serde_json::Value::as_str)
+                    == Some(autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON)
+            {
+                result = compose_missing_consent_review(
+                    job_id,
+                    &snapshot.agent_id,
+                    subscription,
+                    executable,
+                    &consent_snapshot,
+                );
+            } else if result.get("reason").and_then(serde_json::Value::as_str)
+                == Some("consent_active")
+                && matches!(
+                    consent_snapshot.mode,
+                    Some(
+                        consent::ConsentMode::Auto
+                            | consent::ConsentMode::Manual
+                            | consent::ConsentMode::Decline
+                    )
+                )
+            {
+                result = compose_existing_consent_review(
+                    job_id,
+                    &snapshot.agent_id,
+                    subscription,
+                    executable,
+                    &consent_snapshot,
+                );
+            }
         }
     }
     if result.get("reason").and_then(serde_json::Value::as_str)
@@ -1219,28 +1620,42 @@ async fn scoped_watch_autotrade_precheck_inner(
             &snapshot.agent_id,
         )? {
             if file.origin == autotrade::continuation::Origin::SubscriptionRestore {
-                let missing_fields = file.missing_fields();
-                if let Some(object) = result.as_object_mut() {
-                    object.insert(
-                        "continuationId".to_string(),
-                        serde_json::Value::String(file.continuation_id),
-                    );
-                    object.insert(
-                        "selectedMode".to_string(),
-                        serde_json::to_value(file.selected_mode)?,
-                    );
-                    object.insert(
-                        "modeConfirmed".to_string(),
-                        serde_json::Value::Bool(file.mode_confirmed),
-                    );
-                    object.insert(
-                        "requiredFields".to_string(),
-                        serde_json::to_value(file.required_fields)?,
-                    );
-                    object.insert(
-                        "missingFields".to_string(),
-                        serde_json::to_value(missing_fields)?,
-                    );
+                let guide_hash_resolved = result
+                    .get("guideHashResolved")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                let current_guide_hash = result
+                    .get("currentServiceGuideHash")
+                    .and_then(serde_json::Value::as_str);
+                let continuation_matches_guide = !guide_hash_resolved
+                    || (file.service_guide_hash_resolved
+                        && file.service_guide_hash.as_deref() == current_guide_hash);
+                if continuation_matches_guide {
+                    let missing_fields = file.missing_fields();
+                    if let Some(object) = result.as_object_mut() {
+                        object.insert(
+                            "continuationId".to_string(),
+                            serde_json::Value::String(file.continuation_id),
+                        );
+                        object.insert(
+                            "selectedMode".to_string(),
+                            serde_json::to_value(file.selected_mode)?,
+                        );
+                        object.insert(
+                            "modeConfirmed".to_string(),
+                            serde_json::Value::Bool(file.mode_confirmed),
+                        );
+                        object.insert(
+                            "requiredFields".to_string(),
+                            serde_json::to_value(file.required_fields)?,
+                        );
+                        object.insert(
+                            "missingFields".to_string(),
+                            serde_json::to_value(missing_fields)?,
+                        );
+                    }
+                } else {
+                    autotrade::continuation::clear(job_id);
                 }
             } else {
                 anyhow::bail!(
@@ -1539,13 +1954,14 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 title, provider, attachments, endpoint, payment_mode,
                 service_id, service_params, service_token_address, service_token_amount,
             }).await,
-        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, attachments, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment, autotrade_margin_mode, autotrade_order_policy, autotrade_required_fields, format, exclude_device } => {
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, attachments, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment, autotrade_margin_mode, autotrade_order_policy, autotrade_auth_mode, autotrade_settings_json, autotrade_required_fields, format, exclude_device } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
                 service_id, use_trial, service_params, service_token_amount, service_token_address,
                 auto_renew, title, description, attachments, provider_agent_id, service_description, service_interval,
                 autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment,
                 autotrade_margin_mode, autotrade_order_policy, autotrade_required_fields, format, exclude_device,
+                autotrade_auth_mode, autotrade_settings_json,
             }).await
         }
         TaskCommand::AspMatch { job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
@@ -1643,7 +2059,7 @@ mod post_login_tests {
     use crate::asset_class::AssetClass;
     use crate::commands::agent_commerce::task::common::autotrade::consent::{
         ConsentMode, ConsentSnapshot, ConsentSnapshotStatus, MarginMode, OrderPolicy,
-        CONSENT_VERSION,
+        TradeKitAuthMode, CONSENT_VERSION,
     };
     use crate::commands::agent_commerce::task::common::autotrade::trade_kit::TradeEnvironment;
     use serde_json::json;
@@ -1660,6 +2076,8 @@ mod post_login_tests {
             trade_environment: active.then_some(TradeEnvironment::Live),
             margin_mode: active.then_some(MarginMode::Cross),
             order_policy: active.then_some(OrderPolicy::Market),
+            auth_mode: active.then_some(TradeKitAuthMode::OAuth),
+            dynamic_settings: Default::default(),
             created_at: active.then_some(1),
             expires_at: active.then_some(u64::MAX),
         }
@@ -1762,7 +2180,7 @@ mod post_login_tests {
     }
 
     #[test]
-    fn scoped_watch_precheck_uses_a_recovered_service_description() {
+    fn scoped_watch_precheck_allows_missing_policy_with_recovered_service_description() {
         let mut subscription = active_executable_subscription();
         subscription
             .as_object_mut()
@@ -1781,11 +2199,11 @@ mod post_login_tests {
             &consent_snapshot(ConsentSnapshotStatus::NotSet),
             false,
         );
-        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["watchAllowed"], true);
         assert_eq!(result["shouldPromptAuthorization"], false);
-        assert_eq!(result["shouldPromptConfiguration"], true);
-        assert_eq!(result["reason"], "configuration_required");
-        assert_eq!(result["descriptionSource"], "subscription_detail");
+        assert_eq!(result["shouldPromptConfiguration"], false);
+        assert_eq!(result["reason"], "execution_policy_not_configured");
+        assert!(result.get("descriptionSource").is_none());
     }
 
     fn active_executable_subscription() -> serde_json::Value {
@@ -1800,8 +2218,22 @@ mod post_login_tests {
         })
     }
 
+    fn executable_with_current_guide(guide: Option<&str>) -> PostLoginExecutableService {
+        let mut executable = executable_service_from_description(
+            "Spot trading signals with BUY entries",
+            "service_description",
+        )
+        .unwrap();
+        let service = match guide {
+            Some(guide) => json!({"serviceGuide": guide}),
+            None => json!({}),
+        };
+        attach_service_guide(&mut executable, &service, true);
+        executable
+    }
+
     #[test]
-    fn scoped_watch_precheck_returns_bounded_restore_configuration() {
+    fn scoped_watch_precheck_allows_notify_only_when_policy_is_missing() {
         let subscription = active_executable_subscription();
         let result = compose_scoped_watch_autotrade_precheck(
             "job-watch",
@@ -1811,25 +2243,42 @@ mod post_login_tests {
             false,
         );
         assert_eq!(result["applicable"], true);
-        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["watchAllowed"], true);
         assert_eq!(result["shouldPromptAuthorization"], false);
+        assert_eq!(result["shouldPromptConfiguration"], false);
+        assert_eq!(result["reason"], "execution_policy_not_configured");
+    }
+
+    #[test]
+    fn explicit_configuration_request_returns_bounded_restore_configuration() {
+        let subscription = active_executable_subscription();
+        let executable = post_login_executable_service(&subscription).unwrap();
+        let snapshot = consent_snapshot(ConsentSnapshotStatus::NotSet);
+        let result = compose_missing_consent_review(
+            "job-watch",
+            "user-1",
+            &subscription,
+            &executable,
+            &snapshot,
+        );
+        assert_eq!(result["watchAllowed"], false);
         assert_eq!(result["shouldPromptConfiguration"], true);
+        assert_eq!(result["configurationRequested"], true);
         assert_eq!(result["reason"], "configuration_required");
         assert_eq!(result["assetClasses"], json!(["spot"]));
-        assert_eq!(
-            result["serviceDescription"],
-            active_executable_subscription()["serviceDescription"]
-        );
     }
 
     #[test]
     fn restore_binding_accepts_only_the_canonical_configuration_precheck() {
-        let precheck = compose_scoped_watch_autotrade_precheck(
+        let subscription = active_executable_subscription();
+        let executable = post_login_executable_service(&subscription).unwrap();
+        let snapshot = consent_snapshot(ConsentSnapshotStatus::NotSet);
+        let precheck = compose_missing_consent_review(
             "job-watch",
             "user-1",
-            Some(&active_executable_subscription()),
-            &consent_snapshot(ConsentSnapshotStatus::NotSet),
-            false,
+            &subscription,
+            &executable,
+            &snapshot,
         );
         let bound = bind_subscription_restore_consent_context(
             &precheck,
@@ -1928,6 +2377,117 @@ mod post_login_tests {
     }
 
     #[test]
+    fn legacy_manual_notify_only_policy_never_blocks_normal_watch() {
+        let subscription = active_executable_subscription();
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.mode = Some(ConsentMode::Manual);
+        snapshot.version = Some(CONSENT_VERSION - 1);
+        snapshot.trade_environment = None;
+        snapshot.margin_mode = None;
+        snapshot.order_policy = None;
+
+        let result = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            &snapshot,
+            false,
+        );
+
+        assert_eq!(result["watchAllowed"], true);
+        assert_eq!(result["reason"], "consent_active");
+    }
+
+    #[test]
+    fn unchanged_service_guide_does_not_interrupt_existing_consent() {
+        let subscription = active_executable_subscription();
+        let executable = executable_with_current_guide(Some("Choose a fixed amount."));
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.dynamic_settings.insert(
+            "serviceGuideHash".to_string(),
+            json!(executable.service_guide_hash.clone().unwrap()),
+        );
+        let result = compose_scoped_watch_autotrade_precheck_with_executable(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            Some(&executable),
+            &snapshot,
+            false,
+        );
+        assert_eq!(result["watchAllowed"], true);
+        assert_eq!(result["guideStatus"], "unchanged");
+        assert_eq!(result["guideRefreshRequired"], false);
+    }
+
+    #[test]
+    fn changed_service_guide_enters_incremental_refresh_without_reconfirming_mode() {
+        let subscription = active_executable_subscription();
+        let executable = executable_with_current_guide(Some("Choose a risk bucket."));
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.dynamic_settings.insert(
+            "serviceGuideHash".to_string(),
+            json!(format!("sha256:{}", "a".repeat(64))),
+        );
+        snapshot.dynamic_settings.insert(
+            "requiredFields".to_string(),
+            json!(["extra.legacyRiskBucket"]),
+        );
+        snapshot.dynamic_settings.insert(
+            "extra".to_string(),
+            json!({
+                "legacyRiskBucket": {
+                    "label": "Legacy risk bucket",
+                    "type": "string",
+                    "value": "medium"
+                }
+            }),
+        );
+        let result = compose_scoped_watch_autotrade_precheck_with_executable(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            Some(&executable),
+            &snapshot,
+            false,
+        );
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["guideStatus"], "changed");
+        assert_eq!(result["guideRefreshRequired"], true);
+        assert_eq!(result["authorizationRefreshRequired"], false);
+        assert_eq!(result["modeConfirmationRequired"], false);
+        assert_eq!(result["requiredFields"], json!([]));
+        assert_eq!(result["missingFields"], json!([]));
+        assert_eq!(result["refreshReasons"], json!(["service_guide_changed"]));
+        assert_eq!(
+            result["currentServiceGuideHash"],
+            executable.service_guide_hash.unwrap()
+        );
+    }
+
+    #[test]
+    fn removed_service_guide_is_a_resolved_change_not_a_fetch_failure() {
+        let subscription = active_executable_subscription();
+        let executable = executable_with_current_guide(None);
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.dynamic_settings.insert(
+            "serviceGuideHash".to_string(),
+            json!(format!("sha256:{}", "b".repeat(64))),
+        );
+        let result = compose_scoped_watch_autotrade_precheck_with_executable(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            Some(&executable),
+            &snapshot,
+            false,
+        );
+        assert_eq!(result["guideStatus"], "changed");
+        assert_eq!(result["guideHashResolved"], true);
+        assert!(result.get("currentServiceGuideHash").is_none());
+    }
+
+    #[test]
     fn explicit_restore_can_review_and_modify_existing_live_consent() {
         let subscription = active_executable_subscription();
         let executable = post_login_executable_service(&subscription).unwrap();
@@ -1955,6 +2515,30 @@ mod post_login_tests {
             AssetClass::Spot,
         )
         .expect("review must remain bound to the canonical subscription");
+    }
+
+    #[test]
+    fn explicit_review_normalizes_decline_as_notify_only_and_keeps_saved_settings() {
+        let subscription = active_executable_subscription();
+        let executable = post_login_executable_service(&subscription).unwrap();
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.mode = Some(ConsentMode::Decline);
+        snapshot.trade_amount_u = Some("100".to_string());
+        snapshot.quote_token = Some("usdt".to_string());
+
+        let result = compose_existing_consent_review(
+            "job-watch",
+            "user-1",
+            &subscription,
+            &executable,
+            &snapshot,
+        );
+
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["configurationReviewRequired"], true);
+        assert_eq!(result["existingConsent"]["mode"], "notify_only");
+        assert_eq!(result["existingConsent"]["tradeAmountU"], "100");
+        assert_eq!(result["existingConsent"]["quoteToken"], "usdt");
     }
 
     #[test]

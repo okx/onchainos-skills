@@ -78,7 +78,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 - `[Watch]` block present → read `skills/okx-ai/references/watch-core.md` and enter its Watch generation. A returned notification, deliverable, or empty poll does **not** end the turn; dispatch the complete batch and re-enter the same scoped command until `watch-core.md` says to stop or a `decision_request` requires the user's reply.
 - No `[Watch]` block → **end this turn immediately**.
 
-🛑 This Watch handoff is the **last non-Watch action in the creation flow** — once entered, `watch-core.md` owns the rest of the turn, including every required dispatch and re-entry. Do not run unrelated creation commands after the handoff, and do not confuse "last creation action" with permission to stop after the first watch result. On the `sub_created` event the agent only sends the subscription notification and starts the watch — it does NOT re-scan the description for DApp names, does NOT auto-install any plugin, and does NOT pre-select a tool. Local tool preparation is surfaced up-front (before subscribing) as the non-blocking schema-v3 `autoTradePreflight`; the visible Install/connect flow runs only if the user explicitly chooses it and delegates authentication to `okx-cex-auth`. Trade Kit readiness is not repeated on every delivery or for a compatible cached route. Authentication and trading availability are decided only by the final target command. A failed delivery remains visible and is never auto-replayed, while future deliveries continue normally.
+🛑 This Watch handoff is the **last non-Watch action in the creation flow** — once entered, `watch-core.md` owns the rest of the turn, including every required dispatch and re-entry. Do not run unrelated creation commands after the handoff, and do not confuse "last creation action" with permission to stop after the first watch result. On the `sub_created` event the agent only sends the subscription notification and starts the watch — it does NOT re-scan the description for DApp names, does NOT auto-install any plugin, and does NOT pre-select a tool. Local tool preparation is non-blocking and happens at its `serviceGuide` step, or as the post-guide fallback only when that step is absent; the visible Install/connect flow runs only if the user explicitly chooses it and delegates authentication to `okx-cex-auth`. Trade Kit readiness is not repeated on every delivery or for a compatible cached route. Authentication and trading availability are decided only by the final target command. A failed delivery remains visible and is never auto-replayed, while future deliveries continue normally.
 
 ### Subscription management (user-initiated)
 
@@ -112,6 +112,12 @@ watch action. The prompted `listen to <subscription title>` form is also actiona
 from the just-created or just-rendered buyer-subscription context. When current focus is an ACTIVE buyer
 subscription, this includes a bare restore/resume request
 even if it omits “signals” or “watch”; it must not enter generic watch or drain historical signals first.
+For the authorization gate, distinguish the object of the user's action: a bare request to restore/resume
+the **subscription itself** (for example `restore this subscription`, `resume subscription`, or `恢复订阅`)
+is an explicit subscription restoration and MUST review its execution policy. A request to resume only
+**listening, receipt, signals, or messages** is receipt-only and MUST NOT review the execution policy.
+The prompted `listen to <subscription title>` continuation is also receipt-only because its configuration
+was just confirmed during creation.
 Treat an interrogative form as read-only only when the same message asks why/how/basis or explicitly asks
 about device configuration rather than starting conversation watch.
 In a compound request, any stop in steps 1–3 ends only this receipt branch; continue each independently
@@ -138,9 +144,12 @@ authorized lifecycle/progress action unless the user explicitly made it conditio
    §Existing-subscription scoped-watch authorization gate before the banner or any watch call. Only after
    the gate passes, emit the canonical banner and run
    `okx-a2a user watch --json --job-id <jobId>`. Keep the jobId sticky for every re-entry. Never substitute
-   global watch or claim that starting watch proves a new signal already exists. For an explicit
-   restore/resume request, the first gate must use `--review-existing`; omit that flag for a just-created
-   subscription continuation and after the user has completed the bounded review.
+   global watch or claim that starting watch proves a new signal already exists. A request to restore/resume
+   the subscription itself MUST use `--review-existing`; this reviews an existing consent or, when none
+   exists, enters serviceGuide-driven execution configuration before watch. A request to resume only
+   listening/receipt/signals/messages uses the gate without that flag and remains notify-only when no active
+   Auto consent exists. Also omit the flag for a just-created subscription continuation, automatic watch
+   re-entry, and the fresh gate after the user has completed the bounded review.
 
 ### Restore execution-configuration reply
 
@@ -148,11 +157,11 @@ When the immediately preceding assistant turn asked for missing restore configur
 `autotrade-watch-precheck`, bind the reply only through the exact local `continuationId` returned in that
 turn. Run `autotrade-consent-continue --job-id <sameJobId> --agent-id <sameAgentId>
 --continuation-id <exactId>` with only `--trade-amount`, `--cap`, `--quote`, `--environment`,
-`--margin-mode`, or `--order-policy` values explicitly authored
-in this reply. If the user explicitly disables automatic execution, add `--mode manual`; if they affirm
-the displayed automatic default, add `--mode auto`. For a refresh, affirming the displayed existing mode
+`--margin-mode`, `--order-policy`, or `--auth-mode` values explicitly authored
+in this reply. If the user explicitly chooses notification only, add `--mode notify_only`; if they explicitly
+choose automatic execution, add `--mode auto`. For a refresh, affirming the displayed existing mode
 adds that exact `--mode`. Supplying the mode on resume records the user's
-confirmation; never treat the continuation's default `auto` value as confirmation. Never infer a value or
+confirmation; there is no automatic default. Never infer a value or
 authorization from ASP prose.
 
 For `authorizationRefreshRequired:true` or `configurationReviewRequired:true`, show the bounded existing
@@ -161,8 +170,19 @@ configuration or state any settings to change. Do not turn `existingConsent` int
 preloads it from the trusted local file. Use the returned full `consentCommand` unchanged so consent and its
 automatic-execution grant are written together.
 
+When a continuation returns `draftReviewRequired:true`, it is a hard stop even if `missingFields` is empty.
+Render its complete bounded `draftReview` and end the turn. A change must be applied first and the refreshed
+draft shown again. Only the next explicit confirmation of that displayed final draft may run the same
+continuation with `--confirm-draft` alone; never combine draft confirmation with mode or value flags.
+
+For `guideRefreshRequired:true`, follow `watch-core.md`'s incremental reconciliation. Reuse valid values
+from `existingConsent`, ask only for new/missing/invalid/semantically changed guide fields, and do not ask the
+user to repeat the existing mode when `modeConfirmationRequired:false`. A metadata-only baseline or
+prose/reordering change is persisted without a user question, then the same precheck is rerun.
+
 If `validationErrors` or `missingFields` remains, ask once for only those fields in natural language and
-end the turn. If complete, run the exact returned `consentCommand`, then resume the same subscription at
+end the turn. If `draftReviewRequired:true`, follow the separate draft-review stop above. If complete, run
+the exact returned `consentCommand`, then resume the same subscription at
 §Signal-receipt watch entry step 2 so receipt state and the canonical authorization gate are fresh-read
 before watch; that post-review gate must omit `--review-existing`. Never show A/B/C options or create a
 delivery-time authorization decision. A generic amount or currency message without the preceding bound
@@ -375,8 +395,9 @@ The device columns below are illustrative — replace them with the user's **act
 For every ACTIVE executable subscription received by this device, the CLI restores the bounded execution
 profile but never creates or changes local consent. It does not emit
 `autoTradeAuthorizationPrechecks`, ask for authorization, or render a decision card during login. Existing
-`auto`/`manual` policy is preserved; missing policy is configured only when the user explicitly restores
-that subscription's watch, and an unreadable policy remains a blocking local error.
+an existing `auto` policy is preserved; legacy `manual`/`decline` policies remain notify-only. Missing or
+expired policy never blocks receipt and is configured only when the user explicitly asks to configure the
+execution policy. An unreadable policy remains a blocking local error.
 
 The old receipt/listening rule remains unchanged: during login, do **not** ask
 whether to turn on receipt or start listening — enabling happens only when the user explicitly asks later.

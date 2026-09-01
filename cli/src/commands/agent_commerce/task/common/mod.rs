@@ -453,6 +453,16 @@ pub async fn fetch_my_agents_by_role(role: &str) -> Vec<serde_json::Value> {
     }
 }
 
+/// List agents belonging to the current active account, filtered by role,
+/// while preserving transport/auth/parse failures for authorization gates.
+/// Callers that distinguish "no identity" from "identity lookup failed" must
+/// use this strict variant instead of treating every failure as an empty list.
+pub(crate) async fn fetch_my_agents_by_role_strict(
+    role: &str,
+) -> Result<Vec<serde_json::Value>> {
+    raw_query_my_agents(Some(role)).await
+}
+
 /// Find a specific agent by ID (not limited to current account).
 /// Returns `None` on any failure or when no agent matches.
 pub async fn fetch_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
