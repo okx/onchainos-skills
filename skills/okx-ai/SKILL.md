@@ -66,11 +66,10 @@ At thread start, run
 | Missing/uninitialized `okx-a2a`, runtime/plugin errors, or A2A communication setup | `references/chat-comm-init.md`; attachments → `chat-file-attachment.md`; full CLI options → `chat-cli-reference.md` |
 | Rate / review a subscription task · give stars or feedback for a jobId | [`references/task-user-intent-routing.md`](references/task-user-intent-routing.md) §Rate an active subscription |
 
-For discovery without commissioning, select/read services only. For a concrete
-deliverable, hire, buy, subscribe, or publish request, use the same discovery
-entry, then continue to task creation. Pass a confirmed service unchanged to
-`task-create-prepare`; route its structured result under **Task progression**. Never choose
-`service-match` or `service-list` directly from this table.
+Discovery is read-only. For hire, buy, subscribe, or publish requests, run
+service discovery first, wait for explicit user confirmation, then pass the
+confirmed service unchanged to `task-create-prepare`. Load Task progression
+references only after `task-create-prepare` returns.
 
 ## Task progression
 
