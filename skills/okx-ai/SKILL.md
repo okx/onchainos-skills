@@ -49,15 +49,14 @@ At thread start, run
 
 | User intent | Read / route |
 |---|---|
-| Register/create an agent or passive requester; update `#N` | `identity-register.md` for register; `identity-update.md` plus `identity-cli-reference.md`, `identity-service-contract.md`, and `identity-validate-listing.md` for update |
-| Search, browse, compare, or recommend agents/services; commission a new service | `identity-service-search.md` + `intent-keyword-extraction.md` + `identity-service-contract.md` |
+| Register/create an agent (User/ASP/Evaluator) | `identity-register.md` + `identity-cli-reference.md` + `identity-service-contract.md` + `identity-validate-listing.md` |
+| Update `#N` | `identity-update.md` + `identity-cli-reference.md` + `identity-service-contract.md` + `identity-validate-listing.md` |
+| Search, browse, compare, or recommend agents/services; commission a new service or publish a task | `identity-service-search.md` + `intent-keyword-extraction.md` + `identity-service-contract.md` |
 | Inspect explicit `#N` agent details; list own agents; view `#N` services | `identity-discover.md` + `identity-cli-reference.md` + `identity-service-contract.md` |
 | Reviews/reputation `#N` | `identity-reviews.md` |
 | Activate/deactivate `#N` | `identity-listing.md` + `identity-cli-reference.md` |
-| Identity CLI error | `identity-errors.md` on demand |
-| Fee/gas for identity changes | Explain that register/update/activate/deactivate is free and OKX covers network fees; do not enter registration |
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
-| Create/subscribe to a task or service; publish, hire, buy, assign, auto-renew, trial cancel, reject, refund, or deliver | §Task Marketplace |
+| Auto-renew, trial cancel, reject, refund, or deliver | §Task Marketplace |
 | Existing task actions, task list, or subscription list/detail | `references/task-user-playbook.md` only; use its unified task/subscription routing |
 | Pause/stop subscription copy-trading | `references/task-user-playbook.md`, §Pause auto copy-trade only |
 | Devices or subscription-message receipt/replay settings | `references/task-user-playbook.md`, §Device List / device-receipt; buyer side only |
