@@ -2,7 +2,7 @@
 
 Reached when the user has an explicit **install / update / upgrade** intent for the
 Onchain OS CLI or its skills ("install onchain os", "update onchainos", "upgrade to
-the latest version", "reinstall the CLI", "安装 / 更新 / 升级 onchainos").
+the latest version", "reinstall the CLI").
 
 > This is the **forced** path. The routine session-start check (daily silent precheck)
 > stays in [_shared/preflight.md](../_shared/preflight.md) and uses the **un-forced**
