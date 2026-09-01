@@ -71,128 +71,36 @@ fn required_service_string(service: &Value, key: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("selected Service is missing required field `{key}`"))
 }
 
-fn selected_provider_agent_id(service: &Value) -> Result<String> {
-    scalar_string(service.get("asp").and_then(|asp| asp.get("aspAgentId")))
-        .ok_or_else(|| anyhow!("matched Service is missing required field `asp.aspAgentId`"))
-}
-
-fn selected_sid(service: &Value) -> Option<String> {
-    scalar_string(service.get("sid"))
-}
-
-fn service_id(value: &Value) -> Option<String> {
-    scalar_string(value.get("serviceId"))
-        .or_else(|| scalar_string(value.get("ServiceId")))
-        .or_else(|| scalar_string(value.get("id")))
-}
-
-fn find_service(value: &Value, expected_service_id: &str) -> Option<Value> {
-    if service_id(value).as_deref() == Some(expected_service_id) {
-        return Some(value.clone());
-    }
-    match value {
-        Value::Array(items) => items
-            .iter()
-            .find_map(|item| find_service(item, expected_service_id)),
-        Value::Object(map) => {
-            ["list", "services", "data"]
-                .into_iter()
-                .filter_map(|key| map.get(key))
-                .find_map(|item| find_service(item, expected_service_id))
-        }
-        _ => None,
-    }
-}
-
-async fn fetch_matched_service(user_agent_id: &str, sid: &str) -> Result<Value> {
+async fn fetch_service_detail(user_agent_id: &str, sid: &str) -> Result<Value> {
     let output = tokio::process::Command::new(std::env::current_exe()?)
         .args([
             "agent",
-            "service-match",
+            "service-detail",
             "--sid",
             sid,
             "--agentic-id",
             user_agent_id,
-            "--limit",
-            "1",
         ])
         .output()
         .await
-        .context("failed to invoke service-match")?;
+        .context("failed to invoke service-detail")?;
     if !output.status.success() {
         bail!(
-            "service-match failed: {}",
+            "service-detail failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
     let response: Value = serde_json::from_slice(&output.stdout)
-        .context("failed to parse service-match JSON output")?;
+        .context("failed to parse service-detail JSON output")?;
     if response.get("ok").and_then(Value::as_bool) != Some(true) {
-        bail!("service-match returned a non-success response");
+        bail!("service-detail returned a non-success response");
     }
-    let services = response
+    let service = response
         .get("data")
-        .and_then(|data| data.get("services"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("service-match response is missing data.services"))?;
-    services
-        .iter()
-        .find(|service| selected_sid(service).as_deref() == Some(sid))
         .cloned()
-        .ok_or_else(|| anyhow!("service-match returned no Service matching sid `{sid}`"))
-}
-
-async fn fetch_service_detail(provider_agent_id: &str, service_id: &str) -> Result<Value> {
-    let output = tokio::process::Command::new(std::env::current_exe()?)
-        .args([
-            "agent",
-            "service-list",
-            "--agent-id",
-            provider_agent_id,
-            "--service-id",
-            service_id,
-        ])
-        .output()
-        .await
-        .context("failed to invoke service-list")?;
-    if !output.status.success() {
-        bail!(
-            "service-list failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let response: Value = serde_json::from_slice(&output.stdout)
-        .context("failed to parse service-list JSON output")?;
-    if response.get("ok").and_then(Value::as_bool) != Some(true) {
-        bail!("service-list returned a non-success response");
-    }
-    let data = response.get("data").cloned().unwrap_or(Value::Null);
-
-    let service = find_service(&data, service_id).ok_or_else(|| {
-        anyhow!(
-            "service-list returned no Service matching serviceId `{service_id}` for Provider Agent `{provider_agent_id}`"
-        )
-    })?;
-    Ok(service)
-}
-
-fn merge_service_guide(mut service: Value, detail: &Value) -> Result<Value> {
-    let service_object = service
-        .as_object_mut()
-        .ok_or_else(|| anyhow!("service-match returned a non-object Service"))?;
-    let guide = detail
-        .get("serviceGuide")
-        .or_else(|| detail.get("ServiceGuide"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    match guide {
-        Some(value) => {
-            service_object.insert("serviceGuide".to_string(), Value::String(value.to_string()));
-        }
-        None => {
-            service_object.remove("serviceGuide");
-        }
+        .ok_or_else(|| anyhow!("service-detail response is missing data"))?;
+    if !service.is_object() {
+        bail!("service-detail response data must be a Service object");
     }
     Ok(service)
 }
@@ -287,12 +195,8 @@ pub(crate) async fn handle_task_create_prepare(
     if selected_sid.is_empty() {
         bail!("--sid must not be blank");
     }
-    let service = fetch_matched_service(&user_agent_id, selected_sid).await?;
-    let provider_agent_id = selected_provider_agent_id(&service)?;
+    let service = normalize_service(fetch_service_detail(&user_agent_id, selected_sid).await?);
     let selected_service_id = required_service_string(&service, "serviceId")?;
-    let detail = fetch_service_detail(&provider_agent_id, &selected_service_id).await?;
-    let service = merge_service_guide(service, &detail)?;
-    let service = normalize_service(service);
 
     let service_type = required_service_string(&service, "serviceType")?;
     if service_type.eq_ignore_ascii_case("A2MCP") {

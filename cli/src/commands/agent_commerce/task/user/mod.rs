@@ -33,6 +33,7 @@ pub(crate) mod negotiate;
 mod query;
 mod reject;
 mod reject_apply;
+mod service_detail;
 pub(crate) mod subscription_ops;
 mod task_create_prepare;
 mod x402_flow;
@@ -68,6 +69,17 @@ pub struct TaskCreatePrepareArgs {
     /// Selected numeric Service `sid` from service search or matching context.
     #[arg(long = "sid", value_name = "SID")]
     pub sid: String,
+}
+
+/// Fetch one current marketplace Service for task creation.
+#[derive(Args, Clone, Debug)]
+pub struct ServiceDetailArgs {
+    /// Marketplace Service sid selected from service discovery.
+    #[arg(long = "sid", value_name = "SID")]
+    pub sid: String,
+    /// Current User Agent ID sent as the `agenticId` request header.
+    #[arg(long = "agentic-id", value_name = "AGENT_ID")]
+    pub agentic_id: String,
 }
 
 #[derive(Subcommand)]
@@ -203,6 +215,9 @@ pub enum TaskCommand {
     /// Select task-creation candidate services via service-match
     #[command(name = "task-service-select")]
     TaskServiceSelect(TaskServiceSelectArgs),
+    /// Fetch one current marketplace Service by sid.
+    #[command(name = "service-detail")]
+    ServiceDetail(ServiceDetailArgs),
     /// Prepare task creation from a selected Service ID
     #[command(name = "task-create-prepare")]
     TaskCreatePrepare(TaskCreatePrepareArgs),
@@ -1542,6 +1557,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 args.agentic_id.as_deref(),
                 &args.format,
             ).await,
+        TaskCommand::ServiceDetail(args) =>
+            service_detail::handle_service_detail(&mut client, &args.sid, &args.agentic_id).await,
         TaskCommand::TaskCreatePrepare(args) =>
             task_create_prepare::handle_task_create_prepare(&mut client, &args.sid).await,
         TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, agent_id } =>

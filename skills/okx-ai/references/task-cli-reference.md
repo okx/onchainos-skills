@@ -199,6 +199,18 @@ agent funding-notice --chain <chain> --currency <symbol> --shortfall <amount> --
 
 Optional: `--available <amount>`, `--required <amount>`, `--deposit-chain <chain>`, `--reason <task-payment|payment-402|dispute-bond|subscription>`.
 
+### service-detail
+
+```text
+agent service-detail --sid <sid> --agentic-id <userAgentId>
+```
+
+Fetch one current Service after the user confirms a search result. The command calls the same backend
+endpoint as `service-match` with `sid`, `limit=1`, and the `agenticId` header, then returns the exact
+matching Service as `data`. It preserves current pricing, subscription/trial state, ASP metadata, and
+`serviceGuide`. Use it for `task-create-prepare`; do not replace it with another search or a
+`service-list` request.
+
 ### task-create-prepare
 
 ```text
@@ -207,22 +219,22 @@ agent task-create-prepare --sid <sid>
 
 Pass only the confirmed numeric `sid` from search or matching context. The command first checks wallet
 login and resolves the current wallet's User Agent. It then runs
-`service-match --sid <sid> --agentic-id <userAgentId> --limit 1` and treats the matched Service as the
-sole source of current pricing, subscription, trial eligibility, provider, and service metadata. From
-that result it reads `asp.aspAgentId` and the UUID `serviceId`, then runs
-`service-list --agent-id <providerAgentId> --service-id <serviceId>` exactly once to obtain only the
-current `serviceGuide`. It merges that guide, normalizes the Service, checks existing subscriptions,
-and checks the payable token balance. Current trial eligibility or an effective fee of zero skips the
-balance query.
+`service-detail --sid <sid> --agentic-id <userAgentId>` exactly once and treats the returned Service as
+the sole source of current pricing, subscription, trial eligibility, provider, service metadata, and
+`serviceGuide`. It normalizes that Service, checks existing subscriptions, and checks the payable token
+balance. Current trial eligibility or an effective fee of zero skips the balance query.
 
-Every successful response contains exactly `phase`, `action`, and `payload` under `data`.
-`payload` is an empty object for `login-check` and `user-identity-check`; for every other
-phase it is the complete normalized selected Service. Follow `action` verbatim; do not derive the
-next action from `phase`. Stable phase values are `login-check`, `user-identity-check`,
-`a2mcp-check`, `service-type-check`, `balance-check`, `subscription-check`, and `ready-check`.
+Every successful response contains exactly `phase`, `decision`, `reason`, `nextAction`, and `payload`
+under `data`. Route by `decision`, then execute or present only the actions returned in `nextAction`;
+there is no `action` field. `payload` is empty for `login_validation` and `identity_validation`. For
+other phases it contains the normalized selected Service; `payment_validation` also includes
+`balanceWarning` when the balance is insufficient. Stable phase values are `login_validation`,
+`identity_validation`, `service_validation`, `subscription_validation`, `payment_validation`, and
+`creation`. Use [`task-action-routing.md`](task-action-routing.md) for each `nextAction[].id`.
 
 Invalid/missing Service fields and failed detail/subscription/balance requests are command errors, not
-additional business cases. The returned `action` is the sole routing authority.
+additional business cases. For a successful response, route by `decision` and only the returned
+`nextAction` items; never derive an unreturned action from `phase` or `reason`.
 
 ### task-service-select
 
@@ -1159,7 +1171,15 @@ agent my-stake [--agent-id <id>]
 Rate a counterpart agent after task completion (params provided by `next-action` playbook)
 
 ```
-agent feedback-submit --agent-id <ratee> --creator-id <rater> --score <0-100> --task-id <jobId> [--description "<txt>"]
+agent feedback-submit --agent-id <ratee> --creator-id <rater> --score <0.00-5.00> --task-id <jobId> [--description "<txt>"]
+```
+
+### task-feedback
+
+Check whether the rater already reviewed a task before submitting feedback.
+
+```
+agent task-feedback --agent-id <rater> --task-id <jobId>
 ```
 
 ### file-upload / file-download
