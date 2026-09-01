@@ -469,7 +469,7 @@ pub fn sub_open_trial_user_notify(
     out
 }
 
-/// `sub_created` — subscription confirmed, first charge taken (user).
+/// `sub_created` — ASP accepted; subscription is active and service starts.
 pub fn sub_created_user_notify(
     job_id: &str,
     service_name: &str,
@@ -480,7 +480,7 @@ pub fn sub_created_user_notify(
     auto_renew: bool,
 ) -> String {
     let mut out = format!(
-        "[Subscribed] Job {job_id} (subscribing to {service_name}) is on-chain, status: Active"
+        "[Subscription Accepted] The ASP accepted Job {job_id} (subscribing to {service_name}); the subscription is Active and service has started"
     );
     if let (Some(s), Some(e)) = (fmt_epoch(period_start), fmt_epoch(period_end)) {
         out.push_str(&format!(", current period {s}–{e}"));
@@ -504,7 +504,7 @@ pub fn sub_created_user_notify(
     out
 }
 
-/// `sub_created` with `trialType=1` — free trial started, nothing charged yet (user).
+/// `sub_created` with `trialType=1` — ASP accepted and the free trial started.
 /// Renders the trial-start copy: the trial window is charge-free, so the
 /// immediate-first-charge copy from `sub_created_user_notify` must never be shown
 /// for a trial order (the real first charge is announced by `sub_trial_into_active`).
@@ -516,7 +516,9 @@ pub fn sub_created_trial_user_notify(
     trial_start: Option<i64>,
     trial_end: Option<i64>,
 ) -> String {
-    let mut out = String::from("[Trial Started] Your free trial is active");
+    let mut out = String::from(
+        "[Trial Subscription Accepted] The ASP accepted the subscription; your free trial is active",
+    );
     if let (Some(s), Some(e)) = (fmt_epoch(trial_start), fmt_epoch(trial_end)) {
         out.push_str(&format!(" ({s}\u{2013}{e})"));
     }
@@ -969,10 +971,14 @@ mod tests {
             Some(1_700_500_000),
             true,
         );
-        assert!(out.starts_with("[Subscribed]"), "canonical prefix: {out}");
+        assert!(
+            out.starts_with("[Subscription Accepted]"),
+            "canonical prefix: {out}"
+        );
+        assert!(out.contains("The ASP accepted"));
         assert!(out.contains("Job job-1"));
         assert!(out.contains("subscribing to My Sub"));
-        assert!(out.contains("status: Active"));
+        assert!(out.contains("subscription is Active and service has started"));
         assert!(out.contains("current period"));
         assert!(
             out.contains("First charge of 1.500000 USDT completed"),
@@ -1058,9 +1064,13 @@ mod tests {
             Some(1_700_000_000),
             Some(1_700_500_000),
         );
-        assert!(out.starts_with("[Trial Started]"), "trial prefix: {out}");
         assert!(
-            out.contains("Your free trial is active ("),
+            out.starts_with("[Trial Subscription Accepted]"),
+            "trial prefix: {out}"
+        );
+        assert!(out.contains("The ASP accepted"));
+        assert!(
+            out.contains("your free trial is active ("),
             "date range rendered: {out}"
         );
         assert!(
@@ -1081,7 +1091,8 @@ mod tests {
     fn sub_created_trial_degrades_without_amount_or_dates() {
         let bare = sub_created_trial_user_notify(None, None, None, None);
         assert_eq!(
-            bare, "[Trial Started] Your free trial is active.",
+            bare,
+            "[Trial Subscription Accepted] The ASP accepted the subscription; your free trial is active.",
             "no amount → whole conversion sentence omitted; no dates → no range"
         );
         let no_dates = sub_created_trial_user_notify(Some("1.5"), None, None, None);

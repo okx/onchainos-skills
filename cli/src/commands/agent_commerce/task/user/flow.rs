@@ -1488,11 +1488,11 @@ mod tests {
         )
         .await;
         assert!(
-            out.contains("[Trial Started]"),
+            out.contains("[Trial Subscription Accepted]"),
             "trialType=1 → trial copy: {out}"
         );
         assert!(
-            !out.contains("First charge") && !out.contains("[Subscribed]"),
+            !out.contains("First charge") && !out.contains("[Subscription Accepted]"),
             "trial order must not claim a completed first charge: {out}"
         );
 
@@ -1505,7 +1505,7 @@ mod tests {
         ] {
             let out = run("sub_created", msg).await;
             assert!(
-                out.contains("[Subscribed]"),
+                out.contains("[Subscription Accepted]"),
                 "paid path keeps Sub-1-2 copy: {out}"
             );
             assert!(

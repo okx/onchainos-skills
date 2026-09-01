@@ -2234,6 +2234,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn job_accepted_user_notice_is_single_task_specific() {
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id: "job-1",
+            agent_id: "buyer-1",
+            short_id: "job-1",
+            title_display: "Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: None,
+            data: None,
+        };
+        let output = job_accepted(&ctx);
+        assert!(output.contains("[Job Accepted]"));
+        assert!(output.contains("execution begins"));
+        assert!(!output.contains("[Subscription Accepted]"));
+    }
+
+    #[test]
     fn user_authored_rejection_reason_rejects_missing_or_blank_values() {
         assert_eq!(user_authored_rejection_reason(None), None);
         assert_eq!(user_authored_rejection_reason(Some("  \n\t ")), None);

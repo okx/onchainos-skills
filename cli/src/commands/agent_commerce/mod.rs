@@ -4175,10 +4175,23 @@ mod escape_control_chars_tests {
     }
 }
 
+fn detail_path_for_event(
+    client: &task::common::network::task_api_client::TaskApiClient,
+    job_id: &str,
+    event: &str,
+) -> String {
+    if matches!(event, "sub_open" | "sub_created") {
+        client.subscribe_path(job_id)
+    } else {
+        client.task_path(job_id)
+    }
+}
+
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).
 ///
 /// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
-/// returns None on network/parse failure (does not block script output, graceful fallback).
+/// Most network failures degrade to no prefetch. Acceptance notifications are
+/// stricter: they require authoritative detail and are blocked on fetch error.
 async fn check_status_freshness(
     job_id: &str,
     job_status_or_event: &str,
@@ -4265,13 +4278,19 @@ async fn check_status_freshness(
 
     // Fetch task data — shared by both freshness-check and pre-fetch paths.
     let mut c = TaskApiClient::new();
-    let detail_path = if job_status_or_event == "sub_open" {
-        c.subscribe_path(job_id)
-    } else {
-        c.task_path(job_id)
-    };
+    let detail_path = detail_path_for_event(&c, job_id, job_status_or_event);
     let resp = match c.get_with_identity(&detail_path, agent_id).await {
         Ok(r) => r,
+        Err(error)
+            if matches!(job_status_or_event, "job_accepted" | "sub_created") =>
+        {
+            return (
+                Some(format!(
+                    "[next-action blocked] Cannot fetch latest task detail for {job_status_or_event}: {error:#}. Do not display an acceptance notice from stale or incomplete event data."
+                )),
+                None,
+            );
+        }
         Err(_) => return (None, None),
     };
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
@@ -4385,4 +4404,23 @@ async fn check_status_freshness(
          **MUST NOT**: do NOT guess the next step; do NOT call any task CLI before getting a fresh playbook; do NOT push this warning to the user via `onchainos agent user-notify`.\n",
         expected_str = expected.as_str(),
     )), prefetched)
+}
+
+#[cfg(test)]
+mod acceptance_detail_path_tests {
+    use super::detail_path_for_event;
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+
+    #[test]
+    fn user_acceptance_events_use_authoritative_detail_endpoint() {
+        let client = TaskApiClient::new();
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "job_accepted"),
+            "/priapi/v1/aieco/task/job-1"
+        );
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "sub_created"),
+            "/priapi/v1/aieco/task/subscribe/job-1"
+        );
+    }
 }
