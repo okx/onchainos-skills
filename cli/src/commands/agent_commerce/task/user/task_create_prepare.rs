@@ -47,12 +47,24 @@ fn next_action(id: &str, recommend: bool) -> Value {
     json!([{"id": id, "recommend": recommend}])
 }
 
-fn duplicate_next_action(existing: &subscription_ops::ExistingSubscriptionSummary) -> &'static str {
+fn duplicate_next_actions(
+    existing: &subscription_ops::ExistingSubscriptionSummary,
+) -> Value {
     if existing.restore_listening_available {
-        "restore_subscription"
+        json!([
+            {"id": "restore_subscription", "recommend": true},
+            {"id": "stop", "recommend": false}
+        ])
     } else {
-        "stop"
+        next_action("stop", true)
     }
+}
+
+fn duplicate_payload(existing: &subscription_ops::ExistingSubscriptionSummary) -> Value {
+    json!({
+        "jobId": existing.job_id,
+        "active": existing.restore_listening_available,
+    })
 }
 
 fn scalar_string(value: Option<&Value>) -> Option<String> {
@@ -221,7 +233,13 @@ pub(crate) async fn handle_task_create_prepare(
         if let Some(existing) =
             subscription_ops::existing_subscription_for_service(&existing, &selected_service_id)
         {
-            emit(PHASE_SUBSCRIPTION_VALIDATION, "blocked", "duplicate_subscription", next_action(duplicate_next_action(existing), true), service);
+            emit(
+                PHASE_SUBSCRIPTION_VALIDATION,
+                "blocked",
+                "duplicate_subscription",
+                duplicate_next_actions(existing),
+                duplicate_payload(existing),
+            );
             return Ok(());
         }
     }
