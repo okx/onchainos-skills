@@ -15,6 +15,25 @@
 
 ---
 
+## §1.7 Deliverable intake contract
+
+- Pass the complete raw `a2a-agent-chat` envelope through `next-action --a2a-file`; the file must be
+  private (`0600`) and under the OS temp directory. Do not flatten file metadata or text into
+  `--message` fields—the new protocol has no legacy fallback.
+- The CLI requires matching envelope/embedded `jobId`, the exact receiving User Agent, and a terminal
+  `[intent:deliver]`. File deliveries require non-empty `fileKey`, `digest`, `salt`, `nonce`, and
+  `secret`; text deliveries use the complete body between the delimiters. Validation, download, and
+  persistence failures are fail-closed and never create an acceptance decision.
+- A successful task-detail prefetch identifies a one-time task. If its authoritative status is already
+  `submitted`, create the acceptance decision immediately; otherwise save and wait for `job_submitted`.
+- A delivery absent from the one-time task registry must pass the ACTIVE subscription lookup before the
+  copy-trade Skill path. Before a money-moving command, require `tradeRecordsV1.ok=true` from
+  `okx-a2a capabilities --json`, query the exact `(jobId, deliveryId)` through
+  `okx-a2a trade-records query`, and do not execute when any record exists. Persist the one terminal
+  attempt using `okx-a2a trade-records insert`; a post-submit record failure must never trigger a retry.
+
+---
+
 ## User Intent Routing
 
 > When the user-session receives free-form text targeting a specific task and no pending decision matches, load [`task-user-intent-routing.md`](task-user-intent-routing.md) and follow its routing flow.

@@ -128,7 +128,7 @@ agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message
 | `--role` | Yes | - | `user` / `asp` / `evaluator` / `auto` |
 | `--agentId` | Yes | - | Receiving agent's id |
 | `--message` | Yes | - | Entire `message` object from envelope as JSON string |
-| `--a2a-file` | No | - | User-side `[intent:deliver]` only: path to the complete raw A2A JSON envelope stored as a temp input file. Write this file with a JSON serializer for the whole envelope; treat `content` as an opaque string, even when it is not JSON. CLI validates the file and writes a canonical 0600 recovery spool copy before processing. Do not pass only `content`, and do not use stdin/heredoc/pipe/inline JSON for this envelope in tool-use runtimes. |
+| `--a2a-file` | Required for `deliverable_received` | - | Path to the complete raw A2A JSON envelope stored as a 0600 temp input file. CLI requires the current `a2a-agent-chat` shape, matching envelope and embedded `jobId`, the exact `receiverAgentId`, and terminal `[intent:deliver]`, then writes a canonical 0600 recovery spool copy. Direct legacy deliverable fields in `--message` are rejected. Do not pass only `content`, and do not use stdin/heredoc/pipe/inline JSON for this envelope in tool-use runtimes. |
 
 #### Fields CLI reads from `--message`
 

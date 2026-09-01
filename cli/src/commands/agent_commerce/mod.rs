@@ -3770,19 +3770,37 @@ fn validate_a2a_file_arg(
             "--a2a-file payload jobId {pj} does not match --message jobId {message_job_id}"
         );
     }
-    if let Some(receiver) = payload.get("receiverAgentId").and_then(|v| v.as_str()) {
-        if receiver != agent_id {
-            anyhow::bail!(
-                "--a2a-file receiverAgentId {receiver} does not match --agentId {agent_id}"
-            );
-        }
+    let receiver = payload
+        .get("receiverAgentId")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.receiverAgentId is required"))?;
+    if receiver != agent_id {
+        anyhow::bail!(
+            "--a2a-file receiverAgentId {receiver} does not match --agentId {agent_id}"
+        );
     }
     let content = payload
         .get("content")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.content is required"))?;
-    if !content.contains("[intent:deliver]") {
-        anyhow::bail!("--a2a-file content must contain [intent:deliver]");
+    if content
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(str::trim)
+        != Some("[intent:deliver]")
+    {
+        anyhow::bail!("--a2a-file content must end with [intent:deliver]");
+    }
+    let embedded_job_id = content
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("jobId:"))
+        .map(str::trim)
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file content.jobId is required"))?;
+    if embedded_job_id != pj {
+        anyhow::bail!(
+            "--a2a-file content jobId {embedded_job_id} does not match payload jobId {pj}"
+        );
     }
     let canonical = serde_json::to_string(&payload)?;
     persist_validated_a2a_spool(pj, &canonical)
@@ -4118,7 +4136,7 @@ mod escape_control_chars_tests {
         let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
             .expect_err("missing intent must fail")
             .to_string();
-        assert!(err.contains("content must contain [intent:deliver]"));
+        assert!(err.contains("content must end with [intent:deliver]"));
     }
 
     #[test]
@@ -4162,6 +4180,32 @@ mod escape_control_chars_tests {
             .expect_err("receiver mismatch must fail")
             .to_string();
         assert!(err.contains("receiverAgentId 8779 does not match --agentId 1696"));
+    }
+
+    #[test]
+    fn rejects_a2a_file_arg_without_receiver() {
+        let path = write_temp_a2a(
+            "missing-receiver.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("missing receiver must fail")
+            .to_string();
+        assert!(err.contains("payload.receiverAgentId is required"));
+    }
+
+    #[test]
+    fn rejects_a2a_file_arg_with_mismatched_embedded_job_id() {
+        let path = write_temp_a2a(
+            "wrong-embedded-job.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xother\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("embedded jobId mismatch must fail")
+            .to_string();
+        assert!(err.contains("content jobId 0xother does not match payload jobId 0xabc123"));
     }
 }
 
