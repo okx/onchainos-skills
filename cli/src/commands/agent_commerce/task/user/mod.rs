@@ -54,6 +54,9 @@ use crate::commands::Context;
 pub struct TaskServiceSelectArgs {
     #[command(flatten)]
     pub service_match: ServiceMatchArgs,
+    /// Buyer Agent ID used by the task flow to check existing subscriptions.
+    #[arg(long = "agentic-id")]
+    pub agentic_id: Option<String>,
     /// Output format: json
     #[arg(long, default_value = "json")]
     pub format: String,
@@ -1533,7 +1536,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::AspMatch { job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
             asp_ops::handle_asp_match(&mut client, &job_id, provider_agent_id.as_deref(), payment_token_amount, page, agent_id.as_deref(), &format).await,
         TaskCommand::TaskServiceSelect(args) =>
-            asp_ops::handle_task_service_select(&mut client, &args.service_match, &args.format).await,
+            asp_ops::handle_task_service_select(
+                &mut client,
+                &args.service_match,
+                args.agentic_id.as_deref(),
+                &args.format,
+            ).await,
         TaskCommand::TaskCreatePrepare(args) =>
             task_create_prepare::handle_task_create_prepare(&mut client, &args.sid).await,
         TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, agent_id } =>

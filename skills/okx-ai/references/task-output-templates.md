@@ -34,28 +34,6 @@ Rules:
   numbered choice when no user decision is required.
 - Do not expose raw JSON, internal phase names, or provider instructions.
 
-## Service search
-
-Render `service-match` results from `reason`, `nextAction`, and `payload`.
-Preserve the CLI's Service order; do not rescore or reorder results.
-
-| Reason | Result | Details |
-|---|---|---|
-| `no_services` | No matching Service was found. | Show the active search criteria only when useful. |
-| `single_service` | One matching Service was found. | Render one Service card. |
-| `multiple_services` | Matching Services were found. | Render the visible Services in returned order. |
-| `search_unavailable` | Service search could not be completed. | Do not claim there are no Services. |
-
-For each visible Service, show only stable comparison fields: Service name and
-`sid`, ASP, type, online eligibility, price, trial, rating, sold count, and a
-short description when present. Render every returned `select_service` action
-in the same order as its corresponding Service, followed by `load_more`,
-`refine_search`, and `stop` when returned.
-
-Selecting a Service confirms selection only. For commissioning intent, route
-the selected `sid` to `task-create-prepare`; do not render the task-creation
-confirmation card from search data.
-
 ## `decision=blocked`
 
 Use a concise status result and a recovery-oriented action list.

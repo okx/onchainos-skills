@@ -399,6 +399,7 @@ fn service_match_data_from_stdout(stdout: &[u8]) -> Result<serde_json::Value> {
 pub async fn handle_task_service_select(
     client: &mut TaskApiClient,
     args: &ServiceMatchArgs,
+    agentic_id: Option<&str>,
     format: &str,
 ) -> Result<()> {
     let mut cmd = Command::new(std::env::current_exe()?);
@@ -442,9 +443,6 @@ pub async fn handle_task_service_select(
     if let Some(value) = args.search_after.as_deref().filter(|s| !s.is_empty()) {
         cmd.arg("--search-after").arg(value);
     }
-    if let Some(value) = args.agentic_id.as_deref().filter(|s| !s.is_empty()) {
-        cmd.arg("--agentic-id").arg(value);
-    }
     cmd.arg("--limit").arg(args.limit.to_string());
 
     let output = cmd.output()?;
@@ -475,7 +473,7 @@ pub async fn handle_task_service_select(
         }))
         .unwrap_or(false);
     if has_subscription_service {
-        let buyer_agent_id = args.agentic_id.as_deref()
+        let buyer_agent_id = agentic_id
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| anyhow::anyhow!(
                 "--agentic-id is required to check existing subscriptions before selecting a subscription service"
@@ -1382,7 +1380,7 @@ mod tests {
             "2864",
             "--service-name",
             "A2A Task Collaboration",
-            "--service-id",
+            "--sid",
             "svc-001",
             "--agentic-id",
             "1695",
@@ -1404,7 +1402,7 @@ mod tests {
                     Some("A2A Task Collaboration")
                 );
                 assert_eq!(args.service_match.service_id.as_deref(), Some("svc-001"));
-                assert_eq!(args.service_match.agentic_id.as_deref(), Some("1695"));
+                assert_eq!(args.agentic_id.as_deref(), Some("1695"));
                 assert_eq!(args.service_match.limit, 1);
                 assert_eq!(args.format, "json");
             }

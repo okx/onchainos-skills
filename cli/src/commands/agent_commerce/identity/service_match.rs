@@ -1,8 +1,7 @@
 //! Marketplace service search with a stable output contract.
 
 use anyhow::{bail, Context as _, Result};
-use serde::Deserialize;
-use serde_json::{json, Map, Number, Value};
+use serde_json::{Map, Number, Value};
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::Context;
@@ -35,99 +34,6 @@ pub async fn service_match(args: ServiceMatchArgs, ctx: &Context) -> Result<()> 
     add_flow_metadata(&mut data, &args);
     output::success(data);
     Ok(())
-}
-
-/// Add the shared Skill/CLI progression contract while preserving the legacy
-/// service-match fields consumed by existing task adapters. `payload` is the
-/// untouched normalized backend result; the duplicate top-level fields are a
-/// temporary compatibility surface and can be removed after all callers read
-/// the contract explicitly.
-fn with_progression_contract(mut data: Value) -> Value {
-    let payload = data.clone();
-    let Some(object) = data.as_object_mut() else {
-        return json!({
-            "phase": "service_selection",
-            "decision": "blocked",
-            "reason": "search_unavailable",
-            "nextAction": [
-                {"id": "retry_search", "recommend": true},
-                {"id": "stop", "recommend": false}
-            ],
-            "payload": payload
-        });
-    };
-
-    let Some(services) = payload.get("services").and_then(Value::as_array) else {
-        object.insert("phase".into(), json!("service_selection"));
-        object.insert("decision".into(), json!("blocked"));
-        object.insert("reason".into(), json!("search_unavailable"));
-        object.insert(
-            "nextAction".into(),
-            json!([
-                {"id": "retry_search", "recommend": true},
-                {"id": "stop", "recommend": false}
-            ]),
-        );
-        object.insert("payload".into(), payload);
-        return data;
-    };
-
-    let mut actions = Vec::new();
-    for service in services {
-        let sid = service.get("sid").and_then(scalar_string);
-        if let Some(sid) = sid {
-            actions.push(json!({
-                "id": "select_service",
-                "recommend": actions.is_empty(),
-                "params": {"sid": sid}
-            }));
-        }
-    }
-
-    let has_more = payload
-        .get("hasMore")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let search_after = payload
-        .get("searchAfter")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if has_more {
-        if let Some(cursor) = search_after {
-            let recommend = actions.is_empty();
-            actions.push(json!({
-                "id": "load_more",
-                "recommend": recommend,
-                "params": {"searchAfter": cursor}
-            }));
-        }
-    }
-    let recommend_refine = actions.is_empty();
-    actions.push(json!({"id": "refine_search", "recommend": recommend_refine}));
-    actions.push(json!({"id": "stop", "recommend": false}));
-
-    let reason = match services.len() {
-        0 => "no_services",
-        1 => "single_service",
-        _ => "multiple_services",
-    };
-    object.insert("phase".into(), json!("service_selection"));
-    object.insert("decision".into(), json!("requires_user_input"));
-    object.insert("reason".into(), json!(reason));
-    object.insert("nextAction".into(), Value::Array(actions));
-    object.insert("payload".into(), payload);
-    data
-}
-
-fn scalar_string(value: &Value) -> Option<String> {
-    value
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| value.as_i64().map(|value| value.to_string()))
-        .or_else(|| value.as_u64().map(|value| value.to_string()))
 }
 
 /// Add a ready-to-render rating sourced from the ASP's 0–5 `securityRate`.
@@ -202,21 +108,40 @@ fn service_is_offline(service: &Value) -> bool {
 }
 
 fn build_request(args: &ServiceMatchArgs) -> Result<Value> {
-    let query = SearchQuery::from_args(args)?;
-    let keywords: Vec<&str> = query
+    if args.keywords.len() > 10 {
+        bail!("service search accepts at most 10 keywords");
+    }
+    let keywords: Vec<&str> = args
         .keywords
         .iter()
         .map(String::as_str)
         .map(str::trim)
         .filter(|keyword| !keyword.is_empty())
         .collect();
-    let asp_agent_id = trimmed(query.asp_agent_id.as_deref());
-    let asp_name = trimmed(query.asp_name.as_deref());
-    let service_name = trimmed(query.service_name.as_deref());
-    let service_id = trimmed(query.sid.as_deref());
+    let asp_agent_id = trimmed(args.asp_agent_id.as_deref());
+    let asp_name = trimmed(args.asp_name.as_deref());
+    let service_name = trimmed(args.service_name.as_deref());
+    let service_id = trimmed(args.service_id.as_deref());
     let search_after = trimmed(args.search_after.as_deref());
-    let min_payment_token_amount = query.min_payment_token_amount;
-    let max_payment_token_amount = query.max_payment_token_amount;
+    let min_payment_token_amount = trimmed(args.min_payment_token_amount.as_deref())
+        .map(|value| parse_non_negative_decimal(value, "--min-payment-token-amount"))
+        .transpose()?;
+    let max_payment_token_amount = trimmed(args.max_payment_token_amount.as_deref())
+        .map(|value| parse_non_negative_decimal(value, "--max-payment-token-amount"))
+        .transpose()?;
+
+    if let (Some(min), Some(max)) = (
+        min_payment_token_amount
+            .as_ref()
+            .and_then(Number::as_f64),
+        max_payment_token_amount
+            .as_ref()
+            .and_then(Number::as_f64),
+    ) {
+        if min > max {
+            bail!("minPaymentTokenAmount must be less than or equal to maxPaymentTokenAmount");
+        }
+    }
 
     let has_initial_condition = !keywords.is_empty()
         || asp_agent_id.is_some()
@@ -285,7 +210,6 @@ mod tests {
 
     fn args() -> ServiceMatchArgs {
         ServiceMatchArgs {
-            query_json: None,
             keywords: vec!["smart contract".into(), "audit".into()],
             asp_agent_id: None,
             asp_name: None,
