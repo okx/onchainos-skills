@@ -851,7 +851,7 @@ fn enrich_agent_row(row: &mut Value) {
 
 // ─── `card`: ordered, ready-to-render detail-card rows ────────────────────
 //
-// Mirrors `skills/okx-ai/references/identity-discover.md §detail` exactly:
+// Mirrors `skills/okx-ai/references/identity-discover.md §Agent detail`:
 // one ordered `{ "label": <canonical-English>, "value": <string> }` row per
 // visible field, omitting a row when its value is unavailable (same omit
 // rules the skill uses today). Service rows are ASP-ONLY — the
@@ -972,7 +972,7 @@ fn unpriced_fee_label(is_a2mcp: bool) -> String {
 }
 
 /// Format a single ASP service into its card value string, mirroring
-/// references/identity-discover.md §detail's `<ServiceName> — <Type>, <Fee or free>[, <Endpoint>]`.
+/// references/identity-discover.md §Agent detail Service summary.
 /// A subscription-priced A2A service shows its monthly tier(s) in the fee slot
 /// (`<N> USDT / month`) instead of a single-purchase price.
 /// `Type` maps `A2MCP`→"API service" / `A2A`→"agent-to-agent" (verbatim
@@ -1029,7 +1029,7 @@ fn format_service_value(service: &Value) -> Option<String> {
     Some(format!("{name} — {}", segments.join(", ")))
 }
 
-/// Assemble the ordered `card` array per references/identity-discover.md §detail.
+/// Assemble the ordered `card` array per references/identity-discover.md §Agent detail.
 fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     let mut card: Vec<Value> = Vec::new();
 
@@ -1139,8 +1139,8 @@ fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
 // Labels are canonical English; the skill localizes them. All formatting
 // (truncation, ★ stars, A2A fee, type labels, `—` fallbacks) is done HERE so
 // the skill renders the table by simply laying out cells. Mirrors:
-//   • references/identity-discover.md   §list          → `build_agent_list_cells`
-//   • references/identity-discover.md   §service-list  → `build_service_cells`
+//   • references/identity-discover.md   §My Agents    → `build_agent_list_cells`
+//   • references/identity-discover.md   §Service list → `build_service_cells`
 //   • skills/okx-guide/references/registered-home.md §2 → `build_search_table`
 //   • references/identity-reviews.md    §feedback-list → `build_feedback_cells`
 // All builders are additive: raw fields + existing `card`/labels stay intact.
@@ -1176,7 +1176,7 @@ fn read_agent_id(map: &serde_json::Map<String, Value>) -> Option<String> {
 
 // ─── §1 agent-list row cells ──────────────────────────────────────────────
 //
-// Columns (references/identity-discover.md §list), in order:
+// Columns (references/identity-discover.md §My Agents), in order:
 //   Agent ID | Name | Role | Status | Approval status | Rating
 // Mirrors §1's rules: Name truncate-20; Role/Status via computed labels;
 // Approval status via approval_label, with `Review failed (reason: <remark>)`
@@ -1433,7 +1433,7 @@ pub(super) fn build_search_table(v: &Value) -> Value {
 
 // ─── §4 service-list row cells ────────────────────────────────────────────
 //
-// Cells (references/identity-discover.md §service-list), in order:
+// Cells (references/identity-discover.md §Service list), in order:
 //   # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description
 // Read-only service-list never exposes Service guide for any service type;
 // serviceGuide is handled only by the guided register/update flows.
@@ -1445,7 +1445,7 @@ pub(super) fn build_search_table(v: &Value) -> Value {
 // monthly tier `<n> USDT / month`, or `—` when there is none (or A2MCP). Free
 // trial: `<n> days`/`hours` when a subscription trial is set, else `—` (single
 // fee / A2MCP never have one). Endpoint: `—` for A2A, the URL for A2MCP.
-// Description: truncated per references/identity-discover.md §service-list (≤ 80 chars).
+// Description: truncated for the discovery Service list (≤ 80 chars).
 fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     let Value::Object(s) = service else {
         return None;

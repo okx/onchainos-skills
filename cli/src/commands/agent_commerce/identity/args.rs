@@ -370,6 +370,10 @@ pub struct ServiceListArgs {
 /// `onchainos agent service-match`: search marketplace services directly.
 #[derive(Args, Clone, Debug)]
 pub struct ServiceMatchArgs {
+    /// Initial-search query produced from the structured extraction contract.
+    /// Cannot be combined with legacy initial-search flags or --search-after.
+    #[arg(long = "query-json")]
+    pub query_json: Option<String>,
     /// Initial-search Service capability keywords; accepts at most 10 values.
     #[arg(long, num_args = 1..)]
     pub keywords: Vec<String>,
@@ -440,6 +444,19 @@ mod service_match_args_tests {
     #[test]
     fn rejects_removed_agentic_id_argument() {
         assert!(TestCli::try_parse_from(["test", "--agentic-id", "user-agent-001"]).is_err());
+    }
+
+    #[test]
+    fn accepts_structured_query_json() {
+        let cli = TestCli::parse_from([
+            "test",
+            "--query-json",
+            r#"{"keywords":["smart contract audit"],"maxPaymentTokenAmount":10}"#,
+            "--limit",
+            "5",
+        ]);
+        assert!(cli.service_match.query_json.is_some());
+        assert_eq!(cli.service_match.limit, 5);
     }
 
     #[test]

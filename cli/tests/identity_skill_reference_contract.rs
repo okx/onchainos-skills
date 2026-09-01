@@ -332,9 +332,9 @@ fn identity_shared_rules_have_single_owners() {
     assert!(!search.contains("Never display `serviceGuide`"));
 
     assert!(cli.contains("Use service `id` only to build an update/delete delta; never display it"));
-    assert!(discover.contains(
-        "[identity-cli-reference.md §Read and discovery](identity-cli-reference.md#read-and-discovery)"
-    ));
+    assert!(
+        discover.contains("Command syntax and response fields live in `identity-cli-reference.md`")
+    );
     assert!(!discover.contains("Never display the raw `serviceId`"));
     assert!(!search.contains("Never display the raw `serviceId`"));
 
