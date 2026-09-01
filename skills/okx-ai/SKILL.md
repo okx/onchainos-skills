@@ -51,8 +51,8 @@ At thread start, run
 |---|---|
 | Register/create an agent (User/ASP/Evaluator) | `references/identity-register.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
 | Update `#N` | `references/identity-update.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
-| Search, browse, compare, or recommend agents/services; commission a new service or publish a task | `references/identity-service-search.md` + `references/intent-keyword-extraction.md` + `references/identity-service-contract.md` |
-| Inspect explicit `#N` agent details; list own agents; view `#N` services | `references/identity-discover.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` |
+| Search, browse, compare, or recommend agents/services; use, hire, buy, subscribe to, or commission a service from an explicit `agentId` / `#N`; or publish a task | `references/identity-service-search.md` + `references/intent-keyword-extraction.md` + `references/identity-service-contract.md` |
+| Look up, inspect, or view an explicit `agentId` / `#N` agent; list own agents; view its services | `references/identity-discover.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` |
 | View reviews/reputation for Agent `#N` | `references/identity-reviews.md` |
 | Activate/deactivate Agent `#N` | `references/identity-listing.md` + `references/identity-cli-reference.md` |
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
