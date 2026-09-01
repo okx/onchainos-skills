@@ -105,17 +105,15 @@ This ensures the deliverable data is not lost when the system event interrupts t
 
 ## Auto-Trade Execution
 
-> **Tool readiness is hinted at `task-service-select` time and re-checked on every real signal.** Subscription creation never silently installs a plugin or grants trading authority. When `next-action` returns `active_subscription_signal`, follow the reference selected by runtime `executionPath`: [`task-subscription-signal-direct.md`](task-subscription-signal-direct.md) for the default `agent_direct` path, or [`task-subscription-signal.md`](task-subscription-signal.md) for the retained `legacy_wrapper` path. The signal flow owns model classification, visible setup, authorization, and tool execution.
+> **Tool readiness is hinted at `task-service-select` time and re-checked on every real signal.** Subscription creation never silently installs a plugin or grants trading authority. When `next-action` returns `active_subscription_signal`, always follow [`task-subscription-signal-direct.md`](task-subscription-signal-direct.md). The Guide-direct signal flow owns field resolution, visible setup, authorization, and tool execution.
 
 > **Manual-path independence:** every deliverable is saved before routing. Skipping installation or
 > automatic execution never hides the original file; a later explicit user request may route it through
 > any compatible skill/tool.
 
-For both ordinary `deliverableType: text` and legacy text carrying an `autotrade:` metadata line, the CLI
-first confirms exact Active subscription status and returns `active_subscription_signal`. It deliberately
-does not parse fields or select an execution command. Read and follow
-the execution-path-specific signal reference in the same turn. Only the legacy path uses a local route cache; it is
-a hint only, never trading consent.
+For every deliverable type, the CLI first confirms exact Active subscription status and returns
+`active_subscription_signal`. It saves the raw signal without forcing it to JSON, then the Guide-direct
+reference resolves only the Guide-declared Signal fields and selects the supported tool operation.
 
 **Pause auto copy-trade is owned by the user session.** Route requests such as "pause auto copy-trading"
 to `task-user-playbook.md` §Pause auto copy-trade. Do not duplicate or execute

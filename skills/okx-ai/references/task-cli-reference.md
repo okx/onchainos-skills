@@ -15,7 +15,7 @@
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
 - **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
 - **Evaluator Agent**: `evidence-info` · `vote-commit` · `vote-reveal` · `arbitration-claim` · `arbitration-claimable` · `stake` · `increase-stake` · `request-unstake` · `claim-unstake` · `cancel-unstake` · `staking-config` · `my-stake`
-- **Misc**: `feedback-submit` · `file-upload`/`file-download` · `sensitive-words`/`message-eligible`/`system-config` · `heartbeat` · `autotrade-consent-set`
+- **Misc**: `feedback-submit` · `file-upload`/`file-download` · `sensitive-words`/`message-eligible`/`system-config` · `heartbeat` · Guide-direct coordination · `autotrade-consent-set --mode pause`
 
 ---
 
@@ -1145,126 +1145,15 @@ agent heartbeat --chain-index <196|...>
 |---|---|---|---|
 | `--chain-index` | Yes | - | Chain index (e.g. `196`) |
 
-### autotrade-watch-precheck
+### autotrade-consent-set (pause compatibility)
 
-First-entry gate for a scoped watch. It checks whether `<jobId>` is an existing Active executable
-subscription received by this device. When its local policy is missing, it returns the bounded ASP
-description and any live restore continuation needed to collect user-authored configuration. It never
-starts watch, pushes a card, or converts ASP prose into authorization.
-
-```bash
-agent autotrade-watch-precheck --job-id <jobId> [--review-existing]
-```
-
-Output `data` includes `watchAllowed`, `shouldPromptAuthorization:false`, and a stable `reason`. Missing or
-expired policy normally returns `watchAllowed:true`, `reason:"execution_policy_not_configured"`; signal
-receipt continues as notify-only. When the caller explicitly requests execution-policy configuration with
-`--review-existing`, missing policy instead returns `watchAllowed:false`,
-`reason:"configuration_required"`, `shouldPromptConfiguration:true`, the canonical job/agent/asset binding,
-and untrusted `serviceDescription`. When available it also returns the current untrusted `serviceGuide`, deterministic
-`guideStatus`, `guideHashResolved`, `guideRefreshRequired`, and bounded stored/current guide hashes. A guide
-fetch failure is `guideStatus:"unknown"` and never blocks an otherwise complete policy. A changed/baseline
-guide enters configuration only for incremental reconciliation; `modeConfirmationRequired:false` means the
-existing mode remains authorized and is preserved by the CLI. A legacy/incomplete active policy or stale Trade Kit grant returns the same gate plus
-`authorizationRefreshRequired:true`, bounded `existingConsent`, `refreshReasons`, and canonical Trade Kit
-`requiredFields`/`missingFields`. A live configuration attempt also returns its `continuationId`, `requiredFields`,
-and `missingFields`. On an explicit execution-policy review, `--review-existing` makes a complete active
-policy—including notify-only—return the same bounded flow with `configurationReviewRequired:true` and
-`existingConsent`, so the user can review or change the full policy before watch resumes. Legacy
-`manual`/`decline` is exposed as `notify_only`. Omit the flag after that review is completed. An unreadable consent record returns `watchAllowed:false`,
-`reason:"consent_unreadable"`, and a user-confirmable `repairCommand`.
-
-### autotrade-consent-continue (internal)
-
-Short-lived configuration command used by subscription restoration and retained for older in-flight
-delivery decisions. The record binds `continuationId`, job, buyer agent, selected mode, signal type,
-original delivery ID, required fields, and explicit values. For an active-policy refresh, the CLI seeds the
-record from trusted existing consent and emits a full consent write so consent and grant are regenerated
-together. It normally still requires explicit mode confirmation; a guide-only refresh is the exception
-because the saved mode itself did not change. It is separate from consent and pending/A2A
-state: it cannot authorize or execute a trade. Start/resume revalidates the canonical Active subscription;
-the record is also bound to the resolved current guide hash, so a second guide change invalidates the stale
-attempt. A guide-only refresh preserves the already-authorized mode without another confirmation.
-A successful permit-bound `autotrade-consent-set --mode auto`, `pause`, or explicit `--cancel`
-consumes the record.
-The first call may return `validationErrors` while still persisting the safe mode/job/origin binding;
-invalid supplied values are not persisted. Every later resume or cancel requires the exact returned
-`continuationId`. A repeated start also requires that exact ID when a live record already exists.
+Guide-driven subscriptions do not use this command to collect, restore, or update Consent fields.
+Those fields are created from the confirmed Guide declaration during subscription creation. The only
+Skill-directed use retained here is an immediate local pause:
 
 ```bash
-agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
-  --mode <auto|notify_only> --origin subscription-restore --signal-type <class> \
-  [--delivery-id <deliveryId>] [--trade-amount <amount>] [--cap <amount>] \
-  [--quote <usdt|usdc>] [--environment <live|demo>] [--margin-mode <cross|isolated>] \
-  [--order-policy <market|signal_price_limit>] [--auth-mode <oauth|api_key>] \
-  [--settings-json '<JSON object>'] \
-  [--required-field <core-or-guide-defined-field>]... [--confirm-mode]
-
-agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
-  --continuation-id <id> [--mode <auto|notify_only>] [--trade-amount <amount>] [--cap <amount>] \
-  [--quote <usdt|usdc>] [--environment <live|demo>] [--margin-mode <cross|isolated>] \
-  [--order-policy <market|signal_price_limit>] [--auth-mode <oauth|api_key>] \
-  [--settings-json '<JSON object>']
-
-agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
-  --continuation-id <id> --confirm-draft
-
-agent autotrade-consent-continue --job-id <jobId> --agent-id <agentId> \
-  --continuation-id <id> --cancel
+agent autotrade-consent-set --job-id <jobId> --mode pause
 ```
 
-For `subscription-restore`, the starting mode is a display default until the current user explicitly
-selects it. `--confirm-mode` marks an explicitly selected starting mode; on resume, supplying `--mode`
-records that confirmation. Until then, `missingFields` includes `mode` and no consent command is returned.
-New records may be started only for `subscription-restore`. Older in-flight records with another origin
-remain resumable by their exact `continuationId` for compatibility.
-
-Restoring `auto` from a persisted `notify_only` policy always returns
-`draftReviewRequired:true`, `complete:false`, and a bounded `draftReview` on the first call, even when
-`--confirm-mode` was supplied and every required value exists in the inactive draft. Render that complete
-draft and end the turn. Only a later explicit user confirmation may resume the exact continuation with
-`--confirm-draft`. That flag must be used alone: it cannot be supplied on a new continuation or combined
-with `--mode` or any setting change. A setting change produces a refreshed draft that must be displayed
-before a separate `--confirm-draft` call can generate `consentCommand`.
-
-### autotrade-consent-set
-
-Persist the buyer's per-subscription execution policy. Amount and cap are optional; a supplied cap is
-enforced at execution admission in this MVP. This command never parses or replays a delivery;
-the active subscription signal skill owns the current execution turn. `notify_only` accepts no new amount,
-venue, authentication, or dynamic execution setting and clears the automatic grant. When changing an
-existing automatic policy to notify-only, its last confirmed settings may remain as an inactive draft;
-they cannot execute and must be displayed and confirmed through `--review-existing` before Auto is restored.
-
-```
-agent autotrade-consent-set --job-id <jobId> --mode <mode> [--agent-id <agentId>] [--continuation-id <id>] [--cap <amount>] [--trade-amount <amount>] [--ttl-sec <secs>] [--plugin <id>] [--quote <usdc|usdt>] [--environment <live|demo>] [--margin-mode <cross|isolated>] [--order-policy <market|signal_price_limit>] [--auth-mode <oauth|api_key>] [--settings-json '<JSON object>'] [--tool <tool>]
-```
-
-| Param | Required | Default | Description |
-|---|---|---|---|
-| `--job-id` | Yes | - | Subscription job ID |
-| `--mode` | Yes | - | `auto`, `notify_only`, `pause`, `cap-adjust`, `environment-set`, `settings-update`, or `plugin-ready-check` (`manual`, `decline`, and `plugin-approved` are compatibility aliases) |
-| `--agent-id` | Except `pause` | - | Buyer agent ID; omitted for `pause`, required for every other mode |
-| `--continuation-id` | For `auto` | - | One-time ID returned by a completed execution configuration continuation. The final job, agent, mode, and all execution settings must exactly match that confirmed draft; it is consumed only after consent and grant are both written. Missing, mismatched, expired, or replayed IDs are rejected. Not accepted by non-`auto` modes. |
-| `--cap` | No | - | Optional per-trade execution ceiling in quote-stablecoin units |
-| `--trade-amount` | No | - | Optional policy amount; the model/tool must still read and validate each delivery |
-| `--ttl-sec` | No | 31536000 | Consent lifetime in seconds (default 365 days) |
-| `--plugin` | For plugin readiness | - | Plugin-store ID for `plugin-ready-check` or its compatibility alias |
-| `--quote` | No | usdt | Quote stablecoin: `usdc` or `usdt` |
-| `--environment` | For `environment-set`; optional for policy writes | - | User-authorized Trade Kit target: `live` or `demo`; omission preserves an existing value |
-| `--margin-mode` | No | - | User-authorized Trade Kit margin mode: `cross` or `isolated`; omission preserves an existing value |
-| `--order-policy` | No | - | User-authorized order policy: `market` or `signal_price_limit`; omission preserves an existing value |
-| `--auth-mode` | No | - | User-selected Trade Kit credential source: `oauth` or `api_key`; omission preserves an existing value. OAuth sets API-key variables to empty in the final Trade Kit child process so the CLI cannot fall back to inherited or config-file API keys. |
-| `--settings-json` | No | - | Merge user-confirmed stable flat fields and typed `extra` entries into consent. A top-level JSON `null` removes that optional setting; `{"extra":{"field":null}}` removes only that named extra entry. Core/reserved and credential-like fields are rejected. |
-| `--tool` | No | - | Deprecated and rejected; the legacy wrapper stores routes with `subscription-route-set`, while the default direct path selects the tool per delivery |
-
-### subscription-route-set / subscription-route-clear
-
-Internal commands used only by the retained `legacy_wrapper` path in `task-subscription-signal.md` to
-cache bounded routing identifiers per subscription and asset class. The default `agent_direct` path never
-calls them. They never store order fields or commands.
-
-```bash
-agent subscription-route-set --job-id <jobId> --asset-class <spot|perp|prediction|option|defi> --skill-id <id> [--plugin-id <id>] [--protocol <id>] [--requirement <token> ...] --delivery-id <id>
-agent subscription-route-clear --job-id <jobId>
-```
+It stops automatic execution for that subscription without cancelling it or disabling signal receipt.
+Do not use any other mode or fixed trading-field argument in the Guide-direct flow.

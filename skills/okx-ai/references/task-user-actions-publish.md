@@ -39,8 +39,8 @@ Runs the moment a concrete service is selected (provider `agentId` + `serviceId`
 toward `create-task` or `create-subscribe`. The §1 `next-action` returned-script path carries it via
 the standing addition above (the returned script does not mention this gate); direct/fallback routes
 that render Appendix A anchor it in the A1/A2 preamble checks below. Run it BEFORE any remaining
-field collection, so guide answers feed that collection (e.g. the internal execution configuration
-collected outside the form). The gate never adds fields to a confirmation form. **A2MCP services are
+field collection, so Guide Consent answers can be collected outside the form. The gate never adds fields
+to a confirmation form. **A2MCP services are
 exempt**: their guides are never displayed (service contract — a fetched legacy value is preserved
 internally only), so skip this gate and continue the normal flow.
 
@@ -58,8 +58,9 @@ internally only), so skip this gate and continue the normal flow.
    advance to the next guide step. Do not append auto-renew, generic execution settings, readiness setup,
    confirmation-form fields, or later guide steps to the same question. After every guide step is answered,
    continue normal field collection for values the guide did not cover; never ask again for a value already
-   answered through the guide. Answers feed the normal field collection (internal execution configuration
-   included). Classify only the current step. If it asks the user to check/install/connect/sign in to/configure
+   answered through the guide. For subscriptions, collect only the Consent fields declared by the Guide
+   and its semantic declaration; do not add a platform execution mode or any fixed trading field after
+   the Guide. Classify only the current step. If it asks the user to check/install/connect/sign in to/configure
    Trade Kit, handle preparation at that exact position: run the bounded local compatibility probe there
    when applicable, then ask whether the user wants trusted setup assistance or wants to defer and end the
    turn. When the user requests assistance, immediately run the trusted
@@ -95,10 +96,9 @@ Display as a single `| Field | Value |` table with exactly these **5** fields in
 
 If attachments are present, list them below the table; never add an Attachments row.
 
-Execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode,
-order policy, and any other execution setting are internal execution configuration. Never add them to this
-or any other confirmation form, even when they appear in the user request, service description, retained
-context, or service usage guide.
+Guide-defined Consent and Signal values are not regular-task confirmation fields. Never add them to this
+or any other product-facing confirmation form, even when they appear in the user request, service
+description, retained context, or service usage guide.
 
 Initialize internal `budget` and `max-budget` from the selected service `feeAmount`; a zero service fee produces `budget=0` and `max-budget=0` and remains publishable. Never ask for them initially and never show them in this card. Continue collecting and validating Payment Currency internally for A2A and x402, but do not show it because Service Price already includes the currency. A user may explicitly edit budget fields to zero before `create-task`, subject to `max-budget >= budget`; validate and confirm the proposed values separately, then re-render this card without budget rows.
 
@@ -135,39 +135,26 @@ Display as a single `| Field | Value |` table with exactly these **7 fields** in
 | 6 | Trial | task-service-select `subscriptionInfo.supportTrial/freeTrial` | A positive `freeTrial` → `Yes (<freeTrial> hours free)`; otherwise `No` |
 | 7 | Auto-Renew | Explicit user choice; no default | `On` or `Off` |
 
-Execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode,
-order policy, and any other execution setting are internal execution configuration. Never add them to this
-product-facing subscription confirmation form; they belong in the separate execution-configuration review
-described below. Automatic execution remains the
-result of an explicit user choice; it has no default. The other choice is notification only, which skips all
-remaining automatic-only setup and later stores/forwards deliverables without a per-delivery execution entry.
-Their collection sequence is owned exclusively by the **Service Usage Guide gate** above; do not
-define or apply a second batching rule here. Only user-authored replies supply persisted values. Retain the
-confirmed answers outside the form and pass them through the existing `--autotrade-*` arguments.
+Guide Consent values never appear in this product-facing subscription confirmation form. After the Guide
+has collected its declared Consent fields, render those exact user-authored values as a standalone Guide
+Consent review and end the turn. Require explicit confirmation or an edit; never add an automatic/
+notification mode, amount, cap, quote, environment, margin mode, order policy, credential, or another
+platform field. Pass the confirmed object unchanged through `--guide-consent-json` with the matching
+Guide semantic declaration.
 
-After the guide and all applicable execution fields are complete, but before asking about auto-renew, render
-the complete execution configuration as a standalone localized review and end the turn. For automatic mode,
-show every applicable confirmed core, stable, and `extra` field as a separate item; render `extra` entries from
-their label, exact value, and optional unit. For notification-only mode, state separately that deliverables are
-received/stored without a per-delivery execution entry. Require an explicit confirmation or edit. Never compress
-this review into one `internal execution configuration` sentence, append it below the subscription table, ask
-about auto-renew in the same turn, or treat the later subscription confirmation as confirmation of this review.
-Any edit invalidates the review and requires the complete updated review to be shown and confirmed again.
-
-Only after that standalone review is explicitly confirmed, ask for auto-renew in a separate turn when it has not
-already been answered. The reply that confirms execution configuration never also answers auto-renew. If an
-execution-setting edit from the later subscription card returns here, retain the previously confirmed auto-renew
-choice and return to the subscription card after the updated execution review is confirmed.
+Only after that standalone Guide Consent review is explicitly confirmed, ask for auto-renew in a separate
+turn when it has not already been answered. The reply that confirms Guide Consent never also answers
+auto-renew. A later edit to a Guide-defined Consent value requires the complete updated review before
+returning to this subscription card.
 
 If attachments are present, list them below the table; never add an Attachments row.
 
 Before displaying this confirmation table, verify the **Service Usage Guide gate** above has already
-run for the selected service (run it now if not — backstop), and require an explicit automatic-vs-notification-only
-choice if the guide did not collect it. For explicit automatic mode, inspect advisory local readiness. When
-Trade Kit is explicit or the sole candidate, show the separate optional two-choice card from the CLI
-playbook only if the guide did not already handle a Trade Kit preparation step: Install/connect Trade Kit,
-or Later and continue subscribing. This is an optional setup action,
-not evidence that the user is logged out. On Install/connect, load `okx-cex-auth`; install
+run for the selected service (run it now if not — backstop). Tool preparation is allowed only when the
+Guide declares the matching setup step. When Trade Kit is declared there, show the optional two-choice
+card from the CLI playbook only at that Guide step: Install/connect Trade Kit, or Later when the Guide
+permits deferral. This is an optional setup action, not evidence that the user is logged out. On
+Install/connect, load `okx-cex-auth`; install
 `okx/agent-skills` only after its required security scan when the auth skill is absent, and delegate
 CLI/site/OAuth/API-key setup to that skill. The schema-v3 readiness probe remains local-only; re-run it
 only after install/upgrade and never to verify OAuth. Never auto-install, persist an authentication

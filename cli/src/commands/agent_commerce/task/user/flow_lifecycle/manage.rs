@@ -109,7 +109,7 @@ Using the selected service's `serviceDescription` + `serviceName` + the user's t
 **Identify required user input** from `serviceDescription` (strict / fail closed):
 Create a service parameter ONLY when the listing explicitly addresses the subscriber and says a concrete value is required, for example \"you must provide ...\", \"please input ...\", \"required parameter: ...\", or an explicit subscriber-fillable placeholder. A capability description, output schema, signal example, risk disclosure, execution precondition, or phrase such as \"check X before execution\" is NOT a request for subscriber input.
 
-For trading-signal subscriptions, keep account, wallet, balance/collateral, per-trade amount, authorization limit/cap, venue/tool choice, plugin installation, API credentials, signal fields, execution mode, Trade Kit environment, margin mode, and order policy out of `serviceParams`. Parse user-authored execution settings into the separate `--autotrade-*` fields described below.
+For trading-signal subscriptions, keep account, wallet, balance/collateral, venue/tool choice, plugin installation, API credentials, and Signal fields out of `serviceParams`. Collect Consent only when the selected service Guide declares it, and pass those user-authored values through `--guide-consent-json`; do not create platform-defined execution fields.
 
 If explicit subscriber-input language is absent or ambiguous → `serviceParams` MUST be empty. Do not create `<to be provided>` rows from inference alone.
 
@@ -603,9 +603,9 @@ mod tests {
         let out = service_params_inference();
         assert!(out.contains("strict / fail closed"));
         assert!(out.contains("balance/collateral"));
-        assert!(out.contains("per-trade amount"));
-        assert!(out.contains("authorization limit/cap"));
         assert!(out.contains("venue/tool choice"));
+        assert!(out.contains("--guide-consent-json"));
+        assert!(out.contains("do not create platform-defined execution fields"));
         assert!(out.contains("serviceParams` MUST be empty"));
     }
 

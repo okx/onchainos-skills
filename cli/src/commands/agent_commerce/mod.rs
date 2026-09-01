@@ -2033,25 +2033,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             delivery_id,
             signal_type: _,
         } => {
-            use task::common::autotrade::{consent, executor};
-            let policy = consent::load_consent(&job_id)?;
-            if policy
-                .as_ref()
-                .is_some_and(|policy| policy.mode == consent::ConsentMode::Auto)
-            {
-                crate::output::success(serde_json::json!({
-                    "decision": false,
-                    "decisionPushed": false,
-                    "status": "policy_ready",
-                    "reason": "auto_authorization_already_persisted",
-                    "jobId": job_id,
-                    "deliveryId": delivery_id,
-                    "consentMode": "auto",
-                    "terminal": false,
-                    "guidance": "Re-read this delivery and use the Guide-generated direct claim/finalize lifecycle if eligible.",
-                }));
-                return Ok(());
-            }
+            use task::common::autotrade::executor;
+            // This hidden command is reached only from an in-flight legacy
+            // decision. A fixed-field Consent cannot satisfy the Guide +
+            // Guide Consent + resolved Signal contract, so never advertise a
+            // resumable execution path here.
             let outcome = executor::report_delivery(
                 &job_id,
                 &delivery_id,
@@ -2068,7 +2054,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 "deliveryId": delivery_id,
                 "terminal": true,
                 "outcome": outcome,
-                "guidance": "The deliverable was saved and no transaction was submitted. This subscription is notify-only because it has no active automatic execution policy. Do not create a per-delivery execution decision. The user may explicitly update the subscription for future automatic execution.",
+                "guidance": "The deliverable was saved and skipped. This retired Consent flow cannot authorize Guide-driven execution; do not create another execution decision.",
             }));
             Ok(())
         }
