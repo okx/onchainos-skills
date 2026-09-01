@@ -125,6 +125,14 @@ when present, and the locally saved attachment count. Then execute the returned
 `nextAction.id=watch_task`; do not offer `set-payment-mode`, ASP apply, or Buyer
 accept.
 
+For `agent create-subscribe`, the same progression state means the subscription
+UserOperation was submitted but is not yet final. Require
+`payload.type=204`, `payload.bizType=204`, and use `payload.jobId` as the sole
+subscription identifier. Render the broadcast transaction hash when present,
+attachment count, and whether automatic execution was configured. Then execute
+the returned `nextAction.id=watch_task`. Do not establish the A2A session in
+this creation step; the `sub_open` event owns that transition.
+
 ## `task_create_prepare` phase mapping
 
 | Phase | Decision | Next action IDs |

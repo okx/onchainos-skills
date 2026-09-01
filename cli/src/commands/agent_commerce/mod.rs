@@ -144,7 +144,10 @@ pub enum AgentCommand {
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
         #[arg(long = "provider-agent-id")]
-        provider_agent_id: Option<String>,
+        provider_agent_id: String,
+        /// Copy-trade subscription marker: 0=off, 1=on
+        #[arg(long = "copy-trade", default_value_t = 0, value_parser = clap::value_parser!(i32).range(0..=1))]
+        copy_trade: i32,
         /// Exact service description returned by asp-match. Only bounded
         /// asset/tool hints are persisted; the raw prose is never executed.
         #[arg(long = "service-description", default_value = "")]
@@ -197,9 +200,6 @@ pub enum AgentCommand {
         autotrade_required_fields: Vec<String>,
         #[arg(long, default_value = "")]
         format: String,
-        /// Legacy compatibility input. Create-time device selection is rejected.
-        #[arg(long = "exclude-device", hide = true)]
-        exclude_device: Option<Vec<String>>,
     },
 
     /// Cancel a subscription (unified: trial cancel + close auto-renew)
@@ -1555,6 +1555,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             description,
             attachments,
             provider_agent_id,
+            copy_trade,
             service_description,
             service_interval,
             autotrade_mode,
@@ -1568,7 +1569,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             autotrade_settings_json,
             autotrade_required_fields,
             format,
-            exclude_device,
         } => {
             task::user::run_task(
                 T::CreateSubscribe {
@@ -1582,6 +1582,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     description,
                     attachments,
                     provider_agent_id,
+                    copy_trade,
                     service_description,
                     service_interval,
                     autotrade_mode,
@@ -1595,7 +1596,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     autotrade_settings_json,
                     autotrade_required_fields,
                     format,
-                    exclude_device,
                 },
                 ctx,
             )

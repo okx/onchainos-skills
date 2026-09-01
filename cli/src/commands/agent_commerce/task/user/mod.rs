@@ -119,7 +119,7 @@ pub enum TaskCommand {
         #[arg(long = "chain-id", default_value_t = 196)]
         chain_id: u64,
     },
-    /// Create a subscription task (providerConfirmStatus → EIP-712 sign → create → broadcast)
+    /// Create a subscription task (providerConfirmStatus → sign → createSubscription → broadcast)
     CreateSubscribe {
         #[arg(long = "service-id")]
         service_id: String,
@@ -138,7 +138,7 @@ pub enum TaskCommand {
         /// Auto-renew: 0/false=off, 1/true=on
         #[arg(long = "auto-renew")]
         auto_renew: String,
-        /// Subscription title (max 64 chars)
+        /// Subscription title (max 30 Unicode characters)
         #[arg(long)]
         title: String,
         /// Subscription description (max 4096 chars)
@@ -147,9 +147,12 @@ pub enum TaskCommand {
         /// Local file paths to attach to the subscription after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
-        /// Designated provider agent ID
+        /// Designated provider agent ID from the confirmed Service result
         #[arg(long = "provider-agent-id")]
-        provider_agent_id: Option<String>,
+        provider_agent_id: String,
+        /// Copy-trade subscription marker: 0=off, 1=on
+        #[arg(long = "copy-trade", default_value_t = 0, value_parser = clap::value_parser!(i32).range(0..=1))]
+        copy_trade: i32,
         /// Exact service description returned by asp-match. Used only to persist
         /// bounded asset/tool hints; the raw prose is never executed.
         #[arg(long = "service-description", default_value = "")]
@@ -195,12 +198,9 @@ pub enum TaskCommand {
         /// deprecated alias for the public tradeAmount name.
         #[arg(long = "autotrade-required-field")]
         autotrade_required_fields: Vec<String>,
-        /// Output format: "json" for raw JSON
+        /// Output format (the v2 success envelope is always structured JSON)
         #[arg(long, default_value = "")]
         format: String,
-        /// Legacy compatibility input. Create-time device selection is rejected.
-        #[arg(long = "exclude-device", hide = true)]
-        exclude_device: Option<Vec<String>>,
     },
     /// Search matching ASPs for an existing task
     AspMatch {
@@ -1953,13 +1953,13 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 service_id, service_params, service_token_address, service_token_amount,
                 category_code, min_credit_score, visibility, chain_id,
             }).await,
-        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, attachments, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment, autotrade_margin_mode, autotrade_order_policy, autotrade_auth_mode, autotrade_settings_json, autotrade_required_fields, format, exclude_device } => {
+        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, attachments, provider_agent_id, copy_trade, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment, autotrade_margin_mode, autotrade_order_policy, autotrade_auth_mode, autotrade_settings_json, autotrade_required_fields, format } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
                 service_id, use_trial, service_params, service_token_amount, service_token_address,
-                auto_renew, title, description, attachments, provider_agent_id, service_description, service_interval,
+                auto_renew, copy_trade, title, description, attachments, provider_agent_id, service_description, service_interval,
                 autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment,
-                autotrade_margin_mode, autotrade_order_policy, autotrade_required_fields, format, exclude_device,
+                autotrade_margin_mode, autotrade_order_policy, autotrade_required_fields, format,
                 autotrade_auth_mode, autotrade_settings_json,
             }).await
         }

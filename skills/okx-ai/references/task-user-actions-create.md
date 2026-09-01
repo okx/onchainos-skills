@@ -186,6 +186,7 @@ onchainos agent create-subscribe \
   --service-token-amount <payload.subscriptionInfo.feeAmount> \
   --service-token-address <payload.feeToken> \
   --auto-renew <retained autoRenew> \
+  --copy-trade <1 when retained autotrade mode is auto; otherwise 0> \
   --title <title> \
   --description <confirmed Description> \
   --provider-agent-id <payload.providerAgentId> \
@@ -203,11 +204,13 @@ Repeat `--file` for each attachment. Repeat
 `--autotrade-required-field` only for execution fields explicitly required by
 the current Guide. Follow structured errors from `task-cli-reference.md`.
 
-Read `autoTradeConfigRequested` and `autoTradeConfigured` from the success
-data. `true/true` means the requested local policy was saved; `true/false`
-means creation succeeded but local execution configuration was not persisted,
-which is reported without retrying creation. `false/false` is an unconfigured
-notification-only subscription and must not be described as automatic.
+Read these fields from `payload`, not from a legacy top-level success object.
+`jobId` is the subscription identifier. `type` and `bizType` must both be 204.
+`autoTradeConfigRequested=true` implies `autoTradeConfigured=true`: requested
+local execution configuration is now a pre-broadcast requirement, so a local
+write failure blocks broadcast instead of returning partial success.
+`false/false` is an unconfigured notification-only subscription and must not be
+described as automatic. Then execute `nextAction.id=watch_task`.
 
 On success, continue to `task-user-playbook.md` **Post-creation:
 Offline-deliverables question**, then its mandatory Watch check. Do not add
