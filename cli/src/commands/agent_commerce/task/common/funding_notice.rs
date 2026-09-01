@@ -477,7 +477,7 @@ impl TryFrom<FundingNoticeArgs> for FundingNoticeInput {
             && args
                 .content
                 .as_ref()
-                .is_none_or(|value| value.trim().is_empty())
+                .map_or(true, |value| value.trim().is_empty())
         {
             bail!("--notify-user requires --content with already-localized text");
         }

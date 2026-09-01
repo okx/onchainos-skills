@@ -869,7 +869,7 @@ fn candidate_balance_atomic(
     }
 }
 
-fn find_balance_entry<F>(value: &Value, matches: F) -> Option<&Map<String, Value>>
+fn find_balance_entry<'a, F>(value: &'a Value, matches: F) -> Option<&'a Map<String, Value>>
 where
     F: Fn(&Map<String, Value>) -> bool + Copy,
 {
@@ -916,7 +916,7 @@ fn human_to_atomic(human: &str, decimals: u32) -> Option<U256> {
     }
     let mut digits = whole.to_string();
     digits.push_str(fraction);
-    digits.extend(std::iter::repeat_n('0', decimals as usize - fraction.len()));
+    digits.extend(std::iter::repeat('0').take(decimals as usize - fraction.len()));
     let normalized = digits.trim_start_matches('0');
     U256::from_str_radix(
         if normalized.is_empty() {

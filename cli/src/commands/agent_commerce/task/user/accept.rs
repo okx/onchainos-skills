@@ -486,7 +486,7 @@ async fn confirm_accept_escrow(
             format!("jobId={job_id}"),
             format!("agentId={agent_id}"),
             format!("provider={provider}"),
-            "paymentMode=escrow".to_string(),
+            format!("paymentMode=escrow"),
             format!("tokenSymbol={symbol}"),
             format!("tokenAmount={amount}"),
             format!("txHash={tx_hash}"),

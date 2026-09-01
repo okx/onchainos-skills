@@ -423,7 +423,7 @@ fn parse_command(venue: &str, command_json: &str) -> Result<(PathBuf, Vec<String
 
     let program = match venue {
         "dex" => {
-            if args.first().map(String::as_str) != Some("swap")
+            if args.get(0).map(String::as_str) != Some("swap")
                 || args.get(1).map(String::as_str) != Some("execute")
             {
                 bail!("dex automatic execution requires `swap execute`");
@@ -435,7 +435,7 @@ fn parse_command(venue: &str, command_json: &str) -> Result<(PathBuf, Vec<String
         }
         "defi" => {
             let operation = args.get(1).map(String::as_str);
-            if args.first().map(String::as_str) != Some("defi")
+            if args.get(0).map(String::as_str) != Some("defi")
                 || !matches!(operation, Some("deposit" | "redeem" | "collect"))
             {
                 bail!("defi automatic execution requires a supported write operation");
@@ -785,7 +785,7 @@ fn validate_trade_kit_execution_settings(
                     bail!("Trade Kit order type does not match persisted signal-price limit policy")
                 }
                 consent::OrderPolicy::SignalPriceLimit
-                    if flag_value(args, "--px").is_none_or(str::is_empty) =>
+                    if flag_value(args, "--px").map_or(true, str::is_empty) =>
                 {
                     bail!("Trade Kit signal-price limit policy requires an explicit order price")
                 }
@@ -895,7 +895,7 @@ fn receipt_from_stdout(venue: &str, stdout: &[u8]) -> Option<Value> {
     let value = json_from_stdout(stdout)?;
     let mut receipt = serde_json::Map::new();
     collect_receipt_fields(venue, &value, &mut receipt, 0);
-    (!receipt.is_empty()).then_some(Value::Object(receipt))
+    (!receipt.is_empty()).then(|| Value::Object(receipt))
 }
 
 fn structured_failure(stdout: &[u8]) -> Option<String> {

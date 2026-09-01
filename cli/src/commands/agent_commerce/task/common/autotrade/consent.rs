@@ -580,9 +580,6 @@ pub fn write_consent_policy(
 /// Persist the complete local execution policy. Omitted Trade Kit settings
 /// preserve an existing choice, which makes cap/amount changes safe and lets
 /// older callers remain source-compatible.
-// 9 independently-optional settings; a params struct would only move the same
-// fields into another type without reducing the call-site surface.
-#[allow(clippy::too_many_arguments)]
 pub fn write_consent_policy_with_settings(
     job_id: &str,
     mode: ConsentMode,

@@ -1329,8 +1329,8 @@ fn handle_resolve(user_reply: String) -> Result<()> {
             );
         }
         write_queue_atomic(&q)?;
-        println!(
-            "🛑 User reply relayed and consumed — do NOT reuse it for future cards; wait for a fresh user message, then end the turn."
+        print!(
+            "🛑 User reply relayed and consumed — do NOT reuse it for future cards; wait for a fresh user message, then end the turn.\n"
         );
     } else {
         // Auto-advance: promote the newest queued entry (LIFO — sort already placed it at
