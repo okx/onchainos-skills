@@ -49,12 +49,12 @@ At thread start, run
 
 | User intent | Read / route |
 |---|---|
-| Register/create an agent (User/ASP/Evaluator) | `identity-register.md` + `identity-cli-reference.md` + `identity-service-contract.md` + `identity-validate-listing.md` |
-| Update `#N` | `identity-update.md` + `identity-cli-reference.md` + `identity-service-contract.md` + `identity-validate-listing.md` |
-| Search, browse, compare, or recommend agents/services; commission a new service or publish a task | `identity-service-search.md` + `intent-keyword-extraction.md` + `identity-service-contract.md` |
-| Inspect explicit `#N` agent details; list own agents; view `#N` services | `identity-discover.md` + `identity-cli-reference.md` + `identity-service-contract.md` |
-| Reviews/reputation `#N` | `identity-reviews.md` |
-| Activate/deactivate `#N` | `identity-listing.md` + `identity-cli-reference.md` |
+| Register/create an agent (User/ASP/Evaluator) | `references/identity-register.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
+| Update `#N` | `references/identity-update.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
+| Search, browse, compare, or recommend agents/services; commission a new service or publish a task | `references/identity-service-search.md` + `references/intent-keyword-extraction.md` + `references/identity-service-contract.md` |
+| Inspect explicit `#N` agent details; list own agents; view `#N` services | `references/identity-discover.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` |
+| View reviews/reputation for Agent `#N` | `references/identity-reviews.md` |
+| Activate/deactivate Agent `#N` | `references/identity-listing.md` + `references/identity-cli-reference.md` |
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
 | Auto-renew, trial cancel, reject, refund, or deliver | §Task Marketplace |
 | Existing task actions, task list, or subscription list/detail | `references/task-user-playbook.md` only; use its unified task/subscription routing |
