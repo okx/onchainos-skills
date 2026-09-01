@@ -1159,6 +1159,7 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
                 output::success(json!({
                     "status": "fresh",
                     "currentVersion": current,
+                    "versionAfterPreflight": current,
                     "updated": false,
                     "throttled": true,
                     "selfUpdateDisabled": no_self_update,
@@ -1335,6 +1336,7 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
     let mut payload = json!({
         "status": status,
         "currentVersion": current,
+        "versionAfterPreflight": effective_version,
         "updated": updated,
         "selfUpdateDisabled": no_self_update,
         "binaryIdentity": binary_identity,
