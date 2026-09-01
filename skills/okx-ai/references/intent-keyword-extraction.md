@@ -1,44 +1,50 @@
-# Build a Service Search Query
+# Initial Service-Match Argument Extraction
 
-Convert the current service-search request into the JSON below. For a refined
-search, update the previous query only where the user explicitly changes or
-removes a condition.
+Extract explicit service/ASP selectors, price bounds, and capability-focused search keywords from the current query, using the previous query only to resolve follow-ups.
 
-Return JSON only. Include every field.
+## Query Context
 
-```json
-{
-  "keywords": [],
-  "aspAgentId": null,
-  "aspName": null,
-  "serviceName": null,
-  "sid": null,
-  "minPaymentTokenAmount": null,
-  "maxPaymentTokenAmount": null,
-  "unsupportedConstraints": [],
-  "requiresUserInput": false
-}
-```
+1. **Standalone or unrelated request:** extract from the current query only; ignore the previous query.
+2. **Follow-up request:** use the previous query only to fill omitted context; the current query overrides conflicting, replaced, or rejected conditions.
+3. Extract only explicitly stated or contextually resolved content; do not invent conditions.
 
-Rules:
+## Output contract
 
-- Extract IDs and names only when explicitly identified. Preserve their values.
-- Extract only explicit numeric price bounds; never quantify “cheap” or similar
-  wording.
-- `keywords`: 1–5 minimal capability phrases in the user's language, maximum
-  10. Remove request wrappers; do not translate, infer synonyms, or duplicate
-  dedicated fields.
-- Keep capability modifiers with what they qualify, such as chain, asset,
-  real-time behavior, language, and output format.
-- Exclude rejected requirements. For “not X, but Y”, keep Y.
-- Put unsupported filters such as availability, rating, sales, ranking, and
-  sorting in `unsupportedConstraints`; never silently discard them.
-- Set `requiresUserInput` when a necessary condition is ambiguous; never guess.
+1. **Return JSON only** with every field in this schema:
+   ```typescript
+   type ExtractionResult = {
+     "asp-agent-id": string | null;
+     "asp-name": string | null;
+     "service-name": string | null;
+     "sid": string | null;
+     "min-payment-token-amount": number | null;
+     "max-payment-token-amount": number | null;
+     "keywords": string[];
+   };
+   ```
+2. Use `null` for absent scalars and `[]` for no keywords.
 
-Example:
+## Keyword Extraction Rules
 
-`找一个实时监控 Solana 聪明钱钱包并推送信号的服务，价格不超过 10`
+1. **Extract explicit names and IDs**
+   - Agent/ASP ID → `asp-agent-id`
+   - Agent/ASP name → `asp-name`
+   - Service name → `service-name`
+   - Service ID → `sid`
+   - Extract only explicitly labeled values. Preserve them verbatim after removing labels, quotes, brackets, delimiters, whitespace, and an adjacent `#`.
+2. **Extract price bounds**
+   - Lower-bound wording (`above`, `greater than`, `no less than`, `at least`, `>`, `>=`) → `min-payment-token-amount`
+   - Upper-bound wording (`below`, `less than`, `no more than`, `at most`, `<`, `<=`) → `max-payment-token-amount`
+   - An explicit range sets both fields
+3. **Extract and finalize service `keywords`**
+   - Keep only requested capabilities and outputs with their required subjects, modifiers, and scopes; split only independent items useful alone.
+   - Exclude names, IDs, price constraints, request wrappers, filler, rejected intent, generic service words, and provider/listing metadata; never quantify qualitative prices.
+   - Build keywords only from source content in the previous or current query; when a follow-up adds a scope, attach it to the previous capability as one phrase, without expanding names into categories, synonyms, or related concepts.
+   - Return 1–5 concise, deduplicated phrases; never exceed 10 or pad the list.
 
-```json
-{"keywords":["实时监控 Solana 聪明钱钱包","推送信号"],"aspAgentId":null,"aspName":null,"serviceName":null,"sid":null,"minPaymentTokenAmount":null,"maxPaymentTokenAmount":10,"unsupportedConstraints":[],"requiresUserInput":false}
-```
+## examples
+
+| Previous query | Current query | Output |
+|---|---|---|
+| — | `Find a market analysis service priced between 8 and 20` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":8,"max-payment-token-amount":20,"keywords":["market analysis"]}` |
+| `找一个 BTC 行情分析服务` | `换成 ETH，价格低于 10` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":null,"max-payment-token-amount":10,"keywords":["ETH 行情分析"]}` |
