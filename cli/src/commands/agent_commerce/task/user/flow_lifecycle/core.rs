@@ -1496,6 +1496,13 @@ pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
     }
 }
 
+fn job_submitted_waiting_for_deliverable(job_id: &str) -> String {
+    format!(
+        "[System] job_submitted received before the deliverable for job {job_id}.\n\
+         No user-facing action and no acceptance decision. End this turn and wait for `[intent:deliver]`; the CLI retained the out-of-order marker and will create the review decision only after the deliverable is saved.\n"
+    )
+}
+
 /// Escrow path (paymentMode=1):
 ///   Step 1 (task ctx) → Step 2a (saved check) → Step 2b (download / extract + save)
 ///   → Step 3 (compose review user_content) → push pending-decisions-v2 review card.
@@ -1596,22 +1603,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
             return job_submitted_escrow(&patched_ctx);
         }
         let _ = deliverables::write_review_marker(job_id);
-        // FB1: point the LLM at the SAME directory recovery actually scans
-        // (`a2a_spool_dir()` == `env::temp_dir()`). Hardcoding `/tmp` broke macOS:
-        // launchd sets `TMPDIR` to `/var/folders/…`, so `temp_dir() != /tmp` — the
-        // file was written to `/tmp` while recovery scanned `/var/folders`, so
-        // `oldest_spool_candidate` always came up empty (Linux CI never reproduced it
-        // because unset `TMPDIR` makes `temp_dir()` == `/tmp`). Emitting the resolved
-        // spool dir keeps write-dir == scan-dir on every platform.
-        let spool_dir = a2a_spool_dir();
-        let spool_dir = spool_dir.display();
-        return format!(
-            "[System] job_submitted received but deliverable has not arrived yet (XMTP [intent:deliver] pending).\n\
-             If your conversation context contains an `[intent:deliver]` message, process it FIRST: write the full raw A2A JSON envelope to a 0600 temp file under `{spool_dir}`, then pass that path to the CLI:\n\
-             `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"deliverable_received\",\"jobId\":\"{job_id}\"}}' --a2a-file \"<raw-a2a-json-file>\"`\n\
-             Then re-trigger: `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_submitted\",\"jobId\":\"{job_id}\"}}'`\n\
-             Otherwise, end this turn and wait.\n"
-        );
+        return job_submitted_waiting_for_deliverable(job_id);
     }
 
     // Inline-from-prefetched values used in Step 2b's task-deliverable-save commands.
@@ -2070,6 +2062,15 @@ mod tests {
         assert!(!single_review_ready(Some(1), false));
         assert!(single_review_ready(Some(2), false));
         assert!(single_review_ready(Some(1), true));
+    }
+
+    #[test]
+    fn job_submitted_without_deliverable_is_not_user_facing() {
+        let output = job_submitted_waiting_for_deliverable("job-1");
+        assert!(output.contains("No user-facing action and no acceptance decision"));
+        assert!(!output.contains("pending-decisions-v2 request"));
+        assert!(!output.contains("onchainos agent user-notify"));
+        assert!(!output.contains("okx-a2a session history"));
     }
 
     #[test]

@@ -462,23 +462,22 @@ pub async fn generate_next_action(
              )\"\n\
              ```\n\n\
              **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
-             🛑 **The next system events for this ASP are `job_completed` OR `job_rejected` — both are action-required, NEITHER is observer-only.** ASP does NOT receive a `job_submitted` envelope after deliver.\n\n\
+             🛑 **The next system event is `job_submitted`** — notify the ASP owner that the delivery is confirmed on-chain and awaiting User review. After that, `job_completed` or `job_rejected` is action-required.\n\n\
              [Follow-up events]\n\
              - `job_completed` (User Agent reviewed and accepted) — auto-rate the User Agent + notify the user\n\
              - `job_rejected`  (User Agent rejected the deliverable) — push dispute-vs-refund decision to the user\n"
             )
         }
 
-        // ─── Scene 5: Deliverable confirmed on-chain (observer-only) ──────────────────
-        // In the new flow the deliverable was already sent to the User Agent via okx-a2a xmtp-send
-        // in Scene 4 A-Step 2; when the job_submitted system event reaches this sub there
-        // is no need to okx-a2a xmtp-send again, to avoid the User Agent receiving duplicate messages.
+        // ─── §1.8: Deliverable confirmed on-chain; notify ASP owner ──────────────────
+        // `onchainos agent deliver` already sent the deliverable to the User Agent.
+        // When job_submitted reaches this sub, never send it to the peer again.
         Event::JobSubmitted => {
             let user_notify = super::content::job_submitted_user_notify(job_id);
             format!(
             "[System notification] job_submitted (deliverable confirmed on-chain; task state is now submitted)\n\
              [Role] ASP (Agent Service ASP)\n\n\
-             ⚠️ **observer-only toward the User Agent (peer)** — the deliverable was already sent in the `job_accepted` script (Step 3); this event **must NOT trigger a second okx-a2a xmtp-send** to the User Agent (duplicating would cause loop). The user-side notify in Step 1 below targets your OWN user (the ASP wallet owner), NOT the User Agent-peer.\n\n\
+             ⚠️ The deliverable was already sent by `onchainos agent deliver`; this event **must NOT trigger a second A2A send** to the User Agent. The notification below targets the ASP owner only.\n\n\
              **Step 1 — Notify the user of the submit milestone via `onchainos agent user-notify`**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
@@ -487,7 +486,7 @@ pub async fn generate_next_action(
              content:\n\
              {user_notify}\n\n\
              **Step 2 — End this turn.** Wait for `job_completed` / `job_rejected` to drive the next action.\n\n\
-             🛑 **DO NOT extend `observe silently` to the next event.** When `job_completed` or `job_rejected` arrives, those are **action-required** events (auto-rate the User Agent / push a dispute-vs-refund decision to the user). Treating a subsequent `job_completed` envelope as silent = the user never gets the completion notice + the User Agent never gets rated.\n\n\
+             When `job_completed` or `job_rejected` arrives, those are **action-required** events (auto-rate the User Agent / push a dispute-vs-refund decision to the user).\n\n\
              [Follow-up events]\n\
              - `job_completed` (review passed) — auto-rate the User Agent + notify the user\n\
              - `job_rejected`  (User Agent rejected) — push dispute-vs-refund decision to the user\n"
@@ -1449,6 +1448,15 @@ mod tests {
             Some(&msg),
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn job_submitted_notifies_only_the_asp_owner() {
+        let output = run_asp("job_submitted", json!({"event":"job_submitted"})).await;
+        assert!(output.contains("onchainos agent user-notify"));
+        assert!(output.contains("Waiting for the User Agent's review"));
+        assert!(output.contains("must NOT trigger a second A2A send"));
+        assert!(!output.contains("ASP does NOT receive a `job_submitted`"));
     }
 
     #[tokio::test]

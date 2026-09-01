@@ -42,6 +42,12 @@ authorization to execute.
 - Use only the new `--file` / `--deliverable-text` inputs. The old ignored `--message` and
   `--autotrade` delivery flags are not part of the new CLI contract.
 
+## §1.8 On-chain submission notification
+
+On `job_submitted`, do not resend the deliverable or send any A2A peer message. Notify only the ASP
+owner that the submit transaction is confirmed and the task is waiting for the User Agent's acceptance
+or rejection, then end the turn. `job_completed` and `job_rejected` remain action-required follow-ups.
+
 ## Peer Message: `[user_rejected]`
 
 When the ASP sub session receives a peer message starting with `[user_rejected]:`, the User Agent has declined this ASP's application (either explicitly rejected, or accepted another ASP for the same job).

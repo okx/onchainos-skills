@@ -32,6 +32,13 @@
   `okx-a2a trade-records query`, and do not execute when any record exists. Persist the one terminal
   attempt using `okx-a2a trade-records insert`; a post-submit record failure must never trigger a retry.
 
+## §1.8 `job_submitted`
+
+- If the single-task deliverable is already saved, create the acceptance decision card exactly once.
+- If no deliverable is available, write only the internal out-of-order marker and take no user-facing
+  action: no notification, no decision card, and no manual chat-history extraction. The later validated
+  `[intent:deliver]` intake consumes the marker and creates the card after persistence succeeds.
+
 ---
 
 ## User Intent Routing
