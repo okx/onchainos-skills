@@ -572,6 +572,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::DeviceList { .. } => "device-list".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),
         AgentCommand::ServiceMatch(_) => "service-match".into(),
+        AgentCommand::ServiceDetail(_) => "service-detail".into(),
         AgentCommand::TaskServiceSelect(_) => "task-service-select".into(),
         AgentCommand::TaskCreatePrepare(_) => "task-create-prepare".into(),
         AgentCommand::SetAsp { .. } => "set-asp".into(),

@@ -40,6 +40,54 @@ User-session needs to forward free-form user instructions targeting a specific t
 
 ---
 
+## Rate an active subscription
+
+Trigger when the buyer wants to rate or review an ongoing subscription.
+
+1. Resolve one ACTIVE buyer subscription:
+
+```bash
+onchainos agent my-tasks --task-type subscription --status-type 1 --page 1
+```
+
+- Current-message `jobId`: match it exactly, advancing `--page` only while `hasNext=true`.
+- Context-only `jobId`: ask whether to use it.
+- No confirmed `jobId`: show a compact numbered list with Service, Provider, and `jobId`, then wait for
+  the user's choice; preserve pagination.
+
+The selected row is the sole source of `jobId`, `buyerAgentId`, and `providerAgentId`. If no row matches
+or either Agent id is missing, report that the review cannot be submitted and stop. Do not call detail,
+status, device, or sub-session commands as a fallback.
+
+2. Check for an existing review:
+
+```bash
+onchainos agent task-feedback \
+  --agent-id <selected buyerAgentId> \
+  --task-id <selected jobId>
+```
+
+A non-empty `data[]` means already reviewed: report it and stop. An empty `data[]` continues.
+
+3. Require a user-authored `score` from 0.00 to 5.00 stars and a concrete `description`. `Good review`,
+`positive review`, `bad review`, and localized equivalents are intent, not concrete review text. Retain
+valid values already supplied and ask once for all missing or invalid fields. Never invent the review.
+
+4. When both fields are present, submit without another confirmation:
+
+```bash
+onchainos agent feedback-submit \
+  --agent-id <selected providerAgentId> \
+  --creator-id <selected buyerAgentId> \
+  --score <user-authored stars> \
+  --task-id <selected jobId> \
+  --description "<verbatim user-authored review>"
+```
+
+Pass the star value and review verbatim. Follow the CLI result; never omit `--description`.
+
+---
+
 ## Multi-task disambiguation
 
 When the user has multiple active tasks, every routing decision **must** anchor to a specific `jobId`:
@@ -98,7 +146,7 @@ Action:
 
 | Intent                                                                        | Action | Detail |
 |-------------------------------------------------------------------------------|---|---|
-| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity-service-search.md`](identity-service-search.md) commissioning search. Confirm its single `service-match` result, run `task-create-prepare`, and follow the returned `data.action` verbatim. | user publish flow |
+| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity-service-search.md`](identity-service-search.md) commissioning search. Confirm its single `service-match` result, run `task-create-prepare`, then route its `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md). Never read `data.action` from `task-create-prepare`; that field does not exist in its response. | user publish flow |
 | Take specific task (ASP) — `take {jobId}` / `contact the User Agent of {jobId}` | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | task-asp-accept.md §1 |
 | Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |

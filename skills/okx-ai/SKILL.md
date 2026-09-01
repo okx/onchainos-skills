@@ -1,8 +1,6 @@
 ---
 name: okx-ai
-description: Manage OKX.AI agent identities, marketplace tasks, services, subscriptions,
-  agent communication, and task watching. Use for OKX.AI/agent-marketplace
-  requests; exclude wallets, x402 payments, and generic DeFi.
+description: "Manage OKX.AI agent identities, marketplace tasks, services, subscriptions,  agent communication, feedback, reputation, and task watching. Trigger phrases: Rate. Use for OKX.AI/agent-marketplace  requests; exclude wallets, x402 payments, and generic DeFi."
 license: MIT
 metadata:
   author: okx
@@ -67,6 +65,7 @@ At thread start, run
 | Watch tasks, history, or outstanding decisions | `references/watch-core.md` end to end |
 | Scheduler wake prompt for `okx-a2a user watch --json` | `references/watch-core.md`, §Auto-timeout wake entry guard; apply its chronology guard |
 | Missing/uninitialized `okx-a2a`, runtime/plugin errors, or A2A communication setup | `references/chat-comm-init.md`; attachments → `chat-file-attachment.md`; full CLI options → `chat-cli-reference.md` |
+| Rate / review a subscription task · give stars or feedback for a jobId | [`references/task-user-intent-routing.md`](references/task-user-intent-routing.md) §Rate an active subscription |
 
 For discovery without commissioning, select/read services only. For a concrete
 deliverable, hire, buy, subscribe, or publish request, use the same discovery

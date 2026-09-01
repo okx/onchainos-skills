@@ -285,6 +285,10 @@ pub enum AgentCommand {
     #[command(name = "task-service-select")]
     TaskServiceSelect(task::user::TaskServiceSelectArgs),
 
+    /// Fetch one current marketplace Service by sid.
+    #[command(name = "service-detail")]
+    ServiceDetail(task::user::ServiceDetailArgs),
+
     /// Run deterministic task-creation checks for a selected Service
     #[command(name = "task-create-prepare")]
     TaskCreatePrepare(task::user::TaskCreatePrepareArgs),
@@ -1617,6 +1621,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::TaskServiceSelect(args) => {
             task::user::run_task(T::TaskServiceSelect(args), ctx).await
+        }
+
+        AgentCommand::ServiceDetail(args) => {
+            task::user::run_task(T::ServiceDetail(args), ctx).await
         }
 
         AgentCommand::TaskCreatePrepare(args) => {
