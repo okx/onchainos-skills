@@ -424,16 +424,16 @@ pub async fn generate_next_action(
             )
         },
 
-        // ─── Scene 4: User Agent has confirmed the apply; execute and deliver ──
+        // ─── §1.5: designated-provider acceptance confirmed; execute and deliver ──
         Event::JobAccepted => {
             let user_notify = super::content::job_accepted_user_notify(job_id, agent_id);
             let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol", "serviceParams", "buyerAgentId"]);
             format!(
-            "[Current state] job_accepted (User Agent has confirmed the apply)\n\
+            "[Current state] job_accepted (your provider acceptance is confirmed)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
              {task_fields}\n\
-             **Step 1 — Notify the user (apply accepted) via `onchainos agent user-notify`**:\n\n\
+             **Step 1 — Notify the ASP owner (acceptance succeeded) via `onchainos agent user-notify`**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
              onchainos agent user-notify --content \"<localized content shown below>\"\n\
@@ -441,7 +441,7 @@ pub async fn generate_next_action(
              content:\n\
              {user_notify}\n\n\
              Fill the `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` placeholders from the **Task fields** block above.\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` `received apply confirmation` filler to the User Agent — the User Agent just ran confirm-accept; they already know.\n\n\
+             ⚠️ Do NOT send `okx-a2a xmtp-send` acceptance filler to the Buyer Agent — both sides receive the authoritative `job_accepted` system event.\n\n\
              **Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
              {execute_task}\n\n\
              **Step 3 — Deliver** (single CLI command — handles file upload, peer notification, on-chain submit, and local save internally):\n\n\
@@ -1118,7 +1118,20 @@ pub async fn generate_next_action(
                     msg_i64("subEndTime"),
                 )
             };
-            sub_asp_notify("sub_asp_selected (you were selected for a subscription)", &content, None)
+            let task_fields = inline_task_fields(&[
+                "title",
+                "description",
+                "serviceParams",
+                "buyerAgentId",
+                "serviceId",
+            ]);
+            sub_asp_accepted_start(
+                "sub_asp_selected (subscription acceptance confirmed)",
+                &content,
+                &task_fields,
+                job_id,
+                agent_id,
+            )
         }
         Event::SubCompleteNotify => {
             let title = message
@@ -1263,6 +1276,31 @@ fn sub_asp_notify(header: &str, content: &str, terminal_hint: Option<&str>) -> S
          ```\n\
          content:\n\
          {content}\n{tail}"
+    )
+}
+
+/// Acceptance is not display-only: after notifying the ASP owner, hand the
+/// active subscription into the existing service execution/skill flow.
+fn sub_asp_accepted_start(
+    header: &str,
+    content: &str,
+    task_fields: &str,
+    job_id: &str,
+    agent_id: &str,
+) -> String {
+    format!(
+        "[System notification] {header}\n\
+         [Role] ASP (Agent Service ASP)\n\n\
+         {task_fields}\n\
+         **Step 1 — Notify the ASP owner** (localize the fixed template first):\n\
+         ```bash\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
+         ```\n\
+         content:\n\
+         {content}\n\n\
+         **Step 2 — Start service execution now.** Reuse the registered Service's existing AI/Skill workflow with the authoritative description, serviceParams, and attachments above. Do not re-run provider acceptance and do not send filler to the Buyer Agent.\n\n\
+         - If this execution produces a deliverable now, hand it to the §1.6 delivery command for job `{job_id}` as ASP `{agent_id}`.\n\
+         - If the Service is schedule/event driven, initialize its existing schedule/listener and then end the turn; do not invent an empty deliverable.\n"
     )
 }
 
@@ -1491,7 +1529,7 @@ mod tests {
                 "{evt}: terminal ASP event must append the cleanup hint"
             );
         }
-        // sub_asp_selected is display-only and non-terminal → no cleanup hint.
+        // sub_asp_selected starts service execution and is non-terminal → no cleanup hint.
         for evt in ["sub_asp_selected"] {
             let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
             assert!(
@@ -1509,6 +1547,29 @@ mod tests {
         )
         .await;
         assert!(out.contains("5.5 USDT"), "ASP terms echoed verbatim: {out}");
+        assert!(
+            out.contains("Start service execution now"),
+            "accepted subscription must enter the existing service workflow: {out}"
+        );
+        assert!(
+            out.contains("§1.6 delivery command"),
+            "immediate output must hand off to delivery: {out}"
+        );
+        assert!(!out.contains("Notify the user, then end the turn"));
+    }
+
+    #[tokio::test]
+    async fn asp_job_accepted_notifies_then_executes_and_delivers() {
+        let out = run_asp(
+            "job_accepted",
+            json!({ "event": "job_accepted", "jobId": ASP_JOB_ID }),
+        )
+        .await;
+        assert!(out.contains("your provider acceptance is confirmed"));
+        assert!(out.contains("Notify the ASP owner"));
+        assert!(out.contains("Autonomously execute the task"));
+        assert!(out.contains("onchainos agent deliver"));
+        assert!(!out.contains("User Agent has confirmed the apply"));
     }
 
     #[tokio::test]

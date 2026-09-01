@@ -4180,7 +4180,7 @@ fn detail_path_for_event(
     job_id: &str,
     event: &str,
 ) -> String {
-    if matches!(event, "sub_open" | "sub_created") {
+    if matches!(event, "sub_open" | "sub_created" | "sub_asp_selected") {
         client.subscribe_path(job_id)
     } else {
         client.task_path(job_id)
@@ -4282,7 +4282,10 @@ async fn check_status_freshness(
     let resp = match c.get_with_identity(&detail_path, agent_id).await {
         Ok(r) => r,
         Err(error)
-            if matches!(job_status_or_event, "job_accepted" | "sub_created") =>
+            if matches!(
+                job_status_or_event,
+                "job_accepted" | "sub_created" | "sub_asp_selected"
+            ) =>
         {
             return (
                 Some(format!(
@@ -4420,6 +4423,10 @@ mod acceptance_detail_path_tests {
         );
         assert_eq!(
             detail_path_for_event(&client, "job-1", "sub_created"),
+            "/priapi/v1/aieco/task/subscribe/job-1"
+        );
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "sub_asp_selected"),
             "/priapi/v1/aieco/task/subscribe/job-1"
         );
     }
