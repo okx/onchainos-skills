@@ -658,8 +658,6 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long, default_value = "")]
         file: String,
-        #[arg(long, default_value = "Task completed, please review")]
-        message: String,
         /// Text deliverable content for auto-save. When non-empty and --file is empty,
         /// the CLI writes this to a temp file and persists it as a text deliverable.
         #[arg(long = "deliverable-text", default_value = "")]
@@ -667,10 +665,6 @@ pub enum AgentCommand {
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Deprecated compatibility argument. Accepted but ignored; only the
-        /// explicit text/file deliverable is sent and processed.
-        #[arg(long, default_value = "")]
-        autotrade: String,
     },
 
     /// Check deterministic local Trade Kit CLI/version/capability compatibility.
@@ -2116,19 +2110,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Deliver {
             job_id,
             file,
-            message,
             deliverable_text,
             agent_id,
-            autotrade,
         } => {
             task::asp::run_provider(
                 task::asp::ProviderCommand::Deliver {
                     job_id,
                     file,
-                    message,
                     deliverable_text,
                     agent_id,
-                    autotrade,
                 },
                 ctx,
             )

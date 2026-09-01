@@ -447,7 +447,8 @@ pub async fn generate_next_action(
              **Step 3 — Deliver** (single CLI command — handles file upload, peer notification, on-chain submit, and local save internally):\n\n\
              ⚠️ Do NOT call `okx-a2a file upload` or `okx-a2a xmtp-send` yourself — the `deliver` CLI handles all of this internally:\n\
              \x20\x20- file_upload (when needed) → xmtp_send `[intent:deliver]` to the User Agent → on-chain submit → local persistent save.\n\
-             \x20\x20- Text deliverables >200 characters are auto-converted to a `.md` file and sent as file attachment.\n\n\
+             \x20\x20- Text deliverables over 500 Unicode characters are auto-converted to a `.md` file and sent as a file attachment; if conversion/upload fails, the CLI falls back to inline text.\n\
+             \x20\x20- A2A delivery must succeed before a single task can be submitted on-chain. Subscription delivery never calls the single-task submit API.\n\n\
              ▸ **File deliverable** — pass `--file` with the local file path:\n\
              ```bash\n\
              onchainos agent deliver {job_id} --file \"<local file path>\" --agent-id {agent_id}\n\

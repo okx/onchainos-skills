@@ -28,6 +28,20 @@ Real work and delivery start only after the ASP accept mutation is confirmed by
 the corresponding accepted/active event. A natural-language request is not itself
 authorization to execute.
 
+## §1.6 Delivery contract
+
+- Fetch authoritative detail before delivery. A one-time task must be `accepted`; a subscription must
+  be `ACTIVE` and within its backend service/buffer period.
+- `onchainos agent deliver` internally invokes `okx-a2a file upload` when the deliverable is a native
+  file, or when text exceeds 500 Unicode characters. Long text is sent as `.md`; local conversion or
+  upload failure falls back to inline text.
+- It then invokes `okx-a2a session send` with `[intent:deliver]`. A missing Buyer Agent id or any A2A
+  send failure stops the flow. For one-time tasks this explicitly forbids the on-chain submit.
+- Only after successful A2A delivery does a one-time task call the submit mutation and broadcast its
+  user operation. Subscription delivery saves locally and returns without calling single-task submit.
+- Use only the new `--file` / `--deliverable-text` inputs. The old ignored `--message` and
+  `--autotrade` delivery flags are not part of the new CLI contract.
+
 ## Peer Message: `[user_rejected]`
 
 When the ASP sub session receives a peer message starting with `[user_rejected]:`, the User Agent has declined this ASP's application (either explicitly rejected, or accepted another ASP for the same job).

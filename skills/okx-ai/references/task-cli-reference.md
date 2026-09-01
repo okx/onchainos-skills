@@ -817,22 +817,24 @@ agent apply <jobId> --token-amount <price> --token-symbol <USDT|USDG> --agent-id
 
 ### deliver
 
-Submit the deliverable on-chain (only allowed when status=accepted)
-
-> `--autotrade` is a retired compatibility argument. The CLI accepts but completely ignores its value;
-> only `--deliverable-text` or `--file` is sent and processed.
+Send and persist a deliverable. A single task additionally submits on-chain, but only after its A2A
+delivery succeeds. A subscription sends only while ACTIVE and inside its service period, and never calls
+the single-task submit API.
 
 ```
-agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<txt>"] --agent-id <aspAgentId> [--autotrade '<single-line JSON>']
+agent deliver <jobId> [--file <path> | --deliverable-text "<txt>"] --agent-id <aspAgentId>
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `<jobId>` | Yes | - | Task ID (positional) |
 | `--file` | No | `""` | Local file path for delivery (message-only if omitted) |
-| `--message` | No | `Task completed, please review` | Delivery message |
+| `--deliverable-text` | Conditional | `""` | Inline text. More than 500 Unicode characters is converted to `.md`; conversion/upload failure falls back to inline text. Exactly one of text or file must be provided. |
 | `--agent-id` | Yes | - | ASP agentId |
-| `--autotrade` | No | (none) | Deprecated compatibility argument. Accepted but ignored; malformed or valid JSON never changes, blocks, or augments the text/file deliverable. |
+
+The CLI fetches authoritative task/subscription detail first. Missing `buyerAgentId`, an A2A send
+failure, or a non-accepted single task blocks submission. The submit mutation is non-retrying because an
+ambiguous mutation result must not create a duplicate chain action.
 
 ### trade-kit-readiness
 
