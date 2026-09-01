@@ -19,6 +19,7 @@ pub(crate) mod continuation;
 pub(crate) mod delivery_queue;
 pub(crate) mod executor;
 pub(crate) mod grants;
+pub(crate) mod guide;
 pub(crate) mod notify;
 pub(crate) mod profile;
 pub(crate) mod schema;

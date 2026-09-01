@@ -41,15 +41,11 @@ fn persisted_autotrade_execution_path(
     job_id: &str,
     delivery_id: Option<&str>,
 ) -> Option<SubscriptionTradePath> {
-    use crate::commands::agent_commerce::task::common::autotrade::consent;
-
-    match delivery_id {
-        Some(delivery_id) => consent::load_delivery_context(job_id, delivery_id).map(Some),
-        None => consent::load_pending_delivery_context(job_id),
-    }
-    .ok()
-    .flatten()
-    .map(|context| context.execution_path)
+    // Historical contexts may contain `legacy_wrapper`, but migration and new
+    // work both resume through the Guide-driven direct lifecycle. The arguments
+    // remain to keep the caller's trusted-context lookup shape unchanged.
+    let _ = (job_id, delivery_id);
+    Some(SubscriptionTradePath::AgentDirect)
 }
 
 // ── Localization constants (shared across flow_negotiate / flow_lifecycle) ────
@@ -1205,8 +1201,7 @@ mod tests {
         // The relay carries deliveryId, so the receiving Job Session can load
         // the exact immutable context even after the pending pointer is cleared.
         consent::clear_pending_signal(JOB_ID);
-        let rendered =
-            persisted_autotrade_delivery_context(JOB_ID, Some("msg:signal-1"));
+        let rendered = persisted_autotrade_delivery_context(JOB_ID, Some("msg:signal-1"));
         assert!(rendered.contains("[Persisted delivery context"));
         assert!(!rendered.contains("originSessionKey"));
         assert!(rendered.contains("\"deliveryId\":\"msg:signal-1\""));

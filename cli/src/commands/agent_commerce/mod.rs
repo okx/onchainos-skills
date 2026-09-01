@@ -2,7 +2,7 @@ pub mod chat;
 pub mod identity;
 pub mod task;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::Subcommand;
 use std::path::PathBuf;
 
@@ -152,52 +152,21 @@ pub enum AgentCommand {
         /// asset/tool hints are persisted; the raw prose is never executed.
         #[arg(long = "service-description", default_value = "")]
         service_description: String,
+        /// Exact provider service Guide. Stored locally before broadcast.
+        #[arg(long = "service-guide")]
+        service_guide: Option<String>,
+        /// SHA-256 of the exact service Guide when supplied by the provider.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// JSON declaration of Guide-defined consent/signal fields and bounded execution bindings.
+        #[arg(long = "autotrade-guide-semantics-json")]
+        autotrade_guide_semantics_json: Option<String>,
+        /// User-confirmed values keyed exclusively by the matching Guide's
+        /// declared consent fields.
+        #[arg(long = "guide-consent-json")]
+        guide_consent_json: Option<String>,
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
-        /// Explicit signal handling mode (`auto` or `notify_only`).
-        #[arg(long = "autotrade-mode")]
-        autotrade_mode: Option<String>,
-        /// Fixed quote amount used for every delivered signal.
-        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
-        /// e.g. 20.5; never minimal units; do not include a USDT/USDC suffix.]
-        #[arg(long = "autotrade-amount")]
-        autotrade_amount: Option<String>,
-        /// Per-delivery automatic-execution quote cap.
-        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
-        /// e.g. 50; never minimal units; do not include a USDT/USDC suffix.]
-        #[arg(long = "autotrade-cap")]
-        autotrade_cap: Option<String>,
-        /// Quote currency for amount/cap (`usdt` or `usdc`).
-        #[arg(long = "autotrade-quote")]
-        autotrade_quote: Option<String>,
-        /// User-authorized Trade Kit environment (`live` or `demo`).
-        #[arg(long = "autotrade-environment")]
-        autotrade_environment: Option<String>,
-        /// User-authorized Trade Kit derivative margin mode.
-        #[arg(long = "autotrade-margin-mode")]
-        autotrade_margin_mode: Option<String>,
-        /// User-authorized signal-entry order policy.
-        #[arg(long = "autotrade-order-policy")]
-        autotrade_order_policy: Option<String>,
-        /// User-selected Trade Kit credential source.
-        #[arg(long = "autotrade-auth-mode")]
-        autotrade_auth_mode: Option<String>,
-        /// User-confirmed settings as one JSON object. Stable product fields
-        /// stay flat; unknown fields must use typed entries under `extra`.
-        #[arg(long = "autotrade-settings-json")]
-        autotrade_settings_json: Option<String>,
-        /// Execution fields that the selected service requires the subscriber
-        /// to confirm. Repeat per field. Core names and matching value flags:
-        /// mode (--autotrade-mode), tradeAmount (--autotrade-amount),
-        /// cap (--autotrade-cap), quote (--autotrade-quote), environment
-        /// (--autotrade-environment), marginMode (--autotrade-margin-mode),
-        /// orderPolicy (--autotrade-order-policy), authMode
-        /// (--autotrade-auth-mode). Stable fields use their top-level name;
-        /// unknown fields use extra.<key> and a typed object in
-        /// --autotrade-settings-json. tradeAmountU is accepted only as a
-        /// deprecated alias for the public tradeAmount name.
-        #[arg(long = "autotrade-required-field")]
-        autotrade_required_fields: Vec<String>,
         #[arg(long, default_value = "")]
         format: String,
         /// Legacy compatibility input. Create-time device selection is rejected.
@@ -727,9 +696,6 @@ pub enum AgentCommand {
         /// `plugin-approved` alias is retained for compatibility).
         #[arg(long)]
         plugin: Option<String>,
-        /// Deprecated. Model routes are persisted with `subscription-route-set`.
-        #[arg(long)]
-        tool: Option<String>,
         /// Quote stablecoin dex trades pay with / settle into: `usdc` | `usdt`.
         /// Pass ONLY when the user named one; omitted keeps the stored choice
         /// (or the default, USDT).
@@ -831,34 +797,6 @@ pub enum AgentCommand {
         amount: String,
     },
 
-    /// Execute one admitted delivery through a venue-specific CLI and
-    /// deterministically report its terminal result to the job UI.
-    #[command(name = "autotrade-execute", hide = true)]
-    AutotradeExecute {
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long = "delivery-id")]
-        delivery_id: String,
-        /// dex | defi | trade_kit | polymarket | hyperliquid
-        #[arg(long)]
-        venue: String,
-        /// buy | sell
-        #[arg(long)]
-        action: String,
-        /// Exact persisted policy amount.
-        #[arg(long)]
-        amount: String,
-        /// `auto` for persisted grant execution; `one_time` for an exact
-        /// over-cap permit. `manual` is accepted only to fail closed for legacy callers.
-        #[arg(long = "execution-mode", default_value = "auto")]
-        execution_mode: String,
-        /// JSON array containing only the target CLI's argv (no program/shell).
-        #[arg(long = "command-json")]
-        command_json: String,
-        #[arg(long = "timeout-sec", default_value_t = 120)]
-        timeout_sec: u64,
-    },
-
     /// Reserve an Agent-direct delivery immediately before the selected
     /// Skill/tool performs its money-moving call. This command validates local
     /// authorization and idempotency but never accepts or executes target argv.
@@ -868,16 +806,28 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long = "delivery-id")]
         delivery_id: String,
-        /// Resolved quote amount used as authorization metadata.
+        /// SHA-256 fingerprint of the exact locally generated Guide intent.
+        #[arg(long = "guide-intent-hash")]
+        guide_intent_hash: String,
+        /// Exact Guide-resolved authorization value. Its source field is
+        /// service-defined by `execution.authorizationParameter`.
         #[arg(long)]
         amount: String,
-        /// Current tool-account available quote amount. Required when the
-        /// persisted policy uses a percentage amount.
-        #[arg(long = "available-amount")]
-        available_amount: Option<String>,
-        /// auto | one_time (`manual` is legacy and rejected by authorization)
-        #[arg(long = "execution-mode", default_value = "auto")]
-        execution_mode: String,
+    },
+
+    /// Validate and persist the Guide-declared fields extracted from one saved
+    /// Signal before producing an executable Guide intent. The source Signal
+    /// itself may be plain text, Markdown, or JSON.
+    #[command(name = "autotrade-guide-intent-resolve", hide = true)]
+    AutotradeGuideIntentResolve {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long = "delivery-id")]
+        delivery_id: String,
+        /// JSON object containing only the Signal fields declared by the
+        /// matching local Guide; this is an extraction result, not the raw Signal.
+        #[arg(long = "signal-values-json")]
+        signal_values_json: String,
     },
 
     /// Persist the documented result returned by an Agent-selected Skill/tool.
@@ -924,32 +874,6 @@ pub enum AgentCommand {
         /// Concise user-safe reason; command output and credentials are forbidden.
         #[arg(long)]
         reason: String,
-    },
-
-    /// Persist a bounded model-selected route for an Active subscription.
-    #[command(name = "subscription-route-set", hide = true)]
-    SubscriptionRouteSet {
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long = "asset-class")]
-        asset_class: String,
-        #[arg(long = "skill-id")]
-        skill_id: String,
-        #[arg(long = "plugin-id")]
-        plugin_id: Option<String>,
-        #[arg(long)]
-        protocol: Option<String>,
-        #[arg(long = "requirement")]
-        requirements: Vec<String>,
-        #[arg(long = "delivery-id")]
-        delivery_id: String,
-    },
-
-    /// Clear cached model routes after an explicit incompatibility or reset.
-    #[command(name = "subscription-route-clear", hide = true)]
-    SubscriptionRouteClear {
-        #[arg(long = "job-id")]
-        job_id: String,
     },
 
     /// Read-only first-entry gate for an explicitly scoped subscription watch.
@@ -1542,17 +1466,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             description,
             provider_agent_id,
             service_description,
+            service_guide,
+            service_guide_hash,
+            autotrade_guide_semantics_json,
+            guide_consent_json,
             service_interval,
-            autotrade_mode,
-            autotrade_amount,
-            autotrade_cap,
-            autotrade_quote,
-            autotrade_environment,
-            autotrade_margin_mode,
-            autotrade_order_policy,
-            autotrade_auth_mode,
-            autotrade_settings_json,
-            autotrade_required_fields,
             format,
             exclude_device,
         } => {
@@ -1568,17 +1486,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     description,
                     provider_agent_id,
                     service_description,
+                    service_guide,
+                    service_guide_hash,
+                    autotrade_guide_semantics_json,
+                    guide_consent_json,
                     service_interval,
-                    autotrade_mode,
-                    autotrade_amount,
-                    autotrade_cap,
-                    autotrade_quote,
-                    autotrade_environment,
-                    autotrade_margin_mode,
-                    autotrade_order_policy,
-                    autotrade_auth_mode,
-                    autotrade_settings_json,
-                    autotrade_required_fields,
                     format,
                     exclude_device,
                 },
@@ -2048,7 +1960,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::common::autotrade::trade_kit::TradeEnvironment::parse(&environment)
                     .map_err(anyhow::Error::msg)?;
             let result =
-                task::common::autotrade::trade_kit::probe_runtime(&asset_classes, environment).await;
+                task::common::autotrade::trade_kit::probe_runtime(&asset_classes, environment)
+                    .await;
             crate::output::success(result);
             Ok(())
         }
@@ -2101,37 +2014,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::SubscriptionRouteSet {
-            job_id,
-            asset_class,
-            skill_id,
-            plugin_id,
-            protocol,
-            requirements,
-            delivery_id,
-        } => {
-            let asset_class = asset_class
-                .parse::<crate::asset_class::AssetClass>()
-                .map_err(anyhow::Error::msg)?;
-            let route = task::common::autotrade::profile::write_model_route(
-                &job_id,
-                asset_class,
-                &skill_id,
-                plugin_id.as_deref(),
-                protocol.as_deref(),
-                &requirements,
-                &delivery_id,
-            )?;
-            crate::output::success(route);
-            Ok(())
-        }
-
-        AgentCommand::SubscriptionRouteClear { job_id } => {
-            task::common::autotrade::profile::clear_model_routes(&job_id)?;
-            crate::output::success_empty();
-            Ok(())
-        }
-
         AgentCommand::AutotradeWatchPrecheck {
             job_id,
             review_existing,
@@ -2166,7 +2048,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     "deliveryId": delivery_id,
                     "consentMode": "auto",
                     "terminal": false,
-                    "guidance": "Re-read this delivery, run the normal grant/readiness checks, and execute only through autotrade-execute if eligible.",
+                    "guidance": "Re-read this delivery and use the Guide-generated direct claim/finalize lifecycle if eligible.",
                 }));
                 return Ok(());
             }
@@ -2191,49 +2073,46 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::AutotradeExecute {
-            job_id,
-            delivery_id,
-            venue,
-            action,
-            amount,
-            execution_mode,
-            command_json,
-            timeout_sec,
-        } => {
-            let outcome = task::common::autotrade::executor::execute(
-                task::common::autotrade::executor::ExecuteRequest {
-                    job_id: &job_id,
-                    delivery_id: &delivery_id,
-                    venue: &venue,
-                    action: &action,
-                    amount: &amount,
-                    execution_mode:
-                        task::common::autotrade::executor::ExecutionMode::parse(&execution_mode)?,
-                    command_json: &command_json,
-                    timeout_sec,
-                },
-            )
-            .await?;
-            crate::output::success(outcome);
-            Ok(())
-        }
-
         AgentCommand::AutotradeDirectClaim {
             job_id,
             delivery_id,
+            guide_intent_hash,
             amount,
-            available_amount,
-            execution_mode,
         } => {
-            let result = task::common::autotrade::executor::claim_direct(
+            let result = task::common::autotrade::executor::claim_guide_direct(
                 &job_id,
                 &delivery_id,
+                &guide_intent_hash,
                 &amount,
-                available_amount.as_deref(),
-                task::common::autotrade::executor::ExecutionMode::parse(&execution_mode)?,
             )?;
             crate::output::success(result);
+            Ok(())
+        }
+
+        AgentCommand::AutotradeGuideIntentResolve {
+            job_id,
+            delivery_id,
+            signal_values_json,
+        } => {
+            use task::common::autotrade::{consent, guide};
+            use task::common::config::SubscriptionTradePath;
+
+            let context = consent::load_delivery_context(&job_id, &delivery_id)
+                .context("trusted delivery context is unavailable")?;
+            if context.execution_path != SubscriptionTradePath::AgentDirect {
+                anyhow::bail!("delivery is pinned to the legacy execution wrapper");
+            }
+            let values: std::collections::BTreeMap<String, serde_json::Value> =
+                serde_json::from_str(&signal_values_json).context(
+                    "--signal-values-json must be a JSON object of Guide-declared Signal fields",
+                )?;
+            let intent = guide::resolve_execution_intent(
+                &job_id,
+                &delivery_id,
+                &context.saved_path,
+                values,
+            )?;
+            crate::output::success(serde_json::to_value(intent)?);
             Ok(())
         }
 
@@ -2262,13 +2141,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             delivery_id,
             amount,
         } => {
-            crate::output::success(
-                task::common::autotrade::executor::authorize_one_time(
-                    &job_id,
-                    &delivery_id,
-                    &amount,
-                )?,
-            );
+            crate::output::success(task::common::autotrade::executor::authorize_one_time(
+                &job_id,
+                &delivery_id,
+                &amount,
+            )?);
             Ok(())
         }
 
@@ -2351,10 +2228,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             settings_json,
             cancel,
         } => {
+            use task::common::autotrade::consent;
             use task::common::autotrade::continuation::{
                 self, ExplicitValues, Origin, SelectedMode, StartBinding,
             };
-            use task::common::autotrade::consent;
             if cancel {
                 if mode.is_some()
                     || origin.is_some()
@@ -2374,9 +2251,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 {
                     anyhow::bail!("--cancel does not accept configuration arguments");
                 }
-                let continuation_id = continuation_id
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("--continuation-id is required with --cancel"))?;
+                let continuation_id = continuation_id.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("--continuation-id is required with --cancel")
+                })?;
                 continuation::cancel(&job_id, &agent_id, continuation_id)?;
                 crate::output::success(serde_json::json!({
                     "jobId": job_id,
@@ -2386,10 +2263,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
 
-            let selected_mode = mode
-                .as_deref()
-                .map(SelectedMode::parse)
-                .transpose()?;
+            let selected_mode = mode.as_deref().map(SelectedMode::parse).transpose()?;
             let values = ExplicitValues {
                 trade_amount_u: trade_amount.as_deref(),
                 cap_u: cap.as_deref(),
@@ -2465,8 +2339,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         original_delivery_id: delivery_id.as_deref(),
                         required_fields: Some(&effective_required_fields),
                         service_guide_hash: restore_context.service_guide_hash.as_deref(),
-                        service_guide_hash_resolved: restore_context
-                            .service_guide_hash_resolved,
+                        service_guide_hash_resolved: restore_context.service_guide_hash_resolved,
                         seed_consent: seed_consent.as_ref(),
                     }),
                     &job_id,
@@ -2487,11 +2360,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     );
                 }
                 let continuation_id = continuation_id.as_deref().expect("checked above");
-                let existing = continuation::load_for_resume(
-                    &job_id,
-                    &agent_id,
-                    continuation_id,
-                )?;
+                let existing = continuation::load_for_resume(&job_id, &agent_id, continuation_id)?;
                 if existing.origin == Origin::SubscriptionRestore {
                     let asset_class = existing
                         .signal_type
@@ -2537,7 +2406,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             agent_id,
             ttl_sec,
             plugin,
-            tool,
             quote,
             environment,
             margin_mode,
@@ -2567,13 +2435,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .as_deref()
                 .map(consent::TradeKitAuthMode::parse)
                 .transpose()?;
-            let dynamic_settings = consent::parse_dynamic_settings_json(
-                settings_json.as_deref(),
-                "--settings-json",
-            )?;
-            if tool.is_some() {
-                anyhow::bail!("--tool is deprecated; use subscription-route-set");
-            }
+            let dynamic_settings =
+                consent::parse_dynamic_settings_json(settings_json.as_deref(), "--settings-json")?;
             let auto_continuation_id =
                 auto_write_continuation_id(&mode, continuation_id.as_deref())?;
             if mode == "pause" {
@@ -2593,9 +2456,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 grants::clear_grant(&job_id);
                 consent::clear_pending_signal(&job_id);
                 task::common::autotrade::continuation::clear(&job_id);
-                let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(
-                    &job_id,
-                );
+                let _ =
+                    task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(&job_id);
                 crate::output::success(
                     serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id}),
                 );
@@ -2816,17 +2678,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::common::autotrade::continuation::clear(&job_id);
             }
             consent::clear_pending_signal(&job_id);
-            crate::output::success(
-                serde_json::json!({
-                    "consentMode": if mode_enum == consent::ConsentMode::Auto { "auto" } else { "notify_only" },
-                    "cap": cap,
-                    "tradeEnvironment": persisted_environment,
-                    "marginMode": persisted_margin_mode,
-                    "orderPolicy": persisted_order_policy,
-                    "authMode": persisted_auth_mode,
-                    "replayed": false
-                }),
-            );
+            crate::output::success(serde_json::json!({
+                "consentMode": if mode_enum == consent::ConsentMode::Auto { "auto" } else { "notify_only" },
+                "cap": cap,
+                "tradeEnvironment": persisted_environment,
+                "marginMode": persisted_margin_mode,
+                "orderPolicy": persisted_order_policy,
+                "authMode": persisted_auth_mode,
+                "replayed": false
+            }));
             Ok(())
         }
         AgentCommand::AgreeRefund { job_id, agent_id } => {
@@ -3665,7 +3525,6 @@ mod auto_consent_permit_tests {
             agent_id: Some("7".to_string()),
             ttl_sec: 3600,
             plugin: None,
-            tool: None,
             quote: None,
             environment: None,
             margin_mode: None,
@@ -3698,11 +3557,10 @@ mod auto_consent_permit_tests {
             "plugin-ready-check",
         ] {
             assert_eq!(auto_write_continuation_id(mode, None).unwrap(), None);
-            assert!(auto_write_continuation_id(
-                mode,
-                Some("atc_0123456789abcdef0123456789abcdef")
-            )
-            .is_err());
+            assert!(
+                auto_write_continuation_id(mode, Some("atc_0123456789abcdef0123456789abcdef"))
+                    .is_err()
+            );
         }
     }
 
@@ -3719,9 +3577,7 @@ mod auto_consent_permit_tests {
         let consent = final_writer
             .find("write_consent_policy_with_dynamic_settings")
             .expect("consent write");
-        let grant = final_writer
-            .find("write_auto_grant")
-            .expect("grant write");
+        let grant = final_writer.find("write_auto_grant").expect("grant write");
         let consume = final_writer
             .find("consume_auto_write")
             .expect("permit consumption");
@@ -3753,7 +3609,9 @@ mod auto_consent_permit_tests {
         };
 
         let missing = run(auto_command(None), &ctx).await.unwrap_err();
-        assert!(missing.to_string().contains("--continuation-id is required"));
+        assert!(missing
+            .to_string()
+            .contains("--continuation-id is required"));
         assert!(consent::load_consent("job-1").unwrap().is_none());
         assert!(grants::check_grant("job-1", "trade_kit", "buy", "1").is_err());
 
@@ -3781,12 +3639,9 @@ mod auto_consent_permit_tests {
         .unwrap();
         assert!(completed.complete);
 
-        run(
-            auto_command(Some(completed.continuation_id.clone())),
-            &ctx,
-        )
-        .await
-        .unwrap();
+        run(auto_command(Some(completed.continuation_id.clone())), &ctx)
+            .await
+            .unwrap();
         assert_eq!(
             consent::load_consent("job-1").unwrap().unwrap().mode,
             ConsentMode::Auto
@@ -3796,9 +3651,7 @@ mod auto_consent_permit_tests {
         let replay = run(auto_command(Some(completed.continuation_id)), &ctx)
             .await
             .unwrap_err();
-        assert!(replay
-            .to_string()
-            .contains("no live consent continuation"));
+        assert!(replay.to_string().contains("no live consent continuation"));
 
         std::env::remove_var("ONCHAINOS_HOME");
         let _ = std::fs::remove_dir_all(dir);
@@ -4168,8 +4021,7 @@ async fn check_status_freshness(
             {
                 return (Some(prompt), Some(ctx));
             }
-        } else if let Ok(Some(manifest)) =
-            task::common::deliverables::read_manifest("user", job_id)
+        } else if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("user", job_id)
         {
             if let Some(entry) = manifest.entries.last() {
                 let dir = task::common::deliverables::deliverables_dir("user", job_id)

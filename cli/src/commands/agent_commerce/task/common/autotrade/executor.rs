@@ -18,7 +18,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use super::amount::Decimal;
-use super::{consent, grants, trade_kit};
+use super::{consent, grants, guide, trade_kit};
 use crate::asset_class::AssetClass;
 use crate::commands::agent_commerce::task::common::{okx_a2a, user_lang};
 
@@ -74,6 +74,12 @@ struct ExecutionLatch {
     direct_amount: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     direct_execution_mode: Option<ExecutionMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    direct_intent_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    direct_tool_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    direct_operation: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -316,6 +322,9 @@ fn reserve_execution(job_id: &str, delivery_id: &str) -> Result<bool> {
                 updated_at: now_secs(),
                 direct_amount: None,
                 direct_execution_mode: None,
+                direct_intent_hash: None,
+                direct_tool_id: None,
+                direct_operation: None,
             })?)?;
             file.sync_all()?;
             Ok(true)
@@ -355,6 +364,52 @@ fn reserve_direct_execution(
                 updated_at: now_secs(),
                 direct_amount: Some(amount.to_string()),
                 direct_execution_mode: Some(execution_mode),
+                direct_intent_hash: None,
+                direct_tool_id: None,
+                direct_operation: None,
+            })?)?;
+            file.sync_all()?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn reserve_guide_direct_execution(
+    job_id: &str,
+    delivery_id: &str,
+    amount: &str,
+    intent_hash: &str,
+    tool_id: &str,
+    operation: &str,
+) -> Result<bool> {
+    let path = latch_path(job_id, delivery_id)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(path) {
+        Ok(mut file) => {
+            file.write_all(&serde_json::to_vec_pretty(&ExecutionLatch {
+                version: EXECUTION_LATCH_VERSION,
+                job_id: job_id.to_string(),
+                delivery_id: delivery_id.to_string(),
+                // Claim happens immediately before the external call. An
+                // interruption is therefore always treated as non-retryable.
+                phase: ExecutionPhase::Spawned,
+                updated_at: now_secs(),
+                direct_amount: Some(amount.to_string()),
+                direct_execution_mode: Some(ExecutionMode::Auto),
+                direct_intent_hash: Some(intent_hash.to_string()),
+                direct_tool_id: Some(tool_id.to_string()),
+                direct_operation: Some(operation.to_string()),
             })?)?;
             file.sync_all()?;
             Ok(true)
@@ -371,7 +426,10 @@ fn update_execution_phase(
 ) -> Result<()> {
     let existing = read_execution_latch(job_id, delivery_id)?;
     let direct_amount = existing.as_ref().and_then(|latch| latch.direct_amount.clone());
-    let direct_execution_mode = existing.and_then(|latch| latch.direct_execution_mode);
+    let direct_execution_mode = existing.as_ref().and_then(|latch| latch.direct_execution_mode);
+    let direct_intent_hash = existing.as_ref().and_then(|latch| latch.direct_intent_hash.clone());
+    let direct_tool_id = existing.as_ref().and_then(|latch| latch.direct_tool_id.clone());
+    let direct_operation = existing.as_ref().and_then(|latch| latch.direct_operation.clone());
     crate::home::write_secure(
         &latch_path(job_id, delivery_id)?,
         &serde_json::to_vec_pretty(&ExecutionLatch {
@@ -382,6 +440,9 @@ fn update_execution_phase(
             updated_at: now_secs(),
             direct_amount,
             direct_execution_mode,
+            direct_intent_hash,
+            direct_tool_id,
+            direct_operation,
         })?,
     )?;
     Ok(())
@@ -1582,6 +1643,82 @@ pub fn claim_direct(
     })
 }
 
+/// Claim a delivery for the Guide-driven flow. Unlike the retired policy
+/// wrapper, this does not inspect platform-specific Consent fields: it
+/// recomputes the exact local Guide intent and binds the claim to its hash,
+/// selected tool, operation, and Guide-declared authorization parameter.
+pub fn claim_guide_direct(
+    job_id: &str,
+    delivery_id: &str,
+    intent_hash: &str,
+    amount: &str,
+) -> Result<DirectClaimResult> {
+    use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
+
+    if intent_hash.len() != 64 || !intent_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("Guide intent hash is invalid")
+    }
+    let context = consent::load_delivery_context(job_id, delivery_id)
+        .context("trusted delivery context is unavailable")?;
+    if context.execution_path != SubscriptionTradePath::AgentDirect {
+        bail!("delivery is pinned to the legacy execution wrapper");
+    }
+    let intent = guide::load_resolved_execution_intent(job_id, delivery_id, &context.saved_path)?;
+    if !intent.eligible {
+        bail!("Guide intent is not eligible for execution")
+    }
+    if intent.intent_hash != intent_hash {
+        bail!("Guide intent hash no longer matches the saved delivery")
+    }
+    let expected_amount = intent
+        .authorization_amount
+        .as_deref()
+        .context("Guide intent is missing its authorization amount")?;
+    let normalized = Decimal::parse(amount)
+        .context("invalid Guide authorization amount")?
+        .to_plain_string();
+    if normalized != expected_amount {
+        bail!("claim amount does not match the Guide authorization parameter")
+    }
+
+    let path = outcome_path(job_id, delivery_id)?;
+    if read_outcome(&path)?.is_some() {
+        return Ok(DirectClaimResult {
+            allowed: false,
+            status: "terminal".to_string(),
+            job_id: job_id.to_string(),
+            delivery_id: delivery_id.to_string(),
+            amount: Some(normalized),
+            reason: Some("delivery already has a terminal outcome".to_string()),
+        });
+    }
+    if !reserve_guide_direct_execution(
+        job_id,
+        delivery_id,
+        &normalized,
+        &intent.intent_hash,
+        &intent.tool_id,
+        &intent.operation,
+    )? {
+        return Ok(DirectClaimResult {
+            allowed: false,
+            status: "already_claimed".to_string(),
+            job_id: job_id.to_string(),
+            delivery_id: delivery_id.to_string(),
+            amount: Some(normalized),
+            reason: Some("an earlier Guide-driven execution may have started; do not retry".to_string()),
+        });
+    }
+    Ok(DirectClaimResult {
+        allowed: true,
+        status: "claimed".to_string(),
+        job_id: job_id.to_string(),
+        delivery_id: delivery_id.to_string(),
+        amount: Some(normalized),
+        reason: None,
+    })
+}
+
 /// Persist a selected Skill/tool's documented terminal result. The coordinator
 /// accepts only bounded metadata; it never parses, rewrites, or executes the
 /// target command and never attempts a cross-path fallback.
@@ -1618,6 +1755,11 @@ pub fn finalize_direct(
     let execution_mode = latch
         .direct_execution_mode
         .context("direct execution claim mode is unavailable")?;
+    if let Some(expected_tool_id) = latch.direct_tool_id.as_deref() {
+        if tool_id != expected_tool_id {
+            bail!("direct execution tool does not match the claimed Guide intent")
+        }
+    }
     let (status, receipt, reason) = match status {
         "submitted" => {
             let receipt_id = receipt_id.context("submitted direct execution requires a receipt id")?;
@@ -1661,7 +1803,9 @@ pub fn finalize_direct(
             job_id: job_id.to_string(),
             delivery_id: delivery_id.to_string(),
             venue: format!("agent_direct/{tool_id}"),
-            action: "execute".to_string(),
+            action: latch
+                .direct_operation
+                .unwrap_or_else(|| "execute".to_string()),
             amount,
             execution_mode,
             status,

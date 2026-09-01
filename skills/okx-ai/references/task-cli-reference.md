@@ -544,14 +544,9 @@ agent create-subscribe \
   --auto-renew <0|1> \
   --title <txt> --description <txt> \
   [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
-  [--autotrade-mode <auto|notify_only>] [--autotrade-amount <decimal-number>] \
-  [--autotrade-cap <decimal-number>] [--autotrade-quote <usdt|usdc>] \
-  [--autotrade-environment <live|demo>] \
-  [--autotrade-margin-mode <cross|isolated>] \
-  [--autotrade-order-policy <market|signal_price_limit>] \
-  [--autotrade-auth-mode <oauth|api_key>] \
-  [--autotrade-settings-json '<user-confirmed JSON object>'] \
-  [--autotrade-required-field <field>]... \
+  --service-guide '<exact Guide text>' [--service-guide-hash <sha256>] \
+  --autotrade-guide-semantics-json '<Guide semantic declaration>' \
+  [--guide-consent-json '<Guide-defined values JSON object>'] \
   [--format json]
 ```
 
@@ -566,28 +561,12 @@ agent create-subscribe \
 | `--description` | Yes | - | Max 4096 chars |
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
 | `--service-description` | No | `""` | Exact service description from `task-service-select`; persisted only as bounded routing hints |
-| `--autotrade-mode` | Required when any execution configuration is supplied | none | `auto` or `notify_only`; omission creates no local execution policy. Legacy `manual` input is accepted as a notify-only alias. |
-| `--autotrade-amount` | No | - | Optional positive human-readable quote amount for each signal |
-| `--autotrade-cap` | No | - | Optional positive per-signal execution ceiling; not compared during subscription collection, enforced when a trade is admitted |
-| `--autotrade-quote` | No | `usdt` | `usdt` or `usdc` |
-| `--autotrade-environment` | For confirmed Trade Kit routes | - | User-authorized target: `live` or `demo`; never inferred or defaulted |
-| `--autotrade-margin-mode` | For confirmed Trade Kit `perp` routes | - | User-authorized margin mode: `cross` or `isolated` |
-| `--autotrade-order-policy` | For confirmed Trade Kit routes | - | User-authorized order construction: `market` or `signal_price_limit` |
-| `--autotrade-auth-mode` | No | - | User-selected Trade Kit credential source: `oauth` or `api_key`. Pass it when the user completed or explicitly selected that method. |
-| `--autotrade-settings-json` | No | - | User-confirmed settings as one bounded JSON object. Stable product fields remain flat. Unknown fields must be entries under `extra`, each requiring `label`, `type`, and `value`; optional metadata is `description`, `unit`, `constraints`, `options`, `appliesWhen`, and `confirmedAt`. Exact decimals use decimal strings. Long integers, identifiers, and digit sequences that must not lose precision use `type:string` with a string `value`. Core authorization fields and credential-like keys are rejected. |
-| `--autotrade-required-field` | No (repeatable) | - | Declare a public core, stable flat, or `extra.<key>` field the flow required the user to confirm. Public core mappings: `mode` → `--autotrade-mode`; `tradeAmount` → `--autotrade-amount`; `cap` → `--autotrade-cap`; `quote` → `--autotrade-quote`; `environment` → `--autotrade-environment`; `marginMode` → `--autotrade-margin-mode`; `orderPolicy` → `--autotrade-order-policy`; `authMode` → `--autotrade-auth-mode`. Before any remote create request, the CLI rejects a declaration whose matching value is missing and persists the normalized declaration in consent. `tradeAmountU` is an internal consent key; the CLI accepts it only as a deprecated compatibility alias and normalizes it to `tradeAmount`. |
+| `--service-guide` | Required for guide-driven signal execution | - | Exact provider Guide stored locally before broadcast at `ONCHAINOS_HOME/autotrade/guide/<jobId>.md` |
+| `--service-guide-hash` | No | computed locally | Provider SHA-256 for the exact Guide; mismatch fails locally |
+| `--autotrade-guide-semantics-json` | Required for guide-driven signal execution | - | Declarative Guide-defined Consent/Signal fields, conditions, bounded `toolId`, operation, `authorizationParameter`, and bindings; never shell code |
+| `--guide-consent-json` | No | `{}` | User-confirmed JSON object keyed only by that Guide's `consentFields`. Undeclared or credential-like keys are rejected. |
 
-The caller derives this declaration from `autoTradePreflight` and `serviceGuide`, falling back to the ASP description only when the guide is blank; the CLI does not reinterpret ASP prose. The user must explicitly select the mode. `notify_only` declares only `mode` and carries no automatic-only settings. A fixed amount is always declared as `tradeAmount`, never `tradeAmountU`. A confirmed automatic Trade Kit route declares `environment` and `orderPolicy`, plus `marginMode` for `perp`. Fields merely suggested by the ASP and local tool readiness are not declarations.
-
-When a guide asks whether a fixed derivative amount is position/notional value or margin value, persist
-the confirmed choice as top-level `tradeAmountBasis:"notional"|"margin"` in
-`--autotrade-settings-json` and declare `--autotrade-required-field tradeAmountBasis`. Do not use
-Trade Kit `tgtCcy` for this perpetual/futures sizing policy and do not retain only the numeric amount.
-
-Stable settings include `tradeAmountMode`, `tradeAmountRatio`, `tradeAmountBasis`, `leverageMode`,
-`leverage`, `maxLeverage`, `takeProfitRatio`, `stopLossRatio`, `slippage`, `maxAutoSlippage`, `gasLevel`,
-`mevProtection`, `orderSize`, `sellShares`, and `orderType`. The bounded `extra` object remains extensible for later guide-defined
-settings without a schema change.
+The Guide semantic declaration, not `autoTradePreflight` or service description, defines every Consent and Signal field. Persist user-confirmed values through `--guide-consent-json`; the CLI validates them against the declaration, writes Guide and prepared Consent Markdown before broadcast, and activates Consent only after broadcast succeeds. Fields merely suggested by the ASP and local tool readiness are not declarations.
 
 > **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
 
@@ -597,13 +576,9 @@ settings without a schema change.
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
-There is no `--copy-trade` input. Before creation, the product flow must explicitly collect `auto` or
-`notify_only`; the CLI never defaults to automatic execution. A call with no execution flags writes no
-local policy. `notify_only` accepts no automatic-only values. For explicit `auto`, amount, cap, and quote
-flags are independent optional user-authored values; a supplied cap is enforced at execution admission. JSON success reports
-`autoTradeConfigRequested` (whether any explicit flag was supplied) and `autoTradeConfigured` (whether the
-explicit policy was persisted). A newly created notify-only policy does not persist the automatic quote
-default. A persistence failure does not roll back the subscription.
+Guide execution is configured exclusively by the local Guide bundle. JSON success reports
+`guideExecutionRequested` and `guideExecutionConfigured`; activation failure leaves the
+Consent in its fail-closed `prepared` state and does not roll back the subscription.
 
 ### subscribe-detail
 
@@ -771,60 +746,34 @@ schema-version-3 response includes `scope:"local_compatibility"`,
 `authenticationChecked:false`, `environment`, `readiness`, compatibility `ready`, stable `reason`,
 `checkedAt`, `version`, `missingCapabilities`, `remediation`, and `assetChecks[]`.
 
-Active-subscription deliveries default to `executionPath:"agent_direct"`: the Agent reads
-`task-subscription-signal-direct.md`, chooses the compatible Skill/plugin, and uses the two internal
-coordination commands below around exactly one normal tool call. Set
-`ONCHAINOS_USE_LEGACY_AUTOTRADE_WRAPPER=1` (or `true`) before admitting a new delivery to use the retained
-wrapper instead. The chosen path is persisted per delivery, so changing the environment never changes an
-in-flight or replayed delivery.
+All new active-subscription deliveries use `executionPath:"agent_direct"`: the
+Agent reads `task-subscription-signal-direct.md`, chooses the compatible
+Skill/plugin, and uses the internal coordination commands below around exactly
+one normal tool call.
 
-### autotrade-direct-claim / autotrade-direct-finalize
+### autotrade-guide-intent-resolve / autotrade-direct-claim / autotrade-direct-finalize
 
-Internal exactly-once coordination for the default Agent-direct path. These commands validate persisted
-consent and record terminal outcomes; they do not classify a signal, build parameters, select a venue,
-wrap a target command, or retry it.
+Internal coordination for the Guide-driven Agent-direct path. The raw Signal may be plain text, Markdown,
+or JSON. First submit the Guide-declared field projection; the CLI validates it, binds it to the exact
+saved Signal bytes, and returns the only intent that may be claimed.
 
 ```bash
+agent autotrade-guide-intent-resolve --job-id <jobId> --delivery-id <deliveryId> \
+  --signal-values-json '<Guide-declared Signal values JSON object>'
+
 agent autotrade-direct-claim --job-id <jobId> --delivery-id <deliveryId> \
-  --amount <resolvedPolicyAmount> [--available-amount <currentAvailableAmount>] \
-  [--execution-mode <auto|one_time>]
+  --guide-intent-hash <intentHash> --amount <authorizationAmount>
 
 agent autotrade-direct-finalize --job-id <jobId> --delivery-id <deliveryId> \
   --status <submitted|failed_before_submit|unknown_after_submit> --tool-id <safeToolId> \
   [--receipt-id <orderOrTransactionId>] [--reason <safeReason>]
 ```
 
-`--available-amount` is required only for a persisted percentage amount policy. It is the fresh available
-quote amount from the same selected tool account/product; the CLI verifies
-`resolvedPolicyAmount = currentAvailableAmount * tradeAmountRatio` before claiming.
-
 Claim only immediately before the single money-moving call and proceed only when `data.allowed:true`.
+The JSON argument is an extraction result, not the raw Signal; it may contain only Signal fields declared
+by the matching Guide.
 `submitted` requires a concrete tool-documented receipt ID. A repeated claim never authorizes another
-call; a repeated finalize returns the original durable outcome. Neither command permits crossing to the
-legacy path.
-
-### autotrade-execute (retained legacy path)
-
-`agent autotrade-execute` does not repeat readiness. It validates the supported
-`spot|swap|futures|option|event` operation, persisted consent/grant/amount/settings, explicit
-`--live`/`--demo`, command shape, and idempotency, then spawns exactly one final Trade Kit command.
-That target command is the sole authority for authentication and actual trading availability. The
-gateway also canonicalizes split
-`--tpOrdPx -1` / `--slOrdPx -1` argv pairs to the Trade Kit-compatible equals form before spawn. Completed
-non-zero commands expose a bounded, redacted reason in both the persisted outcome and scoped AI-session
-notification. Conclusive local argument failures or explicit venue rejections are `failed_before_submit`;
-opaque, timeout, or transport failures remain `unknown_after_submit` and are never automatically retried.
-
-The local states are `ready`, `missing`, `verification_unknown`, and `incompatible`.
-`verification_unknown` means only that local discovery was inconclusive; it is non-blocking and must
-never be reported as logged out, unauthenticated, or lacking trade permission. Missing/incompatible
-results expose fixed install/upgrade remediation. Authentication errors come only from the final target
-command and are persisted as its concrete sanitized result. A conclusive Trade Kit authentication failure
-is `status:"failed_before_submit"` with the optional
-`failureCategory:"authentication_required"`; other failures omit `failureCategory`. This category is the
-only execution-time trigger for the Connect Trade Kit / Later recovery interaction. Connecting delegates
-site selection and OAuth/API-key recovery to `okx-cex-auth`, but never reruns readiness and never retries
-or replays the terminal delivery. No failed or unknown delivery is automatically retried or replayed.
+call; a repeated finalize returns the original durable outcome.
 
 ### autotrade-grant-check
 
