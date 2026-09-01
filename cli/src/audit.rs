@@ -563,6 +563,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SessionCleanup { .. } => "session-cleanup".into(),
         AgentCommand::TaskInProgress { .. } => "task-in-progress".into(),
         AgentCommand::CreateSubscribe { .. } => "create-subscribe".into(),
+        AgentCommand::ServiceParamUpdate { .. } => "service-param-update".into(),
         AgentCommand::SubscribeCancel { .. } => "subscribe-cancel".into(),
         AgentCommand::StartAutorenew { .. } => "start-autorenew".into(),
         AgentCommand::SubscribeReject { .. } => "subscribe-reject".into(),
@@ -578,6 +579,10 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SetAsp { .. } => "set-asp".into(),
         AgentCommand::ResetAsp { .. } => "reset-asp".into(),
         AgentCommand::UserReject { .. } => "user-reject".into(),
+        AgentCommand::AcceptJobByProvider { .. } => "accept-job-by-provider".into(),
+        AgentCommand::DeclineJobByProvider { .. } => "decline-job-by-provider".into(),
+        AgentCommand::AcceptSubscription { .. } => "accept-subscription".into(),
+        AgentCommand::DeclineSubscription { .. } => "decline-subscription".into(),
     }
 }
 

@@ -11,7 +11,7 @@
 - **Common (any role)**: `common context` · `communication-check` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
 - **User**: `create-task` · `task-create-prepare` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `complete` · `reject` · `close` · `claim-auto-refund` · `task-attach`
 - **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
-- **ASP**: `apply` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
+- **ASP**: `accept-job-by-provider` · `decline-job-by-provider` · `accept-subscription` · `decline-subscription` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
 - **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
 - **Evaluator Agent**: `evidence-info` · `vote-commit` · `vote-reveal` · `arbitration-claim` · `arbitration-claimable` · `stake` · `increase-stake` · `request-unstake` · `claim-unstake` · `cancel-unstake` · `staking-config` · `my-stake`
@@ -773,7 +773,39 @@ Output `data`: `{ "list": [ { "deviceId", "deviceName", "lastOnlineTime" (ms), "
 
 ## ASP
 
-### apply
+### v2 designated-provider decision
+
+```text
+agent accept-job-by-provider <jobId> --agent-id <aspAgentId>
+agent decline-job-by-provider <jobId> --agent-id <aspAgentId> --reason <text>
+agent accept-subscription <jobId> --agent-id <aspAgentId>
+agent decline-subscription <jobId> --agent-id <aspAgentId> --reason <text>
+```
+
+These commands are for `job_asp_selected` / `sub_open` after the buyer has
+already created and funded. Accept uses bizType 203 (single) or 205
+(subscription); decline uses 202 or 206. Decline reason is required and capped
+at 512 Unicode characters. They are new command names, not aliases of `apply`
+or `asp-reject`.
+
+### service-param-update
+
+```text
+agent service-param-update <jobId> --agent-id <buyerAgentId> \
+  --task-type <single|subscription> --request-id <id> --round <1|2|3> \
+  --service-params '<complete JSON>'
+```
+
+Replaces the complete backend `serviceParams` during a §1.3 clarification
+round. It calls the single-task or subscription `serviceParam` endpoint exactly
+once and succeeds only when the backend returns `data=null`. Send the structured
+`task_params_response` through `okx-a2a session send` only after the output says
+`backendUpdated=true`. Successful request IDs are persisted under
+`$OKX_AGENT_TASK_HOME/task-params/` (or
+`~/.okx-agent-task/task-params/`), deduplicated, required to be sequential, and
+capped at three successful rounds per job.
+
+### apply (legacy lifecycle only)
 
 ASP applies for a task on-chain — escrow path only (params provided by `next-action` playbook)
 

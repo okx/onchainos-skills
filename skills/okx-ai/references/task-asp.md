@@ -16,19 +16,17 @@ The task state machine has moved into the CLI (`onchainos agent next-action`) �
 
 ---
 
-## 🛑 `deliver` is gated by `job_accepted`
+## 🛑 Provider work is gated by v2 acceptance
 
-`apply` going on-chain does NOT advance the task status — it stays `created`. The User Agent then has to run `confirm-accept`, which triggers the `job_accepted` system event. **Only after `job_accepted` arrives** may the ASP run `onchainos agent deliver` / `okx-a2a xmtp-send` the deliverable.
+For the §1.3 designated-provider flow, the buyer creates and funds first. On
+`job_asp_selected` (single) or `sub_open` (subscription), follow
+[task-asp-accept.md](task-asp-accept.md): verify the exact registered Service,
+produce `ACCEPT / NEED_PARAMS / REJECT`, and use the new provider-decision
+commands. Do not use legacy `apply` or `asp-reject`.
 
-Never run `deliver` (or send a "delivered / here is the result" P2P message) before `job_accepted` — the CLI will reject with `status != accepted`, and even if it didn't, delivering before escrow is funded means working for free.
-
-Real work execution (calling external tools / generating output / etc.) ALSO waits for `job_accepted`. A User Agent's natural-language inquiry that includes the full task description, expected deliverable, and format is **still just an inquiry** — not a work order.
-
-> **Deprecated `--autotrade`:** the CLI still accepts this argument so older ASP scripts do not fail,
-> but ignores its value completely. It is never parsed, validated, appended to the XMTP message, or used
-> to drive User-side execution. Put the complete signal in `--deliverable-text` (or the delivered file).
-
----
+Real work and delivery start only after the ASP accept mutation is confirmed by
+the corresponding accepted/active event. A natural-language request is not itself
+authorization to execute.
 
 ## Peer Message: `[user_rejected]`
 
@@ -66,13 +64,13 @@ Trigger: `my provided subscriptions` / `subscriptions I provide`. Command: `onch
 
 ## Subscription events (`sub_*`)
 
-For the ASP, **most** subscription events are display-only notifications: call `next-action --role asp`
-and render the returned message; don't push a decision, don't wait, don't transition state. The **one
-exception is `sub_user_reject`** — it requires an ASP refund/dispute decision (see its row below), so do
-NOT treat it as display-only or ignore it.
+For the ASP, most later subscription events are display-only notifications. Two
+events are action-required: `sub_open` owns the initial provider decision and
+`sub_user_reject` owns the later refund/dispute decision.
 
 | Event | Action |
 |---|---|
+| `sub_open` | **Run the §1.3 provider decision.** Fetch latest subscription detail, require CREATED, verify the exact registered Service, then return exactly `ACCEPT / NEED_PARAMS / REJECT` and follow [task-asp-accept.md](task-asp-accept.md). |
 | `sub_asp_selected` | Render the CLI's canonical `Content:` per the language rule below. End turn. |
 | `sub_complete_notify` / `sub_close_notify` / `sub_failed_notify` | Render the CLI's canonical terminal `Content:` per the language rule below, then follow `session-cleanup`. End turn. |
 | `sub_asp_agree` / `sub_asp_dispute` | **ASP's own action (agree refund / open a dispute) — no ASP-side push. Silently ignore. End turn.** Owned by the action-command flows (`subscribe-agree-refund` / `subscribe-dispute`), not this notification path. |

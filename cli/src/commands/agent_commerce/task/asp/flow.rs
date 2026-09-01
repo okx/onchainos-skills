@@ -8,6 +8,164 @@
 
 use crate::commands::agent_commerce::task::common::util::short_job_id;
 
+#[derive(Clone, Copy)]
+enum ProviderAssignmentType {
+    Single,
+    Subscription,
+}
+
+async fn provider_assignment_playbook(
+    job_id: &str,
+    agent_id: &str,
+    assignment_type: ProviderAssignmentType,
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    message: Option<&serde_json::Value>,
+) -> String {
+    let task_type = match assignment_type {
+        ProviderAssignmentType::Single => "single",
+        ProviderAssignmentType::Subscription => "subscription",
+    };
+    let event_name = match assignment_type {
+        ProviderAssignmentType::Single => "job_asp_selected",
+        ProviderAssignmentType::Subscription => "sub_open",
+    };
+    let accept_command = match assignment_type {
+        ProviderAssignmentType::Single => "accept-job-by-provider",
+        ProviderAssignmentType::Subscription => "accept-subscription",
+    };
+    let decline_command = match assignment_type {
+        ProviderAssignmentType::Single => "decline-job-by-provider",
+        ProviderAssignmentType::Subscription => "decline-subscription",
+    };
+    let p = match prefetched {
+        Some(value) => value,
+        None => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 Latest task detail could not be fetched. Stop with an error; do NOT accept, decline, or send task_params_request.\n\
+                 jobId={job_id}\n"
+            );
+        }
+    };
+    match p.status {
+        Some(0) => {}
+        Some(1) => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 Latest backend status is ACCEPTED/ACTIVE. This is a duplicate trigger: end idempotently.\n\
+                 Do NOT repeat the mutation or broadcast. jobId={job_id}\n"
+            );
+        }
+        Some(status) => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 Latest backend status is {status}, not CREATED(0). End idempotently; do NOT mutate or broadcast.\n\
+                 jobId={job_id}\n"
+            );
+        }
+        None => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 Latest backend detail has no status. Stop with an error; do NOT accept or decline.\n\
+                 jobId={job_id}\n"
+            );
+        }
+    }
+
+    let msg_str = |key: &str| {
+        message
+            .and_then(|value| value.get(key))
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+    };
+    let service_id = msg_str("serviceId")
+        .or_else(|| p.service_id.as_deref().filter(|value| !value.is_empty()))
+        .unwrap_or("");
+    if service_id.is_empty() {
+        return format!(
+            "[Current state] {event_name}\n[Role] ASP\n\n\
+             No serviceId is present. Run the v2 decline command (reason is required, ≤512 Unicode characters):\n\
+             ```bash\n\
+             onchainos agent {decline_command} {job_id} --agent-id {agent_id} --reason \"designated serviceId is missing\"\n\
+             ```\n"
+        );
+    }
+
+    let service = match crate::commands::agent_commerce::task::common::find_service(
+        agent_id, service_id,
+    )
+    .await
+    {
+        Ok(Some(service)) => service,
+        Ok(None) => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 `onchainos agent service-list --agent-id {agent_id} --service-id {service_id}` completed but returned no matching service.\n\
+                 Run exactly:\n\
+                 ```bash\n\
+                 onchainos agent {decline_command} {job_id} --agent-id {agent_id} --reason \"designated service is not registered\"\n\
+                 ```\n"
+            );
+        }
+        Err(error) => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 Service lookup failed: {error:#}\n\
+                 Stop with an error. Do NOT decline: a timeout, malformed response, or temporary service-list failure is not a capability rejection.\n\
+                 jobId={job_id}\n"
+            );
+        }
+    };
+
+    let service_name = service
+        .get("serviceName")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let service_description = service
+        .get("serviceDescription")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let buyer_agent_id = p.user_agent_id.as_deref().unwrap_or("<buyerAgentId>");
+    let service_params = p.service_params.as_deref().unwrap_or("{}");
+
+    format!(
+        "[Current state] {event_name}; latest backend status=CREATED(0)\n\
+         [Role] ASP\n\n\
+         Evaluate ONCE using only these four inputs:\n\
+         - task description: {description}\n\
+         - serviceParams: {service_params}\n\
+         - attachments: inspect the attachments already forwarded into this job session\n\
+         - registered service: {service_name} (`{service_id}`): {service_description}\n\n\
+         Output exactly one internal conclusion: `ACCEPT`, `NEED_PARAMS`, or `REJECT`. Do not invent a fourth result.\n\n\
+         **ACCEPT** — immediately before mutation, rely on the latest detail above (CREATED). Run:\n\
+         ```bash\n\
+         onchainos agent {accept_command} {job_id} --agent-id {agent_id}\n\
+         ```\n\
+         The command calls the documented {task_type} provider-accept endpoint, signs uopData, broadcasts bizType {accept_type}, and requires a full receipt. End the turn; duplicate accepted events must not repeat it.\n\n\
+         **REJECT** — generate one concrete reason (required, ≤512 Unicode characters), then run:\n\
+         ```bash\n\
+         onchainos agent {decline_command} {job_id} --agent-id {agent_id} --reason \"<reason>\"\n\
+         ```\n\
+         The reason is placed in broadcast bizContext; do not use legacy `asp-reject`.\n\n\
+         **NEED_PARAMS** — send one natural-language question followed by the structured block below through the existing A2A session:\n\
+         ```bash\n\
+         okx-a2a session send --job-id {job_id} --to-agent-id {buyer_agent_id} --content \"<natural-language request>\\n\\n[intent:task_params_request]\\n{{\\\"version\\\":1,\\\"jobId\\\":\\\"{job_id}\\\",\\\"taskType\\\":\\\"{task_type}\\\",\\\"requestId\\\":\\\"<unique-request-id>\\\",\\\"round\\\":<1-3>,\\\"missing\\\":[\\\"<field>\\\"]}}\" --json\n\
+         ```\n\
+         Count only a response for which the buyer successfully updated the backend as a successful round. Ignore duplicate requestId/response messages. Maximum: 3 successful update/response rounds. After the third successful update, fetch current detail and evaluate once more; if still NEED_PARAMS, decline.\n\n\
+         When `[intent:task_params_response]` arrives: fetch latest detail again. If status is not CREATED, stop. If CREATED, evaluate the updated complete serviceParams again. The buyer-side required ordering is:\n\
+         ```bash\n\
+         onchainos agent service-param-update {job_id} --agent-id {buyer_agent_id} --task-type {task_type} --request-id '<request-id>' --round <same-round> --service-params '<complete JSON>'\n\
+         # only after exit 0 and backendUpdated=true:\n\
+         okx-a2a session send --job-id {job_id} --to-agent-id {agent_id} --content \"[intent:task_params_response]\\n{{\\\"version\\\":1,\\\"jobId\\\":\\\"{job_id}\\\",\\\"requestId\\\":\\\"<request-id>\\\",\\\"round\\\":<same-round>,\\\"backendUpdated\\\":true}}\" --json\n\
+         ```\n",
+        description = p.description,
+        accept_type = match assignment_type {
+            ProviderAssignmentType::Single => 203,
+            ProviderAssignmentType::Subscription => 205,
+        },
+    )
+}
+
 /// x402 / A2MCP next-action playbook for the ASP.
 ///
 /// In the x402 flow the User Agent paid the ASP at request time via the A2MCP
@@ -126,51 +284,6 @@ fn reject_expire_time(message: Option<&serde_json::Value>) -> Option<i64> {
         .and_then(|m| m.get("expireTime"))
         .and_then(|v| v.as_i64())
         .filter(|&t| t > 0)
-}
-
-/// Pure ASP price-gate decision: pick the `(status, summary, action)` tuple for
-/// the designated-service accept flow. Extracted from `generate_next_action` so
-/// the branch is unit-testable (the enclosing async fn does network I/O).
-///
-/// FR-3: when `test_flag` is set (backend-derived sandbox-review allowlist), the
-/// numeric quote-vs-fee gate is skipped and the decision is the exact same accept
-/// tuple as a normal `offer >= fee` accept — so the emitted playbook text is
-/// byte-identical to a normal accept and carries no bypass marker.
-fn price_gate_decision(
-    offer_num: Option<f64>,
-    fee_num: Option<f64>,
-    offer_amount: &str,
-    svc_fee: &str,
-    user_token_symbol: &str,
-    test_flag: bool,
-) -> (&'static str, String, &'static str) {
-    // Bind the accept tuple once so the test-accept path is byte-identical to it.
-    let accept = || {
-        (
-            "OK",
-            format!("User Agent offer {offer_amount} ≥ registered fee {svc_fee} ✅"),
-            "Apply at offer amount.",
-        )
-    };
-    match (offer_num, fee_num) {
-        _ if test_flag => accept(),
-        (Some(o), Some(f)) if o >= f => accept(),
-        (Some(_), Some(_)) => (
-            "TOO_LOW",
-            format!("User Agent offer {offer_amount} < registered fee {svc_fee} ❌"),
-            "Reject — price below registered floor.",
-        ),
-        (_, None) => (
-            "ESTIMATE",
-            format!("registered fee not set; User Agent offer {offer_amount} {user_token_symbol} — judge by task complexity"),
-            "If offer is fair for the workload → apply at offer; else counter-apply at your fair price (do NOT reject for price alone).",
-        ),
-        _ => (
-            "PARSE_FAIL",
-            format!("could not parse offer=`{offer_amount}` fee=`{svc_fee}`"),
-            "Treat as ESTIMATE; LLM judges based on complexity.",
-        ),
-    }
 }
 
 /// Generate the structured next-action prompt for the ASP based on event.
@@ -729,226 +842,14 @@ pub async fn generate_next_action(
              Designated tasks arrive via a `job_asp_selected` event when the User Agent designates this ASP.\n".to_string(),
 
         // ─── Scene 1.5: User Agent designated this ASP for a private task ──────────
-        Event::JobAspSelected => {
-            // CODE-DRIVEN PATH: fetch service-list, match by serviceId, pre-compute price
-            // gate, emit deterministic playbook. LLM only does the semantic capability
-            // judgment (does task description fit service description?) and picks ONE
-            // of two pre-built actions (apply or okx-a2a xmtp-send-reject). Single turn, no
-            // intermediate CLI calls in the LLM context.
-            // Field sourcing priority — `--message` envelope wins (it's the inbound
-            // system event payload, source-of-truth for this turn). Falls back to
-            // `prefetched` (GET /task API response) when the envelope omits a field.
-            let p = prefetched;
-            let msg_str = |k: &str| -> Option<&str> {
-                message.and_then(|m| m.get(k)).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
-            };
-
-            let service_id = msg_str("serviceId")
-                .or_else(|| p.and_then(|x| x.service_id.as_deref()).filter(|s| !s.is_empty()))
-                .unwrap_or("");
-            // User Agent's offered amount: task-level `tokenAmount`. Envelope wins over prefetched.
-            let offer_amount = msg_str("tokenAmount")
-                .or_else(|| p.map(|x| x.token_amount.as_str()).filter(|s| !s.is_empty()))
-                .unwrap_or("");
-            // User Agent's token symbol — task-level; envelope wins. Stays as Option so missing
-            // tokenSymbol triggers the incomplete-terms guard (do NOT silent-fallback to USDT
-            // — applying with the wrong token would lock the wrong escrow currency).
-            let user_token_symbol_opt = msg_str("tokenSymbol")
-                .or_else(|| p.map(|x| x.token_symbol.as_str()).filter(|s| !s.is_empty() && *s != "?"));
-            let task_title = msg_str("jobTitle")
-                .or_else(|| msg_str("title"))
-                .or_else(|| p.map(|x| x.title.as_str()).filter(|s| !s.is_empty()))
-                .unwrap_or("");
-            let task_desc = msg_str("description")
-                .or_else(|| p.map(|x| x.description.as_str()).filter(|s| !s.is_empty()))
-                .unwrap_or("");
-
-            // Render-helper for the three early-bailout branches (no service / empty
-            // offer / missing token symbol). All share: notify + end turn, no on-chain
-            // action, no asp-reject (User Agent is in incomplete state and needs to re-route).
-            let render_bailout = |header: &str, user_notify: &str| -> String {
-                format!(
-                    "[Current state] job_asp_selected — {header}. jobId=`{job_id}` agentId={agent_id}\n\n\
-                     **Notify the user, then end the turn**:\n\n\
-                     🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                     ```bash\n\
-                     onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                     ```\n\
-                     content:\n\
-                     {user_notify}\n"
-                )
-            };
-
-            if service_id.is_empty() {
-                let user_notify = super::content::job_asp_selected_no_service_notify(job_id);
-                render_bailout("designated by User Agent, but no specific `serviceId` was pinned", &user_notify)
-            } else if offer_amount.is_empty() {
-                let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenAmount");
-                render_bailout("designation envelope missing `tokenAmount`", &user_notify)
-            } else if user_token_symbol_opt.is_none() {
-                let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenSymbol");
-                render_bailout("designation envelope missing `tokenSymbol`", &user_notify)
-            } else {
-                let user_token_symbol = user_token_symbol_opt.unwrap();
-                // CODE: fetch service catalog and find the designated entry.
-                let matched = crate::commands::agent_commerce::task::common::find_service(agent_id, service_id).await.ok().flatten();
-
-                // Build a reject template factory — the reason can be either a code-determined
-                // fixed string (passed verbatim) or the LLM-fillable `<reason>` placeholder.
-                // Backend off-chain endpoint: POST /priapi/v1/aieco/task/{jobId}/asp/reject — no signing required.
-                let build_reject_template = |reason_for_cli: &str, reason_for_notify: &str| {
-                    let notify_body = super::content::job_asp_selected_rejected_notify(job_id, reason_for_notify);
-                    format!(
-                        "**REJECT path** — run in order, then end the turn:\n\
-                         ❌ Do NOT call `apply`. ❌ Do NOT `okx-a2a xmtp-send` the User Agent. (Agent-side constraint; do NOT include in any `--content` / `--reason` text below.)\n\n\
-                         ```bash\n\
-                         onchainos agent asp-reject {job_id} --agent-id {agent_id} --reason \"{reason_for_cli}\"\n\
-                         ```\n\
-                         Then notify the user:\n\n\
-                         🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                         ```bash\n\
-                         onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                         ```\n\
-                         content (only the lines between `=== BEGIN ===` and `=== END ===` — do NOT include the markers themselves, do NOT append anything else):\n\
-                         === BEGIN ===\n\
-                         {notify_body}\n\
-                         === END ===\n"
-                    )
-                };
-                // Generic LLM-driven reject template — only `capability mismatch` is
-                // LLM-decidable here. `price too low` is handled by the TOO_LOW branch
-                // (code-decided) and `designated service not registered` by the
-                // matched=None branch (code-decided), so the menu collapses to one
-                // option. Kept as a placeholder so the CLI / notify wording stays
-                // verbatim-aligned across the rendered playbook.
-                let reject_template = build_reject_template(
-                    "capability mismatch",
-                    "capability mismatch — the designated service does not match the task",
-                );
-
-                match matched {
-                    None => {
-                        // CODE-decided REJECT: service not in catalog. Reason is fully known.
-                        let reject_template_fixed = build_reject_template(
-                            "designated service not registered",
-                            "designated service not registered",
-                        );
-                        format!(
-                            "[Auto-decision] ❌ REJECT — designated `serviceId={service_id}` is NOT in your registered catalog (service-list returned no match). This is the ONLY action; no LLM judgment needed.\n\n\
-                             Task: {task_title}\n\
-                             User Agent offer: {offer_amount} {user_token_symbol}\n\n\
-                             {reject_template_fixed}"
-                        )
-                    }
-                    Some(svc) => {
-                        let svc_name = svc.get("serviceName").and_then(|v| v.as_str()).unwrap_or("");
-                        let svc_desc = svc.get("serviceDescription").and_then(|v| v.as_str()).unwrap_or("");
-                        let svc_fee  = svc.get("fee").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).unwrap_or("");
-
-                        // CODE: numerical price gate.
-                        // `fee_num=None` means "service has no registered fee" → LLM estimates by complexity.
-                        let offer_num = offer_amount.parse::<f64>().ok();
-                        let fee_num = if svc_fee.is_empty() { None } else { svc_fee.parse::<f64>().ok() };
-                        // FR-3: allowlisted sandbox tasks skip the price gate (backend-derived).
-                        let test_flag = prefetched.map(|pf| pf.test_flag).unwrap_or(false);
-                        let (price_status, price_summary, price_action) = price_gate_decision(
-                            offer_num,
-                            fee_num,
-                            offer_amount,
-                            svc_fee,
-                            user_token_symbol,
-                            test_flag,
-                        );
-
-                        // Deterministic apply command — uses User Agent's token symbol (per spec).
-                        // After apply, push a user-facing notification via `onchainos agent user-notify`.
-                        let apply_failed_notify = super::content::job_asp_selected_apply_failed_notify(job_id, "<one-line error from apply's stderr>");
-                        let apply_template = format!(
-                            "**APPLY path** — run apply, then branch by exit code:\n\
-                             ```bash\n\
-                             onchainos agent apply {job_id} --agent-id {agent_id} --token-amount {offer_amount} --token-symbol {user_token_symbol}\n\
-                             ```\n\n\
-                             ✅ **On success** (exit code 0 + `txHash` in stdout) — end the turn directly; wait for the `provider_applied` system event. \n\n\
-                             ❌ **On failure** (non-zero exit / stderr / no txHash) — push a failure notification instead:\n\n\
-                             🌐 **Localize first** — fill `<one-line error from apply's stderr>`, then rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                             ```bash\n\
-                             onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                             ```\n\
-                             content:\n\
-                             {apply_failed_notify}\n\n\
-                             Then end the turn. Do NOT retry apply automatically — the user will decide manually.\n"
-                        );
-
-                        // Counter-offer apply template — same `apply` CLI as above but `--token-amount`
-                        // is a placeholder the LLM fills with its own fair price. Token symbol stays
-                        // the User Agent's specified token (we don't counter the currency, only the amount).
-                        let apply_counter_template = format!(
-                            "**APPLY-COUNTER path** — capability fits but the User Agent's offer is unfair for the workload. Apply at YOUR fair price (User Agent will see the difference and decide whether to confirm-accept):\n\
-                             ```bash\n\
-                             onchainos agent apply {job_id} --agent-id {agent_id} --token-amount <YOUR_FAIR_PRICE> --token-symbol {user_token_symbol}\n\
-                             ```\n\
-                             ⚠️ `<YOUR_FAIR_PRICE>` — substitute a numeric value YOU judge fair for this workload (e.g. `0.05`). Same token as the User Agent's offer ({user_token_symbol}); do NOT change the symbol.\n\
-                             ⚠️ Do NOT self-discount to 0 / free. Do NOT throw a wildly inflated number (e.g. 100×). Stay within the tier the workload actually fits.\n\n\
-                             ✅ **On success** (exit 0 + `txHash`) — end the turn directly; wait for the `provider_applied` system event. \n\n\
-                             ❌ **On failure** — same as APPLY path: push failure notification, do NOT auto-retry.\n"
-                        );
-
-                        // Decide which branches the LLM can take, based on the code-computed price gate.
-                        let llm_decision = match price_status {
-                            "OK" => format!(
-                                "**LLM judgment** — single question: does the service description capability-match the task description?\n\
-                                 \x20\x20• YES → run **APPLY path** below.\n\
-                                 \x20\x20• NO  → run **REJECT path** below (reason = capability mismatch).\n\n\
-                                 {apply_template}\n\
-                                 {reject_template}"
-                            ),
-                            "TOO_LOW" => {
-                                // Price-too-low reason is fully determined in code; no LLM judgment.
-                                let too_low_reason = format!(
-                                    "price below registered fee: offer {offer_amount} {user_token_symbol} < registered fee {svc_fee} {user_token_symbol}"
-                                );
-                                let too_low_template = build_reject_template(&too_low_reason, &too_low_reason);
-                                format!(
-                                    "**Auto-decision** — price gate already FAILED in code (see Price below). Capability is moot; run **REJECT path** regardless.\n\n\
-                                     {too_low_template}"
-                                )
-                            },
-                            "ESTIMATE" | "PARSE_FAIL" => format!(
-                                "**LLM judgment** — two questions:\n\
-                                 \x20\x20• Capability: does the service description match the task?\n\
-                                 \x20\x20• Price: is the User Agent's offer fair for this task's workload?\n\
-                                 \x20\x20• Capability NO → run **REJECT path** below.\n\
-                                 \x20\x20• Capability YES + price fair → run **APPLY path** below.\n\
-                                 \x20\x20• Capability YES + price unfair (offer below the right tier for this workload) → run **APPLY-COUNTER path** at YOUR fair price. **Counter instead of rejecting — don't refuse work that you can actually do; let the User Agent decide whether to confirm-accept at your price.**\n\n\
-                                 💰 **Workload tier rubric** (no registered fee on this service — estimate by complexity):\n\
-                                 \x20\x20- ✅ Reference comparable tasks / the User Agent's offer / task complexity for a reasonable estimate. If the User Agent's offer is already at-or-above your workload estimate → ACCEPT; never counter down.\n\
-                                 \x20\x20- ❌ Don't blindly throw out something like 100 USDT / USDG.\n\
-                                 \x20\x20- ❌ Don't self-discount to 0 / free — `price is always asked, never assumed`.\n\
-                                 \x20\x20- ⚠️ The ranges below are denominated in USD-pegged stablecoins (**USDT / USDG**). If `{user_token_symbol}` is one of these, use the ranges directly; if it is a non-USD token (ETH / BTC / a non-stable token), convert the ranges to that token's spot-price equivalent before judging — DO NOT apply the numeric ranges as-is.\n\
-                                 \x20\x20- Simple query tasks (1 API call / 1 datum) typically 0.001–0.05 USDT/USDG; complex tasks (multi-step / long text generation / reports) 0.05–1 USDT/USDG; deep research > 1 USDT/USDG requires solid justification.\n\n\
-                                 {apply_template}\n\
-                                 {apply_counter_template}\n\
-                                 {reject_template}"
-                            ),
-                            _ => unreachable!(),
-                        };
-
-                        format!(
-                            "[Auto-decision context — pre-computed by CLI]\n\
-                             \x20\x20Task title:          {task_title}\n\
-                             \x20\x20Task description:    {task_desc}\n\
-                             \x20\x20Designated service:  {svc_name} (`{service_id}`)\n\
-                             \x20\x20Service description: {svc_desc}\n\
-                             \x20\x20User Agent offer:    {offer_amount} {user_token_symbol}\n\
-                             \x20\x20Price gate ({price_status}): {price_summary}\n\
-                             \x20\x20Recommended action:  {price_action}\n\
-                             \x20\x20Apply currency:      {user_token_symbol} (User Agent's specified token)\n\n\
-                             {llm_decision}"
-                        )
-                    }
-                }
-            }
-        },
+        Event::JobAspSelected => provider_assignment_playbook(
+            job_id,
+            agent_id,
+            ProviderAssignmentType::Single,
+            prefetched,
+            message,
+        )
+        .await,
 
         // ─── User Agent-driven tx receipt notifications; no ASP action needed ─────
         Event::JobClosed
@@ -1318,8 +1219,16 @@ pub async fn generate_next_action(
 
         // sub_asp_agree is the ASP's OWN action (agree refund); the existing action-command
         // flow (subscribe-agree-refund) owns that lifecycle, not this notification path.
-        Event::SubOpen
-        | Event::SubCreated
+        Event::SubOpen => provider_assignment_playbook(
+            job_id,
+            agent_id,
+            ProviderAssignmentType::Subscription,
+            prefetched,
+            message,
+        )
+        .await,
+
+        Event::SubCreated
         | Event::SubCancel
         | Event::SubTrialIntoActive
         | Event::SubExpireWarn
@@ -1501,6 +1410,52 @@ mod tests {
             Some(&msg),
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn provider_assignment_duplicate_accept_is_idempotent() {
+        let single = crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+            &json!({"status": 1}),
+        );
+        let output = provider_assignment_playbook(
+            ASP_JOB_ID,
+            ASP_AGENT_ID,
+            ProviderAssignmentType::Single,
+            Some(&single),
+            None,
+        )
+        .await;
+        assert!(output.contains("duplicate trigger"));
+        assert!(output.contains("Do NOT repeat the mutation or broadcast"));
+        assert!(!output.contains("accept-job-by-provider 0xsub01"));
+
+        let subscription = crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+            &json!({"subStatus": 1}),
+        );
+        let output = provider_assignment_playbook(
+            ASP_JOB_ID,
+            ASP_AGENT_ID,
+            ProviderAssignmentType::Subscription,
+            Some(&subscription),
+            None,
+        )
+        .await;
+        assert!(output.contains("ACCEPTED/ACTIVE"));
+        assert!(!output.contains("accept-subscription 0xsub01"));
+    }
+
+    #[tokio::test]
+    async fn provider_assignment_requires_fresh_detail() {
+        let output = provider_assignment_playbook(
+            ASP_JOB_ID,
+            ASP_AGENT_ID,
+            ProviderAssignmentType::Single,
+            None,
+            None,
+        )
+        .await;
+        assert!(output.contains("could not be fetched"));
+        assert!(output.contains("do NOT accept, decline"));
     }
 
     #[tokio::test]
@@ -1732,50 +1687,5 @@ mod tests {
         assert!(!out.contains("+58692"), "no five-digit year: {out}");
     }
 
-    // ── FR-3: price gate test_flag short-circuit (sandbox ASP review) ────
 
-    // test_flag forces OK even when the offer is below the registered fee.
-    #[test]
-    fn price_gate_test_flag_forces_ok_when_below_fee() {
-        let (status, _summary, action) =
-            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", true);
-        assert_eq!(status, "OK");
-        assert_eq!(action, "Apply at offer amount.");
-    }
-
-    // Normal path (test_flag=false): offer below fee ⇒ TOO_LOW (regression).
-    #[test]
-    fn price_gate_normal_below_fee_is_too_low() {
-        let (status, _summary, action) =
-            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", false);
-        assert_eq!(status, "TOO_LOW");
-        assert_eq!(action, "Reject — price below registered floor.");
-    }
-
-    // Normal path (test_flag=false): offer at/above fee ⇒ OK.
-    #[test]
-    fn price_gate_normal_at_or_above_fee_is_ok() {
-        let (status, _summary, action) =
-            price_gate_decision(Some(2.0), Some(1.0), "2", "1", "USDT", false);
-        assert_eq!(status, "OK");
-        assert_eq!(action, "Apply at offer amount.");
-    }
-
-    // §6 / A-CLISPEC invariant 2: a test_flag accept is byte-identical to a
-    // normal accept — same tuple, so no downstream consumer can distinguish them.
-    #[test]
-    fn price_gate_test_flag_ok_string_matches_normal_ok() {
-        // Test-accept: below fee but test_flag=true.
-        let test_accept =
-            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", true);
-        // Normal-accept: same amounts, offer >= fee, test_flag=false.
-        let normal_accept =
-            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", false);
-        // Prove the normal-accept path with identical inputs (offer >= fee).
-        let normal_ok = price_gate_decision(Some(1.0), Some(1.0), "0.00001", "1", "USDT", false);
-        // The normal below-fee case rejects; the test path accepts with the OK tuple.
-        assert_eq!(normal_accept.0, "TOO_LOW");
-        // The test-accept tuple is byte-identical to a genuine OK accept.
-        assert_eq!(test_accept, normal_ok);
-    }
 }

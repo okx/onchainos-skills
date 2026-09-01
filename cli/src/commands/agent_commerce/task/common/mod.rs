@@ -191,9 +191,15 @@ impl PreFetchedTaskContext {
             token_amount: v["tokenAmount"].as_str().unwrap_or("").to_string(),
             payment_mode: v["paymentMode"].as_i64(),
             max_budget: v["paymentMostTokenAmount"].as_str().map(String::from),
-            provider_agent_id: v["providerAgentId"].as_str().map(String::from),
-            user_agent_id: v["buyerAgentId"].as_str().map(String::from),
-            status: v["status"].as_i64(),
+            provider_agent_id: v["providerAgentId"]
+                .as_str()
+                .or_else(|| v["aspAgentId"].as_str())
+                .map(String::from),
+            user_agent_id: v["buyerAgentId"]
+                .as_str()
+                .or_else(|| v["userAgentId"].as_str())
+                .map(String::from),
+            status: v["status"].as_i64().or_else(|| v["subStatus"].as_i64()),
             deliverable: None,
             service_id: v["serviceId"].as_str().map(String::from),
             service_token_address: v["serviceTokenAddress"].as_str().map(String::from),
@@ -535,11 +541,24 @@ pub async fn handle_profile(agent_id: &str) -> Result<()> {
 /// Spawn `onchainos agent service-list --agent-id <id>` as subprocess and
 /// return the parsed `data` field (services array/object).
 pub(crate) async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Value> {
+    spawn_service_list_filtered(agent_id, None).await
+}
+
+/// Spawn the public service-list command, optionally applying its documented
+/// backend-side `--service-id` filter.
+async fn spawn_service_list_filtered(
+    agent_id: &str,
+    service_id: Option<&str>,
+) -> Result<serde_json::Value> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
 
-    let output = tokio::process::Command::new(&exe)
-        .args(["agent", "service-list", "--agent-id", agent_id])
+    let mut command = tokio::process::Command::new(&exe);
+    command.args(["agent", "service-list", "--agent-id", agent_id]);
+    if let Some(service_id) = service_id.filter(|value| !value.is_empty()) {
+        command.args(["--service-id", service_id]);
+    }
+    let output = command
         .output()
         .await
         .map_err(|e| anyhow::anyhow!("spawn `agent service-list` failed: {e}"))?;
@@ -564,8 +583,9 @@ pub(crate) async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Val
 /// - `Ok(None)`         — service-list fetched, but no entry has this serviceId
 ///                        (e.g. User Agent designated a stale / unregistered serviceId)
 /// - `Err(e)`           — service-list fetch failed entirely (subprocess died,
-///                        backend rejected, JSON parse failed). Callers usually
-///                        want to treat this as "no match" — use `.ok().flatten()`.
+///                        backend rejected, JSON parse failed). This is an
+///                        operational error, never evidence that the service
+///                        does not match and never a reason to decline a task.
 ///
 /// Response navigation: scans every group's `list` (`data[*].list[*]`, flattened
 /// by the same logic that `designated_route_inner` uses); the first `serviceId`
@@ -577,7 +597,7 @@ pub(crate) async fn find_service(
     if service_id.is_empty() {
         return Ok(None);
     }
-    let data = spawn_service_list(agent_id).await?;
+    let data = spawn_service_list_filtered(agent_id, Some(service_id)).await?;
     // service-list returns two ID fields per entry: numeric `id` (e.g. 2301)
     // and UUID `serviceId` (e.g. "06d89519-..."). The task system passes UUIDs
     // while identity update/delete uses numeric ids. Match against BOTH fields
@@ -1717,6 +1737,19 @@ mod expire_time_tests {
         let v = json!({ "title": "x" });
         let ctx = PreFetchedTaskContext::from_api_response(&v);
         assert_eq!(ctx.expire_time, None);
+    }
+
+    #[test]
+    fn subscription_detail_fields_map_to_common_context() {
+        let v = json!({
+            "subStatus": 0,
+            "userAgentId": "buyer-1",
+            "aspAgentId": "asp-1"
+        });
+        let ctx = PreFetchedTaskContext::from_api_response(&v);
+        assert_eq!(ctx.status, Some(0));
+        assert_eq!(ctx.user_agent_id.as_deref(), Some("buyer-1"));
+        assert_eq!(ctx.provider_agent_id.as_deref(), Some("asp-1"));
     }
 
     // AC-8: `expireTime == 0` is filtered out; with no expireConfig it falls to None.

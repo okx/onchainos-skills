@@ -34,6 +34,7 @@ mod query;
 mod reject;
 mod reject_apply;
 mod service_detail;
+pub(crate) mod service_param_update;
 pub(crate) mod subscription_ops;
 mod task_create_prepare;
 mod v2;

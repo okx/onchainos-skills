@@ -202,6 +202,22 @@ pub enum AgentCommand {
         format: String,
     },
 
+    /// Replace the complete serviceParams during a v2 provider clarification round.
+    #[command(name = "service-param-update")]
+    ServiceParamUpdate {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long = "task-type", value_enum)]
+        task_type: task::user::service_param_update::ServiceParamTaskType,
+        #[arg(long = "request-id")]
+        request_id: String,
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
+        round: u8,
+        #[arg(long = "service-params")]
+        service_params: String,
+    },
+
     /// Cancel a subscription (unified: trial cancel + close auto-renew)
     #[command(name = "subscribe-cancel")]
     SubscribeCancel { sub_id: String },
@@ -1004,6 +1020,42 @@ pub enum AgentCommand {
         reason: String,
     },
 
+    /// Accept a designated one-time task created and funded by the buyer.
+    #[command(name = "accept-job-by-provider")]
+    AcceptJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
+    /// Decline a designated one-time task and trigger its refund flow.
+    #[command(name = "decline-job-by-provider")]
+    DeclineJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+
+    /// Accept a designated subscription created and funded by the buyer.
+    #[command(name = "accept-subscription")]
+    AcceptSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
+    /// Decline a designated subscription and trigger its refund flow.
+    #[command(name = "decline-subscription")]
+    DeclineSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+
     /// ASP: list my still-active subscription jobs (continuous-delivery phase) as a JSON array
     /// — the resident dispatch script's fan-out set. Source: GET /subscribe/my.
     #[command(name = "subscribe-active")]
@@ -1598,6 +1650,27 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     format,
                 },
                 ctx,
+            )
+            .await
+        }
+
+        AgentCommand::ServiceParamUpdate {
+            job_id,
+            agent_id,
+            task_type,
+            request_id,
+            round,
+            service_params,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::user::service_param_update::handle(
+                &mut client,
+                &job_id,
+                &agent_id,
+                task_type,
+                &request_id,
+                round,
+                &service_params,
             )
             .await
         }
@@ -2878,6 +2951,54 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             .await
         }
 
+        AgentCommand::AcceptJobByProvider { job_id, agent_id } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::AcceptJobByProvider { job_id, agent_id },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::DeclineJobByProvider {
+            job_id,
+            agent_id,
+            reason,
+        } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::DeclineJobByProvider {
+                    job_id,
+                    agent_id,
+                    reason,
+                },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::AcceptSubscription { job_id, agent_id } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::AcceptSubscription { job_id, agent_id },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::DeclineSubscription {
+            job_id,
+            agent_id,
+            reason,
+        } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::DeclineSubscription {
+                    job_id,
+                    agent_id,
+                    reason,
+                },
+                ctx,
+            )
+            .await
+        }
+
         AgentCommand::SubscribeActive { agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
             task::asp::subscription::handle_active(&mut client, &agent_id).await
@@ -4144,7 +4265,12 @@ async fn check_status_freshness(
 
     // Fetch task data — shared by both freshness-check and pre-fetch paths.
     let mut c = TaskApiClient::new();
-    let resp = match c.get_with_identity(&c.task_path(job_id), agent_id).await {
+    let detail_path = if job_status_or_event == "sub_open" {
+        c.subscribe_path(job_id)
+    } else {
+        c.task_path(job_id)
+    };
+    let resp = match c.get_with_identity(&detail_path, agent_id).await {
         Ok(r) => r,
         Err(_) => return (None, None),
     };

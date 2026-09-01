@@ -19,6 +19,7 @@ mod apply;
 mod asp_reject;
 mod content;
 mod deliver;
+mod provider_decision;
 mod dispute_confirm;
 mod dispute_raise;
 pub mod flow;
@@ -90,6 +91,34 @@ pub enum ProviderCommand {
         agent_id: String,
         /// Optional decline reason surfaced to the User Agent's backend record.
         #[arg(long, default_value = "")]
+        reason: String,
+    },
+    /// Accept a designated one-time task under the v2 create-and-fund flow.
+    AcceptJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+    /// Decline and refund a designated one-time task under the v2 flow.
+    DeclineJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Accept a designated subscription under the v2 flow.
+    AcceptSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+    /// Decline and refund a designated subscription under the v2 flow.
+    DeclineSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
         reason: String,
     },
     /// ASP claims after submit→complete timeout (claimAutoComplete API → sign → broadcast)
@@ -202,6 +231,14 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await,
         ProviderCommand::AspReject { job_id, agent_id, reason } =>
             asp_reject::handle_asp_reject(&mut client, &job_id, &agent_id, &reason).await,
+        ProviderCommand::AcceptJobByProvider { job_id, agent_id } =>
+            provider_decision::handle_accept_job(&mut client, &job_id, &agent_id).await,
+        ProviderCommand::DeclineJobByProvider { job_id, agent_id, reason } =>
+            provider_decision::handle_decline_job(&mut client, &job_id, &agent_id, &reason).await,
+        ProviderCommand::AcceptSubscription { job_id, agent_id } =>
+            provider_decision::handle_accept_subscription(&mut client, &job_id, &agent_id).await,
+        ProviderCommand::DeclineSubscription { job_id, agent_id, reason } =>
+            provider_decision::handle_decline_subscription(&mut client, &job_id, &agent_id, &reason).await,
         ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
             asp_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
         ProviderCommand::Status { job_id, agent_id } => {
