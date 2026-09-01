@@ -93,7 +93,7 @@ pub struct UpgradeArgs {
     #[arg(long)]
     pub skip_skills: bool,
 
-    /// Exit immediately if the last check ran within 12 hours (stamp at
+    /// Exit immediately if the last check ran within 24 hours (stamp at
     /// `<ONCHAINOS_HOME>/last_check`); refresh the stamp after a real check
     #[arg(long)]
     pub throttle: bool,
@@ -169,8 +169,8 @@ fn skill_requests_beta(current: &str, skill_version: Option<&str>) -> bool {
 
 // ── Upgrade throttle ────────────────────────────────────────────────────
 
-/// Seconds a previous check stays fresh for `--throttle` (12 hours).
-const THROTTLE_WINDOW_SECS: u64 = 12 * 60 * 60;
+/// Seconds a previous check stays fresh for `--throttle` (24 hours).
+const THROTTLE_WINDOW_SECS: u64 = 24 * 60 * 60;
 
 fn last_check_path(home: &Path) -> PathBuf {
     home.join("last_check")
@@ -881,7 +881,7 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // With --throttle, a check within the last 12 hours short-circuits the
+    // With --throttle, a check within the last 24 hours short-circuits the
     // whole command — no network, no skill pulls. --force and --check always
     // get a real answer.
     if args.throttle && !args.force && !args.check {
@@ -1020,7 +1020,7 @@ pub struct PreflightArgs {
     #[arg(long)]
     pub no_self_update: bool,
 
-    /// Bypass the 12-hour throttle and always perform a fresh online check.
+    /// Bypass the 24-hour throttle and always perform a fresh online check.
     ///
     /// [UNIT: bool]
     #[arg(long)]
@@ -1128,14 +1128,14 @@ fn compute_drift(effective_cli: &str, skill_version: Option<&str>) -> Option<Str
     }
 }
 
-/// The 12-hour throttle is consulted only when `--force` is absent. `--force`
+/// The 24-hour throttle is consulted only when `--force` is absent. `--force`
 /// bypasses it and always runs the full online check — the same throttle-bypass
 /// semantics `UpgradeArgs::force` gives `execute()`.
 pub(super) fn should_consult_throttle(force: bool) -> bool {
     !force
 }
 
-/// Session-start check: at most once every 12 hours, resolve the latest release,
+/// Session-start check: at most once every 24 hours, resolve the latest release,
 /// auto-update the binary, clean up deprecated skills, verify binary integrity,
 /// and report version drift.
 /// Always exits 0 with a JSON payload; the agent acts only on `data.action`.
@@ -1158,8 +1158,8 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
                 let drift = compute_drift(current, skill_version);
                 output::success(json!({
                     "status": "fresh",
-                    "currentVersion": current,
-                    "versionAfterPreflight": current,
+                    "versionBefore": current,
+                    "versionAfter": current,
                     "updated": false,
                     "throttled": true,
                     "selfUpdateDisabled": no_self_update,
@@ -1335,8 +1335,8 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
 
     let mut payload = json!({
         "status": status,
-        "currentVersion": current,
-        "versionAfterPreflight": effective_version,
+        "versionBefore": current,
+        "versionAfter": effective_version,
         "updated": updated,
         "selfUpdateDisabled": no_self_update,
         "binaryIdentity": binary_identity,
@@ -1349,7 +1349,7 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
         payload["latestVersion"] = json!(lv);
     }
     // Match upgrade --throttle semantics: a successful version check starts a
-    // new 12-hour window. Offline checks and failed binary installs remain
+    // new 24-hour window. Offline checks and failed binary installs remain
     // immediately retryable.
     let should_record_stamp = status != "offline" && status != "update_failed";
     if should_record_stamp {
@@ -1785,14 +1785,14 @@ mod tests {
     fn throttled_within_window() {
         let tmp = TempDir::new().unwrap();
         record_check(tmp.path(), 1_000).unwrap();
-        assert!(is_throttled(tmp.path(), 1_000 + 11 * 3600));
+        assert!(is_throttled(tmp.path(), 1_000 + 23 * 3600));
     }
 
     #[test]
     fn stale_at_window_boundary() {
         let tmp = TempDir::new().unwrap();
         record_check(tmp.path(), 1_000).unwrap();
-        assert!(!is_throttled(tmp.path(), 1_000 + 12 * 3600));
+        assert!(!is_throttled(tmp.path(), 1_000 + 24 * 3600));
     }
 
     #[test]
@@ -1823,7 +1823,7 @@ mod tests {
         record_check(tmp.path(), 1_000).unwrap();
         record_check(tmp.path(), 200_000).unwrap();
         assert!(is_throttled(tmp.path(), 200_000 + 100));
-        assert!(!is_throttled(tmp.path(), 200_000 + 13 * 3600));
+        assert!(!is_throttled(tmp.path(), 200_000 + 25 * 3600));
     }
 
     // ── preflight --force: parser surface + throttle-gate bypass ─────────
