@@ -226,8 +226,9 @@ balance. Current trial eligibility or an effective fee of zero skips the balance
 
 Every successful response contains exactly `phase`, `decision`, `reason`, `nextAction`, and `payload`
 under `data`. Route by `decision`, then execute or present only the actions returned in `nextAction`;
-there is no `action` field. `payload` is empty for `login_validation` and `identity_validation`. For
-other phases it contains the normalized selected Service; `payment_validation` also includes
+there is no `action` field. `payload` is empty for `login_validation` and `identity_validation`.
+For `reason=duplicate_subscription`, it is exactly `{jobId:<existing subscription id>,active:<bool>}`.
+For other phases it contains the normalized selected Service; `payment_validation` also includes
 `balanceWarning` when the balance is insufficient. Stable phase values are `login_validation`,
 `identity_validation`, `service_validation`, `subscription_validation`, `payment_validation`, and
 `creation`. Use [`task-action-routing.md`](task-action-routing.md) for each `nextAction[].id`.
