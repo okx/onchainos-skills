@@ -1579,7 +1579,7 @@ fn parse_services_a2a_subscription_trims_and_preserves_service_guide() {
 
 #[test]
 fn parse_services_enforces_service_guide_display_width_limit() {
-    for guide in ["x".repeat(6000), "中".repeat(3000)] {
+    for guide in ["x".repeat(10000), "中".repeat(5000)] {
         let raw = json!([{
             "serviceName": "Yield",
             "serviceDescription": "yields",
@@ -1592,7 +1592,7 @@ fn parse_services_enforces_service_guide_display_width_limit() {
         assert!(parse_services(Some(&raw)).is_ok());
     }
 
-    for guide in ["x".repeat(6001), "中".repeat(3001)] {
+    for guide in ["x".repeat(10001), "中".repeat(5001)] {
         let raw = json!([{
             "serviceName": "Yield",
             "serviceDescription": "yields",

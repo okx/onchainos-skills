@@ -1700,10 +1700,10 @@ fn a2a_subscription_with_service_guide_passes_guide_check() {
 #[test]
 fn service_guide_display_width_limit_has_exact_boundaries() {
     for (guide, should_block) in [
-        ("x".repeat(6000), false),
-        ("x".repeat(6001), true),
-        ("中".repeat(3000), false),
-        ("中".repeat(3001), true),
+        ("x".repeat(10000), false),
+        ("x".repeat(10001), true),
+        ("中".repeat(5000), false),
+        ("中".repeat(5001), true),
     ] {
         let service = serde_json::json!([{
             "serviceName": "Signal Service",
@@ -1736,7 +1736,7 @@ fn delete_service_bypasses_service_guide_length_check() {
         "id": "9",
         "serviceName": "Signal Service",
         "serviceDescription": "Provides trading signals.",
-        "serviceGuide": "x".repeat(6001),
+        "serviceGuide": "x".repeat(10001),
         "serviceType": "A2A",
         "fee": "",
         "subscription": [{"interval": "month", "fee": "10"}]

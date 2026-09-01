@@ -67,7 +67,7 @@ mod fe {
     pub const FE20: &str = "The free-trial setup is invalid: freeTrial can only be configured on monthly-subscription A2A services and must be a positive integer number of hours; A2MCP and pay-per-use services can't offer a trial. Guided writes use \"72\" (3 days); preserve another positive integer only when writing back a legacy service. Otherwise omit freeTrial entirely (don't set \"\" or \"0\"). Then resubmit.";
     pub fn service_guide_too_long(service_name: &str) -> String {
         format!(
-            "The service guide for [{service_name}] exceeds the length limit. Shorten it to no more than 3,000 full-width Chinese/Japanese characters or 6,000 Latin characters, then resubmit."
+            "The service guide for [{service_name}] exceeds the length limit. Shorten it to no more than 5,000 full-width Chinese/Japanese characters or 10,000 Latin characters, then resubmit."
         )
     }
     /// FE-21 (必填 / 长度) — SPLIT per sub-check, because the two are not

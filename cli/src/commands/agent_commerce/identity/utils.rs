@@ -12,7 +12,7 @@ use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
 
 use super::models::{AgentCard, AgentService, ServiceOperation};
 
-pub(super) const SERVICE_GUIDE_MAX_DISPLAY_WIDTH: usize = 6_000;
+pub(super) const SERVICE_GUIDE_MAX_DISPLAY_WIDTH: usize = 10_000;
 
 // ─── HTTP client ──────────────────────────────────────────────────────────
 
@@ -235,7 +235,7 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
         && display_width(&service.service_guide) > SERVICE_GUIDE_MAX_DISPLAY_WIDTH
     {
         bail!(
-            "The service guide for [{}] exceeds the length limit. Shorten it to no more than 3,000 full-width Chinese/Japanese characters or 6,000 Latin characters, then resubmit.",
+            "The service guide for [{}] exceeds the length limit. Shorten it to no more than 5,000 full-width Chinese/Japanese characters or 10,000 Latin characters, then resubmit.",
             service.service_name
         );
     }
