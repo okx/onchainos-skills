@@ -20,8 +20,7 @@ Read `services[]`, `searchAfter`, `hasMore`, `action`, and `tip`.
 
 ## Display
 
-Group `services[]` by `asp.aspAgentId` in returned order. **Must** render every Agent exactly in this
-format:
+**MUST** group `services[]` by `asp.aspAgentId` in returned order and render each Agent exactly as:
 
 ```markdown
 ### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>
@@ -31,8 +30,12 @@ format:
 | 1 | <serviceName> | <serviceType> | <fee> | <subscription> | <freeTrial> | <endpoint> | <serviceDescription> |
 ```
 
-Render Fee, Subscription, and Free trial per
-[`identity-service-contract.md` §Display](identity-service-contract.md#display), then append `tip`.
+Render fields per [`identity-service-contract.md` §Display]. **MUST** render the CLI `tip` once, verbatim,
+below all Agent tables.
+
+```text
+<CLI-returned tip>
+```
 
 ## Pagination
 
@@ -42,16 +45,16 @@ When `hasMore == true`, `searchAfter` is non-empty, and the user asks for more, 
 onchainos agent service-match --search-after <cursor> --limit <1..10>
 ```
 
-Apply the same display rules to every page.
+Apply the same rules to every page.
 
 ## Selection
 
 Use the selected Service's numeric `sid`.
 
-After the user confirms or selects a Service, run:
+**MUST** stop after displaying the tables and `tip`. Only after explicit user confirmation or selection, run:
 
 ```bash
 onchainos agent task-create-prepare --sid <selected-sid>
 ```
 
-Execute `data.action` directly as Markdown instructions.
+Follow `data.action`.
