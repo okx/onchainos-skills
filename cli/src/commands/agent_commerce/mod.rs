@@ -89,42 +89,36 @@ pub enum AgentCommand {
     #[command(name = "create-task")]
     CreateTask {
         #[arg(long)]
+        title: String,
+        #[arg(long)]
         description: String,
-        #[arg(long)]
-        budget: f64,
-        #[arg(long = "max-budget")]
-        max_budget: f64,
-        #[arg(long)]
-        currency: String,
-        #[arg(long)]
-        title: Option<String>,
-        /// Specified provider agentId (required; skip asp-match, negotiate directly with this provider or x402 accept)
-        #[arg(long)]
-        provider: String,
-        /// Designated service endpoint (persisted for multi-service providers)
-        #[arg(long)]
-        endpoint: Option<String>,
+        #[arg(long = "description-summary")]
+        description_summary: Option<String>,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
+        #[arg(long = "payment-token-symbol")]
+        payment_token_symbol: String,
+        #[arg(long = "payment-token-amount")]
+        payment_token_amount: String,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
-        /// Payment mode to set at creation time (required; escrow / x402).
-        #[arg(long = "payment-mode")]
-        payment_mode: String,
-        /// Service ID from asp/match response (required)
         #[arg(long = "service-id")]
         service_id: String,
-        /// Service input parameters (natural language string)
-        #[arg(long = "service-params")]
-        service_params: Option<String>,
-        /// Service token contract address
+        #[arg(long = "service-params", default_value = "{}")]
+        service_params: String,
         #[arg(long = "service-token-address")]
-        service_token_address: Option<String>,
-        /// Service price (from asp/match feeAmount)
+        service_token_address: String,
         #[arg(long = "service-token-amount")]
-        service_token_amount: Option<String>,
-        /// Accepted for compatibility but ignored — user identity is auto-resolved.
-        #[arg(long = "agentId", alias = "agent-id", hide = true)]
-        _agent_id: Option<String>,
+        service_token_amount: String,
+        #[arg(long = "category-code")]
+        category_code: Option<String>,
+        #[arg(long = "min-credit-score")]
+        min_credit_score: Option<f64>,
+        #[arg(long, default_value = "private", value_parser = ["private", "public"])]
+        visibility: String,
+        #[arg(long = "chain-id", default_value_t = 196)]
+        chain_id: u64,
     },
 
     /// Create a subscription task
@@ -1511,36 +1505,39 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         // ── Client (user) task commands ────────────────────────────
         AgentCommand::CreateTask {
-            description,
-            budget,
-            max_budget,
-            currency,
             title,
-            provider,
-            endpoint,
+            description,
+            description_summary,
+            provider_agent_id,
+            payment_token_symbol,
+            payment_token_amount,
             attachments,
-            payment_mode,
             service_id,
             service_params,
             service_token_address,
             service_token_amount,
-            _agent_id: _,
+            category_code,
+            min_credit_score,
+            visibility,
+            chain_id,
         } => {
             task::user::run_task(
                 T::Create {
-                    description,
-                    budget,
-                    max_budget,
-                    currency,
                     title,
-                    provider,
-                    endpoint,
+                    description,
+                    description_summary,
+                    provider_agent_id,
+                    payment_token_symbol,
+                    payment_token_amount,
                     attachments,
-                    payment_mode,
                     service_id,
                     service_params,
                     service_token_address,
                     service_token_amount,
+                    category_code,
+                    min_credit_score,
+                    visibility,
+                    chain_id,
                 },
                 ctx,
             )

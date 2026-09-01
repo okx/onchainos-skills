@@ -36,6 +36,7 @@ mod reject_apply;
 mod service_detail;
 pub(crate) mod subscription_ops;
 mod task_create_prepare;
+mod v2;
 mod x402_flow;
 
 use anyhow::Result;
@@ -87,39 +88,36 @@ pub enum TaskCommand {
     /// Create a new task (Client only)
     Create {
         #[arg(long)]
+        title: String,
+        #[arg(long)]
         description: String,
-        #[arg(long)]
-        budget: f64,
-        #[arg(long = "max-budget")]
-        max_budget: f64,
-        #[arg(long)]
-        currency: String,
-        #[arg(long)]
-        title: Option<String>,
-        /// Designated provider agentId (required; skip asp-match; negotiate or x402-accept with this provider directly).
-        #[arg(long)]
-        provider: String,
+        #[arg(long = "description-summary")]
+        description_summary: Option<String>,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
+        #[arg(long = "payment-token-symbol")]
+        payment_token_symbol: String,
+        #[arg(long = "payment-token-amount")]
+        payment_token_amount: String,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
-        /// Designated service endpoint (persisted for multi-service providers)
-        #[arg(long)]
-        endpoint: Option<String>,
-        /// Payment mode to set at creation time (required; escrow / x402).
-        #[arg(long = "payment-mode")]
-        payment_mode: String,
-        /// Service ID from asp/match response (required)
         #[arg(long = "service-id")]
         service_id: String,
-        /// Service input parameters (natural language string)
-        #[arg(long = "service-params")]
-        service_params: Option<String>,
-        /// Service token contract address
+        #[arg(long = "service-params", default_value = "{}")]
+        service_params: String,
         #[arg(long = "service-token-address")]
-        service_token_address: Option<String>,
-        /// Service price (from asp/match feeAmount)
+        service_token_address: String,
         #[arg(long = "service-token-amount")]
-        service_token_amount: Option<String>,
+        service_token_amount: String,
+        #[arg(long = "category-code")]
+        category_code: Option<String>,
+        #[arg(long = "min-credit-score")]
+        min_credit_score: Option<f64>,
+        #[arg(long, default_value = "private", value_parser = ["private", "public"])]
+        visibility: String,
+        #[arg(long = "chain-id", default_value_t = 196)]
+        chain_id: u64,
     },
     /// Create a subscription task (providerConfirmStatus → EIP-712 sign → create → broadcast)
     CreateSubscribe {
@@ -1948,11 +1946,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, budget, max_budget, currency, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount } =>
+        TaskCommand::Create { title, description, description_summary, provider_agent_id, payment_token_symbol, payment_token_amount, attachments, service_id, service_params, service_token_address, service_token_amount, category_code, min_credit_score, visibility, chain_id } =>
             create::handle_create(&mut client, create::CreateTaskParams {
-                description, budget, max_budget, currency,
-                title, provider, attachments, endpoint, payment_mode,
+                title, description, description_summary, provider_agent_id,
+                payment_token_symbol, payment_token_amount, attachments,
                 service_id, service_params, service_token_address, service_token_amount,
+                category_code, min_credit_score, visibility, chain_id,
             }).await,
         TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, attachments, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment, autotrade_margin_mode, autotrade_order_policy, autotrade_auth_mode, autotrade_settings_json, autotrade_required_fields, format, exclude_device } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;

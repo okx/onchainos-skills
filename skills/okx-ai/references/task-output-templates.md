@@ -118,6 +118,13 @@ For `task_create_prepare`, `nextAction.id=open_create_playbook` means to open
 the task-creation reference and continue its confirmation flow; it does not
 mean that the subscription has already been created.
 
+For `agent create-task`, `phase=creation`, `decision=ready`, and
+`reason=broadcast_submitted` mean the create-and-fund UserOperation was
+submitted but is not yet final. Render `payload.jobId`, `payload.broadcast.txHash`
+when present, and the locally saved attachment count. Then execute the returned
+`nextAction.id=watch_task`; do not offer `set-payment-mode`, ASP apply, or Buyer
+accept.
+
 ## `task_create_prepare` phase mapping
 
 | Phase | Decision | Next action IDs |

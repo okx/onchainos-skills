@@ -361,16 +361,14 @@ fn create_task_regular() -> String {
 Step 4 -- Regular field collection
 ================================================
 
-For regular tasks, collect Currency internally but do not show it in the confirmation form. Derive Budget and Max budget from the selected service:
+Consume the fixed payment context from the selected Service:
 
-1. **Payment token** (--currency): Only USDT / USDG. Fuzzy input (\"U\"/\"USD\") → ask \"USDT or USDG?\".
-   - Validate: must match `feeTokenSymbol` from task-service-select. Mismatch → ask user to change token or designate another provider.
-2. Read `feeAmount` from the exact selected service. Missing/non-numeric → stop before confirmation.
-   - `budget = feeAmount`
-   - `max_budget = feeAmount`
-   - Apply the existing create-task amount rules (non-negative, <=6 decimals, max 10M). Do not ask the user for either value.
+1. `paymentTokenSymbol = feeTokenSymbol`.
+2. `paymentTokenAmount = feeAmount`.
+3. `serviceTokenAddress = feeToken` and `serviceTokenAmount = feeAmount`.
+4. Infer `serviceParams` below, then encode the confirmed key/value data as one JSON object; use `{{}}` when no input is required.
 
-3. **serviceParams inference** (same logic as §serviceParams inference below).
+Missing or invalid confirmed fields → stop before confirmation. Do not independently re-price the Service, query balance, offer a max budget, or negotiate another amount.
 
 → Proceed to **Step 5** (regular confirmation form).
 
@@ -389,8 +387,6 @@ Never add execution mode, per-signal amount, per-signal cap, quote currency, Tra
 | Service params | <serviceParams readable display, or \"None\"> |
 | Service price | <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this row if feeAmount has a value) |
 
-Payment mode: A2A → `escrow`, A2MCP → `x402` (from serviceType; do not ask user, do not show as a card row).
-
 > Confirm and publish?
 
 → **End this turn**; wait for the user's reply.
@@ -401,10 +397,8 @@ Step 5.5 -- Route by user decision (separate turn)
 
 - Confirm / publish → Step 6
 - Edit description → update search intent → **re-run task-service-select** (may switch branch; if branch changes, load the other branch playbook via `next-action`) → Step 4 → Step 5
-- Edit budget/max-budget → validate the proposed value(s) with the existing rules, including `max_budget >= budget`; keep an omitted field unchanged and do not auto-adjust the other field. Invalid → explain and keep the current values. Valid → show the proposed value(s) separately, ask for one explicit confirmation, and end the turn. After confirmation, update the existing field(s) and return to Step 5; the confirmation form still omits both budget rows.
-- Edit currency → update → re-validate → Step 5
 - Edit serviceParams → update → Step 5
-- Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → reset budget/max_budget from the newly selected service fee → Step 4 → Step 5
+- Change ASP or Service → **re-run task-service-select** and replace the whole confirmed Service context → Step 4 → Step 5
 
 ================================================
 Step 6 -- Publish regular (create-task)
@@ -412,18 +406,20 @@ Step 6 -- Publish regular (create-task)
 
 ```bash
 onchainos agent create-task \\
-  --description \"<description>\" --title \"<title>\" \\
-  --budget <budget> --max-budget <max_budget> --currency <USDT|USDG> \\
-  --provider <agentId> --service-id <serviceId> --payment-mode <escrow|x402> \\
-  [--service-params \"<params>\"] [--service-token-address <addr>] [--service-token-amount <amt>]
+  --title \"<title>\" --description \"<description>\" \\
+  --provider-agent-id <agentId> \\
+  --payment-token-symbol <feeTokenSymbol> --payment-token-amount <feeAmount> \\
+  --service-id <serviceId> --service-params '<confirmed JSON object or {{}}>' \\
+  --service-token-address <feeToken> --service-token-amount <feeAmount> \\
+  [--file \"<attachment-path>\" ...]
 ```
-- `--provider`, `--service-id`, `--payment-mode` required. Payment mode: A2A→escrow, A2MCP→x402.
+- Pass the confirmed Service context unchanged. The command does not repeat price, balance, ASP, or payment-mode decisions.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
-- After `create-task` succeeds, budget and max budget are locked; never offer a direct edit.
+- `reason=broadcast_submitted` means the UserOperation was submitted, not that `job_created` has arrived.
+- Route `nextAction.id=watch_task` through `task-action-routing.md` immediately.
 
-{attachments_stop}",
+Do not call `task-attach`, `set-payment-mode`, `confirm-accept`, `okx-a2a session create`, or `okx-a2a file upload` in this step. Attachments were saved locally by `create-task`; A2A forwarding starts only from the later `job_created` flow.",
         service_params = service_params_inference(),
-        attachments_stop = attachments_and_stop(),
     )
 }
 
@@ -795,43 +791,33 @@ mod tests {
     }
 
     #[test]
-    fn regular_create_task_requires_full_balance_notice_before_watch() {
+    fn regular_create_task_routes_structured_success_to_watch() {
         let out = create_task_regular();
-        assert!(out.contains("balanceWarning"));
-        assert!(out.contains("blockedReason=insufficient-balance"));
-        assert!(out.contains("save the exact `create-task` command + `balanceWarning`"));
-        assert!(out.contains("if `fundingNoticeCommand` exists, run it"));
-        assert!(out.contains("`terminal-unicode`"));
-        assert!(out.contains("show `terminalQr` + full notice"));
-        assert!(out.contains("`image-notify`"));
-        assert!(out.contains("run `notifyCommandArgs`"));
-        assert!(out.contains("If missing, show `balanceWarning`"));
-        assert!(out.contains("END TURN"));
-        assert!(out.contains("do not create again or Watch"));
-        assert!(out.contains("Legacy submitted `balanceWarning`"));
-        assert!(out.contains("do not Watch"));
+        assert!(out.contains("reason=broadcast_submitted"));
+        assert!(out.contains("nextAction.id=watch_task"));
+        assert!(out.contains("not that `job_created` has arrived"));
     }
 
     #[test]
-    fn regular_create_task_defaults_budget_to_service_fee_without_showing_it() {
+    fn regular_create_task_uses_fixed_service_price_without_negotiation() {
         let out = create_task_regular();
 
-        assert!(out.contains("budget = feeAmount"));
-        assert!(out.contains("max_budget = feeAmount"));
-        assert!(!out.contains("ask user explicitly"));
+        assert!(out.contains("paymentTokenAmount = feeAmount"));
+        assert!(out.contains("Do not independently re-price"));
+        assert!(!out.contains("max_budget = feeAmount"));
         assert!(!out.contains("| Budget |"));
         assert!(!out.contains("| Max budget |"));
         assert!(!out.contains("| Payment token |"));
-        assert!(out.contains("non-negative"));
     }
 
     #[test]
-    fn regular_create_task_keeps_pre_create_budget_edits_with_separate_confirmation() {
+    fn regular_create_task_uses_only_new_cli_flags() {
         let out = create_task_regular();
 
-        assert!(out.contains("Edit budget/max-budget"));
-        assert!(out.contains("show the proposed value(s) separately"));
-        assert!(out.contains("do not auto-adjust the other field"));
-        assert!(out.contains("After `create-task` succeeds, budget and max budget are locked"));
+        assert!(out.contains("--provider-agent-id"));
+        assert!(out.contains("--payment-token-symbol"));
+        assert!(out.contains("--payment-token-amount"));
+        assert!(!out.contains("--max-budget"));
+        assert!(!out.contains("--payment-mode <"));
     }
 }

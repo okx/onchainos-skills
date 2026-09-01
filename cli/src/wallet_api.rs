@@ -1001,6 +1001,24 @@ impl WalletApiClient {
             .await
     }
 
+    /// Authenticated mutation with additional identity headers and no replay.
+    pub async fn post_authed_mutation_no_retry_with_headers(
+        &mut self,
+        path: &str,
+        access_token: &str,
+        body: &Value,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
+        self.post_authed_no_retry_with_headers(
+            path,
+            access_token,
+            body,
+            extra_headers,
+            "Network result is unknown for this state-changing request. Query authoritative state before retrying.",
+        )
+        .await
+    }
+
     /// POST multipart/form-data with Bearer accessToken.
     pub async fn post_authed_multipart(
         &self,

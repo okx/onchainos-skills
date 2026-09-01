@@ -11,6 +11,7 @@ legacy prose field `action`.
 | `fund_account` | Wallet funding flow | Required | Rerun prepare with the same `sid` |
 | `restore_subscription` | `task-user-playbook.md`, Signal-receipt watch | Required | Enter scoped watch |
 | `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |
+| `watch_task` | `watch-core.md`, scoped watch for `params.jobId` | No | Continue until the Watch stop condition |
 | `stop` | End the current flow | No | Run no further command |
 
 ## Routing rules

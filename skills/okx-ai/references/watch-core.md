@@ -280,8 +280,10 @@ If the user's message matched `keep watching` / `continue watching` / `resume mo
 
 **Step 1 — Recall the jobId from this conversation's transcript.** Search in this order, take the FIRST hit:
 
-1. The most recent CLI `[Watch]` block emitted earlier in this conversation (the jobId is the `--job-id <X>` value in its `okx-a2a user watch ...` command).
-2. The most recent successful `agent create-task` stdout (jobId printed as `jobId: 0x...`).
+1. The most recent successful creation progression result whose
+   `nextAction.id=watch_task` (use `nextAction.params.jobId`; verify it equals
+   `payload.jobId`).
+2. The most recent legacy CLI `[Watch]` block emitted earlier in this conversation (the jobId is the `--job-id <X>` value in its `okx-a2a user watch ...` command).
 3. The most recent jobId referenced in any rendered `notification` / `decision_request` in this conversation.
 
 **Step 2 — Route by recall result**:
@@ -299,7 +301,10 @@ If the user's message matched `keep watching` / `continue watching` / `resume mo
 **Entries that REQUIRE the banner (only these two)**:
 
 1. **Trigger-phrase entry** — this turn's user message matched a §Triggers phrase (e.g. `task watch` / `show message history`). **Exception**: a continuation phrase such as `keep watching` only triggers the banner when recall fails and watch falls back to global; see §Continuation triggers.
-2. **CLI `[Watch]` block entry** — a command earlier in this turn emitted a `[Watch]` block in stdout: a hint block that starts with `[Watch]` and instructs the current call to run `okx-a2a user watch ...` (typical sample: `` [Watch] Read `skills/okx-ai/references/watch-core.md` now, then start the monitor: ``, output by `agent create-task`).
+2. **CLI task-watch action entry** — a command earlier in this turn returned
+   `nextAction.id=watch_task`; use only its structured `params.jobId`. A legacy
+   `[Watch]` block remains a valid entry for commands that still emit one, but
+   `agent create-task` uses the structured action contract.
 
 Any watch call that does not match one of these two entries **must NOT** emit the banner — all session-continuation paths (dispatch resume, wake fire, etc.) are excluded.
 

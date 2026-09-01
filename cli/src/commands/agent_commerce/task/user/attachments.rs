@@ -11,10 +11,36 @@ use crate::commands::agent_commerce::task::common::{AGENT_ROLE_USER, DEBUG_LOG};
 
 const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
 
+pub(crate) fn validate_attachment_sources(sources: &[String]) -> Result<()> {
+    for src_path in sources {
+        let src = Path::new(src_path);
+        let metadata = std::fs::metadata(src)
+            .map_err(|e| anyhow::anyhow!("attachment file is not readable: {src_path}: {e}"))?;
+        if !metadata.is_file() {
+            bail!("attachment path is not a regular file: {src_path}");
+        }
+        if metadata.len() > MAX_FILE_SIZE {
+            let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+            bail!(
+                "attachment file too large: {src_path} ({size_mb:.1} MB, max 100 MB). \
+                 Please compress or resize the file."
+            );
+        }
+        if src.file_name().is_none() {
+            bail!("invalid attachment file path: {src_path}");
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn attachments_dir(job_id: &str) -> Result<PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
-    Ok(home.join(".onchainos").join("task").join(job_id).join("attachments"))
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
+    Ok(home
+        .join(".onchainos")
+        .join("task")
+        .join(job_id)
+        .join("attachments"))
 }
 
 pub(crate) fn dedup_dest(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
@@ -43,9 +69,15 @@ pub(crate) fn dedup_dest(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
     ))
 }
 
-pub async fn handle_task_attach(client: &mut TaskApiClient, job_id: &str, file_path: &str) -> Result<()> {
+pub async fn handle_task_attach(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    file_path: &str,
+) -> Result<()> {
     let agent_id = common_query::resolve_agent_id("", AGENT_ROLE_USER).await;
-    let resp = client.get_with_agent_id(&client.task_path(job_id), &agent_id).await?;
+    let resp = client
+        .get_with_agent_id(&client.task_path(job_id), &agent_id)
+        .await?;
     let status = resp["status"].as_i64().unwrap_or(-1);
     if status >= 2 {
         let status_str = status_name(status);
@@ -69,7 +101,8 @@ pub async fn handle_task_attach(client: &mut TaskApiClient, job_id: &str, file_p
         );
     }
 
-    let file_name = src.file_name()
+    let file_name = src
+        .file_name()
         .ok_or_else(|| anyhow::anyhow!("invalid file path: {file_path}"))?;
 
     let dir = attachments_dir(job_id)?;
@@ -88,7 +121,9 @@ pub async fn handle_task_attach(client: &mut TaskApiClient, job_id: &str, file_p
     println!();
     println!("   okx-a2a session send --job-id {job_id} --to-agent-id <peer agentId from sub session> --content \"[ATTACHMENT_ADDED] {}\"  ← exact prefix, do NOT change", dest.display());
     println!();
-    println!("   If NO sub session exists yet (task not matched with a provider), skip the dispatch —");
+    println!(
+        "   If NO sub session exists yet (task not matched with a provider), skip the dispatch —"
+    );
     println!("   the sub session will pick up the file automatically via list-attachments when it starts.");
     Ok(())
 }
@@ -121,29 +156,38 @@ pub fn handle_task_attachments(job_id: &str) -> Result<()> {
 }
 
 pub fn copy_attachments_to_job(job_id: &str, sources: &[String]) -> Result<()> {
+    copy_attachments_to_job_with_manifest(job_id, sources).map(|_| ())
+}
+
+pub(crate) fn copy_attachments_to_job_with_manifest(
+    job_id: &str,
+    sources: &[String],
+) -> Result<Vec<serde_json::Value>> {
+    validate_attachment_sources(sources)?;
+    if sources.is_empty() {
+        return Ok(Vec::new());
+    }
     let dir = attachments_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
+    let mut manifest = Vec::with_capacity(sources.len());
 
     for src_path in sources {
         let src = Path::new(src_path);
-        if !src.exists() {
-            bail!("attachment file not found: {src_path}");
-        }
         let file_size = std::fs::metadata(src)?.len();
-        if file_size > MAX_FILE_SIZE {
-            let size_mb = file_size as f64 / (1024.0 * 1024.0);
-            bail!(
-                "attachment file too large: {src_path} ({size_mb:.1} MB, max 100 MB). \
-                 Please compress or resize the file."
-            );
-        }
-        let file_name = src.file_name()
+        let file_name = src
+            .file_name()
             .ok_or_else(|| anyhow::anyhow!("invalid file path: {src_path}"))?;
         let dest = dedup_dest(&dir, file_name);
         std::fs::copy(src, &dest)?;
+        manifest.push(serde_json::json!({
+            "sourcePath": src.display().to_string(),
+            "storedPath": dest.display().to_string(),
+            "fileName": file_name.to_string_lossy(),
+            "size": file_size,
+        }));
         if DEBUG_LOG {
             eprintln!("[task-create] attachment saved: {}", dest.display());
         }
     }
-    Ok(())
+    Ok(manifest)
 }

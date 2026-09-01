@@ -160,34 +160,48 @@ agent list-attachments <jobId>
 
 ### create-task
 
-Publish a new task on-chain (params provided by `next-action` playbook; blocks on insufficient wallet balance)
-
-> **Insufficient-balance output (XLayer):** when under-funded, `create-task` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs` and puts `markdownImage` under option 1. If missing, show `balanceWarning`.
+Execute the confirmed fixed-price create-and-fund operation for one designated
+ASP. Discovery, field collection, price/balance validation, and explicit User
+confirmation happen before this command and are not repeated here.
 
 ```
-agent create-task --description <txt> --budget <num> --max-budget <num> --currency <USDT|USDG> \
-  --title <txt> \
-  --provider <agentId> \
-  --service-id <id> --payment-mode <escrow> [--service-params <txt>] \
-  [--service-token-address <addr>] [--service-token-amount <num>] \
-  [--endpoint <url>] [--file <path>]
+agent create-task --title <txt> --description <txt> \
+  --provider-agent-id <agentId> \
+  --payment-token-symbol <USDT|USDG> --payment-token-amount <decimal-string> \
+  --service-id <id> --service-params '<json>' \
+  --service-token-address <addr> --service-token-amount <decimal-string> \
+  [--description-summary <txt>] [--category-code <code>] \
+  [--min-credit-score <0..1>] [--visibility <private|public>] \
+  [--chain-id 196] [--file <path> ...]
 ```
 
 | Param | Required | Default | Description                                 |
 |---|---|---|---------------------------------------------|
-| `--description` | Yes | - | Task description (20–2000 chars)            |
-| `--budget` | Yes | - | Non-negative budget amount (max 10M, ≤6 decimals) |
-| `--max-budget` | Yes | - | Non-negative max budget (≥ budget)           |
-| `--currency` | Yes | - | `USDT` or `USDG`                            |
 | `--title` | Yes | - | Task title (max 30 chars)                   |
-| `--provider` | Yes | - | Provider agentId; always required |
+| `--description` | Yes | - | Confirmed task description (max 2000 Unicode characters) |
+| `--description-summary` | No | - | Optional summary (max 200 Unicode characters) |
+| `--provider-agent-id` | Yes | - | Confirmed ASP agentId |
+| `--payment-token-symbol` | Yes | - | Confirmed `USDT` or `USDG` symbol |
+| `--payment-token-amount` | Yes | - | Confirmed fixed price; exact decimal string, ≤6 decimals |
 | `--service-id` | Yes | - | UUID `serviceId` from `task-create-prepare data.payload` |
-| `--service-params` | No | - | Service input parameters (natural language) |
-| `--service-token-address` | No | - | Service token contract address              |
-| `--service-token-amount` | No | - | Service price from `task-create-prepare data.payload.feeAmount` |
-| `--endpoint` | No | - | Designated service endpoint URL             |
+| `--service-params` | No | `{}` | Confirmed Service parameters encoded as JSON |
+| `--service-token-address` | Yes | - | Confirmed Service token contract address |
+| `--service-token-amount` | Yes | - | Confirmed Service price; exact decimal string |
+| `--category-code` | No | - | Confirmed backend category code |
+| `--min-credit-score` | No | - | Confirmed minimum credit score from 0 to 1 |
+| `--visibility` | No | `private` | Semantic visibility; `private` maps to 1, `public` to 0 |
+| `--chain-id` | No | `196` | X Layer only in this flow |
 | `--file` | No | - | Local file paths to attach (repeatable)     |
-| `--payment-mode` | Yes | - | `escrow`                          |
+
+Execution order is `createAndFundConfirmStatus` → EIP-3009 signing from that
+response → `createAndFund` → local attachment save → mandatory
+`okx-a2a job-provider bind-current` → broadcast with `bizType=201`. Success
+returns the progression envelope with `phase=creation`,
+`reason=broadcast_submitted`, `payload.jobId`, full `payload.broadcast`, and
+`nextAction.id=watch_task`. It does not mean `job_created` has arrived.
+`createAndFund` and broadcast are sent without transport replay. If either
+returns an unknown network result, do not rerun `create-task`; reconcile the
+task/transaction by the returned or previously recorded `jobId` first.
 
 ### funding-notice
 

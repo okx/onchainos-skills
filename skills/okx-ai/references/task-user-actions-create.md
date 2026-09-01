@@ -156,24 +156,23 @@ selector. Do not pass localized display values or add `descriptionSummary`.
 
 ```bash
 onchainos agent create-task \
-  --description <confirmed Description> \
-  --budget <payload.feeAmount> \
-  --max-budget <payload.feeAmount> \
-  --currency <payload.feeTokenSymbol> \
   --title <title> \
-  --provider <payload.providerAgentId> \
+  --description <confirmed Description> \
+  --provider-agent-id <payload.providerAgentId> \
+  --payment-token-symbol <payload.feeTokenSymbol> \
+  --payment-token-amount <payload.feeAmount> \
   --service-id <payload.serviceId> \
-  --payment-mode escrow \
-  [--service-params <confirmed non-empty serviceParams>] \
-  [--service-token-address <payload.feeToken>] \
-  [--service-token-amount <payload.feeAmount>] \
+  --service-params '<confirmed JSON serviceParams, or {}>' \
+  --service-token-address <payload.feeToken> \
+  --service-token-amount <payload.feeAmount> \
   [--file <attachment> ...]
 ```
 
-Repeat `--file` for each attachment. Follow structured CLI errors and
-`data.guidance` for routing; translate user-facing guidance while preserving
-IDs, URLs, raw tokens, and command identifiers. Enter `watch-core.md`
-immediately if the command prints a `[Watch]` block.
+Pass the confirmed Service context unchanged. Do not re-check price, balance,
+ASP selection, or ask for another confirmation. Repeat `--file` for each
+attachment. On `reason=broadcast_submitted`, route `nextAction.id=watch_task`
+through `task-action-routing.md`; task creation is final only after
+`job_created` is received.
 
 ### Subscription creation
 

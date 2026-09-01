@@ -324,7 +324,7 @@ pub async fn sign_uop_and_broadcast_full(
     // `.context` (not `anyhow!("...: {e}")`) so the underlying `ApiCodeError`
     // survives in the chain — callers (task-402-pay fee-rejection) downcast to
     // recover the backend `code` + `msg`. `{e:#}` still renders "broadcast failed: …".
-    let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
+    let bc_resp = client.post_mutation_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
         .context("broadcast failed")?;
 
     Ok(bc_resp.get(0).cloned().unwrap_or(Value::Null))
@@ -418,7 +418,7 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
         "voteReportSummary": vote_report_summary,
     });
 
-    let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
+    let bc_resp = client.post_mutation_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
         .map_err(|e| anyhow::anyhow!("broadcast failed: {e}"))?;
 
     Ok(bc_resp[0]["txHash"]
@@ -477,7 +477,7 @@ pub async fn sign_uop_and_broadcast_with_payment(
         "paymentVerify": payment_verify,
     });
 
-    let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
+    let bc_resp = client.post_mutation_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
         .map_err(|e| anyhow::anyhow!("broadcast failed: {e}"))?;
 
     Ok(bc_resp[0]["txHash"]
