@@ -1,6 +1,6 @@
 //! Marketplace service search with a stable output contract.
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use serde_json::{Map, Number, Value};
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
@@ -8,7 +8,7 @@ use crate::commands::Context;
 use crate::output;
 
 use super::utils::{format_search_rate, wallet_client};
-use super::ServiceMatchArgs;
+use super::{GetMyAgentsArgs, ServiceMatchArgs};
 
 const SERVICE_MATCH_PATH: &str = "/priapi/v1/aieco/task/asp/service/search";
 const ACTION_RESTORE_SUBSCRIPTION: &str = "restore_subscription";
@@ -23,13 +23,39 @@ const TIP_NO_MORE: &str =
 
 pub async fn service_match(args: ServiceMatchArgs, ctx: &Context) -> Result<()> {
     let body = build_request(&args)?;
-    let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    // Injects `Authorization: Bearer <accessToken>` and retries once with a
-    // refreshed token if the backend reports server-side token revocation.
-    let mut data = client
-        .post_authed(SERVICE_MATCH_PATH, &access_token, &body)
+    let mut data = if is_precise_search(&args) {
+        let access_token = ensure_tokens_refreshed().await?;
+        let user_agents = super::queries::get_my_agents_with_access_token(
+            &GetMyAgentsArgs {
+                role: Some("user".to_string()),
+                owner_address: None,
+                page: None,
+                page_size: None,
+            },
+            ctx,
+            &access_token,
+        )
         .await?;
+        let agentic_id = require_user_agent_id(&user_agents)?;
+        let identity_headers = [("agenticId", agentic_id.as_str())];
+
+        // Precise search is personalized to the current account's User Agent.
+        // The client retries once with a refreshed JWT on token revocation while
+        // preserving the agenticId header.
+        client
+            .post_authed_with_headers(
+                SERVICE_MATCH_PATH,
+                &access_token,
+                &body,
+                Some(&identity_headers),
+            )
+            .await?
+    } else {
+        // Fuzzy search is public: do not read login state and do not attach an
+        // Authorization header.
+        client.post_public(SERVICE_MATCH_PATH, &body).await?
+    };
     normalize_security_ratings(&mut data);
     add_flow_metadata(&mut data, &args);
     output::success(data);
@@ -61,6 +87,43 @@ fn trimmed(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
+fn is_precise_search(args: &ServiceMatchArgs) -> bool {
+    trimmed(args.service_id.as_deref()).is_some() || trimmed(args.asp_agent_id.as_deref()).is_some()
+}
+
+fn agent_id_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => trimmed(Some(value)).map(str::to_string),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn extract_user_agent_id(data: &Value) -> Option<String> {
+    let entries = data
+        .get("list")
+        .and_then(Value::as_array)
+        .or_else(|| data.as_array())?;
+
+    entries.iter().find_map(|entry| {
+        if let Some(agents) = entry.get("agentList").and_then(Value::as_array) {
+            agents
+                .iter()
+                .find_map(|agent| agent.get("agentId").and_then(agent_id_string))
+        } else {
+            entry.get("agentId").and_then(agent_id_string)
+        }
+    })
+}
+
+fn require_user_agent_id(data: &Value) -> Result<String> {
+    extract_user_agent_id(data).ok_or_else(|| {
+        anyhow!(
+            "no User identity found on this account; create a User identity before using precise service search"
+        )
+    })
+}
+
 fn add_flow_metadata(data: &mut Value, args: &ServiceMatchArgs) {
     let Some(object) = data.as_object() else {
         return;
@@ -70,8 +133,7 @@ fn add_flow_metadata(data: &mut Value, args: &ServiceMatchArgs) {
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default();
-    let precise_search = trimmed(args.service_id.as_deref()).is_some()
-        || trimmed(args.asp_agent_id.as_deref()).is_some();
+    let precise_search = is_precise_search(args);
 
     let (action, tip) = if services.is_empty() {
         (Value::Null, Value::String(TIP_NO_MATCH.to_string()))
@@ -102,8 +164,7 @@ fn add_flow_metadata(data: &mut Value, args: &ServiceMatchArgs) {
 fn service_is_offline(service: &Value) -> bool {
     match service.get("asp").and_then(|asp| asp.get("onlineStatus")) {
         Some(Value::Number(value)) => value.as_i64() != Some(1),
-        Some(Value::String(value)) => value.trim() != "1",
-        _ => false,
+        _ => true,
     }
 }
 
@@ -339,6 +400,48 @@ mod tests {
     }
 
     #[test]
+    fn precise_search_requires_sid_or_asp_agent_id() {
+        let mut input = args();
+        assert!(is_precise_search(&input));
+
+        input.service_id = None;
+        assert!(!is_precise_search(&input));
+
+        input.asp_agent_id = Some(" 2864 ".into());
+        assert!(is_precise_search(&input));
+
+        input.asp_agent_id = Some("   ".into());
+        assert!(!is_precise_search(&input));
+    }
+
+    #[test]
+    fn extracts_user_agent_id_from_get_my_agents_shapes() {
+        let flat = json!({
+            "list": [{"agentId": 42, "role": 1}]
+        });
+        assert_eq!(extract_user_agent_id(&flat).as_deref(), Some("42"));
+
+        let grouped = json!({
+            "list": [{
+                "ownerAddress": "0xabc",
+                "agentList": [{"agentId": " 77 ", "role": 1}]
+            }]
+        });
+        assert_eq!(extract_user_agent_id(&grouped).as_deref(), Some("77"));
+
+        assert_eq!(extract_user_agent_id(&json!({"list": []})), None);
+        assert_eq!(
+            extract_user_agent_id(&json!({"list": [{"name": "missing id"}]})),
+            None
+        );
+
+        let error = require_user_agent_id(&json!({"list": []}))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("create a User identity"));
+    }
+
+    #[test]
     fn adds_no_match_and_pagination_tips() {
         let mut no_match = json!({"services": [], "hasMore": false});
         add_flow_metadata(&mut no_match, &args());
@@ -379,5 +482,25 @@ mod tests {
         add_flow_metadata(&mut subscribed, &args());
         assert!(subscribed["action"].is_null());
         assert_eq!(subscribed["tip"], TIP_CONFIRM);
+    }
+
+    #[test]
+    fn treats_only_online_status_one_as_online() {
+        for offline_status in [
+            json!(0),
+            json!(2),
+            json!("1"),
+            json!("0"),
+            json!("2"),
+            Value::Null,
+            json!(true),
+        ] {
+            let service = json!({"asp": {"onlineStatus": offline_status}});
+            assert!(service_is_offline(&service));
+        }
+
+        assert!(service_is_offline(&json!({"asp": {}})));
+        assert!(service_is_offline(&json!({})));
+        assert!(!service_is_offline(&json!({"asp": {"onlineStatus": 1}})));
     }
 }

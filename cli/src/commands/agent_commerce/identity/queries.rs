@@ -71,6 +71,14 @@ pub async fn get_by_address(args: GetByAddressArgs, ctx: &Context) -> Result<()>
 
 async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
+    get_my_agents_with_access_token(args, ctx, &access_token).await
+}
+
+pub(super) async fn get_my_agents_with_access_token(
+    args: &GetMyAgentsArgs,
+    ctx: &Context,
+    access_token: &str,
+) -> Result<Value> {
     let mut client = wallet_client(ctx)?;
 
     // Product spec: agent-list identifies the user via JWT; `from` is never needed.
@@ -98,14 +106,14 @@ async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Val
         "[agent-identity] get-my-agents request: url={} access_token_len={} access_token_prefix={} query={:?}",
         reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/agent-list", &query_refs),
         access_token.len(),
-        redact_token_for_debug(&access_token),
+        redact_token_for_debug(access_token),
         query_refs,
     );
 
     let result = client
         .get_authed(
             "/priapi/v5/wallet/agentic/agent/agent-list",
-            &access_token,
+            access_token,
             &query_refs,
         )
         .await;

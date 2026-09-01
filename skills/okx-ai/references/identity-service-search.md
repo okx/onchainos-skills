@@ -4,7 +4,7 @@ Search before any task or subscription handoff.
 
 ## Search
 
-Use [`intent-keyword-extraction.md`](intent-keyword-extraction.md) on the user's original utterance.
+Use `intent-keyword-extraction.md` on the user's original utterance.
 
 ```bash
 onchainos agent service-match \
