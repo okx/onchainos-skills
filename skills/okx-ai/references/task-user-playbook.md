@@ -25,7 +25,7 @@
 | Add attachment / image | "attach a file/image to a task" | [`task-user-actions.md`](task-user-actions.md) §2 |
 | Stop task | "stop task / close task" | [`task-user-actions.md`](task-user-actions.md) §3 |
 | View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
-| Subscription task list | "my subscriptions / subscription list / ongoing subscriptions / active subscriptions / ended subscriptions" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Task list → §Unified My Tasks. User-initiated lists use `my-tasks --task-type subscription`, never `my-subscriptions`. |
+| Subscription task list or detail | "my subscriptions / subscription list / ongoing subscriptions / active subscriptions / ended subscriptions / subscription detail" | [`task-subscription-view.md`](task-subscription-view.md) |
 | Rate | "rate this task / rate this subscription / review jobId X / give X five stars / leave feedback" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Rate an active subscription |
 | Subscription task ops | "auto-renew / trial cancel / reject delivery / apply for refund / claim refund / subscription charge / subscription cost" | §Subscription below |
 | Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
@@ -374,21 +374,15 @@ The device columns below are illustrative — replace them with the user's **act
 
 **Trigger (entry layer):** a newly completed wallet login, not a standalone OKX.AI free-text intent and not `wallet status`. [`wallet.md`](../../okx-agentic-wallet/references/wallet.md) owns the single entry point: step 3 after a successful login poll. Do **NOT** add trigger words to `SKILL.md` for this display.
 
-**Programmatic data source (mandatory).** A successful `wallet login --phase poll` may return the already-aggregated snapshot at `data.postLoginSubscriptions`: `subscriptions` is the exact buyer `my-subscriptions` payload; `devices` is the complete `device-list` payload (or `null` on device-query failure). `wallet status` never returns this field. Consume the poll snapshot directly. **Never issue a follow-up `my-subscriptions` or `device-list` command in the login flow.** User-initiated task/subscription listing uses §Unified My Tasks and remains a separate command flow.
+**Programmatic data source (mandatory).** A successful `wallet login --phase poll` may return `data.postLoginSubscriptions.activeSubscriptionCount`. `wallet status` never returns this field. Consume it directly and **never issue a follow-up subscription or device query in the login flow**. User-initiated listing remains a separate flow under [`task-subscription-view.md`](task-subscription-view.md).
 
 **New-device default routing (login only).** After resolving a non-empty User `agenticId` and before the login heartbeat, the CLI checks whether this device already exists in the complete device table, then always sends the heartbeat regardless of whether that optional probe succeeded. A device proved new gets production/pre-release-isolated durable state, is registered, then is added to every subscription's explicit `deviceList` by fresh-list union and batched overwrite (≤100 items per request); `deviceList:null` remains null because it already means default-all. Progress is persisted after each confirmed batch and the state becomes `completed` before rendering, so retries touch only unfinished jobs and cleanup failure cannot re-enable a later manual opt-out. The CLI returns `postLoginSubscriptions` only after routing succeeds, so the table never appears before the new device is configured. An already-registered device without pending work is never rewritten on re-login. If `agenticId` is unavailable or the pre-heartbeat probe fails, the heartbeat still registers/refreshes the device, but automatic routing and the table are safely suppressed.
 
-**Zero-disturb (mandatory).** The CLI omits `data.postLoginSubscriptions` when the subscription lookup errors (no OKX.AI identity, transport/auth failure), times out, or returns an empty list. When absent, output **nothing** OKX.AI-related — no table, no opening line, no 💡 hint, no error, no mention that a check ran. The login flow concludes normally. Never surface the attempt.
+**Zero-disturb (mandatory).** The CLI omits `data.postLoginSubscriptions` when the subscription lookup errors (no OKX.AI identity, transport/auth failure), times out, or finds no Active subscription. When absent, output **nothing** OKX.AI-related — no hint, no error, no mention that a check ran. The login flow concludes normally. Never surface the attempt.
 
-**Non-empty render.** Reuse §Buyer Subscription Renderer **as-is**: the same one-row-per-subscription dynamic device-column matrix, actual device names, device ordering and disambiguation, tri-state cell mapping, `thisDeviceReceives` authority, legend, and mandatory degraded render when `device-list` fails/empty. Only the surrounding copy below differs.
+**Non-empty render.** Render one localized light hint only; do not render a subscription or device table:
 
-- **Surrounding copy.** Precede the legend and table with this English line verbatim or translate it faithfully per §Localization:
-
-  > Here are your subscriptions and each device's message-receipt state. You can change device delivery anytime.
-
-  Follow the table with exactly **one** 💡 hint: Codex / Claude Code messages do not appear automatically; the user must say `listen to <task title>`. Use a **real** title from this render, never a sample:
-
-  > 💡 In Codex / Claude Code, task messages do not appear automatically. To see them here, say "listen to {a real subscribed title from this render}."
+> You have {activeSubscriptionCount} active subscription task(s). Say “view my subscriptions” to inspect them.
 
 ### Post-login executable-subscription profile restore
 

@@ -204,8 +204,8 @@ Triggers:
 
 | Trigger | Action |
 |---|---|
-| `my subscriptions` / `subscription list` / `what am I subscribed to` / `ongoing subscriptions` / `active subscriptions` / `ended subscriptions` | Use §Task list with scope `subscription`; map generic requests to `all`, ongoing/active to `active`, and ended to `ended`. |
-| `subscription detail` / `show this subscription` | `onchainos agent subscribe-detail <jobId>` (id = the row's `jobId`) → render per [`task-user-playbook.md` §Subscription Detail](task-user-playbook.md). |
+| `my subscriptions` / `subscription list` / `what am I subscribed to` / `ongoing subscriptions` / `active subscriptions` / `ended subscriptions` | Route to [`task-subscription-view.md`](task-subscription-view.md). |
+| `subscription detail` / `show this subscription` | Route to [`task-subscription-view.md`](task-subscription-view.md); use the selected row's `jobId`. |
 | `device list` / `list my logged-in devices` / `which devices are online` | `onchainos agent device-list` → render per [`task-user-playbook.md` §Device List](task-user-playbook.md). |
 | `start receiving X on this device` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — fresh-read; `deviceList:null` already means default-all, so report already receiving without a write; otherwise union → overwrite → re-read. |
 | `start receiving Y on device X` / `also send Y to devices X and Z` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — resolve device names→ids via `device-list` (never fabricate an unresolvable name); `deviceList:null` already includes every logged-in device (no write), otherwise UNION with the fresh-read list → overwrite → re-read → confirm the complete receiving set. |

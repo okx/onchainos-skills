@@ -34,6 +34,52 @@ Rules:
   numbered choice when no user decision is required.
 - Do not expose raw JSON, internal phase names, or provider instructions.
 
+## Subscription view
+
+This template renders the read-only results defined by
+[`task-subscription-view.md`](task-subscription-view.md). It does not make a
+CLI decision or authorize an operation.
+
+For an unfiltered request, render an `Active subscriptions` section first and
+an `Ended subscriptions` section second. Within each section, sort rows by the
+verbatim `serviceTokenAmount` only when every row uses the same
+`serviceTokenAddress`; otherwise retain CLI order and say that different tokens
+are not compared. Never parse an amount as a float.
+
+Use this table for Active rows. Fetch `device-list` only for this rendering;
+its readable device names form the dynamic columns.
+
+| # | Service | Provider | Fee | Billing Period | Next Charge | Auto-Renew | {device columns} |
+|---|---|---|---|---|---|---|---|
+| 1 | {title} | Agent#{providerAgentId} | {serviceTokenAmount} | {billingPeriod} | {nextCharge} | {autoRenew} | {receipt state} |
+
+Use this smaller table for non-Active rows; do not expose device receipt state.
+
+| # | Service | Provider | Status | Fee | Billing Period |
+|---|---|---|---|---|---|
+| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {billingPeriod} |
+
+`deviceList:null` means every logged-in buyer device receives messages;
+`deviceList:[]` means none; a non-empty list uses membership. The current
+device cell uses the CLI's `thisDeviceReceives` field directly. If device data
+is unavailable, say so and render only the current-device column; never imply
+that it represents every device.
+
+After a non-empty result, offer only these display choices:
+
+```text
+[Next]
+1. View a subscription detail
+2. Manage message-receipt devices
+3. View latest signals
+4. View copy-trade status
+```
+
+The user must select a row before any choice. Choices 2–4 are entry points,
+not commands: they require a fresh explicit request and their own Reference.
+Do not start watching, change device delivery, or alter copy-trade policy from
+this template.
+
 ## `decision=blocked`
 
 Use a concise status result and a recovery-oriented action list.

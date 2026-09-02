@@ -57,7 +57,8 @@ At thread start, run
 | Activate/deactivate Agent `#N` | `references/identity-listing.md` + `references/identity-cli-reference.md` |
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
 | Auto-renew, trial cancel, reject, refund, or deliver | §Task Marketplace |
-| Existing task actions, task list, or subscription list/detail | `references/task-user-playbook.md` only; use its unified task/subscription routing |
+| Existing task actions or task list | `references/task-user-playbook.md` only; use its unified task routing |
+| My subscriptions, subscription list, ended subscriptions, or subscription detail | `references/task-subscription-view.md` |
 | Pause/stop subscription copy-trading | `references/task-user-playbook.md`, §Pause auto copy-trade only |
 | Devices or subscription-message receipt/replay settings | `references/task-user-playbook.md`, §Device List / device-receipt; buyer side only |
 | Receive/resume/restore an existing subscription or its signals; update its copy-trade policy; `listen to <subscription title>` | `references/task-user-playbook.md`, §Signal-receipt watch entry; resolve the active subscription, pass authorization, then use scoped watch. Never read backlog first, guess `jobId`, or use global watch |

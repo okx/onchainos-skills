@@ -449,21 +449,37 @@ fn parse_bool_or_int(s: &str, flag: &str) -> Result<i32> {
     }
 }
 
-/// Build the optional post-login subscription block. An empty subscription
-/// list deliberately produces no block (the product's zero-disturb contract),
-/// while a missing device snapshot is kept as JSON null so the renderer uses
-/// the documented this-device-only degraded view.
+/// Build the optional post-login subscription hint. Only active subscriptions
+/// are surfaced, keeping wallet login quiet for ended-only histories.
+fn active_subscription_count(subscriptions: &serde_json::Value) -> u64 {
+    subscriptions
+        .get("list")
+        .and_then(serde_json::Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter(|item| {
+                    item.get("status").and_then(serde_json::Value::as_i64) == Some(1)
+                        || item
+                            .get("statusName")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|status| status.eq_ignore_ascii_case("ACTIVE"))
+                })
+                .count() as u64
+        })
+        .unwrap_or(0)
+}
+
 fn compose_post_login_subscriptions(
     subscriptions: serde_json::Value,
     subscriptions_empty: bool,
-    devices: Option<serde_json::Value>,
+    _devices: Option<serde_json::Value>,
 ) -> Option<serde_json::Value> {
-    if subscriptions_empty {
+    let active_count = active_subscription_count(&subscriptions);
+    if subscriptions_empty || active_count == 0 {
         return None;
     }
     Some(serde_json::json!({
-        "subscriptions": subscriptions,
-        "devices": devices,
+        "activeSubscriptionCount": active_count,
     }))
 }
 
@@ -2094,23 +2110,35 @@ mod post_login_tests {
     }
 
     #[test]
-    fn non_empty_subscriptions_include_complete_device_snapshot() {
-        let subscriptions = json!({ "list": [{ "jobId": "j1" }] });
-        let devices = json!({ "list": [{ "deviceId": "d1" }], "total": 1 });
-        let block =
-            compose_post_login_subscriptions(subscriptions.clone(), false, Some(devices.clone()))
-                .expect("non-empty subscriptions must produce a block");
-        assert_eq!(block["subscriptions"], subscriptions);
-        assert_eq!(block["devices"], devices);
+    fn active_subscriptions_produce_a_count_only_hint() {
+        let block = compose_post_login_subscriptions(
+            json!({ "list": [{ "jobId": "j1", "status": 1 }] }),
+            false,
+            Some(json!({ "list": [{ "deviceId": "d1" }], "total": 1 })),
+        )
+        .expect("active subscriptions must produce a hint");
+        assert_eq!(block, json!({ "activeSubscriptionCount": 1 }));
     }
 
     #[test]
-    fn device_failure_keeps_subscriptions_and_selects_degraded_render() {
-        let subscriptions = json!({ "list": [{ "jobId": "j1" }] });
-        let block = compose_post_login_subscriptions(subscriptions.clone(), false, None)
-            .expect("subscription data must survive a device-list failure");
-        assert_eq!(block["subscriptions"], subscriptions);
-        assert!(block["devices"].is_null());
+    fn ended_only_subscriptions_produce_no_post_login_hint() {
+        let block = compose_post_login_subscriptions(
+            json!({ "list": [{ "jobId": "j1", "status": 6 }] }),
+            false,
+            None,
+        );
+        assert!(block.is_none());
+    }
+
+    #[test]
+    fn device_failure_does_not_block_an_active_subscription_hint() {
+        let block = compose_post_login_subscriptions(
+            json!({ "list": [{ "jobId": "j1", "statusName": "ACTIVE" }] }),
+            false,
+            None,
+        )
+        .expect("active subscription hint must not need device data");
+        assert_eq!(block, json!({ "activeSubscriptionCount": 1 }));
     }
 
     #[test]
