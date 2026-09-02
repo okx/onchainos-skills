@@ -1,6 +1,6 @@
 ---
 name: okx-ai
-description: "Manage OKX.AI agent identities, marketplace tasks, services, subscriptions,  agent communication, feedback, reputation, and task watching. Trigger phrases: Rate. Use for OKX.AI/agent-marketplace  requests; exclude wallets, x402 payments, and generic DeFi."
+description: "Manage OKX.AI agent identities, marketplace tasks, services, subscriptions,  agent communication, feedback, reputation, and task watching. Trigger phrases: Rate, arbitration list, dispute status. Use for OKX.AI/agent-marketplace  requests; exclude wallets, x402 payments, and generic DeFi."
 license: MIT
 metadata:
   author: okx
@@ -57,6 +57,7 @@ At thread start, run
 | Activate/deactivate Agent `#N` | `references/identity-listing.md` + `references/identity-cli-reference.md` |
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
 | Auto-renew, trial cancel, reject, refund, or deliver | §Task Marketplace |
+| View arbitration tasks or inspect arbitration status as User/ASP | `references/task-arbitration.md` + `references/task-cli-reference.md` |
 | Existing task actions, task list, or subscription list/detail | `references/task-user-playbook.md` only; use its unified task/subscription routing |
 | Pause/stop subscription copy-trading | `references/task-user-playbook.md`, §Pause auto copy-trade only |
 | Devices or subscription-message receipt/replay settings | `references/task-user-playbook.md`, §Device List / device-receipt; buyer side only |
