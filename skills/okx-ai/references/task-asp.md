@@ -28,6 +28,14 @@ Real work and delivery start only after the ASP accept mutation is confirmed by
 the corresponding accepted/active event. A natural-language request is not itself
 authorization to execute.
 
+On single-task `job_accepted`, reuse the designated registered Service's existing
+AI/Skill workflow with authoritative `serviceId`, description, complete
+`serviceParams`, and forwarded attachments. Do not replace it with an unrelated
+ad-hoc workflow. Any remaining clarification uses `okx-a2a session send`, not the
+removed `xmtp-send` interface. On subscription `sub_asp_selected`, the latest
+subscription detail must report `subStatus/status=ACTIVE(1)` before notification
+or service startup; missing/non-Active state fails closed.
+
 ## §1.6 Delivery contract
 
 - Fetch authoritative detail before delivery. A one-time task must be `accepted`; a subscription must

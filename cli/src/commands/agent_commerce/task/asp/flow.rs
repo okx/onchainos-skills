@@ -372,21 +372,17 @@ pub async fn generate_next_action(
     // xmtp_send internally (upload + [intent:deliver] message + on-chain submit).
     // Other events that need peer messaging construct the command inline.
 
-    // Shared "execute task autonomously" guidance for escrow Step 2 — the script does
-    // not prescribe how to do it; list a few examples so the agent knows "pick your own
-    // tool" is the expected behavior.
+    // V2 accepted-task execution is anchored to the designated registered Service.
+    // The provider may use that Service's existing tools internally, but must not
+    // replace it with an unrelated ad-hoc workflow.
     let execute_task = format!(
-        "Pick the right tool / capability for the task content to get the work done. For example:\n\
-        \x20\x20• `Generate a cat image` → call an image-generation tool, get the local file path\n\
-        \x20\x20• `Check the weather` → call wttr.in / a weather API, get a text result\n\
-        \x20\x20• `Audit a smart contract` → read the code, produce an audit report\n\
-        Tool choice is outside the script's scope; the agent decides autonomously.\n\n\
-        ⚠️ If you have questions about task details / acceptance criteria → run `okx-a2a xmtp-send` (resolve `<buyerAgentId>` from the task fields above):\n\
+        "Reuse the designated registered Service's existing AI/Skill workflow. Feed it the authoritative description, complete serviceParams, and forwarded attachments from the Task fields/session; do not substitute an unrelated workflow and do not re-run provider acceptance.\n\n\
+        ⚠️ If a new question about task details / acceptance criteria is still required, use the existing A2A session (resolve `<buyerAgentId>` from the Task fields above):\n\
         \x20\x20\x20\x20```bash\n\
-        \x20\x20\x20\x20okx-a2a xmtp-send \\\n\
+        \x20\x20\x20\x20okx-a2a session send \\\n\
         \x20\x20\x20\x20\x20\x20--job-id {job_id} \\\n\
         \x20\x20\x20\x20\x20\x20--to-agent-id <buyerAgentId> \\\n\
-        \x20\x20\x20\x20\x20\x20--message \"<plain natural-language question to the User Agent>\"\n\
+        \x20\x20\x20\x20\x20\x20--content \"<plain natural-language question to the User Agent>\" --json\n\
         \x20\x20\x20\x20```\n\
         End this turn after sending, wait for the reply; once you have the answer, start the work. Do not guess and produce a deliverable that misses the mark."
     );
@@ -427,7 +423,7 @@ pub async fn generate_next_action(
         // ─── §1.5: designated-provider acceptance confirmed; execute and deliver ──
         Event::JobAccepted => {
             let user_notify = super::content::job_accepted_user_notify(job_id, agent_id);
-            let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol", "serviceParams", "buyerAgentId"]);
+            let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol", "serviceId", "serviceParams", "buyerAgentId"]);
             format!(
             "[Current state] job_accepted (your provider acceptance is confirmed)\n\
              [Role] ASP (Agent Service ASP)\n\n\
@@ -441,12 +437,12 @@ pub async fn generate_next_action(
              content:\n\
              {user_notify}\n\n\
              Fill the `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` placeholders from the **Task fields** block above.\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` acceptance filler to the Buyer Agent — both sides receive the authoritative `job_accepted` system event.\n\n\
-             **Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
+             ⚠️ Do NOT send any A2A acceptance filler to the Buyer Agent — both sides receive the authoritative `job_accepted` system event.\n\n\
+             **Step 2 — Start the designated Service workflow and prepare the deliverable**:\n\
              {execute_task}\n\n\
              **Step 3 — Deliver** (single CLI command — handles file upload, peer notification, on-chain submit, and local save internally):\n\n\
-             ⚠️ Do NOT call `okx-a2a file upload` or `okx-a2a xmtp-send` yourself — the `deliver` CLI handles all of this internally:\n\
-             \x20\x20- file_upload (when needed) → xmtp_send `[intent:deliver]` to the User Agent → on-chain submit → local persistent save.\n\
+             ⚠️ Do NOT call `okx-a2a file upload` or `okx-a2a session send` yourself — the `deliver` CLI handles all of this internally:\n\
+             \x20\x20- file upload (when needed) → session send `[intent:deliver]` to the User Agent → on-chain submit → local persistent save.\n\
              \x20\x20- Text deliverables over 500 Unicode characters are auto-converted to a `.md` file and sent as a file attachment; if conversion/upload fails, the CLI falls back to inline text.\n\
              \x20\x20- A2A delivery must succeed before a single task can be submitted on-chain. Subscription delivery never calls the single-task submit API.\n\n\
              ▸ **File deliverable** — pass `--file` with the local file path:\n\
@@ -461,7 +457,7 @@ pub async fn generate_next_action(
              OKX_TEXT_EOF\n\
              )\"\n\
              ```\n\n\
-             **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
+             **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a session send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
              🛑 **The next system event is `job_submitted`** — notify the ASP owner that the delivery is confirmed on-chain and awaiting User review. After that, `job_completed` or `job_rejected` is action-required.\n\n\
              [Follow-up events]\n\
              - `job_completed` (User Agent reviewed and accepted) — auto-rate the User Agent + notify the user\n\
@@ -1094,6 +1090,12 @@ pub async fn generate_next_action(
             let buyer_agent_id = msg_str("buyerAgentId")
                 .or_else(|| prefetched.and_then(|p| p.user_agent_id.as_deref()))
                 .filter(|s| !s.is_empty());
+            let token_amount = msg_str("tokenAmount")
+                .or_else(|| prefetched.map(|p| p.token_amount.as_str()))
+                .filter(|s| !s.is_empty());
+            let token_symbol = msg_str("tokenSymbol")
+                .or_else(|| prefetched.map(|p| p.token_symbol.as_str()))
+                .filter(|s| !s.is_empty() && *s != "?");
             // Trial subscribers charge nothing on selection — the ASP must not be told a
             // payment was received (mirrors the buyer-side sub_created trialType branch).
             // trail* is the pre-rename field spelling kept as a read fallback (AC-17).
@@ -1102,8 +1104,8 @@ pub async fn generate_next_action(
                     title,
                     buyer_agent_id,
                     job_id,
-                    msg_str("tokenAmount"),
-                    msg_str("tokenSymbol"),
+                    token_amount,
+                    token_symbol,
                     msg_i64("trialStartTime").or_else(|| msg_i64("trailStartTime")),
                     msg_i64("trialEndTime").or_else(|| msg_i64("trailEndTime")),
                 )
@@ -1112,8 +1114,8 @@ pub async fn generate_next_action(
                     title,
                     buyer_agent_id,
                     job_id,
-                    msg_str("tokenAmount"),
-                    msg_str("tokenSymbol"),
+                    token_amount,
+                    token_symbol,
                     msg_i64("subStartTime"),
                     msg_i64("subEndTime"),
                 )
@@ -1576,9 +1578,44 @@ mod tests {
         .await;
         assert!(out.contains("your provider acceptance is confirmed"));
         assert!(out.contains("Notify the ASP owner"));
-        assert!(out.contains("Autonomously execute the task"));
+        assert!(out.contains("registered Service's existing AI/Skill workflow"));
+        assert!(out.contains("serviceId"));
+        assert!(out.contains("okx-a2a session send"));
+        assert!(!out.contains("okx-a2a xmtp-send"));
         assert!(out.contains("onchainos agent deliver"));
         assert!(!out.contains("User Agent has confirmed the apply"));
+    }
+
+    #[tokio::test]
+    async fn asp_subscription_acceptance_falls_back_to_authoritative_detail() {
+        let prefetched =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "title": "Authoritative Service",
+                    "description": "Service description",
+                    "buyerAgentId": "buyer-9",
+                    "tokenAmount": "7.5",
+                    "tokenSymbol": "USDT",
+                    "serviceId": "service-1",
+                    "serviceParams": "{\"symbol\":\"SOL\"}",
+                    "subStatus": 1
+                }),
+            );
+        let out = generate_next_action(
+            ASP_JOB_ID,
+            "sub_asp_selected",
+            ASP_AGENT_ID,
+            None,
+            None,
+            Some(&prefetched),
+            Some(&json!({"event": "sub_asp_selected"})),
+        )
+        .await;
+        assert!(out.contains("Authoritative Service"));
+        assert!(out.contains("Buyer: buyer-9"));
+        assert!(out.contains("7.5 USDT"));
+        assert!(out.contains("serviceId: service-1"));
+        assert!(out.contains("Start service execution now"));
     }
 
     #[tokio::test]

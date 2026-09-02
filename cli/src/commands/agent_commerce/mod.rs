@@ -4237,15 +4237,16 @@ fn subscription_acceptance_status(detail: &serde_json::Value) -> Option<i64> {
         })
 }
 
-fn subscription_acceptance_block_reason(detail: &serde_json::Value) -> Option<String> {
+fn subscription_acceptance_block_reason(detail: &serde_json::Value, event: &str) -> Option<String> {
     match subscription_acceptance_status(detail) {
         Some(1) => None,
         Some(status) => Some(format!(
-            "[next-action blocked] Latest subscription status is {status}, not ACTIVE(1). Do not display the sub_created acceptance notice."
+            "[next-action blocked] Latest subscription status is {status}, not ACTIVE(1). Do not execute the {event} acceptance flow."
         )),
         None => Some(
-            "[next-action blocked] Latest subscription detail has no valid subStatus/status. Do not display the sub_created acceptance notice."
-                .to_string(),
+            format!(
+                "[next-action blocked] Latest subscription detail has no valid subStatus/status. Do not execute the {event} acceptance flow."
+            ),
         ),
     }
 }
@@ -4360,8 +4361,8 @@ async fn check_status_freshness(
         Err(_) => return (None, None),
     };
 
-    if job_status_or_event == "sub_created" {
-        if let Some(reason) = subscription_acceptance_block_reason(&resp) {
+    if matches!(job_status_or_event, "sub_created" | "sub_asp_selected") {
+        if let Some(reason) = subscription_acceptance_block_reason(&resp, job_status_or_event) {
             return (Some(reason), None);
         }
     }
@@ -4517,12 +4518,30 @@ mod acceptance_detail_path_tests {
             Some(0)
         );
         assert_eq!(subscription_acceptance_status(&serde_json::json!({})), None);
+        assert!(subscription_acceptance_block_reason(
+            &serde_json::json!({"subStatus": 1}),
+            "sub_created"
+        )
+        .is_none());
+        assert!(subscription_acceptance_block_reason(
+            &serde_json::json!({"subStatus": 0}),
+            "sub_created"
+        )
+        .is_some());
         assert!(
-            subscription_acceptance_block_reason(&serde_json::json!({"subStatus": 1})).is_none()
+            subscription_acceptance_block_reason(&serde_json::json!({}), "sub_asp_selected")
+                .is_some()
         );
-        assert!(
-            subscription_acceptance_block_reason(&serde_json::json!({"subStatus": 0})).is_some()
-        );
-        assert!(subscription_acceptance_block_reason(&serde_json::json!({})).is_some());
+        assert!(subscription_acceptance_block_reason(
+            &serde_json::json!({"subStatus": 1}),
+            "sub_asp_selected"
+        )
+        .is_none());
+        let blocked = subscription_acceptance_block_reason(
+            &serde_json::json!({"subStatus": 0}),
+            "sub_asp_selected",
+        )
+        .unwrap();
+        assert!(blocked.contains("sub_asp_selected"));
     }
 }
