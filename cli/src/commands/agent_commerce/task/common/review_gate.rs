@@ -16,8 +16,7 @@ use std::path::PathBuf;
 use super::DEBUG_LOG;
 
 fn gate_path(job_id: &str) -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("unable to determine HOME directory"))?;
-    let dir = home.join(".onchainos").join("task").join(job_id);
+    let dir = crate::home::task_state_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("review-gate"))
 }
