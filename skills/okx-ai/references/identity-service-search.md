@@ -20,14 +20,12 @@ Read `services[]`, `searchAfter`, `hasMore`, and `tip`.
 
 ## Display
 
-**MUST** group `services[]` by `asp.aspAgentId` in returned order; number services sequentially across Agents, render localized fields per [`identity-service-contract.md` §Display], merge `Fee` and `Subscription` as `Fee`, and omit columns containing only `—`.
+**MUST** group `services[]` by `asp.aspAgentId` in returned order and render
+them directly with `identity-output-templete.md`. For each group, put the
+Agent heading above its Service table:
 
 ```markdown
 ### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>
-
-| # | Name | Type | Fee | Free trial | Endpoint | Description |
-|---|---|---|---|---|---|---|
-| 1 | <serviceName> | <serviceType> | <fee> | <freeTrial> | <endpoint> | <serviceDescription> |
 ```
 
 **MUST** render all Agent tables as above, then the localized CLI `tip` once.

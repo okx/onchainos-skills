@@ -50,7 +50,5 @@ Run:
 onchainos agent service-list --agent-id <id>
 ```
 
-Render the returned display-ready rows in order. Preserve `A2A` / `A2MCP`,
-Agent IDs, prices, endpoints, and normalized labels exactly. Omit a display
-column only when every row marks it unavailable. Do not display `serviceGuide`
-or internal Service UUIDs.
+Use `identity-output-templete.md` to render the returned `cells[]` in order.
+Omit Agent heading and rating/sold-count metadata.
