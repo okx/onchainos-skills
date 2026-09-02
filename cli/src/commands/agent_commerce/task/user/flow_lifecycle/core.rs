@@ -1524,42 +1524,51 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
-    // Fallback: prefetch didn't include local deliverable info.
-    // Check manifest → temp file → wait.
-    if p.deliverable.is_none() {
+    // A review card is allowed only when the saved artifact still exists as a
+    // regular file. Stale prefetched/manifest metadata must not surface an
+    // acceptance decision for a missing deliverable.
+    let prefetched_deliverable_ready = p
+        .deliverable
+        .as_ref()
+        .is_some_and(|deliverable| std::path::Path::new(&deliverable.path).is_file());
+    // Fallback: prefetch didn't include a usable local deliverable.
+    // Check manifest → current-protocol temp spool → wait.
+    if !prefetched_deliverable_ready {
         use crate::commands::agent_commerce::task::common::deliverables;
         if let Ok(Some(manifest)) = deliverables::read_manifest("user", job_id) {
             if let Some(entry) = manifest.entries.last() {
                 let saved_path = deliverables::deliverables_dir("user", job_id)
                     .map(|d| d.join(&entry.filename))
                     .unwrap_or_default();
-                let text_content = if entry.deliverable_type == "text" {
-                    std::fs::read_to_string(&saved_path).ok()
-                } else {
-                    None
-                };
-                let mut patched = p.clone();
-                patched.deliverable = Some(
-                    crate::commands::agent_commerce::task::common::PreFetchedDeliverable {
-                        path: saved_path.display().to_string(),
-                        deliverable_type: entry.deliverable_type.clone(),
-                        original_name: entry.original_name.clone(),
-                        text_content,
-                    },
-                );
-                let patched_ctx = super::super::flow::FlowContext {
-                    job_id: ctx.job_id,
-                    agent_id: ctx.agent_id,
-                    short_id: ctx.short_id,
-                    title_display: ctx.title_display,
-                    title_query_hint: ctx.title_query_hint,
-                    title_in_extract: ctx.title_in_extract,
-                    terminal_session_hint: ctx.terminal_session_hint.clone(),
-                    payment_mode: ctx.payment_mode,
-                    prefetched: Some(&patched),
-                    data: ctx.data,
-                };
-                return job_submitted_escrow(&patched_ctx);
+                if saved_path.is_file() {
+                    let text_content = if entry.deliverable_type == "text" {
+                        std::fs::read_to_string(&saved_path).ok()
+                    } else {
+                        None
+                    };
+                    let mut patched = p.clone();
+                    patched.deliverable = Some(
+                        crate::commands::agent_commerce::task::common::PreFetchedDeliverable {
+                            path: saved_path.display().to_string(),
+                            deliverable_type: entry.deliverable_type.clone(),
+                            original_name: entry.original_name.clone(),
+                            text_content,
+                        },
+                    );
+                    let patched_ctx = super::super::flow::FlowContext {
+                        job_id: ctx.job_id,
+                        agent_id: ctx.agent_id,
+                        short_id: ctx.short_id,
+                        title_display: ctx.title_display,
+                        title_query_hint: ctx.title_query_hint,
+                        title_in_extract: ctx.title_in_extract,
+                        terminal_session_hint: ctx.terminal_session_hint.clone(),
+                        payment_mode: ctx.payment_mode,
+                        prefetched: Some(&patched),
+                        data: ctx.data,
+                    };
+                    return job_submitted_escrow(&patched_ctx);
+                }
             }
         }
         if let Some(recovered) = try_recover_from_temp_file(
@@ -1597,17 +1606,20 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
             };
             return job_submitted_escrow(&patched_ctx);
         }
-        let _ = deliverables::write_review_marker(job_id);
-        return job_submitted_waiting_for_deliverable(job_id);
+        return match deliverables::write_review_marker(job_id) {
+            Ok(()) => job_submitted_waiting_for_deliverable(job_id),
+            Err(error) => format!(
+                "[System] job_submitted review deferred for job {job_id}: the internal out-of-order marker could not be persisted ({error}).\n\
+                 No user-facing action and no acceptance decision. Do not inspect chat history or reconstruct a deliverable manually; wait for a fresh validated event after local storage recovers.\n"
+            ),
+        };
     }
 
-    // Inline-from-prefetched values used in Step 2b's task-deliverable-save commands.
-    let title = p.title.as_str();
-    let token_symbol = p.token_symbol.as_str();
-    let token_amount = p.token_amount.as_str();
-
-    let step2 = if let Some(d) = p.deliverable.as_ref() {
-        if d.deliverable_type == "text" {
+    let d = p
+        .deliverable
+        .as_ref()
+        .expect("usable deliverable was required before composing a review card");
+    let step2 = if d.deliverable_type == "text" {
             let content = d.text_content.as_deref().unwrap_or("<content unavailable>");
             format!(
                 "\
@@ -1628,41 +1640,6 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      \x20\x20- deliverableType: file\n\n",
                 path = d.path,
             )
-        }
-    } else {
-        format!("\
-     **Step 2a — Check saved deliverable:**\n\
-     ```bash\n\
-     onchainos agent task-deliverable-list --job-id {job_id} --role user\n\
-     ```\n\
-     Non-empty `deliverables` → use first entry's `path` as localPath, `deliverableType`; skip Step 2b.\n\
-     Empty → fall through to Step 2b.\n\n\
-     **Step 2b — Fallback: fetch from chat history:**\n\
-     ```bash\n\
-     okx-a2a session history --job-id {job_id} --to-agent-id {provider_field} --json\n\
-     ```\n\
-     Find the ASP message with `[intent:deliver]` suffix (newest first).\n\n\
-     ▸ Case A (file — message has fileKey/digest/salt/nonce/secret):\n\
-     ```bash\n\
-     okx-a2a file download --file-key <fileKey> --agent-id {agent_id} --digest <digest> --salt <salt> --nonce <nonce> --secret <secret> [--filename <filename>]\n\
-     ```\n\
-     stdout = localPath (must be full absolute path). Then persist:\n\
-     ```bash\n\
-     onchainos agent task-deliverable-save --job-id {job_id} --role user \\\n\
-       --file \"<localPath>\" --deliverable-type file --title \"{title}\" \\\n\
-       --short-id {short_id} --file-key \"<fileKey>\" \\\n\
-       --counterparty-agent-id \"{provider_field}\" --counterparty-name \"<providerName>\" \\\n\
-       --token-symbol \"{token_symbol}\" --token-amount \"{token_amount}\"\n\
-     ```\n\n\
-     ▸ Case B (text — body between `- - -` separators):\n\
-     Extract full text → write to temp .txt → persist:\n\
-     ```bash\n\
-     onchainos agent task-deliverable-save --job-id {job_id} --role user \\\n\
-       --file \"<temp .txt path>\" --deliverable-type text --title \"{title}\" \\\n\
-       --short-id {short_id} --counterparty-agent-id \"{provider_field}\" \\\n\
-       --counterparty-name \"<providerName>\" --token-symbol \"{token_symbol}\" --token-amount \"{token_amount}\"\n\
-     ```\n\
-     After save, update localPath from save command output.\n\n")
     };
 
     // Step 3 — compose review card user_content + push via pending-decisions-v2.
@@ -1670,7 +1647,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         job_id,
         "user",
         agent_id,
-        ctx.prefetched.and_then(|p| p.provider_agent_id.as_deref()),
+        Some(provider_field),
         "<composed in Step 3a from the deliverableType template above — paste the localized result here verbatim, including the A. and B. option lines>",
         &format!("[Decision {short_id}] {title_display} acceptance decision"),
         "job_submitted",
@@ -2684,7 +2661,10 @@ Part B continues
             user_agent_id: None,
             status: Some(2),
             deliverable: Some(PreFetchedDeliverable {
-                path: "/tmp/deliverable.txt".to_string(),
+                path: std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("Cargo.toml")
+                    .display()
+                    .to_string(),
                 deliverable_type: "text".to_string(),
                 original_name: "deliverable.txt".to_string(),
                 text_content: Some("hello".to_string()),
@@ -2698,6 +2678,49 @@ Part B continues
             expire_time,
             test_flag: false,
         }
+    }
+
+    #[test]
+    fn escrow_card_waits_when_prefetched_deliverable_file_is_missing() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("submitted-missing-deliverable-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let mut p = escrow_ctx_with_expire(None);
+        p.deliverable.as_mut().unwrap().path = home
+            .path()
+            .join("does-not-exist.txt")
+            .display()
+            .to_string();
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id: "0xstale",
+            agent_id: "426",
+            short_id: "0xstale",
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+
+        let output = job_submitted_escrow(&ctx);
+        assert!(output.contains("No user-facing action and no acceptance decision"));
+        assert!(!output.contains("pending-decisions-v2 request"));
+        assert!(!output.contains("session history"));
+        assert!(
+            crate::commands::agent_commerce::task::common::deliverables::has_review_marker(
+                "0xstale"
+            )
+        );
     }
 
     #[test]

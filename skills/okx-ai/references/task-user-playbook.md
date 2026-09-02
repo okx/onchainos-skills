@@ -34,10 +34,12 @@
 
 ## §1.8 `job_submitted`
 
-- If the single-task deliverable is already saved, create the acceptance decision card exactly once.
+- If the single-task deliverable is already saved and its local path is still a regular file, create
+  the acceptance decision card. Stale prefetched/manifest metadata never counts as a deliverable.
 - If no deliverable is available, write only the internal out-of-order marker and take no user-facing
   action: no notification, no decision card, and no manual chat-history extraction. The later validated
-  `[intent:deliver]` intake consumes the marker and creates the card after persistence succeeds.
+  `[intent:deliver]` intake consumes the marker and creates the card after persistence succeeds. If
+  the marker itself cannot be persisted, remain internal and fail closed; never claim it was retained.
 
 ---
 
