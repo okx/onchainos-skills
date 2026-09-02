@@ -51,6 +51,12 @@ Onchainos-skills intentionally does **not** enumerate which DApps are supported 
 
 ## Development refresh
 
+When the user asks to "build", "refresh", or "sync" without explicitly naming
+the CLI or skills target, always run `npm run dev:skills`. Treat a CLI rebuild
+as optional for an ambiguous request: run `npm run dev:cli` only when the user
+explicitly asks to build the CLI or when the current task changed files under
+`cli/`.
+
 After making changes, run the checkout-local command that matches the files
 changed before handing work back:
 
@@ -73,12 +79,22 @@ tell the user what was updated and when it takes effect:
 after a machine restart. It restarts the A2A daemon, so never run it
 automatically as part of an ordinary code change.
 
-### Development endpoint
+### Development build environment
 
-The checkout-local development CLI and A2A wrapper use
-`https://forked-walletmain-swim.okx.testokg.com` by default. Do not use the
-production endpoint for development validation. To deliberately use another
-endpoint, set `OKX_BASE_URL` when running `npm run dev:init`.
+Before the first AI-initiated `npm run dev:init` or `npm run dev:cli` build in a
+Codex session, maintain a session-only logical variable named
+`onchainos_cli_build_env` with one of these values:
+
+- `beta`: build with `OKX_BASE_URL=https://beta.okex.org`.
+- `production`: build without a base-URL override by running through
+  `env -u OKX_BASE_URL`; the CLI then uses its built-in production endpoint.
+
+If the variable is unset, ask the user which environment to use before
+building. Remember the answer for the rest of the current Codex session and do
+not ask again unless the user explicitly requests an environment change. Do
+not persist this session choice in repository files or infer it from an
+existing wrapper, binary, or ambient shell environment. `npm run dev:skills`
+does not build the CLI and therefore does not require this choice.
 
 ### Local command boundary
 

@@ -97,9 +97,12 @@ to `.codex/runtime/a2a-spool`, keeping temporary A2A payloads and validated
 delivery-recovery files inside the checkout-local development runtime. Outside
 local development, the spool variable is optional and falls back to the OS
 temporary directory.
-They also use `https://forked-walletmain-swim.okx.testokg.com` as the default
-development API endpoint at both build and runtime. Set `OKX_BASE_URL` when
-running `npm run dev:init` to deliberately use a different endpoint.
+The setup script is endpoint-neutral: when `OKX_BASE_URL` is set, it is used at
+both build and runtime; when it is unset, the CLI is built without a base-URL
+override and uses its built-in production endpoint. In Codex development
+sessions, the agent asks once whether to use `https://beta.okex.org` or the
+production endpoint, then keeps that choice for subsequent CLI builds in the
+same session unless explicitly told to switch.
 They default `ONCHAINOS_SKIP_CLIENT_VERSION_GATE=true` for local development;
 set it to `false` when verifying the production version gate.
 The project-local A2A wrapper also recreates an ignored `.codex` mirror inside

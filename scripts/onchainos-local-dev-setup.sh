@@ -15,7 +15,7 @@ a2a_spool_dir="$project_dir/runtime/a2a-spool"
 ai_workspace_dir="$a2a_runtime_dir/workspace"
 target_dir="$project_dir/build/cargo-target"
 onchainos_binary="$target_dir/debug/onchainos"
-dev_base_url="${OKX_BASE_URL:-https://forked-walletmain-swim.okx.testokg.com}"
+dev_base_url="${OKX_BASE_URL:-}"
 
 usage() {
   cat <<'EOF'
@@ -29,8 +29,17 @@ Commands:
 
 Environment:
   OKX_A2A_GLOBAL_BIN  Path to the already globally installed okx-a2a executable.
-  OKX_BASE_URL        Override the default local development API endpoint.
+  OKX_BASE_URL        Optional build/runtime API endpoint override. When unset,
+                      build the CLI for its built-in production endpoint.
 EOF
+}
+
+base_url_wrapper_line() {
+  if [[ -n "$dev_base_url" ]]; then
+    printf 'export OKX_BASE_URL=%q\n' "$dev_base_url"
+  else
+    printf 'unset OKX_BASE_URL\n'
+  fi
 }
 
 require_command() {
@@ -90,7 +99,7 @@ set -euo pipefail
 export ONCHAINOS_HOME='$runtime_dir'
 export ONCHAINOS_CREDENTIAL_STORE=file
 export ONCHAINOS_SKIP_CLIENT_VERSION_GATE="\${ONCHAINOS_SKIP_CLIENT_VERSION_GATE:-true}"
-export OKX_BASE_URL='$dev_base_url'
+$(base_url_wrapper_line)
 export TMPDIR='$tmp_dir'
 export ONCHAINOS_A2A_SPOOL_DIR='$a2a_spool_dir'
 export OKX_AGENT_TASK_HOME='$a2a_runtime_dir'
@@ -113,7 +122,11 @@ build_cli() {
   }
   prepare_project_dirs
   require_command cargo
-  OKX_BASE_URL="$dev_base_url" CARGO_TARGET_DIR="$target_dir" cargo build --manifest-path "$repo_root/cli/Cargo.toml"
+  if [[ -n "$dev_base_url" ]]; then
+    OKX_BASE_URL="$dev_base_url" CARGO_TARGET_DIR="$target_dir" cargo build --manifest-path "$repo_root/cli/Cargo.toml"
+  else
+    env -u OKX_BASE_URL CARGO_TARGET_DIR="$target_dir" cargo build --manifest-path "$repo_root/cli/Cargo.toml"
+  fi
   [[ -x "$onchainos_binary" ]] || {
     echo "error: project-local onchainos binary not found: $onchainos_binary" >&2
     exit 1
@@ -155,7 +168,7 @@ refresh_ai_workspace_codex() {
 export ONCHAINOS_HOME='$runtime_dir'
 export ONCHAINOS_CREDENTIAL_STORE=file
 export ONCHAINOS_SKIP_CLIENT_VERSION_GATE="\${ONCHAINOS_SKIP_CLIENT_VERSION_GATE:-true}"
-export OKX_BASE_URL='$dev_base_url'
+$(base_url_wrapper_line)
 export TMPDIR='$tmp_dir'
 export ONCHAINOS_A2A_SPOOL_DIR='$a2a_spool_dir'
 export OKX_AGENT_TASK_HOME='$a2a_runtime_dir'
