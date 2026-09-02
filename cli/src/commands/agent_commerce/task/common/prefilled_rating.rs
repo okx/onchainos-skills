@@ -24,9 +24,7 @@ pub struct Rating {
 }
 
 fn cache_dir(job_id: &str) -> Result<std::path::PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
-    Ok(home.join(".onchainos").join("task").join(job_id).join("cache"))
+    Ok(crate::home::task_state_dir(job_id)?.join("cache"))
 }
 
 fn cache_path(job_id: &str) -> Result<std::path::PathBuf> {

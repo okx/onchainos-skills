@@ -15,6 +15,24 @@ use crate::file_keyring;
 
 const SERVICE: &str = "onchainos";
 const UNIFIED_KEY: &str = "agentic-wallet";
+const CREDENTIAL_STORE_ENV: &str = "ONCHAINOS_CREDENTIAL_STORE";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CredentialStore {
+    Auto,
+    File,
+}
+
+fn credential_store_from(value: Option<&str>) -> CredentialStore {
+    match value.map(str::trim) {
+        Some(value) if value.eq_ignore_ascii_case("file") => CredentialStore::File,
+        _ => CredentialStore::Auto,
+    }
+}
+
+fn credential_store() -> CredentialStore {
+    credential_store_from(std::env::var(CREDENTIAL_STORE_ENV).ok().as_deref())
+}
 
 // --------------- internal helpers ---------------
 
@@ -32,6 +50,9 @@ const UNIFIED_KEY: &str = "agentic-wallet";
 /// still expired" loop with no explanation (spec §3 / §8.5 #7). The caller maps
 /// the error to exit code 1.
 pub fn read_blob() -> Result<HashMap<String, String>> {
+    if credential_store() == CredentialStore::File {
+        return read_file_blob();
+    }
     if cfg!(target_os = "linux") {
         // Linux: file_keyring is the durable cross-process store.
         // Fall back to OS keyring only if file is empty (e.g. first run
@@ -74,16 +95,13 @@ fn read_blob_os_first() -> Result<HashMap<String, String>> {
             eprintln!("Warning: OS keyring read failed ({e}), trying file fallback");
         }
     }
-    match file_keyring::read_blob() {
-        Ok(map) => Ok(map),
-        Err(_) => {
-            // Same as the Linux path: surface corruption to the caller rather
-            // than silently purging every credential. See spec §3 / §8.5 #7.
-            Err(anyhow::anyhow!(
-                "Credentials corrupted. Please login again: onchainos wallet login"
-            ))
-        }
-    }
+    read_file_blob()
+}
+
+fn read_file_blob() -> Result<HashMap<String, String>> {
+    file_keyring::read_blob().map_err(|_| {
+        anyhow::anyhow!("Credentials corrupted. Please login again: onchainos wallet login")
+    })
 }
 
 /// Write the entire JSON blob to the keyring.
@@ -94,6 +112,9 @@ fn read_blob_os_first() -> Result<HashMap<String, String>> {
 ///   different session than the user's SSH shell). OS keyring is also
 ///   attempted best-effort for in-session convenience.
 fn write_blob(map: &HashMap<String, String>) -> Result<()> {
+    if credential_store() == CredentialStore::File {
+        return file_keyring::write_blob(map);
+    }
     if cfg!(target_os = "linux") {
         // Linux: file_keyring is the durable store; OS keyring best-effort.
         let result = file_keyring::write_blob(map);
@@ -172,6 +193,9 @@ pub fn store(credentials: &[(&str, &str)]) -> Result<()> {
 /// Clear all credentials by deleting the single keyring entry.
 /// Also clears the file fallback to ensure no stale credentials remain.
 pub fn clear_all() -> Result<()> {
+    if credential_store() == CredentialStore::File {
+        return file_keyring::clear_all();
+    }
     let _ = os_clear_all();
     file_keyring::clear_all()
 }
@@ -190,6 +214,15 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[test]
+    fn credential_store_override_accepts_only_file() {
+        assert_eq!(credential_store_from(Some("file")), CredentialStore::File);
+        assert_eq!(credential_store_from(Some(" FILE ")), CredentialStore::File);
+        assert_eq!(credential_store_from(None), CredentialStore::Auto);
+        assert_eq!(credential_store_from(Some("auto")), CredentialStore::Auto);
+        assert_eq!(credential_store_from(Some("unknown")), CredentialStore::Auto);
+    }
+
     /// Run `f` inside a sandboxed `ONCHAINOS_HOME` so credential files live in a
     /// throwaway dir. Mirrors `file_keyring::tests::with_temp_home` and shares the
     /// same `TEST_ENV_MUTEX` so env-var mutation is serialized across modules.
@@ -206,8 +239,10 @@ mod tests {
         }
         fs::create_dir_all(&dir).unwrap();
         std::env::set_var("ONCHAINOS_HOME", &dir);
+        std::env::set_var(CREDENTIAL_STORE_ENV, "file");
         f();
         std::env::remove_var("ONCHAINOS_HOME");
+        std::env::remove_var(CREDENTIAL_STORE_ENV);
         fs::remove_dir_all(&dir).ok();
     }
 

@@ -49,6 +49,32 @@ Onchainos-skills intentionally does **not** enumerate which DApps are supported 
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 
+## Development refresh
+
+After making changes, run the checkout-local command that matches the files
+changed before handing work back:
+
+- Changed `skills/` or `workflows/`: run `npm run dev:skills`.
+- Changed `cli/`: run `npm run dev:cli`.
+- Changed both areas: run both commands.
+
+`npm run dev:init` is only for a new checkout or the first development session
+after a machine restart. It restarts the A2A daemon, so never run it
+automatically as part of an ordinary code change.
+
+### Local command boundary
+
+After the developer has run `npm run dev:init`, every AI-initiated command in
+this checkout must use the project-local wrappers:
+
+- Use `./.codex/bin/onchainos ...`; never invoke bare `onchainos ...`.
+- Use `./.codex/bin/okx-a2a ...`; never invoke bare `okx-a2a ...`.
+
+The wrappers select the project-local credential and daemon state and disable
+development-only preflight actions. If either wrapper is missing, stop and ask
+the developer to run `npm run dev:init`; do not fall back to a globally
+installed command.
+
 ## CLI Composite Commands
 
 | Command | What it does |

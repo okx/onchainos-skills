@@ -58,6 +58,46 @@ Tell Codex:
 Fetch and follow instructions from https://raw.githubusercontent.com/okx/onchainos-skills/refs/heads/main/.codex/INSTALL.md
 ```
 
+### Project-local development setup
+
+Run one command after cloning the checkout, or on the first development session
+after starting your machine:
+
+```bash
+npm run dev:init
+```
+
+It builds the checkout's debug CLI, links project-local skills, initializes
+project-local runtime directories, and restarts the A2A daemon through the
+already installed global `okx-a2a` command. No adjacent A2A repository is
+required. The generated `onchainos` wrapper handles `preflight` locally, so
+local builds do not trigger CLI self-update or integrity preflight actions and
+the production CLI path remains unchanged.
+
+For later work, choose the command that matches the development surface:
+
+```bash
+# Skills, workflows, or skill references only
+npm run dev:skills
+
+# CLI code: rebuild only
+npm run dev:cli
+
+# CLI code: rebuild, then execute the checkout-local CLI
+npm run dev:cli -- wallet status
+```
+
+Run `npm run dev:init:test` to verify the first-time initialization flow using
+only a globally installed `okx-a2a` substitute and no local A2A repository.
+
+All runtime, wrapper, build, and skill-link files generated under `.codex/`
+are ignored by Git. Do not commit its runtime state, logs, or credential files.
+The wrappers also set `TMPDIR` to `.codex/runtime/tmp`, keeping temporary A2A
+payloads and CLI artifacts inside the checkout-local development runtime.
+The project-local A2A wrapper also recreates an ignored `.codex` mirror inside
+its disposable AI workspace after every local daemon start or restart, so
+daemon-spawned Codex sessions use the same relative wrappers and skills.
+
 ### OpenClaw
 
 Tell OpenClaw:

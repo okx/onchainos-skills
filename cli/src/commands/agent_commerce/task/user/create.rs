@@ -5,7 +5,7 @@
 //! Identity check: invokes the identity-module CLI (`onchainos agent get-my-agents`) to verify
 //! that the current user has a user identity (role=1) before running the publish flow.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::io::Write;
 use std::time::Duration;
 
@@ -209,6 +209,10 @@ pub async fn handle_create(
     params: CreateTaskParams,
 ) -> Result<()> {
     let validated = params.validate()?;
+
+    crate::home::ensure_task_state_writable().context(
+        "task state storage is not writable; set ONCHAINOS_HOME to a writable directory",
+    )?;
 
     ensure_tokens_refreshed().await.map_err(|e| {
         anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}")
