@@ -4221,6 +4221,35 @@ fn detail_path_for_event(
     }
 }
 
+fn subscription_acceptance_status(detail: &serde_json::Value) -> Option<i64> {
+    detail["subStatus"]
+        .as_i64()
+        .or_else(|| {
+            detail["subStatus"]
+                .as_str()
+                .and_then(|value| value.parse().ok())
+        })
+        .or_else(|| detail["status"].as_i64())
+        .or_else(|| {
+            detail["status"]
+                .as_str()
+                .and_then(|value| value.parse().ok())
+        })
+}
+
+fn subscription_acceptance_block_reason(detail: &serde_json::Value) -> Option<String> {
+    match subscription_acceptance_status(detail) {
+        Some(1) => None,
+        Some(status) => Some(format!(
+            "[next-action blocked] Latest subscription status is {status}, not ACTIVE(1). Do not display the sub_created acceptance notice."
+        )),
+        None => Some(
+            "[next-action blocked] Latest subscription detail has no valid subStatus/status. Do not display the sub_created acceptance notice."
+                .to_string(),
+        ),
+    }
+}
+
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).
 ///
 /// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
@@ -4330,6 +4359,12 @@ async fn check_status_freshness(
         }
         Err(_) => return (None, None),
     };
+
+    if job_status_or_event == "sub_created" {
+        if let Some(reason) = subscription_acceptance_block_reason(&resp) {
+            return (Some(reason), None);
+        }
+    }
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
 
     // For job_submitted: prefer an unprocessed spool delivery over an existing
@@ -4445,7 +4480,9 @@ async fn check_status_freshness(
 
 #[cfg(test)]
 mod acceptance_detail_path_tests {
-    use super::detail_path_for_event;
+    use super::{
+        detail_path_for_event, subscription_acceptance_block_reason, subscription_acceptance_status,
+    };
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
     #[test]
@@ -4463,5 +4500,29 @@ mod acceptance_detail_path_tests {
             detail_path_for_event(&client, "job-1", "sub_asp_selected"),
             "/priapi/v1/aieco/task/subscribe/job-1"
         );
+    }
+
+    #[test]
+    fn subscription_acceptance_requires_active_authoritative_status() {
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"subStatus": 1})),
+            Some(1)
+        );
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"status": "1"})),
+            Some(1)
+        );
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"subStatus": 0})),
+            Some(0)
+        );
+        assert_eq!(subscription_acceptance_status(&serde_json::json!({})), None);
+        assert!(
+            subscription_acceptance_block_reason(&serde_json::json!({"subStatus": 1})).is_none()
+        );
+        assert!(
+            subscription_acceptance_block_reason(&serde_json::json!({"subStatus": 0})).is_some()
+        );
+        assert!(subscription_acceptance_block_reason(&serde_json::json!({})).is_some());
     }
 }

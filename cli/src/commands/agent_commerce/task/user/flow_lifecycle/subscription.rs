@@ -17,7 +17,11 @@ fn extract_i64(message: Option<&serde_json::Value>, key: &str) -> Option<i64> {
 fn service_name<'a>(message: Option<&'a serde_json::Value>, ctx: &'a FlowContext<'_>) -> &'a str {
     extract_str(message, "jobTitle")
         .or_else(|| extract_str(message, "title"))
-        .or_else(|| ctx.prefetched.map(|p| p.description.as_str()))
+        .or_else(|| {
+            ctx.prefetched
+                .map(|p| p.title.as_str())
+                .filter(|value| !value.is_empty())
+        })
         .unwrap_or("subscription")
 }
 
@@ -71,10 +75,16 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
     // anything else / absent → paid subscription with immediate first charge.
     // Defaulting the absent case to the paid variant matches the copy doc, which
     // defines that entry as the no-trial direct-subscribe notice.
+    let token_amount = extract_str(message, "tokenAmount")
+        .or_else(|| ctx.prefetched.map(|value| value.token_amount.as_str()))
+        .filter(|value| !value.is_empty());
+    let token_symbol = extract_str(message, "tokenSymbol")
+        .or_else(|| ctx.prefetched.map(|value| value.token_symbol.as_str()))
+        .filter(|value| !value.is_empty() && *value != "?");
     let content = if extract_i64(message, "trialType") == Some(1) {
         super::super::content::sub_created_trial_user_notify(
-            extract_str(message, "tokenAmount"),
-            extract_str(message, "tokenSymbol"),
+            token_amount,
+            token_symbol,
             // Wire has not finished the trail*→trial* field rename; keep the
             // legacy spelling as a read fallback until it does.
             extract_i64(message, "trialStartTime")
@@ -90,8 +100,8 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
         super::super::content::sub_created_user_notify(
             ctx.job_id,
             service_name(message, ctx),
-            extract_str(message, "tokenAmount"),
-            extract_str(message, "tokenSymbol"),
+            token_amount,
+            token_symbol,
             extract_i64(message, "subStartTime"),
             extract_i64(message, "subEndTime"),
             auto_renew,
@@ -677,6 +687,36 @@ mod tests {
             !out.contains("okx-dapp-discovery"),
             "sub_created must not route to dapp-discovery: {out}"
         );
+    }
+
+    #[test]
+    fn sub_created_falls_back_to_authoritative_title_and_payment() {
+        let prefetched =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "title": "Authoritative Title",
+                    "description": "This is not the service title",
+                    "tokenAmount": "9.5",
+                    "tokenSymbol": "USDT",
+                    "subStatus": 1
+                }),
+            );
+        let ctx = FlowContext {
+            job_id: "job1",
+            agent_id: "agent1",
+            short_id: "s1",
+            title_display: "fallback",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: None,
+            prefetched: Some(&prefetched),
+            data: None,
+        };
+        let out = sub_created(&ctx, Some(&serde_json::json!({"event": "sub_created"})));
+        assert!(out.contains("subscribing to Authoritative Title"));
+        assert!(out.contains("First charge of 9.5 USDT completed"));
+        assert!(!out.contains("subscribing to This is not the service title"));
     }
 
     #[test]
