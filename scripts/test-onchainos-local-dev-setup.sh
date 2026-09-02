@@ -54,8 +54,11 @@ grep -qx 'export ONCHAINOS_SKIP_CLIENT_VERSION_GATE="${ONCHAINOS_SKIP_CLIENT_VER
 grep -qx 'export ONCHAINOS_SKIP_CLIENT_VERSION_GATE="${ONCHAINOS_SKIP_CLIENT_VERSION_GATE:-true}"' "$fixture_root/.codex/bin/okx-a2a"
 grep -qx "export TMPDIR='$fixture_root/.codex/runtime/tmp'" "$fixture_root/.codex/bin/onchainos"
 grep -qx "export TMPDIR='$fixture_root/.codex/runtime/tmp'" "$fixture_root/.codex/bin/okx-a2a"
+grep -qx "export ONCHAINOS_A2A_SPOOL_DIR='$fixture_root/.codex/runtime/a2a-spool'" "$fixture_root/.codex/bin/onchainos"
+grep -qx "export ONCHAINOS_A2A_SPOOL_DIR='$fixture_root/.codex/runtime/a2a-spool'" "$fixture_root/.codex/bin/okx-a2a"
 [[ "$(< "$fixture_root/.codex/runtime/a2a/observed-tmpdir")" == "$fixture_root/.codex/runtime/tmp" ]]
 [[ "$(stat -f '%Lp' "$fixture_root/.codex/runtime/tmp")" == "700" ]]
+[[ "$(stat -f '%Lp' "$fixture_root/.codex/runtime/a2a-spool")" == "700" ]]
 
 workspace_dir="$fixture_root/.codex/runtime/a2a/workspace"
 [[ -L "$workspace_dir/.codex/bin/onchainos" ]]

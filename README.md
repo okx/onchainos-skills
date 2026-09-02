@@ -92,8 +92,11 @@ only a globally installed `okx-a2a` substitute and no local A2A repository.
 
 All runtime, wrapper, build, and skill-link files generated under `.codex/`
 are ignored by Git. Do not commit its runtime state, logs, or credential files.
-The wrappers also set `TMPDIR` to `.codex/runtime/tmp`, keeping temporary A2A
-payloads and CLI artifacts inside the checkout-local development runtime.
+The wrappers set `TMPDIR` to `.codex/runtime/tmp` and `ONCHAINOS_A2A_SPOOL_DIR`
+to `.codex/runtime/a2a-spool`, keeping temporary A2A payloads and validated
+delivery-recovery files inside the checkout-local development runtime. Outside
+local development, the spool variable is optional and falls back to the OS
+temporary directory.
 They default `ONCHAINOS_SKIP_CLIENT_VERSION_GATE=true` for local development;
 set it to `false` when verifying the production version gate.
 The project-local A2A wrapper also recreates an ignored `.codex` mirror inside

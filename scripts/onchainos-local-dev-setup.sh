@@ -11,6 +11,7 @@ skills_dir="$project_dir/skills"
 runtime_dir="$project_dir/runtime/onchainos"
 a2a_runtime_dir="$project_dir/runtime/a2a"
 tmp_dir="$project_dir/runtime/tmp"
+a2a_spool_dir="$project_dir/runtime/a2a-spool"
 ai_workspace_dir="$a2a_runtime_dir/workspace"
 target_dir="$project_dir/build/cargo-target"
 onchainos_binary="$target_dir/debug/onchainos"
@@ -51,8 +52,8 @@ absolute_executable() {
 }
 
 prepare_project_dirs() {
-  mkdir -p "$bin_dir" "$skills_dir" "$runtime_dir" "$a2a_runtime_dir" "$tmp_dir" "$target_dir"
-  chmod 700 "$runtime_dir" "$a2a_runtime_dir" "$tmp_dir"
+  mkdir -p "$bin_dir" "$skills_dir" "$runtime_dir" "$a2a_runtime_dir" "$tmp_dir" "$a2a_spool_dir" "$target_dir"
+  chmod 700 "$runtime_dir" "$a2a_runtime_dir" "$tmp_dir" "$a2a_spool_dir"
 }
 
 refresh_skills() {
@@ -88,6 +89,7 @@ export ONCHAINOS_HOME='$runtime_dir'
 export ONCHAINOS_CREDENTIAL_STORE=file
 export ONCHAINOS_SKIP_CLIENT_VERSION_GATE="\${ONCHAINOS_SKIP_CLIENT_VERSION_GATE:-true}"
 export TMPDIR='$tmp_dir'
+export ONCHAINOS_A2A_SPOOL_DIR='$a2a_spool_dir'
 export OKX_AGENT_TASK_HOME='$a2a_runtime_dir'
 export OKX_A2A_AI_CWD='$repo_root'
 export OKX_A2A_AI_CODEX_ADD_DIRS='$skills_dir'
@@ -151,6 +153,7 @@ export ONCHAINOS_HOME='$runtime_dir'
 export ONCHAINOS_CREDENTIAL_STORE=file
 export ONCHAINOS_SKIP_CLIENT_VERSION_GATE="\${ONCHAINOS_SKIP_CLIENT_VERSION_GATE:-true}"
 export TMPDIR='$tmp_dir'
+export ONCHAINOS_A2A_SPOOL_DIR='$a2a_spool_dir'
 export OKX_AGENT_TASK_HOME='$a2a_runtime_dir'
 export OKX_A2A_AI_CWD='$repo_root'
 export OKX_A2A_AI_CODEX_ADD_DIRS='$skills_dir'
