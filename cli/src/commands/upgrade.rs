@@ -1128,6 +1128,39 @@ fn compute_drift(effective_cli: &str, skill_version: Option<&str>) -> Option<Str
     }
 }
 
+/// The calling skill lags the CLI (drift). Actively update the installed
+/// onchainos skills via the package manager — the same `npx skills add` the
+/// drift hint used to only recommend — instead of asking the user to run it by
+/// hand. Bounded and best-effort (mirrors [`remove_deprecated_skills`]): a
+/// missing npx, a non-zero exit, or a 30s timeout returns `false` so the caller
+/// falls back to the manual hint. `beta` selects the channel to match the CLI.
+async fn update_drifted_skills(beta: bool) -> bool {
+    let pkg = if beta {
+        "okx/onchainos-skills#beta"
+    } else {
+        "okx/onchainos-skills"
+    };
+    let mut child = match tokio::process::Command::new("npx")
+        .args(["skills", "add", pkg, "--yes", "-g"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
+        Ok(Ok(status)) => status.success(),
+        _ => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            false
+        }
+    }
+}
+
 /// The 24-hour throttle is consulted only when `--force` is absent. `--force`
 /// bypasses it and always runs the full online check — the same throttle-bypass
 /// semantics `UpgradeArgs::force` gives `execute()`.
@@ -1137,7 +1170,8 @@ pub(super) fn should_consult_throttle(force: bool) -> bool {
 
 /// Session-start check: at most once every 24 hours, resolve the latest release,
 /// auto-update the binary, clean up deprecated skills, verify binary integrity,
-/// and report version drift.
+/// and — when the calling skill lags the CLI — update the skills and tell the
+/// agent to reload.
 /// Always exits 0 with a JSON payload; the agent acts only on `data.action`.
 pub async fn preflight(args: PreflightArgs) -> Result<()> {
     let current = CURRENT_VERSION;
@@ -1306,14 +1340,31 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
         }
         i.as_str().to_string()
     };
-    // 3. drift (skill behind CLI)
-    let drift = compute_drift(&effective_version, skill_version);
-    let drift_json = match &drift {
-        Some(msg) => {
-            actions.push(msg.clone());
-            json!({ "skill": skill_version, "cli": effective_version })
-        }
-        None => Value::Null,
+    // 3. drift (skill behind CLI). Actively update the installed skills and tell
+    //    the agent to reload, instead of only advising a manual update; fall back
+    //    to the manual command if the update can't run.
+    let drift_present = skill_version.is_some_and(|s| semver_gt(&effective_version, s));
+    let drift_json = if drift_present {
+        let skill = skill_version.unwrap_or("");
+        let beta = is_prerelease(&effective_version);
+        let action = if update_drifted_skills(beta).await {
+            format!(
+                "Skills were behind the CLI (skill v{skill} < CLI v{effective_version}) and have been updated. Reload this skill's SKILL.md to pick up the changes."
+            )
+        } else {
+            let cmd = if beta {
+                "npx skills add okx/onchainos-skills#beta --yes -g"
+            } else {
+                "npx skills add okx/onchainos-skills --yes -g"
+            };
+            format!(
+                "Skill is behind the CLI (skill v{skill} < CLI v{effective_version}); the automatic update could not run. Update it with `{cmd}` (or your manager's equivalent), then reload this skill's SKILL.md."
+            )
+        };
+        actions.push(action);
+        json!({ "skill": skill_version, "cli": effective_version })
+    } else {
+        Value::Null
     };
     // 4. Collect the background cleanup result. Usually this adds no latency
     // because it has already completed alongside the network checks above.
