@@ -36,7 +36,8 @@ agent create --role <role> --name <name> [--description <text>] [--picture <cdn-
 
 ASP requires description, picture, and at least one service; other roles omit `--service`. Build
 the service array only from the service-contract/type references. Read `newAgentId` first, then
-`agent.agentId` only as the fallback defined by `identity-register.md` §10.
+`agent.agentId` only as the fallback defined by
+[`identity-register.md` §CLI reference].
 
 ### `agent update`
 

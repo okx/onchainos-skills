@@ -10,6 +10,7 @@ Shared Agent/Service templates and display rules.
 | <agentId> | <name> | <role> | <status> | <approvalStatus> | <rating> |
 ```
 
+- Localize mapped fields.
 - User/Evaluator: `Status` and `Approval status` MUST be `—`.
 
 ## Service table
@@ -22,7 +23,7 @@ Shared Agent/Service templates and display rules.
 
 ## Rules
 
-- Render localized fields according to [`identity-service-contract.md` §Display], after mapping command-specific source fields.
+- Render localized fields according to [`identity-service-contract.md` §Display Rules], after mapping command-specific source fields.
 - Number services sequentially across Agent tables.
 - Merge `Fee` and `Subscription` as `Fee`; subscription price takes precedence.
 - Omit columns containing only `—`.
