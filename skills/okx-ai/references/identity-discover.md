@@ -2,9 +2,6 @@
 
 Use for read-only owned-Agent lists, Agent details, and Service lists.
 
-Command syntax and response fields live in `identity-cli-reference.md`.
-Service display rules live in `identity-service-contract.md`.
-
 ## Route
 
 | Intent | Command / route |
@@ -12,8 +9,6 @@ Service display rules live in `identity-service-contract.md`.
 | My Agents | `agent get-my-agents` |
 | Detail for explicit Agent IDs | `agent get-agents --agent-ids <ids>` |
 | Services for an explicit Agent ID | `agent service-list --agent-id <id>` |
-
-“My” selects `get-my-agents`; explicit Agent IDs select `get-agents`.
 
 ## My Agents
 
