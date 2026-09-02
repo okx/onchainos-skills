@@ -17,7 +17,7 @@ const TIP_NO_MATCH: &str =
 const TIP_OFFLINE: &str =
     "This Agent is offline and cannot provide the service right now. Search for another service.";
 const TIP_CONFIRM: &str = "Reply \"confirm\" to use this service.";
-const TIP_MORE: &str = "Tell me which service you want to use, or reply \"show more\".";
+const TIP_MORE: &str = "Tell me which service you want to use, or reply \"more\".";
 const TIP_NO_MORE: &str =
     "There are no more matching services. Tell me which service you want to use.";
 
