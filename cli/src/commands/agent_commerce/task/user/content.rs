@@ -18,7 +18,7 @@
 //!    Decision prompts (❓) carry the `[Job {short_id} — you are the User Agent]` prefix.
 //!    User reply instructions use descriptive phrasing (naturally translatable by the sub agent).
 //!
-//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
+//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a session send`
 //!    to the provider sub agent. Naming suffix: `_to_seller`.
 //!    Rule: may contain protocol literals (`[intent:*]` etc.);
 //!    **never instruct the peer to call CLI** (the peer has its own flow.rs and decides based on chain events;

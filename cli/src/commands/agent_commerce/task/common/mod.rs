@@ -33,7 +33,6 @@ pub mod session_cleanup;
 pub mod state_machine;
 pub mod subscription_identity;
 pub mod util;
-pub mod version_notice;
 
 use util::{fmt_unix_secs, validate_job_id};
 

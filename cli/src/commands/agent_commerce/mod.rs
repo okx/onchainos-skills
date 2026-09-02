@@ -1381,7 +1381,7 @@ pub enum AgentCommand {
     ///                                              from the inbound notification
     ///
     /// All other inputs (`jobId`, `event`, `code`, `jobTitle`, `provider`, `data`,
-    /// `peerTaskMinVersion`, etc.) are extracted from inside the `--message` JSON.
+    /// etc.) are extracted from inside the `--message` JSON.
     /// This keeps the LLM-facing surface minimal: copy the envelope through, the
     /// CLI parses out whatever it needs.
     #[command(name = "next-action")]
@@ -1395,7 +1395,7 @@ pub enum AgentCommand {
         role: String,
         /// Full system event envelope as a JSON string — the entire `message` object.
         /// Required. Must contain at least `event` and `jobId`; optional fields the
-        /// CLI reads: `code` / `jobTitle` / `provider` / `data` / `taskMinVersion`
+        /// CLI reads: `code` / `jobTitle` / `provider` / `data`
         /// (plus any task-detail fields like `paymentMode` /
         /// `tokenAmount` / `tokenSymbol` / `serviceParams` that downstream scenes
         /// may consume directly).
@@ -3167,17 +3167,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let job_title: Option<String> = msg_str("jobTitle");
             let provider: Option<String> = msg_str("provider");
             let data: Option<String> = msg_str("data");
-            let peer_task_min_version: Option<u32> = parsed_message
-                .get("taskMinVersion")
-                .and_then(|v| v.as_u64())
-                .and_then(|v| u32::try_from(v).ok())
-                .or_else(|| {
-                    parsed_message
-                        .get("payload")
-                        .and_then(|p| p.get("taskMinVersion"))
-                        .and_then(|v| v.as_u64())
-                        .and_then(|v| u32::try_from(v).ok())
-                });
             let parsed_message = Some(parsed_message);
             if !job_id.is_empty() {
                 if let Err(msg) = task::common::util::validate_job_id(&job_id) {
@@ -3186,46 +3175,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }
             if DEBUG_LOG {
                 eprintln!(
-                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
+                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}",
                     title = job_title.as_deref().unwrap_or("(none)"),
                     provider = provider.as_deref().unwrap_or("(none)"),
-                    peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
                 );
             }
-
-            // Version handshake: when peer's required minimum version is higher than the local TASK_MIN_VERSION,
-            // only prepend a notice line at the top of the script (so the agent can push an upgrade suggestion to the user);
-            // **do not block the flow** — the role flow continues to execute under the current protocol, and any actual
-            // compatibility issues (if any) are escalated when subsequent CLI / business layer errors surface.
-            let version_notice: Option<String> = if let Some(peer_min) = peer_task_min_version {
-                let local = task::common::config::TASK_MIN_VERSION;
-                if local < peer_min {
-                    if task::common::version_notice::should_show() {
-                        if DEBUG_LOG {
-                            eprintln!(
-                                "[next-action] version notice (non-blocking): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                            );
-                        }
-                        task::common::version_notice::mark_shown();
-                        Some("Before executing the scene below, run `onchainos agent user-notify` to notify the user (recommend upgrade but do **not** halt the flow). The `--content` template below is a sample — translate it to the user's language before sending:\n\
-                             ```bash\n\
-                             onchainos agent user-notify --content 'Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.'\n\
-                             ```\n\
-                             Then proceed to the scene below normally.\n\n".to_string())
-                    } else {
-                        if DEBUG_LOG {
-                            eprintln!(
-                                "[next-action] version notice suppressed (last shown within 48h): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                            );
-                        }
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
 
             // When --provider is passed, write the designated-provider file so generate_next_action takes the specified-provider path
             if let Some(ref pid) = provider {
@@ -3434,9 +3388,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
                 other => anyhow::bail!("--role 必须是 asp/user/evaluator，当前: {other}"),
             };
-            if let Some(notice) = &version_notice {
-                print!("{notice}");
-            }
             println!("{prompt}");
             Ok(())
         }

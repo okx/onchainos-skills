@@ -139,7 +139,6 @@ agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message
 | `code` | No | `0` | Tx receipt code; non-zero = tx failed                                                   |
 | `jobTitle` | No | - | Task title from system notification                                                     |
 | `provider` | No | - | Target provider agentId (user + `job_created` only)                                          |
-| `taskMinVersion` | No | - | Protocol version from inbound a2a-agent-chat; mismatch appends a non-blocking warning   |
 | `data` | No | - | User decision payload; required when event starts with `user_decision_`                 |
 
 ### list-attachments

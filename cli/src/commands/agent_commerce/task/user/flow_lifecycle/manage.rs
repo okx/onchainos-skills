@@ -496,7 +496,7 @@ pub(crate) fn upload_and_forward_all_attachments(
     ok_count
 }
 
-/// Rust fast-path for `attachment_added`: upload + xmtp-send in-process,
+/// Rust fast-path for `attachment_added`: upload + session send in-process,
 /// then return a notify-only prompt for the LLM.
 pub(crate) fn attachment_added_cli(
     ctx: &super::super::flow::FlowContext<'_>,

@@ -9,7 +9,7 @@
 //! - `flow_lifecycle.rs` — task execution + arbitration + terminal states
 
 use crate::commands::agent_commerce::task::common::config::{
-    SubscriptionTradePath, TASK_MIN_VERSION,
+    SubscriptionTradePath,
 };
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 use crate::commands::agent_commerce::task::common::util::short_job_id;
@@ -119,7 +119,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20Then send SKILL_PREFETCH:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\"\n\
+                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\" --json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x207. **Upload pending attachments (if any):**\n\
                      \x20\x20\x20\x20```bash\n\
@@ -127,7 +127,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20If non-empty JSON array, iterate each file:\n\
                      \x20\x20\x20\x20a) `okx-a2a file upload --file-path <path> --agent-id {agent_id} --job-id {job_id}` → obtain fileKey + decryption-metadata.\n\
-                     \x20\x20\x20\x20b) `okx-a2a xmtp-send --job-id {job_id} --to-agent-id <agentId>` with attachment content (all fields verbatim from upload output).\n\
+                     \x20\x20\x20\x20b) `okx-a2a session send --job-id {job_id} --to-agent-id <agentId> --content \"<attachment content; all upload fields verbatim>\" --json`.\n\
                      \x20\x20\x20\x20⚠️ Failure MUST NOT block — skip failed files.\n\
                      \x20\x20\x20\x20If empty (`[]`), skip.\n\
                      \x20\x20\x20\x20End the turn. Wait for `provider_applied`.\n\
@@ -288,10 +288,6 @@ pub async fn generate_next_action(
         parse_status_or_event, Event,
     };
 
-    let version_prefix = format!(
-        "[Protocol version] When calling `okx-a2a xmtp-send`, the `--payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
-    );
-
     // Short jobId, used in pending-decisions-v2 request --user-content / --list-label as the `[Job <shortID>]` prefix.
     // Serves as a dual disambiguation anchor for the user and user agent when multiple prompts run concurrently. See user-sub-playbook.md §Communication Contract.
     let short_id = short_job_id(job_id);
@@ -314,7 +310,7 @@ pub async fn generate_next_action(
     // This file only tells the agent **what content to send where at each step**, without re-explaining tool usage.
     //
     // Three communication CLI commands:
-    //   - okx-a2a xmtp-send: send to provider (peer sub session), params --job-id + --to-agent-id + --message
+    //   - okx-a2a session send: send to provider (peer sub session), params --job-id + --to-agent-id + --content
     //   - onchainos agent user-notify: notify the user (no user decision needed), params: --content
     //   - onchainos agent pending-decisions-v2 request: needs user interaction (confirm / decide), params: --user-content + --list-label + --source-event
     //     (internally pushes via the okx-a2a user_attention table; the user-session agent then renders + relays the user's reply back to the sub)
@@ -362,7 +358,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             "[user-flow] parsed event: {:?} | okx-a2a commands involved: {}",
             event,
             match &event {
-                Event::JobCreated => "okx-a2a session create (create group) → okx-a2a xmtp-send (send negotiation message)",
+                Event::JobCreated => "okx-a2a session create (create group) → okx-a2a session send (send negotiation message)",
                 Event::ProviderApplied => "in-process branch by over_most_budget: confirm-accept (within budget) OR reject-apply + 3/4-option card (over budget)",
                 Event::JobProviderReject => "in-process POST /reset/asp → playbook tells agent to localize + 3/4-option card",
                 Event::JobAccepted => "onchainos agent user-notify (notify accept success)",
@@ -374,7 +370,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 Event::JobAutoRefunded => "onchainos agent user-notify (claimAutoRefund tx receipt)",
                 Event::NegotiateReply =>
                     "natural-language reply (max 2 rounds; over-limit → mark-failed + user decision card)",
-                Event::AttachmentAdded => "okx-a2a file upload → okx-a2a xmtp-send (upload + forward attachment to provider)",
+                Event::AttachmentAdded => "okx-a2a file upload → okx-a2a session send (upload + forward attachment to provider)",
                 Event::DeliverableReceived => "task-deliverable-save (download + save deliverable immediately)",
                 _ => "none",
             }
@@ -975,7 +971,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```\n\
                      Then send SKILL_PREFETCH:\n\
                      ```bash\n\
-                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\"\n\
+                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\" --json\n\
                      ```\n\
                      5. **Upload pending attachments (if any):**\n\
                      ```bash\n\
@@ -983,7 +979,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```\n\
                      If non-empty JSON array, iterate each file:\n\
                      a) `okx-a2a file upload --file-path <path> --agent-id {agent_id} --job-id {job_id}` → obtain fileKey + decryption-metadata.\n\
-                     b) `okx-a2a xmtp-send --job-id {job_id} --to-agent-id <providerAgentId>` with attachment content (all fields verbatim from upload output).\n\
+                     b) `okx-a2a session send --job-id {job_id} --to-agent-id <providerAgentId> --content \"<attachment content; all upload fields verbatim>\" --json`.\n\
                      ⚠️ Failure MUST NOT block — skip failed files.\n\
                      If empty (`[]`), skip.\n\
                      6. On failure → relay the error to the user and re-ask via `pending-decisions-v2 request` with `--source-event set_asp_params`.\n\
@@ -1007,10 +1003,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
     };
 
     // Minimal-output short-circuit: applies to events whose body is self-contained
-    // and does NOT call any of the IRON-RULE-governed commands (okx-a2a xmtp-send /
+    // and does NOT call any of the IRON-RULE-governed commands (okx-a2a session send /
     // okx-a2a session status / sessions_spawn / pending-decisions-v2 request).
-    // Skip every preamble (the IRON RULEs do not apply) and version_prefix
-    // (no `okx-a2a xmtp-send` call to validate).
+    // Skip every preamble (the IRON RULEs do not apply).
     let use_cli_minimal = matches!(
         event_str,
         "job_created" |
@@ -1032,11 +1027,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
     } else {
         format!("{preamble_slim}{prefetched_block}{body}")
     };
-    let result = if use_cli_minimal {
-        core
-    } else {
-        format!("{version_prefix}{core}")
-    };
+    let result = core;
     if DEBUG_LOG {
         let preview: String = result.chars().take(200).collect();
         eprintln!(

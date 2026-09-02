@@ -213,7 +213,7 @@ pub async fn generate_a2mcp_next_action(
                 "[Current state] job_accepted (x402 / A2MCP flow — User Agent's request received, payment confirmed at the A2MCP endpoint)\n\
                  [Role] ASP (Agent Service ASP)\n\n\
                  {task_fields_inline}\n\
-                 **Notify the user via `onchainos agent user-notify`** — no on-chain `deliver`, no `okx-a2a xmtp-send` (the deliverable was already returned by the A2MCP service endpoint at request time):\n\n\
+                 **Notify the user via `onchainos agent user-notify`** — no on-chain `deliver`, no `okx-a2a session send` (the deliverable was already returned by the A2MCP service endpoint at request time):\n\n\
                  🌐 **Localize first** — rewrite the content below in the user's language before sending. Fill `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` from the **Task fields** block above. Do NOT pass the English template verbatim to a non-English user.\n\
                  ```bash\n\
                  onchainos agent user-notify --content \"<localized content shown below>\"\n\
@@ -229,7 +229,7 @@ pub async fn generate_a2mcp_next_action(
             format!(
                 "[Current state] job_completed (x402 / A2MCP flow — terminal receipt; funds were already received at request time)\n\
                  [Role] ASP (Agent Service ASP)\n\n\
-                 ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
+                 ⚠️ Do NOT send `okx-a2a session send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
                  {task_fields_inline}\n\
                  **Step 1 — Notify the user of task completion via `onchainos agent user-notify`**:\n\n\
                  🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
@@ -303,9 +303,8 @@ pub async fn generate_next_action(
     let _ = message; // currently used only by event handlers that opt in (see JobAspSelected below); silence the unused-arg warning when no scene reads it.
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
-    // (Old MCP-era `okx-a2a xmtp-send` `payload` version handshake was removed when the script
-    // migrated to `okx-a2a xmtp-send`, which has no equivalent `payload` parameter.
-    // Protocol version is now enforced server-side, not via wire-level payload tagging.)
+    // Protocol compatibility is enforced by preflight before task execution,
+    // not by tagging individual A2A messages with a legacy payload field.
 
     // Short jobId, used as the `[Job <shortId> — you are the ASP]` prefix on the first
     // When multiple prompts run concurrently it provides the user and the user agent a
@@ -369,7 +368,7 @@ pub async fn generate_next_action(
     // tool usage.
     //
     // NOTE: `send_to_peer` helper was removed — the deliver CLI now handles
-    // xmtp_send internally (upload + [intent:deliver] message + on-chain submit).
+    // session send internally (upload + [intent:deliver] message + on-chain submit).
     // Other events that need peer messaging construct the command inline.
 
     // V2 accepted-task execution is anchored to the designated registered Service.
@@ -504,7 +503,7 @@ pub async fn generate_next_action(
             "[Current state] job_rejected (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              🛑 **MUST push the dispute/refund decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = 24h timeout → auto-refund.\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\
+             ⚠️ Do NOT send `okx-a2a session send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\
              ⚠️ **24h hard deadline** — if the user does not decide within 24h, funds are auto-refunded to the User Agent. (Agent-side context; do NOT include in `--user-content` unless the localized template already mentions it.)\n\n\
              **Step 1 — Push the decision to the user via `pending-decisions-v2 request-prompt`**:\n\n\
              🌐 **Localize first** — translate the source template below to the user's language before passing to `--user-content`. Keep `[Job <shortId>]`, the `A.` / `B.` letters, the shortId hex.\n\
@@ -533,7 +532,7 @@ pub async fn generate_next_action(
              ```\n\
              CLI internals: POST /dispute/approve → uopData → sign uopHash → broadcast. Wait for the on-chain `dispute_approved` notification.\n\n\
              ⚠️ **After dispute raise ends this turn directly**:\n\
-             - Do NOT send any okx-a2a xmtp-send to the User Agent (`dispute raised` is filler; wait until phase 2 completes)\n\
+             - Do NOT send any okx-a2a session send to the User Agent (`dispute raised` is filler; wait until phase 2 completes)\n\
              - Do NOT call `dispute confirm` in the same turn (must wait for the on-chain dispute_approved notification)\n\n\
              [Follow-up events]\n\
              - `dispute_approved` system notification → call next-action to fetch the phase-2 script (dispute confirm)\n\
@@ -550,7 +549,7 @@ pub async fn generate_next_action(
              ```\n\
              CLI internals: POST /dispute → uopData → sign uopHash → broadcast. Wait for the on-chain `job_disputed` notification.\n\n\
              ⚠️ **After dispute confirm ends this turn directly**:\n\
-             - Do NOT okx-a2a xmtp-send the User Agent (still filler state)\n\
+             - Do NOT okx-a2a session send the User Agent (still filler state)\n\
              - Do NOT submit evidence in the same turn (evidence goes through dispute upload; must wait for the `job_disputed` notification + user-provided content)\n\n\
              [Follow-up events]\n\
              - `job_disputed` system notification\n"
@@ -565,7 +564,7 @@ pub async fn generate_next_action(
              onchainos agent agree-refund {job_id} --agent-id {agent_id}\n\
              ```\n\n\
              After Step 1 → **end this turn**.\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` `agreed to refund` filler to the User Agent — both sides receive the `job_refunded` system event.\n\
+             ⚠️ Do NOT send `okx-a2a session send` `agreed to refund` filler to the User Agent — both sides receive the `job_refunded` system event.\n\
              ⚠️ Do NOT push to the user with `onchainos agent user-notify`.\n"
         ),
 
@@ -597,7 +596,7 @@ pub async fn generate_next_action(
             "[Current state] sub_user_reject (the buyer rejected the current subscription period)\n\
              [Role] ASP (subscription)\n\n\
              🛑 **Push the refund/dispute decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay); a plain reply doesn't reach the user-session, so either path lets the ~1-day window lapse into an auto-refund.\n\
-             ⚠️ Limited reaction window (about 1 day). Let the USER choose — do NOT decide autonomously; do NOT `okx-a2a xmtp-send` the buyer (they just rejected — they know).\n\n\
+             ⚠️ Limited reaction window (about 1 day). Let the USER choose — do NOT decide autonomously; do NOT `okx-a2a session send` the buyer (they just rejected — they know).\n\n\
              **Step 1 — push the decision to the user**:\n\n\
              🌐 **Localize first** — translate the content between the markers to the user's language; keep the `A.` / `B.` letters and the `[Decision {short_id}]` label.\n\
              ```bash\n\
@@ -625,7 +624,7 @@ pub async fn generate_next_action(
              ```\n\
              🌐 Localize the `--reason` text to the user's language; keep it ≤2000 chars. It is persisted on-chain in the evaluation record (broadcast bizContext) — pass the ASP's actual argument, not an empty string.\n\
              CLI internals: POST /task/{{jobId}}/dispute/approveAndCreateDispute (approve + create in ONE call — not the two-phase task dispute raise/confirm) → uopData → sign → broadcast (reason on bizContext); subStatus → Disputed.\n\n\
-             After Step 1 → **end this turn**. Do NOT `okx-a2a xmtp-send` the buyer.\n"
+             After Step 1 → **end this turn**. Do NOT `okx-a2a session send` the buyer.\n"
         ),
 
         // ─── Subscription: user chose to agree to refund (pseudo-event) ──
@@ -637,7 +636,7 @@ pub async fn generate_next_action(
              onchainos agent subscribe-agree-refund {job_id} --agent-id {agent_id}\n\
              ```\n\
              CLI internals: POST /subscribe/{{subId}}/agreeRefund (subId == jobId) → uopData → sign → broadcast; subStatus → Failed (this period refunded).\n\n\
-             After Step 1 → **end this turn**. Do NOT `okx-a2a xmtp-send` the buyer.\n"
+             After Step 1 → **end this turn**. Do NOT `okx-a2a session send` the buyer.\n"
         ),
 
         // ─── Scene 7: Task completed (review passed / evaluation won) ────────────────
@@ -649,7 +648,7 @@ pub async fn generate_next_action(
             "[Current state] job_completed (task completed; funds received)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              [Your next action]\n\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
+             ⚠️ Do NOT send `okx-a2a session send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
              {task_fields}\n\
              **Step 1 — Notify the user of task completion via `onchainos agent user-notify`**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
@@ -698,7 +697,7 @@ pub async fn generate_next_action(
              - `jobStatus = \"complete\"` → **you (ASP) won**; funds released to you\n\
              - `jobStatus = \"failed\"` → **you (ASP) lost**; funds refunded to the User Agent\n\
              [Your next action (branch by win/loss)]\n\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` `ruling supports party X` filler to the User Agent — both sides receive the `dispute_resolved` system event.\n\n\
+             ⚠️ Do NOT send `okx-a2a session send` `ruling supports party X` filler to the User Agent — both sides receive the `dispute_resolved` system event.\n\n\
              {task_fields}\n\
              ━━━━━━━━━━━━━ Branch A: jobStatus=complete (ASP won) ━━━━━━━━━━━━━\n\n\
              **A-Step 1 — Check claimable rewards (account-pull)**:\n\
@@ -783,7 +782,7 @@ pub async fn generate_next_action(
             "[Current state] job_refunded (funds refunded to the User Agent)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              [Your next action]\n\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` `refund on-chain` filler to the User Agent — both sides already receive the `job_refunded` system event.\n\
+             ⚠️ Do NOT send `okx-a2a session send` `refund on-chain` filler to the User Agent — both sides already receive the `job_refunded` system event.\n\
              {terminal_session_hint}\n\n\
              **End this turn directly**; the refund flow is fully complete.\n"
         ),
@@ -799,7 +798,7 @@ pub async fn generate_next_action(
              session, calls `dispute upload` (which also auto-attaches the deliverable copy saved under\n\
              `~/.onchainos/deliverables/asp/{job_id}/`), and then notifies the user via\n\
              `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
-             **Do NOT** `okx-a2a xmtp-send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
+             **Do NOT** `okx-a2a session send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
              {task_fields}\n\
              **Step 1 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
              ```bash\n\
@@ -822,7 +821,7 @@ pub async fn generate_next_action(
              **Step 4 — Notify the user (after upload returns):**\n\n\
              content:\n\
              \x20\x20\x20\x20[Evaluation opened] Evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverable). Awaiting the evaluator's verdict.\n\n\
-             **Step 5 — End this turn.** Do NOT `okx-a2a xmtp-send` anything to the User Agent.\n\n\
+             **Step 5 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
              - dispute_resolved → lost, funds refunded to the User Agent\n"
@@ -880,7 +879,7 @@ pub async fn generate_next_action(
              ```\n\
              CLI internals: POST /claimAutoComplete → uopData → sign uopHash → broadcast. Wait for the on-chain `job_completed` notification.\n\n\
              ⚠️ **After claim-auto-complete, end the turn directly**:\n\
-             - Do NOT send any okx-a2a xmtp-send to the User Agent (filler in between; wait until the job_completed on-chain receipt arrives)\n\
+             - Do NOT send any okx-a2a session send to the User Agent (filler in between; wait until the job_completed on-chain receipt arrives)\n\
              - Do NOT push to the user with `onchainos agent user-notify`\n\n\
              [Follow-up events]\n\
              - `job_completed` (success) → next-action provides the funds-received script (push to user; conversation retained)\n\
@@ -903,7 +902,7 @@ pub async fn generate_next_action(
             "[System notification] submit_deadline_warn (deadline for submitting the deliverable is approaching)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              🛑 **MUST push the submit-now/let-timeout decision via `pending-decisions-v2 request`** — `onchainos agent user-notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = the deadline silently expires → auto-refund to the User Agent.\n\
-             ❌ Do NOT `okx-a2a xmtp-send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
+             ❌ Do NOT `okx-a2a session send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
              **Push the decision to the user (3-substep protocol; read ALL 3 before running any command)**:\n\n\
              {request_block}\n\
              ⚠️ **Do NOT auto-run `onchainos agent deliver` later** — only the user knows whether the deliverable is actually ready; the agent must not decide \"deliverable is ready\" on the user's behalf.\n",
@@ -981,7 +980,7 @@ pub async fn generate_next_action(
              onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<value of the message.jobStatus field>\",\"jobId\":\"{job_id}\"}}'\n\
              ```\n\
              Follow the returned script for what to do in the current status.\n\n\
-             ⚠️ **Do NOT** okx-a2a xmtp-send the User Agent something like `I'm back online` — the peer does not care about your connection status.\n\
+             ⚠️ **Do NOT** okx-a2a session send the User Agent something like `I'm back online` — the peer does not care about your connection status.\n\
              ⚠️ If the Step 2 script is a passive-wait kind (e.g. status=accepted: ASP is working / status=submitted: waiting for User Agent review), only emit a `task resumed` notification and end the turn; do not proactively run business actions.\n"
             )
         }
@@ -1067,7 +1066,7 @@ pub async fn generate_next_action(
                  ```bash\n\
                  onchainos agent user-notify --content \"<translated text>\"\n\
                  ```\n\
-                 ❌ Do NOT okx-a2a xmtp-send the User Agent. ❌ Do NOT retry apply.\n\n\
+                 ❌ Do NOT okx-a2a session send the User Agent. ❌ Do NOT retry apply.\n\n\
                  {terminal_session_hint}\n"
             )
         }
@@ -1184,7 +1183,7 @@ pub async fn generate_next_action(
              session, calls `dispute upload` (which also auto-attaches the most recent 20 deliverables saved under\n\
              `~/.onchainos/deliverables/asp/{job_id}/`), and then notifies the user via\n\
              `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
-             **Do NOT** `okx-a2a xmtp-send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
+             **Do NOT** `okx-a2a session send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
              {task_fields}\n\
              **Step 1 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
              ```bash\n\
@@ -1207,7 +1206,7 @@ pub async fn generate_next_action(
              **Step 4 — Notify the user (after upload returns):**\n\n\
              content:\n\
              \x20\x20\x20\x20[Evaluation opened] Subscription evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverables). Awaiting the evaluator's verdict.\n\n\
-             **Step 5 — End this turn.** Do NOT `okx-a2a xmtp-send` anything to the User Agent.\n\n\
+             **Step 5 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
              - dispute_resolved → lost, funds refunded to the User Agent\n"
@@ -1229,7 +1228,7 @@ pub async fn generate_next_action(
              ```\n\
              CLI internals: POST /subscribe/{{subId}}/aspClaim (subId == jobId) → uopData → sign → broadcast. It claims everything outstanding for this subscription in one shot.\n\
              **Step 2 — Report:** on success push a short localized note via `onchainos agent user-notify --content \"<claim submitted, tx …>\"` — a background session's reply text never reaches the operator. If the CLI reports nothing claimable / already claimed, end the turn silently.\n\
-             Do NOT `okx-a2a xmtp-send` anything to the User Agent — this involves no buyer action.\n"
+             Do NOT `okx-a2a session send` anything to the User Agent — this involves no buyer action.\n"
         ),
 
         // sub_asp_agree is the ASP's OWN action (agree refund); the existing action-command
@@ -1294,7 +1293,7 @@ fn sub_asp_accepted_start(
         "[System notification] {header}\n\
          [Role] ASP (Agent Service ASP)\n\n\
          {task_fields}\n\
-         **Step 1 — Notify the ASP owner** (localize the fixed template first):\n\
+         **Step 1 — Notify the ASP owner** (localize the fixed template first; fill any `<...>` value from the task context and never send a literal placeholder):\n\
          ```bash\n\
          onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
@@ -1346,7 +1345,7 @@ fn user_attachment_received_cli(
              ```bash\n\
              onchainos agent user-notify --content \"<translate: [Job {short_id}] User Agent attachment download failed — encryption metadata incomplete. The User Agent may need to re-send.>\"\n\
              ```\n\n\
-             ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
+             ❌ Do NOT reply to the User Agent via okx-a2a session send.\n\
              **End this turn.**\n"
         );
     }
@@ -1363,7 +1362,7 @@ fn user_attachment_received_cli(
                  ```bash\n\
                  onchainos agent user-notify --content \"<translate: [Job {short_id}] User Agent attachment download failed. Please check network and retry.>\"\n\
                  ```\n\n\
-                 ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
+                 ❌ Do NOT reply to the User Agent via okx-a2a session send.\n\
                  **End this turn.**\n"
             );
         }
@@ -1402,7 +1401,7 @@ fn user_attachment_received_cli(
          ```bash\n\
          onchainos agent user-notify --content \"<your translated content>\"\n\
          ```\n\n\
-         ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
+         ❌ Do NOT reply to the User Agent via okx-a2a session send.\n\
          **End this turn.**\n"
     )
 }
@@ -1581,7 +1580,7 @@ mod tests {
         assert!(out.contains("registered Service's existing AI/Skill workflow"));
         assert!(out.contains("serviceId"));
         assert!(out.contains("okx-a2a session send"));
-        assert!(!out.contains("okx-a2a xmtp-send"));
+        assert!(!out.contains("xmtp-send"));
         assert!(out.contains("onchainos agent deliver"));
         assert!(!out.contains("--file \"\""));
         assert!(out.contains("exactly one delivery-input flag"));
@@ -1705,7 +1704,7 @@ mod tests {
         assert!(out.contains(ASP_JOB_ID) && out.contains(ASP_AGENT_ID), "got: {out}");
         assert!(!out.contains("Silently ignore"), "got: {out}");
         // No buyer involvement: never instruct an XMTP send toward the User Agent.
-        assert!(out.contains("Do NOT `okx-a2a xmtp-send`"), "got: {out}");
+        assert!(out.contains("Do NOT `okx-a2a session send`"), "got: {out}");
     }
 
     #[tokio::test]

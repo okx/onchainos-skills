@@ -31,8 +31,8 @@ authorization to execute.
 On single-task `job_accepted`, reuse the designated registered Service's existing
 AI/Skill workflow with authoritative `serviceId`, description, complete
 `serviceParams`, and forwarded attachments. Do not replace it with an unrelated
-ad-hoc workflow. Any remaining clarification uses `okx-a2a session send`, not the
-removed `xmtp-send` interface. On subscription `sub_asp_selected`, the latest
+ad-hoc workflow. Any remaining clarification uses `okx-a2a session send`. On
+subscription `sub_asp_selected`, the latest
 subscription detail must report `subStatus/status=ACTIVE(1)` before notification
 or service startup; missing/non-Active state fails closed.
 
@@ -61,7 +61,7 @@ or rejection, then end the turn. `job_completed` and `job_rejected` remain actio
 When the ASP sub session receives a peer message starting with `[user_rejected]:`, the User Agent has declined this ASP's application (either explicitly rejected, or accepted another ASP for the same job).
 
 1. **Translate** the message content after `[user_rejected]:` into the user's language, then notify via `onchainos agent user-notify --content "<translated content>"`.
-2. **Do NOT reply** to the User Agent — no `okx-a2a xmtp-send`, no `next-action`. This is a terminal notification.
+2. **Do NOT reply** to the User Agent — no `okx-a2a session send`, no `next-action`. This is a terminal notification.
 3. End turn.
 
 ---
@@ -104,7 +104,7 @@ events are action-required: `sub_open` owns the initial provider decision and
 | `sub_asp_agree` / `sub_asp_dispute` | **ASP's own action (agree refund / open a dispute) — no ASP-side push. Silently ignore. End turn.** Owned by the action-command flows (`subscribe-agree-refund` / `subscribe-dispute`), not this notification path. |
 | `sub_user_reject` | **Decision — NOT display-only, do NOT ignore.** The buyer rejected the current period. Call `next-action --role asp`; the CLI returns a `pending-decisions-v2 request-prompt` decision (A = file a dispute for evaluation / B = confirm the refund — ASP-3 copy: `[Action Needed: User Rejection]` with the rejected period, the precise response deadline `{rejectWindowEndsAt}`, and the auto-refund amount). Push that decision to the user per the returned guidance. Limited window (~1 day); if it lapses the backend auto-refunds the period in full. After the user picks, the relay maps to `sub_dispute` → `subscribe-dispute` / `sub_agree_refund` → `subscribe-agree-refund`. |
 | `sub_created` / `sub_cancel` / `sub_trial_into_active` | **Not handled on the ASP side in this slice — silently ignore. End turn.** Buyer-only. |
-| `sub_renew` | Renewal → the **previous period's income is now claimable**. Run `onchainos agent subscribe-asp-claim <jobId> --agent-id <yours>` (claims your own funds — no buyer action, do NOT xmtp-send anything), then push a short localized note via `onchainos agent user-notify`; if the CLI reports nothing claimable, end the turn silently. |
+| `sub_renew` | Renewal → the **previous period's income is now claimable**. Run `onchainos agent subscribe-asp-claim <jobId> --agent-id <yours>` (claims your own funds — no buyer action, do not send a peer message), then push a short localized note via `onchainos agent user-notify`; if the CLI reports nothing claimable, end the turn silently. |
 
 #### ASP `sub_*` language rule
 

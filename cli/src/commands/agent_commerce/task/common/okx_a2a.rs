@@ -813,7 +813,7 @@ pub fn task_reject_by_job(job_id: &str, content: Option<&str>) -> Result<()> {
 /// Result of `okx-a2a file upload`. The 5 encryption fields (digest / salt /
 /// nonce / secret / fileKey) plus filename are what the receiving peer needs
 /// to download and decrypt the file later — they are typically embedded in
-/// the next `xmtp_send` payload so the peer can call `file_download`.
+/// the next `session send` payload so the peer can call `file_download`.
 #[derive(Debug, Clone)]
 pub struct FileUploadResult {
     pub file_key: String,

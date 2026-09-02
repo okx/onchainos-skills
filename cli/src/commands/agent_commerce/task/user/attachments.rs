@@ -119,7 +119,7 @@ pub async fn handle_task_attach(
     println!("   If a sub session exists for this job (task already has a matched provider),");
     println!("   you MUST run `okx-a2a session send` to notify the sub session:");
     println!();
-    println!("   okx-a2a session send --job-id {job_id} --to-agent-id <peer agentId from sub session> --content \"[ATTACHMENT_ADDED] {}\"  ← exact prefix, do NOT change", dest.display());
+    println!("   okx-a2a session send --job-id {job_id} --to-agent-id <peer agentId from sub session> --content \"[ATTACHMENT_ADDED] {}\" --json  ← exact prefix, do NOT change", dest.display());
     println!();
     println!(
         "   If NO sub session exists yet (task not matched with a provider), skip the dispatch —"
