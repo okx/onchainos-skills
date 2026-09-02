@@ -807,7 +807,10 @@ once and succeeds only when the backend returns `data=null`. Send the structured
 `backendUpdated=true`. Successful request IDs are persisted under
 `$OKX_AGENT_TASK_HOME/task-params/` (or
 `~/.okx-agent-task/task-params/`), deduplicated, required to be sequential, and
-capped at three successful rounds per job.
+capped at three successful backend updates per job. A successful update consumes
+the round and returns the registered `send_task_params_response` action; an
+identical retry of the same `requestId` returns that action without consuming a
+new round.
 
 ### apply (legacy lifecycle only)
 

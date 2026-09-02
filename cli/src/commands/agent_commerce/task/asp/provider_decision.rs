@@ -118,6 +118,22 @@ fn detail_status(kind: DecisionKind, detail: &Value) -> Option<i64> {
     }
 }
 
+fn already_accepted_result(job_id: &str, kind: DecisionKind) -> Value {
+    json!({
+        "phase": "provider_decision",
+        "decision": "ready",
+        "reason": "already_accepted",
+        "nextAction": [],
+        "payload": {
+            "jobId": job_id,
+            "taskType": if kind.is_subscription() { "subscription" } else { "single" },
+            "providerDecision": "already_accepted",
+            "status": 1,
+            "broadcast": Value::Null,
+        }
+    })
+}
+
 async fn execute(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -148,18 +164,7 @@ async fn execute(
     match detail_status(kind, &detail) {
         Some(0) => {}
         Some(1) => {
-            crate::output::success(json!({
-                "phase": "provider_decision",
-                "decision": "noop",
-                "reason": "already_accepted",
-                "payload": {
-                    "jobId": job_id,
-                    "taskType": if kind.is_subscription() { "subscription" } else { "single" },
-                    "providerDecision": "already_accepted",
-                    "status": 1,
-                    "broadcast": Value::Null,
-                }
-            }));
+            crate::output::success(already_accepted_result(job_id, kind));
             return Ok(());
         }
         Some(status) => {
@@ -313,6 +318,17 @@ mod tests {
             detail_status(DecisionKind::AcceptSubscription, &json!({"subStatus": 1})),
             Some(1)
         );
+    }
+
+    #[test]
+    fn duplicate_accept_uses_standard_progression_decision() {
+        for kind in [DecisionKind::AcceptJob, DecisionKind::AcceptSubscription] {
+            let result = already_accepted_result("job-1", kind);
+            assert_eq!(result["decision"], "ready");
+            assert_eq!(result["reason"], "already_accepted");
+            assert_eq!(result["nextAction"], json!([]));
+            assert_eq!(result["payload"]["status"], 1);
+        }
     }
 
     #[test]

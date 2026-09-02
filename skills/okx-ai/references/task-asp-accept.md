@@ -110,7 +110,9 @@ okx-a2a session send \
 On response, the ASP fetches latest detail again. If it is still CREATED, evaluate
 the newly stored complete `serviceParams`; otherwise stop.
 
-The maximum is three successful backend-update/response rounds, not three raw
-requests or delivery attempts. Duplicate `requestId` messages do not consume a
-round. After the third successful update, evaluate once more; if the result remains
-`NEED_PARAMS`, decline with a concrete reason.
+The maximum is three successful backend updates, not three raw requests or
+delivery attempts. A successful update makes the matching response eligible to
+send and consumes that round. Retrying the same `requestId` with identical round
+and parameters returns the same response action and does not consume another
+round. After the third successful update, evaluate once more; if the result
+remains `NEED_PARAMS`, decline with a concrete reason.
