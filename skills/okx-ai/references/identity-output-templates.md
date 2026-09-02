@@ -1,4 +1,4 @@
-# Identity output templates
+# Agent and Service output templates
 
 Shared Agent/Service templates and display rules.
 
@@ -20,8 +20,6 @@ Shared Agent/Service templates and display rules.
 |---|---|---|---|---|---|---|
 | 1 | <serviceName> | <serviceType> | <fee> | <freeTrial> | <endpoint> | <serviceDescription> |
 ```
-
-## Rules
 
 - Render localized fields according to [`identity-service-contract.md` §Display Rules], after mapping command-specific source fields.
 - Number services sequentially across Agent tables.
