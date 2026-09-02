@@ -10,7 +10,7 @@ Shared Agent/Service templates and display rules.
 | <agentId> | <name> | <role> | <status> | <approvalStatus> | <rating> |
 ```
 
-- Localize mapped fields.
+- Localize all table labels and mapped display values.
 - User/Evaluator: `Status` and `Approval status` MUST be `—`.
 
 ## Service table
