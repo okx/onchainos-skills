@@ -43,7 +43,7 @@ or service startup; missing/non-Active state fails closed.
 - `onchainos agent deliver` internally invokes `okx-a2a file upload` when the deliverable is a native
   file, or when text exceeds 500 Unicode characters. Long text is sent as `.md`; local conversion or
   upload failure falls back to inline text.
-- It then invokes `okx-a2a session send` with `[intent:deliver]`. A missing Buyer Agent id or any A2A
+- It then invokes `okx-a2a xmtp-send` with `[intent:deliver]`. A missing Buyer Agent id or any A2A
   send failure stops the flow. For one-time tasks this explicitly forbids the on-chain submit.
 - Only after successful A2A delivery does a one-time task call the submit mutation and broadcast its
   user operation. Subscription delivery saves locally and returns without calling single-task submit.

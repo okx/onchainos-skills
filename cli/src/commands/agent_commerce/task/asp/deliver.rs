@@ -79,7 +79,7 @@ fn print_deliver_result(outcome: &DeliverOutcome, job_id: &str) {
 }
 
 /// Deliverable preparation result — carries the info needed by later stages
-/// (the A2A session message was already sent; this tracks what to save locally).
+/// (the peer XMTP message was already sent; this tracks what to save locally).
 enum Prepared {
     File { local_path: String, file_key: String },
     Text { tmp_path: String },
@@ -92,7 +92,7 @@ fn is_long_text(text: &str) -> bool {
 // ── Debug-only local E2E mock (ONCHAINOS_TEST_MOCK_SUBSCRIPTION=1) ───────────
 // Lets the resident-script subscription flow be exercised end-to-end with NO backend,
 // credentials, or A2A transport — the precondition task detail is synthesized (accepted + escrow +
-// jobType 1) and each send is written to a local outbox file instead of uploaded + session-sent.
+// jobType 1) and each send is written to a local outbox file instead of uploaded + XMTP-sent.
 // Compiled OUT of release builds (`#[cfg(debug_assertions)]`), so a release ASP can never
 // fake a delivery.
 
@@ -248,13 +248,13 @@ async fn resolve_precondition(
     }
 }
 
-/// Send the A2A delivery message, or write it to a local outbox when the debug mock is on.
+/// Send the A2A delivery message over XMTP, or write it to a local outbox when the debug mock is on.
 fn send_or_mock(job_id: &str, user_agent_id: &str, msg: &str) -> Result<()> {
     #[cfg(debug_assertions)]
     if std::env::var("ONCHAINOS_TEST_MOCK_SUBSCRIPTION").as_deref() == Ok("1") {
         return mock_write_outbox(job_id, msg);
     }
-    okx_a2a::session_send(job_id, Some(user_agent_id), msg)
+    okx_a2a::xmtp_send(job_id, user_agent_id, msg)
 }
 
 #[cfg(debug_assertions)]
