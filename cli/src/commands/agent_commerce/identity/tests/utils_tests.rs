@@ -505,7 +505,7 @@ fn build_agent_list_cells_full_asp_row() {
 }
 
 #[test]
-fn build_agent_list_cells_count_zero_no_rating_and_truncates_name() {
+fn build_agent_list_cells_user_role_and_truncated_name() {
     let row = json!({
         "agentId": "58",
         "name": "A really long agent name that exceeds twenty",
@@ -523,13 +523,10 @@ fn build_agent_list_cells_count_zero_no_rating_and_truncates_name() {
         ("Name".to_string(), "A really long agent …".to_string())
     );
     assert_eq!(pairs[2].1, "User");
-    // count 0 → No rating yet (never `—` in list view).
-    assert_eq!(
-        pairs[5],
-        ("Rating".to_string(), "No rating yet".to_string())
-    );
-    // no approvalDisplayStatus → `—`.
+    // User status and approval are not applicable.
+    assert_eq!(pairs[3], ("Status".to_string(), "—".to_string()));
     assert_eq!(pairs[4], ("Approval status".to_string(), "—".to_string()));
+    assert_eq!(pairs[5], ("Rating".to_string(), "No rating yet".to_string()));
 }
 
 #[test]

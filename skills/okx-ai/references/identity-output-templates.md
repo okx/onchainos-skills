@@ -1,6 +1,16 @@
-# Identity service output template
+# Identity output templates
 
-Shared service table and display rules.
+Shared Agent/Service templates and display rules.
+
+## Agent table
+
+```markdown
+| Agent ID | Name | Role | Status | Approval status | Rating |
+|---|---|---|---|---|---|
+| <agentId> | <name> | <role> | <status> | <approvalStatus> | <rating> |
+```
+
+- User/Evaluator: `Status` and `Approval status` MUST be `—`.
 
 ## Service table
 

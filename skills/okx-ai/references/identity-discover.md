@@ -1,7 +1,6 @@
 # Discover Agents and Services
 
-Use this reference for owned-Agent lists, Agent details, and an Agent's Service
-list. All operations here are read-only.
+Use for read-only owned-Agent lists, Agent details, and Service lists.
 
 Command syntax and response fields live in `identity-cli-reference.md`.
 Service display rules live in `identity-service-contract.md`.
@@ -14,17 +13,21 @@ Service display rules live in `identity-service-contract.md`.
 | Detail for explicit Agent IDs | `agent get-agents --agent-ids <ids>` |
 | Services for an explicit Agent ID | `agent service-list --agent-id <id>` |
 
-Ownership words such as “my” select `get-my-agents`. Explicit IDs in a detail
-request select `get-agents`.
+“My” selects `get-my-agents`; explicit Agent IDs select `get-agents`.
 
 ## My Agents
 
-Run `agent get-my-agents`, adding `--role` only when the user supplied one.
-Render returned account groups and display-ready `cells[]` in order. Do not
-recompute role, status, approval, rating, wallet ownership, or totals.
+Run:
 
-For an empty group, show that it has no Agents. Offer detail only as a short
-follow-up suggestion; do not automatically query every Agent.
+```bash
+onchainos agent get-my-agents [--role <role>]
+```
+
+Add `--role` only when the user supplied one.
+Use `identity-output-templates.md` to render only display-ready `cells[]` in
+order; do not derive table values from raw fields.
+
+**STOP.** Wait for an explicit Agent-detail request.
 
 ## Agent detail
 
@@ -34,13 +37,10 @@ Run:
 onchainos agent get-agents --agent-ids <id[,id...]>
 ```
 
-Render each returned `card[]` in order. Multiple Agents are separated clearly.
-Do not invent identity fields or inline reviews.
-
-For each returned ASP, run at most one
-`agent service-list --agent-id <id>` and render its Services. User Agents and
-Evaluators do not trigger a Service query. Load `identity-reviews.md` only when
-the user asks for reviews.
+Render `card[]` in order, separating Agents clearly; do not invent identity
+fields or inline reviews. Only ASPs need at most one
+`agent service-list --agent-id <id>` query; apply `## Service list` to its
+Services.
 
 ## Service list
 
@@ -50,5 +50,5 @@ Run:
 onchainos agent service-list --agent-id <id>
 ```
 
-Use `identity-output-templete.md` to render the returned `cells[]` in order.
-Omit Agent heading and rating/sold-count metadata.
+Use `identity-output-templates.md` to render returned `cells[]` in order;
+omit Agent heading and rating/sold-count metadata.

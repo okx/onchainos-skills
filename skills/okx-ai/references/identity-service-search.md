@@ -21,7 +21,7 @@ Read `services[]`, `searchAfter`, `hasMore`, and `tip`.
 ## Display
 
 **MUST** group `services[]` by `asp.aspAgentId` in returned order and render
-them directly with `identity-output-templete.md`. For each group, put the
+them directly with `identity-output-templates.md`. For each group, put the
 Agent heading above its Service table:
 
 ```markdown
