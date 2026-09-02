@@ -368,7 +368,7 @@ pub async fn generate_next_action(
     // tool usage.
     //
     // NOTE: `send_to_peer` helper was removed — the deliver CLI now handles
-    // session send internally (upload + [intent:deliver] message + on-chain submit).
+    // XMTP peer send internally (upload + [intent:deliver] message + on-chain submit).
     // Other events that need peer messaging construct the command inline.
 
     // V2 accepted-task execution is anchored to the designated registered Service.
@@ -378,10 +378,10 @@ pub async fn generate_next_action(
         "Reuse the designated registered Service's existing AI/Skill workflow. Feed it the authoritative description, complete serviceParams, and forwarded attachments from the Task fields/session; do not substitute an unrelated workflow and do not re-run provider acceptance.\n\n\
         ⚠️ If a new question about task details / acceptance criteria is still required, use the existing A2A session (resolve `<buyerAgentId>` from the Task fields above):\n\
         \x20\x20\x20\x20```bash\n\
-        \x20\x20\x20\x20okx-a2a session send \\\n\
+        \x20\x20\x20\x20okx-a2a xmtp-send \\\n\
         \x20\x20\x20\x20\x20\x20--job-id {job_id} \\\n\
         \x20\x20\x20\x20\x20\x20--to-agent-id <buyerAgentId> \\\n\
-        \x20\x20\x20\x20\x20\x20--content \"<plain natural-language question to the User Agent>\" --json\n\
+        \x20\x20\x20\x20\x20\x20--message \"<plain natural-language question to the User Agent>\" --json\n\
         \x20\x20\x20\x20```\n\
         End this turn after sending, wait for the reply; once you have the answer, start the work. Do not guess and produce a deliverable that misses the mark."
     );
@@ -440,8 +440,8 @@ pub async fn generate_next_action(
              **Step 2 — Start the designated Service workflow and prepare the deliverable**:\n\
              {execute_task}\n\n\
              **Step 3 — Deliver** (single CLI command — handles file upload, peer notification, on-chain submit, and local save internally):\n\n\
-             ⚠️ Do NOT call `okx-a2a file upload` or `okx-a2a session send` yourself — the `deliver` CLI handles all of this internally:\n\
-             \x20\x20- file upload (when needed) → session send `[intent:deliver]` to the User Agent → on-chain submit → local persistent save.\n\
+             ⚠️ Do NOT call `okx-a2a file upload` or `okx-a2a xmtp-send` yourself — the `deliver` CLI handles all of this internally:\n\
+             \x20\x20- file upload (when needed) → XMTP-send `[intent:deliver]` to the User Agent → on-chain submit → local persistent save.\n\
              \x20\x20- Text deliverables over 500 Unicode characters are auto-converted to a `.md` file and sent as a file attachment; if conversion/upload fails, the CLI falls back to inline text.\n\
              \x20\x20- A2A delivery must succeed before a single task can be submitted on-chain. Subscription delivery never calls the single-task submit API.\n\n\
              ▸ **File deliverable** — pass `--file` with the local file path:\n\
@@ -456,7 +456,7 @@ pub async fn generate_next_action(
              OKX_TEXT_EOF\n\
              )\"\n\
              ```\n\n\
-             **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a session send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
+             **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
              🛑 **The next system event is `job_submitted`** — notify the ASP owner that the delivery is confirmed on-chain and awaiting User review. After that, `job_completed` or `job_rejected` is action-required.\n\n\
              [Follow-up events]\n\
              - `job_completed` (User Agent reviewed and accepted) — auto-rate the User Agent + notify the user\n\
@@ -1579,8 +1579,8 @@ mod tests {
         assert!(out.contains("Notify the ASP owner"));
         assert!(out.contains("registered Service's existing AI/Skill workflow"));
         assert!(out.contains("serviceId"));
-        assert!(out.contains("okx-a2a session send"));
-        assert!(!out.contains("xmtp-send"));
+        assert!(out.contains("okx-a2a xmtp-send"));
+        assert!(!out.contains("okx-a2a session send"));
         assert!(out.contains("onchainos agent deliver"));
         assert!(!out.contains("--file \"\""));
         assert!(out.contains("exactly one delivery-input flag"));

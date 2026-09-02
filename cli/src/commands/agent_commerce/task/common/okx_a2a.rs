@@ -678,6 +678,45 @@ pub fn session_send_with_timeout(
     Ok(())
 }
 
+/// Send a real peer-to-peer message through the running XMTP daemon.
+///
+/// This is intentionally separate from `session_send`: that command queues a
+/// message into a local AI session and does not transport it to the peer.
+pub fn xmtp_send(job_id: &str, to_agent_id: &str, message: &str) -> Result<()> {
+    let args = xmtp_send_args(job_id, to_agent_id, message);
+    let out = Command::new("okx-a2a")
+        .args(&args)
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!(
+            "okx-a2a xmtp-send exit {status}: {stderr}",
+            status = out.status
+        );
+    }
+
+    let response: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .map_err(|e| anyhow::anyhow!("okx-a2a xmtp-send stdout not valid JSON: {e}"))?;
+    if response.get("ok").and_then(|value| value.as_bool()) != Some(true) {
+        anyhow::bail!("okx-a2a xmtp-send returned an unsuccessful response: {response}");
+    }
+    Ok(())
+}
+
+fn xmtp_send_args(job_id: &str, to_agent_id: &str, message: &str) -> Vec<String> {
+    vec![
+        "xmtp-send".into(),
+        "--job-id".into(),
+        job_id.into(),
+        "--to-agent-id".into(),
+        to_agent_id.into(),
+        "--message".into(),
+        message.into(),
+        "--json".into(),
+    ]
+}
+
 /// Dispatch to one exact AI session. Used only with a session key captured
 /// from the trusted inbound delivery envelope.
 pub fn session_send_exact(session_key: &str, content: &str, message_id: &str) -> Result<()> {
@@ -955,6 +994,23 @@ pub fn file_download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xmtp_send_uses_peer_transport_contract() {
+        assert_eq!(
+            xmtp_send_args("job-1", "agent-2", "deliverable"),
+            vec![
+                "xmtp-send",
+                "--job-id",
+                "job-1",
+                "--to-agent-id",
+                "agent-2",
+                "--message",
+                "deliverable",
+                "--json",
+            ]
+        );
+    }
 
     #[test]
     fn retired_mode_cleanup_matches_only_mode_and_configuration_cards() {
