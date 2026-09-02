@@ -1,7 +1,9 @@
 # Identity service contract
 
-Use this single rule source for every ASP service create, update, validation, and display. In mixed
-batches, apply the section matching each service's `serviceType`.
+Use this contract for ASP service payload fields, display, and create workflows. For update behavior,
+follow [`identity-update.md`](identity-update.md); for validation, follow
+[`identity-validate-listing.md`](identity-validate-listing.md). In mixed batches, apply the workflow
+matching each service's `serviceType`.
 
 ## Shared payload
 
@@ -16,159 +18,19 @@ uses `serviceDescription` inside its `--service` element.
 | `serviceGuide` | Optional for every A2A pricing model. Never offer, request, or display it for A2MCP; preserve a fetched non-blank legacy value on update |
 | `serviceType` | Required raw `A2MCP` or `A2A`; display unchanged |
 | `fee` | Quoted number, ≤6 decimals, no currency unit/symbol; type rules define its shape |
-| `subscription` | A2A only; see [§A2A create and pricing](#a2a-create-and-pricing) |
+| `subscription` | A2A only; see [§1. fee, subscription, and freeTrial](#1-fee-subscription-and-freetrial) |
 | `freeTrial` | A2A monthly only; fixed value below |
-| `endpoint` | A2MCP only; see [§A2MCP endpoint](#a2mcp-endpoint) |
+| `endpoint` | A2MCP only; see [§3. endpoint](#3-endpoint) |
 | `operation` | Update only: `create`/`update`/`delete`; omit during register |
-| `id` | Existing service id for update/delete; delete sends only `operation` and `id` |
+| `id` | Update/delete only: copy the fetched `serviceId` into `id`; never use numeric raw `id`. Delete sends only `operation` and `id` |
 
 Trim text fields. `0` is a valid fee. Reject bare JSON numbers, units/symbols, and approximations.
 Use exact camelCase keys.
 
-## Collect and route
+## Display Rules
 
-Use only the user's replies. On update, preserve fetched values only where required; never use
-email, wallet, or session metadata or invent capabilities, metrics, or optional content.
-
-1. Ask service name + exact `A2MCP`/`A2A` type together.
-2. Follow its section and ask missing pricing/endpoint fields. Do not ask for `serviceGuide` yet.
-3. Collect and complete `serviceDescription`.
-4. For an A2A registration, follow [§A2A serviceGuide](#a2a-serviceguide) after the description.
-   On update, follow [§A2A update](#a2a-update). Never ask for `serviceGuide` on A2MCP.
-
-Accept batched answers. During registration, after every service—including a fully batched first
-service—ask **1. Add another service / 2. Done** and wait for explicit Done. Never validate during
-collection.
-
-## A2A
-
-### A2A create and pricing
-
-Ask one numbered billing pick plus its price:
-
-| Pick | Store |
-|---|---|
-| 1 per-call | `fee:"N", subscription:[]`; omit trial |
-| 2 monthly | `fee:"", subscription:[{"interval":"month","fee":"N"}]`; omit trial |
-| 3 monthly + 3-day trial | same as 2 plus `freeTrial:"72"` |
-
-Never offer both models, a non-monthly interval, or another trial duration. Ask only for missing or
-ambiguous values. For another trial length, explain that only 3 days is supported and re-ask 2/3.
-
-### A2A description
-
-- Require core capability + audience; for signal services also require signal kind.
-- Accept optional user inputs and delivery/copy-trading notes on separate lines. Numbering is
-  optional.
-- Keep supplied content; never invent/chase optional parts or require a particular paragraph,
-  label, order, audience, market, example, disclaimer, or style.
-- Recommend ≤2000 East-Asian display width (about 1000 CJK characters; CJK=2, ASCII=1), with no
-  per-part limit.
-
-### A2A serviceGuide
-
-`serviceGuide` is optional for all A2A pricing models. If absent, ask:
-
-> Describe the prerequisites, steps, and key parameters. For trading, payments, or authorization,
-> include confirmation requirements and execution limits.
-> [Service Guide Examples](https://web3.okx.com/onchainos/dev-docs/okxai/a2a-subscription).
->
-> Send the guide body, or reply 2 to skip.
-
-Accept non-blank text directly; bare `1` asks for the body and `2` omits `serviceGuide`.
-
-Trim, preserve, and submit every supplied value. Leave guide-length validation to the CLI.
-
-### A2A update
-
-Apply [§Update delta](#update-delta). Keep an existing A2A billing model fixed even if the CLI
-accepts a flip; the backend rejects it.
-
-- Per-call: send current/new numeric `fee` and `subscription:[]`.
-- Subscription: send `fee:""` and the current/new monthly tier; include `serviceGuide` only when
-  non-blank.
-- Trial: change only on explicit request; enable with `freeTrial:"72"`, disable by omission; never
-  send `""` or `"0"`.
-- Preserve a fetched non-blank guide unless explicitly changed. A missing/blank guide does not need
-  to be filled during update.
-
-To change billing models, add a new service and optionally remove the old one.
-
-### A2A QA and display
-
-- **Block:** description empty; test marker; URL.
-- **Suggest:** over-length description or missing core capability.
-- Wallet/contract addresses do not block. Ignore paragraph count. Delete entries bypass QA per
-  [§Update delta](#update-delta).
-
-Display per [§Display](#display). A2A has no endpoint.
-
-## A2MCP
-
-### A2MCP collect
-
-Ask for quoted numeric per-call `fee`, deployed public HTTPS `endpoint`, and the four-part request
-description below. Forbid `subscription` and `freeTrial`. A2MCP has no user-facing `serviceGuide`
-option: never offer, request, or display one.
-
-### A2MCP request description
-
-Store four numbered lines with localized bracketed labels:
-
-1. `[Service Description]` — purpose.
-2. `[Parameter Spec]` — key parameters on one `;`-separated line as
-   `name(type, required/optional): meaning`; append optional defaults.
-3. `[Request Method]` — HTTP verb or bare MCP tool name.
-4. `[Request Example]` — runnable `curl` against the endpoint with realistic inputs.
-
-Preserve supplied labels and add missing ones. Use ASCII `( , ) : ;` in Latin-language
-conversations; use full-width `（ ， ） ： ；` and localized required/optional words in CJK.
-Recommend total width ≤2000 (about 1000 CJK characters; CJK=2, ASCII=1). Key parameters suffice
-when all cannot fit; never block solely for incomplete enumeration.
-
-If a present parameter spec is malformed, normalize it into that strict one-line form, show it, and
-obtain a separate confirmation before storage. Strip URL/path text from line 3, keeping only the
-verb/tool name; apply it silently and show the stored value on the normal final confirmation/diff
-card. A path without a verb defaults to POST; ask only if ambiguous. Convert a non-curl example and
-obtain a separate confirmation before storage. Reject placeholder/mismatched hosts. Allow A2MCP curl
-URLs. Never show a fill-in template.
-
-### A2MCP endpoint
-
-Require deployed public HTTPS, ≤512 characters. Reject HTTP, localhost, loopback, RFC-1918,
-`*.local`, `*.internal`, mocks, and placeholders. Explain that an on-chain endpoint change requires
-update. Without one, deploy first or choose A2A.
-
-### A2MCP QA
-
-All four request-description items block by meaning. A description containing `0x` + 40 hex
-characters is exempt and accepted as-is. Empty text and test markers also block. On four-item
-failure, localize and show only:
-
-- Reason: `The request description is incomplete — it is missing one or more of: what the service does, the parameter specification, the request method, or the CURL request example. Buyers and the sandbox cannot determine how to call this service.`
-- Suggestion: `In the request description, include all four: (1) what the service does, (2) each key parameter — all on one line, separated by ;, in the format name(type, required/optional): meaning (append the default value for an optional parameter), (3) the request method (POST/GET or tool name), (4) a working CURL example using the real endpoint.`
-
-### A2MCP update and display
-
-Apply [§Update delta](#update-delta). Send current/new `fee`, endpoint, and description. On update,
-preserve a fetched non-blank `serviceGuide` internally so unrelated edits do not erase legacy data;
-never render it. Never send subscription fields. Display per [§Display](#display).
-
-## Update delta
-
-Send changed services only. Create: `operation:"create"` without `id`. Modify: use fetched `id` and
-other parser-required current fields. Delete: send only `operation:"delete"` and the fetched `id`.
-Omit unchanged services; never interpret omission as deletion or suggest deletion without an
-explicit request. Delete entries bypass listing QA. Apply the matching type's update rules before
-building the payload.
-
-## Validate
-
-At the register/update QA gate, follow `identity-validate-listing.md` for timing, input scope, update-key
-stripping, semantic merging, and finding resolution.
-
-## Display
-
+- Description: render each `serviceDescription` verbatim on create confirmation and update diff,
+  preserving all content and line breaks; never summarize, rewrite, or omit any part.
 - Fee: non-zero → `N USDT`; zero → localized Free; empty/inapplicable → `—`. Exception: legacy A2A
   with neither fee nor subscription displays Free; A2MCP without fee remains `—`.
 - Subscription: `N USDT / month`; zero → Free.
@@ -177,3 +39,152 @@ stripping, semantic merging, and finding resolution.
   positive-hour values remain visible as `N days` or `N hours`; never recompute it skill-side.
 - Guide: show non-blank A2A `serviceGuide` only on create confirmation/update diff. Never display it
   for A2MCP. `service-list` and `service-match` omit it for every service type.
+
+## Collection flow
+
+1. Confirm the exact `serviceType`, then enter the matching A2A or A2MCP workflow.
+2. Accept batched answers and collect only missing fields.
+3. After each service, ask **1. Add another service / 2. Done** and wait for explicit Done. If the
+   user chooses 1, return to `serviceType` collection and repeat the matching workflow.
+4. Use only user-provided data; preserve fetched values only when update rules require it.
+5. Run validation only after explicit Done.
+
+## A2A create workflow
+
+Actions:
+
+1. Collect fields in the order below.
+2. After all fields are collected, continue to the QA gate.
+
+#### 1. fee, subscription, and freeTrial
+
+Actions:
+
+1. Ask one numbered billing pick plus its price.
+
+User-facing prompt/options:
+
+> Choose a billing model:
+> 1. Per call
+> 2. Monthly
+> 3. Monthly + 3-day trial
+
+Rules:
+
+1. Store the selected billing model as follows:
+
+| Pick | Store |
+|---|---|
+| 1 per-call | `fee:"N", subscription:[]`; omit trial |
+| 2 monthly | `fee:"", subscription:[{"interval":"month","fee":"N"}]`; omit trial |
+| 3 monthly + 3-day trial | same as 2 plus `freeTrial:"72"` |
+
+2. Never offer both models, a non-monthly interval, or another trial duration.
+3. Ask only for missing or ambiguous values.
+4. For another trial length, explain that only 3 days is supported and re-ask 2/3.
+
+#### 2. A2A serviceName and serviceDescription
+
+Actions:
+
+1. Ask for the service name and description together.
+
+Rules:
+
+1. Require core capability + audience; for signal services also require signal kind.
+2. Accept optional user inputs and delivery/copy-trading notes on separate lines. Numbering is
+   optional.
+3. Keep supplied content; never invent/chase optional parts or require a particular paragraph,
+   label, order, audience, market, example, disclaimer, or style.
+4. Recommend ≤2000 East-Asian display width (about 1000 CJK characters; CJK=2, ASCII=1), with no
+   per-part limit.
+
+#### 3. serviceGuide
+
+Actions:
+
+1. If `serviceGuide` is absent, show the following prompt.
+
+User-facing prompt/options:
+
+> Describe the prerequisites, steps, and key parameters. For trading, payments, or authorization,
+> include confirmation requirements and execution limits.
+> [Service Guide Examples](https://web3.okx.com/onchainos/dev-docs/okxai/a2a-subscription).
+>
+> Send the guide body, or reply 2 to skip.
+
+Rules:
+
+1. Accept non-blank text directly; bare `1` asks for the body and `2` omits `serviceGuide`.
+2. Trim, preserve, and submit every supplied value.
+3. Leave guide-length validation to the CLI.
+
+## A2MCP create workflow
+
+Actions:
+
+1. Collect fields in the order below.
+2. After all fields are collected, continue to the QA gate.
+
+#### 1. fee
+
+Actions:
+
+1. Ask for the fee first.
+
+Rules:
+
+1. Forbid `subscription` and `freeTrial`.
+
+#### 2. A2MCP serviceName and serviceDescription
+
+Actions:
+
+1. Ask for the service name and request description together.
+
+User-facing prompt/options:
+
+> Provide the service name and request description. Format the request description as four numbered
+> lines using the required labels and formats.
+
+Rules:
+
+1. Store four numbered lines with localized bracketed labels:
+
+   1. `[Service Description]` — purpose.
+   2. `[Parameter Spec]` — key parameters on one `;`-separated line as
+      `name(type, required/optional): meaning`; append optional defaults.
+   3. `[Request Method]` — HTTP verb or bare MCP tool name.
+   4. `[Request Example]` — runnable `curl` against the endpoint with realistic inputs.
+
+2. Preserve supplied labels and add missing ones.
+3. Use locale-appropriate punctuation and required/optional terms. Recommend total width ≤2000
+   (about 1000 CJK characters; CJK=2, ASCII=1).
+4. Keep key parameters when the full enumeration does not fit. If the parameter spec is malformed,
+   normalize it to the required one-line form, show it, and obtain separate confirmation before
+   storage.
+5. Strip URL/path text from line 3, keeping only the verb/tool name. If a path has no verb, default
+   to POST unless ambiguous. Apply stripping silently and show the stored value in the normal final
+   confirmation/diff card.
+6. Collect the request example after the endpoint is available. Convert non-curl examples and reject
+   placeholder or mismatched hosts; obtain separate confirmation before storage. Allow A2MCP curl
+   URLs.
+7. Never show a fill-in template.
+
+#### 3. endpoint
+
+Actions:
+
+1. Ask for the endpoint after the fee and request description.
+
+Rules:
+
+1. Require a deployed public HTTPS endpoint of ≤512 characters.
+2. Reject HTTP, localhost, loopback, RFC-1918, `*.local`, `*.internal`, mocks, and placeholders.
+3. Explain that an on-chain endpoint change requires update.
+4. If no endpoint is available, ask the user to deploy one first or choose A2A.
+
+## Validate
+
+At the register/update QA gate, follow `identity-validate-listing.md` for timing, input scope, update-key
+stripping, semantic merging, and finding resolution.

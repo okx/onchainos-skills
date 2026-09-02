@@ -18,10 +18,7 @@ Always merge the CLI result with these semantic checks:
 - service name is a descriptive noun phrase, not one letter;
 - agent name is a brand, not a personal/public-figure name or substring; draft only a neutral brand
   alternative derived from the user's meaning;
-- A2A follows
-  [identity-service-contract.md §A2A QA and display](identity-service-contract.md#a2a-qa-and-display);
-- A2MCP follows
-  [identity-service-contract.md §A2MCP QA](identity-service-contract.md#a2mcp-qa).
+- Apply the matching [type-specific QA](#type-specific-qa) rules for A2A or A2MCP.
 
 Preserve every CLI finding's severity. For type-specific semantic severity and exceptions, use only
 the matching type section's QA rules; do not restate or reinterpret them here.
@@ -29,6 +26,25 @@ the matching type section's QA rules; do not restate or reinterpret them here.
 If nothing is found, say QA passed. Otherwise map each dotted `field` to its identity/service card
 row, translate and de-duplicate `message` by `(field,message)`, never show `code`, retain original
 values, and show `(test)` on the affected name row.
+
+## Type-specific QA
+
+### A2A QA
+
+1. Block empty descriptions, test markers, and URLs.
+2. Suggest changes for over-length descriptions or missing core capability.
+3. Do not block wallet or contract addresses.
+4. Ignore paragraph count.
+5. Skip listing QA for delete entries.
+
+### A2MCP QA
+
+1. Block any request description missing one or more of the four required items by meaning.
+2. Accept a description containing `0x` followed by 40 hexadecimal characters as-is.
+3. Block empty text and test markers.
+4. On four-item failure, localize and show only:
+   - Reason: `The request description is incomplete — it is missing one or more of: what the service does, the parameter specification, the request method, or the CURL request example. Buyers and the sandbox cannot determine how to call this service.`
+   - Suggestion: `In the request description, include all four: (1) what the service does, (2) each key parameter — all on one line, separated by ;, in the format name(type, required/optional): meaning (append the default value for an optional parameter), (3) the request method (POST/GET or tool name), (4) a working CURL example using the real endpoint.`
 
 ## Resolve findings
 
@@ -49,7 +65,7 @@ normal confirmation. If rejected, recollect and redraw; never silently store a s
 
 Never silently correct a semantic finding, repeat a draft, invent field content, or force advice.
 The only no-separate-confirmation exception is A2MCP Request Method URL/path stripping defined in
-[identity-service-contract.md §A2MCP request description](identity-service-contract.md#a2mcp-request-description);
+[identity-service-contract.md §2. A2MCP serviceName and serviceDescription](identity-service-contract.md#2-a2mcp-servicename-and-servicedescription);
 apply it silently and show the result on the normal final card. All other
 normalizations—including malformed parameter specs and non-curl examples—must be shown and
 separately confirmed before storage as required by that section. A2MCP failure uses only the
