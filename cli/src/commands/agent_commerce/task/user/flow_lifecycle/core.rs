@@ -660,21 +660,16 @@ fn a2a_spool_dir() -> std::path::PathBuf {
 
 /// Collect the A2A spool candidates for `job_id` and return the OLDEST by mtime.
 ///
-/// Candidates (FR-10): the fixed-name file `a2a_deliver_<jobId>.json` (old / no
-/// auto-trade block) **plus** every per-delivery file matching the
-/// `a2a_deliver_<jobId>_` prefix. Subscription copy-trade delivers repeatedly under
-/// one `jobId`, so the write side uses per-delivery names to avoid same-round
-/// overwrite; recovery must therefore dual-scan. Oldest-first preserves delivery
-/// order (first-in first-out). Returns `None` when no candidate exists.
+/// Candidates are current-protocol per-delivery files matching the
+/// `a2a_deliver_<jobId>_` prefix. Subscription delivery repeats under one `jobId`,
+/// so unique names prevent same-round overwrite. Oldest-first preserves delivery
+/// order (first-in first-out). The retired fixed-name spool is deliberately ignored:
+/// preflight guarantees the current protocol on both peers and there is no migration window.
 fn oldest_spool_candidate(job_id: &str) -> Option<String> {
     let dir = a2a_spool_dir();
-    let fixed = dir.join(format!("a2a_deliver_{job_id}.json"));
     let prefix = format!("a2a_deliver_{job_id}_");
 
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-    if fixed.is_file() {
-        candidates.push(fixed);
-    }
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let name = entry.file_name();
@@ -796,7 +791,7 @@ fn process_recovered_file(
     })
 }
 
-/// Try to recover a deliverable from an A2A spool file (FR-10 dual-scan).
+/// Try to recover a deliverable from a current-protocol A2A spool file.
 ///
 /// Called by `check_status_freshness` when `job_submitted` finds no manifest.
 /// Picks the OLDEST spool candidate for `job_id` (fixed name + per-delivery prefix;
@@ -2539,7 +2534,7 @@ Part B continues
         }
     }
 
-    // ── FR-10: recover dual-scans the spool and processes oldest → newest ──
+    // ── Current per-delivery spool recovery processes oldest → newest ──
     #[test]
     fn recover_processes_oldest_spool_file_first() {
         let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
@@ -2547,19 +2542,31 @@ Part B continues
         // to isolated temp dirs so the test is hermetic and never touches a hardcoded
         // /tmp. The tempdirs are created BEFORE TMPDIR is set, so they land in the real
         // OS temp; the recover code then reads the redirected TMPDIR.
-        let spool = tempfile::tempdir().unwrap();
-        let home = tempfile::tempdir().unwrap();
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let spool = tempfile::Builder::new()
+            .prefix("recover-spool-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("recover-home-")
+            .tempdir_in(&test_root)
+            .unwrap();
         let _tmpdir = EnvVarGuard::set("TMPDIR", spool.path());
         let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
 
         let job_id = "0xJOB";
         let a2a = |body: &str| {
             format!(
-                r#"{{"content":"deliverableType: text\n- - -\n{body}\n- - -\n[intent:deliver]"}}"#
+                r#"{{"msgType":"a2a-agent-chat","jobId":"{job_id}","receiverAgentId":"1891","content":"jobId: {job_id}\ndeliverableType: text\n- - -\n{body}\n- - -\n[intent:deliver]"}}"#
             )
         };
+        let retired_fixed = spool.path().join(format!("a2a_deliver_{job_id}.json"));
         let older = spool.path().join(format!("a2a_deliver_{job_id}_d1.json"));
         let newer = spool.path().join(format!("a2a_deliver_{job_id}_d2.json"));
+        std::fs::write(&retired_fixed, a2a("RETIRED")).unwrap();
         std::fs::write(&older, a2a("OLDEST")).unwrap();
         std::fs::write(&newer, a2a("NEWEST")).unwrap();
         // Force deterministic mtimes: older < newer (no sleep — avoids flakiness).
@@ -2588,6 +2595,10 @@ Part B continues
         );
         assert!(!older.exists(), "processed spool file must be deleted");
         assert!(
+            retired_fixed.exists(),
+            "retired fixed-name spool must be ignored without a migration window"
+        );
+        assert!(
             newer.exists(),
             "the newer file must remain for the next recovery pass"
         );
@@ -2597,8 +2608,18 @@ Part B continues
     #[test]
     fn recover_skips_poison_pill_and_processes_next() {
         let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
-        let spool = tempfile::tempdir().unwrap();
-        let home = tempfile::tempdir().unwrap();
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let spool = tempfile::Builder::new()
+            .prefix("recover-poison-spool-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("recover-poison-home-")
+            .tempdir_in(&test_root)
+            .unwrap();
         let _tmpdir = EnvVarGuard::set("TMPDIR", spool.path());
         let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
 
@@ -2609,7 +2630,9 @@ Part B continues
         std::fs::write(&poison, "not json at all").unwrap();
         std::fs::write(
             &good,
-            r#"{"content":"deliverableType: text\n- - -\nGOOD\n- - -\n[intent:deliver]"}"#,
+            format!(
+                r#"{{"msgType":"a2a-agent-chat","jobId":"{job_id}","receiverAgentId":"1891","content":"jobId: {job_id}\ndeliverableType: text\n- - -\nGOOD\n- - -\n[intent:deliver]"}}"#
+            ),
         )
         .unwrap();
         // Deterministic mtimes: poison (oldest) < good.

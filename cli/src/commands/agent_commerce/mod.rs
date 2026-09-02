@@ -3620,22 +3620,8 @@ fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
 }
 
 fn parse_a2a_json_arg(raw: &str) -> anyhow::Result<serde_json::Value> {
-    match serde_json::from_str(raw) {
-        Ok(v) => Ok(v),
-        Err(strict_err) => {
-            let repaired = escape_control_chars_in_strings(raw);
-            match serde_json::from_str::<serde_json::Value>(&repaired) {
-                Ok(v) => {
-                    eprintln!(
-                        "[next-action] --a2a-file payload had raw control chars inside string values; \
-                         auto-repaired. Strict parse error was: {strict_err}"
-                    );
-                    Ok(v)
-                }
-                Err(_) => anyhow::bail!("--a2a-file payload is not valid JSON: {strict_err}"),
-            }
-        }
-    }
+    serde_json::from_str(raw)
+        .map_err(|error| anyhow::anyhow!("--a2a-file payload is not valid JSON: {error}"))
 }
 
 fn write_secure_temp_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
@@ -3735,16 +3721,17 @@ fn validate_a2a_file_arg(
     if !is_safe_a2a_file_path(fp) {
         anyhow::bail!("--a2a-file must point to a file under the OS temp directory");
     }
+    let metadata = std::fs::symlink_metadata(fp)
+        .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?;
+    if !metadata.file_type().is_file() {
+        anyhow::bail!("--a2a-file must be a regular file, not a symlink or directory");
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(fp)
-            .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?
-            .permissions()
-            .mode()
-            & 0o777;
-        if mode & 0o077 != 0 {
-            anyhow::bail!("--a2a-file must not be readable, writable, or executable by group/others; use chmod 600");
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode != 0o600 {
+            anyhow::bail!("--a2a-file must have mode 0600; run chmod 600");
         }
     }
     let raw =
@@ -4065,22 +4052,16 @@ mod escape_control_chars_tests {
     }
 
     #[test]
-    fn canonicalizes_repaired_a2a_file_arg_for_downstream_strict_parse() {
+    fn rejects_a2a_file_arg_with_raw_control_char_json() {
         let path = write_temp_a2a(
             "raw-control-char.json",
             "{ \"msgType\":\"a2a-agent-chat\", \"jobId\":\"0xabc123\", \"receiverAgentId\":\"1696\", \"content\":\"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]\" }",
         );
 
-        let original = std::fs::read_to_string(&path).unwrap();
-        let got = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
-        let rewritten = std::fs::read_to_string(&got).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
-        assert_eq!(
-            parsed["content"].as_str().unwrap().lines().next(),
-            Some("jobId: 0xabc123")
-        );
-        std::fs::remove_file(got).ok();
+        let error = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("current A2A envelope must be strict JSON")
+            .to_string();
+        assert!(error.contains("payload is not valid JSON"));
     }
 
     #[test]
@@ -4167,6 +4148,43 @@ mod escape_control_chars_tests {
             .expect_err("group-readable file must fail")
             .to_string();
         assert!(err.contains("chmod 600"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a2a_file_arg_with_non_exact_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = write_temp_a2a(
+            "owner-executable.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("the new envelope contract requires exact mode 0600")
+            .to_string();
+        assert!(err.contains("mode 0600"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a2a_file_arg_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let target = write_temp_a2a(
+            "symlink-target.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+        let link = target.with_file_name("symlink-envelope.json");
+        std::fs::remove_file(&link).ok();
+        symlink(&target, &link).unwrap();
+
+        let err = validate_a2a_file_arg(link.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("symlinked envelopes must fail closed")
+            .to_string();
+        assert!(err.contains("regular file"));
+        std::fs::remove_file(link).ok();
     }
 
     #[test]

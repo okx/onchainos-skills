@@ -461,8 +461,8 @@ fn upload_and_forward_one(
         filename = upload.filename,
     );
 
-    okx_a2a::xmtp_send(job_id, to_agent_id, &msg)
-        .map_err(|e| format!("xmtp-send failed for {file_path}: {e}"))
+    okx_a2a::session_send(job_id, Some(to_agent_id), &msg)
+        .map_err(|e| format!("session send failed for {file_path}: {e}"))
 }
 
 /// Upload + forward ALL pending attachments for a job. Best-effort: failures

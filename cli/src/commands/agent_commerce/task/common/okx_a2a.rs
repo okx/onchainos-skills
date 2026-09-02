@@ -741,37 +741,6 @@ pub fn session_delete(job_id: &str, to_agent_id: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-// ── XMTP wire messages ────────────────────────────────────────────────────
-
-/// Bridge equivalent: `xmtp_send '{sessionKey, content, payload?}'`
-/// Real-business XMTP message (payload is silently dropped by the bridge, so
-/// we don't expose it here). Note the API divergence:
-/// - CLI uses `--message` (not `--content`, unlike user_notify / session_send).
-/// - `--my-agent-id` / `--from-agent-id` were removed from the CLI spec —
-///   the daemon resolves the local agent from session metadata.
-pub fn xmtp_send(job_id: &str, to_agent_id: &str, message: &str) -> Result<()> {
-    let out = Command::new("okx-a2a")
-        .args([
-            "xmtp-send",
-            "--job-id",
-            job_id,
-            "--to-agent-id",
-            to_agent_id,
-            "--message",
-            message,
-        ])
-        .output()
-        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!(
-            "okx-a2a xmtp-send exit {status}: {stderr}",
-            status = out.status
-        );
-    }
-    Ok(())
-}
-
 // ── XMTP conversation history ─────────────────────────────────────────────
 
 /// Bridge equivalent: `xmtp_get_conversation_history '{jobId, toAgentId}'`

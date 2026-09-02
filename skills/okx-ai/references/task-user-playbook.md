@@ -17,8 +17,8 @@
 
 ## §1.7 Deliverable intake contract
 
-- Pass the complete raw `a2a-agent-chat` envelope through `next-action --a2a-file`; the file must be
-  private (`0600`) and under the OS temp directory. Do not flatten file metadata or text into
+- Pass the complete raw `a2a-agent-chat` envelope through `next-action --a2a-file`; the envelope must
+  be strict JSON, and the path must be a regular (not symlinked) `0600` file under the OS temp directory. Do not flatten file metadata or text into
   `--message` fields—the new protocol has no legacy fallback.
 - The CLI requires matching envelope/embedded `jobId`, the exact receiving User Agent, and a terminal
   `[intent:deliver]`. File deliveries require non-empty `fileKey`, `digest`, `salt`, `nonce`, and
