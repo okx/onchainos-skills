@@ -58,6 +58,17 @@ changed before handing work back:
 - Changed `cli/`: run `npm run dev:cli`.
 - Changed both areas: run both commands.
 
+Whenever either refresh command is triggered, the final response must explicitly
+tell the user what was updated and when it takes effect:
+
+- After `npm run dev:cli` succeeds, state that the CLI was rebuilt and is already
+  effective for checkout-local `./.codex/bin/onchainos` commands.
+- After `npm run dev:skills` succeeds, state that skills were updated and will
+  take effect in a new Codex session.
+- If both commands run, report both activation states separately.
+- If a refresh command fails, do not claim that update is effective; report the
+  failure and the affected activation state instead.
+
 `npm run dev:init` is only for a new checkout or the first development session
 after a machine restart. It restarts the A2A daemon, so never run it
 automatically as part of an ordinary code change.

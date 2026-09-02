@@ -86,6 +86,7 @@ write_onchainos_wrapper() {
 set -euo pipefail
 export ONCHAINOS_HOME='$runtime_dir'
 export ONCHAINOS_CREDENTIAL_STORE=file
+export ONCHAINOS_SKIP_CLIENT_VERSION_GATE="\${ONCHAINOS_SKIP_CLIENT_VERSION_GATE:-true}"
 export TMPDIR='$tmp_dir'
 export OKX_AGENT_TASK_HOME='$a2a_runtime_dir'
 export OKX_A2A_AI_CWD='$repo_root'
@@ -148,6 +149,7 @@ refresh_ai_workspace_codex() {
 
 export ONCHAINOS_HOME='$runtime_dir'
 export ONCHAINOS_CREDENTIAL_STORE=file
+export ONCHAINOS_SKIP_CLIENT_VERSION_GATE="\${ONCHAINOS_SKIP_CLIENT_VERSION_GATE:-true}"
 export TMPDIR='$tmp_dir'
 export OKX_AGENT_TASK_HOME='$a2a_runtime_dir'
 export OKX_A2A_AI_CWD='$repo_root'
