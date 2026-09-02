@@ -582,15 +582,18 @@ agent task-attach <jobId> --file <local-path> [--file <local-path> ...]
 
 ### create-subscribe
 
-Create a subscription task. Handles providerConfirmStatus → EIP-712 terms signing → create API → sign uopData → broadcast(bizType=101) internally.
+Create a subscription task. Handles `providerConfirmStatus` → EIP-712 terms
+signing → `createSubscription` → local readiness → sign `uopData` → broadcast
+(`bizType=204`) internally.
 
 ```
 agent create-subscribe \
   --service-id <svcId> --use-trial <true/false> \
   --service-token-amount <amt> --service-token-address <addr> \
   --auto-renew <0|1> \
+  [--copy-trade <0|1>] \
   --title <txt> --description <txt> \
-  [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
+  --provider-agent-id <id> [--service-description <txt>] [--service-params <params>] \
   [--service-interval <interval>] [--file <path>]... \
   [--autotrade-mode <auto|notify_only>] [--autotrade-amount <decimal-number>] \
   [--autotrade-cap <decimal-number>] [--autotrade-quote <usdt|usdc>] \
@@ -611,10 +614,11 @@ agent create-subscribe \
 | `--service-token-amount` | Yes | - | Monthly fee from `task-create-prepare data.payload.subscriptionInfo.feeAmount` |
 | `--service-token-address` | Yes | - | Fee token contract address from `task-create-prepare data.payload.feeToken` |
 | `--auto-renew` | Yes | - | 0=off, 1=on |
-| `--title` | Yes | - | Max 64 chars |
+| `--copy-trade` | No | `0` | 0=ordinary subscription, 1=copy-trade subscription; derive it from the confirmed execution mode |
+| `--title` | Yes | - | Max 30 Unicode characters |
 | `--description` | Yes | - | Max 4096 chars |
 | `--file` | No (repeatable) | - | Local file paths to attach; 100 MB limit per file |
-| `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
+| `--provider-agent-id` | Yes | - | Confirmed designated ASP agentId from `task-create-prepare data.payload` |
 | `--service-description` | No | `""` | Exact `task-create-prepare data.payload.serviceDescription`; persisted only as bounded routing hints |
 | `--service-interval` | No | `month` | Billing interval from `task-create-prepare data.payload.subscriptionInfo.interval` |
 | `--autotrade-mode` | Required when any execution configuration is supplied | none | `auto` or `notify_only`; omission creates no local execution policy. Legacy `manual` input is accepted as a notify-only alias. |

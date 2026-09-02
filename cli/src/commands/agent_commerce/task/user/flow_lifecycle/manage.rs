@@ -324,10 +324,13 @@ onchainos agent create-subscribe \\
   --service-token-amount \"<subscriptionInfo.feeAmount>\" \\
   --service-token-address \"<feeToken>\" \\
   --auto-renew <0|1> \\
+  --copy-trade <1 when confirmed mode is auto; otherwise 0> \\
   --title \"<title>\" \\
   --description \"<description>\" \\
+  --service-params '<confirmed JSON serviceParams, or {{}}>' \\
   --service-description \"<serviceDescription>\" \\
   --provider-agent-id <agentId> \\
+  --service-interval \"<subscriptionInfo.interval>\" \\
   --autotrade-mode <auto|notify_only> \\
   [--autotrade-amount \"<decimal-number>\"] \\
   [--autotrade-cap \"<decimal-number>\"] \\
@@ -337,7 +340,8 @@ onchainos agent create-subscribe \\
   [--autotrade-order-policy <market|signal_price_limit>] \
   [--autotrade-auth-mode <oauth|api_key>] \
   [--autotrade-settings-json '<user-confirmed JSON object>'] \
-  [--autotrade-required-field <canonical-or-guide-defined-field>]...
+  [--autotrade-required-field <canonical-or-guide-defined-field>]... \\
+  --format json
 ```
 - Always pass the explicitly confirmed mode; there is no default. For `notify_only`, pass no other `--autotrade-*` value and declare only `--autotrade-required-field mode`. For `auto`, pass amount, cap, quote, Trade Kit environment, margin mode, order policy, and authentication mode only from user-authored context. Pass the final confirmed non-core settings together through `--autotrade-settings-json`; omit the flag when there are none. For a confirmed Trade Kit route, environment and order policy are required; margin mode is additionally required for `perp`. Pass `--autotrade-auth-mode` whenever the user completed or explicitly selected OAuth/API Key; otherwise the first executable delivery asks once before starting Trade Kit. ASP suggestions alone are never values.
 - Pass one `--autotrade-required-field` for every execution field that this flow required the user to confirm. Include fields explicitly required by `serviceGuide`, or by `serviceDescription` only when the guide is absent. Use the public core names `mode`, `tradeAmount`, `cap`, `quote`, `environment`, `marginMode`, `orderPolicy`, and `authMode`; specifically, declare a fixed amount as `tradeAmount`, never the internal consent key `tradeAmountU`. For a confirmed Trade Kit route, always include `environment` and `orderPolicy`, plus `marginMode` for `perp`. Stable settings use their exact top-level names. Unknown fields use `extra.<camelCaseKey>` and must have the matching object under `extra` in `--autotrade-settings-json`. Do not include tool installation, OAuth/API-key readiness, or ASP-suggested values. The CLI validates this declaration before any remote create request and persists the normalized list in consent.
@@ -731,10 +735,10 @@ mod tests {
             "playbook must keep preflight advisory: {out}"
         );
         assert!(out.contains("continue creating the subscription"));
-        assert!(
-            !out.contains("  --copy-trade"),
-            "removed copy-trade argument must not appear: {out}"
-        );
+        assert!(out.contains("--copy-trade <1 when confirmed mode is auto; otherwise 0>"));
+        assert!(out.contains("--service-params '<confirmed JSON serviceParams, or {}>'"));
+        assert!(out.contains("--service-interval \"<subscriptionInfo.interval>\""));
+        assert!(out.contains("--format json"));
         assert!(
             !out.contains("re-run `task-service-select` exactly once"),
             "preflight absence must not force an extra match: {out}"
