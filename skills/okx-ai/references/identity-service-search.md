@@ -16,7 +16,7 @@ onchainos agent service-match \
 
 Use the requested limit; otherwise **MUST** pass `--limit 3`.
 
-Read `services[]`, `searchAfter`, `hasMore`, `action`, and `tip`.
+Read `services[]`, `searchAfter`, `hasMore`, and `tip`.
 
 ## Display
 
@@ -56,5 +56,3 @@ Use the selected Service's numeric `sid`.
 ```bash
 onchainos agent task-create-prepare --sid <selected-sid>
 ```
-
-Follow `data.action`.
