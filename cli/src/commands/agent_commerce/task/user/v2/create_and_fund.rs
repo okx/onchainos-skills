@@ -56,6 +56,15 @@ struct ConfirmContext {
     expired_at: String,
 }
 
+impl ConfirmContext {
+    /// The deployed escrow flow currently derives the nonce with the hook
+    /// address in the provider slot. Keep this compatibility mapping local to
+    /// create-and-fund instead of changing the generic signing primitive.
+    fn provider_for_escrow_nonce(&self) -> &str {
+        &self.hook
+    }
+}
+
 fn build_confirm_body(input: &CreateAndFundInput<'_>) -> Value {
     json!({
         "providerAgentId": input.provider_agent_id,
@@ -212,7 +221,7 @@ pub(in super::super) async fn execute(
     // The authorization is derived only from the backend-confirmed escrow fields.
     let authorization = a2a_pay::sign_escrow(a2a_pay::SignEscrowParams {
         chain_id: input.chain_id,
-        provider: confirmation.provider.clone(),
+        provider: confirmation.provider_for_escrow_nonce().to_string(),
         receiver: confirmation.receiver.clone(),
         arbitrator: confirmation.evaluator.clone(),
         currency: confirmation.currency.clone(),
@@ -348,6 +357,13 @@ mod tests {
         assert_eq!(body["categoryCode"], "FINANCE");
         assert!(body.get("paymentMostTokenAmount").is_none());
         assert!(body.get("paymentMode").is_none());
+    }
+
+    #[test]
+    fn escrow_nonce_uses_hook_in_provider_slot_for_legacy_contract_compatibility() {
+        let confirmation = confirmation();
+        assert_eq!(confirmation.provider, "0xprovider");
+        assert_eq!(confirmation.provider_for_escrow_nonce(), "0xhook");
     }
 
     #[test]
