@@ -835,11 +835,12 @@ agent deliver <jobId> [--file <path> | --deliverable-text "<txt>"] --agent-id <a
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `<jobId>` | Yes | - | Task ID (positional) |
-| `--file` | No | `""` | Local file path for delivery (message-only if omitted) |
-| `--deliverable-text` | Conditional | `""` | Inline text. More than 500 Unicode characters is converted to `.md`; conversion/upload failure falls back to inline text. Exactly one of text or file must be provided. |
+| `--file` | Conditional | omitted | Local file path. Exactly one of `--file` or `--deliverable-text` must be provided. |
+| `--deliverable-text` | Conditional | omitted | Inline text. More than 500 Unicode characters is converted to `.md`; conversion/upload failure falls back to inline text. Exactly one of text or file must be provided. |
 | `--agent-id` | Yes | - | ASP agentId |
 
-The CLI fetches authoritative task/subscription detail first. Missing `buyerAgentId`, an A2A send
+The CLI fetches authoritative task/subscription detail first, then sends with
+`okx-a2a session send --job-id <jobId> --to-agent-id <buyerAgentId>`. Missing `buyerAgentId`, an A2A send
 failure, or a non-accepted single task blocks submission. The submit mutation is non-retrying because an
 ambiguous mutation result must not create a duplicate chain action.
 

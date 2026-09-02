@@ -449,9 +449,9 @@ pub async fn generate_next_action(
              ```bash\n\
              onchainos agent deliver {job_id} --file \"<local file path>\" --agent-id {agent_id}\n\
              ```\n\n\
-             ▸ **Text deliverable** — `--file \"\"` + heredoc-wrapped `--deliverable-text`:\n\
+             ▸ **Text deliverable** — pass only the heredoc-wrapped `--deliverable-text` (exactly one delivery-input flag):\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"\" --agent-id {agent_id} \\\n\
+             onchainos agent deliver {job_id} --agent-id {agent_id} \\\n\
              \x20\x20--deliverable-text \"$(cat <<'OKX_TEXT_EOF'\n\
              <full text deliverable content>\n\
              OKX_TEXT_EOF\n\
@@ -1583,6 +1583,8 @@ mod tests {
         assert!(out.contains("okx-a2a session send"));
         assert!(!out.contains("okx-a2a xmtp-send"));
         assert!(out.contains("onchainos agent deliver"));
+        assert!(!out.contains("--file \"\""));
+        assert!(out.contains("exactly one delivery-input flag"));
         assert!(!out.contains("User Agent has confirmed the apply"));
     }
 

@@ -79,7 +79,7 @@ fn print_deliver_result(outcome: &DeliverOutcome, job_id: &str) {
 }
 
 /// Deliverable preparation result — carries the info needed by later stages
-/// (xmtp message was already sent; this tracks what to save locally).
+/// (the A2A session message was already sent; this tracks what to save locally).
 enum Prepared {
     File { local_path: String, file_key: String },
     Text { tmp_path: String },
@@ -91,8 +91,8 @@ fn is_long_text(text: &str) -> bool {
 
 // ── Debug-only local E2E mock (ONCHAINOS_TEST_MOCK_SUBSCRIPTION=1) ───────────
 // Lets the resident-script subscription flow be exercised end-to-end with NO backend,
-// credentials, or XMTP — the precondition task detail is synthesized (accepted + escrow +
-// jobType 1) and each send is written to a local outbox file instead of uploaded + XMTP-sent.
+// credentials, or A2A transport — the precondition task detail is synthesized (accepted + escrow +
+// jobType 1) and each send is written to a local outbox file instead of uploaded + session-sent.
 // Compiled OUT of release builds (`#[cfg(debug_assertions)]`), so a release ASP can never
 // fake a delivery.
 
@@ -168,7 +168,7 @@ async fn resolve_precondition(
                 bail!(
                     "Deliver rejected: current task status = {} ({}), must be accepted (1) before delivery.\n\
                      If you just applied, wait for the User Agent to confirm-accept on-chain and receive the `job_accepted` system notification before delivering.\n\
-                     Do NOT call `okx-a2a xmtp-send` to rush the User Agent — confirm-accept is a user decision driven by the User Agent's session.",
+                     Do NOT call `okx-a2a session send` to rush the User Agent — confirm-accept is a user decision driven by the User Agent's session.",
                     status_int, status.as_str(),
                 );
             }
@@ -254,7 +254,7 @@ fn send_or_mock(job_id: &str, user_agent_id: &str, msg: &str) -> Result<()> {
     if std::env::var("ONCHAINOS_TEST_MOCK_SUBSCRIPTION").as_deref() == Ok("1") {
         return mock_write_outbox(job_id, msg);
     }
-    okx_a2a::xmtp_send(job_id, user_agent_id, msg)
+    okx_a2a::session_send(job_id, Some(user_agent_id), msg)
 }
 
 #[cfg(debug_assertions)]
@@ -359,10 +359,10 @@ pub async fn handle_deliver(
 
         let msg = super::content::build_file_deliver_message(job_id, &upload);
         match send_or_mock(job_id, user_agent_id, &msg) {
-            Ok(()) => audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
+            Ok(()) => audit::log("cli", "ASP/deliver_a2a_sent", true, Duration::default(),
                 Some([base_tags.clone(), vec!["type=file".into()]].concat()), None),
             Err(e) => {
-                audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
+                audit::log("cli", "ASP/deliver_a2a_failed", false, Duration::default(),
                     Some([base_tags.clone(), vec!["type=file".into()]].concat()), Some(&e.to_string()));
                 send_error = Some(e.to_string());
             }
@@ -375,7 +375,7 @@ pub async fn handle_deliver(
             Some([base_tags.clone(), vec![format!("charCount={text_len}"), format!("isLong={is_long}")]].concat()), None);
 
         if is_long {
-            // ▸ Long text → write .md → file_upload → file-format xmtp
+            // ▸ Long text → write .md → file_upload → file-format A2A message
             //   Fallback: if tmp write or file_upload fails, degrade to inline text.
             let file_result = (|| -> Result<(Prepared, Option<String>)> {
                 let tmp_dir = std::env::temp_dir();
@@ -389,10 +389,10 @@ pub async fn handle_deliver(
                 let msg = super::content::build_file_deliver_message(job_id, &upload);
                 let mut local_err: Option<String> = None;
                 match send_or_mock(job_id, user_agent_id, &msg) {
-                    Ok(()) => audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
+                    Ok(()) => audit::log("cli", "ASP/deliver_a2a_sent", true, Duration::default(),
                         Some([base_tags.clone(), vec!["type=file_from_long_text".into()]].concat()), None),
                     Err(e) => {
-                        audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
+                        audit::log("cli", "ASP/deliver_a2a_failed", false, Duration::default(),
                             Some([base_tags.clone(), vec!["type=file_from_long_text".into()]].concat()), Some(&e.to_string()));
                         local_err = Some(e.to_string());
                     }
@@ -410,10 +410,10 @@ pub async fn handle_deliver(
 
                     let msg = super::content::build_text_deliver_message(job_id, deliverable_text);
                     match send_or_mock(job_id, user_agent_id, &msg) {
-                        Ok(()) => audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
+                        Ok(()) => audit::log("cli", "ASP/deliver_a2a_sent", true, Duration::default(),
                             Some([base_tags.clone(), vec!["type=text_fallback".into()]].concat()), None),
                         Err(e) => {
-                            audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
+                            audit::log("cli", "ASP/deliver_a2a_failed", false, Duration::default(),
                                 Some([base_tags.clone(), vec!["type=text_fallback".into()]].concat()), Some(&e.to_string()));
                             send_error = Some(e.to_string());
                         }
@@ -427,13 +427,13 @@ pub async fn handle_deliver(
                 }
             }
         } else {
-            // ▸ Short text → inline text-format xmtp
+            // ▸ Short text → inline text-format A2A message
             let msg = super::content::build_text_deliver_message(job_id, deliverable_text);
             match send_or_mock(job_id, user_agent_id, &msg) {
-                Ok(()) => audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
+                Ok(()) => audit::log("cli", "ASP/deliver_a2a_sent", true, Duration::default(),
                     Some([base_tags.clone(), vec!["type=text".into()]].concat()), None),
                 Err(e) => {
-                    audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
+                    audit::log("cli", "ASP/deliver_a2a_failed", false, Duration::default(),
                         Some([base_tags.clone(), vec!["type=text".into()]].concat()), Some(&e.to_string()));
                     send_error = Some(e.to_string());
                 }
