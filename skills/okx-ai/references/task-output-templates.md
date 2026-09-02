@@ -128,3 +128,25 @@ mean that the subscription has already been created.
 | `subscription_validation` | `blocked` | `restore_subscription`, `stop` |
 | `payment_validation` | `blocked` | `fund_account` |
 | `creation` | `ready` | `open_create_playbook` |
+
+## Subscription completion phase mapping
+
+| Role | Phase | Decision | Reason | Next action IDs |
+|---|---|---|---|---|
+| User | `subscription_completion` | `ready` | `notification_required` | `finalize_user_subscription` |
+| ASP | `subscription_completion` | `ready` | `notification_required` | `notify_and_cleanup_subscription` |
+
+## Task completion phase mapping
+
+| Role | Phase | Decision | Reason | Next action IDs |
+|---|---|---|---|---|
+| User | `task_completion` | `ready` | `notification_and_rating_required` | `finalize_user_task` |
+| ASP | `task_completion` | `ready` | `notification_and_rating_required` | `finalize_asp_task` |
+
+## Deliverable review phase mapping
+
+| Decision | Reason | Next action IDs |
+|---|---|---|
+| `ready` | `completion_submitted` / `rejection_submitted` | `stop` |
+| `blocked` | `x402_no_deliverable` / `completion_failed` / `rejection_failed` | `stop` |
+| `requires_user_input` | `rejection_reason_required` | `request_rejection_reason` |

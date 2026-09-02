@@ -11,10 +11,8 @@ use crate::commands::agent_commerce::task::common::util::short_job_id;
 /// x402 / A2MCP next-action playbook for the ASP.
 ///
 /// In the x402 flow the User Agent paid the ASP at request time via the A2MCP
-/// service endpoint, so every on-chain task event is a pure receipt with no
-/// ASP-side business action. `JobAccepted` and `JobCompleted` get a
-/// dedicated note that explains the payment model; every other event gets a
-/// shorter generic "ignore and end the turn" message.
+/// service endpoint. `JobCompleted` still performs completion notification,
+/// evaluation, and cleanup; other terminal receipts have no ASP-side action.
 pub async fn generate_a2mcp_next_action(
     job_id: &str,
     event_str: &str,
@@ -27,10 +25,7 @@ pub async fn generate_a2mcp_next_action(
     let _ = (job_title, data, message);
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
     let event = parse_status_or_event(event_str);
-    // Used by JobCompleted's auto-rate step. Inline a minimal Task fields block
-    // from the prefetched context so the LLM can fill `<buyerAgentId>` / `<title>`
-    // into the feedback-submit command and the rating-notify content without
-    // calling `common context`.
+    // Inline the task fields used by JobAccepted without another context call.
     let task_fields_inline: String = {
         let mut out = String::new();
         if let Some(p) = prefetched {
@@ -65,49 +60,7 @@ pub async fn generate_a2mcp_next_action(
                  jobId={job_id}\n"
             )
         },
-        Event::JobCompleted => {
-            let user_notify = super::content::job_completed_user_notify(job_id);
-            let rating_notify = super::content::rating_submitted_user_notify(job_id);
-            format!(
-                "[Current state] job_completed (x402 / A2MCP flow — terminal receipt; funds were already received at request time)\n\
-                 [Role] ASP (Agent Service ASP)\n\n\
-                 ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
-                 {task_fields_inline}\n\
-                 **Step 1 — Notify the user of task completion via `onchainos agent user-notify`**:\n\n\
-                 🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                 ```bash\n\
-                 onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                 ```\n\
-                 content:\n\
-                 {user_notify}\n\n\
-                 🛑 Do NOT end this turn — Step 2 (auto-rate) and Step 2.5 (notify rating) below are MANDATORY.\n\n\
-                 **Step 2 — 🛑 Auto-rate the User Agent (MANDATORY):**\n\
-                 Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
-                 \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent User Agent (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
-                 \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
-                 Then execute:\n\
-                 ```bash\n\
-                 onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
-                 ```\n\
-                 ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block above); `--creator-id` is the ASP's own agent id ({agent_id}).\n\n\
-                 **Step 2.5 — Notify the user of the submitted rating**:\n\
-                 🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                 After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
-                 - ✅ **Success** (output contains `txHash`):\n\
-                 ```bash\n\
-                 onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                 ```\n\
-                 content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
-                 {rating_notify}\n\
-                 - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
-                 **Step 3 — Terminal wrap-up (keep the sub session):**\n\
-                 ℹ️ Task is in terminal state — run the cleanup command:\n\
-                 ```bash\n\
-                 onchainos agent session-cleanup --job-id {job_id}\n\
-                 ```\n\
-                 Task fully complete.\n"
-            )
-        },
+        Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id, prefetched),
         other => format!(
             "[System notification] {other} (x402 / A2MCP flow — no ASP-side action)\n\
              [Role] ASP (Agent Service ASP)\n\n\
@@ -532,48 +485,7 @@ pub async fn generate_next_action(
         ),
 
         // ─── Scene 7: Task completed (review passed / evaluation won) ────────────────
-        Event::JobCompleted => {
-            let user_notify = super::content::job_completed_user_notify(job_id);
-            let rating_notify = super::content::rating_submitted_user_notify(job_id);
-            let task_fields = inline_task_fields(&["title", "tokenAmount", "tokenSymbol", "buyerAgentId"]);
-            format!(
-            "[Current state] job_completed (task completed; funds received)\n\
-             [Role] ASP (Agent Service ASP)\n\n\
-             [Your next action]\n\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
-             {task_fields}\n\
-             **Step 1 — Notify the user of task completion via `onchainos agent user-notify`**:\n\n\
-             🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-             ```bash\n\
-             onchainos agent user-notify --content \"<localized content shown below>\"\n\
-             ```\n\
-             content:\n\
-             {user_notify}\n\n\
-             🛑 Do NOT end this turn — Step 2 (auto-rate) and Step 2.5 (notify rating) below are MANDATORY.\n\n\
-             **Step 2 — 🛑 Auto-rate the User Agent (MANDATORY):**\n\
-             Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
-             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent User Agent (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
-             \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
-             Then execute:\n\
-             ```bash\n\
-             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
-             ```\n\
-             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the ASP's own agent id ({agent_id}).\n\n\
-             **Step 2.5 — Notify the user of the submitted rating**:\n\
-             🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-             After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
-             - ✅ **Success** (output contains `txHash`):\n\
-             ```bash\n\
-             onchainos agent user-notify --content \"<localized content shown below>\"\n\
-             ```\n\
-             content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
-             {rating_notify}\n\
-             - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
-             **Step 3 — Terminal wrap-up (keep the sub session):**\n\
-             {terminal_session_hint}\n\
-             Task fully complete.\n"
-            )
-        }
+        Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id, prefetched),
 
         // ─── Scene 6.5: Evaluation ruling (won / lost branches distinguished by jobStatus in the inbound envelope) ─
         Event::DisputeResolved => {
@@ -1221,15 +1133,12 @@ pub async fn generate_next_action(
         }
         Event::SubCompleteNotify => {
             let title = message
-                .and_then(|m| m.get("jobTitle").or_else(|| m.get("title")))
+                .and_then(|m| m.get("jobTitle"))
                 .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty());
+                .filter(|s| !s.is_empty())
+                .or_else(|| prefetched.map(|task| task.title.as_str()).filter(|s| !s.is_empty()));
             let period_end = message.and_then(|m| m.get("subEndTime")).and_then(|v| v.as_i64());
-            sub_asp_notify(
-                "sub_complete_notify (subscription completed)",
-                &super::content::sub_complete_notify_asp_notify(title, job_id, period_end),
-                Some(terminal_session_hint.as_str()),
-            )
+            super::v2::sub_complete_notify::handle(job_id, title, period_end)
         }
         Event::SubCloseNotify => {
             let title = message
@@ -1502,11 +1411,54 @@ mod tests {
         .await
     }
 
+    fn completed_task(payment_mode: i64) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+        crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+            &json!({
+                "title": "Audit report",
+                "description": "Audit the contract",
+                "paymentMode": payment_mode,
+                "tokenAmount": "12",
+                "tokenSymbol": "USDT",
+                "buyerAgentId": "user-1"
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn job_completed_routes_structured_asp_action_in_both_flows() {
+        let task = completed_task(1);
+        let output = generate_next_action(
+            ASP_JOB_ID,
+            "job_completed",
+            ASP_AGENT_ID,
+            None,
+            None,
+            Some(&task),
+            None,
+        )
+        .await;
+        let progression: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(progression["nextAction"][0]["id"], "finalize_asp_task");
+
+        let task = completed_task(3);
+        let output = generate_a2mcp_next_action(
+            ASP_JOB_ID,
+            "job_completed",
+            ASP_AGENT_ID,
+            None,
+            None,
+            Some(&task),
+            None,
+        )
+        .await;
+        let progression: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(progression["nextAction"][0]["id"], "finalize_asp_task");
+    }
+
     #[tokio::test]
     async fn asp_handled_subscription_events_render_notify() {
         for evt in [
             "sub_asp_selected",
-            "sub_complete_notify",
             "sub_close_notify",
             "sub_failed_notify",
         ] {
@@ -1525,7 +1477,6 @@ mod tests {
     #[tokio::test]
     async fn asp_terminal_subscription_events_carry_cleanup_hint() {
         for evt in [
-            "sub_complete_notify",
             "sub_close_notify",
             "sub_failed_notify",
         ] {
@@ -1546,6 +1497,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn asp_sub_complete_routes_structured_progression() {
+        let out = run_asp(
+            "sub_complete_notify",
+            json!({ "event": "sub_complete_notify", "jobId": ASP_JOB_ID }),
+        )
+        .await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+
+        assert_eq!(progression["decision"], "ready");
+        assert_eq!(
+            progression["nextAction"][0]["id"],
+            "notify_and_cleanup_subscription"
+        );
+        assert_eq!(progression["payload"]["cleanup"]["jobId"], ASP_JOB_ID);
+    }
+
+    #[tokio::test]
     async fn asp_selected_renders_terms_verbatim() {
         let out = run_asp(
             "sub_asp_selected",
@@ -1562,16 +1530,20 @@ mod tests {
             json!({ "event": "sub_complete_notify", "jobId": ASP_JOB_ID, "jobTitle": "AlphaBot", "subEndTime": 1786547115 }),
         )
         .await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let content = progression["payload"]["notification"]["content"]
+            .as_str()
+            .unwrap();
         assert!(
-            out.contains("[Subscription Complete]"),
+            content.contains("[Subscription Complete]"),
             "ASP-9 label: {out}"
         );
         assert!(
-            out.contains("\"AlphaBot\""),
+            content.contains("\"AlphaBot\""),
             "ASP-9 service name quoted: {out}"
         );
         assert!(
-            out.contains("no further delivery is required"),
+            content.contains("no further delivery is required"),
             "ASP-9 tail: {out}"
         );
 
@@ -1729,6 +1701,17 @@ mod tests {
         .await;
         assert!(out.contains("2026-"), "ms timestamp rendered as seconds date: {out}");
         assert!(!out.contains("+58692"), "no five-digit year: {out}");
+    }
+
+    #[tokio::test]
+    async fn sub_complete_notify_ignores_legacy_title_field() {
+        let out = run_asp(
+            "sub_complete_notify",
+            json!({ "event": "sub_complete_notify", "title": "Legacy title" }),
+        )
+        .await;
+
+        assert!(!out.contains("Legacy title"), "legacy title must be ignored: {out}");
     }
 
     // ── FR-3: price gate test_flag short-circuit (sandbox ASP review) ────

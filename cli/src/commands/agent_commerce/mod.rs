@@ -3208,8 +3208,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
-            let (freshness_warning, prefetched) =
-                check_status_freshness(&job_id, &event, &agent_id).await;
+            let (freshness_warning, prefetched) = if handler_fetches_own_task_detail(
+                &resolved_role,
+                &event,
+            ) {
+                (None, None)
+            } else {
+                check_status_freshness(&job_id, &event, &agent_id).await
+            };
             if let Some(w) = freshness_warning {
                 println!("{w}");
                 return Ok(());
@@ -3235,8 +3241,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     // x402 (paymentMode=3): the user paid the ASP at request time via
                     // the A2MCP service endpoint, so the on-chain events are pure
                     // receipts — provider has no business action for any of them.
-                    // Route every x402 event to the observer-only a2mcp playbook.
-                    let use_a2mcp = matches!(payment_mode, Some(3));
+                    // Route x402 events to the observer-only a2mcp playbook, except
+                    // sub_complete_notify, which always identifies a subscription.
+                    let use_a2mcp = should_use_a2mcp_flow(payment_mode, &event);
                     if use_a2mcp {
                         task::asp::flow::generate_a2mcp_next_action(
                             &job_id,
@@ -3650,7 +3657,10 @@ fn validate_a2a_file_arg(
 
 #[cfg(test)]
 mod escape_control_chars_tests {
-    use super::{escape_control_chars_in_strings, validate_a2a_file_arg};
+    use super::{
+        escape_control_chars_in_strings, handler_fetches_own_task_detail, should_use_a2mcp_flow,
+        validate_a2a_file_arg,
+    };
 
     #[test]
     fn escapes_raw_lf_inside_string() {
@@ -3870,6 +3880,31 @@ mod escape_control_chars_tests {
             .to_string();
         assert!(err.contains("receiverAgentId 8779 does not match --agentId 1696"));
     }
+
+    #[test]
+    fn user_subscription_completion_owns_its_task_detail_request() {
+        assert!(handler_fetches_own_task_detail("user", "sub_complete_notify"));
+        assert!(!handler_fetches_own_task_detail("asp", "sub_complete_notify"));
+        assert!(!handler_fetches_own_task_detail("user", "sub_close_notify"));
+    }
+
+    #[test]
+    fn asp_subscription_completion_never_uses_a2mcp_flow() {
+        assert!(!should_use_a2mcp_flow(Some(3), "sub_complete_notify"));
+    }
+
+    #[test]
+    fn other_payment_mode_three_events_still_use_a2mcp_flow() {
+        assert!(should_use_a2mcp_flow(Some(3), "job_completed"));
+    }
+}
+
+fn handler_fetches_own_task_detail(role: &str, event: &str) -> bool {
+    role == "user" && event == "sub_complete_notify"
+}
+
+fn should_use_a2mcp_flow(payment_mode: Option<i64>, event: &str) -> bool {
+    matches!(payment_mode, Some(3)) && event != "sub_complete_notify"
 }
 
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).

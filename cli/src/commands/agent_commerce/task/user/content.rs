@@ -161,17 +161,6 @@ pub fn job_completed_escrow_user_notify(
     )
 }
 
-/// `Event::JobCompleted` Branch B (x402) — final summary notification (B-4-3).
-pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
-    format!(
-        "[x402 Job Completed] {title} (`{job_id}`) — all steps complete.\n\
-         - Spent: <tokenAmount> <tokenSymbol>\n\
-         - Payment: x402\n\
-         - Deliverable saved to: <deliverableSavedPath from task-402-pay output; if not in context, omit this line>\n\
-         - Deliverable summary: <one-line summary of the replayBodyDisplay content from task-402-pay; if not in context, omit this line>"
-    )
-}
-
 // ── Event::DisputeResolved ─────────────────────────────────────────
 
 /// Per-evaluator verdict rationales block shared by both `DisputeResolved` outcomes.

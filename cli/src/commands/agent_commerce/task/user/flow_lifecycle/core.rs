@@ -1546,78 +1546,6 @@ pub(crate) async fn deliverable_received_cli(
         return prompt;
     }
 
-    // Pre-decide the ASP rating + pre-translate the rating_submitted notify
-    // + pre-translate the JobCompleted notify on the backup session (escrow
-    // only). The future `job_completed` event then dispatches
-    // `feedback-submit` + `user-notify` in-process with zero LLM decisions.
-    //
-    // All three artifacts are bundled into one backup turn because they share
-    // the same trigger (rating decided from this deliverable) and the same
-    // downstream consumer (the job_completed fast path).
-    if ctx.payment_mode != Some(3) {
-        // Description is the basis for the sub LLM's rating decision — if it's
-        // missing (no prefetched / empty), skip the prefetch entirely and let
-        // the LLM playbook handle job_completed with full context at event time.
-        let task_description = ctx
-            .prefetched
-            .map(|p| p.description.as_str())
-            .filter(|s| !s.is_empty());
-        if let Some(task_description) = task_description {
-            let rating_title = ctx
-                .prefetched
-                .map(|p| p.title.as_str())
-                .filter(|s| !s.is_empty())
-                .unwrap_or(ctx.title_display);
-            let deliverable_summary = match (deliverable_type.as_str(), text_content.as_deref()) {
-                ("text", Some(t)) => format!("type: text\ncontent:\n{t}"),
-                ("file", _) => format!("type: file\nsaved path: {saved_path}"),
-                _ => format!("type: {deliverable_type}\nsaved path: {saved_path}"),
-            };
-            // JobCompleted notify — jobId + title prefilled; `<tokenAmount>` /
-            // `<tokenSymbol>` kept as placeholders, filled by the `job_completed`
-            // fast path with the on-chain locked values from `ctx.prefetched`.
-            let canonical_job_completed = super::super::content::job_completed_escrow_user_notify(
-                job_id,
-                rating_title,
-                "<tokenAmount>",
-                "<tokenSymbol>",
-            );
-            let prefetch_batch = format!(
-                "[PREFETCH — internal cache only, NOT a user-facing flow]\n\
-             Pre-decide the ASP rating, then pre-translate two notifications for job `{job_id}`. \
-             Execute all steps in one turn.\n\
-             ⚠️ The triple-backtick fence markers are NOT part of the content — do not include them.\n\
-             ⚠️ Keep EVERY angle-bracket placeholder (e.g. `<tokenAmount>`, `<tokenSymbol>`) verbatim in your translation — CLI will fill them at dispatch time.\n\
-             🛑 **Output discipline (strict):** the THREE `cache-*` commands below are the ONLY commands you may run in this turn.\n\
-             Task description:\n\
-             ```\n\
-             {task_description}\n\
-             ```\n\n\
-             Deliverable:\n\
-             ```\n\
-             {deliverable_summary}\n\
-             ```\n\n\
-             [Step 1] Decide score (`X.XX`, 0.00–5.00) + comment (≤100 chars). Then run:\n\
-             \x20\x20onchainos agent cache-rating --job-id {job_id} --score <X.XX> --comment '<your comment>'\n\n\
-             [Step 2] Fill `<score>` and `<description>` in the template below with the values you just decided, translate the filled result into the user's chat language, then run:\n\
-             \x20\x20onchainos agent cache-notify --job-id {job_id} --event-key rating_submitted --content \"<your translation>\"\n\
-             Template:\n\
-             ```\n\
-             [📝 Rating Submitted] {rating_title} (`{job_id}`) — rated.\n\
-             Score: <score> / 5.00\n\
-             💬 Comment: <description>\n\
-             ```\n\n\
-             [Step 3] **Localize first** — rewrite the template below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user. Preserve placeholders verbatim.\n\
-             \x20\x20onchainos agent cache-notify --job-id {job_id} --event-key job_completed_escrow --content \"<your translation>\"\n\
-             Template:\n\
-             ```\n\
-             {canonical_job_completed}\n\
-             ```"
-            );
-            let _ = okx_a2a::session_send(job_id, None, &prefetch_batch);
-        }
-    }
-
     // Out-of-order handling: if the review marker exists, job_submitted already arrived
     // before this deliverable. Delete marker → directly output the review prompt so the
     // sub doesn't wait for a job_submitted that already came.
@@ -2057,26 +1985,24 @@ pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-/// Directly runs `onchainos agent complete` in-process. The single-arg bash
-/// command provides no LLM decision-making value — Rust just broadcasts and
-/// returns. Iron rules from the previous LLM-driven version ("don't notify
-/// user via onchainos agent user-notify / don't auto-rate / don't say funds released
-/// before job_completed") all become moot — Rust cannot misbehave.
-///
-/// Failure path: the playbook emitted on error directs the LLM into the
-/// standard cli_failed 5-substep protocol (push a decision to the user).
+/// Runs `complete` in-process and returns its structured result.
 pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
     let mut client = TaskApiClient::new();
-    match super::super::complete::handle_complete(&mut client, job_id).await {
-        Ok(()) => {
-            "**End this turn** and wait for the `job_completed` system notification.".to_string()
-        }
-        Err(e) => format!(
-            "[approve_review] `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
-        ),
+    match super::super::v2::complete::handle(&mut client, job_id).await {
+        Ok(result) => result.to_string(),
+        Err(error) => serde_json::json!({
+            "phase": "deliverable_review",
+            "decision": "blocked",
+            "reason": "completion_failed",
+            "nextAction": [{ "id": "stop" }],
+            "payload": {
+                "jobId": job_id,
+                "error": error.to_string(),
+            },
+        })
+        .to_string(),
     }
 }
 
@@ -2084,149 +2010,38 @@ fn user_authored_rejection_reason(data: Option<&str>) -> Option<&str> {
     data.map(str::trim).filter(|reason| !reason.is_empty())
 }
 
-/// Directly runs `onchainos agent reject` in-process with the rejection reason
-/// forwarded from the user's reply. Missing reasons are blocked before I/O.
-///
-/// Failure path: standard cli_failed instruction (push decision to user).
+/// Runs `reject` in-process with the user's reason and returns its structured result.
 pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
 
     let Some(reason) = user_authored_rejection_reason(ctx.data) else {
-        return format!(
-            "[reject_review] blocked: missing user-authored rejection reason; no task mutation occurred.\n\n\
-             Re-ask with `onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {} --source-event reject_reason_required --user-content \"Please provide the rejection reason.\" --list-label \"[Reject {}] rejection reason\"`; preserve the current `--to-agent-id` when present, then end the turn.\n",
-            ctx.agent_id, ctx.short_id
-        );
+        return super::super::v2::reject::reason_required_result(
+            job_id,
+            ctx.agent_id,
+            ctx.short_id,
+        )
+        .to_string();
     };
 
     let mut client = TaskApiClient::new();
-    match super::super::reject::handle_reject(&mut client, job_id, reason).await {
-        Ok(()) => format!(
-            "[reject_review] [OK]`onchainos agent reject {job_id} --reason \"{reason}\"` broadcast in-process. End the turn now.\n\n\
-             broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (evaluation) or agree to a refund. The user cannot initiate evaluation.\n\
-             Do NOT send any message to the ASP about the rejection — they learn via on-chain events.\n"
-        ),
-        Err(e) => format!(
-            "[reject_review] `onchainos agent reject {job_id} --reason \"{reason}\"` failed in-process: {e}\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
-        ),
+    match super::super::v2::reject::handle(&mut client, job_id, reason).await {
+        Ok(result) => result.to_string(),
+        Err(error) => serde_json::json!({
+            "phase": "deliverable_review",
+            "decision": "blocked",
+            "reason": "rejection_failed",
+            "nextAction": [{ "id": "stop" }],
+            "payload": {
+                "jobId": job_id,
+                "error": error.to_string(),
+            },
+        })
+        .to_string(),
     }
 }
 
 // --- Terminal states ---------------------------------------------------
-
-/// Primary `job_completed` playbook — on-chain confirmation notification.
-///
-/// This event fires when the blockchain confirms the `complete` transaction.
-/// It is the ONLY place where "funds released" is factually true.
-/// `approve_review` only broadcasts; this event confirms.
-pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json::Value>) -> String {
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-    let title_display = ctx.title_display;
-    let terminal_session_hint = &ctx.terminal_session_hint;
-
-    let provider_id = ctx
-        .prefetched
-        .and_then(|p| p.provider_agent_id.as_deref())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("<providerAgentId>");
-
-    let (token_amount, token_symbol) = ctx
-        .prefetched
-        .map(|p| (p.token_amount.as_str(), p.token_symbol.as_str()))
-        .unwrap_or(("<tokenAmount>", "<tokenSymbol>"));
-
-    let pm = ctx.payment_mode;
-
-    // Fast path (escrow only): rating + both notify templates pre-cached at
-    // deliverable_received time. Run feedback-submit and user-notify entirely
-    // in-process; zero LLM decisions.
-    //
-    // The `job_completed_escrow` template is cached at deliverable_received
-    // with `<tokenAmount>` / `<tokenSymbol>` placeholders — filled here with
-    // the on-chain locked values from `ctx.prefetched`.
-    let provider_id_opt = ctx
-        .prefetched
-        .and_then(|p| p.provider_agent_id.as_deref())
-        .filter(|s| !s.is_empty());
-    if pm != Some(3) {
-        if let Some(real_provider_id) = provider_id_opt {
-            use crate::commands::agent_commerce::task::common::{
-                okx_a2a, onchainos_self, prefilled_notify, prefilled_rating, session_cleanup,
-            };
-            let cached_completed = prefilled_notify::get(job_id, "job_completed_escrow")
-                .ok()
-                .flatten();
-            let cached_rating_notify = prefilled_notify::get(job_id, "rating_submitted")
-                .ok()
-                .flatten();
-            let cached_rating = prefilled_rating::get(job_id).ok().flatten();
-            let amount_ok = !token_amount.is_empty() && !token_amount.starts_with('<');
-            let symbol_ok = !token_symbol.is_empty() && !token_symbol.starts_with('<');
-            if let (Some(completed_tpl), Some(rating_text), Some(rating)) =
-                (cached_completed, cached_rating_notify, cached_rating)
-            {
-                let placeholders_present = completed_tpl.contains("<tokenAmount>")
-                    && completed_tpl.contains("<tokenSymbol>");
-                if amount_ok && symbol_ok && placeholders_present {
-                    let completed = completed_tpl
-                        .replace("<tokenAmount>", token_amount)
-                        .replace("<tokenSymbol>", token_symbol);
-                    let feedback_ok = onchainos_self::feedback_submit(
-                        real_provider_id,
-                        agent_id,
-                        &rating.score,
-                        job_id,
-                        &rating.comment,
-                    )
-                    .is_ok();
-                    let combined = if feedback_ok {
-                        format!("{completed}\n\n{rating_text}")
-                    } else {
-                        completed
-                    };
-                    let _ = okx_a2a::user_notify(&combined, None, false);
-                    let _ = session_cleanup::handle_session_cleanup(job_id, false);
-
-                    return "Task is at a terminal state. User has been notified by the CLI. Do NOT run any further command.".to_string();
-                }
-                // Placeholder missing or amount/symbol unknown → fall through to LLM playbook.
-            }
-        }
-    }
-
-    let completed_notify = if pm == Some(3) {
-        super::super::content::job_completed_x402_user_notify(job_id, title_display)
-    } else {
-        super::super::content::job_completed_escrow_user_notify(
-            job_id,
-            title_display,
-            token_amount,
-            token_symbol,
-        )
-    };
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
-
-    format!(
-        "✓ job_completed — on-chain confirmed. Rate ASP, then notify user in one message.\n\n\
-         **Step 1 — Rate ASP** (0.00–5.00, comment ≤100 chars):\n\
-         ```bash\n\
-         onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
-         ```\n\n\
-         **Step 2 — Notify user** (completion + rating):\n\
-         **Localize first** — translate the template below into the user's language before sending.\n\
-         ```bash\n\
-         onchainos agent user-notify --content \"<localized content>\"\n\
-         ```\n\
-         Template:\n\
-         \x20\x20{completed_notify}\n\n\
-         \x20\x20{rating_notify}  ← omit if Step 1 failed\n\n\
-         **Step 3 — Wrap-up:**\n\
-         {terminal_session_hint}\n"
-    )
-}
 
 #[cfg(test)]
 mod tests {
@@ -2258,10 +2073,14 @@ mod tests {
         };
 
         let out = reject_review(&ctx).await;
-        assert!(out.contains("missing user-authored rejection reason"));
-        assert!(out.contains("--source-event reject_reason_required"));
-        assert!(out.contains("--user-content \"Please provide the rejection reason.\""));
-        assert!(!out.contains("<localized reason"));
+        let output: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(output["decision"], "requires_user_input");
+        assert_eq!(output["reason"], "rejection_reason_required");
+        assert_eq!(
+            output["nextAction"][0]["id"],
+            "request_rejection_reason"
+        );
+        assert_eq!(output["payload"]["requiredParams"], serde_json::json!(["reason"]));
         assert!(!out.contains("did not meet acceptance criteria"));
         assert!(!out.contains("cli_failed"));
     }

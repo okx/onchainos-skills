@@ -17,7 +17,6 @@ mod asp_ops;
 pub(crate) mod attachments;
 mod claim_auto_refund;
 mod close;
-mod complete;
 mod content;
 mod create;
 mod create_subscribe;
@@ -31,11 +30,11 @@ mod flow_negotiate;
 pub(crate) mod my_tasks;
 pub(crate) mod negotiate;
 mod query;
-mod reject;
 mod reject_apply;
 mod service_detail;
 pub(crate) mod subscription_ops;
 mod task_create_prepare;
+mod v2;
 mod x402_flow;
 
 use anyhow::Result;
@@ -1578,10 +1577,16 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref(), body.as_deref(), force).await,
         TaskCommand::X402Check { endpoint, agent_id, body } =>
             accept::handle_x402_check(&mut client, &endpoint, agent_id.as_deref(), body.as_deref()).await,
-        TaskCommand::Complete { job_id } =>
-            complete::handle_complete(&mut client, &job_id).await,
-        TaskCommand::Reject { job_id, reason } =>
-            reject::handle_reject(&mut client, &job_id, &reason).await,
+        TaskCommand::Complete { job_id } => {
+            let result = v2::complete::handle(&mut client, &job_id).await?;
+            crate::output::success(result);
+            Ok(())
+        }
+        TaskCommand::Reject { job_id, reason } => {
+            let result = v2::reject::handle(&mut client, &job_id, &reason).await?;
+            crate::output::success(result);
+            Ok(())
+        }
         TaskCommand::Close { job_id, agent_id } =>
             close::handle_close(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
@@ -1606,8 +1611,11 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             subscription_ops::handle_subscribe_cancel(&mut client, &sub_id).await,
         TaskCommand::StartAutorenew { sub_id } =>
             subscription_ops::handle_start_autorenew(&mut client, &sub_id).await,
-        TaskCommand::SubscribeReject { sub_id, reason } =>
-            reject::handle_reject(&mut client, &sub_id, &reason).await,
+        TaskCommand::SubscribeReject { sub_id, reason } => {
+            let result = v2::reject::handle(&mut client, &sub_id, &reason).await?;
+            crate::output::success(result);
+            Ok(())
+        }
         TaskCommand::SubscribeDetail { sub_id, format } =>
             subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await,
         TaskCommand::SubscribeDeviceUpdate { job_id, device_list, items } =>
