@@ -145,13 +145,10 @@ pub fn write_guide(file: &GuideFile, source: &str) -> Result<()> {
 pub fn load_guide(job_id: &str) -> Result<GuideFile> {
     let raw = std::fs::read_to_string(guide_path(job_id)?)
         .context("service guide is not available locally")?;
-    let (file, source): (GuideFile, &str) = parse_markdown_document("guide", &raw)?;
+    let (file, _source): (GuideFile, &str) = parse_markdown_document("guide", &raw)?;
     validate_file(&file)?;
     if file.job_id != job_id {
         bail!("service guide job id mismatch")
-    }
-    if sha256_hex(source.as_bytes()) != file.source_hash {
-        bail!("local service guide content does not match its hash")
     }
     Ok(file)
 }
@@ -297,16 +294,15 @@ fn load_guide_and_consent(job_id: &str) -> Result<(GuideFile, GuideConsentFile)>
     let guide = load_guide(job_id)?;
     let consent =
         load_active_consent(job_id)?.context("active Guide Consent is not available locally")?;
-    if consent.guide_hash != guide_contract_hash(&guide)? {
-        bail!("service guide and consent do not match")
-    }
     Ok((guide, consent))
 }
 
 /// A delivery may enter the Guide-direct execution lifecycle only when its
-/// locally persisted Guide and matching active Guide Consent form one valid
-/// contract. Any missing, stale, or unreadable record is deliberately a
-/// signal-only condition, not an execution error.
+/// locally persisted Guide and active Guide Consent are both available. The
+/// Guide source hash is creation metadata only: users may update their local
+/// Guide or Consent without re-binding the other document. Any missing, stale,
+/// or unreadable record is deliberately a signal-only condition, not an
+/// execution error.
 pub fn has_active_execution_contract(job_id: &str) -> bool {
     load_guide_and_consent(job_id).is_ok()
 }
@@ -415,6 +411,21 @@ mod tests {
         activate_prepared_consent("job-guide-plain").unwrap();
         assert!(has_active_execution_contract("job-guide-plain"));
         assert_eq!(consent_snapshot("job-guide-plain").status, "active");
+
+        let guide_path = guide_path("job-guide-plain").unwrap();
+        let edited_guide = std::fs::read_to_string(&guide_path).unwrap().replace(
+            source,
+            "Follow the saved Signal using the updated local Guide.",
+        );
+        std::fs::write(&guide_path, edited_guide).unwrap();
+
+        let mut consent = read_guide_consent("job-guide-plain").unwrap().unwrap();
+        consent
+            .values
+            .insert("followEnabled".to_string(), serde_json::Value::Bool(false));
+        write_guide_consent(&consent).unwrap();
+
+        assert!(has_active_execution_contract("job-guide-plain"));
 
         std::env::remove_var("ONCHAINOS_HOME");
         std::fs::remove_dir_all(home).ok();
