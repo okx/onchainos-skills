@@ -21,8 +21,10 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   ': "${CARGO_TARGET_DIR:?}"' \
+  ': "${OKX_BASE_URL:?}"' \
   'mkdir -p "$CARGO_TARGET_DIR/debug"' \
-  'printf "%s\\n" "#!/usr/bin/env bash" '\''printf "tmp=%s version_gate=%s local-onchainos %s\\n" "$TMPDIR" "$ONCHAINOS_SKIP_CLIENT_VERSION_GATE" "$*"'\'' > "$CARGO_TARGET_DIR/debug/onchainos"' \
+  'printf "%s\\n" "$OKX_BASE_URL" > "$CARGO_TARGET_DIR/observed-base-url"' \
+  'printf "%s\\n" "#!/usr/bin/env bash" '\''printf "tmp=%s base_url=%s version_gate=%s local-onchainos %s\\n" "$TMPDIR" "$OKX_BASE_URL" "$ONCHAINOS_SKIP_CLIENT_VERSION_GATE" "$*"'\'' > "$CARGO_TARGET_DIR/debug/onchainos"' \
   'chmod 700 "$CARGO_TARGET_DIR/debug/onchainos"' \
   > "$fake_bin/cargo"
 chmod 700 "$fake_bin/cargo"
@@ -39,10 +41,11 @@ printf '%s\n' \
   > "$fake_bin/okx-a2a"
 chmod 700 "$fake_bin/okx-a2a"
 
-PATH="$fake_bin:$PATH" bash "$fixture_root/scripts/onchainos-local-dev-setup.sh" init
+env -u OKX_BASE_URL PATH="$fake_bin:$PATH" bash "$fixture_root/scripts/onchainos-local-dev-setup.sh" init
 
 wrapper_output="$("$fixture_root/.codex/bin/onchainos" probe)"
-[[ "$wrapper_output" == "tmp=$fixture_root/.codex/runtime/tmp version_gate=true local-onchainos probe" ]]
+[[ "$wrapper_output" == "tmp=$fixture_root/.codex/runtime/tmp base_url=https://forked-walletmain-swim.okx.testokg.com version_gate=true local-onchainos probe" ]]
+[[ "$(< "$fixture_root/.codex/build/cargo-target/observed-base-url")" == "https://forked-walletmain-swim.okx.testokg.com" ]]
 preflight_output="$("$fixture_root/.codex/bin/onchainos" preflight --skill-version 0.0.0)"
 [[ "$preflight_output" == '{"ok":true,"data":{"status":"skipped","preflightSkipped":true,"skipReason":"project-local-wrapper","action":null}}' ]]
 [[ "$("$fixture_root/.codex/bin/okx-a2a" --version)" == "global-okx-a2a --version" ]]
@@ -52,6 +55,8 @@ preflight_output="$("$fixture_root/.codex/bin/onchainos" preflight --skill-versi
 ! grep -q 'ONCHAINOS_SKIP_PREFLIGHT' "$fixture_root/.codex/bin/okx-a2a"
 grep -qx 'export ONCHAINOS_SKIP_CLIENT_VERSION_GATE="${ONCHAINOS_SKIP_CLIENT_VERSION_GATE:-true}"' "$fixture_root/.codex/bin/onchainos"
 grep -qx 'export ONCHAINOS_SKIP_CLIENT_VERSION_GATE="${ONCHAINOS_SKIP_CLIENT_VERSION_GATE:-true}"' "$fixture_root/.codex/bin/okx-a2a"
+grep -qx "export OKX_BASE_URL='https://forked-walletmain-swim.okx.testokg.com'" "$fixture_root/.codex/bin/onchainos"
+grep -qx "export OKX_BASE_URL='https://forked-walletmain-swim.okx.testokg.com'" "$fixture_root/.codex/bin/okx-a2a"
 grep -qx "export TMPDIR='$fixture_root/.codex/runtime/tmp'" "$fixture_root/.codex/bin/onchainos"
 grep -qx "export TMPDIR='$fixture_root/.codex/runtime/tmp'" "$fixture_root/.codex/bin/okx-a2a"
 grep -qx "export ONCHAINOS_A2A_SPOOL_DIR='$fixture_root/.codex/runtime/a2a-spool'" "$fixture_root/.codex/bin/onchainos"
@@ -64,13 +69,13 @@ workspace_dir="$fixture_root/.codex/runtime/a2a/workspace"
 [[ -L "$workspace_dir/.codex/bin/onchainos" ]]
 [[ -L "$workspace_dir/.codex/bin/okx-a2a" ]]
 [[ -L "$workspace_dir/.codex/skills" ]]
-[[ "$(cd "$workspace_dir" && ./.codex/bin/onchainos probe)" == "tmp=$fixture_root/.codex/runtime/tmp version_gate=true local-onchainos probe" ]]
+[[ "$(cd "$workspace_dir" && ./.codex/bin/onchainos probe)" == "tmp=$fixture_root/.codex/runtime/tmp base_url=https://forked-walletmain-swim.okx.testokg.com version_gate=true local-onchainos probe" ]]
 
 "$fixture_root/.codex/bin/okx-a2a" daemon restart >/dev/null
 [[ -L "$workspace_dir/.codex/bin/onchainos" ]]
 [[ -L "$workspace_dir/.codex/skills" ]]
 [[ "$(< "$fixture_root/.codex/runtime/a2a/observed-tmpdir")" == "$fixture_root/.codex/runtime/tmp" ]]
-[[ "$(cd "$workspace_dir" && ./.codex/bin/onchainos probe)" == "tmp=$fixture_root/.codex/runtime/tmp version_gate=true local-onchainos probe" ]]
+[[ "$(cd "$workspace_dir" && ./.codex/bin/onchainos probe)" == "tmp=$fixture_root/.codex/runtime/tmp base_url=https://forked-walletmain-swim.okx.testokg.com version_gate=true local-onchainos probe" ]]
 
 mkdir -p "$temp_root/external-skill"
 printf '%s\n' '---' 'name: external' '---' '# External' > "$temp_root/external-skill/SKILL.md"

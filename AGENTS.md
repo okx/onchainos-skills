@@ -73,6 +73,13 @@ tell the user what was updated and when it takes effect:
 after a machine restart. It restarts the A2A daemon, so never run it
 automatically as part of an ordinary code change.
 
+### Development endpoint
+
+The checkout-local development CLI and A2A wrapper use
+`https://forked-walletmain-swim.okx.testokg.com` by default. Do not use the
+production endpoint for development validation. To deliberately use another
+endpoint, set `OKX_BASE_URL` when running `npm run dev:init`.
+
 ### Local command boundary
 
 After the developer has run `npm run dev:init`, every AI-initiated command in
