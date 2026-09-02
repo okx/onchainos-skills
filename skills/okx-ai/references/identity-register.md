@@ -1,6 +1,6 @@
 # Register flow
 
-This document defines the registration flow for User, ASP, and Evaluator identities. Use the canonical role, follow the CLI reference at the end of this document, collect only user-provided data, require explicit confirmation, never fabricate fields or IDs, and handle failures through (`identity-errors.md`).
+Registration flow for User, ASP, and Evaluator identities. Use canonical roles, user-provided data, and the CLI reference below. Require explicit final confirmation, never fabricate fields or IDs, and handle failures through `identity-errors.md`.
 
 ## Workflow
 
@@ -11,7 +11,7 @@ Actions:
 1. If the role is clear, use it; otherwise ask once and accept `1 User`, `2 ASP`, `3 Evaluator`, or a role name.
 2. Map numbers, synonyms, and names in any language to `user`, `asp`, or `evaluator` before calling the CLI.
 
-rules:
+Rules:
 
 1. Display localized User / ASP / Evaluator labels. In Chinese, use 用户 / 服务提供商 / 评审员. Never expose raw enums, legacy role names, or bilingual labels.
 
@@ -19,11 +19,12 @@ rules:
 
 Actions:
 
-1. Invoke the initial `agent pre-check` according to the CLI reference at the end of this document.
+1. Run the initial `agent pre-check`.
 2. If `consent` is returned, show the complete translated `consent.terms` and ask the user to agree or decline. On agreement, rerun `agent pre-check` with the returned consent key; on decline, stop; if the response is ambiguous, redisplay once.
-3. If `canCreate:false` is returned without `consent`, do not create. For User / Evaluator, use `existingSameRole[0]` to direct the user to update the existing identity; for ASP, follow the CLI `reason` without presenting an existing-ASP choice.
-4. If `canCreate:true` is returned, continue directly to field collection for the requested role.
-rules:
+3. If `canCreate:false` is returned without `consent`, stop and follow `reason`. If `existingSameRole[0]` exists, direct the user to update that identity.
+4. If `canCreate:true` is returned, continue to field collection.
+
+Rules:
 
 1. Each address can register only one User identity and one Evaluator identity. ASP identities are not subject to this same-role limit.
 
@@ -31,37 +32,29 @@ rules:
 
 Actions:
 
-1. User / Evaluator: collect Name from the user's literal reply in the current turn; the avatar is optional; do not prompt for Description. If volunteered, include it on the card; otherwise silently send `ProfileDescription:""`.
+1. User / Evaluator: collect the user-provided Name. Avatar and Description are optional; do not prompt for Description. If Description was not provided, omit `--description`.
 2. ASP Step 1: ask for Name, Description, and the required Avatar in one message. Name must be a brand name with no test markers or celebrity names; Description is a required one-sentence summary of the Agent. Once all three are ready, immediately render the Identity card (Role / Name / Description / Profile photo) with the uploaded CDN URL. Reply `1` advances to Step 2; it never runs create.
-3. ASP Step 2: load (`identity-service-contract.md`) and collect services in its required field order, including batched answers, service type, Add another / Done, and validation timing. Continue only after explicit Done. Apply the contract's A2MCP endpoint validation exclusively.
-4. Avatar handling: reject avatar URLs; when the user uploads an image, save it to a temporary path, invoke `agent upload` according to the CLI reference at the end of this document, and use the returned URL as `--picture`. If an ASP has not uploaded an image, ask again and do not advance to Step 2; if User / Evaluator skips the avatar, use the default.
+3. ASP Step 2: follow `identity-service-contract.md` end to end. Continue only after explicit Done, using only its A2MCP endpoint-validation rules.
+4. Reject avatar URLs. Upload a user-provided image with `agent upload` and pass the returned URL as `--picture`. ASP requires an uploaded avatar; for User / Evaluator without one, omit `--picture`.
 
-rules:
+Rules:
 
-1. Name, Description, and picture must come from the user's replies or uploaded image. Do not invent capabilities, metrics, or optional content.
-3. Upload images as-is; never resize, crop, or convert them. Non-square images are acceptable; 1:1 is only recommended.
+1. Any supplied Name, Description, or picture must come from the user. Never invent capabilities, metrics, or optional content.
+2. Upload images as-is; never resize, crop, or convert them. Non-square images are acceptable; 1:1 is only recommended.
 
 ### 4. Service validation
 
-Actions:
-
-1. Run this step for ASP only; User / Evaluator skip it.
-2. After explicit Done, load (`identity-validate-listing.md`) and execute its Create mode end to end.
-3. Continue to final confirmation only when validation allows progression.
-
-rules:
-
-1. `validate-listing` is the authoritative pre-creation validation flow for ASP services, including field-length validation. Do not duplicate those limits here.
+ASP only: after explicit Done, execute Create mode from `identity-validate-listing.md`. Continue only when it permits progression. User and Evaluator skip this step.
 
 ### 5. Final confirmation
 
 Actions:
 
 1. For User / Evaluator, render one `| Field | Value |` identity card.
-2. For ASP, do not repeat the confirmed Identity card. Render one final Service card with Name / Description / Type / Fee / Subscription / Free trial / Endpoint rows for every collected service, labeled `Service [N]`.
-3. End the card with localized `Reply 1 to confirm and run.` and the gate echo: `I won't run anything until you reply 1.`
+2. For ASP, do not repeat the confirmed Identity card. Render a final card for each service, labeled `Service [N]`, with Name / Description / Type / Fee / Subscription / Free trial / Endpoint rows.
+3. End with localized `Reply 1 to confirm and run. Nothing will run before that.`
 
-rules:
+Rules:
 
 1. Render each service Description verbatim without summarizing, rewriting, or omitting content; all
    service display fields follow (`identity-service-contract.md#display-rules`).
@@ -72,11 +65,11 @@ rules:
 
 Actions:
 
-1. Invoke `agent create` once with the collected fields according to the CLI reference at the end of this document. For ASP, include the identity and every collected service.
-2. For any non-success response, load (`identity-errors.md`); never interpret an error code inline.
-3. Resolve the ID using the precedence in the CLI reference. If neither supported ID field exists, do not output a bare `#`.
+1. After final confirmation, run `agent create` once with all confirmed fields and, for ASP, every confirmed service.
+2. Handle non-success responses through `identity-errors.md`; never interpret an error code inline.
+3. Resolve the Agent ID using the CLI-reference precedence. If neither supported ID field exists, do not output a bare `#`.
 
-rules:
+Rules:
 
 1. Never reuse an ID from pre-check.
 
@@ -88,7 +81,7 @@ Actions:
 2. For every role, run (`chat-comm-init.md`) and complete its communication setup/readiness check.
 3. For Evaluator only, after communication setup, ask whether the user wants to stake now. If yes, hand off to (`task-core.md`) §Pre-flight and then (`task-evaluator-staking.md`); if no, finish registration.
 
-rules:
+Rules:
 
 1. Keep the success message concise; do not add txHash or detail cards.
 2. Evaluator staking is optional and always happens after registration and communication setup.

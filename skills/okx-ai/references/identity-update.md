@@ -68,8 +68,7 @@ Rules:
 Rules:
 
 1. Send the current/new `fee`, endpoint, and description.
-2. Preserve a fetched non-blank `serviceGuide` internally so unrelated edits do not erase legacy data;
-   never render it.
+2. Preserve a fetched non-blank `serviceGuide` so unrelated edits do not erase legacy data.
 3. Never send subscription fields.
 
 ### 4. Validation

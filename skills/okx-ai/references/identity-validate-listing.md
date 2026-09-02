@@ -25,7 +25,7 @@ the matching type section's QA rules; do not restate or reinterpret them here.
 
 If nothing is found, say QA passed. Otherwise map each dotted `field` to its identity/service card
 row, translate and de-duplicate `message` by `(field,message)`, never show `code`, retain original
-values, and show `(test)` on the affected name row.
+values, and render the affected name row in bold.
 
 ## Type-specific QA
 
