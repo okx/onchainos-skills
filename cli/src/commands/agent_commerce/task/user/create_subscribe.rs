@@ -26,15 +26,11 @@ pub struct CreateSubscribeParams {
     pub title: String,
     pub description: String,
     pub provider_agent_id: Option<String>,
-    pub service_description: String,
     /// Provider service Guide retained locally before the subscription broadcast.
     pub service_guide: Option<String>,
     /// Optional provider-supplied SHA-256 of `service_guide`.
     pub service_guide_hash: Option<String>,
-    /// Declarative Guide contract for consent/signal fields and bounded tool bindings.
-    pub autotrade_guide_semantics_json: Option<String>,
-    /// User-confirmed values keyed exclusively by the matching Guide's
-    /// `consentFields` declaration.
+    /// User-confirmed values for the matching Guide.
     pub guide_consent_json: Option<String>,
     pub service_interval: String,
     pub format: String,
@@ -44,19 +40,21 @@ pub struct CreateSubscribeParams {
 const MAX_TITLE_CHARS: usize = 64;
 const MAX_DESCRIPTION_CHARS: usize = 4096;
 
-impl CreateSubscribeParams {
-    fn guide_execution_requested(&self) -> bool {
-        self.service_guide.is_some()
-            || self.service_guide_hash.is_some()
-            || self.autotrade_guide_semantics_json.is_some()
-            || self.guide_consent_json.is_some()
-    }
+/// The validated, ephemeral Guide + Consent input for one subscription create.
+///
+/// This is deliberately not a subscription state. A created subscription only
+/// exposes whether its persisted Guide and Consent are both active.
+#[derive(Debug)]
+struct GuideConsentInput {
+    draft: super::super::common::autotrade::guide::GuideDraft,
+    consent_values: BTreeMap<String, serde_json::Value>,
+}
 
+impl CreateSubscribeParams {
     fn guide_draft(&self) -> Result<Option<super::super::common::autotrade::guide::GuideDraft>> {
         super::super::common::autotrade::guide::parse_draft(
             self.service_guide.as_deref(),
             self.service_guide_hash.as_deref(),
-            self.autotrade_guide_semantics_json.as_deref(),
         )
     }
 
@@ -65,10 +63,29 @@ impl CreateSubscribeParams {
             return Ok(BTreeMap::new());
         };
         serde_json::from_str(raw)
-            .context("--guide-consent-json must be a JSON object keyed by Guide consentFields")
+            .context("--guide-consent-json must be a JSON object")
     }
 
-    fn validate(&self) -> Result<()> {
+    fn validated_guide_consent(&self) -> Result<Option<GuideConsentInput>> {
+        let guide_draft = self.guide_draft()?;
+        let Some(draft) = guide_draft else {
+            if self.service_guide_hash.is_some() || self.guide_consent_json.is_some() {
+                bail!("guide-driven signal execution requires --service-guide");
+            }
+            return Ok(None);
+        };
+        if self.guide_consent_json.is_none() {
+            bail!("guide-driven signal execution requires --guide-consent-json, including {{}} when the Guide declares no consent fields");
+        }
+        let consent_values = self.guide_consent_values()?;
+        super::super::common::autotrade::guide::validate_consent_values(&consent_values)?;
+        Ok(Some(GuideConsentInput {
+            draft,
+            consent_values,
+        }))
+    }
+
+    fn validate(&self) -> Result<Option<GuideConsentInput>> {
         if self.exclude_device.is_some() {
             bail!("create-time device selection is unsupported; create the subscription for all logged-in devices, then adjust receiving devices with subscribe-device-update");
         }
@@ -99,41 +116,32 @@ impl CreateSubscribeParams {
         if self.description.chars().count() > MAX_DESCRIPTION_CHARS {
             bail!("--description exceeds {MAX_DESCRIPTION_CHARS} characters");
         }
-        let guide_draft = self.guide_draft()?;
-        if self.guide_execution_requested() && guide_draft.is_none() {
-            bail!("guide-driven signal execution requires --service-guide and --autotrade-guide-semantics-json");
-        }
-        if let Some(guide_draft) = guide_draft {
-            super::super::common::autotrade::guide::validate_consent_values(
-                &guide_draft.semantics,
-                &self.guide_consent_values()?,
-            )?;
-        }
-        Ok(())
+        self.validated_guide_consent()
     }
 
 }
 
-fn prepare_guide_execution(job_id: &str, params: &CreateSubscribeParams) -> Result<()> {
-    let guide_draft = params
-        .guide_draft()?
-        .ok_or_else(|| anyhow::anyhow!("service Guide is required for signal execution"))?;
-    let guide_file = guide_draft.clone().into_file(
+fn prepare_guide_consent(
+    job_id: &str,
+    params: &CreateSubscribeParams,
+    execution: &GuideConsentInput,
+) -> Result<()> {
+    let guide_file = execution.draft.clone().into_file(
         job_id,
         &params.service_id,
         params.provider_agent_id.as_deref(),
     );
-    super::super::common::autotrade::guide::write_guide(&guide_file, &guide_draft.source)?;
+    super::super::common::autotrade::guide::write_guide(&guide_file, &execution.draft.source)?;
     super::super::common::autotrade::guide::write_prepared_consent(
         job_id,
         &guide_file,
-        params.guide_consent_values()?,
+        execution.consent_values.clone(),
         super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
     )?;
     Ok(())
 }
 
-fn activate_guide_execution(job_id: &str) -> Result<()> {
+fn activate_guide_consent(job_id: &str) -> Result<()> {
     super::super::common::autotrade::guide::activate_prepared_consent(job_id)
 }
 
@@ -177,16 +185,20 @@ fn build_create_success(
     sub_id: &str,
     tx_hash: &str,
     offline_replay: &OfflineReplayCapability,
-    guide_execution_requested: bool,
-    guide_execution_configured: bool,
+    guide_and_consent_active: bool,
 ) -> serde_json::Value {
+    let status = if guide_and_consent_active {
+        "active"
+    } else {
+        "none"
+    };
     let mut envelope = serde_json::json!({
         "subId": sub_id,
         "txHash": tx_hash,
         "deviceRoutingDegraded": false,
         "offlineReplaySupported": offline_replay.supported,
-        "guideExecutionRequested": guide_execution_requested,
-        "guideExecutionConfigured": guide_execution_configured,
+        "guideStatus": status,
+        "consentStatus": status,
     });
     if !offline_replay.supported {
         envelope["offlineReplayFixCommands"] =
@@ -223,8 +235,7 @@ pub async fn handle_create_subscribe(
     client: &mut TaskApiClient,
     params: CreateSubscribeParams,
 ) -> Result<()> {
-    params.validate()?;
-    let guide_execution_requested = params.guide_execution_requested();
+    let guide_consent = params.validate()?;
 
     let json_mode = params.format.eq_ignore_ascii_case("json");
 
@@ -358,8 +369,8 @@ pub async fn handle_create_subscribe(
     // Create time is the only safe point to bind the provider Guide and the
     // subscriber's consent to the real backend `jobId`, while still allowing a
     // local persistence failure to stop before signing/broadcasting.
-    let prepared_guide_execution = if guide_execution_requested {
-        prepare_guide_execution(&sub_id, &params)?;
+    let prepared_guide_consent = if let Some(ref guide_consent) = guide_consent {
+        prepare_guide_consent(&sub_id, &params, guide_consent)?;
         true
     } else {
         false
@@ -385,7 +396,7 @@ pub async fn handle_create_subscribe(
     {
         Ok(tx_hash) => tx_hash,
         Err(err) => {
-            if prepared_guide_execution {
+            if prepared_guide_consent {
                 super::super::common::autotrade::guide::abort_prepared_consent(&sub_id);
             }
             if let Some(prebind) = &provider_prebind {
@@ -398,8 +409,8 @@ pub async fn handle_create_subscribe(
     // A prepared Guide Consent becomes executable only after the subscription has been
     // broadcast. Activation failure leaves it prepared, so delivery handling
     // remains fail-closed even though the remote subscription now exists.
-    let guide_execution_configured = if prepared_guide_execution {
-        match activate_guide_execution(&sub_id) {
+    let guide_and_consent_active = if prepared_guide_consent {
+        match activate_guide_consent(&sub_id) {
             Ok(()) => true,
             Err(err) => {
                 eprintln!("[guide-execution] subscription created, but Guide Consent could not be activated: {err}");
@@ -421,8 +432,8 @@ pub async fn handle_create_subscribe(
             format!("serviceId={}", params.service_id),
             format!("useTrial={effective_use_trial}"),
             format!("autoRenew={}", params.auto_renew),
-            format!("guideExecutionRequested={guide_execution_requested}"),
-            format!("guideExecutionConfigured={guide_execution_configured}"),
+            format!("guideStatus={}", if guide_and_consent_active { "active" } else { "none" }),
+            format!("consentStatus={}", if guide_and_consent_active { "active" } else { "none" }),
             format!("txHash={tx_hash}"),
         ]),
         None,
@@ -443,8 +454,7 @@ pub async fn handle_create_subscribe(
             &sub_id,
             &tx_hash,
             &offline_replay,
-            guide_execution_requested,
-            guide_execution_configured,
+            guide_and_consent_active,
         ));
         // Balance is verified before create/broadcast; insufficiency exits earlier
         // via the blocked funding-notice envelope.
@@ -458,16 +468,14 @@ pub async fn handle_create_subscribe(
     println!("✓ Subscription submitted (transaction broadcast, awaiting on-chain confirmation)");
     println!("  jobId:  {sub_id}");
     println!("  txHash: {tx_hash}");
-    if guide_execution_requested {
-        println!(
-            "  Signal execution policy: {}",
-            if guide_execution_configured {
-                "configured"
-            } else {
-                "configuration pending"
-            }
-        );
-    }
+    println!(
+        "  Guide: {}",
+        if guide_and_consent_active { "active" } else { "none" }
+    );
+    println!(
+        "  Consent: {}",
+        if guide_and_consent_active { "active" } else { "none" }
+    );
     if let Some(ref pid) = params.provider_agent_id {
         println!("  Designated provider: {pid}");
     }
@@ -568,10 +576,8 @@ mod tests {
                 title,
                 description,
                 provider_agent_id,
-                service_description,
                 service_guide,
                 service_guide_hash,
-                autotrade_guide_semantics_json,
                 guide_consent_json,
                 service_params,
                 service_interval,
@@ -586,10 +592,8 @@ mod tests {
                 assert_eq!(title, "Signal Subscription");
                 assert_eq!(description, "On-chain signal subscription service");
                 assert!(provider_agent_id.is_none());
-                assert_eq!(service_description, "");
                 assert!(service_guide.is_none());
                 assert!(service_guide_hash.is_none());
-                assert!(autotrade_guide_semantics_json.is_none());
                 assert!(guide_consent_json.is_none());
                 assert_eq!(service_params, "");
                 assert_eq!(service_interval, "month");
@@ -598,6 +602,29 @@ mod tests {
             }
             _ => panic!("expected CreateSubscribe"),
         }
+    }
+
+    #[test]
+    fn cli_create_subscribe_rejects_service_description() {
+        assert!(TestCli::try_parse_from([
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_001",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0x6776",
+            "--auto-renew",
+            "1",
+            "--title",
+            "Signal Subscription",
+            "--description",
+            "On-chain signal subscription service",
+            "--service-description",
+            "legacy inferred routing metadata",
+        ])
+        .is_err());
     }
 
     #[test]
@@ -837,10 +864,8 @@ mod tests {
             title: "t".to_string(),
             description: "d".to_string(),
             provider_agent_id: provider.map(str::to_string),
-            service_description: String::new(),
             service_guide: None,
             service_guide_hash: None,
-            autotrade_guide_semantics_json: None,
             guide_consent_json: None,
             service_interval: "month".to_string(),
             format: "json".to_string(),
@@ -849,9 +874,8 @@ mod tests {
     }
 
     fn attach_minimal_guide(params: &mut super::CreateSubscribeParams) {
-        params.service_guide = Some("Use only the declared operation.".to_string());
-        params.autotrade_guide_semantics_json =
-            Some(r#"{"execution":{"toolId":"onchainos","operation":"swap"}}"#.to_string());
+        params.service_guide = Some("Follow the saved Signal using only the confirmed Consent.".to_string());
+        params.guide_consent_json = Some("{}".to_string());
     }
 
     #[test]
@@ -883,16 +907,18 @@ mod tests {
             supported: true,
             fix_commands: Vec::new(),
         };
-        let success = super::build_create_success("0xjob", "0xhash", &supported, true, true);
+        let success = super::build_create_success("0xjob", "0xhash", &supported, true);
         assert_eq!(success["deviceRoutingDegraded"], serde_json::json!(false));
         assert_eq!(success["subId"], serde_json::json!("0xjob"));
         assert_eq!(success["txHash"], serde_json::json!("0xhash"));
         assert_eq!(success["offlineReplaySupported"], serde_json::json!(true));
-        assert_eq!(success["guideExecutionRequested"], serde_json::json!(true));
-        assert_eq!(success["guideExecutionConfigured"], serde_json::json!(true));
+        assert_eq!(success["guideStatus"], serde_json::json!("active"));
+        assert_eq!(success["consentStatus"], serde_json::json!("active"));
         assert!(success.get("offlineReplayFixCommands").is_none());
-        let ok = super::build_create_success("0xjob", "0xhash", &supported, false, false);
+        let ok = super::build_create_success("0xjob", "0xhash", &supported, false);
         assert_eq!(ok["deviceRoutingDegraded"], serde_json::json!(false));
+        assert_eq!(ok["guideStatus"], serde_json::json!("none"));
+        assert_eq!(ok["consentStatus"], serde_json::json!("none"));
     }
 
     #[test]
@@ -903,7 +929,7 @@ mod tests {
             supported: false,
             fix_commands: vec!["npm i -g @okxweb3/a2a-node@1.2.3".to_string()],
         };
-        let env = super::build_create_success("0xjob", "0xhash", &unsupported, false, false);
+        let env = super::build_create_success("0xjob", "0xhash", &unsupported, false);
         assert_eq!(env["offlineReplaySupported"], serde_json::json!(false));
         assert_eq!(
             env["offlineReplayFixCommands"],
@@ -915,7 +941,7 @@ mod tests {
             fix_commands: Vec::new(),
         };
         let env2 =
-            super::build_create_success("0xjob", "0xhash", &unsupported_default, false, false);
+            super::build_create_success("0xjob", "0xhash", &unsupported_default, false);
         assert_eq!(
             env2["offlineReplayFixCommands"],
             serde_json::json!(["npm install -g @okxweb3/a2a-node@latest"])
@@ -980,10 +1006,8 @@ mod tests {
             title: "Analytics report".to_string(),
             description: "Read-only market report without trading signals".to_string(),
             provider_agent_id: Some("agent-99".to_string()),
-            service_description: String::new(),
             service_guide: None,
             service_guide_hash: None,
-            autotrade_guide_semantics_json: None,
             guide_consent_json: None,
             service_interval: "month".to_string(),
             format: "json".to_string(),
@@ -1022,8 +1046,6 @@ mod tests {
             "Execute the delivered signals",
             "--service-guide",
             "guide body",
-            "--autotrade-guide-semantics-json",
-            r#"{"consentFields":[{"key":"strategyArmed","required":true,"type":"boolean"}],"signalFields":[{"key":"units","required":true,"type":"decimal"}],"execution":{"toolId":"onchainos","operation":"swap","authorizationParameter":"size","bindings":[{"parameter":"size","source":"signal.units"}]}}"#,
             "--guide-consent-json",
             r#"{"strategyArmed":true}"#,
         ]);
@@ -1044,7 +1066,7 @@ mod tests {
             Ok(_) => panic!("--help must exit through clap"),
         };
 
-        for expected in ["--guide-consent-json", "matching Guide's", "declared consent fields"] {
+        for expected in ["--guide-consent-json", "matching Guide"] {
             assert!(
                 help.contains(expected),
                 "help must contain {expected:?}: {help}"
@@ -1068,11 +1090,10 @@ mod tests {
         std::env::set_var("ONCHAINOS_HOME", &home);
 
         let mut params = params_fixture(None);
-        params.service_guide = Some("Place the declared operation only.".to_string());
-        params.autotrade_guide_semantics_json =
-            Some(r#"{"consentFields":[{"key":"strategyArmed","required":true,"type":"boolean"}],"signalFields":[{"key":"pairCode","required":true,"type":"string"},{"key":"units","required":true,"type":"decimal"}],"execution":{"toolId":"onchainos","operation":"swap","authorizationParameter":"size","conditions":[{"source":"consent.strategyArmed","equals":true}],"bindings":[{"parameter":"instrument","source":"signal.pairCode"},{"parameter":"size","source":"signal.units"}]}}"#.to_string());
+        params.service_guide = Some("Place only as directed by this Guide and the saved Signal.".to_string());
         params.guide_consent_json = Some(r#"{"strategyArmed":true}"#.to_string());
-        prepare_guide_execution("job-subscribe-guide", &params).unwrap();
+        let consent = params.validate().unwrap().expect("Guide Consent input");
+        prepare_guide_consent("job-subscribe-guide", &params, &consent).unwrap();
         assert!(home
             .join("autotrade")
             .join("guide")
@@ -1087,7 +1108,7 @@ mod tests {
             crate::commands::agent_commerce::task::common::autotrade::guide::consent_snapshot("job-subscribe-guide").status,
             "unavailable"
         );
-        activate_guide_execution("job-subscribe-guide").unwrap();
+        activate_guide_consent("job-subscribe-guide").unwrap();
         assert_eq!(
             crate::commands::agent_commerce::task::common::autotrade::guide::consent_snapshot("job-subscribe-guide").status,
             "active"
@@ -1095,5 +1116,18 @@ mod tests {
 
         std::env::remove_var("ONCHAINOS_HOME");
         std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn guide_consent_requires_explicit_json_even_when_empty() {
+        let mut params = params_fixture(None);
+        attach_minimal_guide(&mut params);
+        params.guide_consent_json = None;
+
+        let error = params.validate().expect_err("Guide bundle needs explicit Consent");
+        assert!(
+            error.to_string().contains("--guide-consent-json"),
+            "unexpected error: {error}"
+        );
     }
 }

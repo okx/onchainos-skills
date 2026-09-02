@@ -221,8 +221,8 @@ fn asset_class_is_required_and_aliases_are_rejected_before_probe() {
 fn signal_playbook_uses_guide_direct_lifecycle() {
     let playbook =
         include_str!("../../skills/okx-ai/references/task-subscription-signal-direct.md");
-    assert!(playbook.contains("The raw Signal is not required to be JSON."));
-    assert!(playbook.contains("autotrade-guide-intent-resolve"));
+    assert!(playbook.contains("The raw Signal may be plain text, Markdown, or JSON."));
+    assert!(!playbook.contains("autotrade-guide-intent-resolve"));
     assert!(playbook.contains("autotrade-direct-claim"));
     assert!(playbook.contains("autotrade-direct-finalize"));
     assert!(playbook.contains("Never call `autotrade-execute`"));

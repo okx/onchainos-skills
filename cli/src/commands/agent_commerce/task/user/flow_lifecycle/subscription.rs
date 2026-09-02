@@ -76,9 +76,8 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
         out.push('\n');
     }
 
-    // FR-7 / AC-8: no post-`sub_created` DApp text re-scan or install. Tool readiness
-    // was already surfaced at `asp-match` time via `autoTradePreflight`; the runtime
-    // re-checks tool status when the first real signal arrives.
+    // No post-`sub_created` text re-scan, tool inference, or installation. The
+    // persisted Guide + Guide Consent contract controls later signal handling.
     out.push_str("**End this turn** after the notification is sent.\n");
 
     out

@@ -2,7 +2,7 @@ pub mod chat;
 pub mod identity;
 pub mod task;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use clap::Subcommand;
 use std::path::PathBuf;
 
@@ -148,23 +148,13 @@ pub enum AgentCommand {
         description: String,
         #[arg(long = "provider-agent-id")]
         provider_agent_id: Option<String>,
-        /// Exact service description returned by asp-match. Only bounded
-        /// asset/tool hints are persisted; the raw prose is never executed.
-        #[arg(long = "service-description", default_value = "")]
-        service_description: String,
         /// Exact provider service Guide. Stored locally before broadcast.
         #[arg(long = "service-guide")]
         service_guide: Option<String>,
         /// SHA-256 of the exact service Guide when supplied by the provider.
         #[arg(long = "service-guide-hash")]
         service_guide_hash: Option<String>,
-        /// Locally derived projection of the exact Guide: Guide-defined
-        /// consent/signal fields and bounded execution bindings. This is
-        /// Agent-to-CLI input, never an ASP-supplied companion artifact.
-        #[arg(long = "autotrade-guide-semantics-json")]
-        autotrade_guide_semantics_json: Option<String>,
-        /// User-confirmed values keyed exclusively by the matching Guide's
-        /// declared consent fields.
+        /// User-confirmed values for the matching Guide.
         #[arg(long = "guide-consent-json")]
         guide_consent_json: Option<String>,
         #[arg(long = "service-interval", default_value = "month")]
@@ -800,52 +790,17 @@ pub enum AgentCommand {
     },
 
     /// Reserve an Agent-direct delivery immediately before the selected
-    /// Skill/tool performs its money-moving call. This command validates local
-    /// authorization and idempotency but never accepts or executes target argv.
+    /// Skill/tool performs its money-moving call. This command validates the
+    /// active Guide+Consent contract and idempotency but never executes target argv.
     #[command(name = "autotrade-direct-claim", hide = true)]
     AutotradeDirectClaim {
         #[arg(long = "job-id")]
         job_id: String,
         #[arg(long = "delivery-id")]
         delivery_id: String,
-        /// SHA-256 fingerprint of the exact locally generated Guide intent.
-        #[arg(long = "guide-intent-hash")]
-        guide_intent_hash: String,
-        /// Exact Guide-resolved authorization value. Its source field is
-        /// service-defined by `execution.authorizationParameter`.
+        /// Exact amount derived by the runtime Agent from Guide, Consent, and Signal.
         #[arg(long)]
         amount: String,
-    },
-
-    /// Validate and persist the Guide-declared fields extracted from one saved
-    /// Signal before producing an executable Guide intent. The source Signal
-    /// itself may be plain text, Markdown, or JSON.
-    #[command(name = "autotrade-guide-intent-resolve", hide = true)]
-    AutotradeGuideIntentResolve {
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long = "delivery-id")]
-        delivery_id: String,
-        /// JSON object containing only the Signal fields declared by the
-        /// matching local Guide; this is an extraction result, not the raw Signal.
-        #[arg(long = "signal-values-json")]
-        signal_values_json: String,
-    },
-
-    /// Validate a subscriber-local semantic projection of the exact provider
-    /// Guide before collecting Guide Consent. This never writes files, creates
-    /// a subscription, or asks the ASP for a second artifact.
-    #[command(name = "autotrade-guide-draft-validate", hide = true)]
-    AutotradeGuideDraftValidate {
-        /// Exact provider Guide returned by service selection.
-        #[arg(long = "service-guide")]
-        service_guide: String,
-        /// Optional SHA-256 of that exact Guide supplied with the service.
-        #[arg(long = "service-guide-hash")]
-        service_guide_hash: Option<String>,
-        /// Agent-derived, machine-readable projection of the exact Guide.
-        #[arg(long = "autotrade-guide-semantics-json")]
-        autotrade_guide_semantics_json: String,
     },
 
     /// Persist the documented result returned by an Agent-selected Skill/tool.
@@ -1483,10 +1438,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             title,
             description,
             provider_agent_id,
-            service_description,
             service_guide,
             service_guide_hash,
-            autotrade_guide_semantics_json,
             guide_consent_json,
             service_interval,
             format,
@@ -1503,10 +1456,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     title,
                     description,
                     provider_agent_id,
-                    service_description,
                     service_guide,
                     service_guide_hash,
-                    autotrade_guide_semantics_json,
                     guide_consent_json,
                     service_interval,
                     format,
@@ -2080,65 +2031,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::AutotradeDirectClaim {
             job_id,
             delivery_id,
-            guide_intent_hash,
             amount,
         } => {
             let result = task::common::autotrade::executor::claim_guide_direct(
                 &job_id,
                 &delivery_id,
-                &guide_intent_hash,
                 &amount,
             )?;
             crate::output::success(result);
-            Ok(())
-        }
-
-        AgentCommand::AutotradeGuideIntentResolve {
-            job_id,
-            delivery_id,
-            signal_values_json,
-        } => {
-            use task::common::autotrade::{consent, guide};
-            use task::common::config::SubscriptionTradePath;
-
-            let context = consent::load_delivery_context(&job_id, &delivery_id)
-                .context("trusted delivery context is unavailable")?;
-            if context.execution_path != SubscriptionTradePath::AgentDirect {
-                anyhow::bail!("delivery is pinned to the legacy execution wrapper");
-            }
-            let values: std::collections::BTreeMap<String, serde_json::Value> =
-                serde_json::from_str(&signal_values_json).context(
-                    "--signal-values-json must be a JSON object of Guide-declared Signal fields",
-                )?;
-            let intent = guide::resolve_execution_intent(
-                &job_id,
-                &delivery_id,
-                &context.saved_path,
-                values,
-            )?;
-            crate::output::success(serde_json::to_value(intent)?);
-            Ok(())
-        }
-
-        AgentCommand::AutotradeGuideDraftValidate {
-            service_guide,
-            service_guide_hash,
-            autotrade_guide_semantics_json,
-        } => {
-            use task::common::autotrade::guide;
-
-            let draft = guide::parse_draft(
-                Some(&service_guide),
-                service_guide_hash.as_deref(),
-                Some(&autotrade_guide_semantics_json),
-            )?
-            .context("Guide draft validation requires Guide text and a locally derived semantic projection")?;
-            crate::output::success(serde_json::json!({
-                "sourceHash": draft.source_hash,
-                "semantics": draft.semantics,
-                "validation": "local_guide_projection_valid",
-                "writesLocalFiles": false,
-            }));
             Ok(())
         }
 

@@ -123,23 +123,13 @@ pub enum TaskCommand {
         /// Designated provider agent ID
         #[arg(long = "provider-agent-id")]
         provider_agent_id: Option<String>,
-        /// Exact service description returned by asp-match. Used only to persist
-        /// bounded asset/tool hints; the raw prose is never executed.
-        #[arg(long = "service-description", default_value = "")]
-        service_description: String,
         /// Exact provider service Guide. Stored locally before broadcast.
         #[arg(long = "service-guide")]
         service_guide: Option<String>,
         /// SHA-256 of the exact service Guide when supplied by the provider.
         #[arg(long = "service-guide-hash")]
         service_guide_hash: Option<String>,
-        /// Locally derived projection of the exact Guide: Guide-defined
-        /// consent/signal fields and bounded execution bindings. This is
-        /// Agent-to-CLI input, never an ASP-supplied companion artifact.
-        #[arg(long = "autotrade-guide-semantics-json")]
-        autotrade_guide_semantics_json: Option<String>,
-        /// User-confirmed values keyed exclusively by the matching Guide's
-        /// declared consent fields.
+        /// User-confirmed values for the matching Guide.
         #[arg(long = "guide-consent-json")]
         guide_consent_json: Option<String>,
         /// Service billing interval (from asp-match subscription.interval, e.g. "month")
@@ -1894,10 +1884,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             title,
             description,
             provider_agent_id,
-            service_description,
             service_guide,
             service_guide_hash,
-            autotrade_guide_semantics_json,
             guide_consent_json,
             service_interval,
             format,
@@ -1916,10 +1904,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                     title,
                     description,
                     provider_agent_id,
-                    service_description,
                     service_guide,
                     service_guide_hash,
-                    autotrade_guide_semantics_json,
                     guide_consent_json,
                     service_interval,
                     format,

@@ -51,10 +51,9 @@
 | Guide preparation | A setup step runs only at the position and for the bounded tool declared by the Guide. On Install/connect, use the trusted matching Skill; Later remains allowed when the Guide permits it. Never execute ASP-provided commands, auto-install, or block subscription creation on generic readiness. | **optional; Guide-defined only** |
 | `serviceTokenAmount` | from `task-service-select` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
 
-Read both `guideExecutionRequested` and `guideExecutionConfigured` from the JSON success envelope.
-`true/true` means the Guide and its confirmed Consent were persisted locally. `true/false` means the
-subscription succeeded but local Guide Consent activation is pending; report that state without opening a
-decision card. `false/false` means the subscription did not request Guide-driven signal execution.
+Read `guideStatus` and `consentStatus` from the JSON success envelope. The Guide-driven happy path
+returns `active / active`; only that pair permits automatic signal execution. These are the only
+subscription execution states exposed to the flow.
 
 For a `next-action` route, its returned confirmation form is the sole field authority; never merge fields
 from a Skill appendix or other card into it. Use `task-user-actions-publish.md` **Appendix A2** only for a

@@ -189,8 +189,7 @@ Optional: `--available <amount>`, `--required <amount>`, `--deposit-chain <chain
 ### task-service-select
 
 Task-creation service selection wrapper. It calls `service-match`, preserves each service's online status,
-normalizes fields for the create-task / create-subscribe playbooks, and preserves
-`autoTradePreflight`.
+and normalizes fields for the create-task / create-subscribe playbooks.
 
 First search:
 
@@ -227,7 +226,7 @@ conditions.
 | `unmatchReason` | string/null | Backend no-match reason when present |
 | `subscriptionCheck` | object | Present when a matched result contains a subscription service: `{status:"checked", blockingServiceCount}` |
 | `duplicateSubscription` | object | Present when the selected service has a blocking non-terminal subscription. Contains the exact minimal `userFacingPrompt` and optional `nextAfterUserChoice`; only ACTIVE offers `restore-listening`. |
-| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, serviceId, serviceName, serviceDescription, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, existingSubscription, autoTradePreflight}`. `existingSubscription` is added only to subscription services and is `null` when no non-terminal duplicate exists. |
+| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, serviceId, serviceName, serviceDescription, serviceGuide, serviceGuideHash, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, existingSubscription}`. `existingSubscription` is added only to subscription services and is `null` when no non-terminal duplicate exists. |
 
 For a matched subscription service, `--agentic-id <buyerAgentId>` is mandatory because the command performs
 the duplicate-subscription check before returning a selectable result. A blocking
@@ -281,7 +280,7 @@ agent asp-match --job-id <jobId> [--provider-agent-id <id>] [--page <n>] [--agen
 | `providerAgentName` | string | ASP display name — **may be empty/absent**; when empty, render the provider as `Agent <providerAgentId>` (no parentheses) |
 | `securityRate` / `feedbackRate` | number | reputation scores |
 | `soldCount` | number | completed orders |
-| `services[]` | array | `{serviceId, serviceName, serviceDescription, serviceType, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, autoTradePreflight}` |
+| `services[]` | array | `{serviceId, serviceName, serviceDescription, serviceGuide, serviceGuideHash, serviceType, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo}` |
 
 Use `supportSubscription` for subscription branch selection. Use `subscriptionInfo.interval`,
 `subscriptionInfo.feeAmount`, and `subscriptionInfo.supportTrial/freeTrial`
@@ -292,32 +291,10 @@ service fee; for subscription services pass `subscriptionInfo.feeAmount` as
 Render the service provider as `Agent <providerAgentId>(<providerAgentName>)`; degrade to
 `Agent <providerAgentId>` when `providerAgentName` is empty or missing.
 
-**Output — per-service `autoTradePreflight` schema version 3 (local, deterministic):** each
-`data.recommendations[].services[]` carries an `autoTradePreflight` object computed locally at match
-time (no extra network call):
-
-- `schemaVersion:3`
-- `isTradingSignal` (bool; advisory classification, not an execution authorization)
-- `assetClasses` (⊆ `spot|perp|prediction|option|defi`; `[]` when undetermined)
-- `explicitTools[]`, `selectionRequired`, and `advisoryOnly:true`
-- `tools[]` = `{ tool, displayName, pluginId?, readiness, reason, checkedAt }`, where readiness is one
-  of `ready|missing|verification_unknown|incompatible`; a local snapshot has
-  `checkedAt:null`
-- `reminders[]` = bilingual (`messageEn`+`messageZh`), `blocking:false`, de-duplicated install/config hints
-- `tradeKitProbe` = `{mode, assetClasses}`; mode is
-  `probe_before_confirmation|deferred_until_venue_selection|not_applicable`
-- `evidence[]` = stable diagnostic codes only (never raw text/secrets)
-
-The match-time preflight never reads configuration or credential state and never invokes Trade Kit.
-An installed `okx` CLI is therefore `verification_unknown` with reason
-`local_compatibility_not_checked`, never `ready`. This field says nothing about authentication. After
-service selection, `probe_before_confirmation` applies only when Trade Kit is an explicit or sole
-candidate; run one batch `agent trade-kit-readiness` probe before confirmation.
-Generic multi-venue services use `deferred_until_venue_selection`; their first real delivery probes only
-if Trade Kit is actually selected. `not_applicable` never probes. All outcomes remain advisory and
-subscription creation remains non-blocking.
-
-Undetermined descriptions yield `isTradingSignal:false`, `assetClasses:[]`, and `reminders:[]`. On an internal preflight error the object degrades to `evidence:["preflight:unavailable"]` and `asp-match` still returns `ok:true`. Preflight absence never blocks subscription creation.
+For subscription execution, `serviceGuide` is the sole runtime trading policy.
+Neither `asp-match` nor `task-service-select` classifies a service as spot, perp, or any other market,
+and neither returns candidate tools or local readiness. A missing or empty Guide means signal-only
+subscription behavior.
 
 ### mark-failed
 
@@ -543,10 +520,9 @@ agent create-subscribe \
   --service-token-amount <amt> --service-token-address <addr> \
   --auto-renew <0|1> \
   --title <txt> --description <txt> \
-  [--provider-agent-id <id>] [--service-description <txt>] [--service-params <params>] \
+  [--provider-agent-id <id>] [--service-params <params>] \
   --service-guide '<exact Guide text>' [--service-guide-hash <sha256>] \
-  --autotrade-guide-semantics-json '<subscriber-local Guide projection>' \
-  [--guide-consent-json '<Guide-defined values JSON object>'] \
+  --guide-consent-json '<Guide-defined values JSON object>' \
   [--format json]
 ```
 
@@ -560,21 +536,11 @@ agent create-subscribe \
 | `--title` | Yes | - | Max 64 chars |
 | `--description` | Yes | - | Max 4096 chars |
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
-| `--service-description` | No | `""` | Exact service description from `task-service-select`; persisted only as bounded routing hints |
 | `--service-guide` | Required for guide-driven signal execution | - | Exact provider Guide stored locally before broadcast at `ONCHAINOS_HOME/autotrade/guide/<jobId>.md` |
 | `--service-guide-hash` | No | computed locally | Provider SHA-256 for the exact Guide; mismatch fails locally |
-| `--autotrade-guide-semantics-json` | Required for guide-driven signal execution | - | Subscriber-Agent-derived projection of the exact `--service-guide`: Guide-defined Consent/Signal fields, conditions, bounded `toolId`, operation, `authorizationParameter`, and bindings; never shell code. It is not an ASP companion artifact. |
-| `--guide-consent-json` | No | `{}` | User-confirmed JSON object keyed only by that Guide's `consentFields`. Undeclared or credential-like keys are rejected. |
+| `--guide-consent-json` | Required for guide-driven signal execution | - | Explicit user-confirmed JSON object for the exact Guide; pass `{}` when no values need storing. Credential-like keys are rejected. |
 
-The subscribing Agent derives the semantic projection locally from the exact provider Guide; ASP supplies the Guide text only. Before asking for Guide Consent, validate the candidate without writing state:
-
-```bash
-agent autotrade-guide-draft-validate \
-  --service-guide '<exact Guide text>' [--service-guide-hash <sha256>] \
-  --autotrade-guide-semantics-json '<subscriber-local Guide projection>'
-```
-
-The Guide projection, not `autoTradePreflight` or service description, defines every Consent and Signal field. Persist user-confirmed values through `--guide-consent-json`; `create-subscribe` validates the same projection again, writes Guide and prepared Consent Markdown before broadcast, and activates Consent only after broadcast succeeds. If the Guide is absent, ambiguous, or cannot be projected into a supported bounded tool, create a receive-only subscription without any Guide execution arguments. Fields merely suggested by the ASP and local tool readiness are not declarations.
+ASP supplies the exact Guide text only. The Guide-driven happy path always passes the exact Guide and explicit `--guide-consent-json`; `create-subscribe` writes Guide and prepared Consent Markdown before broadcast, then activates both after broadcast succeeds. No derived execution JSON is accepted or persisted. On every delivery, the runtime Agent reads the exact Guide, matching Consent, and saved Signal together. `serviceDescription` never defines execution behavior.
 
 > **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
 
@@ -584,9 +550,8 @@ The Guide projection, not `autoTradePreflight` or service description, defines e
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
-Guide execution is configured exclusively by the local Guide bundle. JSON success reports
-`guideExecutionRequested` and `guideExecutionConfigured`; activation failure leaves the
-Consent in its fail-closed `prepared` state and does not roll back the subscription.
+Guide execution is configured exclusively by the local Guide bundle. JSON success reports only
+`guideStatus` and `consentStatus`; the Guide-driven happy path returns `active` for both.
 
 ### subscribe-detail
 
@@ -735,8 +700,8 @@ agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<
 
 ### trade-kit-readiness
 
-Check deterministic local Trade Kit compatibility before confirmation when directed by
-`autoTradePreflight`, during initial Trade Kit route preparation, or after an explicit install/upgrade.
+Check deterministic local Trade Kit compatibility only when the Guide-driven execution flow explicitly
+requires it, or after an explicit install/upgrade.
 The command runs exactly one bounded `okx list-tools --json`, verifies CLI startup and the minimum
 compatible version, and checks each requested class's public command capabilities. It never calls a
 private/account endpoint and never checks or infers authentication, account permissions, network
@@ -759,18 +724,14 @@ Agent reads `task-subscription-signal-direct.md`, chooses the compatible
 Skill/plugin, and uses the internal coordination commands below around exactly
 one normal tool call.
 
-### autotrade-guide-intent-resolve / autotrade-direct-claim / autotrade-direct-finalize
+### autotrade-direct-claim / autotrade-direct-finalize
 
-Internal coordination for the Guide-driven Agent-direct path. The raw Signal may be plain text, Markdown,
-or JSON. First submit the Guide-declared field projection; the CLI validates it, binds it to the exact
-saved Signal bytes, and returns the only intent that may be claimed.
+Internal coordination for the Guide-driven Agent-direct path. The runtime Agent reads the local Guide,
+matching Consent, and raw saved Signal, then applies the Guide before choosing a documented tool call.
 
 ```bash
-agent autotrade-guide-intent-resolve --job-id <jobId> --delivery-id <deliveryId> \
-  --signal-values-json '<Guide-declared Signal values JSON object>'
-
 agent autotrade-direct-claim --job-id <jobId> --delivery-id <deliveryId> \
-  --guide-intent-hash <intentHash> --amount <authorizationAmount>
+  --amount <amount-derived-from-guide-consent-and-signal>
 
 agent autotrade-direct-finalize --job-id <jobId> --delivery-id <deliveryId> \
   --status <submitted|failed_before_submit|unknown_after_submit> --tool-id <safeToolId> \
@@ -778,8 +739,6 @@ agent autotrade-direct-finalize --job-id <jobId> --delivery-id <deliveryId> \
 ```
 
 Claim only immediately before the single money-moving call and proceed only when `data.allowed:true`.
-The JSON argument is an extraction result, not the raw Signal; it may contain only Signal fields declared
-by the matching Guide.
 `submitted` requires a concrete tool-documented receipt ID. A repeated claim never authorizes another
 call; a repeated finalize returns the original durable outcome.
 
