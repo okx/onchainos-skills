@@ -20,18 +20,17 @@ Read `services[]`, `searchAfter`, `hasMore`, and `tip`.
 
 ## Display
 
-**MUST** group `services[]` by `asp.aspAgentId` in returned order and render each Agent using this layout, localizing labels and units:
+**MUST** group `services[]` by `asp.aspAgentId` in returned order; number services sequentially across Agents, render localized fields per [`identity-service-contract.md` §Display], merge `Fee` and `Subscription` as `Fee`, and omit columns containing only `—`.
 
 ```markdown
 ### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>
 
-| # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description |
-|---|---|---|---|---|---|---|---|
-| 1 | <serviceName> | <serviceType> | <fee> | <subscription> | <freeTrial> | <endpoint> | <serviceDescription> |
+| # | Name | Type | Fee | Free trial | Endpoint | Description |
+|---|---|---|---|---|---|---|
+| 1 | <serviceName> | <serviceType> | <fee> | <freeTrial> | <endpoint> | <serviceDescription> |
 ```
 
-Render fields per [`identity-service-contract.md` §Display]. **MUST** render all Agent tables as above,
-then the localized CLI `tip` once.
+**MUST** render all Agent tables as above, then the localized CLI `tip` once.
 
 ```text
 <CLI-returned tip>

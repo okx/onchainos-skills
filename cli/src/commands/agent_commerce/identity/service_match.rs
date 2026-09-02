@@ -16,8 +16,8 @@ const TIP_NO_MATCH: &str =
     "No matching services were found on OKX.AI. Try another keyword and search again.";
 const TIP_OFFLINE: &str =
     "This Agent is offline and cannot provide the service right now. Search for another service.";
-const TIP_CONFIRM: &str = "Reply \"confirm\" to use this service.";
-const TIP_MORE: &str = "Tell me which service you want to use, or reply \"more\".";
+const TIP_CONFIRM: &str = "Reply to confirm that you want to use this service.";
+const TIP_MORE: &str = "Tell me which service you want to use, or ask for more.";
 const TIP_NO_MORE: &str =
     "There are no more matching services. Tell me which service you want to use.";
 
