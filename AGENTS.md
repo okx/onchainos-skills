@@ -81,6 +81,13 @@ automatically as part of an ordinary code change.
 
 ### Development build environment
 
+The checkout-local build script must isolate Cargo state for every
+`npm run dev:init` and `npm run dev:cli` invocation. It must set
+`CARGO_HOME` to `$PWD/.codex/build/cargo-home` and `CARGO_TARGET_DIR` to
+`$PWD/.codex/build/cargo-target`; do not rely on or reuse a developer's ambient
+Cargo directories. Keep this behavior covered by
+`scripts/test-onchainos-local-dev-setup.sh`.
+
 Before the first AI-initiated `npm run dev:init` or `npm run dev:cli` build in a
 Codex session, maintain a session-only logical variable named
 `onchainos_cli_build_env` with one of these values:

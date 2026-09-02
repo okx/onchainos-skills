@@ -14,6 +14,7 @@ tmp_dir="$project_dir/runtime/tmp"
 a2a_spool_dir="$project_dir/runtime/a2a-spool"
 ai_workspace_dir="$a2a_runtime_dir/workspace"
 target_dir="$project_dir/build/cargo-target"
+cargo_home="$project_dir/build/cargo-home"
 onchainos_binary="$target_dir/debug/onchainos"
 dev_base_url="${OKX_BASE_URL:-}"
 
@@ -63,8 +64,8 @@ absolute_executable() {
 }
 
 prepare_project_dirs() {
-  mkdir -p "$bin_dir" "$skills_dir" "$runtime_dir" "$a2a_runtime_dir" "$tmp_dir" "$a2a_spool_dir" "$target_dir"
-  chmod 700 "$runtime_dir" "$a2a_runtime_dir" "$tmp_dir" "$a2a_spool_dir"
+  mkdir -p "$bin_dir" "$skills_dir" "$runtime_dir" "$a2a_runtime_dir" "$tmp_dir" "$a2a_spool_dir" "$target_dir" "$cargo_home"
+  chmod 700 "$runtime_dir" "$a2a_runtime_dir" "$tmp_dir" "$a2a_spool_dir" "$cargo_home"
 }
 
 refresh_skills() {
@@ -123,9 +124,9 @@ build_cli() {
   prepare_project_dirs
   require_command cargo
   if [[ -n "$dev_base_url" ]]; then
-    OKX_BASE_URL="$dev_base_url" CARGO_TARGET_DIR="$target_dir" cargo build --manifest-path "$repo_root/cli/Cargo.toml"
+    OKX_BASE_URL="$dev_base_url" CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$target_dir" cargo build --manifest-path "$repo_root/cli/Cargo.toml"
   else
-    env -u OKX_BASE_URL CARGO_TARGET_DIR="$target_dir" cargo build --manifest-path "$repo_root/cli/Cargo.toml"
+    env -u OKX_BASE_URL CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$target_dir" cargo build --manifest-path "$repo_root/cli/Cargo.toml"
   fi
   [[ -x "$onchainos_binary" ]] || {
     echo "error: project-local onchainos binary not found: $onchainos_binary" >&2

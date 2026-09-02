@@ -20,7 +20,10 @@ cp "$repo_root/scripts/onchainos-local-dev-setup.sh" "$fixture_root/scripts/"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
+  ': "${CARGO_HOME:?}"' \
   ': "${CARGO_TARGET_DIR:?}"' \
+  'mkdir -p "$CARGO_HOME"' \
+  'printf "%s\\n" "$CARGO_HOME" > "$CARGO_TARGET_DIR/observed-cargo-home"' \
   'mkdir -p "$CARGO_TARGET_DIR/debug"' \
   'printf "%s\\n" "${OKX_BASE_URL-unset}" > "$CARGO_TARGET_DIR/observed-base-url"' \
   'printf "%s\\n" "#!/usr/bin/env bash" '\''printf "tmp=%s base_url=%s version_gate=%s local-onchainos %s\\n" "$TMPDIR" "${OKX_BASE_URL-unset}" "$ONCHAINOS_SKIP_CLIENT_VERSION_GATE" "$*"'\'' > "$CARGO_TARGET_DIR/debug/onchainos"' \
@@ -45,6 +48,7 @@ env -u OKX_BASE_URL PATH="$fake_bin:$PATH" bash "$fixture_root/scripts/onchainos
 wrapper_output="$("$fixture_root/.codex/bin/onchainos" probe)"
 [[ "$wrapper_output" == "tmp=$fixture_root/.codex/runtime/tmp base_url=unset version_gate=true local-onchainos probe" ]]
 [[ "$(< "$fixture_root/.codex/build/cargo-target/observed-base-url")" == "unset" ]]
+[[ "$(< "$fixture_root/.codex/build/cargo-target/observed-cargo-home")" == "$fixture_root/.codex/build/cargo-home" ]]
 preflight_output="$("$fixture_root/.codex/bin/onchainos" preflight --skill-version 0.0.0)"
 [[ "$preflight_output" == '{"ok":true,"data":{"status":"skipped","preflightSkipped":true,"skipReason":"project-local-wrapper","action":null}}' ]]
 [[ "$("$fixture_root/.codex/bin/okx-a2a" --version)" == "global-okx-a2a --version" ]]
