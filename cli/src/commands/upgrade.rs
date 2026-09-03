@@ -93,7 +93,7 @@ pub struct UpgradeArgs {
     #[arg(long)]
     pub skip_skills: bool,
 
-    /// Exit immediately if the last check ran within 12 hours (stamp at
+    /// Exit immediately if the last check ran within 24 hours (stamp at
     /// `<ONCHAINOS_HOME>/last_check`); refresh the stamp after a real check
     #[arg(long)]
     pub throttle: bool,
@@ -169,8 +169,8 @@ fn skill_requests_beta(current: &str, skill_version: Option<&str>) -> bool {
 
 // ── Upgrade throttle ────────────────────────────────────────────────────
 
-/// Seconds a previous check stays fresh for `--throttle` (12 hours).
-const THROTTLE_WINDOW_SECS: u64 = 12 * 60 * 60;
+/// Seconds a previous check stays fresh for `--throttle` (24 hours).
+const THROTTLE_WINDOW_SECS: u64 = 24 * 60 * 60;
 
 fn last_check_path(home: &Path) -> PathBuf {
     home.join("last_check")
@@ -881,7 +881,7 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // With --throttle, a check within the last 12 hours short-circuits the
+    // With --throttle, a check within the last 24 hours short-circuits the
     // whole command — no network, no skill pulls. --force and --check always
     // get a real answer.
     if args.throttle && !args.force && !args.check {
@@ -1019,6 +1019,12 @@ pub struct PreflightArgs {
     /// Keep the currently running binary unchanged (feature/E2E test mode).
     #[arg(long)]
     pub no_self_update: bool,
+
+    /// Bypass the 24-hour throttle and always perform a fresh online check.
+    ///
+    /// [UNIT: bool]
+    #[arg(long)]
+    pub force: bool,
 }
 
 fn env_disables_self_update() -> bool {
@@ -1122,9 +1128,50 @@ fn compute_drift(effective_cli: &str, skill_version: Option<&str>) -> Option<Str
     }
 }
 
-/// Session-start check: at most once every 12 hours, resolve the latest release,
+/// The calling skill lags the CLI (drift). Actively update the installed
+/// onchainos skills via the package manager — the same `npx skills add` the
+/// drift hint used to only recommend — instead of asking the user to run it by
+/// hand. Bounded and best-effort (mirrors [`remove_deprecated_skills`]): a
+/// missing npx, a non-zero exit, or a 120s timeout returns `false` so the caller
+/// falls back to the manual hint. `beta` selects the channel to match the CLI.
+async fn update_drifted_skills(beta: bool) -> bool {
+    let pkg = if beta {
+        "okx/onchainos-skills#beta"
+    } else {
+        "okx/onchainos-skills"
+    };
+    let mut child = match tokio::process::Command::new("npx")
+        .args(["skills", "add", pkg, "--yes", "-g"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match tokio::time::timeout(Duration::from_secs(120), child.wait()).await {
+        Ok(Ok(status)) => status.success(),
+        _ => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            false
+        }
+    }
+}
+
+/// The 24-hour throttle is consulted only when `--force` is absent. `--force`
+/// bypasses it and always runs the full online check — the same throttle-bypass
+/// semantics `UpgradeArgs::force` gives `execute()`.
+pub(super) fn should_consult_throttle(force: bool) -> bool {
+    !force
+}
+
+/// Session-start check: at most once every 24 hours, resolve the latest release,
 /// auto-update the binary, clean up deprecated skills, verify binary integrity,
-/// and report version drift.
+/// and — when the calling skill lags the CLI — update the skills and tell the
+/// agent to reload.
 /// Always exits 0 with a JSON payload; the agent acts only on `data.action`.
 pub async fn preflight(args: PreflightArgs) -> Result<()> {
     let current = CURRENT_VERSION;
@@ -1137,25 +1184,29 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
 
     // Share upgrade's last_check stamp so frequent sessions do not repeatedly
     // hit GitHub or run package-manager cleanup. Local CLI/skill drift can still
-    // be reported without a remote check.
-    if let Ok(home) = crate::home::onchainos_home() {
-        if is_throttled(&home, now_secs) {
-            let drift = compute_drift(current, skill_version);
-            output::success(json!({
-                "status": "fresh",
-                "currentVersion": current,
-                "updated": false,
-                "throttled": true,
-                "selfUpdateDisabled": no_self_update,
-                "binaryIdentity": Value::Null,
-                "integrity": "skipped",
-                "drift": match &drift {
-                    Some(_) => json!({ "skill": skill_version, "cli": current }),
-                    None => Value::Null,
-                },
-                "action": drift,
-            }));
-            return Ok(());
+    // be reported without a remote check. `--force` bypasses the throttle
+    // entirely and always runs the full online check (mirrors `execute()`).
+    if should_consult_throttle(args.force) {
+        if let Ok(home) = crate::home::onchainos_home() {
+            if is_throttled(&home, now_secs) {
+                let drift = compute_drift(current, skill_version);
+                output::success(json!({
+                    "status": "fresh",
+                    "versionBefore": current,
+                    "versionAfter": current,
+                    "updated": false,
+                    "throttled": true,
+                    "selfUpdateDisabled": no_self_update,
+                    "binaryIdentity": Value::Null,
+                    "integrity": "skipped",
+                    "drift": match &drift {
+                        Some(_) => json!({ "skill": skill_version, "cli": current }),
+                        None => Value::Null,
+                    },
+                    "action": drift,
+                }));
+                return Ok(());
+            }
         }
     }
 
@@ -1289,14 +1340,31 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
         }
         i.as_str().to_string()
     };
-    // 3. drift (skill behind CLI)
-    let drift = compute_drift(&effective_version, skill_version);
-    let drift_json = match &drift {
-        Some(msg) => {
-            actions.push(msg.clone());
-            json!({ "skill": skill_version, "cli": effective_version })
-        }
-        None => Value::Null,
+    // 3. drift (skill behind CLI). Actively update the installed skills and tell
+    //    the agent to reload, instead of only advising a manual update; fall back
+    //    to the manual command if the update can't run.
+    let drift_present = skill_version.is_some_and(|s| semver_gt(&effective_version, s));
+    let drift_json = if drift_present {
+        let skill = skill_version.unwrap_or("");
+        let beta = is_prerelease(&effective_version);
+        let action = if update_drifted_skills(beta).await {
+            format!(
+                "Skills were behind the CLI (skill v{skill} < CLI v{effective_version}) and have been updated. Reload this skill's SKILL.md to pick up the changes."
+            )
+        } else {
+            let cmd = if beta {
+                "npx skills add okx/onchainos-skills#beta --yes -g"
+            } else {
+                "npx skills add okx/onchainos-skills --yes -g"
+            };
+            format!(
+                "Skill is behind the CLI (skill v{skill} < CLI v{effective_version}); the automatic update could not run. Update it with `{cmd}` (or your manager's equivalent), then reload this skill's SKILL.md."
+            )
+        };
+        actions.push(action);
+        json!({ "skill": skill_version, "cli": effective_version })
+    } else {
+        Value::Null
     };
     // 4. Collect the background cleanup result. Usually this adds no latency
     // because it has already completed alongside the network checks above.
@@ -1318,7 +1386,8 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
 
     let mut payload = json!({
         "status": status,
-        "currentVersion": current,
+        "versionBefore": current,
+        "versionAfter": effective_version,
         "updated": updated,
         "selfUpdateDisabled": no_self_update,
         "binaryIdentity": binary_identity,
@@ -1331,7 +1400,7 @@ pub async fn preflight(args: PreflightArgs) -> Result<()> {
         payload["latestVersion"] = json!(lv);
     }
     // Match upgrade --throttle semantics: a successful version check starts a
-    // new 12-hour window. Offline checks and failed binary installs remain
+    // new 24-hour window. Offline checks and failed binary installs remain
     // immediately retryable.
     let should_record_stamp = status != "offline" && status != "update_failed";
     if should_record_stamp {
@@ -1352,8 +1421,9 @@ mod tests {
         artifact_name, compute_drift, current_branch, decide_target, decorate_graduation,
         discover_skill_paths_in, env_disables_self_update, highest_version, is_dev_build_path,
         is_throttled, parse_ls_remote_versions, parse_release_tag_url, record_check,
-        remote_is_trusted_okx, removal_action, reportable_skills, semver_gt, skill_requests_beta,
-        update_one_checkout, DEPRECATED_SKILLS,
+        remote_is_trusted_okx, removal_action, reportable_skills, semver_gt,
+        should_consult_throttle, skill_requests_beta, update_one_checkout, PreflightArgs,
+        DEPRECATED_SKILLS,
     };
     use serde_json::{json, Value};
     use std::path::{Path, PathBuf};
@@ -1766,14 +1836,14 @@ mod tests {
     fn throttled_within_window() {
         let tmp = TempDir::new().unwrap();
         record_check(tmp.path(), 1_000).unwrap();
-        assert!(is_throttled(tmp.path(), 1_000 + 11 * 3600));
+        assert!(is_throttled(tmp.path(), 1_000 + 23 * 3600));
     }
 
     #[test]
     fn stale_at_window_boundary() {
         let tmp = TempDir::new().unwrap();
         record_check(tmp.path(), 1_000).unwrap();
-        assert!(!is_throttled(tmp.path(), 1_000 + 12 * 3600));
+        assert!(!is_throttled(tmp.path(), 1_000 + 24 * 3600));
     }
 
     #[test]
@@ -1804,7 +1874,63 @@ mod tests {
         record_check(tmp.path(), 1_000).unwrap();
         record_check(tmp.path(), 200_000).unwrap();
         assert!(is_throttled(tmp.path(), 200_000 + 100));
-        assert!(!is_throttled(tmp.path(), 200_000 + 13 * 3600));
+        assert!(!is_throttled(tmp.path(), 200_000 + 25 * 3600));
+    }
+
+    // ── preflight --force: parser surface + throttle-gate bypass ─────────
+
+    #[derive(clap::Parser)]
+    struct ForceTestCli {
+        #[command(flatten)]
+        pf: PreflightArgs,
+    }
+
+    #[test]
+    fn preflight_force_flag_parses_as_true() {
+        use clap::Parser;
+        let cli = ForceTestCli::try_parse_from(["preflight", "--force"]).unwrap();
+        assert!(cli.pf.force);
+    }
+
+    #[test]
+    fn preflight_force_defaults_to_false() {
+        use clap::Parser;
+        // Bare invocation leaves force off.
+        let bare = ForceTestCli::try_parse_from(["preflight"]).unwrap();
+        assert!(!bare.pf.force);
+        // Passing only an unrelated flag also leaves force off.
+        let argv = ["preflight", "--skill-version", "1.0.0"];
+        let only_version = ForceTestCli::try_parse_from(argv).unwrap();
+        assert!(!only_version.pf.force);
+    }
+
+    #[test]
+    fn preflight_force_coexists_with_existing_flags() {
+        use clap::Parser;
+        let argv = [
+            "preflight",
+            "--force",
+            "--no-self-update",
+            "--skill-version",
+            "1.2.3",
+        ];
+        let cli = ForceTestCli::try_parse_from(argv).unwrap();
+        assert!(cli.pf.force);
+        assert!(cli.pf.no_self_update);
+        assert_eq!(cli.pf.skill_version.as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn force_bypasses_throttle_gate_even_with_fresh_stamp() {
+        // A just-written stamp WOULD throttle a normal preflight — this is the
+        // exact predicate the "fresh" early-return depends on...
+        let tmp = TempDir::new().unwrap();
+        record_check(tmp.path(), 1_000).unwrap();
+        assert!(is_throttled(tmp.path(), 1_000 + 11 * 3600));
+        // ...yet the gate treats `--force` as "do not consult the throttle".
+        assert!(!should_consult_throttle(true));
+        // Without `--force`, the gate still consults `is_throttled` as before.
+        assert!(should_consult_throttle(false));
     }
 
     // ── decorate_graduation: machine-readable action hint ───────────────
