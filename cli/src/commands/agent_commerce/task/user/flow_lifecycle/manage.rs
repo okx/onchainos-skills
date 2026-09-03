@@ -54,8 +54,8 @@ retained in context, not that Service's `serviceId`. Omit it when neither exists
 otherwise preprocess or enrich the input or output.
 
 - `matchStatus=no_match` → if `asp-agent-id` was supplied, say that the specified ASP has no matching service; otherwise say that no matching service was found. Ask the user to adjust the description or specify/change the provider.
-- `matchStatus=no_online_service` → matches exist, but none is eligible (offline non-x402 services remain ineligible). Ask whether to view alternatives or adjust the description/provider.
-- `matchStatus=matched` → render the service confirmation card from `data.services[0]`. The CLI keeps original ranking while filtering candidates to online services plus offline A2MCP services with a non-empty endpoint.
+- `matchStatus=no_online_service` → matches exist, but none is an online A2A Task service. Ask whether to view alternatives or adjust the description/provider.
+- `matchStatus=matched` → render the service confirmation card from `data.services[0]`. The CLI preserves ranking while filtering to online A2A Task services.
 
 **Subscription duplicate gate — before the normal service confirmation card:**
 - For a selected service with `supportSubscription == true`, require `subscriptionCheck.status == \"checked\"` and inspect `services[0].existingSubscription`. The CLI has already compared the exact `serviceId` against this buyer's subscriptions. A missing check is a hard stop: report that existing subscriptions could not be verified and do not confirm or create.
@@ -67,9 +67,9 @@ otherwise preprocess or enrich the input or output.
 
 **Service confirmation gate**:
 - Show Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
-- Render `serviceType` verbatim (for example, `A2A` or `A2MCP`); never translate or localize it.
+- Require `serviceType=A2A` and render it verbatim. If any A2MCP service reaches this Task playbook, stop with `legacy_a2mcp_flow_removed`; the upstream confirmed-service route must emit `invoke_a2mcp` instead.
 - For a non-subscription Service, render `feeAmount` with `feeTokenSymbol`. If `feeAmount` is zero (number or numeric string), render localized `Free` instead of `0 <symbol>`.
-- An offline A2MCP service with a non-empty endpoint is eligible; do not reject it for being offline. Offline non-x402 services remain ineligible.
+- Offline services are ineligible for Task creation.
 - Ask the user to confirm using this service. Offer \"show 3 alternatives\" only when `hasMore == true` and `searchAfter` is a non-empty string; otherwise state that no more alternatives are available.
 - If the user chooses alternatives, call:
   ```bash
@@ -391,6 +391,8 @@ Never add execution mode, per-signal amount, per-signal cap, quote currency, Tra
 | Service params | <serviceParams readable display, or \"None\"> |
 | Service price | <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this row if feeAmount has a value) |
 
+Payment mode is always `escrow` for this Task playbook; do not ask the user or show it as a card row.
+
 > Confirm and publish?
 
 → **End this turn**; wait for the user's reply.
@@ -641,7 +643,10 @@ mod tests {
             "| Trial |",
             "| Auto-renew |",
         ] {
-            assert!(out.contains(expected_row), "missing confirmation row {expected_row}");
+            assert!(
+                out.contains(expected_row),
+                "missing confirmation row {expected_row}"
+            );
         }
         let form = out
             .split("Step 5 -- Subscription confirmation form")
@@ -661,9 +666,7 @@ mod tests {
         assert!(out.contains("--autotrade-environment <live|demo>"));
         assert!(out.contains("--autotrade-auth-mode <oauth|api_key>"));
         assert!(out.contains("--autotrade-required-field"));
-        assert!(out.contains(
-            "The CLI validates this declaration before any remote create request"
-        ));
+        assert!(out.contains("The CLI validates this declaration before any remote create request"));
         assert!(out.contains("Do not compare amount with cap"));
         assert!(out.contains("tradeAmountBasis=notional"));
         assert!(out.contains("tradeAmountBasis=margin"));
@@ -705,9 +708,7 @@ mod tests {
         assert!(out.contains(
             "Never compress this\nreview into a one-line `internal execution configuration` summary"
         ));
-        assert!(out.contains(
-            "A reply confirming Step 4.5 never also answers auto-renew"
-        ));
+        assert!(out.contains("A reply confirming Step 4.5 never also answers auto-renew"));
         assert!(out.contains(
             "For each `extra` entry, use its `label`, exact `value`, and optional `unit`"
         ));
@@ -744,7 +745,9 @@ mod tests {
             "preflight absence must not force an extra match: {out}"
         );
         assert!(out.contains("ASP text is not the user's answer"));
-        assert!(out.contains("Trade Kit preparation and connection fallback (optional; separate turn)"));
+        assert!(
+            out.contains("Trade Kit preparation and connection fallback (optional; separate turn)")
+        );
         assert!(out.contains("guide did not already contain a handled Trade Kit preparation step"));
         assert!(out.contains("Install/connect Trade Kit"));
         assert!(out.contains("Later — continue subscribing"));

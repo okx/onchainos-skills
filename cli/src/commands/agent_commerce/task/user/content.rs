@@ -13,7 +13,7 @@
 //!    that preserves all field labels, data values, and structure (see `localization_prefix`
 //!    in flow.rs for the strict rules).
 //!    Terminology: Job (not Task), User Agent, ASP (Agent Service Provider),
-//!    escrow / x402 lowercase, agentId in camelCase for data fields.
+//!    escrow lowercase, agentId in camelCase for data fields.
 //!    Label format: `[Label]` bracket prefix (e.g. `[Job Accepted]`).
 //!    Decision prompts (❓) carry the `[Job {short_id} — you are the User Agent]` prefix.
 //!    User reply instructions use descriptive phrasing (naturally translatable by the sub agent).
@@ -116,16 +116,6 @@ pub fn job_accepted_escrow_user_notify(job_id: &str, _title: &str) -> String {
     )
 }
 
-/// `Event::JobAccepted` Branch B (x402) — user notification when endpoint replay failed (B-2-4).
-pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
-    format!(
-        "[x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
-         HTTP status: <replayStatus>\n\
-         Error: <replayBody>\n\
-         The job is now in `accepted` status. Please give a new instruction; the agent will not auto-retry."
-    )
-}
-
 // ── Event::JobRejected ─────────────────────────────────────────────
 
 /// `Event::JobRejected` Step 1 — user notification that the rejection is confirmed on-chain.
@@ -158,17 +148,6 @@ pub fn job_completed_escrow_user_notify(
         "[Job Completed] {title} (`{job_id}`) — approved by the User Agent; funds released to the ASP.\n\
          - Spent: {token_amount} {token_symbol}\n\
          - Payment: escrow"
-    )
-}
-
-/// `Event::JobCompleted` Branch B (x402) — final summary notification (B-4-3).
-pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
-    format!(
-        "[x402 Job Completed] {title} (`{job_id}`) — all steps complete.\n\
-         - Spent: <tokenAmount> <tokenSymbol>\n\
-         - Payment: x402\n\
-         - Deliverable saved to: <deliverableSavedPath from task-402-pay output; if not in context, omit this line>\n\
-         - Deliverable summary: <one-line summary of the replayBodyDisplay content from task-402-pay; if not in context, omit this line>"
     )
 }
 
@@ -253,14 +232,6 @@ pub fn payment_mode_escrow_user_notify(job_id: &str, title: &str) -> String {
     format!("[Payment Mode Set] {title} (`{job_id}`) — payment mode updated successfully; ASP <providerName> (<providerAgentId>) is accepting...")
 }
 
-/// x402 set-payment-mode confirmed on-chain; transition notification before task-402-pay.
-pub fn x402_paying_user_notify(job_id: &str, title: &str) -> String {
-    format!(
-        "Payment in progress —【{title}】(`{job_id}`) — x402 agreement reached with the ASP; \
-         fee: <tokenAmount> <tokenSymbol>. Paying and fetching the deliverable..."
-    )
-}
-
 // ── Pseudo events (close) ──────────────────────────────────────────
 
 /// User notification after closing a job (B-7-11).
@@ -339,38 +310,6 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
     format!("[⚠️ Protocol Misalignment] Job `{job_id}` — the remote agent repeatedly sends messages that do not match the current flow. Replies have stopped. Please intervene manually to continue.")
 }
 
-// ── x402 replay result (job_payment_mode_changed) ────────────────
-
-/// x402 replay success — deliverable received, awaiting on-chain confirmation.
-pub fn x402_replay_success_user_notify(job_id: &str) -> String {
-    let trailing = if is_cli_mode() {
-        "\n         On-chain confirmation is in progress. The job will auto-complete and a final completion notice will follow shortly."
-    } else {
-        "\n         Waiting for on-chain confirmation. The job will auto-complete once confirmed."
-    };
-    format!(
-        "[x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
-         ASP agentId: <providerAgentId>\n\
-         Amount: <tokenAmount> <tokenSymbol>\n\n\
-         If CLI output contains `deliverableSavedPath`:\n\
-         \x20\x20Deliverable saved to: <deliverableSavedPath>\n\n\
-         If CLI output does NOT contain `deliverableSavedPath` (save failed):\n\
-         \x20\x20---Deliverable---\n\
-         \x20\x20<replayBodyDisplay in full>\n\
-         \x20\x20---End of deliverable---{trailing}"
-    )
-}
-
-// ── complete failure (job_accepted x402 branch) ──────────────────
-
-/// x402 complete command failed — notify user with retry command.
-pub fn complete_failed_user_notify(job_id: &str) -> String {
-    format!(
-        "[⚠️ Complete Failed] Job `{job_id}` — the completion step failed. \
-         Please retry later or reply with a new instruction."
-    )
-}
-
 // ── create_task notification ─────────────────────────────────────
 
 /// create_task success — with designated provider.
@@ -386,7 +325,7 @@ pub fn create_task_designated_user_notify() -> String {
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
     format!(
         "[⚠️ Operation Failed] Job `{job_id}`\n\
-         - Action: <e.g. match ASPs / submit review / pay via x402>\n\
+         - Action: <e.g. match ASPs / submit review / escrow payment>\n\
          - Error: <one-sentence summary of stderr / error field>\n\
          - Current status: <describe in plain language, e.g. waiting for provider / under review / payment pending>\n\
          \n\
@@ -775,9 +714,7 @@ pub fn sub_close_notify_user_notify(
     if let (Some(s), Some(e)) = (fmt_epoch(period_start), fmt_epoch(period_end)) {
         out.push_str(&format!("'s current period ({s}–{e})"));
     }
-    out.push_str(&format!(
-        " has ended. Job {job_id} status: Closed."
-    ));
+    out.push_str(&format!(" has ended. Job {job_id} status: Closed."));
     out
 }
 
@@ -1003,8 +940,7 @@ mod tests {
 
     #[test]
     fn sub_open_trial_does_not_claim_trial_started() {
-        let out =
-            sub_open_trial_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
+        let out = sub_open_trial_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
         assert!(out.starts_with("[Trial Subscription Created]"));
         assert!(out.contains("waiting for the ASP to accept"));
         assert!(out.contains("free trial has not started yet"));

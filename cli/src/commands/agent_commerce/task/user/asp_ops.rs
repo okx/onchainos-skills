@@ -806,19 +806,9 @@ pub async fn handle_set_asp(
         }
     }
 
-    // FR-8.3/AC-9: resolve and persist the correct multi-service endpoint from the
-    // provider's service catalog (previously persisted endpoint-less). A2A /
-    // no-endpoint services resolve to None → unchanged routing (FR-8.5/AC-11).
-    let resolved_endpoint: Option<String> =
-        crate::commands::agent_commerce::task::common::find_service(provider_agent_id, service_id)
-            .await?
-            .and_then(|svc| svc.get("endpoint").and_then(|v| v.as_str()).map(str::to_string))
-            .filter(|s| !s.is_empty());
-    super::negotiate::save_designated_provider_with_endpoint(
-        job_id,
-        provider_agent_id,
-        resolved_endpoint.as_deref(),
-    )?;
+    // Task creation supports A2A escrow only. Endpoint persistence belonged to
+    // the removed task-based A2MCP flow; direct A2MCP invocation owns routing.
+    super::negotiate::save_designated_provider(job_id, provider_agent_id)?;
 
     audit::log(
         "cli",
