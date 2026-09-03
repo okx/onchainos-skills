@@ -16,6 +16,7 @@
 use anyhow::{bail, Result};
 use std::time::Duration;
 
+use super::subscription::{self, Routing};
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a;
@@ -23,7 +24,6 @@ use crate::commands::agent_commerce::task::common::payment_mode::PaymentMode;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 use crate::commands::agent_commerce::task::signing;
-use super::subscription::{self, Routing};
 
 const LONG_TEXT_THRESHOLD: usize = 200;
 
@@ -81,8 +81,13 @@ fn print_deliver_result(outcome: &DeliverOutcome, job_id: &str) {
 /// Deliverable preparation result — carries the info needed by later stages
 /// (xmtp message was already sent; this tracks what to save locally).
 enum Prepared {
-    File { local_path: String, file_key: String },
-    Text { tmp_path: String },
+    File {
+        local_path: String,
+        file_key: String,
+    },
+    Text {
+        tmp_path: String,
+    },
 }
 
 /// Keep accepting the retired `--autotrade` argument so older ASP scripts do
@@ -117,8 +122,11 @@ async fn fetch_task_detail_or_mock(
 
 /// Read a JSON field that may be serialized as a string or a number, as an owned string.
 fn json_str(v: &serde_json::Value, key: &str) -> Option<String> {
-    v.get(key)
-        .and_then(|f| f.as_str().map(str::to_string).or_else(|| f.as_i64().map(|n| n.to_string())))
+    v.get(key).and_then(|f| {
+        f.as_str()
+            .map(str::to_string)
+            .or_else(|| f.as_i64().map(|n| n.to_string()))
+    })
 }
 
 /// True when a `/task/{jobId}` lookup failed because the job is NOT a one-shot task
@@ -157,14 +165,23 @@ async fn resolve_precondition(
             let status_int = task_resp["status"]
                 .as_i64()
                 .and_then(|n| i32::try_from(n).ok())
-                .ok_or_else(|| anyhow::anyhow!("Task detail missing status field, cannot determine delivery eligibility"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Task detail missing status field, cannot determine delivery eligibility"
+                    )
+                })?;
             let status = Status::from_int(status_int);
             if status != Status::Accepted {
                 audit::log(
-                    "cli", "ASP/deliver_blocked_wrong_status", false, Duration::default(),
+                    "cli",
+                    "ASP/deliver_blocked_wrong_status",
+                    false,
+                    Duration::default(),
                     Some(vec![
-                        format!("jobId={job_id}"), format!("agentId={agent_id}"),
-                        format!("statusInt={status_int}"), format!("status={}", status.as_str()),
+                        format!("jobId={job_id}"),
+                        format!("agentId={agent_id}"),
+                        format!("statusInt={status_int}"),
+                        format!("status={}", status.as_str()),
                     ]),
                     Some("status != accepted(1)"),
                 );
@@ -183,16 +200,21 @@ async fn resolve_precondition(
             let pm = PaymentMode::from_int(pm_int);
             if pm != PaymentMode::Escrow {
                 audit::log(
-                    "cli", "ASP/deliver_blocked_wrong_payment_mode", false, Duration::default(),
+                    "cli",
+                    "ASP/deliver_blocked_wrong_payment_mode",
+                    false,
+                    Duration::default(),
                     Some(vec![
-                        format!("jobId={job_id}"), format!("agentId={agent_id}"),
-                        format!("paymentMode={pm_int}"), format!("paymentModeStr={}", pm.as_str()),
+                        format!("jobId={job_id}"),
+                        format!("agentId={agent_id}"),
+                        format!("paymentMode={pm_int}"),
+                        format!("paymentModeStr={}", pm.as_str()),
                     ]),
                     Some("deliver is escrow-only"),
                 );
                 bail!(
                     "Deliver rejected: paymentMode = {} ({}) — deliver/submit is only supported for escrow (1).\n\
-                     x402 tasks skip the submit step; the User Agent obtains the deliverable by replaying the ASP's endpoint and calls /direct/complete.",
+                     Legacy task-based A2MCP processing has been removed; do not replay, sign, or continue this task flow.",
                     pm_int, pm.as_str(),
                 );
             }
@@ -203,7 +225,11 @@ async fn resolve_precondition(
             // it then makes the `/subscribe/{jobId}` liveness query.
             let job_type = task_resp["jobType"]
                 .as_i64()
-                .or_else(|| task_resp["jobType"].as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+                .or_else(|| {
+                    task_resp["jobType"]
+                        .as_str()
+                        .and_then(|s| s.trim().parse::<i64>().ok())
+                })
                 .unwrap_or(0);
             let (routing, sub_status_code) = if job_type == subscription::JOB_TYPE_SUBSCRIBE {
                 match subscription::fetch_detail(client, job_id, agent_id).await {
@@ -218,7 +244,10 @@ async fn resolve_precondition(
                 routing,
                 sub_status_code,
                 user_agent_id: task_resp["buyerAgentId"].as_str().unwrap_or("").to_string(),
-                title: task_resp["title"].as_str().unwrap_or("(untitled)").to_string(),
+                title: task_resp["title"]
+                    .as_str()
+                    .unwrap_or("(untitled)")
+                    .to_string(),
                 token_symbol: task_resp["tokenSymbol"].as_str().map(str::to_string),
                 token_amount: task_resp["tokenAmount"].as_str().map(str::to_string),
             })
@@ -278,7 +307,9 @@ fn mock_task_resp(job_id: &str) -> serde_json::Value {
 
 #[cfg(debug_assertions)]
 fn mock_write_outbox(job_id: &str, msg: &str) -> Result<()> {
-    let dir = crate::home::onchainos_home()?.join("mock_outbox").join(job_id);
+    let dir = crate::home::onchainos_home()?
+        .join("mock_outbox")
+        .join(job_id);
     std::fs::create_dir_all(&dir)?;
     let ts = chrono::Local::now().format("%Y%m%d-%H%M%S%.3f").to_string();
     let path = dir.join(format!("delivery-{ts}.txt"));
@@ -345,10 +376,27 @@ pub async fn handle_deliver(
     // never delivered.
     if routing == Routing::Ended {
         let backend_code = format!("subStatus={sub_status_code}");
-        audit::log("cli", "ASP/deliver_subscription_expired", false, Duration::default(),
-            Some([base_tags.clone(), vec![format!("subStatus={sub_status_code}"), format!("legacyAutotradeIgnored={legacy_autotrade_ignored}")]].concat()),
-            Some("subscription ended → not delivered; settlement is backend-automatic"));
-        print_deliver_result(&DeliverOutcome::SubscriptionExpired { backend_code }, job_id);
+        audit::log(
+            "cli",
+            "ASP/deliver_subscription_expired",
+            false,
+            Duration::default(),
+            Some(
+                [
+                    base_tags.clone(),
+                    vec![
+                        format!("subStatus={sub_status_code}"),
+                        format!("legacyAutotradeIgnored={legacy_autotrade_ignored}"),
+                    ],
+                ]
+                .concat(),
+            ),
+            Some("subscription ended → not delivered; settlement is backend-automatic"),
+        );
+        print_deliver_result(
+            &DeliverOutcome::SubscriptionExpired { backend_code },
+            job_id,
+        );
         return Ok(());
     }
 
@@ -364,11 +412,29 @@ pub async fn handle_deliver(
         if !src.exists() {
             bail!("file not found: {file}");
         }
-        audit::log("cli", "ASP/deliver_file_upload", true, Duration::default(),
-            Some([base_tags.clone(), vec![format!("path={file}")]].concat()), None);
+        audit::log(
+            "cli",
+            "ASP/deliver_file_upload",
+            true,
+            Duration::default(),
+            Some([base_tags.clone(), vec![format!("path={file}")]].concat()),
+            None,
+        );
         let upload = okx_a2a::file_upload(file, agent_id, job_id, None, None)?;
-        audit::log("cli", "ASP/deliver_file_uploaded", true, Duration::default(),
-            Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key)]].concat()), None);
+        audit::log(
+            "cli",
+            "ASP/deliver_file_uploaded",
+            true,
+            Duration::default(),
+            Some(
+                [
+                    base_tags.clone(),
+                    vec![format!("fileKey={}", upload.file_key)],
+                ]
+                .concat(),
+            ),
+            None,
+        );
 
         let msg = build_outbound_deliver_message(
             super::content::build_file_deliver_message(job_id, &upload),
@@ -376,21 +442,48 @@ pub async fn handle_deliver(
         );
         if !user_agent_id.is_empty() {
             match send_or_mock(job_id, user_agent_id, &msg) {
-                Ok(()) => audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
-                    Some([base_tags.clone(), vec!["type=file".into()]].concat()), None),
+                Ok(()) => audit::log(
+                    "cli",
+                    "ASP/deliver_xmtp_sent",
+                    true,
+                    Duration::default(),
+                    Some([base_tags.clone(), vec!["type=file".into()]].concat()),
+                    None,
+                ),
                 Err(e) => {
-                    audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
-                        Some([base_tags.clone(), vec!["type=file".into()]].concat()), Some(&e.to_string()));
+                    audit::log(
+                        "cli",
+                        "ASP/deliver_xmtp_failed",
+                        false,
+                        Duration::default(),
+                        Some([base_tags.clone(), vec!["type=file".into()]].concat()),
+                        Some(&e.to_string()),
+                    );
                     send_error = Some(e.to_string());
                 }
             }
         }
-        Prepared::File { local_path: file.to_string(), file_key: upload.file_key }
+        Prepared::File {
+            local_path: file.to_string(),
+            file_key: upload.file_key,
+        }
     } else if !deliverable_text.is_empty() {
         let text_len = deliverable_text.chars().count();
         let is_long = text_len > LONG_TEXT_THRESHOLD;
-        audit::log("cli", "ASP/deliver_text_prepare", true, Duration::default(),
-            Some([base_tags.clone(), vec![format!("charCount={text_len}"), format!("isLong={is_long}")]].concat()), None);
+        audit::log(
+            "cli",
+            "ASP/deliver_text_prepare",
+            true,
+            Duration::default(),
+            Some(
+                [
+                    base_tags.clone(),
+                    vec![format!("charCount={text_len}"), format!("isLong={is_long}")],
+                ]
+                .concat(),
+            ),
+            None,
+        );
 
         if is_long {
             // ▸ Long text → write .md → file_upload → file-format xmtp
@@ -401,8 +494,23 @@ pub async fn handle_deliver(
                 std::fs::write(&tmp_path, deliverable_text)?;
                 let tmp_str = tmp_path.display().to_string();
                 let upload = okx_a2a::file_upload(&tmp_str, agent_id, job_id, None, None)?;
-                audit::log("cli", "ASP/deliver_long_text_uploaded", true, Duration::default(),
-                    Some([base_tags.clone(), vec![format!("fileKey={}", upload.file_key), format!("path={tmp_str}")]].concat()), None);
+                audit::log(
+                    "cli",
+                    "ASP/deliver_long_text_uploaded",
+                    true,
+                    Duration::default(),
+                    Some(
+                        [
+                            base_tags.clone(),
+                            vec![
+                                format!("fileKey={}", upload.file_key),
+                                format!("path={tmp_str}"),
+                            ],
+                        ]
+                        .concat(),
+                    ),
+                    None,
+                );
 
                 let msg = build_outbound_deliver_message(
                     super::content::build_file_deliver_message(job_id, &upload),
@@ -411,16 +519,40 @@ pub async fn handle_deliver(
                 let mut local_err: Option<String> = None;
                 if !user_agent_id.is_empty() {
                     match send_or_mock(job_id, user_agent_id, &msg) {
-                        Ok(()) => audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
-                            Some([base_tags.clone(), vec!["type=file_from_long_text".into()]].concat()), None),
+                        Ok(()) => audit::log(
+                            "cli",
+                            "ASP/deliver_xmtp_sent",
+                            true,
+                            Duration::default(),
+                            Some(
+                                [base_tags.clone(), vec!["type=file_from_long_text".into()]]
+                                    .concat(),
+                            ),
+                            None,
+                        ),
                         Err(e) => {
-                            audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
-                                Some([base_tags.clone(), vec!["type=file_from_long_text".into()]].concat()), Some(&e.to_string()));
+                            audit::log(
+                                "cli",
+                                "ASP/deliver_xmtp_failed",
+                                false,
+                                Duration::default(),
+                                Some(
+                                    [base_tags.clone(), vec!["type=file_from_long_text".into()]]
+                                        .concat(),
+                                ),
+                                Some(&e.to_string()),
+                            );
                             local_err = Some(e.to_string());
                         }
                     }
                 }
-                Ok((Prepared::File { local_path: tmp_str, file_key: upload.file_key }, local_err))
+                Ok((
+                    Prepared::File {
+                        local_path: tmp_str,
+                        file_key: upload.file_key,
+                    },
+                    local_err,
+                ))
             })();
             match file_result {
                 Ok((p, local_err)) => {
@@ -428,8 +560,14 @@ pub async fn handle_deliver(
                     p
                 }
                 Err(e) => {
-                    audit::log("cli", "ASP/deliver_long_text_fallback", false, Duration::default(),
-                        Some([base_tags.clone(), vec![format!("charCount={text_len}")]].concat()), Some(&e.to_string()));
+                    audit::log(
+                        "cli",
+                        "ASP/deliver_long_text_fallback",
+                        false,
+                        Duration::default(),
+                        Some([base_tags.clone(), vec![format!("charCount={text_len}")]].concat()),
+                        Some(&e.to_string()),
+                    );
 
                     let msg = build_outbound_deliver_message(
                         super::content::build_text_deliver_message(job_id, deliverable_text),
@@ -437,21 +575,41 @@ pub async fn handle_deliver(
                     );
                     if !user_agent_id.is_empty() {
                         match send_or_mock(job_id, user_agent_id, &msg) {
-                            Ok(()) => audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
-                                Some([base_tags.clone(), vec!["type=text_fallback".into()]].concat()), None),
+                            Ok(()) => audit::log(
+                                "cli",
+                                "ASP/deliver_xmtp_sent",
+                                true,
+                                Duration::default(),
+                                Some(
+                                    [base_tags.clone(), vec!["type=text_fallback".into()]].concat(),
+                                ),
+                                None,
+                            ),
                             Err(e) => {
-                                audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
-                                    Some([base_tags.clone(), vec!["type=text_fallback".into()]].concat()), Some(&e.to_string()));
+                                audit::log(
+                                    "cli",
+                                    "ASP/deliver_xmtp_failed",
+                                    false,
+                                    Duration::default(),
+                                    Some(
+                                        [base_tags.clone(), vec!["type=text_fallback".into()]]
+                                            .concat(),
+                                    ),
+                                    Some(&e.to_string()),
+                                );
                                 send_error = Some(e.to_string());
                             }
                         }
                     }
                     let tmp_dir = std::env::temp_dir();
                     let tmp_path = tmp_dir.join(format!(
-                        "deliverable_{}.txt", chrono::Local::now().format("%Y%m%d%H%M%S")
+                        "deliverable_{}.txt",
+                        chrono::Local::now().format("%Y%m%d%H%M%S")
                     ));
                     let _ = std::fs::write(&tmp_path, deliverable_text);
-                    Prepared::Text { tmp_path: tmp_path.display().to_string() }
+                    Prepared::Text {
+                        tmp_path: tmp_path.display().to_string(),
+                    }
                 }
             }
         } else {
@@ -462,21 +620,36 @@ pub async fn handle_deliver(
             );
             if !user_agent_id.is_empty() {
                 match send_or_mock(job_id, user_agent_id, &msg) {
-                    Ok(()) => audit::log("cli", "ASP/deliver_xmtp_sent", true, Duration::default(),
-                        Some([base_tags.clone(), vec!["type=text".into()]].concat()), None),
+                    Ok(()) => audit::log(
+                        "cli",
+                        "ASP/deliver_xmtp_sent",
+                        true,
+                        Duration::default(),
+                        Some([base_tags.clone(), vec!["type=text".into()]].concat()),
+                        None,
+                    ),
                     Err(e) => {
-                        audit::log("cli", "ASP/deliver_xmtp_failed", false, Duration::default(),
-                            Some([base_tags.clone(), vec!["type=text".into()]].concat()), Some(&e.to_string()));
+                        audit::log(
+                            "cli",
+                            "ASP/deliver_xmtp_failed",
+                            false,
+                            Duration::default(),
+                            Some([base_tags.clone(), vec!["type=text".into()]].concat()),
+                            Some(&e.to_string()),
+                        );
                         send_error = Some(e.to_string());
                     }
                 }
             }
             let tmp_dir = std::env::temp_dir();
             let tmp_path = tmp_dir.join(format!(
-                "deliverable_{}.txt", chrono::Local::now().format("%Y%m%d%H%M%S")
+                "deliverable_{}.txt",
+                chrono::Local::now().format("%Y%m%d%H%M%S")
             ));
             let _ = std::fs::write(&tmp_path, deliverable_text);
-            Prepared::Text { tmp_path: tmp_path.display().to_string() }
+            Prepared::Text {
+                tmp_path: tmp_path.display().to_string(),
+            }
         }
     } else {
         bail!("Either --file or --deliverable-text must be provided");
@@ -487,8 +660,14 @@ pub async fn handle_deliver(
     // reaches here (Ended short-circuited above); the one-shot path keeps legacy continue.
     if routing == Routing::Active {
         if let Some(msg) = &send_error {
-            audit::log("cli", "ASP/deliver_subscription_send_failed", false, Duration::default(),
-                Some(base_tags.clone()), Some(msg));
+            audit::log(
+                "cli",
+                "ASP/deliver_subscription_send_failed",
+                false,
+                Duration::default(),
+                Some(base_tags.clone()),
+                Some(msg),
+            );
             print_deliver_result(&DeliverOutcome::SendFailed(msg.clone()), job_id);
             return Ok(());
         }
@@ -498,52 +677,116 @@ pub async fn handle_deliver(
     // A subscription task NEVER submits: an Active continuous delivery keeps the task in
     // `accepted`, and closing/settlement is backend-automatic (Ended already short-circuited).
     let tx_hash: Option<String> = if is_subscription {
-        audit::log("cli", "ASP/deliver_subscription_continued", true, Duration::default(),
-            Some([base_tags.clone(), vec![format!("subStatus={sub_status_code}")]].concat()), None);
+        audit::log(
+            "cli",
+            "ASP/deliver_subscription_continued",
+            true,
+            Duration::default(),
+            Some(
+                [
+                    base_tags.clone(),
+                    vec![format!("subStatus={sub_status_code}")],
+                ]
+                .concat(),
+            ),
+            None,
+        );
         None
     } else {
         let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
         let body = serde_json::json!({ "evidenceHash": "" });
-        let resp = client.post_with_identity(&client.endpoint(job_id, "submit"), &body, agent_id).await?;
+        let resp = client
+            .post_with_identity(&client.endpoint(job_id, "submit"), &body, agent_id)
+            .await?;
         let tx = signing::sign_uop_and_broadcast(
-            client, &resp["uopData"], &account_id, &address,
-            job_id, signing::extract_biz_type(&resp), agent_id, None,
-        ).await?;
-        audit::log("cli", "ASP/deliver_submitted", true, Duration::default(),
-            Some(vec![format!("jobId={job_id}"), format!("agentId={agent_id}"), format!("txHash={tx}")]), None);
+            client,
+            &resp["uopData"],
+            &account_id,
+            &address,
+            job_id,
+            signing::extract_biz_type(&resp),
+            agent_id,
+            None,
+        )
+        .await?;
+        audit::log(
+            "cli",
+            "ASP/deliver_submitted",
+            true,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("txHash={tx}"),
+            ]),
+            None,
+        );
         Some(tx)
     };
 
     // ── 4. Local persistent save ────────────────────────────────────────
 
     match &prepared {
-        Prepared::File { local_path, file_key } => {
+        Prepared::File {
+            local_path,
+            file_key,
+        } => {
             if std::path::Path::new(local_path).exists() {
                 let params = super::super::common::deliverables::SaveParams {
-                    job_id, role: "asp", file_path: local_path, deliverable_type: "file",
-                    title, short_id: &short_id, file_key: Some(file_key),
-                    token_symbol, token_amount,
+                    job_id,
+                    role: "asp",
+                    file_path: local_path,
+                    deliverable_type: "file",
+                    title,
+                    short_id: &short_id,
+                    file_key: Some(file_key),
+                    token_symbol,
+                    token_amount,
                     counterparty_agent_id: Some(user_agent_id).filter(|s| !s.is_empty()),
                     counterparty_name: None,
                 };
                 match super::super::common::deliverables::handle_save(&params) {
-                    Ok(r) => { if DEBUG_LOG { eprintln!("[deliver] deliverable auto-saved: {}", r.path); } }
-                    Err(e) => { if DEBUG_LOG { eprintln!("[deliver] deliverable auto-save failed (non-blocking): {e}"); } }
+                    Ok(r) => {
+                        if DEBUG_LOG {
+                            eprintln!("[deliver] deliverable auto-saved: {}", r.path);
+                        }
+                    }
+                    Err(e) => {
+                        if DEBUG_LOG {
+                            eprintln!("[deliver] deliverable auto-save failed (non-blocking): {e}");
+                        }
+                    }
                 }
             }
         }
         Prepared::Text { tmp_path } => {
             if std::path::Path::new(tmp_path).exists() {
                 let params = super::super::common::deliverables::SaveParams {
-                    job_id, role: "asp", file_path: tmp_path, deliverable_type: "text",
-                    title, short_id: &short_id, file_key: None,
-                    token_symbol, token_amount,
+                    job_id,
+                    role: "asp",
+                    file_path: tmp_path,
+                    deliverable_type: "text",
+                    title,
+                    short_id: &short_id,
+                    file_key: None,
+                    token_symbol,
+                    token_amount,
                     counterparty_agent_id: Some(user_agent_id).filter(|s| !s.is_empty()),
                     counterparty_name: None,
                 };
                 match super::super::common::deliverables::handle_save(&params) {
-                    Ok(r) => { if DEBUG_LOG { eprintln!("[deliver] text deliverable auto-saved: {}", r.path); } }
-                    Err(e) => { if DEBUG_LOG { eprintln!("[deliver] text deliverable auto-save failed (non-blocking): {e}"); } }
+                    Ok(r) => {
+                        if DEBUG_LOG {
+                            eprintln!("[deliver] text deliverable auto-saved: {}", r.path);
+                        }
+                    }
+                    Err(e) => {
+                        if DEBUG_LOG {
+                            eprintln!(
+                                "[deliver] text deliverable auto-save failed (non-blocking): {e}"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -554,7 +797,12 @@ pub async fn handle_deliver(
         // Continuous delivery (Active) — sent, no submit. The resident script consumes this
         // JSON to decide whether to continue to the next task.
         let _ = tx_hash; // always None for a subscription (never submits)
-        print_deliver_result(&DeliverOutcome::Delivered { delivery_id: signal_delivery_id.clone() }, job_id);
+        print_deliver_result(
+            &DeliverOutcome::Delivered {
+                delivery_id: signal_delivery_id.clone(),
+            },
+            job_id,
+        );
     } else {
         let tx_hash = tx_hash.expect("one-shot delivery always runs the on-chain submit");
         println!("✓ Deliverable submitted, waiting for on-chain confirmation (job_submitted)");

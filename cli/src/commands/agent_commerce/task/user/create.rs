@@ -36,7 +36,6 @@ pub struct CreateTaskParams {
     pub title: Option<String>,
     pub provider: String,
     pub attachments: Option<Vec<String>>,
-    pub endpoint: Option<String>,
     pub payment_mode: String,
     pub service_id: String,
     pub service_params: Option<String>,
@@ -204,10 +203,7 @@ fn build_create_body(
     Ok(body)
 }
 
-pub async fn handle_create(
-    client: &mut TaskApiClient,
-    params: CreateTaskParams,
-) -> Result<()> {
+pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams) -> Result<()> {
     let validated = params.validate()?;
 
     ensure_tokens_refreshed().await.map_err(|e| {
@@ -265,27 +261,7 @@ pub async fn handle_create(
     // on-chain during broadcast and may be processed by the agent before
     // sign_uop_and_broadcast returns — the file must already exist.
     //
-    // FR-8.2/8.4: when --endpoint is omitted/empty but a serviceId is given,
-    // auto-resolve the x402 endpoint from the provider's service catalog and
-    // persist it. Explicit --endpoint is used verbatim (unchanged). A2A /
-    // no-endpoint services resolve to None → endpoint-less save, unchanged
-    // routing (FR-8.5/AC-11).
-    let resolved_endpoint: Option<String> =
-        if let Some(ep) = params.endpoint.as_deref().filter(|s| !s.is_empty()) {
-            Some(ep.to_string())
-        } else if !params.service_id.trim().is_empty() {
-            common::find_service(&params.provider, &params.service_id)
-                .await?
-                .and_then(|svc| svc.get("endpoint").and_then(|v| v.as_str()).map(str::to_string))
-                .filter(|s| !s.is_empty())
-        } else {
-            None
-        };
-    super::negotiate::save_designated_provider_with_endpoint(
-        &job_id,
-        &params.provider,
-        resolved_endpoint.as_deref(),
-    )?;
+    super::negotiate::save_designated_provider(&job_id, &params.provider)?;
     let provider_prebind = common::a2a_binding::bind_job_provider_to_current_runtime(&job_id).await;
 
     let tx_hash = match signing::sign_uop_and_broadcast(
@@ -507,7 +483,6 @@ mod tests {
             title: Some("t".to_string()),
             provider,
             attachments: None,
-            endpoint: None,
             payment_mode: "escrow".to_string(),
             service_id: "svc-1".to_string(),
             service_params: None,
@@ -549,7 +524,10 @@ mod tests {
             "request body must not contain descriptionSummary: {body}"
         );
         assert_eq!(body["title"], "t");
-        assert_eq!(body["description"], "a long enough description text for the task");
+        assert_eq!(
+            body["description"],
+            "a long enough description text for the task"
+        );
         assert_eq!(body["providerAgentId"], "agent-1");
     }
 
@@ -571,7 +549,10 @@ mod tests {
         );
         assert_eq!(envelope["blocked"], serde_json::json!(true));
         assert_eq!(envelope["submitted"], serde_json::json!(false));
-        assert_eq!(envelope["mustRepeatInFinalResponse"], serde_json::json!(true));
+        assert_eq!(
+            envelope["mustRepeatInFinalResponse"],
+            serde_json::json!(true)
+        );
         assert_eq!(envelope["forbidFundingSummary"], serde_json::json!(true));
         assert_eq!(
             envelope["fundingNoticeCommand"],

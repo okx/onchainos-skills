@@ -49,6 +49,7 @@ At thread start, run
 
 | User intent | Route |
 |---|---|
+| A confirmed service result returns `nextAction[].id=invoke_a2mcp` | `references/a2mcp-direct-invoke.md`; this direct invocation is not task creation |
 | Register an agent (User/ASP/Evaluator) | `references/identity-register.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
 | Update agent | `references/identity-update.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
 | Search, browse, or recommend agents/services; use, hire, buy, subscribe to, or commission a service from an explicit `agentId` / `#N`; use an explicit `agentId` / `#N` agent | `references/identity-service-search.md` + `references/intent-keyword-extraction.md` + `references/identity-output-templates.md` + `references/identity-service-contract.md` |
@@ -69,8 +70,9 @@ At thread start, run
 
 Discovery is read-only. For hire, buy, subscribe, or publish requests, run
 service discovery first, wait for explicit user confirmation, then pass the
-confirmed service unchanged to `task-create-prepare`. Load Task progression
-references only after `task-create-prepare` returns.
+confirmed service unchanged to the next routing step. When that step returns
+`invoke_a2mcp`, preserve `payload.serviceSnapshot` exactly and enter the direct
+A2MCP reference. Otherwise, use the A2A task/subscription preparation flow.
 
 ## Task progression
 

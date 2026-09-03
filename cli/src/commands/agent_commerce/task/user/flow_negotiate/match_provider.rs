@@ -45,11 +45,11 @@ async fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
     let dp_id = super::super::negotiate::get_designated_provider(job_id)
         .ok()
         .flatten()
-        .expect("job_created_with_designated_provider_cli called only when designated provider exists");
+        .expect(
+            "job_created_with_designated_provider_cli called only when designated provider exists",
+        );
 
     let notify_tpl = super::super::content::job_created_designated_user_notify();
-    let designated_endpoint = super::super::negotiate::get_designated_endpoint(job_id).ok().flatten();
-
     // Fill the static placeholders in the notify template so the LLM only
     // has to translate (no placeholder bookkeeping). Dispatch itself is
     // LLM-driven so the content is in the user's language.
@@ -67,13 +67,10 @@ async fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
     );
 
     // D-Step 1 — designated-route query (in-process).
-    let designated_service_id = ctx
-        .prefetched
-        .and_then(|task| task.service_id.as_deref());
+    let designated_service_id = ctx.prefetched.and_then(|task| task.service_id.as_deref());
     let route_result = crate::commands::agent_commerce::task::common::designated_route_inner(
         &dp_id,
         designated_service_id,
-        designated_endpoint.as_deref(),
     )
     .await;
     let route_json = match route_result {
@@ -85,10 +82,12 @@ async fn job_created_with_designated_provider(ctx: &FlowContext<'_>) -> String {
     // the "LLM calls `next-action --event designated_*`" round-trip entirely.
     // The a2a branch additionally inlines B-Step 0 / 1 / 1.5 (session
     // duplicate guard + create + SKILL_PREFETCH) via `branch_a2a_cli`.
-    let route = route_json.get("route").and_then(|v| v.as_str()).unwrap_or("");
+    let route = route_json
+        .get("route")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let branch_playbook = match route {
         "a2a" => super::designated::branch_a2a_cli(job_id, agent_id, &dp_id),
-        "x402" => Some(super::designated::branch_x402(job_id, agent_id, short_id, &dp_id, Some(&route_json))),
         "error" => Some(super::designated::branch_error(job_id, agent_id, short_id, &dp_id)),
         _ => return format!(
             "[job_created_cli] ERROR: unknown route value '{route}' in designated-route response: {route_json}\n"
