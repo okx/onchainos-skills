@@ -137,13 +137,13 @@ User-facing prompt:
 
 Rules:
 
-1. Store four numbered lines using localized equivalents of the bracketed labels below; preserve
-   equivalent supplied labels and add missing ones:
+1. Store exactly four numbered lines using the bracketed headings below or their localized
+   equivalents. Preserve supplied headings and brackets, and add any missing headings:
 
    1. `[Service Description]` — purpose.
-   2. `[Parameter Spec]` — key parameters on one `;`-separated line as
-      `name(type, required/optional): meaning`; append optional defaults. Keep key parameters if the
-      full list does not fit. Normalize malformed specs and obtain separate confirmation.
+   2. `[Parameter Spec]` — must list key parameters on one `;`-separated line. Each parameter must
+      use `name(type, required/optional): meaning`; append optional defaults. Keep key parameters if
+      the full list does not fit. Normalize malformed specs and obtain separate confirmation.
    3. `[Request Method]` — HTTP verb or bare MCP tool name. Strip URL/path text and default an
       unambiguous path-only value to POST; show the stored result on the final card.
    4. `[Request Example]` — runnable `curl` against the endpoint with realistic inputs. Confirm it
