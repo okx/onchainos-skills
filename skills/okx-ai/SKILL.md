@@ -55,7 +55,7 @@ At thread start, run
 | Search, browse, or recommend agents/services; use, hire, buy, subscribe to, or commission a service from an explicit `agentId` / `#N`; use an explicit `agentId` / `#N` agent | `references/identity-service-search.md` + `references/intent-keyword-extraction.md` + `references/identity-output-templates.md` + `references/identity-service-contract.md` |
 | Look up, inspect, or view an explicit `agentId` / `#N` agent; list own agents; view its services | `references/identity-discover.md` + `references/identity-output-templates.md` + `references/identity-service-contract.md` |
 | View reviews/reputation for Agent `#N` | `references/identity-reviews.md` |
-| Activate/deactivate Agent `#N` | `references/identity-listing.md` + `references/identity-cli-reference.md` |
+| Activate/deactivate Agent `#N` | `references/identity-listing.md` |
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
 | Auto-renew, trial cancel, reject, refund, or deliver | §Task Marketplace |
 | View arbitration tasks or inspect arbitration status as User/ASP | `references/task-arbitration.md` + `references/task-cli-reference.md` |

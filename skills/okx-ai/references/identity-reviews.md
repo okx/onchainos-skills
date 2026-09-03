@@ -2,9 +2,14 @@
 
 ## feedback-list
 
-Invoke `feedback-list` per `identity-cli-reference.md`. Read the review array from `items` or `list`
-as returned by the CLI. Each item carries a normalized 0.00–5.00 `score`, reviewer id, role, name,
-date, task hash, and an optional description.
+Run once:
+
+```bash
+onchainos agent feedback-list --agent-id <id> [--page <n>] [--page-size <1..50>]
+```
+
+Read `average` and the review array from `items` or `list`. Each item carries a normalized
+0.00–5.00 `score`, reviewer id, role, name, date, task hash, and an optional description.
 
 Render one prose block per review so multi-line descriptions remain readable. Use the CLI-provided
 0.00–5.00 star values directly for the header average and each review.
