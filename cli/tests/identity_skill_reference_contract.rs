@@ -1,6 +1,4 @@
 const SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
-const CLI_REFERENCE: &str =
-    include_str!("../../skills/okx-ai/references/identity-cli-reference.md");
 const REGISTER: &str = include_str!("../../skills/okx-ai/references/identity-register.md");
 const UPDATE: &str = include_str!("../../skills/okx-ai/references/identity-update.md");
 const DISCOVER: &str = include_str!("../../skills/okx-ai/references/identity-discover.md");
@@ -27,49 +25,23 @@ fn flatten(text: &str) -> String {
 }
 
 #[test]
-fn identity_cli_reference_is_compact_and_owns_shared_cli_rules() {
-    let cli = flatten(CLI_REFERENCE);
-    assert!(CLI_REFERENCE.lines().count() <= 110);
-    assert!(cli.contains("Agent identities live on XLayer"));
-    assert!(cli.contains("Run each call prescribed by the active flow once"));
-    assert!(!cli.contains("reload after context compaction"));
-}
-
-#[test]
-fn identity_cli_reference_contains_only_consumed_command_contracts() {
-    for command in [
-        "`agent feedback-list`",
-        "`agent activate`",
-        "`agent deactivate`",
-    ] {
-        assert!(
-            CLI_REFERENCE.contains(command),
-            "missing contract: {command}"
-        );
-    }
-    for command in [
-        "agent pre-check",
-        "agent upload",
-        "agent create",
-        "agent update",
-        "agent validate-listing",
-        "agent get-my-agents",
-        "agent get-agents",
-        "agent service-list",
-        "agent search",
-        "agent get ",
-        "agent get-by-address",
-        "agent xmtp-sign",
-    ] {
-        assert!(
-            !CLI_REFERENCE.contains(command),
-            "unconsumed command leaked into shared reference: {command}"
-        );
-    }
-    assert!(CLI_REFERENCE.contains("Never add `--chain`, `--address`, or undocumented `--format`"));
-    assert!(REVIEWS.contains("Invoke `feedback-list` per `identity-cli-reference.md`"));
-    assert!(LISTING.contains("`deactivate` form in `identity-cli-reference.md`"));
-    assert!(LISTING.contains("`activate` form in `identity-cli-reference.md`"));
+fn identity_cli_contracts_are_owned_by_their_active_flows() {
+    let reviews = flatten(REVIEWS);
+    let listing = flatten(LISTING);
+    assert!(reviews.contains(
+        "onchainos agent feedback-list --agent-id <id> [--page <n>] [--page-size <1..50>]"
+    ));
+    assert!(
+        listing.contains("onchainos agent activate --agent-id <id> --preferred-language <BCP-47>")
+    );
+    assert!(listing.contains("onchainos agent deactivate --agent-id <id>"));
+    assert_eq!(reviews.matches("Run once").count(), 1);
+    assert_eq!(listing.matches("Run once").count(), 2);
+    assert!(listing.contains("never chase a successful toggle with `agent get-agents`"));
+    assert!(reviews.contains("Read `average` and the review array from `items` or `list`"));
+    assert!(listing.contains(
+        "Read `blockType`, `agentRole`, `activate`, and optional `submitApproval` in the order below"
+    ));
     assert!(SERVICE_SEARCH.contains(r"onchainos agent service-match \"));
     assert!(SERVICE_SEARCH.contains("onchainos agent service-match --search-after <cursor>"));
 }
@@ -120,8 +92,8 @@ fn task_flows_own_task_feedback_commands() {
     assert!(TASK_CLI.contains("agent task-feedback --agent-id <rater> --task-id <jobId>"));
     assert!(!TASK_CLI.contains("--score <0-100>"));
 
-    assert!(!CLI_REFERENCE.contains("agent feedback-submit"));
-    assert!(!CLI_REFERENCE.contains("agent task-feedback"));
+    assert!(!REVIEWS.contains("agent feedback-submit"));
+    assert!(!REVIEWS.contains("agent task-feedback"));
 
     assert!(REGISTERED_HOME.contains("./unregistered-role-selection.md"));
     assert!(UNREGISTERED_ROLE_SELECTION.contains("../../okx-ai/references/identity-register.md"));
@@ -130,7 +102,6 @@ fn task_flows_own_task_feedback_commands() {
 
 #[test]
 fn identity_write_gates_are_preserved() {
-    let cli = flatten(CLI_REFERENCE);
     let register = flatten(REGISTER);
     let update = flatten(UPDATE);
     let service_contract = flatten(SERVICE_CONTRACT);
@@ -144,7 +115,6 @@ fn identity_write_gates_are_preserved() {
     assert!(service_contract.contains("wait for explicit Done"));
     assert!(!update.contains("Add another / Done"));
     assert!(validate_listing.contains("**Update:** after collection"));
-    assert!(cli.contains("never follow a successful write with a query or poll"));
     assert!(register.contains("Continue to §4 only after explicit Done"));
     assert!(register.contains("it never runs `agent create`"));
     assert!(register.contains("I won't run anything until you reply **1**"));
@@ -356,7 +326,6 @@ fn optional_a2a_service_guide_and_guided_a2mcp_behavior_are_consistent() {
 
 #[test]
 fn identity_shared_rules_have_single_owners() {
-    let cli = flatten(CLI_REFERENCE);
     let discover = flatten(DISCOVER);
     let search = flatten(SERVICE_SEARCH);
     let contract = flatten(SERVICE_CONTRACT);
@@ -370,8 +339,6 @@ fn identity_shared_rules_have_single_owners() {
     assert!(UPDATE.contains("Never use the numeric raw `id`; use `serviceId`"));
     assert!(!discover.contains("Never display the raw `serviceId`"));
     assert!(!search.contains("Never display the raw `serviceId`"));
-
-    assert!(!cli.contains("A continuation cannot repeat initial filters"));
 
     assert!(listing.contains("`submitApproval.success: true`"));
     assert!(listing.contains("`submitApproval.success: false`"));
@@ -419,7 +386,6 @@ fn evaluator_registration_continues_to_staking() {
 #[test]
 fn identity_references_do_not_self_bootstrap_runtime_prerequisites() {
     for (name, reference) in [
-        ("cli", CLI_REFERENCE),
         ("discover", DISCOVER),
         ("service-search", SERVICE_SEARCH),
         ("errors", ERRORS),

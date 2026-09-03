@@ -5,8 +5,13 @@ field table; never chase a successful toggle with `agent get-agents`. Use the us
 
 ## deactivate
 
-Run the `deactivate` form in `identity-cli-reference.md` directly with the user's `#N`. Read only
-`success`.
+Run once directly with the user's `#N`:
+
+```bash
+onchainos agent deactivate --agent-id <id>
+```
+
+Read only `success`.
 
 - `success: true` → emit exactly ONE line (not a menu):
   `Unpublished — hidden from client lists. Say 'activate #<id>' to re-publish.`
@@ -15,7 +20,13 @@ Run the `deactivate` form in `identity-cli-reference.md` directly with the user'
 
 ## activate
 
-Invoke the `activate` form in `identity-cli-reference.md` with the user's `#N` and locked language.
+Run once with the user's `#N` and locked language:
+
+```bash
+onchainos agent activate --agent-id <id> --preferred-language <BCP-47>
+```
+
+Read `blockType`, `agentRole`, `activate`, and optional `submitApproval` in the order below.
 
 ### Response — match in order
 
