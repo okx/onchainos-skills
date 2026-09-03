@@ -437,7 +437,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             super::flow_lifecycle::reject_review(&ctx).await
         }
         Event::JobCompleted => {
-            super::v2::job_completed::handle(job_id, agent_id, prefetched).to_string()
+            super::v2::job_completed::handle(job_id, agent_id)
+                .await
+                .to_string()
         }
         Event::DisputeResolved => super::flow_lifecycle::dispute_resolved(&ctx),
         Event::JobRefunded => super::flow_lifecycle::job_refunded(&ctx),
@@ -1081,34 +1083,6 @@ mod tests {
             Some(&msg),
         )
         .await
-    }
-
-    #[tokio::test]
-    async fn job_completed_routes_structured_user_action() {
-        let task = crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
-            &json!({
-                "title": "Audit report",
-                "description": "Audit the contract",
-                "paymentMode": 1,
-                "tokenAmount": "12",
-                "tokenSymbol": "USDT",
-                "providerAgentId": "provider-1"
-            }),
-        );
-        let output = generate_next_action(
-            JOB_ID,
-            "job_completed",
-            AGENT_ID,
-            None,
-            None,
-            task.payment_mode,
-            Some(&task),
-            Some(&json!({ "event": "job_completed", "jobId": JOB_ID })),
-        )
-        .await;
-        let progression: serde_json::Value = serde_json::from_str(&output).unwrap();
-
-        assert_eq!(progression["nextAction"][0]["id"], "finalize_user_task");
     }
 
     #[tokio::test]

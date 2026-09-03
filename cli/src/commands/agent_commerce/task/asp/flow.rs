@@ -60,7 +60,7 @@ pub async fn generate_a2mcp_next_action(
                  jobId={job_id}\n"
             )
         },
-        Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id, prefetched),
+        Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id).await,
         other => format!(
             "[System notification] {other} (x402 / A2MCP flow — no ASP-side action)\n\
              [Role] ASP (Agent Service ASP)\n\n\
@@ -485,7 +485,7 @@ pub async fn generate_next_action(
         ),
 
         // ─── Scene 7: Task completed (review passed / evaluation won) ────────────────
-        Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id, prefetched),
+        Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id).await,
 
         // ─── Scene 6.5: Evaluation ruling (won / lost branches distinguished by jobStatus in the inbound envelope) ─
         Event::DisputeResolved => {
@@ -1409,50 +1409,6 @@ mod tests {
             Some(&msg),
         )
         .await
-    }
-
-    fn completed_task(payment_mode: i64) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
-        crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
-            &json!({
-                "title": "Audit report",
-                "description": "Audit the contract",
-                "paymentMode": payment_mode,
-                "tokenAmount": "12",
-                "tokenSymbol": "USDT",
-                "buyerAgentId": "user-1"
-            }),
-        )
-    }
-
-    #[tokio::test]
-    async fn job_completed_routes_structured_asp_action_in_both_flows() {
-        let task = completed_task(1);
-        let output = generate_next_action(
-            ASP_JOB_ID,
-            "job_completed",
-            ASP_AGENT_ID,
-            None,
-            None,
-            Some(&task),
-            None,
-        )
-        .await;
-        let progression: serde_json::Value = serde_json::from_str(&output).unwrap();
-        assert_eq!(progression["nextAction"][0]["id"], "finalize_asp_task");
-
-        let task = completed_task(3);
-        let output = generate_a2mcp_next_action(
-            ASP_JOB_ID,
-            "job_completed",
-            ASP_AGENT_ID,
-            None,
-            None,
-            Some(&task),
-            None,
-        )
-        .await;
-        let progression: serde_json::Value = serde_json::from_str(&output).unwrap();
-        assert_eq!(progression["nextAction"][0]["id"], "finalize_asp_task");
     }
 
     #[tokio::test]

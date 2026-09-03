@@ -1,21 +1,38 @@
-use crate::commands::agent_commerce::task::common::{deliverables, PreFetchedTaskContext};
+use crate::commands::agent_commerce::task::common::{
+    deliverables, network::task_api_client::TaskApiClient, PreFetchedTaskContext,
+};
 
-pub(crate) fn handle(
+pub(crate) async fn handle(job_id: &str, agent_id: &str) -> serde_json::Value {
+    let mut client = TaskApiClient::new();
+    let response = client
+        .get_with_identity(&client.task_path(job_id), agent_id)
+        .await;
+    result_from_task_detail(job_id, agent_id, response)
+}
+
+fn result_from_task_detail(
     job_id: &str,
     agent_id: &str,
-    task: Option<&PreFetchedTaskContext>,
+    response: anyhow::Result<serde_json::Value>,
 ) -> serde_json::Value {
-    let task = match task {
-        Some(task) => task,
-        None => return blocked_result(job_id),
+    let response = match response {
+        Ok(response) => response,
+        Err(_) => return blocked_result(job_id, "task_detail_unavailable"),
     };
+    if response.get("jobId").and_then(serde_json::Value::as_str) != Some(job_id) {
+        return blocked_result(job_id, "task_detail_job_id_mismatch");
+    }
+    if response.get("status").and_then(serde_json::Value::as_i64) != Some(6) {
+        return blocked_result(job_id, "stale_task_status");
+    }
+    let task = PreFetchedTaskContext::from_api_response(&response);
     let provider_agent_id = match task
         .provider_agent_id
         .as_deref()
         .filter(|value| !value.is_empty())
     {
         Some(value) => value,
-        None => return blocked_result(job_id),
+        None => return blocked_result(job_id, "task_detail_unavailable"),
     };
 
     serde_json::json!({
@@ -28,10 +45,10 @@ pub(crate) fn handle(
         }],
         "payload": {
             "jobId": job_id,
-            "notification": completion_notification(job_id, task),
+            "notification": completion_notification(job_id, &task),
             "ratingResultNotification": super::super::content::rating_submitted_user_notify(
                 job_id,
-                title(task),
+                title(&task),
             ),
             "rating": {
                 "targetAgentId": provider_agent_id,
@@ -45,11 +62,11 @@ pub(crate) fn handle(
     })
 }
 
-fn blocked_result(job_id: &str) -> serde_json::Value {
+fn blocked_result(job_id: &str, reason: &str) -> serde_json::Value {
     serde_json::json!({
         "phase": "task_completion",
         "decision": "blocked",
-        "reason": "task_detail_unavailable",
+        "reason": reason,
         "nextAction": [{ "id": "stop" }],
         "payload": { "jobId": job_id },
     })
@@ -108,7 +125,9 @@ mod tests {
 
     #[test]
     fn returns_user_completion_action_with_scoring_context() {
-        let task = PreFetchedTaskContext::from_api_response(&serde_json::json!({
+        let task = serde_json::json!({
+            "jobId": "job-1",
+            "status": 6,
             "title": "Audit report",
             "description": "Audit the contract",
             "paymentMode": 1,
@@ -116,9 +135,9 @@ mod tests {
             "tokenSymbol": "USDT",
             "providerAgentId": "provider-1",
             "serviceParams": "{\"chain\":\"xlayer\"}"
-        }));
+        });
 
-        let output = handle("job-1", "user-1", Some(&task));
+        let output = result_from_task_detail("job-1", "user-1", Ok(task));
 
         assert_eq!(output["phase"], "task_completion");
         assert_eq!(output["decision"], "ready");
@@ -144,11 +163,37 @@ mod tests {
     }
 
     #[test]
-    fn blocks_when_task_detail_is_unavailable() {
-        let output = handle("job-1", "user-1", None);
+    fn blocks_when_task_detail_request_fails() {
+        let output = result_from_task_detail(
+            "job-1",
+            "user-1",
+            Err(anyhow::anyhow!("request failed")),
+        );
 
         assert_eq!(output["decision"], "blocked");
         assert_eq!(output["reason"], "task_detail_unavailable");
         assert_eq!(output["nextAction"][0]["id"], "stop");
+    }
+
+    #[test]
+    fn blocks_when_task_detail_job_id_mismatches() {
+        let output = result_from_task_detail(
+            "job-1",
+            "user-1",
+            Ok(serde_json::json!({ "jobId": "job-2", "status": 6 })),
+        );
+
+        assert_eq!(output["reason"], "task_detail_job_id_mismatch");
+    }
+
+    #[test]
+    fn blocks_when_task_status_is_not_completed() {
+        let output = result_from_task_detail(
+            "job-1",
+            "user-1",
+            Ok(serde_json::json!({ "jobId": "job-1", "status": 2 })),
+        );
+
+        assert_eq!(output["reason"], "stale_task_status");
     }
 }

@@ -3882,7 +3882,10 @@ mod escape_control_chars_tests {
     }
 
     #[test]
-    fn user_subscription_completion_owns_its_task_detail_request() {
+    fn completion_handlers_own_their_task_detail_requests() {
+        assert!(handler_fetches_own_task_detail("user", "job_completed"));
+        assert!(handler_fetches_own_task_detail("asp", "job_completed"));
+        assert!(!handler_fetches_own_task_detail("evaluator", "job_completed"));
         assert!(handler_fetches_own_task_detail("user", "sub_complete_notify"));
         assert!(!handler_fetches_own_task_detail("asp", "sub_complete_notify"));
         assert!(!handler_fetches_own_task_detail("user", "sub_close_notify"));
@@ -3894,17 +3897,19 @@ mod escape_control_chars_tests {
     }
 
     #[test]
-    fn other_payment_mode_three_events_still_use_a2mcp_flow() {
-        assert!(should_use_a2mcp_flow(Some(3), "job_completed"));
+    fn job_completed_never_uses_a2mcp_flow() {
+        assert!(!should_use_a2mcp_flow(Some(3), "job_completed"));
     }
 }
 
 fn handler_fetches_own_task_detail(role: &str, event: &str) -> bool {
-    role == "user" && event == "sub_complete_notify"
+    (matches!(role, "user" | "asp") && event == "job_completed")
+        || (role == "user" && event == "sub_complete_notify")
 }
 
 fn should_use_a2mcp_flow(payment_mode: Option<i64>, event: &str) -> bool {
-    matches!(payment_mode, Some(3)) && event != "sub_complete_notify"
+    matches!(payment_mode, Some(3))
+        && !matches!(event, "sub_complete_notify" | "job_completed")
 }
 
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).
