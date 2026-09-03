@@ -331,6 +331,61 @@ function Add-ToPath {
     Write-Host ""
 }
 
+# ── Optional companion tools ─────────────────────────────────────────────────────
+# okx-a2a environment readiness is owned by `okx-a2a doctor --fix`; this hook
+# installs the latest CLI package and hands the rest to doctor. Every step is
+# best-effort and silent on failure.
+function Get-A2ACommandPath {
+    foreach ($commandName in @("okx-a2a.cmd", "okx-a2a.exe", "okx-a2a")) {
+        $command = Get-Command $commandName -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($command -and $command.Path) { return $command.Path }
+    }
+    return $null
+}
+
+function Get-A2AVersion([string]$CommandPath) {
+    if (-not $CommandPath) { return $null }
+    try {
+        $output = & $CommandPath --version 2>$null
+        return (($output | Out-String).Trim())
+    } catch {
+        return $null
+    }
+}
+
+function Finish-Install {
+    $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $npmCommand) {
+        $npmCommand = Get-Command npm -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if (-not $npmCommand) { return }
+
+    Write-Host ""
+    Write-Host "Installing the latest okx-a2a and ensuring the A2A environment (non-fatal)..."
+
+    $a2aCommandPath = Get-A2ACommandPath
+    $beforeVer = Get-A2AVersion -CommandPath $a2aCommandPath
+    try { & $npmCommand.Path install -g "@okxweb3/a2a-node@latest" *> $null } catch {}
+
+    # A running daemon keeps executing the old code after the package directory
+    # is replaced, so restart it when the installed version actually changed.
+    $a2aCommandPath = Get-A2ACommandPath
+    $afterVer = Get-A2AVersion -CommandPath $a2aCommandPath
+    if ($afterVer -and $afterVer -ne $beforeVer) {
+        try {
+            $daemonStatus = & $a2aCommandPath daemon status 2>$null | Select-Object -First 1
+            if ("$daemonStatus" -match '^running') {
+                try { & $a2aCommandPath daemon restart *> $null } catch {}
+            }
+        } catch {}
+    }
+
+    if ($a2aCommandPath) {
+        try { & $a2aCommandPath doctor --fix --non-interactive *> $null } catch {}
+    }
+    Write-Host "okx-a2a environment check completed."
+}
+
 # ── Main ─────────────────────────────────────────────────────
 function Main {
     $localVer = Get-LocalVersion
@@ -339,9 +394,15 @@ function Main {
         # ── Beta mode: find latest version including pre-releases ──
         $targetVer = Get-LatestVersionWithBeta
 
-        if ($localVer -eq $targetVer) {
+        # Never replace a newer local beta/dev build with an older remote tag.
+        # Update only when the resolved target is strictly newer than local.
+        if ($localVer -and -not (Test-SemverGt $targetVer $localVer)) {
+            if ($localVer -ne $targetVer) {
+                Write-Host "Installed onchainos ${localVer} is newer than the latest published ${targetVer}; keeping local version."
+            }
             $wfDir = Join-Path $CACHE_DIR "workflows"
             if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
+            Finish-Install
             return
         }
     } else {
@@ -356,6 +417,7 @@ function Main {
             # Already on exact latest stable
             $wfDir = Join-Path $CACHE_DIR "workflows"
             if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
+            Finish-Install
             return
         } else {
             if (Test-SemverGt $latestStable $localVer) {
@@ -365,6 +427,7 @@ function Main {
                 # Local is same or newer (e.g., on a beta ahead of stable)
                 $wfDir = Join-Path $CACHE_DIR "workflows"
                 if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
+                Finish-Install
                 return
             }
         }
@@ -377,6 +440,7 @@ function Main {
     Install-Binary -Tag "v${targetVer}"
     Sync-Workflows -Tag "v${targetVer}"
     Add-ToPath
+    Finish-Install
 }
 
 Main
