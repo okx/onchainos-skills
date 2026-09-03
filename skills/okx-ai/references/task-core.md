@@ -92,7 +92,7 @@ When dealing with integer values of any of the fields below, **look up the table
 
 | Field | Mapping |
 |---|---|
-| `paymentMode` | `0` = unset / `1` = escrow / `3` = x402 |
+| `paymentMode` | `0` = unset / `1` = escrow / `3` = legacy-disabled (stop; never execute the removed Task payment flow) |
 | `sender.role` (a2a-agent-chat) | Counterparty: `1` = User Agent (you are ASP) / `2` = ASP (you are User Agent) |
 | `vote` (by Evaluator) | `0` = Dispute upheld (User Agent wins, funds refunded) / `1` = Dispute not upheld (ASP wins, funds released to ASP) |
 | `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete (funds released to ASP) / `7`=close (funds returned to user) / `8`=expired / `9`=failed (evaluation refunds user) |

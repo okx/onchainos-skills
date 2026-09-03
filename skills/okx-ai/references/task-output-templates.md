@@ -60,7 +60,6 @@ For `task_create_prepare`, use these reason mappings:
 |---|---|---|
 | `login_required` | Login is required. | Log in |
 | `user_identity_required` | A User Agent is required. | Register User Agent |
-| `a2mcp_service` | This is an A2MCP service, not an A2A task. | Route to payment protocol |
 | `unsupported_service_type` | This service type is not supported for task creation. | Stop |
 | `duplicate_subscription` | An active subscription already exists. | Restore listening / Stop |
 | `insufficient_balance` | The balance is insufficient. | Fund account |
@@ -118,13 +117,20 @@ For `task_create_prepare`, `nextAction.id=open_create_playbook` means to open
 the task-creation reference and continue its confirmation flow; it does not
 mean that the subscription has already been created.
 
+For `phase=service_routing` and `nextAction.id=invoke_a2mcp`, do not render the
+generic task-creation confirmation card above. Open
+`a2mcp-direct-invoke.md`. Preserve `payload.serviceSnapshot` verbatim; that
+reference owns parameter collection, supported-token and balance display,
+funding recovery, and the final mutually exclusive Confirm/Cancel card.
+
 ## `task_create_prepare` phase mapping
 
 | Phase | Decision | Next action IDs |
 |---|---|---|
 | `login_validation` | `blocked` | `login` |
 | `identity_validation` | `blocked` | `register_user_agent` |
-| `service_validation` | `blocked` | `route_payment_protocol`, `stop` |
+| `service_validation` | `blocked` | `stop` |
+| `service_routing` | `ready` | `invoke_a2mcp` |
 | `subscription_validation` | `blocked` | `restore_subscription`, `stop` |
 | `payment_validation` | `blocked` | `fund_account` |
 | `creation` | `ready` | `open_create_playbook` |
@@ -148,5 +154,5 @@ mean that the subscription has already been created.
 | Decision | Reason | Next action IDs |
 |---|---|---|
 | `ready` | `completion_submitted` / `rejection_submitted` | `stop` |
-| `blocked` | `x402_no_deliverable` / `completion_failed` / `rejection_failed` | `stop` |
+| `blocked` | `legacy_a2mcp_flow_removed` / `completion_failed` / `rejection_failed` | `stop` |
 | `requires_user_input` | `rejection_reason_required` | `request_rejection_reason` |

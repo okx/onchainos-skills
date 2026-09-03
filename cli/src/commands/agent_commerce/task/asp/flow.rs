@@ -8,69 +8,6 @@
 
 use crate::commands::agent_commerce::task::common::util::short_job_id;
 
-/// x402 / A2MCP next-action playbook for the ASP.
-///
-/// In the x402 flow the User Agent paid the ASP at request time via the A2MCP
-/// service endpoint. `JobCompleted` still performs completion notification,
-/// evaluation, and cleanup; other terminal receipts have no ASP-side action.
-pub async fn generate_a2mcp_next_action(
-    job_id: &str,
-    event_str: &str,
-    agent_id: &str,
-    job_title: Option<&str>,
-    data: Option<&str>,
-    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
-    message: Option<&serde_json::Value>,
-) -> String {
-    let _ = (job_title, data, message);
-    use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
-    let event = parse_status_or_event(event_str);
-    // Inline the task fields used by JobAccepted without another context call.
-    let task_fields_inline: String = {
-        let mut out = String::new();
-        if let Some(p) = prefetched {
-            let mut any = false;
-            if !p.title.is_empty() { out.push_str(&format!("\x20\x20- title: {}\n", p.title)); any = true; }
-            if !p.token_amount.is_empty() { out.push_str(&format!("\x20\x20- tokenAmount: {}\n", p.token_amount)); any = true; }
-            if !p.token_symbol.is_empty() && p.token_symbol != "?" { out.push_str(&format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol)); any = true; }
-            if let Some(b) = p.user_agent_id.as_deref().filter(|s| !s.is_empty()) {
-                out.push_str(&format!("\x20\x20- buyerAgentId: {b}\n"));
-                any = true;
-            }
-            if any {
-                out.insert_str(0, "**Task fields** (pre-fetched; use directly):\n");
-            }
-        }
-        out
-    };
-    match event {
-        Event::JobAccepted => {
-            let user_notify = super::content::job_accepted_user_notify_a2mcp(job_id, agent_id);
-            format!(
-                "[Current state] job_accepted (x402 / A2MCP flow — User Agent's request received, payment confirmed at the A2MCP endpoint)\n\
-                 [Role] ASP (Agent Service ASP)\n\n\
-                 {task_fields_inline}\n\
-                 **Notify the user via `onchainos agent user-notify`** — no on-chain `deliver`, no `okx-a2a xmtp-send` (the deliverable was already returned by the A2MCP service endpoint at request time):\n\n\
-                 🌐 **Localize first** — rewrite the content below in the user's language before sending. Fill `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` from the **Task fields** block above. Do NOT pass the English template verbatim to a non-English user.\n\
-                 ```bash\n\
-                 onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                 ```\n\
-                 content:\n\
-                 {user_notify}\n\n\
-                 jobId={job_id}\n"
-            )
-        },
-        Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id).await,
-        other => format!(
-            "[System notification] {other} (x402 / A2MCP flow — no ASP-side action)\n\
-             [Role] ASP (Agent Service ASP)\n\n\
-             Ignore this event; take no action.\n\
-             jobId={job_id}\n",
-            other = other.as_str()
-        ),
-    }
-}
-
 /// Extract the decision deadline (unix seconds) from a `job_rejected` event
 /// `message` JSON. Returns `None` when the field is absent, non-numeric, or
 /// `<= 0` (FR-4 / FR-5 graceful no-op).
@@ -141,7 +78,9 @@ pub async fn generate_next_action(
     message: Option<&serde_json::Value>,
 ) -> String {
     let _ = message; // currently used only by event handlers that opt in (see JobAspSelected below); silence the unused-arg warning when no scene reads it.
-    use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
+    use crate::commands::agent_commerce::task::common::state_machine::{
+        parse_status_or_event, Event,
+    };
 
     // (Old MCP-era `okx-a2a xmtp-send` `payload` version handshake was removed when the script
     // migrated to `okx-a2a xmtp-send`, which has no equivalent `payload` parameter.
@@ -172,22 +111,70 @@ pub async fn generate_next_action(
             let mut any = false;
             for f in fields {
                 let line = match *f {
-                    "title" if !p.title.is_empty() => Some(format!("\x20\x20- title: {}\n", p.title)),
-                    "description" if !p.description.is_empty() => Some(format!("\x20\x20- description: {}\n", p.description)),
-                    "tokenAmount" if !p.token_amount.is_empty() => Some(format!("\x20\x20- tokenAmount: {}\n", p.token_amount)),
-                    "tokenSymbol" if !p.token_symbol.is_empty() && p.token_symbol != "?" => Some(format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol)),
-                    "buyerAgentId" => p.user_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- buyerAgentId: {v}\n")),
-                    "providerAgentId" => p.provider_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- providerAgentId: {v}\n")),
-                    "paymentMode" => p.payment_mode.map(|v| format!("\x20\x20- paymentMode: {v} ({})\n", match v { 1 => "escrow", 3 => "x402", _ => "unknown" })),
-                    "serviceId" => p.service_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceId: {v}\n")),
-                    "serviceTokenAddress" => p.service_token_address.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAddress: {v}\n")),
-                    "serviceTokenAmount" => p.service_token_amount.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAmount: {v}\n")),
-                    "serviceParams" => p.service_params.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceParams: {v}\n")),
+                    "title" if !p.title.is_empty() => {
+                        Some(format!("\x20\x20- title: {}\n", p.title))
+                    }
+                    "description" if !p.description.is_empty() => {
+                        Some(format!("\x20\x20- description: {}\n", p.description))
+                    }
+                    "tokenAmount" if !p.token_amount.is_empty() => {
+                        Some(format!("\x20\x20- tokenAmount: {}\n", p.token_amount))
+                    }
+                    "tokenSymbol" if !p.token_symbol.is_empty() && p.token_symbol != "?" => {
+                        Some(format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol))
+                    }
+                    "buyerAgentId" => p
+                        .user_agent_id
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- buyerAgentId: {v}\n")),
+                    "providerAgentId" => p
+                        .provider_agent_id
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- providerAgentId: {v}\n")),
+                    "paymentMode" => p.payment_mode.map(|v| {
+                        format!(
+                            "\x20\x20- paymentMode: {v} ({})\n",
+                            match v {
+                                1 => "escrow",
+                                3 => "legacy-disabled",
+                                _ => "unknown",
+                            }
+                        )
+                    }),
+                    "serviceId" => p
+                        .service_id
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceId: {v}\n")),
+                    "serviceTokenAddress" => p
+                        .service_token_address
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceTokenAddress: {v}\n")),
+                    "serviceTokenAmount" => p
+                        .service_token_amount
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceTokenAmount: {v}\n")),
+                    "serviceParams" => p
+                        .service_params
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceParams: {v}\n")),
                     _ => None,
                 };
-                if let Some(l) = line { out.push_str(&l); any = true; }
+                if let Some(l) = line {
+                    out.push_str(&l);
+                    any = true;
+                }
             }
-            if any { Some(out) } else { None }
+            if any {
+                Some(out)
+            } else {
+                None
+            }
         };
         match prefetched.and_then(render) {
             Some(s) => s,
@@ -1286,17 +1273,32 @@ fn user_attachment_received_cli(
     let salt = msg_str("salt");
     let nonce = msg_str("nonce");
     let secret = msg_str("secret");
-    let filename = message.and_then(|m| m.get("filename")).and_then(|v| v.as_str());
+    let filename = message
+        .and_then(|m| m.get("filename"))
+        .and_then(|v| v.as_str());
 
-    if file_key.is_empty() || digest.is_empty() || salt.is_empty()
-        || nonce.is_empty() || secret.is_empty()
+    if file_key.is_empty()
+        || digest.is_empty()
+        || salt.is_empty()
+        || nonce.is_empty()
+        || secret.is_empty()
     {
         let mut missing = Vec::new();
-        if file_key.is_empty() { missing.push("fileKey"); }
-        if digest.is_empty() { missing.push("digest"); }
-        if salt.is_empty() { missing.push("salt"); }
-        if nonce.is_empty() { missing.push("nonce"); }
-        if secret.is_empty() { missing.push("secret"); }
+        if file_key.is_empty() {
+            missing.push("fileKey");
+        }
+        if digest.is_empty() {
+            missing.push("digest");
+        }
+        if salt.is_empty() {
+            missing.push("salt");
+        }
+        if nonce.is_empty() {
+            missing.push("nonce");
+        }
+        if secret.is_empty() {
+            missing.push("secret");
+        }
         let fields = missing.join(", ");
         return format!(
             "[user_attachment_received_cli] ERROR: encryption metadata incomplete — missing: {fields}. \
@@ -1335,7 +1337,8 @@ fn user_attachment_received_cli(
         }
         let dir = attachments_dir(job_id).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir failed: {e}"))?;
-        let file_name = src.file_name()
+        let file_name = src
+            .file_name()
             .ok_or_else(|| format!("invalid file path: {local_path}"))?;
         let dest = dedup_dest(&dir, file_name);
         if std::fs::rename(src, &dest).is_err() {
@@ -1560,12 +1563,19 @@ mod tests {
         // Renewal = the previous period's income became claimable (§2.9 aspClaim).
         // The ASP arm must route to the deterministic claim command, NOT silently
         // ignore it (which left accrued income unclaimed in the contract).
-        let out = run_asp("sub_renew", json!({ "event": "sub_renew", "jobId": ASP_JOB_ID })).await;
+        let out = run_asp(
+            "sub_renew",
+            json!({ "event": "sub_renew", "jobId": ASP_JOB_ID }),
+        )
+        .await;
         assert!(
             out.contains("subscribe-asp-claim"),
             "sub_renew must guide the ASP to claim: {out}"
         );
-        assert!(out.contains(ASP_JOB_ID) && out.contains(ASP_AGENT_ID), "got: {out}");
+        assert!(
+            out.contains(ASP_JOB_ID) && out.contains(ASP_AGENT_ID),
+            "got: {out}"
+        );
         assert!(!out.contains("Silently ignore"), "got: {out}");
         // No buyer involvement: never instruct an XMTP send toward the User Agent.
         assert!(out.contains("Do NOT `okx-a2a xmtp-send`"), "got: {out}");
@@ -1617,7 +1627,10 @@ mod tests {
             degraded.contains("within about 1 day"),
             "deadline fallback: {degraded}"
         );
-        assert!(!degraded.contains(" by .") && !degraded.contains("of  "), "no empty slot: {degraded}");
+        assert!(
+            !degraded.contains(" by .") && !degraded.contains("of  "),
+            "no empty slot: {degraded}"
+        );
     }
 
     #[tokio::test]
@@ -1629,7 +1642,10 @@ mod tests {
             json!({ "event": "sub_dispute", "jobId": ASP_JOB_ID }),
         )
         .await;
-        assert!(out.contains("subscribe-dispute"), "must call subscribe-dispute: {out}");
+        assert!(
+            out.contains("subscribe-dispute"),
+            "must call subscribe-dispute: {out}"
+        );
         assert!(
             out.contains("--reason"),
             "sub_dispute guidance must pass --reason (on-chain bizContext): {out}"
@@ -1655,7 +1671,10 @@ mod tests {
             json!({ "event": "sub_complete_notify", "subEndTime": 1_790_000_000_000i64 }),
         )
         .await;
-        assert!(out.contains("2026-"), "ms timestamp rendered as seconds date: {out}");
+        assert!(
+            out.contains("2026-"),
+            "ms timestamp rendered as seconds date: {out}"
+        );
         assert!(!out.contains("+58692"), "no five-digit year: {out}");
     }
 

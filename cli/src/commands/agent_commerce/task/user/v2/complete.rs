@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::task::common::{
-    deliverables, network::task_api_client::TaskApiClient, PaymentMode,
+    network::task_api_client::TaskApiClient, PaymentMode,
 };
 use crate::commands::agent_commerce::task::signing;
 
@@ -15,50 +15,24 @@ pub(crate) async fn handle(client: &mut TaskApiClient, job_id: &str) -> Result<s
         .await?;
     let payment_mode = PaymentMode::from_int(task["paymentMode"].as_i64().unwrap_or(0) as i32);
 
-    let (tx_hash, payment_mode) = if payment_mode == PaymentMode::Escrow {
-        crate::commands::agent_commerce::task::common::review_gate::check_and_consume(job_id)?;
-        let result = signing::task_dual_sign_and_broadcast(
-            client,
-            job_id,
-            "pre-complete",
-            "complete",
-            None,
-            &account_id,
-            &address,
-            &agent_id,
-            None,
-        )
-        .await?;
-        (result.tx_hash, 1)
-    } else {
-        let has_deliverable = deliverables::read_manifest("user", job_id)
-            .ok()
-            .flatten()
-            .is_some_and(|manifest| !manifest.entries.is_empty());
-        if !has_deliverable {
-            return Ok(no_deliverable_result(job_id));
-        }
+    if payment_mode != PaymentMode::Escrow {
+        return Ok(legacy_a2mcp_removed_result(job_id));
+    }
 
-        let response = client
-            .post_with_identity(
-                &client.endpoint(job_id, "direct/complete"),
-                &serde_json::json!({}),
-                &agent_id,
-            )
-            .await?;
-        let tx_hash = signing::sign_uop_and_broadcast(
-            client,
-            &response["uopData"],
-            &account_id,
-            &address,
-            job_id,
-            signing::extract_biz_type(&response),
-            &agent_id,
-            None,
-        )
-        .await?;
-        (tx_hash, 3)
-    };
+    crate::commands::agent_commerce::task::common::review_gate::check_and_consume(job_id)?;
+    let result = signing::task_dual_sign_and_broadcast(
+        client,
+        job_id,
+        "pre-complete",
+        "complete",
+        None,
+        &account_id,
+        &address,
+        &agent_id,
+        None,
+    )
+    .await?;
+    let tx_hash = result.tx_hash;
 
     audit::log(
         "cli",
@@ -68,7 +42,7 @@ pub(crate) async fn handle(client: &mut TaskApiClient, job_id: &str) -> Result<s
         Some(vec![
             format!("jobId={job_id}"),
             format!("agentId={agent_id}"),
-            format!("paymentMode={payment_mode}"),
+            "paymentMode=1".to_string(),
             format!("txHash={tx_hash}"),
         ]),
         None,
@@ -90,11 +64,11 @@ fn submitted_result(job_id: &str, tx_hash: &str) -> serde_json::Value {
     })
 }
 
-fn no_deliverable_result(job_id: &str) -> serde_json::Value {
+fn legacy_a2mcp_removed_result(job_id: &str) -> serde_json::Value {
     serde_json::json!({
         "phase": "deliverable_review",
         "decision": "blocked",
-        "reason": "x402_no_deliverable",
+        "reason": "legacy_a2mcp_flow_removed",
         "nextAction": [{ "id": "stop" }],
         "payload": { "jobId": job_id },
     })
@@ -118,11 +92,11 @@ mod tests {
     }
 
     #[test]
-    fn x402_without_deliverable_is_blocked() {
-        let output = no_deliverable_result("job-1");
+    fn legacy_a2mcp_complete_is_blocked() {
+        let output = legacy_a2mcp_removed_result("job-1");
 
         assert_eq!(output["decision"], "blocked");
-        assert_eq!(output["reason"], "x402_no_deliverable");
+        assert_eq!(output["reason"], "legacy_a2mcp_flow_removed");
         assert_eq!(output["nextAction"][0]["id"], "stop");
         assert_eq!(output["payload"]["jobId"], "job-1");
     }

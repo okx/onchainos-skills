@@ -13,6 +13,7 @@ use super::{asp_ops, create};
 const PHASE_LOGIN_VALIDATION: &str = "login_validation";
 const PHASE_IDENTITY_VALIDATION: &str = "identity_validation";
 const PHASE_SERVICE_VALIDATION: &str = "service_validation";
+const PHASE_SERVICE_ROUTING: &str = "service_routing";
 const PHASE_PAYMENT_VALIDATION: &str = "payment_validation";
 const PHASE_SUBSCRIPTION_VALIDATION: &str = "subscription_validation";
 const PHASE_CREATION: &str = "creation";
@@ -31,20 +32,43 @@ fn build_decision(
     out
 }
 
-fn emit(
+fn emit(phase: &str, decision: &str, reason: &str, next_action: Value, payload: Value) {
+    crate::output::success(decision_with_payload(
+        phase,
+        decision,
+        reason,
+        next_action,
+        payload,
+    ));
+}
+
+fn decision_with_payload(
     phase: &str,
     decision: &str,
     reason: &str,
     next_action: Value,
     payload: Value,
-) {
+) -> Value {
     let mut out = build_decision(phase, decision, reason, next_action);
     out.insert("payload".to_string(), payload);
-    crate::output::success(Value::Object(out));
+    Value::Object(out)
 }
 
 fn next_action(id: &str, recommend: bool) -> Value {
     json!([{"id": id, "recommend": recommend}])
+}
+
+fn a2mcp_service_routing_decision(service_snapshot: Value) -> Value {
+    decision_with_payload(
+        PHASE_SERVICE_ROUTING,
+        "ready",
+        "a2mcp_service_confirmed",
+        next_action("invoke_a2mcp", true),
+        json!({
+            "schemaVersion": 1,
+            "serviceSnapshot": service_snapshot,
+        }),
+    )
 }
 
 struct DuplicateSubscriptionContext {
@@ -90,9 +114,7 @@ fn required_service_string(service: &Value, key: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("selected Service is missing required field `{key}`"))
 }
 
-fn duplicate_subscription_context(
-    service: &Value,
-) -> Result<Option<DuplicateSubscriptionContext>> {
+fn duplicate_subscription_context(service: &Value) -> Result<Option<DuplicateSubscriptionContext>> {
     if service.get("isSubscribing").and_then(Value::as_bool) != Some(true) {
         return Ok(None);
     }
@@ -229,14 +251,26 @@ pub(crate) async fn handle_task_create_prepare(
     if common::current_account_xlayer_address().is_none()
         || ensure_tokens_refreshed().await.is_err()
     {
-        emit(PHASE_LOGIN_VALIDATION, "blocked", "login_required", next_action("login", true), json!({}));
+        emit(
+            PHASE_LOGIN_VALIDATION,
+            "blocked",
+            "login_required",
+            next_action("login", true),
+            json!({}),
+        );
         return Ok(());
     }
 
     let user_agent_id = match create::resolve_user_agent().await {
         Ok((agent_id, _)) => agent_id,
         Err(_) => {
-            emit(PHASE_IDENTITY_VALIDATION, "blocked", "user_identity_required", next_action("register_user_agent", true), json!({}));
+            emit(
+                PHASE_IDENTITY_VALIDATION,
+                "blocked",
+                "user_identity_required",
+                next_action("register_user_agent", true),
+                json!({}),
+            );
             return Ok(());
         }
     };
@@ -249,13 +283,22 @@ pub(crate) async fn handle_task_create_prepare(
     required_service_string(&service, "serviceId")?;
     let service_type = required_service_string(&service, "serviceType")?;
     if service_type.eq_ignore_ascii_case("A2MCP") {
-        let service = normalize_service(service);
-        emit(PHASE_SERVICE_VALIDATION, "blocked", "a2mcp_service", next_action("route_payment_protocol", true), service);
+        // Service discovery and confirmation stay in the OKX.AI creation
+        // entry. The selected authoritative Service object becomes the
+        // immutable direct-invocation snapshot; no Task is created. `success`
+        // adds the standard `{ok:true,data:...}` envelope around this decision.
+        crate::output::success(a2mcp_service_routing_decision(service));
         return Ok(());
     }
     if !service_type.eq_ignore_ascii_case("A2A") {
         let service = normalize_service(service);
-        emit(PHASE_SERVICE_VALIDATION, "blocked", "unsupported_service_type", next_action("stop", true), service);
+        emit(
+            PHASE_SERVICE_VALIDATION,
+            "blocked",
+            "unsupported_service_type",
+            next_action("stop", true),
+            service,
+        );
         return Ok(());
     }
 
@@ -274,14 +317,26 @@ pub(crate) async fn handle_task_create_prepare(
 
     let required = effective_fee(&service)?;
     if trial_available(&service) || required == 0.0 {
-        emit(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), service);
+        emit(
+            PHASE_CREATION,
+            "ready",
+            "all_checks_passed",
+            next_action("open_create_playbook", true),
+            service,
+        );
         return Ok(());
     }
 
     let currency = required_service_string(&service, "feeTokenSymbol")?;
     match common::ensure_sufficient_balance(required, &currency).await {
         Ok(()) => {
-            emit(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), service);
+            emit(
+                PHASE_CREATION,
+                "ready",
+                "all_checks_passed",
+                next_action("open_create_playbook", true),
+                service,
+            );
             Ok(())
         }
         Err(error) => {
@@ -297,7 +352,13 @@ pub(crate) async fn handle_task_create_prepare(
             if let Some(object) = payload.as_object_mut() {
                 object.insert("balanceWarning".to_string(), warning);
             }
-            emit(PHASE_PAYMENT_VALIDATION, "blocked", "insufficient_balance", next_action("fund_account", true), payload);
+            emit(
+                PHASE_PAYMENT_VALIDATION,
+                "blocked",
+                "insufficient_balance",
+                next_action("fund_account", true),
+                payload,
+            );
             Ok(())
         }
     }
@@ -391,6 +452,57 @@ mod tests {
 
         assert_eq!(existing.status, 3);
         assert_eq!(duplicate_next_actions(&existing), next_action("stop", true));
+    }
+
+    #[test]
+    fn confirmed_a2mcp_service_routes_to_direct_invocation_with_verbatim_snapshot() {
+        let service = json!({
+            "asp": {
+                "aspAgentId": "5421",
+                "aspName": "PixelBrief",
+                "feedbackRate": 96.92,
+                "onlineStatus": 1,
+                "rating": "★ 4.86",
+                "securityRate": 4.86,
+                "soldCount": 21721
+            },
+            "endpoint": "https://pixelbrief.tech/v1/logo",
+            "feeAmount": 0.05,
+            "feeToken": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+            "feeTokenSymbol": "USDT",
+            "freeTrial": null,
+            "isSubscribing": false,
+            "serviceDescription": "Returns logo SVG and palette for a brand name and mood.\n1. brand name 2. mood 3. optional style",
+            "serviceId": "9a5041d8-e03d-461d-b5cd-d2ffdd6111f3",
+            "serviceName": "Logo SVG only",
+            "serviceType": "A2MCP",
+            "sid": 33803,
+            "sortOrder": null,
+            "subscription": [],
+            "supportTrial": false
+        });
+
+        let envelope = json!({
+            "ok": true,
+            "data": a2mcp_service_routing_decision(service.clone()),
+        });
+
+        assert_eq!(
+            envelope,
+            json!({
+                "ok": true,
+                "data": {
+                    "phase": "service_routing",
+                    "decision": "ready",
+                    "reason": "a2mcp_service_confirmed",
+                    "nextAction": [{"id": "invoke_a2mcp", "recommend": true}],
+                    "payload": {
+                        "schemaVersion": 1,
+                        "serviceSnapshot": service,
+                    }
+                }
+            })
+        );
     }
 
     #[test]

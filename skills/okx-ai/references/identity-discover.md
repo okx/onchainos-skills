@@ -19,8 +19,8 @@ onchainos agent get-my-agents [--role <role>]
 ```
 
 Add `--role` only when the user supplied one.
-**MUST** use `identity-output-templates.md` to render only display-ready `cells[]` in
-order; do not derive table values from raw fields.
+**MUST** use the `Agent table` in `identity-output-templates.md` to render only
+display-ready `cells[]` in order; do not derive table values from raw fields.
 
 **STOP.** Wait for an explicit Agent-detail request.
 
@@ -45,4 +45,5 @@ Run:
 onchainos agent service-list --agent-id <id>
 ```
 
-**MUST** use `identity-output-templates.md` to render only returned `cells[]` in order.
+**MUST** use the `Service table` in `identity-output-templates.md` to render only
+returned `cells[]` in order.
