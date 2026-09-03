@@ -34,6 +34,8 @@ fn sanitize_title(title: &str, job_id: &str) -> String {
 /// Resolve the deliverables directory for a job. Supports both old-style
 /// (`<jobId>/`) and new-style (`<jobId>_<title>/`) layouts via prefix scan.
 pub(crate) fn deliverables_dir(role: &str, job_id: &str) -> Result<PathBuf> {
+    // Layer-2 guard: fail closed before joining job_id into a path.
+    super::util::validate_job_id_path_component(job_id)?;
     let role_dir = deliverables_root()?.join(role);
     let exact = role_dir.join(job_id);
     if exact.exists() {
@@ -389,5 +391,73 @@ mod tests {
     #[test]
     fn sanitize_strips_spaces() {
         assert_eq!(sanitize_title("  hello world  ", "0xabc"), "helloworld");
+    }
+
+    /// Set ONCHAINOS_HOME to an isolated temp dir for the duration of a test.
+    fn with_home<F: FnOnce()>(f: F) {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp_root = std::env::current_dir()
+            .expect("current working directory")
+            .join("target")
+            .join("deliverables-test-home");
+        std::fs::create_dir_all(&temp_root).expect("create deliverables test temp root");
+        let tmp = tempfile::tempdir_in(temp_root).expect("create deliverables test home");
+        std::env::set_var("ONCHAINOS_HOME", tmp.path());
+        f();
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    /// A direct `deliverables_dir(role, "../../x")` fails closed
+    /// with the coded error BEFORE any filesystem side effect (the validation runs
+    /// before `deliverables_root()` is even resolved).
+    #[test]
+    fn deliverables_dir_rejects_traversal() {
+        for bad in ["../../x", "a/b", "..", "", "/abs"] {
+            let err = deliverables_dir("user", bad).expect_err(bad);
+            let code = err
+                .downcast_ref::<crate::commands::sink::CodedError>()
+                .map(|c| c.code.clone())
+                .unwrap_or_default();
+            assert_eq!(code, "UNSAFE_JOB_PATH_COMPONENT", "case {bad:?}");
+        }
+    }
+
+    /// Existing on-disk deliverable directories — legacy bare
+    /// `<jobId>/`, new-style `<jobId>_<CJK title>/` and `<jobId>_<emoji title>/` —
+    /// must remain resolvable through the guarded `deliverables_dir`. Names are
+    /// built from \u{...} escapes so this source file stays ASCII.
+    #[test]
+    fn deliverables_dir_resolves_composite_and_legacy() {
+        with_home(|| {
+            let hex_a = format!("0x{}", "a".repeat(64));
+            let hex_b = format!("0x{}", "b".repeat(64));
+            let role_dir = deliverables_root().unwrap().join("user");
+            std::fs::create_dir_all(&role_dir).unwrap();
+
+            // Legacy bare-jobId directory.
+            std::fs::create_dir_all(role_dir.join(&hex_a)).unwrap();
+            assert_eq!(deliverables_dir("user", &hex_a).unwrap(), role_dir.join(&hex_a));
+
+            // New-style `<jobId>_<CJK title>` directory (CJK built from \u{...} escapes).
+            let cjk_dir = format!("{hex_b}_\u{6211}\u{7684}\u{62a5}\u{544a}");
+            std::fs::create_dir_all(role_dir.join(&cjk_dir)).unwrap();
+            assert_eq!(
+                deliverables_dir("user", &hex_b).unwrap(),
+                role_dir.join(&cjk_dir),
+                "CJK-title dir must resolve via prefix scan"
+            );
+
+            // New-style `<jobId>_<emoji title>` directory (jobId_📄).
+            let hex_c = format!("0x{}", "c".repeat(64));
+            let emoji_dir = format!("{hex_c}_\u{1F4C4}");
+            std::fs::create_dir_all(role_dir.join(&emoji_dir)).unwrap();
+            assert_eq!(
+                deliverables_dir("user", &hex_c).unwrap(),
+                role_dir.join(&emoji_dir),
+                "emoji-title dir must resolve via prefix scan"
+            );
+        });
     }
 }

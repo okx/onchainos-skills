@@ -24,6 +24,7 @@ pub mod okx_a2a;
 pub mod onchainos_self;
 pub mod payment_mode;
 pub mod pending_v2;
+pub mod template_vars;
 pub mod prefilled_notify;
 pub mod prefilled_rating;
 pub mod user_lang;

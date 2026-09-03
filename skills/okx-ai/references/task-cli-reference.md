@@ -38,14 +38,14 @@ agent common context <jobId> --role <user|asp|evaluator> --agent-id <agentId> [-
 
 ### pending-decisions-v2
 
-Pending-decisions queue with four subcommands. Same `(jobId, role, agentId, toAgentId?)` key re-`request` overwrites in place (idempotent).
+Pending-decisions queue and direct-push helpers: `request`, `request-prompt`, `resolve`, `resolve-with-sessionkey`, `resolve-prompt`, `pick`, `list`, and `cancel`. The same `(jobId, role, agentId, toAgentId?)` key re-`request` overwrites in place (idempotent).
 
 #### request
 
 Push a decision to the user
 
 ```
-agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --user-content "<text>" --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>] [--continuation-id <id>]
+agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] (--user-content "<text>" | --user-content-file <path>) --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>]
 ```
 
 | Param | Required | Default | Description |
@@ -54,11 +54,42 @@ agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> 
 | `--role` | Yes | - | `user` / `asp` / `evaluator` |
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--to-agent-id` | No | - | Peer agentId (omit for backup sub) |
-| `--user-content` | Yes | - | Full content shown to user verbatim |
+| `--user-content` | Conditional | - | Full content shown to user verbatim. Required unless `--user-content-file` is provided; mutually exclusive with it. |
+| `--user-content-file` | Conditional | - | Path to a file containing the full user-facing content. Required unless `--user-content` is provided; mutually exclusive with it. |
 | `--list-label` | Yes | - | Short label for multi-decision list view |
 | `--llm-content` | No | - | Custom llmContent override |
 | `--source-event` | No | - | Chain event name; used to build `user_decision_<source_event>` on resolve |
-| `--continuation-id` | No | - | Opaque state binding persisted with the pending entry and relayed as `message.continuationId`; cannot be combined with `--llm-content` |
+
+#### request-prompt
+
+Push a decision directly to the user, bypassing queue and playbook emission. It shares the routing and content parameters of `request` and additionally accepts `--template-vars-b64`. Used by the `sub_user_reject` subscription card to carry the untrusted task title out of the emitted shell.
+
+```
+agent pending-decisions-v2 request-prompt --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] (--user-content "<text>" | --user-content-file <path>) --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>] [--template-vars-b64 "<Base64 JSON>"]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--job-id` | Yes | - | Task ID |
+| `--role` | Yes | - | `user` / `asp` / `evaluator` |
+| `--agent-id` | Yes | - | Caller's agentId |
+| `--to-agent-id` | No | - | Peer agentId (omit for backup sub) |
+| `--user-content` | Conditional | - | Full content shown to user verbatim. Required unless `--user-content-file` is provided; mutually exclusive with it. |
+| `--user-content-file` | Conditional | - | Path to a file containing the full user-facing content. Required unless `--user-content` is provided; mutually exclusive with it. |
+| `--list-label` | Yes | - | Short label for multi-decision list view |
+| `--llm-content` | No | - | Custom llmContent override |
+| `--source-event` | No | - | Chain event name used to build the decision relay |
+| `--template-vars-b64` | No | - | Base64(JSON object) of whitelisted template variables. Whitelist keys: `__OKX_TASK_TITLE__` (decision-copy title) and `__OKX_TASK_LABEL_TITLE__` (list-label title). Matching `{{KEY}}` placeholders in the input templates are decoded, validated, and replaced literally in-process using a single, non-recursive pass after Clap parsing and before any push, queue, or API side effect. If a reserved placeholder originates in an input template without a matching variable, the command fails closed with `TEMPLATE_VALUE_MISSING` and pushes nothing. Placeholder-looking text inside a supplied variable value is inserted literally and is not scanned or expanded again. The encoded value is fully redacted in the audit log. |
+
+Error contract (fail-closed — the command returns a coded error and pushes nothing before any side effect):
+
+| errorCode | When |
+|---|---|
+| `TEMPLATE_VARS_INVALID` | Payload is not standard-charset Base64, not UTF-8, not a JSON object, has an unknown key, a non-string value, a duplicate key, an over-length value (> 256 bytes), or an over-cap payload (> 8 KiB). |
+| `TEMPLATE_VALUE_MISSING` | Content declares a `{{KEY}}` placeholder but no matching variable was supplied. |
+| `TEMPLATE_PLACEHOLDER_MISSING` | A variable was supplied but its `{{KEY}}` placeholder is absent from `--user-content` / `--list-label`. |
+
+Error messages are value-free and never embed the decoded title.
 
 #### resolve-prompt
 

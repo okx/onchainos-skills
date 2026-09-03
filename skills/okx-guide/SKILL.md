@@ -4,7 +4,7 @@ description: "Guide users through installing or updating Onchain OS, getting sta
 license: MIT
 metadata:
   author: okx
-  version: "4.5.2"
+  version: "4.5.3"
   homepage: "https://web3.okx.com"
 ---
 

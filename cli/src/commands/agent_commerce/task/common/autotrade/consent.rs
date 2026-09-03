@@ -399,9 +399,14 @@ pub enum ConsentDecision {
     AutoOverCap,
 }
 
-/// `<onchainos_home>/autotrade/consent/<jobId>.json`. Caller MUST have
-/// charset-checked `job_id` first (path-traversal defense).
+/// `<onchainos_home>/autotrade/consent/<jobId>.json`. Self-validates `job_id`
+/// BEFORE any `onchainos_home().join(...)`, so a direct caller such
+/// as `clear_consent("../../x")` cannot reach an out-of-root `remove_file`
+/// (reuses the CONSENT_UNREADABLE bespoke exit).
 fn consent_path(job_id: &str) -> Result<PathBuf, ConsentError> {
+    if !job_id_is_safe(job_id) {
+        return Err(ConsentError(CONSENT_UNREADABLE));
+    }
     let home = crate::home::onchainos_home().map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
     Ok(home
         .join("autotrade")
@@ -911,6 +916,8 @@ pub fn clear_pending_delivery(job_id: &str, delivery_id: &str) {
 /// falls back to `FirstTime` — the next signal re-shows the three-way prompt. Best-effort
 /// (already-absent is fine). Grant file + pending signal are cleared by the caller.
 pub fn clear_consent(job_id: &str) {
+    // `consent_path` self-validates job_id, so an unsafe path such as
+    // `../../x` yields `Err` here and no `remove_file` is ever attempted.
     if let Ok(path) = consent_path(job_id) {
         let _ = std::fs::remove_file(path);
     }
@@ -1330,6 +1337,47 @@ mod tests {
                 evaluate_consent("job1", Some(&dec("5"))).unwrap(),
                 ConsentDecision::FirstTime
             );
+        });
+    }
+
+    /// A direct `clear_consent("../../x")` must delete nothing —
+    /// `consent_path` rejects the unsafe id BEFORE any `remove_file`, so a
+    /// pre-existing file that a naive join would have reached is byte-for-byte
+    /// unchanged. This does NOT rely on the outer Pause command guard.
+    ///
+    /// The sentinel is placed at the EXACT target a vulnerable (guard-removed)
+    /// `consent_path` would resolve to: for `job_id = "../../consent_sentinel"`,
+    /// `consent_path` appends `.json` and joins under `autotrade/consent`, giving
+    /// `<home>/autotrade/consent/../../consent_sentinel.json` -> `<home>/consent_sentinel.json`.
+    /// A `.txt` sibling of the home dir (the previous fixture) would never be the
+    /// removal target, so the test could pass even with the guard removed. Using
+    /// the real resolved target makes the test fail iff `job_id_is_safe` is gone.
+    #[test]
+    fn clear_consent_traversal_deletes_nothing() {
+        with_home(|| {
+            let home = crate::home::onchainos_home().unwrap();
+            // A legitimate consent artefact inside the root.
+            let consent_dir = home.join("autotrade").join("consent");
+            std::fs::create_dir_all(&consent_dir).unwrap();
+            let legit = consent_dir.join("legit.json");
+            std::fs::write(&legit, "{}").unwrap();
+            // The EXACT file a vulnerable consent_path("../../consent_sentinel")
+            // would resolve+delete: <home>/autotrade/consent/../../consent_sentinel.json
+            // -> <home>/consent_sentinel.json.
+            let sentinel = home.join("consent_sentinel.json");
+            std::fs::write(&sentinel, "DO_NOT_TOUCH").unwrap();
+
+            // Direct call with an unsafe, path-shaped jobId: no-op, no panic.
+            clear_consent("../../consent_sentinel");
+            clear_consent("../../x");
+
+            assert!(legit.exists(), "in-root consent record must survive");
+            assert_eq!(
+                std::fs::read_to_string(&sentinel).unwrap(),
+                "DO_NOT_TOUCH",
+                "vulnerable-target sentinel must be byte-for-byte unchanged"
+            );
+            let _ = std::fs::remove_file(&sentinel);
         });
     }
 
