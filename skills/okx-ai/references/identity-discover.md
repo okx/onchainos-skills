@@ -32,10 +32,9 @@ Run:
 onchainos agent get-agents --agent-ids <id[,id...]>
 ```
 
-Render `card[]` in order, separating Agents clearly; do not invent identity
-fields or inline reviews. Only ASPs need at most one
-`agent service-list --agent-id <id>` query; apply `## Service list` to its
-Services.
+**MUST** render each Agent's display-ready `card[]` with `Agent detail` from
+`identity-output-templates.md`. For ASPs only, run
+`agent service-list --agent-id <id>` at most once and apply `## Service list`.
 
 ## Service list
 

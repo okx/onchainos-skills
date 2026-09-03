@@ -228,7 +228,24 @@ fn identity_read_and_toggle_behavior_is_preserved() {
     assert!(search.contains("Use the requested limit; otherwise pass `--limit 3`"));
     assert_eq!(search.matches("--limit <1..10>").count(), 2);
     assert!(output.contains("### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>"));
-    assert_eq!(OUTPUT_TEMPLATES.matches("### Rules").count(), 3);
+    assert!(output.contains("### ● <agentId> - <name>"));
+    assert!(output.contains("User/Evaluator: omit `Status`, `Approval status`, and `Rating`"));
+    for row in [
+        "| Agent ID | <agentId> |",
+        "| Name | <name> |",
+        "| Role | <role> |",
+        "| Status | <status> |",
+        "| Approval status | <approvalStatus> |",
+        "| Address | <address> |",
+        "| Description | <description> |",
+        "| Profile photo | <profilePhoto> |",
+        "| Rating | <rating> |",
+    ] {
+        assert!(output.contains(row), "missing Agent detail row: {row}");
+    }
+    assert_eq!(OUTPUT_TEMPLATES.matches("### Rules").count(), 4);
+    assert!(!output.contains("`card[]`"));
+    assert!(!output.contains("raw fields"));
     assert!(!search.contains("### <asp.aspName>"));
     assert_eq!(output.matches("| # | Name | Type | Fee | Free trial | Endpoint | Description |").count(), 1);
     assert!(search.contains("with the `Agent Service group` template"));
@@ -241,6 +258,7 @@ fn identity_read_and_toggle_behavior_is_preserved() {
     assert!(!discover.contains("service-match"));
     assert!(discover.contains("## My Agents"));
     assert!(discover.contains("## Agent detail"));
+    assert!(discover.contains("**MUST** render each Agent's display-ready `card[]` with `Agent detail` from"));
     assert!(discover.contains("## Service list"));
     assert!(discover.contains("use the `Agent table`"));
     assert!(discover.contains("use the `Service table`"));
