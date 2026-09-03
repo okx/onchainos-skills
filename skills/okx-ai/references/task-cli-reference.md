@@ -9,6 +9,7 @@
 ## Contents
 
 - **Common (any role)**: `common context` · `communication-check` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
+- **Arbitration (User/ASP)**: `arbitration-list` · `arbitration-detail`
 - **User**: `create-task` · `task-create-prepare` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `complete` · `reject` · `close` · `claim-auto-refund` · `task-attach`
 - **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
 - **ASP**: `accept-job-by-provider` · `decline-job-by-provider` · `accept-subscription` · `decline-subscription` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
@@ -230,24 +231,23 @@ matching Service as `data`. It preserves current pricing, subscription/trial sta
 agent task-create-prepare --sid <sid>
 ```
 
-Pass only the confirmed numeric `sid` from search or matching context. The command first checks wallet
-login and resolves the current wallet's User Agent. It then runs
-`service-detail --sid <sid> --agentic-id <userAgentId>` exactly once and treats the returned Service as
-the sole source of current pricing, subscription, trial eligibility, provider, service metadata, and
-`serviceGuide`. It normalizes that Service, checks existing subscriptions, and checks the payable token
-balance. Current trial eligibility or an effective fee of zero skips the balance query.
+Pass only the confirmed numeric `sid` from search or matching context. The command checks login,
+User Agent identity, authoritative Service state, subscription conflicts, and payable balance. Current
+trial eligibility or an effective fee of zero skips the balance check.
 
 Every successful response contains exactly `phase`, `decision`, `reason`, `nextAction`, and `payload`
 under `data`. Route by `decision`, then execute or present only the actions returned in `nextAction`;
-there is no `action` field. `payload` is empty for `login_validation` and `identity_validation`. For
-other phases it contains the normalized selected Service; `payment_validation` also includes
+there is no `action` field. `payload` is empty for `login_validation` and `identity_validation`.
+For `reason=duplicate_subscription`, it is exactly
+`{jobId:<existing subscription id>,title:<task title>,status:<numeric status>,active:<bool>}`.
+For other phases it contains the normalized selected Service; `payment_validation` also includes
 `balanceWarning` when the balance is insufficient. Stable phase values are `login_validation`,
 `identity_validation`, `service_validation`, `subscription_validation`, `payment_validation`, and
 `creation`. Use [`task-action-routing.md`](task-action-routing.md) for each `nextAction[].id`.
 
-Invalid/missing Service fields and failed detail/subscription/balance requests are command errors, not
-additional business cases. For a successful response, route by `decision` and only the returned
-`nextAction` items; never derive an unreturned action from `phase` or `reason`.
+Invalid Service data and failed dependency requests are command errors, not additional business cases.
+For a successful response, route by `decision` and only the returned `nextAction` items; never derive
+an unreturned action from `phase` or `reason`.
 
 ### task-service-select
 
@@ -494,6 +494,46 @@ agent active-tasks [--role <r>] [--include-terminal]
   ]
 }
 ```
+
+### arbitration-list
+
+List arbitration tasks visible to one User or ASP identity. The selected identity is sent as the
+`agenticId` request header.
+
+```text
+agent arbitration-list --agent-id <userOrAspAgentId> [--page <n>] [--page-size <n>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--agent-id` | Yes | - | User or ASP Agent ID |
+| `--page` | No | `1` | One-based page number |
+| `--page-size` | No | `20` | Positive page size |
+
+The response preserves backend pagination fields: `total`, `page`, `pageSize`, and `list[]`. Each list
+item preserves `jobId`, `title`, `status`, and `createTime`; the CLI adds `statusName` when `status` is
+numeric.
+
+### arbitration-detail
+
+Show the current arbitration state visible to one User or ASP identity.
+
+```text
+agent arbitration-detail <jobId> --agent-id <userOrAspAgentId>
+```
+
+The response preserves all fields from `GET /task/{jobId}/dispute/status`, including `jobId`,
+`jobType`, `currentRound`, `selectedVoter`, `taskStatus`, `disputeRoundStatus`, `prepareEndTime`, and
+`roundEndTime`. The CLI adds:
+
+| Field | Description |
+|---|---|
+| `taskStatusName` | Normalized task status when `taskStatus` is numeric |
+| `disputeRoundStatusName` | `init`, `commit_phase`, `reveal_phase`, `completed`, `rejected`, `invalidated`, or `unknown` |
+| `phase` | `evidence_preparation`, `arbitrating`, `resolved`, `rejected`, `invalidated`, or `unknown` |
+
+Additional settlement fields are passed through unchanged when the backend returns them. Their
+absence must not be interpreted as a verdict, transfer, refund, or transaction.
 
 ### set-payment-mode
 

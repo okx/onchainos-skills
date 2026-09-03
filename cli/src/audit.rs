@@ -556,6 +556,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::CommunicationCheck => "communication-check".into(),
         AgentCommand::PrepareCreate { .. } => "prepare-create".into(),
         AgentCommand::ActiveTasks { .. } => "active-tasks".into(),
+        AgentCommand::ArbitrationList { .. } => "arbitration-list".into(),
+        AgentCommand::ArbitrationDetail { .. } => "arbitration-detail".into(),
         AgentCommand::Profile { .. } => "profile".into(),
         AgentCommand::PendingDecisionsV2(_) => "pending-decisions-v2".into(),
         AgentCommand::TaskDeliverableSave { .. } => "task-deliverable-save".into(),

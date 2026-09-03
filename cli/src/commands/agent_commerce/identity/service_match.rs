@@ -1,7 +1,7 @@
 //! Marketplace service search with a stable output contract.
 
 use anyhow::{anyhow, bail, Context as _, Result};
-use serde_json::{Map, Number, Value};
+use serde_json::{json, Map, Number, Value};
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::Context;
@@ -11,13 +11,13 @@ use super::utils::{format_search_rate, wallet_client};
 use super::{GetMyAgentsArgs, ServiceMatchArgs};
 
 const SERVICE_MATCH_PATH: &str = "/priapi/v1/aieco/task/asp/service/search";
-const ACTION_RESTORE_SUBSCRIPTION: &str = "restore_subscription";
+const PHASE_SUBSCRIPTION_VALIDATION: &str = "subscription_validation";
 const TIP_NO_MATCH: &str =
     "No matching services were found on OKX.AI. Try another keyword and search again.";
 const TIP_OFFLINE: &str =
     "This Agent is offline and cannot provide the service right now. Search for another service.";
-const TIP_CONFIRM: &str = "Reply \"confirm\" to use this service.";
-const TIP_MORE: &str = "Tell me which service you want to use, or reply \"show more\".";
+const TIP_CONFIRM: &str = "Reply to confirm that you want to use this service.";
+const TIP_MORE: &str = "Tell me which service you want to use, or ask for more.";
 const TIP_NO_MORE: &str =
     "There are no more matching services. Tell me which service you want to use.";
 
@@ -135,30 +135,74 @@ fn add_flow_metadata(data: &mut Value, args: &ServiceMatchArgs) {
         .unwrap_or_default();
     let precise_search = is_precise_search(args);
 
-    let (action, tip) = if services.is_empty() {
-        (Value::Null, Value::String(TIP_NO_MATCH.to_string()))
+    let (tip, duplicate_subscription) = if services.is_empty() {
+        (Some(TIP_NO_MATCH), None)
     } else if precise_search && services.iter().any(service_is_offline) {
-        (Value::Null, Value::String(TIP_OFFLINE.to_string()))
+        (Some(TIP_OFFLINE), None)
     } else if services.len() == 1 {
-        if precise_search && services[0].get("isSubscribing").and_then(Value::as_bool) == Some(true)
-        {
-            (
-                Value::String(ACTION_RESTORE_SUBSCRIPTION.to_string()),
-                Value::Null,
-            )
+        if precise_search {
+            let duplicate_subscription = active_subscription_payload(&services[0]);
+            if duplicate_subscription.is_some() {
+                (None, duplicate_subscription)
+            } else {
+                (Some(TIP_CONFIRM), None)
+            }
         } else {
-            (Value::Null, Value::String(TIP_CONFIRM.to_string()))
+            (Some(TIP_CONFIRM), None)
         }
     } else if object.get("hasMore").and_then(Value::as_bool) == Some(true) {
-        (Value::Null, Value::String(TIP_MORE.to_string()))
+        (Some(TIP_MORE), None)
     } else {
-        (Value::Null, Value::String(TIP_NO_MORE.to_string()))
+        (Some(TIP_NO_MORE), None)
     };
 
     if let Some(object) = data.as_object_mut() {
-        object.insert("action".to_string(), action);
-        object.insert("tip".to_string(), tip);
+        object.remove("action");
+        if let Some(payload) = duplicate_subscription {
+            object.remove("tip");
+            object.insert(
+                "phase".to_string(),
+                Value::String(PHASE_SUBSCRIPTION_VALIDATION.to_string()),
+            );
+            object.insert("decision".to_string(), Value::String("blocked".to_string()));
+            object.insert(
+                "reason".to_string(),
+                Value::String("duplicate_subscription".to_string()),
+            );
+            object.insert(
+                "nextAction".to_string(),
+                json!([{"id": "restore_subscription", "recommend": true}]),
+            );
+            object.insert("payload".to_string(), payload);
+        } else {
+            for key in ["phase", "decision", "reason", "nextAction", "payload"] {
+                object.remove(key);
+            }
+            if let Some(tip) = tip {
+                object.insert("tip".to_string(), Value::String(tip.to_string()));
+            }
+        }
     }
+}
+
+fn active_subscription_payload(service: &Value) -> Option<Value> {
+    let subscribed_info = service.get("subscribedInfo")?;
+    if subscribed_info.get("isActive").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let job_id = subscribed_info.get("jobId")?.as_str()?.trim();
+    if job_id.is_empty() {
+        return None;
+    }
+    let mut payload = Map::new();
+    payload.insert("jobId".to_string(), Value::String(job_id.to_string()));
+    payload.insert("active".to_string(), Value::Bool(true));
+    for key in ["title", "status"] {
+        if let Some(value) = subscribed_info.get(key) {
+            payload.insert(key.to_string(), value.clone());
+        }
+    }
+    Some(Value::Object(payload))
 }
 
 fn service_is_offline(service: &Value) -> bool {
@@ -445,14 +489,14 @@ mod tests {
     fn adds_no_match_and_pagination_tips() {
         let mut no_match = json!({"services": [], "hasMore": false});
         add_flow_metadata(&mut no_match, &args());
-        assert!(no_match["action"].is_null());
+        assert!(no_match.get("action").is_none());
         assert_eq!(no_match["tip"], TIP_NO_MATCH);
 
         let mut more = json!({"services": [{}, {}], "hasMore": true});
         let mut fuzzy_args = args();
         fuzzy_args.service_id = None;
         add_flow_metadata(&mut more, &fuzzy_args);
-        assert!(more["action"].is_null());
+        assert!(more.get("action").is_none());
         assert_eq!(more["tip"], TIP_MORE);
 
         more["hasMore"] = json!(false);
@@ -463,25 +507,88 @@ mod tests {
     #[test]
     fn precise_search_handles_offline_and_existing_subscription() {
         let mut offline = json!({
-            "services": [{"asp": {"onlineStatus": 0}, "isSubscribing": true}],
+            "services": [{
+                "asp": {"onlineStatus": 0},
+                "subscribedInfo": {"isActive": true, "jobId": "job-offline"}
+            }],
             "hasMore": false
         });
         add_flow_metadata(&mut offline, &args());
-        assert!(offline["action"].is_null());
+        assert!(offline.get("action").is_none());
         assert_eq!(offline["tip"], TIP_OFFLINE);
 
         let mut subscribed = json!({
-            "services": [{"asp": {"onlineStatus": 1}, "isSubscribing": true}],
+            "services": [{
+                "asp": {"onlineStatus": 1},
+                "subscribedInfo": {
+                    "isActive": true,
+                    "jobId": " job-123 ",
+                    "title": "Signal Subscription",
+                    "status": 1,
+                    "deviceList": ["device-1"]
+                }
+            }],
             "hasMore": false
         });
         add_flow_metadata(&mut subscribed, &args());
-        assert_eq!(subscribed["action"], ACTION_RESTORE_SUBSCRIPTION);
-        assert!(subscribed["tip"].is_null());
+        assert_eq!(subscribed["phase"], PHASE_SUBSCRIPTION_VALIDATION);
+        assert_eq!(subscribed["decision"], "blocked");
+        assert_eq!(subscribed["reason"], "duplicate_subscription");
+        assert_eq!(
+            subscribed["nextAction"],
+            json!([{"id": "restore_subscription", "recommend": true}])
+        );
+        assert_eq!(
+            subscribed["payload"],
+            json!({
+                "jobId": "job-123",
+                "title": "Signal Subscription",
+                "status": 1,
+                "active": true
+            })
+        );
+        assert!(subscribed.get("action").is_none());
+        assert!(subscribed.get("tip").is_none());
 
-        subscribed["services"][0]["isSubscribing"] = json!(false);
+        subscribed["services"][0]["subscribedInfo"]["isActive"] = json!(false);
         add_flow_metadata(&mut subscribed, &args());
-        assert!(subscribed["action"].is_null());
+        assert!(subscribed.get("action").is_none());
         assert_eq!(subscribed["tip"], TIP_CONFIRM);
+        for key in ["phase", "decision", "reason", "nextAction", "payload"] {
+            assert!(subscribed.get(key).is_none());
+        }
+    }
+
+    #[test]
+    fn active_subscription_payload_requires_active_subscription_job_id() {
+        assert_eq!(
+            active_subscription_payload(&json!({
+                "subscribedInfo": {
+                    "isActive": true,
+                    "jobId": "job-1",
+                    "title": "Task title",
+                    "status": 1
+                }
+            })),
+            Some(json!({
+                "jobId": "job-1",
+                "title": "Task title",
+                "status": 1,
+                "active": true
+            }))
+        );
+        assert_eq!(
+            active_subscription_payload(&json!({
+                "subscribedInfo": {"isActive": false, "jobId": "job-1"}
+            })),
+            None
+        );
+        assert_eq!(
+            active_subscription_payload(&json!({
+                "subscribedInfo": {"isActive": true}
+            })),
+            None
+        );
     }
 
     #[test]
