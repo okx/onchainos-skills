@@ -6,31 +6,11 @@
 
 ## Reading Order
 
-1. **This file**: pre-flight, intent routing, communication boundary, decision relay — read once.
-2. **[`task-user-actions-create.md`](task-user-actions-create.md)**: on demand — read when the user wants to publish a task.
-3. **[`task-user-actions.md`](task-user-actions.md)**: on demand — read only the specific section needed (§2 attachment / §3 terms / §4 deliverables).
-4. **[`task-cli-reference.md`](task-cli-reference.md)**: do NOT read full file. Use `grep` for the specific command you need.
+Read this file only after [`task-user-intent-routing.md`](task-user-intent-routing.md)
+selects a playbook-owned operation. It contains execution, safety, and
+communication rules; it does not match free-text user intents.
 
 ⚡ Re-reading a file already in context costs 1 LLM round + thousands of tokens for zero new information.
-
----
-
-## User Intent Routing
-
-> When the user-session receives free-form text targeting a specific task and no pending decision matches, load [`task-user-intent-routing.md`](task-user-intent-routing.md) and follow its routing flow.
-
-| Intent | Trigger examples | Route to |
-|---|---|---|
-| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`identity-service-search.md`](identity-service-search.md) commissioning search, then route the `task-create-prepare` response's `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md); do not read `data.action` from that response |
-| Add attachment / image | "attach a file/image to a task" | [`task-user-actions.md`](task-user-actions.md) §2 |
-| Stop task | "stop task / close task" | [`task-user-actions.md`](task-user-actions.md) §3 |
-| View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
-| Subscription task list or detail | "my subscriptions / subscription list / ongoing subscriptions / active subscriptions / ended subscriptions / subscription detail" | [`task-subscription-view.md`](task-subscription-view.md) |
-| Rate | "rate this task / rate this subscription / review jobId X / give X five stars / leave feedback" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Rate an active subscription |
-| Subscription task ops | "auto-renew / trial cancel / reject delivery / apply for refund / claim refund / subscription charge / subscription cost" | §Subscription below |
-| Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
-| Re-submit / nudge | "re-submit / nudge" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
-| Task list / status / close / decision list | "my tasks / view decisions / close task" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
 
 ---
 
@@ -261,7 +241,7 @@ Routing entry: [`task-user-intent-routing.md` §Task list](task-user-intent-rout
 Build each list response from the current successful `my-tasks` result in this exact order:
 
 1. The matching opening summary below, using only `summary`.
-2. The requested subscription section, using §Buyer Subscription Renderer, or its prescribed empty state.
+2. The requested subscription section, using [`task-output-templates.md` §Subscription view](task-output-templates.md#subscription-view), or its prescribed empty state.
 3. The requested one-time section, using the exact five-column table below, or its prescribed empty state.
 4. A next-page notice only for a returned section whose `hasNext` is `true`.
 
@@ -270,8 +250,7 @@ wide. A bullet list, prose summary, status breakdown, partial enumeration, or �
 not this contract.
 
 The data boundary is the current CLI result: use `summary` for counts and each section's current `list`,
-`page`, `total`, and `hasNext` for rows and pagination. The required `device-list` call may enrich only the
-current subscription rows. Never merge rows or counts from earlier tool results, prior pages, conversation
+`page`, `total`, and `hasNext` for rows and pagination. Never merge rows or counts from earlier tool results, prior pages, conversation
 history, or another status filter; never derive task groups, combined totals, or status counts from rows.
 For `status-type=0`, display the active rows returned by the CLI.
 
@@ -302,11 +281,12 @@ Replace placeholders only with CLI values; use zero only when returned explicitl
 Render every requested section; omit only unrequested task types:
 
 The schemas below are the complete, mandatory list-row contract. They override generic task-reply rules,
-and their field-specific localization rules are authoritative. Use §Buyer Subscription Renderer for
+and their field-specific localization rules are authoritative. Use
+[`task-output-templates.md` §Subscription view](task-output-templates.md#subscription-view) for
 subscriptions and the five-column table below for one-time tasks; generic task-scoped `jobId` prefixes or
 fields do not apply to list responses.
 
-- `subscriptions`: if empty, say no matching subscription tasks; otherwise show `Subscription tasks` and pass the complete section to §Buyer Subscription Renderer.
+- `subscriptions`: if empty, say no matching subscription tasks; otherwise show `Subscription tasks` and render it with [`task-output-templates.md` §Subscription view](task-output-templates.md#subscription-view).
 - `oneTimeTasks`: if empty, say no matching one-time tasks; otherwise show `One-time tasks (page {page}, {total} total)` and render this exact table:
 
 | # | Service | Agent ID | Price | Status |
@@ -342,33 +322,6 @@ Retain the latest `statusType`, `pageSize`, and each section's `page` and `hasNe
 - A changed task type or all/active/ended filter starts at page 1; `View ended tasks` selects `status-type=2`.
 
 Render only the advanced section in its prescribed shape; do not repeat the opening summary or untouched section. Offer another page only when its returned `hasNext` is true.
-
-## Buyer Subscription Renderer
-
-Use this renderer for unified task lists, direct subscription reads, and post-login subscription display. For user-initiated lists, input is the `my-tasks.subscriptions` section. Internal flows may supply the equivalent `my-subscriptions` payload, but that compatibility source never selects the command for a user-initiated list. Also run `onchainos agent device-list` for the complete device table. Render exactly **one row per subscription** and every column below; keep Next Charge as one derived date, then append one column per real device.
-
-Immediately above the table, render this localized legend:
-
-> ✅ Receives task messages; ❌ Does not receive task messages
-
-The device columns below are illustrative — replace them with the user's **actual readable device names**, never aliases such as D1 / D2:
-
-| # | Service | Provider | Status | Fee | Next Charge | Auto-Renew | Billing Period | Chen Baijia’s MacBook Pro (This Device) | Kevin’s MacBook Pro |
-|---|------|--------|------|------|---------|---------|------|------|------|
-| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {nextCharge} | {autoRenew==1?"✓":"✗"} | {billingPeriod} | {deviceCell} | {deviceCell} |
-
-- **Status**: `statusName` is an explicit localization exception. Render the CLI value verbatim (`ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>`). Billing Period distinguishes trial from paid (`trialType==1` → `Trial Period`).
-- **Fee**: render the `serviceTokenAmount` string verbatim; never convert it to float. The CLI provides only `serviceTokenAddress`, not a token symbol.
-- **Billing Period**: `trialType==1` → `Trial Period`; else positive integer `periodIndex` → `Billing Period {periodIndex}`; else null/non-positive → `—`.
-- **Next Charge** (derive; no CLI field): `statusName != "ACTIVE"` → `—`; else `trialType==1` → prefer `trialEndTime`, fall back to legacy `trailEndTime` (AC-17), render as the trial-conversion charge date, or `Date Unavailable` if both are absent; else `autoRenew==1` → `subEndTime`; `autoRenew==0` → `No Renewal`. Render epoch seconds as a date.
-- **Dynamic device-column matrix:** build columns once. Put `thisDeviceId` first and append `(This Device)` to its readable name; keep others in `device-list` order. Keep one row per subscription. Do **not** add routing summaries, repeat rows, or replace names with D1/D2 aliases. A wide table is acceptable.
-- **Device names and disambiguation:** use readable `deviceName`; escape Markdown separators/line breaks. For duplicate names, append a short device-id suffix to each; retain `(This Device)` where applicable. If a non-empty `deviceList` references an id absent from an otherwise usable device table, append `Device Name Unavailable ({short deviceId})`. Never fabricate a name.
-- **Per-cell receipt state (status gate, then tri-state):** When `statusName != "ACTIVE"`, render every device cell as `-`, including the current-device and degraded-render cells. For `ACTIVE` rows, `deviceList:null` means default-all, so every device cell is `✅`; `deviceList:[]` means explicitly none, so every device cell is `❌`; a non-empty array uses id membership (`✅` when present, otherwise `❌`). Apply the same tri-state rule to appended unknown-id columns. The **ACTIVE this-device cell always comes directly from the CLI `thisDeviceReceives` flag** — never recompute it. The legend above the table defines the symbols; do not repeat the full explanation inside every cell.
-- **Degraded render (MANDATORY — device table unavailable):** keep one row per subscription and one dynamic column for the known current device: `{thisDeviceName} (This Device)`, with its cell following the per-cell receipt-state rule above. Above the table, add "Other device names and receipt states are unavailable." If `thisDeviceName` is absent, use `Device Name Unavailable ({short thisDeviceId})`; never fabricate a name or use bare `(This Device)`.
-- **Display-only rule:** on any list render, do **not** proactively ask whether to turn on receipt (product retracted that prompt); turning on happens only on explicit user request.
-- All timestamps are **epoch seconds** — render as the user's locale date, never raw numbers.
-- Empty list → "You have no subscriptions." Do NOT invent rows.
-- To open one row's detail, pass its **`jobId`** to `subscribe-detail` (§Subscription Detail).
 
 ## Post-login subscription display (login-flow-triggered)
 
@@ -436,7 +389,7 @@ Trigger: `device list` / `list my logged-in devices` / `which devices are online
 - **Device**: readable `deviceName`; if empty, show raw `deviceId` / a count, never fabricate. Append `(This Device)` when `isThisDevice==true`.
 - **Last Online**: render `lastOnlineLocal` **verbatim**; never re-convert or parse `lastOnlineTime`.
 - **Received Subscription Messages**: join each `deviceId` with subscription `deviceList` from `my-subscriptions`. `null` matches every logged-in buyer device; `[]` matches none; non-empty uses membership. List subscriptions received, or show Yes/No for a specific subscription.
-- Empty list (`list: []`) → tell the user no devices are currently listable. If the command errors (endpoint not live yet / transport), see the degraded render in §Buyer Subscription Renderer / §Subscription Detail — state that device info is temporarily unavailable rather than presenting a partial picture as complete.
+- Empty list (`list: []`) → tell the user no devices are currently listable. If the command errors (endpoint not live yet / transport), state that device information is temporarily unavailable rather than presenting a partial picture as complete.
 
 ## Create-subscribe device routing
 

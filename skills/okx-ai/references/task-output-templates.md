@@ -36,49 +36,30 @@ Rules:
 
 ## Subscription view
 
-This template renders the read-only results defined by
-[`task-subscription-view.md`](task-subscription-view.md). It does not make a
-CLI decision or authorize an operation.
+Render only the current `my-tasks.subscriptions` page. Keep the CLI order;
+never sort or compare token amounts. The list is read-only and does not add
+actions, routing, or extra CLI calls.
 
-For an unfiltered request, render an `Active subscriptions` section first and
-an `Ended subscriptions` section second. Within each section, sort rows by the
-verbatim `serviceTokenAmount` only when every row uses the same
-`serviceTokenAddress`; otherwise retain CLI order and say that different tokens
-are not compared. Never parse an amount as a float.
+For an unfiltered request, render `Active subscriptions` first and `Ended
+subscriptions` second. Keep pagination separate for the two CLI responses.
 
-Use this table for Active rows. Fetch `device-list` only for this rendering;
-its readable device names form the dynamic columns.
+For an Active row:
 
-| # | Service | Provider | Fee | Billing Period | Next Charge | Auto-Renew | {device columns} |
-|---|---|---|---|---|---|---|---|
-| 1 | {title} | Agent#{providerAgentId} | {serviceTokenAmount} | {billingPeriod} | {nextCharge} | {autoRenew} | {receipt state} |
-
-Use this smaller table for non-Active rows; do not expose device receipt state.
-
-| # | Service | Provider | Status | Fee | Billing Period |
+| # | Service | Provider | Fee | Auto-Renew | This Device |
 |---|---|---|---|---|---|
-| 1 | {title} | Agent#{providerAgentId} | {statusName} | {serviceTokenAmount} | {billingPeriod} |
+| 1 | <title> | Agent#<providerAgentId> | <serviceTokenAmount> | <autoRenew> | <thisDeviceReceives> |
 
-`deviceList:null` means every logged-in buyer device receives messages;
-`deviceList:[]` means none; a non-empty list uses membership. The current
-device cell uses the CLI's `thisDeviceReceives` field directly. If device data
-is unavailable, say so and render only the current-device column; never imply
-that it represents every device.
+For an ended row:
 
-After a non-empty result, offer only these display choices:
+| # | Service | Provider | Status | Fee |
+|---|---|---|---|---|
+| 1 | <title> | Agent#<providerAgentId> | <statusName> | <serviceTokenAmount> |
 
-```text
-[Next]
-1. View a subscription detail
-2. Manage message-receipt devices
-3. View latest signals
-4. View copy-trade status
-```
-
-The user must select a row before any choice. Choices 2–4 are entry points,
-not commands: they require a fresh explicit request and their own Reference.
-Do not start watching, change device delivery, or alter copy-trade policy from
-this template.
+Use `<field>` for all placeholders in this file: it matches the surrounding
+templates and avoids confusing placeholder braces with literal JSON objects.
+Render `serviceTokenAmount` verbatim; it is a string. Render
+`thisDeviceReceives` directly from the CLI as Yes/No. Device-wide receipt
+state belongs to the explicit device-management flow, not this list.
 
 ## `decision=blocked`
 
