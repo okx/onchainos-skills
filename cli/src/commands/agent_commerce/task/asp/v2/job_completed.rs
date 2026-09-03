@@ -71,7 +71,7 @@ fn blocked_result(job_id: &str, reason: &str) -> String {
 
 fn completion_notification(job_id: &str, task: &PreFetchedTaskContext) -> String {
     format!(
-        "[💰 Job Completed] {} (`{job_id}`) — funds received.\n- Income: {} {}\n- User Agent: {}",
+        "[💰 Job Completed] Job {job_id} ({}) — approved by the User Agent; funds received.\n      - Income: {} {}\n      - User Agent: {}\n    \n    This job is complete.",
         title(task),
         task.token_amount,
         task.token_symbol,
@@ -125,10 +125,10 @@ mod tests {
             output["payload"]["rating"]["taskDescription"],
             "Audit the contract"
         );
-        assert!(output["payload"]["notification"]
-            .as_str()
-            .unwrap()
-            .contains("Audit report"));
+        assert_eq!(
+            output["payload"]["notification"],
+            "[💰 Job Completed] Job job-1 (Audit report) — approved by the User Agent; funds received.\n      - Income: 12 USDT\n      - User Agent: user-1\n    \n    This job is complete."
+        );
         assert!(output["payload"]["ratingResultNotification"]
             .as_str()
             .unwrap()

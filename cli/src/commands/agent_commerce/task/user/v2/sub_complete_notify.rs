@@ -45,14 +45,26 @@ pub(crate) async fn handle(
     let notification = completion_notification(job_id, &task);
 
     let rating = build_rating_payload(agent_id, job_id, &task);
-    success_result(job_id, &notification, rating)
+    success_result(job_id, task_title(&task), &notification, rating)
 }
 
 fn success_result(
     job_id: &str,
+    title: &str,
     notification: &str,
     rating: serde_json::Value,
 ) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "jobId": job_id,
+        "notification": notification,
+        "rating": rating,
+    });
+    if rating["required"].as_bool() == Some(true) {
+        payload["ratingResultNotification"] = serde_json::json!(
+            super::super::content::rating_submitted_user_notify(job_id, title)
+        );
+    }
+
     serde_json::json!({
         "phase": "subscription_completion",
         "decision": "ready",
@@ -61,11 +73,7 @@ fn success_result(
             "id": "finalize_user_subscription",
             "recommend": true,
         }],
-        "payload": {
-            "jobId": job_id,
-            "notification": notification,
-            "rating": rating,
-        },
+        "payload": payload,
     })
 }
 
@@ -94,12 +102,15 @@ fn blocked_result(reason: &str, job_id: Option<&str>, error: Option<&str>) -> se
 }
 
 fn completion_notification(job_id: &str, task: &PreFetchedTaskContext) -> String {
-    let title = if task.title.is_empty() {
+    super::super::content::sub_complete_notify_user_notify(task_title(task), job_id, None)
+}
+
+fn task_title(task: &PreFetchedTaskContext) -> &str {
+    if task.title.is_empty() {
         "subscription"
     } else {
         task.title.as_str()
-    };
-    super::super::content::sub_complete_notify_user_notify(title, job_id, None)
+    }
 }
 
 fn build_rating_payload(
@@ -289,6 +300,7 @@ mod tests {
     fn successful_completion_returns_minimal_structured_action() {
         let output = success_result(
             "job-1",
+            "Weekly report",
             "Completed",
             serde_json::json!({ "required": false }),
         );
@@ -300,7 +312,23 @@ mod tests {
         assert_eq!(output["payload"]["jobId"], "job-1");
         assert_eq!(output["payload"]["notification"], "Completed");
         assert_eq!(output["payload"]["rating"]["required"], false);
+        assert!(output["payload"].get("ratingResultNotification").is_none());
         assert!(output["payload"].get("cleanup").is_none());
+    }
+
+    #[test]
+    fn rated_completion_uses_existing_rating_template() {
+        let output = success_result(
+            "job-1",
+            "Weekly report",
+            "Completed",
+            serde_json::json!({ "required": true }),
+        );
+
+        assert_eq!(
+            output["payload"]["ratingResultNotification"],
+            super::super::super::content::rating_submitted_user_notify("job-1", "Weekly report")
+        );
     }
 
     #[test]
