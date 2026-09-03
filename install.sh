@@ -405,8 +405,13 @@ main() {
     # ── Beta mode: find latest version including pre-releases ──
     target_ver=$(get_latest_version_with_beta)
 
-    if [ "$local_ver" = "$target_ver" ]; then
-      # Binary is current — but ensure workflows exist
+    # Never replace a newer local beta/dev build with an older remote tag.
+    # Update only when the resolved target is strictly newer than local.
+    if [ -n "$local_ver" ] && ! semver_gt "$target_ver" "$local_ver"; then
+      if [ "$local_ver" != "$target_ver" ]; then
+        echo "Installed onchainos ${local_ver} is newer than the latest published ${target_ver}; keeping local version."
+      fi
+      # Binary is current or newer — but ensure workflows exist.
       if [ ! -d "$CACHE_DIR/workflows" ]; then
         sync_workflows "v${local_ver}"
       fi
