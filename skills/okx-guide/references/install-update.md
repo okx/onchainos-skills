@@ -3,7 +3,7 @@
 ## Step 1 — Run the install/update command
 
 ```
-npx -y oc-onchainos update
+npx -y oc-onchainos install
 ```
 
 Capture the command's complete stdout and stderr. Do not treat a zero exit status,
