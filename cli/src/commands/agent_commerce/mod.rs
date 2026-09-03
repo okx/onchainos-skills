@@ -446,6 +446,27 @@ pub enum AgentCommand {
         include_terminal: bool,
     },
 
+    /// List arbitration tasks visible to one User or ASP identity.
+    #[command(name = "arbitration-list")]
+    ArbitrationList {
+        /// User or ASP agentId used as the agenticId request header.
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        page: u32,
+        #[arg(long = "page-size", default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..))]
+        page_size: u32,
+    },
+
+    /// Show the current arbitration state visible to one User or ASP identity.
+    #[command(name = "arbitration-detail")]
+    ArbitrationDetail {
+        job_id: String,
+        /// User or ASP agentId used as the agenticId request header.
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
     /// Set payment mode on-chain (standalone, before confirm-accept)
     #[command(name = "set-payment-mode")]
     SetPaymentMode {
@@ -1847,6 +1868,31 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
             task::common::query::handle_active_tasks(&mut client, role.as_deref(), include_terminal)
                 .await
+        }
+
+        AgentCommand::ArbitrationList {
+            agent_id,
+            page,
+            page_size,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::arbitration_query::handle_arbitration_list(
+                &mut client,
+                &agent_id,
+                page,
+                page_size,
+            )
+            .await
+        }
+
+        AgentCommand::ArbitrationDetail { job_id, agent_id } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::arbitration_query::handle_arbitration_detail(
+                &mut client,
+                &job_id,
+                &agent_id,
+            )
+            .await
         }
 
         AgentCommand::SetPaymentMode {

@@ -18,7 +18,7 @@ use crate::commands::agent_commerce::task::common::okx_a2a;
 use crate::commands::agent_commerce::task::common::subscription_identity::{
     select_subscription_agent_id,
 };
-use crate::commands::agent_commerce::task::common::{self, DEBUG_LOG};
+use crate::commands::agent_commerce::task::common::DEBUG_LOG;
 use crate::commands::agent_commerce::task::signing;
 
 pub(crate) const SUBSCRIBE_API_PREFIX: &str = "/priapi/v1/aieco/task/subscribe";
@@ -323,30 +323,6 @@ fn persist_subscription_autotrade(
     Ok(())
 }
 
-fn build_duplicate_subscription_block(
-    service_id: &str,
-    existing: &super::subscription_ops::ExistingSubscriptionSummary,
-) -> serde_json::Value {
-    let base = format!(
-        "Service {service_id} already has a subscription task, jobId: {}. It cannot be created again.",
-        existing.job_id
-    );
-    let prompt = if existing.restore_listening_available {
-        format!("{base} Would you like to restore listening?")
-    } else {
-        base
-    };
-    let mut block = serde_json::json!({
-        "blockedReason": "duplicate-subscription",
-        "userFacingPrompt": prompt,
-        "existingSubscription": existing,
-    });
-    if existing.restore_listening_available {
-        block["nextAfterUserChoice"] = serde_json::json!(["restore-listening"]);
-    }
-    block
-}
-
 pub async fn handle_create_subscribe(
     client: &mut TaskApiClient,
     params: CreateSubscribeParams,
@@ -367,36 +343,6 @@ pub async fn handle_create_subscribe(
     let user_agent_id = select_subscription_agent_id(&user_agent_id, "")?;
     if DEBUG_LOG {
         eprintln!("[create-subscribe] user identity check passed (agentId: {user_agent_id})");
-    }
-
-    // Repeat the selection-time check immediately before the write path to
-    // close the confirmation-to-create race. Read or parse failures propagate,
-    // so no balance, signing, confirmation, create, or broadcast call follows.
-    let existing_subscriptions =
-        super::subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
-            client,
-            &user_agent_id,
-        ).await?;
-    if let Some(existing) = super::subscription_ops::existing_subscription_for_service(
-        &existing_subscriptions,
-        &params.service_id,
-    ) {
-        return Err(crate::output::CliDuplicateSubscription {
-            data: build_duplicate_subscription_block(&params.service_id, existing),
-        }.into());
-    }
-
-    if let Some(warning) = subscribe_balance_warning(
-        &params.service_token_amount,
-        &params.service_token_address,
-        &user_agent_id,
-    )
-    .await?
-    {
-        return Err(crate::output::CliFundingBlocked {
-            data: build_subscription_funding_block(&warning),
-        }
-        .into());
     }
 
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
@@ -493,52 +439,6 @@ pub async fn handle_create_subscribe(
         "payload": payload,
     }));
     Ok(())
-}
-
-async fn subscribe_balance_warning(
-    service_token_amount: &str,
-    service_token_address: &str,
-    user_agent_id: &str,
-) -> Result<Option<serde_json::Value>> {
-    let required: f64 = service_token_amount.parse().unwrap_or(0.0);
-    if required <= 0.0 {
-        return Ok(None);
-    }
-
-    let symbol = match common::util::resolve_token_symbol_by_address(
-        common::XLAYER_CHAIN_INDEX,
-        service_token_address,
-    )
-    .await
-    {
-        Ok(sym) => sym,
-        Err(e) => {
-            if DEBUG_LOG {
-                eprintln!(
-                    "[create-subscribe] ⚠ token symbol resolution failed \
-                     (skipping balance pre-check): {e}"
-                );
-            }
-            return Ok(None);
-        }
-    };
-
-    match common::ensure_sufficient_balance(required, &symbol).await {
-        Ok(()) => Ok(None),
-        Err(e) => match e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
-            Some(ib) => {
-                let ib_owned = ib.clone();
-                let (warning, _) =
-                    common::deposit_qr::balance_warning_json(&ib_owned, user_agent_id).await;
-                Ok(Some(warning))
-            }
-            None => Err(e),
-        },
-    }
-}
-
-fn build_subscription_funding_block(warning: &serde_json::Value) -> serde_json::Value {
-    common::funding_notice::funding_blocked_envelope(warning, "subscription", "Subscription")
 }
 
 #[cfg(test)]
@@ -656,40 +556,6 @@ mod tests {
                 "/tmp/data.csv".to_string(),
             ])
         );
-    }
-
-    #[test]
-    fn duplicate_block_only_offers_restore_for_active_subscription() {
-        let active = super::super::subscription_ops::ExistingSubscriptionSummary {
-            job_id: "job-active".to_string(),
-            service_id: "svc-1".to_string(),
-            provider_agent_id: "asp-1".to_string(),
-            status_name: "ACTIVE".to_string(),
-            restore_listening_available: true,
-        };
-        let active = super::build_duplicate_subscription_block("svc-1", &active);
-        assert_eq!(active["blockedReason"], "duplicate-subscription");
-        assert_eq!(active["existingSubscription"]["jobId"], "job-active");
-        assert!(active["userFacingPrompt"].as_str().unwrap().contains("jobId: job-active"));
-        assert!(active["userFacingPrompt"].as_str().unwrap().contains("cannot be created again"));
-        assert!(!active["userFacingPrompt"].as_str().unwrap().contains("ACTIVE"));
-        assert_eq!(
-            active["nextAfterUserChoice"],
-            serde_json::json!(["restore-listening"])
-        );
-
-        let rejected = super::super::subscription_ops::ExistingSubscriptionSummary {
-            job_id: "job-rejected".to_string(),
-            service_id: "svc-1".to_string(),
-            provider_agent_id: "asp-1".to_string(),
-            status_name: "REJECTED".to_string(),
-            restore_listening_available: false,
-        };
-        let rejected = super::build_duplicate_subscription_block("svc-1", &rejected);
-        assert!(rejected.get("nextAfterUserChoice").is_none());
-        assert!(!rejected["userFacingPrompt"].as_str().unwrap().contains("Restore listening"));
-        assert!(!rejected["userFacingPrompt"].as_str().unwrap().contains("REJECTED"));
-        assert!(rejected.get("serviceId").is_none());
     }
 
     #[test]
@@ -857,29 +723,6 @@ mod tests {
             .validate()
             .expect_err("a missing attachment must stop subscription creation");
         assert!(error.to_string().contains("attachment file is not readable"));
-    }
-
-    #[test]
-    fn subscription_funding_block_uses_funding_notice_protocol() {
-        let warning = serde_json::json!({
-            "sufficient": false,
-            "chain": "XLayer",
-            "currency": "USDT",
-            "available": "0",
-            "required": "0.0001",
-            "shortfall": "0.0001",
-            "depositAddress": "0x1234567890abcdef1234567890abcdef12345678",
-            "depositChain": "XLayer"
-        });
-
-        let output = build_subscription_funding_block(&warning);
-        assert_eq!(output["blocked"], serde_json::json!(true));
-        assert_eq!(output["submitted"], serde_json::json!(false));
-        assert_eq!(output["mustRunFundingNotice"], serde_json::json!(true));
-        assert_eq!(
-            output["fundingNoticeCommand"],
-            "onchainos agent funding-notice --chain XLayer --currency USDT --shortfall 0.0001 --deposit-address 0x1234567890abcdef1234567890abcdef12345678 --available 0 --required 0.0001 --deposit-chain XLayer --reason subscription --format json"
-        );
     }
 
     #[test]
