@@ -1,42 +1,34 @@
-# Onchain OS — Install / Update (forced preflight)
+# Onchain OS — Install / Update (forced)
 
-Reached when the user has an explicit **install / update / upgrade** intent for the
-Onchain OS CLI or its skills ("install onchain os", "update onchainos", "upgrade to
-the latest version", "reinstall the CLI").
-
-## Step 1 — Run the forced preflight
-
-Read [`../../okx-agentic-wallet/_shared/preflight.md`](../../okx-agentic-wallet/_shared/preflight.md)
-first — it owns the preflight contract: the install fallback when the CLI is missing, and the
-`data.action` handling for every non-success outcome. This install/update path is that same
-check with `--force`, which bypasses the throttle and applies an available update:
+## Step 1 — Run the install/update command
 
 ```
-onchainos preflight --force --skill-version <this skill's frontmatter version>
+npx -y oc-onchainos update
 ```
 
-## Step 2 — Render the outcome
+Capture the command's complete stdout and stderr. Do not treat a zero exit status,
+unrelated progress text, or a separately invoked `onchainos --version` command as
+the version to render. Normalize the successful installer result into an internal
+`afterVersion` value before producing any user-facing response.
 
-From the `{ ok, data }` envelope, read `data.status`:
+## Step 2 — Extract `afterVersion`
 
-- **`ok` / `updated`** → success: render the template below, using `data.versionAfter`
-  as `{version}`.
-- **anything else** → not a success: follow `_shared/preflight.md` — show `data.action`
-  verbatim. Never render the success template on a non-success status.
+Read the top-level `afterVersion` from the final JSON response. Report the relevant output and ask the user to retry or investigate.
+
+## Step 3 — Render the response
+
+After extracting `afterVersion`, render the complete template in the user's
+language.
 
 ### Success template
 
-Render prose in the user's language; keep the version value literal.
+Render prose in the user's language; keep the afterVersion value literal.
 
 ```
-✅ Onchain OS is ready — you're on v{version}.
+✅ Onchain OS is ready — you're on v{afterVersion}.
 
-With Onchain OS you can check on-chain assets and market data, send and receive tokens,
-and use on-chain services like trading, payments, and DeFi. You can also hire other agents
-through OKX.AI to purchase the services you need.
+Your on-chain AI sidekick: wallet, trading, market data, and payments in one place —
+no juggling a dozen DApps or re-connecting wallets every time.
 
 First time here? Just say "log in" to set up your Agentic Wallet and get started.
 ```
-
-If `data.action` is non-null on a success status (e.g. a skill-drift hint), relay it verbatim
-after the template.
