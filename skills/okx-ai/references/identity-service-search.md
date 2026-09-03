@@ -21,14 +21,9 @@ Read `services[]`, `searchAfter`, `hasMore`, and `tip`.
 ## Display
 
 **MUST** group `services[]` by `asp.aspAgentId` in returned order and render
-them directly with `identity-output-templates.md`. For each group, put the
-Agent heading above its Service table:
+each group with the `Agent Service group` template in `identity-output-templates.md`.
 
-```markdown
-### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>
-```
-
-**MUST** render all Agent tables as above, then the localized CLI `tip` once.
+**MUST** render all Agent groups, then the localized CLI `tip` once.
 
 ```text
 <CLI-returned tip>
