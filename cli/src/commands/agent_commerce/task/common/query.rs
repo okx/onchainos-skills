@@ -144,21 +144,88 @@ async fn resolve_agent_id_or_error(explicit_agent_id: &str, role: i64) -> Result
 }
 
 /// Query task status.
-pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &str, role: i64) -> Result<()> {
+pub async fn handle_status(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    agent_id: &str,
+    role: i64,
+) -> Result<()> {
     let agent_id = resolve_agent_id_or_error(agent_id, role).await?;
-    let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
-
-    let t = &resp;
-    let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
-    println!("Task status: {}", t["status"].as_i64().map(status_name).unwrap_or("?"));
-    println!("  jobId:    {job_id}");
-    println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
-    println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
-    println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
-    if let Some(pid) = t["providerAgentId"].as_str() {
-        println!("  asp: {pid}");
+    let resp = match client
+        .get_with_identity(&client.task_path(job_id), &agent_id)
+        .await
+    {
+        Ok(resp) => resp,
+        Err(task_error) => {
+            // Subscription disputes may not exist on the ordinary one-time
+            // task-detail endpoint. The shared dispute endpoint remains the
+            // authoritative existence/permission check for both task types.
+            let dispute = crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
+                client, job_id, &agent_id,
+            )
+            .await
+            .map_err(|_| task_error)?;
+            let supplement = if dispute.job_type == Some(1) {
+                client
+                    .fetch_subscription(job_id, &agent_id)
+                    .await
+                    .unwrap_or_else(|_| json!({}))
+            } else {
+                json!({})
+            };
+            emit_dispute_status(job_id, &agent_id, &supplement, &dispute);
+            return Ok(());
+        }
+    };
+    let status_code = resp["status"].as_i64();
+    let dispute = match status_code {
+        Some(4) => Some(
+            crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
+                client, job_id, &agent_id,
+            )
+            .await?,
+        ),
+        Some(6 | 9) => {
+            crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
+                client, job_id, &agent_id,
+            )
+            .await
+            .ok()
+        }
+        _ => None,
+    };
+    if let Some(dispute) = dispute.as_ref() {
+        emit_dispute_status(job_id, &agent_id, &resp, dispute);
+    } else {
+        print_legacy_status(job_id, &resp);
     }
     Ok(())
+}
+
+fn emit_dispute_status(
+    job_id: &str,
+    agent_id: &str,
+    supplement: &Value,
+    dispute: &crate::commands::agent_commerce::task::evaluator::dispute_status::DisputeStatusResponse,
+) {
+    let result = build_status_result(job_id, supplement, Some(dispute));
+    crate::commands::agent_commerce::task::common::network::api_trace::record_contract(
+        "dispute-detail",
+        &json!({
+            "command": "status",
+            "jobId": job_id,
+            "agentId": agent_id,
+        }),
+        Some(&json!({
+            "backendResponse": {
+                "taskOrSubscriptionDetail": supplement,
+                "disputeStatus": dispute,
+            },
+            "structuredResult": result,
+        })),
+        None,
+    );
+    crate::output::success(result);
 }
 
 /// Query the "my tasks" list.
@@ -171,24 +238,240 @@ pub async fn handle_list(
     role: i64,
 ) -> Result<()> {
     let agent_id = resolve_agent_id_or_error(agent_id, role).await?;
-    let mut path = format!("/priapi/v1/aieco/task/my?page={page}&page_size={limit}");
-    if let Some(s) = status { path.push_str(&format!("&status={s}")); }
+    let is_dispute = status == Some("disputed");
+    let path = if is_dispute {
+        client.dispute_list_path(page, limit)
+    } else {
+        let mut path = format!("/priapi/v1/aieco/task/my?page={page}&page_size={limit}");
+        if let Some(s) = status {
+            path.push_str(&format!("&status={s}"));
+        }
+        path
+    };
 
     let resp = client.get_with_identity(&path, &agent_id).await?;
     let tasks = resp["list"].as_array().cloned().unwrap_or_default();
     let total = resp["total"].as_u64().unwrap_or(0);
-    println!("Task list ({total} total, page {page}):");
-    for t in &tasks {
-        let sym = t["tokenSymbol"].as_str().unwrap_or("?");
-        println!("  [{}] {} — {} {}",
-            t["status"].as_i64().map(status_name).unwrap_or("?"),
-            t["jobId"].as_str().unwrap_or("?"),
-            t["tokenAmount"].as_str().unwrap_or("?"),
-            sym,
+    if is_dispute {
+        let result = build_list_result(status, page, total, &tasks);
+        crate::commands::agent_commerce::task::common::network::api_trace::record_contract(
+            "dispute-list",
+            &json!({
+                "command": "tasks",
+                "status": status,
+                "page": page,
+                "limit": limit,
+                "agentId": agent_id,
+            }),
+            Some(&json!({
+                "backendResponse": resp,
+                "structuredResult": result,
+            })),
+            None,
         );
-        println!("       {}", t["title"].as_str().unwrap_or("?"));
+        crate::output::success(result);
+    } else {
+        print_legacy_list(page, total, &tasks);
     }
     Ok(())
+}
+
+fn print_legacy_status(job_id: &str, task: &Value) {
+    let token_sym = task["tokenSymbol"].as_str().unwrap_or("?");
+    println!(
+        "Task status: {}",
+        task["status"].as_i64().map(status_name).unwrap_or("?")
+    );
+    println!("  jobId:    {job_id}");
+    println!("  title:    {}", task["title"].as_str().unwrap_or("?"));
+    println!(
+        "  budget:   {} {}",
+        task["tokenAmount"].as_str().unwrap_or("?"),
+        token_sym
+    );
+    println!(
+        "  user:    {}",
+        task["buyerAgentId"].as_str().unwrap_or("?")
+    );
+    if let Some(provider_id) = task["providerAgentId"].as_str() {
+        println!("  asp: {provider_id}");
+    }
+}
+
+fn print_legacy_list(page: u32, total: u64, tasks: &[Value]) {
+    println!("Task list ({total} total, page {page}):");
+    for task in tasks {
+        let symbol = task["tokenSymbol"].as_str().unwrap_or("?");
+        println!(
+            "  [{}] {} — {} {}",
+            task["status"].as_i64().map(status_name).unwrap_or("?"),
+            task["jobId"].as_str().unwrap_or("?"),
+            task["tokenAmount"].as_str().unwrap_or("?"),
+            symbol,
+        );
+        println!("       {}", task["title"].as_str().unwrap_or("?"));
+    }
+}
+
+fn value_from_keys(value: &Value, keys: &[&str]) -> Value {
+    keys.iter()
+        .find_map(|key| value.get(*key).filter(|value| !value.is_null()).cloned())
+        .unwrap_or(Value::Null)
+}
+
+/// Normalize the ASP-facing dispute phase from the task status and evidence
+/// deadline. `disputeRoundStatus` is retained as raw detail but is not the
+/// merchant phase/verdict authority for this interaction.
+fn dispute_phase_at(
+    task_status: Option<i64>,
+    prepare_end_time: Option<i64>,
+    now_seconds: i64,
+    now_millis: i64,
+) -> &'static str {
+    match task_status {
+        Some(6 | 9) => "resolved",
+        Some(4) => match prepare_end_time {
+            Some(deadline) => {
+                // Accept the live API's timestamp unit without rewriting the
+                // value: normal epoch seconds are below 1e11, epoch millis are
+                // above it. Equality remains inside evidence preparation.
+                let now = if deadline >= 100_000_000_000 {
+                    now_millis
+                } else {
+                    now_seconds
+                };
+                if now <= deadline {
+                    "evidence_preparation"
+                } else {
+                    "in_progress"
+                }
+            }
+            None => "unknown",
+        },
+        _ => "unknown",
+    }
+}
+
+fn dispute_phase(task_status: Option<i64>, prepare_end_time: Option<i64>) -> &'static str {
+    let now = chrono::Utc::now();
+    dispute_phase_at(
+        task_status,
+        prepare_end_time,
+        now.timestamp(),
+        now.timestamp_millis(),
+    )
+}
+
+fn dispute_verdict(task_status: Option<i64>) -> Value {
+    match task_status {
+        Some(6) => Value::String("asp_won".to_string()),
+        Some(9) => Value::String("asp_lost_auto_refund".to_string()),
+        _ => Value::Null,
+    }
+}
+
+fn build_list_result(status: Option<&str>, page: u32, total: u64, tasks: &[Value]) -> Value {
+    let is_dispute = status == Some("disputed");
+    let items = tasks
+        .iter()
+        .filter_map(|task| {
+            let job_id = task["jobId"].as_str()?.trim();
+            if job_id.is_empty() {
+                return None;
+            }
+            Some(json!({
+                "jobId": job_id,
+                "description": value_from_keys(task, &["title"]),
+                "occurredAt": value_from_keys(task, &["createTime"]),
+                "taskStatus": task["status"].as_i64().map(status_name),
+                "taskStatusCode": value_from_keys(task, &["status"]),
+                "disputePhase": dispute_phase(task["status"].as_i64(), None),
+                "verdict": dispute_verdict(task["status"].as_i64()),
+            }))
+        })
+        .collect::<Vec<_>>();
+    let allowed_job_ids = items
+        .iter()
+        .filter_map(|item| item["jobId"].as_str())
+        .collect::<Vec<_>>();
+    json!({
+        "phase": if is_dispute { "dispute_list" } else { "task_list" },
+        "decision": "ready",
+        "reason": if items.is_empty() && is_dispute { "no_disputes" } else if items.is_empty() { "no_tasks" } else if is_dispute { "disputes_found" } else { "tasks_found" },
+        "nextAction": if is_dispute && !allowed_job_ids.is_empty() {
+            vec![json!({
+                "id": "view_dispute",
+                "recommend": false,
+                "params": {
+                    "allowedJobIds": allowed_job_ids,
+                    "confirmationRequired": true,
+                }
+            })]
+        } else {
+            Vec::new()
+        },
+        "payload": {"total": total, "page": page, "items": items},
+    })
+}
+
+fn build_status_result(
+    job_id: &str,
+    task: &Value,
+    dispute: Option<
+        &crate::commands::agent_commerce::task::evaluator::dispute_status::DisputeStatusResponse,
+    >,
+) -> Value {
+    let task_status = dispute
+        .map(|value| i64::from(value.task_status))
+        .or_else(|| task["status"].as_i64());
+    // Terminal 6/9 alone is not enough to classify an ordinary task as a
+    // dispute. For terminal cases the successful dispute-status lookup is the
+    // existence/permission proof; status 4 is intrinsically disputed.
+    let is_dispute = dispute.is_some() || task_status == Some(4);
+    let dispute_status = dispute.and_then(|value| value.dispute_round_status);
+    let prepare_end_time = dispute.and_then(|value| value.prepare_end_time);
+    let explicit_verdict = value_from_keys(task, &["verdict", "disputeResult"]);
+    let verdict = if explicit_verdict.is_null() {
+        dispute_verdict(task_status)
+    } else {
+        explicit_verdict
+    };
+    json!({
+        "phase": if is_dispute { "dispute_detail" } else { "task_detail" },
+        "decision": "ready",
+        "reason": if is_dispute { "dispute_found" } else { "task_found" },
+        "nextAction": [],
+        "payload": {
+            "jobId": job_id,
+            "description": value_from_keys(task, &["title", "serviceName"]),
+            "occurredAt": value_from_keys(task, &["disputeTime", "updatedAt", "updateTime", "createdAt", "createTime"]),
+            "jobType": dispute.and_then(|value| value.job_type),
+            "amount": dispute
+                .and_then(|value| value.token_amount.clone())
+                .map(Value::String)
+                .unwrap_or_else(|| value_from_keys(task, &["tokenAmount", "serviceTokenAmount"])),
+            "tokenSymbol": dispute
+                .and_then(|value| value.token_symbol.clone())
+                .map(Value::String)
+                .unwrap_or_else(|| value_from_keys(task, &["tokenSymbol", "paymentTokenSymbol"])),
+            "taskStatus": task_status.map(status_name),
+            "taskStatusCode": task_status,
+            "disputePhase": dispute_phase(task_status, prepare_end_time),
+            "currentRound": dispute.and_then(|value| value.current_round),
+            "disputeRoundStatus": dispute_status,
+            "prepareEndTime": prepare_end_time,
+            "roundEndTime": dispute.and_then(|value| value.round_end_time),
+            "deadline": match dispute_phase(task_status, prepare_end_time) {
+                "evidence_preparation" => prepare_end_time,
+                "in_progress" => dispute.and_then(|value| value.round_end_time),
+                _ => None,
+            },
+            "verdict": verdict,
+            "fundDestination": value_from_keys(task, &["fundDestination", "fundsTo"]),
+            "refundAmount": value_from_keys(task, &["refundAmount"]),
+            "txHash": value_from_keys(task, &["disputeTxHash", "refundTxHash", "txHash"]),
+        },
+    })
 }
 
 // ─── active-tasks ───────────────────────────────────────────────────────
@@ -234,8 +517,8 @@ fn short_job_id(jid: &str) -> String {
 
 fn parse_role_arg(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "user"      => Some(1),
-        "asp"       => Some(2),
+        "user" => Some(1),
+        "asp" => Some(2),
         "evaluator" => Some(3),
         _ => None,
     }
@@ -287,9 +570,7 @@ pub async fn handle_active_tasks(
     // Optional --role filter.
     if let Some(raw) = role_filter {
         let want = parse_role_arg(raw).ok_or_else(|| {
-            anyhow::anyhow!(
-                "unrecognized --role value: {raw:?} (expected user / asp / evaluator)"
-            )
+            anyhow::anyhow!("unrecognized --role value: {raw:?} (expected user / asp / evaluator)")
         })?;
         agents.retain(|a| a.get("role").and_then(|v| v.as_i64()) == Some(want));
     }
@@ -307,7 +588,9 @@ pub async fn handle_active_tasks(
         let resp = match client.get_with_identity(path, agent_id).await {
             Ok(r) => r,
             Err(e) => {
-                if DEBUG_LOG { eprintln!("[active-tasks] agent {agent_id} query failed: {e}"); }
+                if DEBUG_LOG {
+                    eprintln!("[active-tasks] agent {agent_id} query failed: {e}");
+                }
                 continue;
             }
         };
@@ -320,7 +603,10 @@ pub async fn handle_active_tasks(
             }
 
             let user_id = t.get("buyerAgentId").and_then(|v| v.as_str()).unwrap_or("");
-            let provider_id = t.get("providerAgentId").and_then(|v| v.as_str()).unwrap_or("");
+            let provider_id = t
+                .get("providerAgentId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
             // Counterparty inferred from my role:
             // - I'm user (1) → counterparty is asp
@@ -502,5 +788,128 @@ mod tests {
                 Classification::None | Classification::MalformedSingle
             ));
         }
+    }
+
+    #[test]
+    fn disputed_list_exposes_stable_selection_ids() {
+        let result = build_list_result(
+            Some("disputed"),
+            1,
+            1,
+            &[json!({
+                "jobId": "job-1",
+                "title": "Research",
+                "status": 4,
+                "createTime": 123,
+            })],
+        );
+        assert_eq!(result["phase"], "dispute_list");
+        assert_eq!(result["payload"]["items"][0]["jobId"], "job-1");
+        assert_eq!(result["payload"]["items"][0]["description"], "Research");
+        assert_eq!(result["payload"]["items"][0]["occurredAt"], 123);
+        assert_eq!(result["payload"]["items"][0]["taskStatus"], "disputed");
+        assert!(result["payload"]["items"][0]["verdict"].is_null());
+        assert_eq!(result["nextAction"][0]["id"], "view_dispute");
+        assert_eq!(
+            result["nextAction"][0]["params"]["allowedJobIds"],
+            json!(["job-1"])
+        );
+        assert_eq!(
+            result["nextAction"][0]["params"]["confirmationRequired"],
+            true
+        );
+    }
+
+    #[test]
+    fn dispute_detail_keeps_unknown_backend_fields_null() {
+        let result = build_status_result(
+            "job-1",
+            &json!({"status": 4, "title": "Research", "disputeTime": 123}),
+            None,
+        );
+        assert_eq!(result["phase"], "dispute_detail");
+        assert_eq!(result["payload"]["jobId"], "job-1");
+        assert_eq!(result["payload"]["occurredAt"], 123);
+        assert_eq!(result["payload"]["disputePhase"], "unknown");
+        assert!(result["payload"]["verdict"].is_null());
+        assert!(result["payload"]["txHash"].is_null());
+    }
+
+    #[test]
+    fn dispute_detail_uses_dispute_status_contract_fields() {
+        use crate::commands::agent_commerce::task::evaluator::dispute_status::DisputeStatusResponse;
+
+        let dispute: DisputeStatusResponse = serde_json::from_value(json!({
+            "jobId": "job-1",
+            "jobType": 1,
+            "currentRound": 2,
+            "selectedVoter": null,
+            "taskStatus": 4,
+            "disputeRoundStatus": 1,
+            "prepareEndTime": 100,
+            "roundEndTime": 200,
+            "tokenAmount": "3",
+            "tokenSymbol": "USDT"
+        }))
+        .unwrap();
+        let result = build_status_result(
+            "job-1",
+            &json!({
+                "status": 6,
+                "title": "Research",
+                "createTime": 50,
+                "tokenAmount": "stale"
+            }),
+            Some(&dispute),
+        );
+
+        assert_eq!(result["payload"]["jobType"], 1);
+        assert_eq!(result["payload"]["taskStatusCode"], 4);
+        assert_eq!(result["payload"]["taskStatus"], "disputed");
+        assert_eq!(result["payload"]["disputePhase"], "in_progress");
+        assert_eq!(result["payload"]["currentRound"], 2);
+        assert_eq!(result["payload"]["prepareEndTime"], 100);
+        assert_eq!(result["payload"]["roundEndTime"], 200);
+        assert_eq!(result["payload"]["deadline"], 200);
+        assert_eq!(result["payload"]["amount"], "3");
+        assert_eq!(result["payload"]["tokenSymbol"], "USDT");
+    }
+
+    #[test]
+    fn task_terminal_status_maps_to_asp_verdict() {
+        use crate::commands::agent_commerce::task::evaluator::dispute_status::DisputeStatusResponse;
+
+        for (task_status, expected) in [(6, "asp_won"), (9, "asp_lost_auto_refund")] {
+            let dispute: DisputeStatusResponse = serde_json::from_value(json!({
+                "jobId": "job-1",
+                "taskStatus": task_status,
+                "disputeRoundStatus": 3
+            }))
+            .unwrap();
+            let result = build_status_result("job-1", &json!({}), Some(&dispute));
+            assert_eq!(result["payload"]["disputePhase"], "resolved");
+            assert_eq!(result["payload"]["verdict"], expected);
+        }
+    }
+
+    #[test]
+    fn disputed_task_uses_prepare_deadline_with_inclusive_boundary() {
+        assert_eq!(
+            dispute_phase_at(Some(4), Some(2_000), 2_000, 2_000_000),
+            "evidence_preparation"
+        );
+        assert_eq!(
+            dispute_phase_at(Some(4), Some(1_999), 2_000, 2_000_000),
+            "in_progress"
+        );
+        assert_eq!(
+            dispute_phase_at(
+                Some(4),
+                Some(2_000_000_000_000),
+                2_000_000_000,
+                2_000_000_000_000,
+            ),
+            "evidence_preparation"
+        );
     }
 }

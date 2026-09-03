@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 pub mod claim;
 pub mod a2a_binding;
+pub mod dispute;
 pub mod autotrade;
 pub mod config;
 pub mod deadline;

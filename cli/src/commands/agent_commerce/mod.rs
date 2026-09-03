@@ -3224,7 +3224,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
             let (freshness_warning, prefetched) =
-                check_status_freshness(&job_id, &event, &agent_id).await;
+                check_status_freshness(&job_id, &event, &agent_id, parsed_message.as_ref()).await;
             if let Some(w) = freshness_warning {
                 println!("{w}");
                 return Ok(());
@@ -4065,6 +4065,7 @@ async fn check_status_freshness(
     job_id: &str,
     job_status_or_event: &str,
     agent_id: &str,
+    message: Option<&serde_json::Value>,
 ) -> (Option<String>, Option<task::common::PreFetchedTaskContext>) {
     use task::common::network::task_api_client::TaskApiClient;
     use task::common::state_machine::{parse_status_or_event, status_when_event, Event, Status};
@@ -4152,6 +4153,50 @@ async fn check_status_freshness(
         Err(_) => return (None, None),
     };
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
+
+    if job_status_or_event == "sub_user_reject" {
+        let detail = match c.fetch_subscription(job_id, agent_id).await {
+            Ok(detail) => detail,
+            Err(error) => {
+                return (
+                    Some(task::common::dispute::blocked_result(
+                        "status_unavailable",
+                        job_id,
+                        serde_json::json!({"sourceEvent": job_status_or_event, "error": error.to_string()}),
+                    )),
+                    Some(ctx),
+                )
+            }
+        };
+        let number = |value: Option<&serde_json::Value>| {
+            value.and_then(|value| {
+                value
+                    .as_i64()
+                    .or_else(|| value.as_str().and_then(|raw| raw.parse::<i64>().ok()))
+            })
+        };
+        let status = number(detail.get("status")).or_else(|| number(detail.get("subStatus")));
+        let period_matches = ["periodIndex", "subStartTime", "subEndTime"]
+            .into_iter()
+            .all(|key| match (number(message.and_then(|value| value.get(key))), number(detail.get(key))) {
+                (Some(event_value), Some(actual_value)) => event_value == actual_value,
+                _ => true,
+            });
+        if status != Some(3) || !period_matches {
+            return (
+                Some(task::common::dispute::blocked_result(
+                    "stale_event",
+                    job_id,
+                    serde_json::json!({
+                        "sourceEvent": job_status_or_event,
+                        "actualSubStatus": status,
+                        "periodMatches": period_matches,
+                    }),
+                )),
+                Some(ctx),
+            );
+        }
+    }
 
     // For job_submitted: prefer an unprocessed spool delivery over an existing
     // manifest. Subscription manifests are append-only, so checking the

@@ -15,13 +15,14 @@ metadata:
 Use the most specific reference for the current intent. Its command-selection,
 confirmation, output, and recovery rules take precedence over generic guidance.
 
-1. Structured inbound events or agent chat → `references/task-core.md`.
-2. New task or subscription → `references/identity-service-search.md` +
+1. `job_rejected` / `sub_user_reject`, an active dispute A/B reply, an ASP request to handle a rejected/refund decision, a dispute list/progress query, a selected dispute `jobId`, or the query-confirmation A/B reply → `references/task-dispute.md` plus `references/task-core.md` for envelope activation.
+2. Other structured inbound events or agent chat → `references/task-core.md`.
+3. New task or subscription → `references/identity-service-search.md` +
    `references/intent-keyword-extraction.md` + `references/identity-service-contract.md`.
-3. Existing task/subscription operations → `references/task-user-playbook.md`.
-4. Task watch or wake → `references/watch-core.md`.
-5. Identity operations → the applicable `references/identity-*.md` file.
-6. A2A runtime or communication setup → `references/chat-comm-init.md`.
+4. Existing task/subscription operations → `references/task-user-playbook.md`.
+5. Task watch or wake → `references/watch-core.md`.
+6. Identity operations → the applicable `references/identity-*.md` file.
+7. A2A runtime or communication setup → `references/chat-comm-init.md`.
 
 ## Envelope precedence
 
@@ -58,6 +59,7 @@ At thread start, run
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
 | Auto-renew, trial cancel, reject, refund, or deliver | §Task Marketplace |
 | Existing task actions, task list, or subscription list/detail | `references/task-user-playbook.md` only; use its unified task/subscription routing |
+| ASP rejection/refund decision (including opening an existing decision card), dispute list/progress, selected dispute jobId, or query-confirmation A/B | `references/task-dispute.md`; this takes precedence over generic task lists/status |
 | Pause/stop subscription copy-trading | `references/task-user-playbook.md`, §Pause auto copy-trade only |
 | Devices or subscription-message receipt/replay settings | `references/task-user-playbook.md`, §Device List / device-receipt; buyer side only |
 | Receive/resume/restore an existing subscription or its signals; update its copy-trade policy; `listen to <subscription title>` | `references/task-user-playbook.md`, §Signal-receipt watch entry; resolve the active subscription, pass authorization, then use scoped watch. Never read backlog first, guess `jobId`, or use global watch |
@@ -96,11 +98,12 @@ read `references/task-action-routing.md`.
 
 Route by `decision`, then use `reason`, `nextAction`, and `payload`:
 
-- `ready`: execute or present `nextAction`.
+- `ready` with actions: execute or present `nextAction`.
+- `ready` with an empty `nextAction`: render the current read-only result and end the turn.
 - `blocked`: stop the current path and handle `reason`.
 - `requires_user_input`: collect only the missing input indicated by `payload`, then retry the selected `nextAction`.
 
-Render `nextAction` as a numbered list. Never invent actions not returned by the CLI.
+Render `nextAction` as a numbered list populated from the CLI result.
 
-Do not infer progression from human-readable output. Keep backend field names
-inside `payload` unchanged. 
+Derive progression from the structured fields and preserve backend field names
+inside `payload`.

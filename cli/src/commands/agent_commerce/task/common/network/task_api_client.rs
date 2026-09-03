@@ -13,6 +13,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
 use super::super::DEBUG_LOG;
+use super::api_trace;
 
 use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
@@ -122,6 +123,12 @@ impl TaskApiClient {
         format!("{TASK_PREFIX}/{job_id}/{action}")
     }
 
+    /// `/priapi/v1/aieco/task/dispute/my` — arbitration cases visible to the
+    /// current identity (shared by one-time and subscription tasks).
+    pub fn dispute_list_path(&self, page: u32, page_size: u32) -> String {
+        format!("{TASK_PREFIX}/dispute/my?page={page}&pageSize={page_size}")
+    }
+
     /// `/priapi/v1/aieco/task/broadcast`
     pub fn broadcast_path(&self) -> &'static str {
         const PATH: &str = "/priapi/v1/aieco/task/broadcast";
@@ -169,6 +176,7 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← {data}");
                 }
                 log_api("get", path, agent_id, true, elapsed, None, None);
+                api_trace::record("GET", &url, agent_id, None, Some(data), None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
@@ -176,6 +184,7 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← ERROR: {err_msg}");
                 }
                 log_api("get", path, agent_id, false, elapsed, Some(&err_msg), None);
+                api_trace::record("GET", &url, agent_id, None, None, Some(&err_msg));
             }
         }
         result
@@ -208,6 +217,7 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] GET {url} ← {data}");
                 }
                 log_api("get", path, agent_id, true, elapsed, None, None);
+                api_trace::record("GET", &url, agent_id, None, Some(data), None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
@@ -215,6 +225,7 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] GET {url} ← ERROR: {err_msg}");
                 }
                 log_api("get", path, agent_id, false, elapsed, Some(&err_msg), None);
+                api_trace::record("GET", &url, agent_id, None, None, Some(&err_msg));
             }
         }
         result
@@ -347,6 +358,7 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] POST {url} ← {data}");
                 }
                 log_api("post", path, agent_id, true, elapsed, None, None);
+                api_trace::record("POST", &url, agent_id, Some(&body), Some(data), None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
@@ -354,6 +366,7 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] POST {url} ← ERROR: {err_msg}");
                 }
                 log_api("post", path, agent_id, false, elapsed, Some(&err_msg), None);
+                api_trace::record("POST", &url, agent_id, Some(&body), None, Some(&err_msg));
             }
         }
         result

@@ -75,8 +75,9 @@ NOT treat it as display-only or ignore it.
 |---|---|
 | `sub_asp_selected` | Render the CLI's canonical `Content:` per the language rule below. End turn. |
 | `sub_complete_notify` / `sub_close_notify` / `sub_failed_notify` | Render the CLI's canonical terminal `Content:` per the language rule below, then follow `session-cleanup`. End turn. |
-| `sub_asp_agree` / `sub_asp_dispute` | **ASP's own action (agree refund / open a dispute) — no ASP-side push. Silently ignore. End turn.** Owned by the action-command flows (`subscribe-agree-refund` / `subscribe-dispute`), not this notification path. |
-| `sub_user_reject` | **Decision — NOT display-only, do NOT ignore.** The buyer rejected the current period. Call `next-action --role asp`; the CLI returns a `pending-decisions-v2 request-prompt` decision (A = file a dispute for evaluation / B = confirm the refund — ASP-3 copy: `[Action Needed: User Rejection]` with the rejected period, the precise response deadline `{rejectWindowEndsAt}`, and the auto-refund amount). Push that decision to the user per the returned guidance. Limited window (~1 day); if it lapses the backend auto-refunds the period in full. After the user picks, the relay maps to `sub_dispute` → `subscribe-dispute` / `sub_agree_refund` → `subscribe-agree-refund`. |
+| `sub_asp_agree` | ASP's own refund action; finish the ASP turn immediately. |
+| `sub_asp_dispute` | Continue and complete the existing automated subscription evidence flow returned by `next-action`. |
+| `sub_user_reject` | Read `task-dispute.md` and use its unified A/B decision contract. |
 | `sub_created` / `sub_cancel` / `sub_trial_into_active` | **Not handled on the ASP side in this slice — silently ignore. End turn.** Buyer-only. |
 | `sub_renew` | Renewal → the **previous period's income is now claimable**. Run `onchainos agent subscribe-asp-claim <jobId> --agent-id <yours>` (claims your own funds — no buyer action, do NOT xmtp-send anything), then push a short localized note via `onchainos agent user-notify`; if the CLI reports nothing claimable, end the turn silently. |
 

@@ -138,7 +138,7 @@ pub fn job_accepted_user_notify_a2mcp(job_id: &str, agent_id: &str) -> String {
 /// The short jobId prefix lets the user tell tasks apart at a glance when
 /// multiple prompts are in flight concurrently.
 pub fn job_rejected_user_decision_prompt(short_id: &str, expire_time: Option<i64>) -> String {
-    // FR-4: append the decision-deadline reminder after the refund option. `None`
+    // FR-4: append the decision-deadline reminder after the dispute option. `None`
     // (no expireTime, or not representable) ⇒ empty string, card unchanged (FR-5).
     use super::super::common::deadline::{self, DeadlineKind};
     let decision_deadline_line = deadline::deadline_reminder_line(
@@ -150,8 +150,8 @@ pub fn job_rejected_user_decision_prompt(short_id: &str, expire_time: Option<i64
     .unwrap_or_default();
     format!(
         "\x20\x20\x20\x20[Job {short_id} — you are the ASP] The User Agent rejected the deliverable. Choose:\n\
-         \x20\x20\x20\x20A. File a dispute → reply 'file dispute, reason: <reason>'\n\
-         \x20\x20\x20\x20B. Agree to refund → reply 'agree to refund'{decision_deadline_line}"
+         \x20\x20\x20\x20A. Agree to a full refund → reply 'agree to refund'\n\
+         \x20\x20\x20\x20B. File a dispute → reply 'file dispute, reason: <reason>'{decision_deadline_line}"
     )
 }
 
@@ -529,8 +529,8 @@ pub fn sub_user_reject_asp_decision_copy(
         _ => {}
     }
     out.push_str(" will be issued to the user automatically.\n");
-    out.push_str("  A. File a dispute for evaluation.\n");
-    out.push_str("  B. Confirm the refund for this period.");
+    out.push_str("  A. Agree to a full refund for this period.\n");
+    out.push_str("  B. File a dispute for evaluation.");
     out
 }
 
@@ -558,7 +558,7 @@ mod tests {
             "no reminder when expire_time is None; got:\n{out}"
         );
         assert!(
-            out.ends_with("agree to refund'"),
+            out.ends_with("file dispute, reason: <reason>'"),
             "card unchanged when None; got:\n{out}"
         );
     }

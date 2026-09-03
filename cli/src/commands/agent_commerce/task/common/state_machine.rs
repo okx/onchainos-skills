@@ -139,7 +139,7 @@ pub enum DisputeRoundStatus {
     Init,         // 0 — initialized (round started, waiting to enter the commit window)
     CommitPhase,  // 1 — commit phase
     RevealPhase,  // 2 — reveal phase
-    Completed,    // 3 — round completed (verdict reached)
+    Completed,    // 3 — round completed
     Rejected,     // 4 — round rejected
     Invalidated,  // 5 — round invalidated (insufficient votes / nobody revealed); wait for next-round redraw
     /// A status code returned by the backend that this enum does not recognize (tolerantly preserved as-is).

@@ -51,14 +51,14 @@ returned without blocking the caller, which may warn and continue.
 
 ### pending-decisions-v2
 
-Pending-decisions queue with four subcommands. Same `(jobId, role, agentId, toAgentId?)` key re-`request` overwrites in place (idempotent).
+Pending-decisions queue with four subcommands. Arbitration requests use `decisionId` as the idempotency key; legacy requests use `(jobId, role, agentId, toAgentId?)`.
 
 #### request
 
 Push a decision to the user
 
 ```
-agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --user-content "<text>" --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>] [--continuation-id <id>]
+agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --user-content "<text>" --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>] [--decision-id <id>] [--choices-json '<json>'] [--expires-at <unix-seconds>]
 ```
 
 | Param | Required | Default | Description |
@@ -71,6 +71,9 @@ agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> 
 | `--list-label` | Yes | - | Short label for multi-decision list view |
 | `--llm-content` | No | - | Custom llmContent override |
 | `--source-event` | No | - | Chain event name; used to build `user_decision_<source_event>` on resolve |
+| `--decision-id` | Arbitration | derived current instance | Stable rejection-instance key |
+| `--choices-json` | Arbitration | event defaults | Exact `key` → `actionId` + `params` mapping |
+| `--expires-at` | No | - | Decision deadline in unix seconds; resolution returns `decision_expired` after this time |
 | `--continuation-id` | No | - | Opaque state binding persisted with the pending entry and relayed as `message.continuationId`; cannot be combined with `--llm-content` |
 
 #### resolve-prompt
@@ -78,7 +81,7 @@ agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> 
 Relay the user's reply back to the sub session
 
 ```
-agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <event> [--continuation-id <id>]
+agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <event> [--decision-id <id>]
 ```
 
 | Param | Required | Default | Description |
@@ -89,6 +92,7 @@ agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jo
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--to-agent-id` | No | - | Must match the original request |
 | `--source-event` | Yes | - | Chain event name from the original request |
+| `--decision-id` | Arbitration | - | Exact decision instance embedded by the original request |
 | `--continuation-id` | No | - | Exact binding embedded by the original request's default resolver; relayed unchanged |
 
 #### cancel
@@ -117,7 +121,7 @@ agent pending-decisions-v2 list --format markdown
 
 ### next-action
 
-Output the script the agent should execute based on `(event, role)`
+Return the next progression result based on `(event, role)`. `job_rejected` and `sub_user_reject` return the five-field structured contract; older flows may still return a script.
 
 ```
 agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message '<JSON>' [--a2a-file <path>]
@@ -394,6 +398,8 @@ agent status <jobId> [--agent-id <id>]
 | `<jobId>` | Yes | - | Task ID (positional) |
 | `--agent-id` | No | auto-resolved | Caller's agentId |
 
+Returns structured task detail. For disputed/settled tasks it queries `GET /priapi/v1/aieco/task/{jobId}/dispute/status` and returns `phase=dispute_detail`. The dispute endpoint is authoritative for `jobType`, `taskStatus`, `currentRound`, `disputeRoundStatus`, `prepareEndTime`, `roundEndTime`, `tokenAmount`, and `tokenSymbol`; ordinary task detail supplements description and occurrence time. Normalize the ASP-facing state as follows: status 4 and now `<= prepareEndTime` → `disputePhase=evidence_preparation`; status 4 and now `> prepareEndTime` → `disputePhase=in_progress`; status 6 → `disputePhase=resolved, verdict=asp_won`; status 9 → `disputePhase=resolved, verdict=asp_lost_auto_refund`. Status 4 with an available `prepareEndTime` follows the time comparison, while status 4 with an unavailable `prepareEndTime` maps to `unknown`. Retain `disputeRoundStatus` as a raw diagnostic field and derive the four merchant states from `taskStatus` plus the preparation deadline. The CLI accepts epoch seconds or milliseconds for deadline comparison, preserves the raw value, and uses `roundEndTime` as the active-round deadline after preparation. `tokenAmount` / `tokenSymbol` are the task amount/currency and, for the explicit status-9 full-refund rule, the refund amount to communicate before chain settlement is confirmed. Set transaction hash to null for this endpoint response. For a direct dispute jobId query, retain this result to populate the query-confirmation card, present that card first, and show detail after the user chooses A.
+
 ### my-tasks
 
 List subscription and one-time tasks for the current account's User identity.
@@ -444,6 +450,8 @@ agent tasks [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 | `--page` | No | `1` | Page number |
 | `--limit` | No | `20` | Items per page |
 | `--agent-id` | No | auto-resolved | Caller's agentId |
+
+With `--status disputed`, the CLI calls `GET /priapi/v1/aieco/task/dispute/my?page=<page>&pageSize=<limit>` and returns `phase=dispute_list`. Each item maps the confirmed list fields: `jobId`, `title -> description`, `createTime -> occurredAt`, and `status -> taskStatus/taskStatusCode`. Status 6 normalizes to `resolved/asp_won`; status 9 normalizes to `resolved/asp_lost_auto_refund`; status 4 remains phase `unknown` at list scope and resolves its preparation deadline through the detail query. Fetch amount, token symbol, round status, and transaction hash from authoritative detail or settlement facts when a later view requires them. `nextAction=view_dispute.params.allowedJobIds` is the selectable allowlist and `confirmationRequired=true` requires the Skill to render the query-confirmation card before showing details. Retain full API logs to confirm the live `status` and `createTime` contract.
 
 ### active-tasks
 
@@ -1187,6 +1195,18 @@ agent my-stake [--agent-id <id>]
 ---
 
 ## Misc
+
+### Task API diagnostic log
+
+Enable `ONCHAINOS_TASK_API_LOG=1` while verifying an API contract. Logs are redacted pretty-JSON files under `./.claude/logs` in the CLI process's current working directory, always using `{error, req, res, url}`.
+
+- Task API JSON calls record the complete request body and backend response.
+- `dispute-decision` records the source rejection event and complete structured decision result.
+- `dispute-choice` records the returned choices, verbatim A/B reply, selected Action ID, params, or ambiguity error.
+- `dispute-list` / `dispute-detail` record both the complete backend response and the final structured result, including the complete `allowedJobIds` selection contract.
+- Keep heartbeat and `wakeup_notify` as runtime events.
+
+Redact query strings and signing/session/authentication material before persistence. Keep this diagnostic log separate from the formal audit log.
 
 ### feedback-submit
 

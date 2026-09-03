@@ -19,7 +19,7 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 |---|---|---|---|---|
 | **User Agent** | `1` | `--role user` | User / User Agent / Buyer / Client | [`task-user-sub-playbook.md`](task-user-sub-playbook.md) |
 | **ASP** | `2` | `--role asp` | ASP / Provider / Provider Agent / Seller / Merchant  | [`task-asp.md`](task-asp.md) |
-| **Evaluator** | `3` | `--role evaluator` | Evaluator / 评审员 | [`task-evaluator.md`](task-evaluator.md) |
+| **Evaluator** | `3` | `--role evaluator` | Evaluator Agent | [`task-evaluator.md`](task-evaluator.md) |
 
 #### Multi-account agentId lookup
 
@@ -42,7 +42,8 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
      --agentId <envelope's top-level agentId> \
      --message '<the envelope.message object as a JSON string>'
    ```
-   🛑 **Strictly execute the returned script. Do NOT run any method or command outside the script.**
+   If the result contains `phase`, `decision`, `reason`, `nextAction`, and `payload`, treat it as structured progression: for `job_rejected` / `sub_user_reject` read `task-dispute.md`; otherwise use `task-action-routing.md` and `task-output-templates.md`. Execute a legacy prose result as its returned script.
+   🛑 **For a legacy script result, execute exactly the returned steps in their declared order and stop at the declared boundary.**
    🛑 **Mandatory whenever an `event` field is present** — regardless of session history or any "Read the … skill" / "SKILL.md" wording inside the envelope (that wording does NOT make it a prefetch). Never classify a message that carries `event` as a skill-prefetch or as "no action".
    🛑 `--message` is JSON — inside string values, escape `\n` `\t` `\"` `\\`; no raw newlines.
 2. **a2a-agent-chat** — `msgType == "a2a-agent-chat"` + `jobId`:
@@ -60,7 +61,7 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 ## Subscription Notifications (display-class)
 
 `sub_*` system events route through **Activation #1 exactly like every other system event**: run
-`next-action --role auto` with the envelope's `message`, then strictly execute the returned script.
+`next-action --role auto` with the envelope's `message`, then process its structured progression or legacy script as defined in Activation #1.
 🛑 Do NOT compose the notification yourself — not from this file, not from memory. The CLI is the
 canonical renderer: copy, freshness gate, dedup, and audit all live in the CLI layer, and they are
 silently bypassed if you hand-render.

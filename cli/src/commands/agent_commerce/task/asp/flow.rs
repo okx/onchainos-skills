@@ -8,6 +8,65 @@
 
 use crate::commands::agent_commerce::task::common::util::short_job_id;
 
+fn dispute_decision_json(
+    source_event: &str,
+    job_id: &str,
+    job_title: Option<&str>,
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    message: Option<&serde_json::Value>,
+) -> String {
+    use crate::commands::agent_commerce::task::common::dispute::{
+        build_decision_result, scalar_string,
+    };
+
+    let message_field = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|key| scalar_string(message.and_then(|value| value.get(*key))))
+    };
+    let name = message_field(&["jobTitle", "title", "serviceName"])
+        .or_else(|| job_title.map(str::to_string).filter(|value| !value.is_empty()))
+        .or_else(|| prefetched.map(|value| value.title.clone()).filter(|value| !value.is_empty()));
+    let amount = message_field(&["tokenAmount", "serviceTokenAmount"]).or_else(|| {
+        prefetched.and_then(|value| {
+            value
+                .service_token_amount
+                .clone()
+                .filter(|amount| !amount.is_empty())
+                .or_else(|| (!value.token_amount.is_empty()).then(|| value.token_amount.clone()))
+        })
+    });
+    let token_symbol = message_field(&["tokenSymbol", "paymentTokenSymbol"]).or_else(|| {
+        prefetched
+            .map(|value| value.token_symbol.clone())
+            .filter(|value| !value.is_empty() && value != "?")
+    });
+    let mut decision_context = message.cloned().unwrap_or_else(|| serde_json::json!({}));
+    if decision_context.get("expireTime").is_none() {
+        if let Some(expire_time) = prefetched.and_then(|value| value.expire_time) {
+            decision_context["expireTime"] = serde_json::Value::Number(expire_time.into());
+        }
+    }
+    let result = build_decision_result(
+        source_event,
+        job_id,
+        name,
+        amount,
+        token_symbol,
+        Some(&decision_context),
+    );
+    crate::commands::agent_commerce::task::common::network::api_trace::record_contract(
+        "dispute-decision",
+        &serde_json::json!({
+            "sourceEvent": source_event,
+            "jobId": job_id,
+            "message": decision_context,
+        }),
+        Some(&result),
+        None,
+    );
+    serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// x402 / A2MCP next-action playbook for the ASP.
 ///
 /// In the x402 flow the User Agent paid the ASP at request time via the A2MCP
@@ -289,6 +348,60 @@ pub async fn generate_next_action(
          Then follow the command's output to close conversations (if applicable).");
 
     let event = parse_status_or_event(event_str);
+    match &event {
+        Event::JobRejected => {
+            return dispute_decision_json(
+                crate::commands::agent_commerce::task::common::dispute::JOB_REJECTED,
+                job_id,
+                job_title,
+                prefetched,
+                message,
+            );
+        }
+        Event::SubUserReject => {
+            return dispute_decision_json(
+                crate::commands::agent_commerce::task::common::dispute::SUB_USER_REJECT,
+                job_id,
+                job_title,
+                prefetched,
+                message,
+            );
+        }
+        Event::Other(event_name) if event_name.starts_with("user_decision_") => {
+            let source_event = &event_name["user_decision_".len()..];
+            if crate::commands::agent_commerce::task::common::dispute::is_decision_source(
+                source_event,
+            ) {
+                let selected_action = message
+                    .and_then(|value| value.get("selectedActionId"))
+                    .and_then(serde_json::Value::as_str);
+                let params = message.and_then(|value| value.get("params"));
+                return match selected_action.and_then(|action_id| {
+                    crate::commands::agent_commerce::task::common::dispute::resolved_action(
+                        source_event,
+                        action_id,
+                        job_id,
+                        params,
+                    )
+                    .ok()
+                }) {
+                    Some(resolved) => serde_json::to_string(
+                        &crate::commands::agent_commerce::task::common::dispute::build_selected_result(
+                            job_id,
+                            &resolved,
+                        ),
+                    )
+                    .unwrap_or_else(|_| "{}".to_string()),
+                    None => crate::commands::agent_commerce::task::common::dispute::blocked_result(
+                        "ambiguous_choice",
+                        job_id,
+                        serde_json::json!({"sourceEvent": source_event}),
+                    ),
+                };
+            }
+        }
+        _ => {}
+    }
     match event {
         // ─── Scene 3: Apply has been recorded on-chain (escrow path; the User Agent issues the payment) ──
         Event::ProviderApplied => {
@@ -1110,25 +1223,25 @@ pub async fn generate_next_action(
                     "[User decision relay] source_event=`job_rejected`, user's verbatim reply: `{reply}`\n\n\
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
-                     \x20\x20• **`dispute_raise`** — user wants to challenge the rejection and go to evaluation (typical intents: A / 发起仲裁 / dispute / 不接受拒绝 / 我做得没问题 / 申诉 / 我要争 / file dispute / contest).\n\
-                     \x20\x20• **`agree_refund`** — user accepts the refund and walks away (typical intents: B / 同意退款 / agree refund / 退款 / 算了 / 不争了 / OK refund / let it go).\n\n\
+                     \x20\x20• **`agree_refund`** — user accepts the refund and walks away (typical intents: A / 同意退款 / agree refund / 退款 / 算了 / 不争了 / OK refund / let it go).\n\
+                     \x20\x20• **`dispute_raise`** — user wants to challenge the rejection and go to evaluation (typical intents: B / 发起仲裁 / dispute / 不接受拒绝 / 我做得没问题 / 申诉 / 我要争 / file dispute / contest).\n\n\
                      If the user's reply clearly maps to one of these → call:\n\
                      ```bash\n\
                      onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<dispute_raise|agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
                      ```\n\
-                     If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT it for `[to: backup]` / backup subs — NEVER your own agentId) and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=file dispute  B=accept refund\".\n"
+                     If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT it for `[to: backup]` / backup subs — NEVER your own agentId) and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=accept full refund  B=file dispute\".\n"
                 ),
                 "sub_user_reject" => format!(
                     "[User decision relay] source_event=`sub_user_reject`, user's verbatim reply: `{reply}`\n\n\
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
-                     \x20\x20• **`sub_dispute`** — user wants to challenge the rejection and go to evaluation (typical intents: A / 发起仲裁 / dispute / 申诉 / 我要争 / contest).\n\
-                     \x20\x20• **`sub_agree_refund`** — user accepts refunding this period (typical intents: B / 同意退款 / agree refund / 退款 / 算了 / let it go).\n\n\
+                     \x20\x20• **`sub_agree_refund`** — user accepts refunding this period (typical intents: A / 同意退款 / agree refund / 退款 / 算了 / let it go).\n\
+                     \x20\x20• **`sub_dispute`** — user wants to challenge the rejection and go to evaluation (typical intents: B / 发起仲裁 / dispute / 申诉 / 我要争 / contest).\n\n\
                      If the reply clearly maps to one → call:\n\
                      ```bash\n\
                      onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<sub_dispute|sub_agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
                      ```\n\
-                     If **truly ambiguous** (non-committal `OK` / `sure` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT it for `[to: backup]` / backup subs — NEVER your own agentId) and `--source-event sub_user_reject`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=raise dispute  B=agree refund\".\n"
+                     If **truly ambiguous** (non-committal `OK` / `sure` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT it for `[to: backup]` / backup subs — NEVER your own agentId) and `--source-event sub_user_reject`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=accept full refund  B=raise dispute\".\n"
                 ),
                 "submit_deadline_warn" => format!(
                     "[User decision relay] source_event=`submit_deadline_warn`, user's verbatim reply: `{reply}`\n\n\
@@ -1645,8 +1758,6 @@ mod tests {
 
     #[tokio::test]
     async fn asp_sub_user_reject_renders_refund_dispute_decision() {
-        // `sub_user_reject` now parses to the first-class `Event::SubUserReject` (state_machine);
-        // the ASP arm must push the refund/dispute decision, NOT silently ignore it.
         let out = run_asp(
             "sub_user_reject",
             json!({
@@ -1657,39 +1768,24 @@ mod tests {
             }),
         )
         .await;
-        assert!(
-            out.contains("pending-decisions-v2 request-prompt"),
-            "sub_user_reject must push a decision to the user: {out}"
-        );
-        assert!(
-            !out.contains("Silently ignore"),
-            "sub_user_reject must NOT hit the silent-ignore group: {out}"
-        );
-        // AC-F2: ASP-3 canonical copy with period / precise deadline / amount slots + A/B.
-        assert!(
-            out.contains("[Action Needed: User Rejection] The user has rejected \"My Sub\"'s current period ("),
-            "ASP-3 copy + period slot: {out}"
-        );
-        assert!(
-            out.contains("file a dispute by ") && out.contains("full refund of 0.0005 USDT"),
-            "precise deadline + amount slots: {out}"
-        );
-        assert!(
-            out.contains("A. File a dispute for evaluation.")
-                && out.contains("B. Confirm the refund for this period."),
-            "A/B decision preserved: {out}"
-        );
-        // Degrade: missing rejectWindowEndsAt falls back to the approximate window, no empty slot.
+        let result: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(result["phase"], "dispute_decision");
+        assert_eq!(result["decision"], "requires_user_input");
+        assert_eq!(result["payload"]["name"], "My Sub");
+        assert_eq!(result["payload"]["amount"], "0.0005");
+        assert_eq!(result["nextAction"][0]["id"], "sub_agree_refund");
+        assert_eq!(result["nextAction"][1]["id"], "sub_dispute");
+        assert_eq!(result["payload"]["extraFields"]["periodIndex"], serde_json::Value::Null);
+
+        // Missing mandatory card facts fails closed instead of generating partial copy.
         let degraded = run_asp(
             "sub_user_reject",
             json!({ "event": "sub_user_reject", "jobId": ASP_JOB_ID, "jobTitle": "My Sub" }),
         )
         .await;
-        assert!(
-            degraded.contains("within about 1 day"),
-            "deadline fallback: {degraded}"
-        );
-        assert!(!degraded.contains(" by .") && !degraded.contains("of  "), "no empty slot: {degraded}");
+        let degraded: serde_json::Value = serde_json::from_str(&degraded).unwrap();
+        assert_eq!(degraded["decision"], "blocked");
+        assert_eq!(degraded["reason"], "missing_required_facts");
     }
 
     #[tokio::test]

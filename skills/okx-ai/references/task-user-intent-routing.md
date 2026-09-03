@@ -104,6 +104,8 @@ See [`entry-points.md`](./entry-points.md#multi-task-context-management) for the
 
 When the user asks for **their task list without a specific jobId**, the user session answers directly (do NOT 6-step forward). Triggers include `my tasks` / `what am I working on` / `list my tasks` / `active tasks` / `ongoing tasks` / `show all my tasks` / `task list` / `ended tasks` / `subscription tasks` / `one-time tasks` and semantically equivalent wording in any language.
 
+Route ASP dispute/arbitration intents and buyer rejection/refund-decision intents to `task-dispute.md` with precedence over generic task or list wording.
+
 Run `onchainos agent my-tasks --task-type <type> --status-type <status> --page 1`, choosing each parameter independently:
 
 | Parameter | User intent → value |
@@ -156,6 +158,12 @@ Action:
 ---
 
 ## Status / progress query (specific task)
+
+ASP arbitration intents take precedence over generic task list/status routing:
+
+- `handle the refund request`, `handle the buyer rejection`, `handle this task decision`, `handle <jobId>`, `view pending refunds`, or semantically equivalent wording in any language → read `task-dispute.md` §Merchant asks to handle a decision and reopen the matching standard decision card.
+- `dispute list`, `query disputes`, `current disputes`, `my disputes`, or semantically equivalent wording in any language, with no jobId → read `task-dispute.md` §Query dispute and render the dispute-list template.
+- `dispute progress`, `query the dispute for <jobId>`, a semantic equivalent in any language, or selecting one dispute from the latest list → validate the target and render the query-confirmation card per `task-dispute.md`; show details after A.
 
 | Trigger | Action |
 |---|---|
