@@ -33,8 +33,9 @@ pub(crate) mod negotiate;
 mod query;
 mod reject;
 mod reject_apply;
+mod service_detail;
 pub(crate) mod subscription_ops;
-mod x402_flow;
+mod task_create_prepare;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -51,9 +52,31 @@ use crate::commands::Context;
 pub struct TaskServiceSelectArgs {
     #[command(flatten)]
     pub service_match: ServiceMatchArgs,
+    /// Buyer Agent ID used by the task flow to check existing subscriptions.
+    #[arg(long = "agentic-id")]
+    pub agentic_id: Option<String>,
     /// Output format: json
     #[arg(long, default_value = "json")]
     pub format: String,
+}
+
+/// Deterministic task-creation checks for a selected Service ID.
+#[derive(Args, Clone, Debug)]
+pub struct TaskCreatePrepareArgs {
+    /// Selected numeric Service `sid` from service search or matching context.
+    #[arg(long = "sid", value_name = "SID")]
+    pub sid: String,
+}
+
+/// Fetch one current marketplace Service for task creation.
+#[derive(Args, Clone, Debug)]
+pub struct ServiceDetailArgs {
+    /// Marketplace Service sid selected from service discovery.
+    #[arg(long = "sid", value_name = "SID")]
+    pub sid: String,
+    /// Current User Agent ID sent as the `agenticId` request header.
+    #[arg(long = "agentic-id", value_name = "AGENT_ID")]
+    pub agentic_id: String,
 }
 
 #[derive(Subcommand)]
@@ -70,16 +93,13 @@ pub enum TaskCommand {
         currency: String,
         #[arg(long)]
         title: Option<String>,
-        /// Designated provider agentId (required; skip asp-match; negotiate or x402-accept with this provider directly).
+        /// Designated provider agentId (required; skip asp-match and negotiate directly).
         #[arg(long)]
         provider: String,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
-        /// Designated service endpoint (persisted for multi-service providers)
-        #[arg(long)]
-        endpoint: Option<String>,
-        /// Payment mode to set at creation time (required; escrow / x402).
+        /// Payment mode to set at creation time (required; escrow only).
         #[arg(long = "payment-mode")]
         payment_mode: String,
         /// Service ID from asp/match response (required)
@@ -120,6 +140,9 @@ pub enum TaskCommand {
         /// Subscription description (max 4096 chars)
         #[arg(long)]
         description: String,
+        /// Local file paths to attach to the subscription after creation.
+        #[arg(long = "file")]
+        attachments: Option<Vec<String>>,
         /// Designated provider agent ID
         #[arg(long = "provider-agent-id")]
         provider_agent_id: Option<String>,
@@ -166,6 +189,12 @@ pub enum TaskCommand {
     /// Select task-creation candidate services via service-match
     #[command(name = "task-service-select")]
     TaskServiceSelect(TaskServiceSelectArgs),
+    /// Fetch one current marketplace Service by sid.
+    #[command(name = "service-detail")]
+    ServiceDetail(ServiceDetailArgs),
+    /// Prepare task creation from a selected Service ID
+    #[command(name = "task-create-prepare")]
+    TaskCreatePrepare(TaskCreatePrepareArgs),
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
     SetAsp {
         job_id: String,
@@ -208,16 +237,13 @@ pub enum TaskCommand {
     /// Set payment mode on-chain (standalone, before confirm-accept)
     SetPaymentMode {
         job_id: String,
-        /// escrow / x402
+        /// escrow only
         #[arg(long = "payment-mode")]
         payment_mode: Option<String>,
         #[arg(long = "token-symbol")]
         token_symbol: Option<String>,
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
-        /// x402 service endpoint URL (when omitted, fetched from the negotiate cache or service-list API).
-        #[arg(long)]
-        endpoint: Option<String>,
     },
     /// Client confirms ASP and executes payment (setPaymentMode must be done first).
     /// ASP, token symbol, and amount are read from the task detail API.
@@ -244,45 +270,6 @@ pub enum TaskCommand {
     },
     /// Client claims auto-refund after seller timeout (submit_expired / reject_expired)
     ClaimAutoRefund { job_id: String },
-    /// x402 Phase 2: x402_pay signing + direct/accept + endpoint replay.
-    /// Returns replay result (deliverable) and Payment Credential.
-    Task402Pay {
-        job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        /// JSON accepts array from the HTTP 402 response
-        #[arg(long)]
-        accepts: String,
-        /// x402 provider endpoint URL (for replay after signing)
-        #[arg(long)]
-        endpoint: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        /// Payer address (optional, defaults to selected account)
-        #[arg(long)]
-        from: Option<String>,
-        /// JSON business body to POST during replay (for endpoints that require business parameters)
-        #[arg(long)]
-        body: Option<String>,
-        /// Bypass the confirming gate and broadcast the on-chain accept immediately (FR-7.3).
-        /// Automated playbooks pass this.
-        #[arg(long, default_value_t = false)]
-        force: bool,
-    },
-    /// Validate an x402 endpoint and extract pricing info
-    X402Check {
-        /// x402 provider endpoint URL
-        #[arg(long)]
-        endpoint: String,
-        /// User agent ID (used to authenticate token-detail lookups).
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-        /// JSON business body to POST (for endpoints that require business parameters)
-        #[arg(long)]
-        body: Option<String>,
-    },
     /// Reject a provider's apply (on-chain pass-through; status stays `created`)
     RejectApply {
         job_id: String,
@@ -1519,7 +1506,7 @@ async fn scoped_watch_autotrade_precheck_inner(
     }
     if result.get("reason").and_then(serde_json::Value::as_str) == Some("configuration_required") {
         if let Some(file) = autotrade::continuation::load_live_for_job(job_id, &snapshot.agent_id)?
-        {
+    {
             if file.origin == autotrade::continuation::Origin::SubscriptionRestore {
                 let guide_hash_resolved = result
                     .get("guideHashResolved")
@@ -1626,16 +1613,16 @@ pub(crate) async fn prepare_post_login_subscriptions(
     };
     let devices =
         match device_routing::fetch_device_list_snapshot(&mut client, &agent_id, 1, 20).await {
-            Ok(snapshot) => snapshot,
-            Err(e) => {
-                if cfg!(feature = "debug-log") {
-                    eprintln!(
-                        "[DEBUG][post-login] pre-registration device snapshot unavailable: {e:#}"
-                    );
-                }
-                return None;
+        Ok(snapshot) => snapshot,
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!(
+                    "[DEBUG][post-login] pre-registration device snapshot unavailable: {e:#}"
+                );
             }
-        };
+            return None;
+        }
+    };
     let Some(current_device_was_registered) =
         device_snapshot_contains(&devices, &current_device_id)
     else {
@@ -1798,7 +1785,7 @@ pub(crate) async fn finalize_post_login_subscriptions(
             Some(prepared.pre_registration_devices)
         } else {
             match device_routing::fetch_device_list_snapshot(&mut client, &prepared.agent_id, 1, 20)
-                .await
+            .await
             {
                 Ok(snapshot)
                     if device_snapshot_contains(&snapshot, &prepared.current_device_id)
@@ -1847,7 +1834,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             title,
             provider,
             attachments,
-            endpoint,
             payment_mode,
             service_id,
             service_params,
@@ -1864,7 +1850,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                     title,
                     provider,
                     attachments,
-                    endpoint,
                     payment_mode,
                     service_id,
                     service_params,
@@ -1890,6 +1875,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             service_interval,
             format,
             exclude_device,
+            attachments,
         } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             create_subscribe::handle_create_subscribe(
@@ -1910,6 +1896,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                     service_interval,
                     format,
                     exclude_device,
+                    attachments,
                 },
             )
             .await
@@ -1934,8 +1921,19 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             .await
         }
         TaskCommand::TaskServiceSelect(args) => {
-            asp_ops::handle_task_service_select(&mut client, &args.service_match, &args.format)
-                .await
+            asp_ops::handle_task_service_select(
+                &mut client,
+                &args.service_match,
+                args.agentic_id.as_deref(),
+                &args.format,
+            )
+            .await
+        }
+        TaskCommand::ServiceDetail(args) => {
+            service_detail::handle_service_detail(&mut client, &args.sid, &args.agentic_id).await
+        }
+        TaskCommand::TaskCreatePrepare(args) => {
+            task_create_prepare::handle_task_create_prepare(&mut client, &args.sid).await
         }
         TaskCommand::SetAsp {
             job_id,
@@ -1977,7 +1975,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             payment_mode,
             token_symbol,
             token_amount,
-            endpoint,
         } => {
             accept::handle_set_payment_mode(
                 &mut client,
@@ -1985,45 +1982,11 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 payment_mode.as_deref(),
                 token_symbol.as_deref(),
                 token_amount.as_deref(),
-                endpoint.as_deref(),
             )
             .await
         }
         TaskCommand::ConfirmAccept { job_id } => {
             accept::handle_confirm_accept(&mut client, &job_id, None).await
-        }
-        TaskCommand::Task402Pay {
-            job_id,
-            provider_agent_id,
-            accepts,
-            endpoint,
-            token_symbol,
-            token_amount,
-            from,
-            body,
-            force,
-        } => {
-            accept::handle_task_402_pay(
-                &mut client,
-                &job_id,
-                &provider_agent_id,
-                &accepts,
-                &endpoint,
-                &token_symbol,
-                &token_amount,
-                from.as_deref(),
-                body.as_deref(),
-                force,
-            )
-            .await
-        }
-        TaskCommand::X402Check {
-            endpoint,
-            agent_id,
-            body,
-        } => {
-            accept::handle_x402_check(&mut client, &endpoint, agent_id.as_deref(), body.as_deref())
-                .await
         }
         TaskCommand::Complete { job_id } => complete::handle_complete(&mut client, &job_id).await,
         TaskCommand::Reject { job_id, reason } => {

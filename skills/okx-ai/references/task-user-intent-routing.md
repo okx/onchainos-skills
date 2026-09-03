@@ -1,6 +1,6 @@
 # User Intent Routing
 
-User-session needs to forward free-form user instructions targeting a specific task (e.g. "re-upload the dispute evidence for the cat-picture job", "remind ASP 963 that the deliverable is overdue", "switch to a different ASP") to the **specific sub session that owns that task**, when there's no matching active pending decision.
+User-session needs to forward free-form user instructions targeting a specific task (e.g. "re-upload the dispute evidence for the cat-picture job" or "remind ASP 963 that the deliverable is overdue") to the **specific sub session that owns that task**, when there's no matching active pending decision.
 
 **Trigger phrases** — when the user says any of the following AND no matching entry exists in `pending-decisions-v2`, **MUST** enter this flow:
 
@@ -8,7 +8,6 @@ User-session needs to forward free-form user instructions targeting a specific t
 |---|---|
 | Re-submit / supplement | "re-submit / re-upload / resubmit / add more / append / supplement evidence / change my X" |
 | Nudge / request a sub-session update | "remind / nudge / chase up / tell the ASP X / tell the buyer X" |
-| Change terms | "use a different provider / switch provider" |
 
 🛑🛑🛑 **CRITICAL — do NOT make domain assumptions on behalf of the user**: when the queue is empty and the user issues a task-scoped instruction, your job is to **route**, not to **adjudicate**. **Do NOT** reply "the evidence phase is over" / "this state doesn't allow that". Only the sub session can query the chain and know for sure. Forward the user's verbatim wording and let the sub respond authoritatively. (🔴 I-15: the user requested "re-submit evidence," but the user session refused because it assumed the evidence phase had ended; the correct path was to route to the sub.)
 
@@ -38,6 +37,78 @@ User-session needs to forward free-form user instructions targeting a specific t
 - ❌ Do NOT call `okx-a2a session send` multiple times in one turn.
 
 **Output schema of `active-tasks`**: see [`task-cli-reference.md → active-tasks`](task-cli-reference.md#active-tasks).
+
+---
+
+## Rate an active subscription
+
+Trigger when the buyer wants to rate or review an ongoing subscription.
+
+1. Resolve one ACTIVE buyer subscription:
+
+```bash
+onchainos agent my-tasks --task-type subscription --status-type 1 --page 1
+```
+
+- Current-message `jobId`: match it exactly, advancing `--page` only while `hasNext=true`.
+- Context-only `jobId`: ask whether to use it.
+- No confirmed `jobId`: introduce the list with the localized equivalent of
+  `I found the following unreviewed orders. Please select the order you want to review.` For Chinese,
+  use exactly `为您查询到以下未评价的订单，请选择您要评价的订单：`. Then render this compact table and
+  wait for the user's choice; preserve pagination.
+
+  | # | Task | Provider | Status | Job ID |
+  |---|---|---|---|---|
+  | 1 | `<title>` | `Agent#<providerAgentId>` | `<statusName>` | `<jobId>` |
+
+  Use only values from the returned row. Render subscription `statusName` verbatim and do not add fee,
+  renewal, device, or billing fields.
+
+The selected row is the sole source of `jobId`, `buyerAgentId`, and `providerAgentId`. If no row matches
+or either Agent id is missing, report that the review cannot be submitted and stop. Do not call detail,
+status, device, or sub-session commands as a fallback.
+
+2. Check for an existing review:
+
+```bash
+onchainos agent task-feedback \
+  --agent-id <selected buyerAgentId> \
+  --task-id <selected jobId>
+```
+
+A non-empty `data[]` means already reviewed: report it and stop. An empty `data[]` continues.
+
+3. Require a user-authored `score` from 0.00 to 5.00 stars and a concrete `description`. `Good review`,
+`positive review`, `bad review`, and localized equivalents are intent, not concrete review text. Retain
+valid values already supplied and ask once for all missing or invalid fields. Never invent the review.
+
+4. When both fields are present, submit without another confirmation:
+
+```bash
+onchainos agent feedback-submit \
+  --agent-id <selected providerAgentId> \
+  --creator-id <selected buyerAgentId> \
+  --score <user-authored stars> \
+  --task-id <selected jobId> \
+  --description "<verbatim user-authored review>"
+```
+
+Pass the star value and review verbatim; never omit `--description`.
+
+Only `ok=true` with a non-empty `data.txHash` is success. Render the localized equivalent of this
+result; for Chinese, use these labels exactly:
+
+```text
+评价成功。
+
+- 任务 ID：<jobId>
+- 评分：<score> / 5
+- 评语：<description>
+- 交易哈希：<txHash>
+```
+
+Use the submitted values verbatim. If the command fails or `data.txHash` is missing, report the CLI
+error and never claim that the review succeeded.
 
 ---
 
@@ -99,7 +170,7 @@ Action:
 
 | Intent                                                                        | Action | Detail |
 |-------------------------------------------------------------------------------|---|---|
-| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance. Resolve `<X>` using the User Agent ID rules in [`task-user-actions-publish.md`](task-user-actions-publish.md) §1, then run `onchainos agent next-action --role user --agentId <X> --message '{"event":"create_task","jobId":"_"}'` and follow the script. When an ASP is specified, `task-service-select` receives the extracted `asp-agent-id`. | user publish flow |
+| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity-service-search.md`](identity-service-search.md) commissioning search. Confirm its single `service-match` result, run `task-create-prepare`, then route its `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md). Never read `data.action` from `task-create-prepare`; that field does not exist in its response. | user publish flow |
 | Take specific task (ASP) — `take {jobId}` / `contact the User Agent of {jobId}` | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | task-asp-accept.md §1 |
 | Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |

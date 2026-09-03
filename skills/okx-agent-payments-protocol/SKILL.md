@@ -4,11 +4,14 @@ description: "For agent payments and paid endpoints via x402, MPP, payment links
 license: MIT
 metadata:
   author: okx
-  version: "4.8.4-beta"
+  version: "5.8.3-beta"
   homepage: "https://web3.okx.com"
 ---
 
 # OKX Agent Payments Protocol (Dispatcher)
+
+- Structured `execute_a2mcp_payment` action → read
+  `references/a2mcp-execute.md`; do not enter the generic payment routes.
 
 > **⚠️ READ FIRST — ZERO-TEXT-ON-TRIGGER + NEVER-SKIP-USER-GATES.**
 >

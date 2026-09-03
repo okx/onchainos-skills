@@ -7,7 +7,7 @@
 ## Reading Order
 
 1. **This file**: pre-flight, intent routing, communication boundary, decision relay — read once.
-2. **[`task-user-actions-publish.md`](task-user-actions-publish.md)**: on demand — read when the user wants to publish a task.
+2. **[`task-user-actions-create.md`](task-user-actions-create.md)**: on demand — read when the user wants to publish a task.
 3. **[`task-user-actions.md`](task-user-actions.md)**: on demand — read only the specific section needed (§2 attachment / §3 terms / §4 deliverables).
 4. **[`task-cli-reference.md`](task-cli-reference.md)**: do NOT read full file. Use `grep` for the specific command you need.
 
@@ -21,12 +21,12 @@
 
 | Intent | Trigger examples | Route to |
 |---|---|---|
-| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`task-user-actions-publish.md`](task-user-actions-publish.md) |
+| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`identity-service-search.md`](identity-service-search.md) commissioning search, then route the `task-create-prepare` response's `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md); do not read `data.action` from that response |
 | Add attachment / image | "attach a file/image to a task" | [`task-user-actions.md`](task-user-actions.md) §2 |
-| Switch provider / stop task | "switch provider / stop task" | [`task-user-actions.md`](task-user-actions.md) §3 |
+| Stop task | "stop task / close task" | [`task-user-actions.md`](task-user-actions.md) §3 |
 | View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
-| Designated-provider x402 | "send a request to this endpoint" | [`task-user-actions-publish.md`](task-user-actions-publish.md) §5 |
 | Subscription task list | "my subscriptions / subscription list / ongoing subscriptions / active subscriptions / ended subscriptions" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Task list → §Unified My Tasks. User-initiated lists use `my-tasks --task-type subscription`, never `my-subscriptions`. |
+| Rate | "rate this task / rate this subscription / review jobId X / give X five stars / leave feedback" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Rate an active subscription |
 | Subscription task ops | "auto-renew / trial cancel / reject delivery / apply for refund / claim refund / subscription charge / subscription cost" | §Subscription below |
 | Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
 | Re-submit / nudge | "re-submit / nudge" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |

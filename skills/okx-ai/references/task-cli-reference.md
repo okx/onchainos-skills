@@ -8,8 +8,9 @@
 
 ## Contents
 
-- **Common (any role)**: `common context` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
-- **User**: `create-task` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `complete` · `reject` · `close` · `claim-auto-refund` · `set-asp` · `task-attach`
+- **Common (any role)**: `common context` · `communication-check` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
+- **Arbitration (User/ASP)**: `arbitration-list` · `arbitration-detail`
+- **User**: `create-task` · `task-create-prepare` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `complete` · `reject` · `close` · `claim-auto-refund` · `task-attach`
 - **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
 - **ASP**: `apply` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
@@ -35,6 +36,19 @@ agent common context <jobId> --role <user|asp|evaluator> --agent-id <agentId> [-
 | `--role` | Yes | - | `user` / `asp` / `evaluator` |
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--address` | No | auto-resolved | Caller's wallet address |
+
+### communication-check
+
+Run only the read-only communication leg used by `gate-check`; it never checks wallet or Agent
+identity and never installs or repairs anything.
+
+```
+agent communication-check
+```
+
+The success envelope carries `data.ok`. `true` means ready. `false` carries `data.hint`; a probe that
+cannot produce a definitive verdict carries `data.note`. This command is advisory: every result is
+returned without blocking the caller, which may warn and continue.
 
 ### pending-decisions-v2
 
@@ -155,9 +169,9 @@ Publish a new task on-chain (params provided by `next-action` playbook; blocks o
 agent create-task --description <txt> --budget <num> --max-budget <num> --currency <USDT|USDG> \
   --title <txt> \
   --provider <agentId> \
-  [--service-id <id>] [--service-params <txt>] \
+  --service-id <id> --payment-mode <escrow> [--service-params <txt>] \
   [--service-token-address <addr>] [--service-token-amount <num>] \
-  [--endpoint <url>] [--file <path>] [--payment-mode <escrow|x402>]
+  [--file <path>]
 ```
 
 | Param | Required | Default | Description                                 |
@@ -168,13 +182,12 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
 | `--currency` | Yes | - | `USDT` or `USDG`                            |
 | `--title` | Yes | - | Task title (max 30 chars)                   |
 | `--provider` | Yes | - | Provider agentId; always required |
-| `--service-id` | No | - | Service ID from `task-service-select` response        |
+| `--service-id` | Yes | - | UUID `serviceId` from `task-create-prepare data.payload` |
 | `--service-params` | No | - | Service input parameters (natural language) |
 | `--service-token-address` | No | - | Service token contract address              |
-| `--service-token-amount` | No | - | Service price (from `task-service-select` `feeAmount`)  |
-| `--endpoint` | No | - | Designated service endpoint URL             |
+| `--service-token-amount` | No | - | Service price from `task-create-prepare data.payload.feeAmount` |
 | `--file` | No | - | Local file paths to attach (repeatable)     |
-| `--payment-mode` | No | unset | `escrow` or `x402`                          |
+| `--payment-mode` | Yes | - | `escrow`                          |
 
 ### funding-notice
 
@@ -186,10 +199,56 @@ agent funding-notice --chain <chain> --currency <symbol> --shortfall <amount> --
 
 Optional: `--available <amount>`, `--required <amount>`, `--deposit-chain <chain>`, `--reason <task-payment|payment-402|dispute-bond|subscription>`.
 
+### service-detail
+
+```text
+agent service-detail --sid <sid> --agentic-id <userAgentId>
+```
+
+Fetch one current Service after the user confirms a search result. The command calls the same backend
+endpoint as `service-match` with `sid`, `limit=1`, and the `agenticId` header, then returns the exact
+matching Service as `data`. It preserves current pricing, subscription/trial state, ASP metadata, and
+`serviceGuide`. Use it for `task-create-prepare`; do not replace it with another search or a
+`service-list` request.
+
+### task-create-prepare
+
+```text
+agent task-create-prepare --sid <sid>
+```
+
+Pass only the confirmed numeric `sid` from search or matching context. The command checks login,
+User Agent identity, authoritative Service state, subscription conflicts, and payable balance. Current
+trial eligibility or an effective fee of zero skips the balance check.
+
+For an authoritative `serviceType=A2MCP` result, this command does not create a Task or run the legacy
+Task/x402 payment flow. It returns `phase=service_routing`, `decision=ready`,
+`reason=a2mcp_service_confirmed`, `nextAction=[{id:"invoke_a2mcp",recommend:true}]`, and
+`payload={schemaVersion:1,serviceSnapshot:<complete authoritative Service object>}`. Route that action
+through [`task-action-routing.md`](task-action-routing.md).
+
+Every successful response contains exactly `phase`, `decision`, `reason`, `nextAction`, and `payload`
+under `data`. Route by `decision`, then execute or present only the actions returned in `nextAction`;
+there is no `action` field. `payload` is empty for `login_validation` and `identity_validation`.
+For `reason=duplicate_subscription`, it is exactly
+`{jobId:<existing subscription id>,title:<task title>,status:<numeric status>,active:<bool>}`.
+For `service_routing`, it contains `schemaVersion` and the complete A2MCP `serviceSnapshot`. For other
+phases it contains the normalized selected Service; `payment_validation` also includes `balanceWarning`
+when the balance is insufficient. Stable phase values are `login_validation`, `identity_validation`,
+`service_validation`, `service_routing`, `subscription_validation`, `payment_validation`, and `creation`.
+Use [`task-action-routing.md`](task-action-routing.md) for each `nextAction[].id`.
+
+Invalid Service data and failed dependency requests are command errors, not additional business cases.
+For a successful response, route by `decision` and only the returned `nextAction` items; never derive
+an unreturned action from `phase` or `reason`.
+
 ### task-service-select
 
 Task-creation service selection wrapper. It calls `service-match`, preserves each service's online status,
 and normalizes fields for the create-task / create-subscribe playbooks.
+
+This wrapper remains available for compatibility, but the current creation flow uses
+`service-match --limit 1` followed by `task-create-prepare`.
 
 First search:
 
@@ -226,7 +285,7 @@ conditions.
 | `unmatchReason` | string/null | Backend no-match reason when present |
 | `subscriptionCheck` | object | Present when a matched result contains a subscription service: `{status:"checked", blockingServiceCount}` |
 | `duplicateSubscription` | object | Present when the selected service has a blocking non-terminal subscription. Contains the exact minimal `userFacingPrompt` and optional `nextAfterUserChoice`; only ACTIVE offers `restore-listening`. |
-| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, serviceId, serviceName, serviceDescription, serviceGuide, serviceGuideHash, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, existingSubscription}`. `existingSubscription` is added only to subscription services and is `null` when no non-terminal duplicate exists. |
+| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, sid, serviceId, serviceName, serviceDescription, serviceGuide, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, existingSubscription, autoTradePreflight}`. `existingSubscription` is added only to subscription services and is `null` when no non-terminal duplicate exists. |
 
 For a matched subscription service, `--agentic-id <buyerAgentId>` is mandatory because the command performs
 the duplicate-subscription check before returning a selectable result. A blocking
@@ -247,7 +306,7 @@ Use `services[0]` as the recommended service for the confirmation card. Offer al
 `task-service-select --search-after <searchAfter> --limit 3`; otherwise state that no more alternatives
 are available.
 
-Render `serviceType` verbatim (for example, `A2A` or `A2MCP`) without translation. For a
+`task-service-select` returns online `A2A` Task services only. Render `serviceType` verbatim. For a
 non-subscription Service, render a zero `feeAmount` (number or numeric string) as localized `Free`
 rather than `0 <feeTokenSymbol>`.
 
@@ -406,6 +465,46 @@ agent active-tasks [--role <r>] [--include-terminal]
 }
 ```
 
+### arbitration-list
+
+List arbitration tasks visible to one User or ASP identity. The selected identity is sent as the
+`agenticId` request header.
+
+```text
+agent arbitration-list --agent-id <userOrAspAgentId> [--page <n>] [--page-size <n>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--agent-id` | Yes | - | User or ASP Agent ID |
+| `--page` | No | `1` | One-based page number |
+| `--page-size` | No | `20` | Positive page size |
+
+The response preserves backend pagination fields: `total`, `page`, `pageSize`, and `list[]`. Each list
+item preserves `jobId`, `title`, `status`, and `createTime`; the CLI adds `statusName` when `status` is
+numeric.
+
+### arbitration-detail
+
+Show the current arbitration state visible to one User or ASP identity.
+
+```text
+agent arbitration-detail <jobId> --agent-id <userOrAspAgentId>
+```
+
+The response preserves all fields from `GET /task/{jobId}/dispute/status`, including `jobId`,
+`jobType`, `currentRound`, `selectedVoter`, `taskStatus`, `disputeRoundStatus`, `prepareEndTime`, and
+`roundEndTime`. The CLI adds:
+
+| Field | Description |
+|---|---|
+| `taskStatusName` | Normalized task status when `taskStatus` is numeric |
+| `disputeRoundStatusName` | `init`, `commit_phase`, `reveal_phase`, `completed`, `rejected`, `invalidated`, or `unknown` |
+| `phase` | `evidence_preparation`, `arbitrating`, `resolved`, `rejected`, `invalidated`, or `unknown` |
+
+Additional settlement fields are passed through unchanged when the backend returns them. Their
+absence must not be interpreted as a verdict, transfer, refund, or transaction.
+
 ### set-payment-mode
 
 Set the task's payment mode on-chain (params provided by `next-action` playbook)
@@ -413,7 +512,7 @@ Set the task's payment mode on-chain (params provided by `next-action` playbook)
 > **Insufficient-balance output:** when under-funded, this command returns blocked funding-notice JSON. If `fundingNoticeCommand` exists, run it; otherwise show `balanceWarning`.
 
 ```
-agent set-payment-mode <jobId> --payment-mode <escrow|x402> [--token-symbol <sym>] [--token-amount <amt>] [--endpoint <url>]
+agent set-payment-mode <jobId> --payment-mode escrow [--token-symbol <sym>] [--token-amount <amt>]
 ```
 
 ### confirm-accept
@@ -425,19 +524,6 @@ User Agent confirms ASP acceptance + escrow payment (params provided by `next-ac
 ```
 agent confirm-accept <jobId>
 ```
-
-### task-402-pay
-
-Accept an x402 task: replay the ASP endpoint FIRST, extract the settlement `txHash` from the `PAYMENT-RESPONSE` header when present, then broadcast the on-chain accept carrying `bizContext.paymentTxHash` so the backend can verify the on-chain fee does not exceed the task budget. (This is the single atomic x402-accept entry — `direct-accept` was removed.) Params provided by the `next-action` playbook.
-
-```
-agent task-402-pay <jobId> --provider-agent-id <id> --accepts <json> --endpoint <url> --token-symbol <sym> --token-amount <amt> [--from <address>] [--body <json>] --force
-```
-
-- **Ordering:** replay → extract `paymentTxHash` when present → `direct/accept` → broadcast. A missing `paymentTxHash` is allowed and is threaded as `""`; HTTP 402 without `input_required` still continues. Only `input_required` leaves the accept unbroadcast and returns `data.status` as `"pending"`.
-- **`--force`:** the on-chain broadcast is gated by a `confirming` (exit 2) prompt; automated playbook invocations MUST pass `--force`.
-- **`data` fields:** `jobId`, `replaySuccess` (bool), `paymentTxHash` (string, `""` when unknown), `accepted` (bool), optional `status` (`"pending"`), optional `broadcast{pkgId,orderId,txHash,bizUniqKey}`, optional `deliverable{saved,path}`.
-- **Fee interception:** if the backend rejects the accept because the on-chain fee exceeds the budget, the command exits non-zero with `output::error` carrying the backend code + description; the task is NOT accepted.
 
 ### complete
 
@@ -472,26 +558,6 @@ User Agent reclaims escrowed funds after `submit_expired` / `reject_expired` (pa
 ```
 agent claim-auto-refund <jobId>
 ```
-
-### set-asp
-
-Re-set ASP + service on an existing task (off-chain); triggers `job_created` event
-
-```
-agent set-asp <jobId> --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params "<params>" --service-token-address <addr> --service-token-amount <amt> [--payment-token-symbol <sym>] [--agent-id <id>]
-```
-
-| Param | Required | Default | Description |
-|---|---|---|---|
-| `<jobId>` | Yes | - | Task ID (positional) |
-| `--provider-agent-id` | Yes | - | New provider agentId |
-| `--service-id` | Yes | - | Service ID from `asp-match` |
-| `--service-type` | Yes | - | `A2A` or `A2MCP` (A2A -> escrow, A2MCP -> x402) |
-| `--service-params` | Yes | - | Service input parameters (natural language string) |
-| `--service-token-address` | Yes | - | Service token contract address (from `asp-match` `feeToken`) |
-| `--service-token-amount` | Yes | - | Service price (from `asp-match` `feeAmount`) |
-| `--payment-token-symbol` | No | - | Payment token symbol (e.g. USDT) |
-| `--agent-id` | No | auto-resolved | User agentId |
 
 ### task-attach
 
@@ -528,13 +594,15 @@ agent create-subscribe \
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--service-id` | Yes | - | Service ID from `task-service-select` |
+| `--service-id` | Yes | - | UUID `serviceId` from `task-create-prepare data.payload` |
 | `--use-trial` | No | false | Start with trial period |
-| `--service-token-amount` | Yes | - | Monthly fee (from `task-service-select` `subscriptionInfo.feeAmount`) |
-| `--service-token-address` | Yes | - | Fee token contract address (from `task-service-select` `feeToken`) |
+| `--service-params` | No | `""` | Confirmed Service inputs; omit when empty |
+| `--service-token-amount` | Yes | - | Monthly fee from `task-create-prepare data.payload.subscriptionInfo.feeAmount` |
+| `--service-token-address` | Yes | - | Fee token contract address from `task-create-prepare data.payload.feeToken` |
 | `--auto-renew` | Yes | - | 0=off, 1=on |
 | `--title` | Yes | - | Max 64 chars |
 | `--description` | Yes | - | Max 4096 chars |
+| `--file` | No (repeatable) | - | Local file paths to attach; 100 MB limit per file |
 | `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
 | `--service-guide` | Required for guide-driven signal execution | - | Exact provider Guide stored locally before broadcast at `ONCHAINOS_HOME/autotrade/guide/<jobId>.md` |
 | `--service-guide-hash` | No | computed locally | Provider SHA-256 for the exact Guide; mismatch fails locally |
@@ -546,7 +614,7 @@ ASP supplies the exact Guide text only. The Guide-driven happy path always passe
 
 > **Insufficient-balance output:** when under-funded, `create-subscribe` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs` and puts `markdownImage` under option 1. If missing, show `balanceWarning`.
 
-> **Duplicate-subscription output:** immediately before any provider-confirmation, signing, create, or broadcast request, the CLI fresh-reads the buyer's subscriptions for the exact `serviceId`. A non-terminal match exits with `{ok:false,data:{blockedReason:"duplicate-subscription",existingSubscription,userFacingPrompt,nextAfterUserChoice?}}`. Render only the localized `userFacingPrompt`; it always includes `jobId` and the explicit duplicate-creation block, and deliberately omits fee, trial, status, description, and readiness. `nextAfterUserChoice` is present only when the existing status is `ACTIVE` and then contains only `restore-listening`; otherwise there is no follow-up action. Do not query or suggest the ASP's other services. A failed precheck is fail-closed and sends no create request. This write-boundary check is intentionally repeated even when `task-service-select` already checked, closing the confirmation-to-create race.
+> **Duplicate-subscription output:** immediately before any provider-confirmation, signing, create, or broadcast request, the CLI fresh-reads the buyer's subscriptions for the exact `serviceId`. A non-terminal match exits with `{ok:false,data:{blockedReason:"duplicate-subscription",existingSubscription,userFacingPrompt,nextAfterUserChoice?}}`. Render only the localized `userFacingPrompt`; it always includes `jobId` and the explicit duplicate-creation block, and deliberately omits fee, trial, status, description, and readiness. `nextAfterUserChoice` is present only when the existing status is `ACTIVE` and then contains only `restore-listening`; otherwise there is no follow-up action. Do not query or suggest the ASP's other services. A failed precheck is fail-closed and sends no create request. This write-boundary check is intentionally repeated even when `task-create-prepare` already checked, closing the confirmation-to-create race.
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
@@ -1070,7 +1138,15 @@ agent my-stake [--agent-id <id>]
 Rate a counterpart agent after task completion (params provided by `next-action` playbook)
 
 ```
-agent feedback-submit --agent-id <ratee> --creator-id <rater> --score <0-100> --task-id <jobId> [--description "<txt>"]
+agent feedback-submit --agent-id <ratee> --creator-id <rater> --score <0.00-5.00> --task-id <jobId> [--description "<txt>"]
+```
+
+### task-feedback
+
+Check whether the rater already reviewed a task before submitting feedback.
+
+```
+agent task-feedback --agent-id <rater> --task-id <jobId>
 ```
 
 ### file-upload / file-download

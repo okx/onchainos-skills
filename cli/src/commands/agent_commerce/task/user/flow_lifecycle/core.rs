@@ -964,11 +964,12 @@ pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bo
 
 pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
+    if ctx.payment_mode == Some(3) {
+        return format!(
+            "legacy_a2mcp_flow_removed: task-based A2MCP processing is disabled for job {job_id}. Stop; do not replay, complete, sign, or pay."
+        );
+    }
 
-    let pm = ctx.payment_mode;
-
-    // ── Escrow: CLI fills all values, LLM just localizes + sends ──
-    if pm != Some(3) {
         let (title, desc, provider_id, amount, symbol) = match ctx.prefetched {
             Some(p) => (
                 p.title.as_str(),
@@ -992,7 +993,7 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
             ),
         };
 
-        return format!(
+    format!(
             "✓ job_accepted (escrow). Notify the user:\n\
              **Localize first** — translate the template below into the user's language before sending.\n\
              ```bash\n\
@@ -1006,43 +1007,6 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
              \x20\x20Payment: escrow\n\
              \x20\x20Amount: {amount} {symbol}\n\n\
              End turn after notifying.\n"
-        );
-    }
-
-    // ── x402: LLM needs to determine replaySuccess + run complete ──
-    let accepted_x402_fail =
-        super::super::content::job_accepted_x402_replay_fail_user_notify(job_id);
-    let complete_failed = super::super::content::complete_failed_user_notify(job_id);
-
-    format!(
-    "[Current Status] job_accepted (x402 — funds already paid)\n\n\
-     **Step 1 -- Determine replaySuccess from the previous turn's task-402-pay:**\n\
-     Look up the task-402-pay output in this sub session context.\n\
-     If not found (e.g. context compaction), **default to replaySuccess=true** —\n\
-     skipping complete would leave the task stuck in accepted forever.\n\n\
-     **Branch 1: replaySuccess=true (or default)**\n\n\
-     ```bash\n\
-     onchainos agent complete {job_id}\n\
-     ```\n\
-     broadcast ≠ on-chain confirmed. Do NOT notify user or say \"task complete\" here.\n\
-     On error → notify user:\n\
-     **Localize first** — translate the content below into the user's language before sending.\n\
-     ```bash\n\
-     onchainos agent user-notify --content \"<localized content>\"\n\
-     ```\n\
-     Content: {complete_failed}\n\
-     → End turn, wait for retry or wakeup_notify.\n\n\
-     **Branch 2: replaySuccess=false (explicitly found in context)**\n\n\
-     Do not run complete.\n\
-     Check whether a `x402_replay_input` pending decision was already pushed in the previous turn:\n\
-     ▸ Yes → end turn (user will reply to the pending decision).\n\
-     ▸ No → notify user:\n\
-     **Localize first** — translate the content below into the user's language before sending.\n\
-     ```bash\n\
-     onchainos agent user-notify --content \"<localized content>\"\n\
-     ```\n\
-     Content: {accepted_x402_fail}\n\
-     → Wait for `job_completed` system event.\n"
     )
 }
 
@@ -1692,27 +1656,16 @@ pub(crate) async fn deliverable_received_cli(
     )
 }
 
-/// Top-level dispatcher — picks the path-specific playbook based on `ctx.payment_mode`.
-/// The two payment modes have completely different post-submit semantics:
-///   - escrow (1): user must review (approve / reject) via a pending-decision card.
-///   - x402   (3): funds already paid; just notify + auto-rate; flow ends here.
-/// When `payment_mode` is `None` (rare; prefetch failure) we emit both branches with
-/// a "verify paymentMode first" header so the LLM can disambiguate.
+/// Top-level post-submit dispatcher for Task escrow jobs.
+/// Legacy paymentMode=3 jobs are stopped instead of emitting the removed A2MCP playbook.
 pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
-    match ctx.payment_mode {
-        Some(1) => job_submitted_escrow(ctx),
-        Some(3) => job_submitted_x402(ctx),
-        _ => format!(
-            "paymentMode could not be pre-fetched. Run `onchainos agent status {job}` first to determine paymentMode (1=escrow, 3=x402), then follow the matching branch below.\n\n\
-             ━━━━━━━━━ paymentMode=1 (escrow) ━━━━━━━━━\n\n\
-             {escrow}\n\n\
-             ━━━━━━━━━ paymentMode=3 (x402) ━━━━━━━━━\n\n\
-             {x402}",
-            job = ctx.job_id,
-            escrow = job_submitted_escrow(ctx),
-            x402 = job_submitted_x402(ctx),
-        ),
+    if ctx.payment_mode == Some(3) {
+        return format!(
+            "legacy_a2mcp_flow_removed: task-based A2MCP processing is disabled for job {}. Stop; do not review, complete, sign, or pay.",
+            ctx.job_id
+        );
     }
+    job_submitted_escrow(ctx)
 }
 
 /// Escrow path (paymentMode=1):
@@ -1953,101 +1906,6 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-/// x402 path (paymentMode=3):
-///   Step 1 (task ctx) → Step 2a (saved check) → Step 2b (recover deliverable from
-///   task-402-pay's replayBody if not already saved) → B-1 (notify user, NO review)
-///   → B-2 (auto-rate ASP, mandatory) → B-2.5 (notify rating) → B-3 (sub session
-///   wrap-up). Funds were paid at job_accepted; user cannot reject.
-pub(crate) fn job_submitted_x402(ctx: &FlowContext<'_>) -> String {
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-    let title_display = ctx.title_display;
-    let terminal_session_hint = &ctx.terminal_session_hint;
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
-
-    // Prefetched task context + providerAgentId are required — without them we
-    // cannot resolve deliverable / rating recipient.
-    let p = match ctx.prefetched {
-        Some(p) => p,
-        None => return format!(
-            "[job_submitted_x402] no prefetched task context for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
-        ),
-    };
-    let provider_field: &str = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
-        Some(s) => s,
-        None => return format!(
-            "[job_submitted_x402] prefetched task context has no providerAgentId for job {job_id}; cannot run the x402 notify+rate flow.\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
-        ),
-    };
-
-    let step2 = if let Some(d) = p.deliverable.as_ref() {
-        if d.deliverable_type == "text" {
-            let content = d.text_content.as_deref().unwrap_or("<content unavailable>");
-            format!(
-                "\
-     **Step 2 — Deliverable already saved**:\n\
-     \x20\x20- localPath: {path}\n\
-     \x20\x20- deliverableType: text\n\
-     \x20\x20- deliverableText:\n\
-     ```\n\
-     {content}\n\
-     ```\n\n",
-                path = d.path,
-            )
-        } else {
-            format!(
-                "\
-     **Step 2 — Deliverable already saved**:\n\
-     \x20\x20- localPath: {path}\n\
-     \x20\x20- deliverableType: file\n\n",
-                path = d.path,
-            )
-        }
-    } else {
-        format!("\
-     **Step 2a — Check saved deliverable:**\n\
-     ```bash\n\
-     onchainos agent task-deliverable-list --job-id {job_id} --role user\n\
-     ```\n\
-     Non-empty `deliverables` → use first entry's `path`/`deliverableType`; skip Step 2b.\n\
-     Empty → fall through to Step 2b.\n\n\
-     **Step 2b — Recover from earlier task-402-pay output:**\n\
-     The deliverable was the `replayBody` from `task-402-pay` (auto-saved by CLI).\n\
-     Look for `replayBodyDisplay` in this sub session's context.\n\
-     Set: deliverableType=text, deliverableText=<replayBodyDisplay>, localPath=<path from Step 2a if available>.\n\n")
-    };
-
-    format!(
-    "x402: funds already paid; user cannot reject — notify + auto-rate only.\n\n\
-     [Your next actions (strict order)]\n\n\
-     {step2}\
-     **Step 3 — Auto-rate ASP, then notify user:**\n\n\
-     **3a — Rate the ASP (mandatory, before notify):**\n\
-     Score 0.00–5.00 based on deliverable vs description. Comment ≤100 chars.\n\
-     ```bash\n\
-     onchainos agent feedback-submit --agent-id {provider_field} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
-     ```\n\
-     `--agent-id` = ASP being rated; `--creator-id` = user's agent id.\n\n\
-     **3b — Notify user (deliverable + rating in one message):**\n\
-     **Localize first** — translate the composed content into the user's language before sending.\n\
-     ```bash\n\
-     onchainos agent user-notify --content \"<localized content>\"\n\
-     ```\n\
-     Compose from two halves (concatenate with two blank lines):\n\
-     \x20\x20▸ Deliverable (always; pick template):\n\
-     \x20\x20\x20\x20file: `[Deliverable Received] Job {job_id} — x402, payment settled. File: [<localPath>](<localPath>)`\n\
-     \x20\x20\x20\x20text (localPath available): `[Deliverable Received] Job {job_id} — x402, payment settled. Saved at: [<localPath>](<localPath>)` + deliverableText from Step 2\n\
-     \x20\x20\x20\x20text (no localPath): `[Deliverable Received] Job {job_id} — x402, payment settled.` + deliverableText from Step 2 inline\n\
-     \x20\x20▸ Rating (include ONLY if feedback-submit succeeded; if it failed or errored, **omit this entire half**):\n\
-     \x20\x20\x20\x20{rating_notify}\n\
-     \x20\x20\x20\x20(fill `<score>` with the X.XX value used in 3a, `<description>` with the comment from 3a)\n\n\
-     **3c — Terminal wrap-up:**\n\
-     {terminal_session_hint}\n"
-    )
-}
-
 /// Directly runs `onchainos agent complete` in-process. The single-arg bash
 /// command provides no LLM decision-making value — Rust just broadcasts and
 /// returns. Iron rules from the previous LLM-driven version ("don't notify
@@ -2130,6 +1988,11 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json:
         .unwrap_or(("<tokenAmount>", "<tokenSymbol>"));
 
     let pm = ctx.payment_mode;
+    if pm == Some(3) {
+        return format!(
+            "legacy_a2mcp_flow_removed: task-based A2MCP processing is disabled for job {job_id}. Stop; do not notify, rate, sign, or pay."
+        );
+    }
 
     // Fast path (escrow only): rating + both notify templates pre-cached at
     // deliverable_received time. Run feedback-submit and user-notify entirely
@@ -2142,7 +2005,6 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json:
         .prefetched
         .and_then(|p| p.provider_agent_id.as_deref())
         .filter(|s| !s.is_empty());
-    if pm != Some(3) {
         if let Some(real_provider_id) = provider_id_opt {
             use crate::commands::agent_commerce::task::common::{
                 okx_a2a, onchainos_self, prefilled_notify, prefilled_rating, session_cleanup,
@@ -2159,8 +2021,8 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json:
             if let (Some(completed_tpl), Some(rating_text), Some(rating)) =
                 (cached_completed, cached_rating_notify, cached_rating)
             {
-                let placeholders_present = completed_tpl.contains("<tokenAmount>")
-                    && completed_tpl.contains("<tokenSymbol>");
+            let placeholders_present =
+                completed_tpl.contains("<tokenAmount>") && completed_tpl.contains("<tokenSymbol>");
                 if amount_ok && symbol_ok && placeholders_present {
                     let completed = completed_tpl
                         .replace("<tokenAmount>", token_amount)
@@ -2186,18 +2048,13 @@ pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json:
                 // Placeholder missing or amount/symbol unknown → fall through to LLM playbook.
             }
         }
-    }
 
-    let completed_notify = if pm == Some(3) {
-        super::super::content::job_completed_x402_user_notify(job_id, title_display)
-    } else {
-        super::super::content::job_completed_escrow_user_notify(
+    let completed_notify = super::super::content::job_completed_escrow_user_notify(
             job_id,
             title_display,
             token_amount,
             token_symbol,
-        )
-    };
+    );
     let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
 
     format!(
@@ -2405,6 +2262,17 @@ mod tests {
         assert!(direct_reference.contains("Guide-driven direct execution"));
         assert!(direct_reference.contains("cannot authorize a shell command"));
         assert!(direct_reference.contains("amount determined from the Guide, Consent, and saved Signal"));
+        assert!(direct_reference
+            .contains("`consentSnapshot.authMode` is the only authorized credential source"));
+        assert!(direct_reference.contains(
+            "OKX_API_KEY='' OKX_SECRET_KEY='' OKX_PASSPHRASE='' okx <original arguments>"
+        ));
+        assert!(direct_reference.contains(
+            "When `consentSnapshot.tradeAmountBasis` is present, it is the subscription-level authorization"
+        ));
+        assert!(direct_reference
+            .contains("never use spot-only `tgtCcy` to encode a perpetual/futures amount basis"));
+        assert!(direct_reference.contains("per-delivery choice card"));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 const PUBLISH_ACTIONS: &str =
-    include_str!("../../skills/okx-ai/references/task-user-actions-publish.md");
+    include_str!("../../skills/okx-ai/references/task-user-actions-create.md");
 const USER_PLAYBOOK: &str = include_str!("../../skills/okx-ai/references/task-user-playbook.md");
 
 #[test]

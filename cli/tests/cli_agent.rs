@@ -858,7 +858,7 @@ fn user_notify_rejects_local_image_links_in_content() {
 }
 
 #[test]
-fn service_match_help_describes_pagination_headers_and_price_range() {
+fn service_match_help_describes_pagination_flow_and_price_range() {
     let (_home, dir) = fresh_home("cli_agent_service_match_help");
     let mut cmd = onchainos();
     scrubbed(&mut cmd, &dir);
@@ -871,8 +871,7 @@ fn service_match_help_describes_pagination_headers_and_price_range() {
     let help = String::from_utf8_lossy(&output.stdout);
     for expected in [
         "Search marketplace Services by capability, ASP, Service ID, Service name, or price range.",
-        "Results include searchAfter, hasMore, unmatchReason",
-        "--agentic-id <AGENTIC_ID>",
+        "Results include searchAfter, hasMore, unmatchReason, action, tip",
         "--sid <SERVICE_ID>",
         "--min-payment-token-amount <MIN_PAYMENT_TOKEN_AMOUNT>",
         "--max-payment-token-amount <MAX_PAYMENT_TOKEN_AMOUNT>",
@@ -883,6 +882,7 @@ fn service_match_help_describes_pagination_headers_and_price_range() {
         assert!(help.contains(expected), "missing {expected:?} in help:\n{help}");
     }
     assert!(!help.contains("      --format "));
+    assert!(!help.contains("--agentic-id"));
     assert!(!help.contains("backend raw data payload"));
 }
 

@@ -36,7 +36,8 @@ agent create --role <role> --name <name> [--description <text>] [--picture <cdn-
 
 ASP requires description, picture, and at least one service; other roles omit `--service`. Build
 the service array only from the service-contract/type references. Read `newAgentId` first, then
-`agent.agentId` only as the fallback defined by `identity-register.md` §10.
+`agent.agentId` only as the fallback defined by
+[`identity-register.md` §CLI reference].
 
 ### `agent update`
 
@@ -62,29 +63,14 @@ Use only at the ASP QA gate. Read `{pass, findings[]}`; each finding has `field`
 |---|---|---|
 | `agent get-my-agents` | `[--role <role>] [--owner-address <address>] [--page <n>] [--page-size <n>]` | `list[]`, including display-ready `cells[]` |
 | `agent get-agents` | `--agent-ids <id[,id...]>` | bare agent array, each with display-ready `card[]` |
-| `agent service-list` | `--agent-id <id> [--service-id <uuid>]` | service rows with raw `id` plus display-ready `cells[]`; `serviceGuide` and CLI-derived `serviceGuideHash` when present |
+| `agent service-list` | `--agent-id <id> [--service-id <uuid>]` | service rows with `serviceId`; copy `serviceId` into update/delete payload `id`, never numeric raw `id`; display-ready `cells[]`; `serviceGuide` when present |
 | `agent feedback-list` | `--agent-id <id> [--page <n>] [--page-size <1..50>]` | `average`, `items[]` or `list[]`, normalized 0–5 scores |
 
 Use service `id` only to build an update/delete delta; never display it. Render `card[]`/`cells[]`
 directly; never rebuild labels from backend enums.
 
-`--service-id` narrows `service-list` to one service — used by the publish flow's Service Usage Guide
-gate (task-user-actions-publish.md) to fetch a single service's `serviceGuide` without pulling the
-agent's full service page. A provided-but-blank value is rejected with `invalid parameter:
---service-id must not be blank` (never silently ignored). `serviceGuide` is flow input for that gate,
-never a display column.
-
-### `agent service-match`
-
-```text
-agent service-match [--keywords <k...>] [--asp-agent-id <id>] [--asp-name <name>] [--service-name <name>] [--sid <sid>] [--agentic-id <id>] [--min-payment-token-amount <n>] [--max-payment-token-amount <n>] [--limit <1..10>]
-agent service-match --search-after <cursor> [--agentic-id <id>] [--limit <1..10>]
-```
-
-Initial search accepts at most ten keywords; minimum/maximum are non-negative and minimum must not
-exceed maximum. Read `services[]`, `searchAfter`, `hasMore`, and `unmatchReason`; each service carries
-its `asp` summary and CLI-normalized rating. Continuation behavior is owned by
-[identity-discover.md §Pagination](identity-discover.md#pagination).
+`--service-id` narrows `service-list` to one service. Blank values are rejected. `serviceGuide` is not a
+display column.
 
 ## Publication
 
