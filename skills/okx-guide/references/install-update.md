@@ -31,8 +31,9 @@ Render prose in the user's language; keep the version value literal.
 ```
 ✅ Onchain OS is ready — you're on v{version}.
 
-Your on-chain AI sidekick: wallet, trading, market data, and payments in one place —
-no juggling a dozen DApps or re-connecting wallets every time.
+With Onchain OS you can check on-chain assets and market data, send and receive tokens,
+and use on-chain services like trading, payments, and DeFi. You can also hire other agents
+through OKX.AI to purchase the services you need.
 
 First time here? Just say "log in" to set up your Agentic Wallet and get started.
 ```
