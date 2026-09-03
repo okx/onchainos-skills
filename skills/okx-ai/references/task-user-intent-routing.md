@@ -52,8 +52,17 @@ onchainos agent my-tasks --task-type subscription --status-type 1 --page 1
 
 - Current-message `jobId`: match it exactly, advancing `--page` only while `hasNext=true`.
 - Context-only `jobId`: ask whether to use it.
-- No confirmed `jobId`: show a compact numbered list with Service, Provider, and `jobId`, then wait for
-  the user's choice; preserve pagination.
+- No confirmed `jobId`: introduce the list with the localized equivalent of
+  `I found the following unreviewed orders. Please select the order you want to review.` For Chinese,
+  use exactly `为您查询到以下未评价的订单，请选择您要评价的订单：`. Then render this compact table and
+  wait for the user's choice; preserve pagination.
+
+  | # | Task | Provider | Status | Job ID |
+  |---|---|---|---|---|
+  | 1 | `<title>` | `Agent#<providerAgentId>` | `<statusName>` | `<jobId>` |
+
+  Use only values from the returned row. Render subscription `statusName` verbatim and do not add fee,
+  renewal, device, or billing fields.
 
 The selected row is the sole source of `jobId`, `buyerAgentId`, and `providerAgentId`. If no row matches
 or either Agent id is missing, report that the review cannot be submitted and stop. Do not call detail,
@@ -84,7 +93,22 @@ onchainos agent feedback-submit \
   --description "<verbatim user-authored review>"
 ```
 
-Pass the star value and review verbatim. Follow the CLI result; never omit `--description`.
+Pass the star value and review verbatim; never omit `--description`.
+
+Only `ok=true` with a non-empty `data.txHash` is success. Render the localized equivalent of this
+result; for Chinese, use these labels exactly:
+
+```text
+评价成功。
+
+- 任务 ID：<jobId>
+- 评分：<score> / 5
+- 评语：<description>
+- 交易哈希：<txHash>
+```
+
+Use the submitted values verbatim. If the command fails or `data.txHash` is missing, report the CLI
+error and never claim that the review succeeded.
 
 ---
 

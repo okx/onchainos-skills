@@ -26,7 +26,7 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 | `invalid serviceType` | "Type must be A2MCP or A2A." → re-render the numbered type prompt. Display both enum values exactly; do not translate or rewrite them. |
 | `invalid value for --role` | "Role must be User / ASP / Evaluator." → re-render numbered role prompt. Never echo the enum. |
 | `ASP agents require at least one service` | "An ASP needs at least one service." → return to service Q&A. No raw enum. |
-| `ASP agents require an avatar` | "An ASP must set an avatar." → return to Step 1 §5: ask for an image file (no default option), upload it, then re-render the identity card. No raw enum/`--picture`. |
+| `ASP agents require an avatar` | "An ASP must set an avatar." → return to [`identity-register.md` §3. Field collection], Avatar handling: ask for an image file (no default option), upload it, then re-render the identity card. No raw enum/`--picture`. |
 | `failed to read file` | "Can't read that file." → recheck path; offer send-image / keep-default. |
 | `upload response missing url` | "Upload succeeded but no URL came back." → retry once; if persists, surface and ask. |
 
@@ -36,7 +36,7 @@ Translate, don't parrot — the friendly line is for the user; the raw line sits
 
 | Keyword | Friendly + next |
 |---|---|
-| `approved agent whitelist` / `10016` | "Your account isn't in the agent beta whitelist yet. Apply here: `<URL>`. We'll email you when approved." Extract the FIRST url from `msg` **verbatim** (keep `/zh-hans/` etc.); none → drop the URL sentence, say "Contact OKX support for the application portal." **No auto-retry**; no further create / update. Redact `approved agent whitelist` from the raw CLI line (§Redaction rule above). |
+| `approved agent whitelist` / `10016` | "Your account isn't in the agent beta whitelist yet. Apply here: `<URL>`. We'll email you when approved." Extract the FIRST url from `msg` **verbatim** (keep `/zh-hans/` etc.); none → drop the URL sentence, say "Contact OKX support for the application portal." **No auto-retry**; no further create / update. Redact `approved agent whitelist` from the raw CLI line according to [§Card format]. |
 | `agent not found` / 404 | "Agent not found." → verify id with `agent get-agents --agent-ids`. |
 | `already active` / `already inactive` | "Agent is already active / inactive." No-op; show detail card. |
 | `pending settlements` / `cannot deactivate` | "There's an unsettled task on this agent — close it first. Want me to take you there?" → on yes, hand to task flow internally (no skill name). |

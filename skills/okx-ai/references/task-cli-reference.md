@@ -9,7 +9,8 @@
 ## Contents
 
 - **Common (any role)**: `common context` · `communication-check` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
-- **User**: `create-task` · `task-create-prepare` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `complete` · `reject` · `close` · `claim-auto-refund` · `task-attach`
+- **Arbitration (User/ASP)**: `arbitration-list` · `arbitration-detail`
+- **User**: `create-task` · `task-create-prepare` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `complete` · `reject` · `close` · `claim-auto-refund` · `task-attach`
 - **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
 - **ASP**: `apply` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
@@ -170,7 +171,7 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
   --provider <agentId> \
   --service-id <id> --payment-mode <escrow> [--service-params <txt>] \
   [--service-token-address <addr>] [--service-token-amount <num>] \
-  [--endpoint <url>] [--file <path>]
+  [--file <path>]
 ```
 
 | Param | Required | Default | Description                                 |
@@ -185,7 +186,6 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
 | `--service-params` | No | - | Service input parameters (natural language) |
 | `--service-token-address` | No | - | Service token contract address              |
 | `--service-token-amount` | No | - | Service price from `task-create-prepare data.payload.feeAmount` |
-| `--endpoint` | No | - | Designated service endpoint URL             |
 | `--file` | No | - | Local file paths to attach (repeatable)     |
 | `--payment-mode` | Yes | - | `escrow`                          |
 
@@ -217,31 +217,33 @@ matching Service as `data`. It preserves current pricing, subscription/trial sta
 agent task-create-prepare --sid <sid>
 ```
 
-Pass only the confirmed numeric `sid` from search or matching context. The command first checks wallet
-login and resolves the current wallet's User Agent. It then runs
-`service-detail --sid <sid> --agentic-id <userAgentId>` exactly once and treats the returned Service as
-the sole source of current pricing, subscription, trial eligibility, provider, service metadata, and
-`serviceGuide`. It normalizes that Service, checks existing subscriptions, and checks the payable token
-balance. Current trial eligibility or an effective fee of zero skips the balance query.
+Pass only the confirmed numeric `sid` from search or matching context. The command checks login,
+User Agent identity, authoritative Service state, subscription conflicts, and payable balance. Current
+trial eligibility or an effective fee of zero skips the balance check.
+
+For an authoritative `serviceType=A2MCP` result, this command does not create a Task or run the legacy
+Task/x402 payment flow. It returns `phase=service_routing`, `decision=ready`,
+`reason=a2mcp_service_confirmed`, `nextAction=[{id:"invoke_a2mcp",recommend:true}]`, and
+`payload={schemaVersion:1,serviceSnapshot:<complete authoritative Service object>}`. Route that action
+through [`task-action-routing.md`](task-action-routing.md).
 
 Every successful response contains exactly `phase`, `decision`, `reason`, `nextAction`, and `payload`
 under `data`. Route by `decision`, then execute or present only the actions returned in `nextAction`;
 there is no `action` field. `payload` is empty for `login_validation` and `identity_validation`.
-For `reason=duplicate_subscription`, it is exactly `{jobId:<existing subscription id>,active:<bool>}`.
-For other phases it contains the normalized selected Service. When
-`payment_validation` reports insufficient balance, the same payload also carries
-the shared `fundingTarget`, `qr`, and `fundingNeed` fields and returns
-`fund_account` with empty params. It carries no saved `sid`, create command,
-or prior confirmation and never authorizes `create-task`.
-After a successful paid-Service balance check, `creation` includes `paymentBalance` with
-`chainIndex`, `chainName`, `currency`, `required`, and the freshly queried total `available` balance.
-Stable phase values are `login_validation`,
-`identity_validation`, `service_validation`, `subscription_validation`, `payment_validation`, and
-`creation`. Use [`task-action-routing.md`](task-action-routing.md) for each `nextAction[].id`.
+For `reason=duplicate_subscription`, it is exactly
+`{jobId:<existing subscription id>,title:<task title>,status:<numeric status>,active:<bool>}`.
+For `service_routing`, it contains `schemaVersion` and the complete A2MCP `serviceSnapshot`. For other
+phases it contains the normalized selected Service. When `payment_validation` reports insufficient
+balance, the same payload also carries the shared `fundingTarget`, `qr`, and `fundingNeed` fields and
+returns `fund_account` with empty params. It carries no saved `sid`, create command, or prior
+confirmation and never authorizes `create-task`. Stable phase values are `login_validation`,
+`identity_validation`, `service_validation`, `service_routing`, `subscription_validation`,
+`payment_validation`, and `creation`.
+Use [`task-action-routing.md`](task-action-routing.md) for each `nextAction[].id`.
 
-Invalid/missing Service fields and failed detail/subscription/balance requests are command errors, not
-additional business cases. For a successful response, route by `decision` and only the returned
-`nextAction` items; never derive an unreturned action from `phase` or `reason`.
+Invalid Service data and failed dependency requests are command errors, not additional business cases.
+For a successful response, route by `decision` and only the returned `nextAction` items; never derive
+an unreturned action from `phase` or `reason`.
 
 ### task-service-select
 
@@ -308,7 +310,7 @@ Use `services[0]` as the recommended service for the confirmation card. Offer al
 `task-service-select --search-after <searchAfter> --limit 3`; otherwise state that no more alternatives
 are available.
 
-Render `serviceType` verbatim (for example, `A2A` or `A2MCP`) without translation. For a
+`task-service-select` returns online `A2A` Task services only. Render `serviceType` verbatim. For a
 non-subscription Service, render a zero `feeAmount` (number or numeric string) as localized `Free`
 rather than `0 <feeTokenSymbol>`.
 
@@ -489,6 +491,46 @@ agent active-tasks [--role <r>] [--include-terminal]
 }
 ```
 
+### arbitration-list
+
+List arbitration tasks visible to one User or ASP identity. The selected identity is sent as the
+`agenticId` request header.
+
+```text
+agent arbitration-list --agent-id <userOrAspAgentId> [--page <n>] [--page-size <n>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--agent-id` | Yes | - | User or ASP Agent ID |
+| `--page` | No | `1` | One-based page number |
+| `--page-size` | No | `20` | Positive page size |
+
+The response preserves backend pagination fields: `total`, `page`, `pageSize`, and `list[]`. Each list
+item preserves `jobId`, `title`, `status`, and `createTime`; the CLI adds `statusName` when `status` is
+numeric.
+
+### arbitration-detail
+
+Show the current arbitration state visible to one User or ASP identity.
+
+```text
+agent arbitration-detail <jobId> --agent-id <userOrAspAgentId>
+```
+
+The response preserves all fields from `GET /task/{jobId}/dispute/status`, including `jobId`,
+`jobType`, `currentRound`, `selectedVoter`, `taskStatus`, `disputeRoundStatus`, `prepareEndTime`, and
+`roundEndTime`. The CLI adds:
+
+| Field | Description |
+|---|---|
+| `taskStatusName` | Normalized task status when `taskStatus` is numeric |
+| `disputeRoundStatusName` | `init`, `commit_phase`, `reveal_phase`, `completed`, `rejected`, `invalidated`, or `unknown` |
+| `phase` | `evidence_preparation`, `arbitrating`, `resolved`, `rejected`, `invalidated`, or `unknown` |
+
+Additional settlement fields are passed through unchanged when the backend returns them. Their
+absence must not be interpreted as a verdict, transfer, refund, or transaction.
+
 ### set-payment-mode
 
 Set the task's payment mode on-chain (params provided by `next-action` playbook)
@@ -496,7 +538,7 @@ Set the task's payment mode on-chain (params provided by `next-action` playbook)
 > **Insufficient-balance output:** when under-funded, this command returns blocked funding-notice JSON. If `fundingNoticeCommand` exists, run it; otherwise show `balanceWarning`.
 
 ```
-agent set-payment-mode <jobId> --payment-mode <escrow|x402> [--token-symbol <sym>] [--token-amount <amt>] [--endpoint <url>]
+agent set-payment-mode <jobId> --payment-mode escrow [--token-symbol <sym>] [--token-amount <amt>]
 ```
 
 ### confirm-accept
@@ -508,19 +550,6 @@ User Agent confirms ASP acceptance + escrow payment (params provided by `next-ac
 ```
 agent confirm-accept <jobId>
 ```
-
-### task-402-pay
-
-Accept an x402 task: replay the ASP endpoint FIRST, extract the settlement `txHash` from the `PAYMENT-RESPONSE` header when present, then broadcast the on-chain accept carrying `bizContext.paymentTxHash` so the backend can verify the on-chain fee does not exceed the task budget. (This is the single atomic x402-accept entry — `direct-accept` was removed.) Params provided by the `next-action` playbook.
-
-```
-agent task-402-pay <jobId> --provider-agent-id <id> --accepts <json> --endpoint <url> --token-symbol <sym> --token-amount <amt> [--from <address>] [--body <json>] --force
-```
-
-- **Ordering:** replay → extract `paymentTxHash` when present → `direct/accept` → broadcast. A missing `paymentTxHash` is allowed and is threaded as `""`; HTTP 402 without `input_required` still continues. Only `input_required` leaves the accept unbroadcast and returns `data.status` as `"pending"`.
-- **`--force`:** the on-chain broadcast is gated by a `confirming` (exit 2) prompt; automated playbook invocations MUST pass `--force`.
-- **`data` fields:** `jobId`, `replaySuccess` (bool), `paymentTxHash` (string, `""` when unknown), `accepted` (bool), optional `status` (`"pending"`), optional `broadcast{pkgId,orderId,txHash,bizUniqKey}`, optional `deliverable{saved,path}`.
-- **Fee interception:** if the backend rejects the accept because the on-chain fee exceeds the budget, the command exits non-zero with `output::error` carrying the backend code + description; the task is NOT accepted.
 
 ### complete
 

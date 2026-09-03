@@ -6,6 +6,8 @@ const UPDATE: &str = include_str!("../../skills/okx-ai/references/identity-updat
 const DISCOVER: &str = include_str!("../../skills/okx-ai/references/identity-discover.md");
 const SERVICE_SEARCH: &str =
     include_str!("../../skills/okx-ai/references/identity-service-search.md");
+const OUTPUT_TEMPLATES: &str =
+    include_str!("../../skills/okx-ai/references/identity-output-templates.md");
 const LISTING: &str = include_str!("../../skills/okx-ai/references/identity-listing.md");
 const REVIEWS: &str = include_str!("../../skills/okx-ai/references/identity-reviews.md");
 const SERVICE_CONTRACT: &str =
@@ -219,14 +221,34 @@ fn identity_update_documents_parseable_service_delta_shapes() {
 fn identity_read_and_toggle_behavior_is_preserved() {
     let discover = flatten(DISCOVER);
     let search = flatten(SERVICE_SEARCH);
+    let output = flatten(OUTPUT_TEMPLATES);
     let listing = flatten(LISTING);
     let reviews = flatten(REVIEWS);
     assert!(search.contains("user's original utterance"));
     assert!(search.contains("Use the requested limit; otherwise pass `--limit 3`"));
     assert_eq!(search.matches("--limit <1..10>").count(), 2);
-    assert!(search.contains("### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>"));
-    assert!(search.contains("| # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description |"));
-    assert!(search.contains("**Must** render every Agent exactly in this format"));
+    assert!(output.contains("### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>"));
+    assert!(output.contains("### ● <agentId> - <name>"));
+    assert!(output.contains("User/Evaluator: omit `Status`, `Approval status`, and `Rating`"));
+    for row in [
+        "| Agent ID | <agentId> |",
+        "| Name | <name> |",
+        "| Role | <role> |",
+        "| Status | <status> |",
+        "| Approval status | <approvalStatus> |",
+        "| Address | <address> |",
+        "| Description | <description> |",
+        "| Profile photo | <profilePhoto> |",
+        "| Rating | <rating> |",
+    ] {
+        assert!(output.contains(row), "missing Agent detail row: {row}");
+    }
+    assert_eq!(OUTPUT_TEMPLATES.matches("### Rules").count(), 4);
+    assert!(!output.contains("`card[]`"));
+    assert!(!output.contains("raw fields"));
+    assert!(!search.contains("### <asp.aspName>"));
+    assert_eq!(output.matches("| # | Name | Type | Fee | Free trial | Endpoint | Description |").count(), 1);
+    assert!(search.contains("with the `Agent Service group` template"));
     assert!(!search.contains("### Other results"));
     assert!(search.contains("onchainos agent task-create-prepare --sid <selected-sid>"));
     assert!(search.contains("Execute `data.action` directly as Markdown instructions"));
@@ -236,7 +258,10 @@ fn identity_read_and_toggle_behavior_is_preserved() {
     assert!(!discover.contains("service-match"));
     assert!(discover.contains("## My Agents"));
     assert!(discover.contains("## Agent detail"));
+    assert!(discover.contains("**MUST** render each Agent's display-ready `card[]` with `Agent detail` from"));
     assert!(discover.contains("## Service list"));
+    assert!(discover.contains("use the `Agent table`"));
+    assert!(discover.contains("use the `Service table`"));
     assert!(listing.contains("card-exempt"));
     assert!(listing.contains("never chase a successful toggle"));
     assert!(reviews.contains("Use the CLI-provided 0.00–5.00 star values directly"));

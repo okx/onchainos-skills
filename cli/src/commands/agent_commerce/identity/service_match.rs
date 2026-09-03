@@ -16,8 +16,8 @@ const TIP_NO_MATCH: &str =
     "No matching services were found on OKX.AI. Try another keyword and search again.";
 const TIP_OFFLINE: &str =
     "This Agent is offline and cannot provide the service right now. Search for another service.";
-const TIP_CONFIRM: &str = "Reply \"confirm\" to use this service.";
-const TIP_MORE: &str = "Tell me which service you want to use, or reply \"show more\".";
+const TIP_CONFIRM: &str = "Reply to confirm that you want to use this service.";
+const TIP_MORE: &str = "Tell me which service you want to use, or ask for more.";
 const TIP_NO_MORE: &str =
     "There are no more matching services. Tell me which service you want to use.";
 
@@ -194,7 +194,15 @@ fn active_subscription_payload(service: &Value) -> Option<Value> {
     if job_id.is_empty() {
         return None;
     }
-    Some(json!({"jobId": job_id, "active": true}))
+    let mut payload = Map::new();
+    payload.insert("jobId".to_string(), Value::String(job_id.to_string()));
+    payload.insert("active".to_string(), Value::Bool(true));
+    for key in ["title", "status"] {
+        if let Some(value) = subscribed_info.get(key) {
+            payload.insert(key.to_string(), value.clone());
+        }
+    }
+    Some(Value::Object(payload))
 }
 
 fn service_is_offline(service: &Value) -> bool {
@@ -515,6 +523,8 @@ mod tests {
                 "subscribedInfo": {
                     "isActive": true,
                     "jobId": " job-123 ",
+                    "title": "Signal Subscription",
+                    "status": 1,
                     "deviceList": ["device-1"]
                 }
             }],
@@ -530,7 +540,12 @@ mod tests {
         );
         assert_eq!(
             subscribed["payload"],
-            json!({"jobId": "job-123", "active": true})
+            json!({
+                "jobId": "job-123",
+                "title": "Signal Subscription",
+                "status": 1,
+                "active": true
+            })
         );
         assert!(subscribed.get("action").is_none());
         assert!(subscribed.get("tip").is_none());
@@ -548,9 +563,19 @@ mod tests {
     fn active_subscription_payload_requires_active_subscription_job_id() {
         assert_eq!(
             active_subscription_payload(&json!({
-                "subscribedInfo": {"isActive": true, "jobId": "job-1"}
+                "subscribedInfo": {
+                    "isActive": true,
+                    "jobId": "job-1",
+                    "title": "Task title",
+                    "status": 1
+                }
             })),
-            Some(json!({"jobId": "job-1", "active": true}))
+            Some(json!({
+                "jobId": "job-1",
+                "title": "Task title",
+                "status": 1,
+                "active": true
+            }))
         );
         assert_eq!(
             active_subscription_payload(&json!({

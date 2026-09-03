@@ -8,11 +8,12 @@ use crate::commands::agent_commerce::task::common::{
 };
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 
-use super::{asp_ops, create, subscription_ops};
+use super::{asp_ops, create};
 
 const PHASE_LOGIN_VALIDATION: &str = "login_validation";
 const PHASE_IDENTITY_VALIDATION: &str = "identity_validation";
 const PHASE_SERVICE_VALIDATION: &str = "service_validation";
+const PHASE_SERVICE_ROUTING: &str = "service_routing";
 const PHASE_PAYMENT_VALIDATION: &str = "payment_validation";
 const PHASE_SUBSCRIPTION_VALIDATION: &str = "subscription_validation";
 const PHASE_CREATION: &str = "creation";
@@ -31,26 +32,54 @@ fn build_decision(
     out
 }
 
-fn emit(
+fn emit(phase: &str, decision: &str, reason: &str, next_action: Value, payload: Value) {
+    crate::output::success(decision_with_payload(
+        phase,
+        decision,
+        reason,
+        next_action,
+        payload,
+    ));
+}
+
+fn decision_with_payload(
     phase: &str,
     decision: &str,
     reason: &str,
     next_action: Value,
     payload: Value,
-) {
+) -> Value {
     let mut out = build_decision(phase, decision, reason, next_action);
     out.insert("payload".to_string(), payload);
-    crate::output::success(Value::Object(out));
+    Value::Object(out)
 }
 
 fn next_action(id: &str, recommend: bool) -> Value {
     json!([{"id": id, "recommend": recommend}])
 }
 
-fn duplicate_next_actions(
-    existing: &subscription_ops::ExistingSubscriptionSummary,
-) -> Value {
-    if existing.restore_listening_available {
+fn a2mcp_service_routing_decision(service_snapshot: Value) -> Value {
+    decision_with_payload(
+        PHASE_SERVICE_ROUTING,
+        "ready",
+        "a2mcp_service_confirmed",
+        next_action("invoke_a2mcp", true),
+        json!({
+            "schemaVersion": 1,
+            "serviceSnapshot": service_snapshot,
+        }),
+    )
+}
+
+struct DuplicateSubscriptionContext {
+    job_id: String,
+    title: String,
+    status: i64,
+    active: bool,
+}
+
+fn duplicate_next_actions(existing: &DuplicateSubscriptionContext) -> Value {
+    if existing.active {
         json!([
             {"id": "restore_subscription", "recommend": true},
             {"id": "stop", "recommend": false}
@@ -60,10 +89,12 @@ fn duplicate_next_actions(
     }
 }
 
-fn duplicate_payload(existing: &subscription_ops::ExistingSubscriptionSummary) -> Value {
+fn duplicate_payload(existing: &DuplicateSubscriptionContext) -> Value {
     json!({
         "jobId": existing.job_id,
-        "active": existing.restore_listening_available,
+        "title": existing.title,
+        "status": existing.status,
+        "active": existing.active,
     })
 }
 
@@ -81,6 +112,35 @@ fn scalar_string(value: Option<&Value>) -> Option<String> {
 fn required_service_string(service: &Value, key: &str) -> Result<String> {
     scalar_string(service.get(key))
         .ok_or_else(|| anyhow!("selected Service is missing required field `{key}`"))
+}
+
+fn duplicate_subscription_context(service: &Value) -> Result<Option<DuplicateSubscriptionContext>> {
+    if service.get("isSubscribing").and_then(Value::as_bool) != Some(true) {
+        return Ok(None);
+    }
+    let info = service
+        .get("subscribedInfo")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("subscribing Service is missing subscribedInfo"))?;
+    let job_id = scalar_string(info.get("jobId"))
+        .ok_or_else(|| anyhow!("subscribedInfo is missing required field `jobId`"))?;
+    let title = scalar_string(info.get("title"))
+        .ok_or_else(|| anyhow!("subscribedInfo is missing required field `title`"))?;
+    let status = info
+        .get("status")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| anyhow!("subscribedInfo is missing numeric field `status`"))?;
+    let active = info
+        .get("isActive")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| anyhow!("subscribedInfo is missing boolean field `isActive`"))?;
+
+    Ok(Some(DuplicateSubscriptionContext {
+        job_id,
+        title,
+        status,
+        active,
+    }))
 }
 
 async fn fetch_service_detail(user_agent_id: &str, sid: &str) -> Result<Value> {
@@ -181,7 +241,7 @@ fn normalize_service(mut service: Value) -> Value {
 }
 
 pub(crate) async fn handle_task_create_prepare(
-    client: &mut TaskApiClient,
+    _client: &mut TaskApiClient,
     sid: &str,
 ) -> Result<()> {
     if cfg!(feature = "debug-log") {
@@ -191,14 +251,26 @@ pub(crate) async fn handle_task_create_prepare(
     if common::current_account_xlayer_address().is_none()
         || ensure_tokens_refreshed().await.is_err()
     {
-        emit(PHASE_LOGIN_VALIDATION, "blocked", "login_required", next_action("login", true), json!({}));
+        emit(
+            PHASE_LOGIN_VALIDATION,
+            "blocked",
+            "login_required",
+            next_action("login", true),
+            json!({}),
+        );
         return Ok(());
     }
 
     let user_agent_id = match create::resolve_user_agent().await {
         Ok((agent_id, _)) => agent_id,
         Err(_) => {
-            emit(PHASE_IDENTITY_VALIDATION, "blocked", "user_identity_required", next_action("register_user_agent", true), json!({}));
+            emit(
+                PHASE_IDENTITY_VALIDATION,
+                "blocked",
+                "user_identity_required",
+                next_action("register_user_agent", true),
+                json!({}),
+            );
             return Ok(());
         }
     };
@@ -207,71 +279,63 @@ pub(crate) async fn handle_task_create_prepare(
     if selected_sid.is_empty() {
         bail!("--sid must not be blank");
     }
-    let service = normalize_service(fetch_service_detail(&user_agent_id, selected_sid).await?);
-    let selected_service_id = required_service_string(&service, "serviceId")?;
-
+    let service = fetch_service_detail(&user_agent_id, selected_sid).await?;
+    required_service_string(&service, "serviceId")?;
     let service_type = required_service_string(&service, "serviceType")?;
     if service_type.eq_ignore_ascii_case("A2MCP") {
-        emit(PHASE_SERVICE_VALIDATION, "blocked", "a2mcp_service", next_action("route_payment_protocol", true), service);
+        // Service discovery and confirmation stay in the OKX.AI creation
+        // entry. The selected authoritative Service object becomes the
+        // immutable direct-invocation snapshot; no Task is created. `success`
+        // adds the standard `{ok:true,data:...}` envelope around this decision.
+        crate::output::success(a2mcp_service_routing_decision(service));
         return Ok(());
     }
     if !service_type.eq_ignore_ascii_case("A2A") {
-        emit(PHASE_SERVICE_VALIDATION, "blocked", "unsupported_service_type", next_action("stop", true), service);
+        let service = normalize_service(service);
+        emit(
+            PHASE_SERVICE_VALIDATION,
+            "blocked",
+            "unsupported_service_type",
+            next_action("stop", true),
+            service,
+        );
         return Ok(());
     }
 
-    let support_subscription = service
-        .get("supportSubscription")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if support_subscription {
-        let existing = subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
-            client,
-            &user_agent_id,
-        )
-        .await?;
-        if let Some(existing) =
-            subscription_ops::existing_subscription_for_service(&existing, &selected_service_id)
-        {
-            emit(
-                PHASE_SUBSCRIPTION_VALIDATION,
-                "blocked",
-                "duplicate_subscription",
-                duplicate_next_actions(existing),
-                duplicate_payload(existing),
-            );
-            return Ok(());
-        }
+    let duplicate_subscription = duplicate_subscription_context(&service)?;
+    let service = normalize_service(service);
+    if let Some(existing) = duplicate_subscription.as_ref() {
+        emit(
+            PHASE_SUBSCRIPTION_VALIDATION,
+            "blocked",
+            "duplicate_subscription",
+            duplicate_next_actions(existing),
+            duplicate_payload(existing),
+        );
+        return Ok(());
     }
 
     let required = effective_fee(&service)?;
     if trial_available(&service) || required == 0.0 {
-        emit(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), service);
+        emit(
+            PHASE_CREATION,
+            "ready",
+            "all_checks_passed",
+            next_action("open_create_playbook", true),
+            service,
+        );
         return Ok(());
     }
 
     let currency = required_service_string(&service, "feeTokenSymbol")?;
     match common::ensure_sufficient_balance(required, &currency).await {
-        Ok(balance) => {
-            let mut payload = service;
-            if let Some(object) = payload.as_object_mut() {
-                object.insert(
-                    "paymentBalance".to_string(),
-                    json!({
-                        "chainIndex": "196",
-                        "chainName": "X Layer",
-                        "currency": currency,
-                        "required": format!("{required}"),
-                        "available": format!("{balance}"),
-                    }),
-                );
-            }
+        Ok(_) => {
             emit(
                 PHASE_CREATION,
                 "ready",
                 "all_checks_passed",
                 next_action("open_create_playbook", true),
-                payload,
+                service,
             );
             Ok(())
         }
@@ -346,6 +410,109 @@ mod tests {
 
         assert!(!trial_available(&service));
         assert_eq!(effective_fee(&service).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn duplicate_payload_uses_authoritative_subscribed_info() {
+        let service = json!({
+            "isSubscribing": true,
+            "subscribedInfo": {
+                "jobId": "job-42",
+                "isActive": true,
+                "title": "Signal Subscription",
+                "status": 1
+            }
+        });
+        let existing = duplicate_subscription_context(&service)
+            .expect("valid duplicate metadata")
+            .expect("duplicate subscription");
+
+        assert_eq!(
+            duplicate_payload(&existing),
+            json!({
+                "jobId": "job-42",
+                "title": "Signal Subscription",
+                "status": 1,
+                "active": true
+            })
+        );
+        assert_eq!(
+            duplicate_next_actions(&existing),
+            json!([
+                {"id": "restore_subscription", "recommend": true},
+                {"id": "stop", "recommend": false}
+            ])
+        );
+    }
+
+    #[test]
+    fn inactive_duplicate_only_allows_stop() {
+        let service = json!({
+            "isSubscribing": true,
+            "subscribedInfo": {
+                "jobId": "job-43",
+                "isActive": false,
+                "title": "Paused Signals",
+                "status": 3
+            }
+        });
+        let existing = duplicate_subscription_context(&service)
+            .expect("valid duplicate metadata")
+            .expect("duplicate subscription");
+
+        assert_eq!(existing.status, 3);
+        assert_eq!(duplicate_next_actions(&existing), next_action("stop", true));
+    }
+
+    #[test]
+    fn confirmed_a2mcp_service_routes_to_direct_invocation_with_verbatim_snapshot() {
+        let service = json!({
+            "asp": {
+                "aspAgentId": "5421",
+                "aspName": "PixelBrief",
+                "feedbackRate": 96.92,
+                "onlineStatus": 1,
+                "rating": "★ 4.86",
+                "securityRate": 4.86,
+                "soldCount": 21721
+            },
+            "endpoint": "https://pixelbrief.tech/v1/logo",
+            "feeAmount": 0.05,
+            "feeToken": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+            "feeTokenSymbol": "USDT",
+            "freeTrial": null,
+            "isSubscribing": false,
+            "serviceDescription": "Returns logo SVG and palette for a brand name and mood.\n1. brand name 2. mood 3. optional style",
+            "serviceId": "9a5041d8-e03d-461d-b5cd-d2ffdd6111f3",
+            "serviceName": "Logo SVG only",
+            "serviceType": "A2MCP",
+            "sid": 33803,
+            "sortOrder": null,
+            "subscription": [],
+            "supportTrial": false
+        });
+
+        let envelope = json!({
+            "ok": true,
+            "data": a2mcp_service_routing_decision(service.clone()),
+        });
+
+        assert_eq!(
+            envelope,
+            json!({
+                "ok": true,
+                "data": {
+                    "phase": "service_routing",
+                    "decision": "ready",
+                    "reason": "a2mcp_service_confirmed",
+                    "nextAction": [{"id": "invoke_a2mcp", "recommend": true}],
+                    "payload": {
+                        "schemaVersion": 1,
+                        "serviceSnapshot": service,
+                    }
+                }
+            })
+        );
     }
 
     #[test]

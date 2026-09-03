@@ -10,6 +10,9 @@ metadata:
 
 # OKX Agent Payments Protocol (Dispatcher)
 
+- Structured `execute_a2mcp_payment` action → read
+  `references/a2mcp-execute.md`; do not enter the generic payment routes.
+
 > **⚠️ READ FIRST — ZERO-TEXT-ON-TRIGGER + NEVER-SKIP-USER-GATES.**
 >
 > Between detecting a 402 (or any trigger word) and emitting the first user-facing card — the Step A3.5 recommendation card, or the Step A4 confirmation card — output **ZERO** user-visible text. No "received 402", no "triggered OKX Agent Payments Protocol", no "detected N schemes", no enumeration of schemes / networks / tokens / amounts, no "loading skill" — in any language (the same prohibition applies to the equivalent phrases in any other language). The skill-load tool call may run but emits no surrounding prose.

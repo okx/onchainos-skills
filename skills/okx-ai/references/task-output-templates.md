@@ -80,20 +80,6 @@ Phase: <localized phase>
 Reply with a number.
 ```
 
-For `task_create_prepare`, use these reason mappings:
-
-| Reason | Result | Typical action label |
-|---|---|---|
-| `login_required` | Login is required. | Log in |
-| `user_identity_required` | A User Agent is required. | Register User Agent |
-| `a2mcp_service` | This is an A2MCP service, not an A2A task. | Route to payment protocol |
-| `unsupported_service_type` | This service type is not supported for task creation. | Stop |
-| `duplicate_subscription` | An active subscription already exists. | Restore listening / Stop |
-| `insufficient_balance` | The balance is insufficient. | Fund account |
-
-Use the exact action IDs returned by `nextAction`; the labels above are display
-guidance only.
-
 ## `decision=requires_user_input`
 
 ```text
@@ -139,23 +125,3 @@ auto-renewal are rendered.
 
 Reply with a number.
 ```
-
-For `task_create_prepare`, `nextAction.id=open_create_playbook` means to open
-the task-creation reference and continue its confirmation flow; it does not
-mean that the subscription has already been created.
-
-When `payload.paymentBalance` is present, show its `available` total together
-with `currency` before the fresh creation confirmation. Do not label the
-difference from an earlier warning as “received” because the CLI does not
-return a verified deposit delta.
-
-## `task_create_prepare` phase mapping
-
-| Phase | Decision | Next action IDs |
-|---|---|---|
-| `login_validation` | `blocked` | `login` |
-| `identity_validation` | `blocked` | `register_user_agent` |
-| `service_validation` | `blocked` | `route_payment_protocol`, `stop` |
-| `subscription_validation` | `blocked` | `restore_subscription`, `stop` |
-| `payment_validation` | `blocked` | `fund_account` |
-| `creation` | `ready` | `open_create_playbook` |

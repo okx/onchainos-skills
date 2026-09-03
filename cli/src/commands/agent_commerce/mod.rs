@@ -1,3 +1,4 @@
+pub mod a2mcp_probe;
 pub mod chat;
 pub mod identity;
 pub mod task;
@@ -13,6 +14,13 @@ use task::common::DEBUG_LOG;
 /// Shared `agent` namespace for identity + task-system commands.
 #[derive(Subcommand)]
 pub enum AgentCommand {
+    /// Stateless OKX.AI A2MCP direct invocation (probe / balance refresh / prepare).
+    #[command(name = "a2mcp-probe")]
+    A2mcpProbe {
+        #[command(subcommand)]
+        command: a2mcp_probe::A2mcpProbeCommand,
+    },
+
     // ── Identity ────────────────────────────────────────────────────────────
     /// Register a new Agent identity
     Create(identity::CreateArgs),
@@ -98,16 +106,13 @@ pub enum AgentCommand {
         currency: String,
         #[arg(long)]
         title: Option<String>,
-        /// Specified provider agentId (required; skip asp-match, negotiate directly with this provider or x402 accept)
+        /// Specified provider agentId (required; skip asp-match and negotiate directly)
         #[arg(long)]
         provider: String,
-        /// Designated service endpoint (persisted for multi-service providers)
-        #[arg(long)]
-        endpoint: Option<String>,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
-        /// Payment mode to set at creation time (required; escrow / x402).
+        /// Payment mode to set at creation time (required; escrow only).
         #[arg(long = "payment-mode")]
         payment_mode: String,
         /// Service ID from asp/match response (required)
@@ -436,67 +441,44 @@ pub enum AgentCommand {
         include_terminal: bool,
     },
 
+    /// List arbitration tasks visible to one User or ASP identity.
+    #[command(name = "arbitration-list")]
+    ArbitrationList {
+        /// User or ASP agentId used as the agenticId request header.
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        page: u32,
+        #[arg(long = "page-size", default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..))]
+        page_size: u32,
+    },
+
+    /// Show the current arbitration state visible to one User or ASP identity.
+    #[command(name = "arbitration-detail")]
+    ArbitrationDetail {
+        job_id: String,
+        /// User or ASP agentId used as the agenticId request header.
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
     /// Set payment mode on-chain (standalone, before confirm-accept)
     #[command(name = "set-payment-mode")]
     SetPaymentMode {
         job_id: String,
-        /// escrow / x402
+        /// Escrow only. Legacy task-based x402/A2MCP is no longer supported.
         #[arg(long = "payment-mode")]
         payment_mode: Option<String>,
         #[arg(long = "token-symbol")]
         token_symbol: Option<String>,
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
-        /// x402 service endpoint URL
-        #[arg(long)]
-        endpoint: Option<String>,
     },
 
     /// Client confirms provider and executes payment (setPaymentMode must be done first).
     /// All parameters are auto-resolved from the task detail API.
     #[command(name = "confirm-accept")]
     ConfirmAccept { job_id: String },
-
-    /// x402 Phase 2: x402_pay signing + direct/accept + endpoint replay
-    #[command(name = "task-402-pay")]
-    Task402Pay {
-        job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        /// JSON accepts array from the HTTP 402 response
-        #[arg(long)]
-        accepts: String,
-        /// x402 provider endpoint URL (for replay after signing)
-        #[arg(long)]
-        endpoint: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        /// Payer address (optional)
-        #[arg(long)]
-        from: Option<String>,
-        /// JSON business body to POST during replay (for endpoints that require business parameters)
-        #[arg(long)]
-        body: Option<String>,
-        /// Bypass the confirming gate and broadcast the on-chain accept immediately (FR-7.3)
-        #[arg(long, default_value_t = false)]
-        force: bool,
-    },
-
-    /// Validate an x402 endpoint and extract pricing info
-    #[command(name = "x402-check")]
-    X402Check {
-        /// x402 provider endpoint URL
-        #[arg(long)]
-        endpoint: String,
-        /// User agent ID (used for auth on token detail queries)
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-        /// JSON business body to POST (for endpoints that require business parameters to return 402)
-        #[arg(long)]
-        body: Option<String>,
-    },
 
     /// Designated-provider routing: service-list + profile in one call
     #[command(name = "designated-route")]
@@ -507,29 +489,6 @@ pub enum AgentCommand {
         /// Target registered service ID (preferred for exact selection)
         #[arg(long = "service-id")]
         service_id: Option<String>,
-        /// Target service endpoint (for multi-service providers)
-        #[arg(long)]
-        endpoint: Option<String>,
-    },
-
-    /// Validate x402 endpoint + price match + budget check in one call
-    #[command(name = "x402-validate")]
-    X402Validate {
-        /// x402 provider endpoint URL
-        #[arg(long)]
-        endpoint: String,
-        /// User agent ID
-        #[arg(long = "agent-id")]
-        agent_id: String,
-        /// Job ID (for budget lookup)
-        #[arg(long = "job-id")]
-        job_id: String,
-        /// Registered fee amount from designated-route
-        #[arg(long = "fee-amount")]
-        fee_amount: String,
-        /// Registered fee token symbol from designated-route
-        #[arg(long = "fee-token")]
-        fee_token: String,
     },
 
     /// Client confirms task complete and releases payment
@@ -1489,6 +1448,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     );
 
     match cmd {
+        AgentCommand::A2mcpProbe { command } => a2mcp_probe::run(command, ctx).await,
         // ── Identity ────────────────────────────────────────────────
         AgentCommand::Create(args) => identity::create(args, ctx).await,
         AgentCommand::Update(args) => identity::update(args, ctx).await,
@@ -1517,7 +1477,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             currency,
             title,
             provider,
-            endpoint,
             attachments,
             payment_mode,
             service_id,
@@ -1534,7 +1493,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     currency,
                     title,
                     provider,
-                    endpoint,
                     attachments,
                     payment_mode,
                     service_id,
@@ -1785,12 +1743,36 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .await
         }
 
+        AgentCommand::ArbitrationList {
+            agent_id,
+            page,
+            page_size,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::arbitration_query::handle_arbitration_list(
+                &mut client,
+                &agent_id,
+                page,
+                page_size,
+            )
+            .await
+        }
+
+        AgentCommand::ArbitrationDetail { job_id, agent_id } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::arbitration_query::handle_arbitration_detail(
+                &mut client,
+                &job_id,
+                &agent_id,
+            )
+            .await
+        }
+
         AgentCommand::SetPaymentMode {
             job_id,
             payment_mode,
             token_symbol,
             token_amount,
-            endpoint,
         } => {
             task::user::run_task(
                 T::SetPaymentMode {
@@ -1798,7 +1780,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     payment_mode,
                     token_symbol,
                     token_amount,
-                    endpoint,
                 },
                 ctx,
             )
@@ -1809,79 +1790,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::user::run_task(T::ConfirmAccept { job_id }, ctx).await
         }
 
-        AgentCommand::Task402Pay {
-            job_id,
-            provider_agent_id,
-            accepts,
-            endpoint,
-            token_symbol,
-            token_amount,
-            from,
-            body,
-            force,
-        } => {
-            task::user::run_task(
-                T::Task402Pay {
-                    job_id,
-                    provider_agent_id,
-                    accepts,
-                    endpoint,
-                    token_symbol,
-                    token_amount,
-                    from,
-                    body,
-                    force,
-                },
-                ctx,
-            )
-            .await
-        }
-
-        AgentCommand::X402Check {
-            endpoint,
-            agent_id,
-            body,
-        } => {
-            task::user::run_task(
-                T::X402Check {
-                    endpoint,
-                    agent_id,
-                    body,
-                },
-                ctx,
-            )
-            .await
-        }
-
         AgentCommand::DesignatedRoute {
             provider,
             service_id,
-            endpoint,
-        } => {
-            task::common::handle_designated_route(
-                &provider,
-                service_id.as_deref(),
-                endpoint.as_deref(),
-            )
-            .await
-        }
-
-        AgentCommand::X402Validate {
-            endpoint,
-            agent_id,
-            job_id,
-            fee_amount,
-            fee_token,
-        } => {
-            task::common::handle_x402_validate(
-                &endpoint,
-                &agent_id,
-                &job_id,
-                &fee_amount,
-                &fee_token,
-            )
-            .await
-        }
+        } => task::common::handle_designated_route(&provider, service_id.as_deref()).await,
 
         AgentCommand::Complete { job_id } => {
             task::user::run_task(T::Complete { job_id }, ctx).await
@@ -2076,7 +1988,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::common::autotrade::trade_kit::TradeEnvironment::parse(&environment)
                     .map_err(anyhow::Error::msg)?;
             let result =
-                task::common::autotrade::trade_kit::probe_runtime(&asset_classes, environment).await;
+                task::common::autotrade::trade_kit::probe_runtime(&asset_classes, environment)
+                    .await;
             crate::output::success(result);
             Ok(())
         }
@@ -2236,8 +2149,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     venue: &venue,
                     action: &action,
                     amount: &amount,
-                    execution_mode:
-                        task::common::autotrade::executor::ExecutionMode::parse(&execution_mode)?,
+                    execution_mode: task::common::autotrade::executor::ExecutionMode::parse(
+                        &execution_mode,
+                    )?,
                     command_json: &command_json,
                     timeout_sec,
                 },
@@ -2290,13 +2204,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             delivery_id,
             amount,
         } => {
-            crate::output::success(
-                task::common::autotrade::executor::authorize_one_time(
+            crate::output::success(task::common::autotrade::executor::authorize_one_time(
                     &job_id,
                     &delivery_id,
                     &amount,
-                )?,
-            );
+            )?);
             Ok(())
         }
 
@@ -2379,10 +2291,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             settings_json,
             cancel,
         } => {
+            use task::common::autotrade::consent;
             use task::common::autotrade::continuation::{
                 self, ExplicitValues, Origin, SelectedMode, StartBinding,
             };
-            use task::common::autotrade::consent;
             if cancel {
                 if mode.is_some()
                     || origin.is_some()
@@ -2402,9 +2314,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 {
                     anyhow::bail!("--cancel does not accept configuration arguments");
                 }
-                let continuation_id = continuation_id
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("--continuation-id is required with --cancel"))?;
+                let continuation_id = continuation_id.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("--continuation-id is required with --cancel")
+                })?;
                 continuation::cancel(&job_id, &agent_id, continuation_id)?;
                 crate::output::success(serde_json::json!({
                     "jobId": job_id,
@@ -2414,10 +2326,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
 
-            let selected_mode = mode
-                .as_deref()
-                .map(SelectedMode::parse)
-                .transpose()?;
+            let selected_mode = mode.as_deref().map(SelectedMode::parse).transpose()?;
             let values = ExplicitValues {
                 trade_amount_u: trade_amount.as_deref(),
                 cap_u: cap.as_deref(),
@@ -2493,8 +2402,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         original_delivery_id: delivery_id.as_deref(),
                         required_fields: Some(&effective_required_fields),
                         service_guide_hash: restore_context.service_guide_hash.as_deref(),
-                        service_guide_hash_resolved: restore_context
-                            .service_guide_hash_resolved,
+                        service_guide_hash_resolved: restore_context.service_guide_hash_resolved,
                         seed_consent: seed_consent.as_ref(),
                     }),
                     &job_id,
@@ -2515,11 +2423,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     );
                 }
                 let continuation_id = continuation_id.as_deref().expect("checked above");
-                let existing = continuation::load_for_resume(
-                    &job_id,
-                    &agent_id,
-                    continuation_id,
-                )?;
+                let existing = continuation::load_for_resume(&job_id, &agent_id, continuation_id)?;
                 if existing.origin == Origin::SubscriptionRestore {
                     let asset_class = existing
                         .signal_type
@@ -2595,10 +2499,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .as_deref()
                 .map(consent::TradeKitAuthMode::parse)
                 .transpose()?;
-            let dynamic_settings = consent::parse_dynamic_settings_json(
-                settings_json.as_deref(),
-                "--settings-json",
-            )?;
+            let dynamic_settings =
+                consent::parse_dynamic_settings_json(settings_json.as_deref(), "--settings-json")?;
             if tool.is_some() {
                 anyhow::bail!("--tool is deprecated; use subscription-route-set");
             }
@@ -2621,9 +2523,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 grants::clear_grant(&job_id);
                 consent::clear_pending_signal(&job_id);
                 task::common::autotrade::continuation::clear(&job_id);
-                let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(
-                    &job_id,
-                );
+                let _ =
+                    task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(&job_id);
                 crate::output::success(
                     serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id}),
                 );
@@ -2844,8 +2745,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::common::autotrade::continuation::clear(&job_id);
             }
             consent::clear_pending_signal(&job_id);
-            crate::output::success(
-                serde_json::json!({
+            crate::output::success(serde_json::json!({
                     "consentMode": if mode_enum == consent::ConsentMode::Auto { "auto" } else { "notify_only" },
                     "cap": cap,
                     "tradeEnvironment": persisted_environment,
@@ -2853,8 +2753,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     "orderPolicy": persisted_order_policy,
                     "authMode": persisted_auth_mode,
                     "replayed": false
-                }),
-            );
+            }));
             Ok(())
         }
         AgentCommand::AgreeRefund { job_id, agent_id } => {
@@ -3247,22 +3146,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    // x402 (paymentMode=3): the user paid the ASP at request time via
-                    // the A2MCP service endpoint, so the on-chain events are pure
-                    // receipts — provider has no business action for any of them.
-                    // Route every x402 event to the observer-only a2mcp playbook.
-                    let use_a2mcp = matches!(payment_mode, Some(3));
-                    if use_a2mcp {
-                        task::asp::flow::generate_a2mcp_next_action(
-                            &job_id,
-                            &event,
-                            &agent_id,
-                            title_ref,
-                            data.as_deref(),
-                            prefetched.as_ref(),
-                            parsed_message.as_ref(),
+                    if payment_mode == Some(3) {
+                        format!(
+                            "legacy_a2mcp_flow_removed: task-based A2MCP processing is disabled for job {job_id}. Stop; do not deliver, complete, sign, or pay."
                         )
-                        .await
                     } else {
                         task::asp::flow::generate_next_action(
                             &job_id,
@@ -3726,11 +3613,10 @@ mod auto_consent_permit_tests {
             "plugin-ready-check",
         ] {
             assert_eq!(auto_write_continuation_id(mode, None).unwrap(), None);
-            assert!(auto_write_continuation_id(
-                mode,
-                Some("atc_0123456789abcdef0123456789abcdef")
-            )
-            .is_err());
+            assert!(
+                auto_write_continuation_id(mode, Some("atc_0123456789abcdef0123456789abcdef"))
+                    .is_err()
+            );
         }
     }
 
@@ -3747,9 +3633,7 @@ mod auto_consent_permit_tests {
         let consent = final_writer
             .find("write_consent_policy_with_dynamic_settings")
             .expect("consent write");
-        let grant = final_writer
-            .find("write_auto_grant")
-            .expect("grant write");
+        let grant = final_writer.find("write_auto_grant").expect("grant write");
         let consume = final_writer
             .find("consume_auto_write")
             .expect("permit consumption");
@@ -3781,7 +3665,9 @@ mod auto_consent_permit_tests {
         };
 
         let missing = run(auto_command(None), &ctx).await.unwrap_err();
-        assert!(missing.to_string().contains("--continuation-id is required"));
+        assert!(missing
+            .to_string()
+            .contains("--continuation-id is required"));
         assert!(consent::load_consent("job-1").unwrap().is_none());
         assert!(grants::check_grant("job-1", "trade_kit", "buy", "1").is_err());
 
@@ -3809,10 +3695,7 @@ mod auto_consent_permit_tests {
         .unwrap();
         assert!(completed.complete);
 
-        run(
-            auto_command(Some(completed.continuation_id.clone())),
-            &ctx,
-        )
+        run(auto_command(Some(completed.continuation_id.clone())), &ctx)
         .await
         .unwrap();
         assert_eq!(
@@ -3824,9 +3707,7 @@ mod auto_consent_permit_tests {
         let replay = run(auto_command(Some(completed.continuation_id)), &ctx)
             .await
             .unwrap_err();
-        assert!(replay
-            .to_string()
-            .contains("no live consent continuation"));
+        assert!(replay.to_string().contains("no live consent continuation"));
 
         std::env::remove_var("ONCHAINOS_HOME");
         let _ = std::fs::remove_dir_all(dir);
@@ -4196,8 +4077,7 @@ async fn check_status_freshness(
             {
                 return (Some(prompt), Some(ctx));
             }
-        } else if let Ok(Some(manifest)) =
-            task::common::deliverables::read_manifest("user", job_id)
+        } else if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("user", job_id)
         {
             if let Some(entry) = manifest.entries.last() {
                 let dir = task::common::deliverables::deliverables_dir("user", job_id)

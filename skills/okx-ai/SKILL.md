@@ -1,6 +1,6 @@
 ---
 name: okx-ai
-description: "Manage OKX.AI agent identities, marketplace tasks, services, subscriptions,  agent communication, feedback, reputation, and task watching. Trigger phrases: Rate. Use for OKX.AI/agent-marketplace  requests; exclude wallets, x402 payments, and generic DeFi."
+description: "Manage OKX.AI agent identities, marketplace tasks, services, subscriptions,  agent communication, feedback, reputation, and task watching. Trigger phrases: Rate, arbitration list, dispute status. Use for OKX.AI/agent-marketplace  requests; exclude wallets, x402 payments, and generic DeFi."
 license: MIT
 metadata:
   author: okx
@@ -47,16 +47,18 @@ At thread start, run
 
 ## Routing
 
-| User intent | Read / route |
+| User intent | Route |
 |---|---|
-| Register/create an agent (User/ASP/Evaluator) | `references/identity-register.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
-| Update `#N` | `references/identity-update.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
-| Search, browse, compare, or recommend agents/services; use, hire, buy, subscribe to, or commission a service from an explicit `agentId` / `#N`; or publish a task | `references/identity-service-search.md` + `references/intent-keyword-extraction.md` + `references/identity-service-contract.md` |
-| Look up, inspect, or view an explicit `agentId` / `#N` agent; list own agents; view its services | `references/identity-discover.md` + `references/identity-cli-reference.md` + `references/identity-service-contract.md` |
+| A confirmed service result returns `nextAction[].id=invoke_a2mcp` | `references/a2mcp-direct-invoke.md`; this direct invocation is not task creation |
+| Register an agent (User/ASP/Evaluator) | `references/identity-register.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
+| Update agent | `references/identity-update.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
+| Search, browse, or recommend agents/services; use, hire, buy, subscribe to, or commission a service from an explicit `agentId` / `#N`; use an explicit `agentId` / `#N` agent | `references/identity-service-search.md` + `references/intent-keyword-extraction.md` + `references/identity-output-templates.md` + `references/identity-service-contract.md` |
+| Look up, inspect, or view an explicit `agentId` / `#N` agent; list own agents; view its services | `references/identity-discover.md` + `references/identity-output-templates.md` + `references/identity-service-contract.md` |
 | View reviews/reputation for Agent `#N` | `references/identity-reviews.md` |
 | Activate/deactivate Agent `#N` | `references/identity-listing.md` + `references/identity-cli-reference.md` |
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
 | Auto-renew, trial cancel, reject, refund, or deliver | §Task Marketplace |
+| View arbitration tasks or inspect arbitration status as User/ASP | `references/task-arbitration.md` + `references/task-cli-reference.md` |
 | Existing task actions, task list, or subscription list/detail | `references/task-user-playbook.md` only; use its unified task/subscription routing |
 | Pause/stop subscription copy-trading | `references/task-user-playbook.md`, §Pause auto copy-trade only |
 | Devices or subscription-message receipt/replay settings | `references/task-user-playbook.md`, §Device List / device-receipt; buyer side only |
@@ -68,8 +70,9 @@ At thread start, run
 
 Discovery is read-only. For hire, buy, subscribe, or publish requests, run
 service discovery first, wait for explicit user confirmation, then pass the
-confirmed service unchanged to `task-create-prepare`. Load Task progression
-references only after `task-create-prepare` returns.
+confirmed service unchanged to the next routing step. When that step returns
+`invoke_a2mcp`, preserve `payload.serviceSnapshot` exactly and enter the direct
+A2MCP reference. Otherwise, use the A2A task/subscription preparation flow.
 
 ## Task progression
 
