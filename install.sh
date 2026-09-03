@@ -7,12 +7,14 @@ set -e
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
 #   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh -s -- --beta
+#   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh -s -- --stable
 #
 # Behavior:
 #   - Default (stable): fetches latest stable release from GitHub,
 #     compares with local version, installs/upgrades if needed.
-#   - --beta: fetches all tags, finds the latest version (including
-#     pre-releases) by semver, and installs it.
+#   - --beta: fetches beta tags only and installs the latest beta.
+#   - --stable: fetches and installs the latest stable release.
+#   - Switching channels is explicit and may install a lower semver.
 #   - Every invocation checks the requested release channel. Automatic
 #     update throttling is handled by `onchainos preflight` / `upgrade --throttle`.
 #
@@ -28,12 +30,30 @@ INSTALL_DIR="$HOME/.local/bin"
 CACHE_DIR="$HOME/.onchainos"
 
 # ── Parse arguments ──────────────────────────────────────────
-BETA_MODE=false
+CHANNEL=""
 for arg in "$@"; do
   case "$arg" in
-    --beta) BETA_MODE=true ;;
+    --beta)
+      [ -n "$CHANNEL" ] && [ "$CHANNEL" != "beta" ] && {
+        echo "Error: --beta and --stable cannot be used together." >&2
+        exit 1
+      }
+      CHANNEL="beta"
+      ;;
+    --stable)
+      [ -n "$CHANNEL" ] && [ "$CHANNEL" != "stable" ] && {
+        echo "Error: --beta and --stable cannot be used together." >&2
+        exit 1
+      }
+      CHANNEL="stable"
+      ;;
+    *)
+      echo "Error: unknown option: $arg" >&2
+      exit 1
+      ;;
   esac
 done
+CHANNEL=${CHANNEL:-stable}
 
 # ── Platform detection ───────────────────────────────────────
 get_target() {
@@ -66,6 +86,13 @@ get_local_version() {
   if [ -x "$INSTALL_DIR/$BINARY" ]; then
     "$INSTALL_DIR/$BINARY" --version 2>/dev/null | awk '{print $2}'
   fi
+}
+
+get_version_channel() {
+  case "$1" in
+    *beta*|*BETA*) echo "beta" ;;
+    *) echo "stable" ;;
+  esac
 }
 
 # Strip pre-release suffix: "2.0.0-beta.0" -> "2.0.0"
@@ -158,13 +185,12 @@ get_latest_stable_version() {
   echo "$ver"
 }
 
-# Fetch latest version including betas.
+# Fetch latest beta version.
 # Primary path lists tags via git smart-http (git ls-remote), which does NOT
 # count against the API limit. Falls back to the tags API if git is unavailable
-# or fails. Iterates all tags and returns the highest by semver using semver_gt
-# (which correctly orders pre-releases below their base version — unlike
-# `sort -V`, which would rank v2.0.0-beta.1 ABOVE v2.0.0).
-get_latest_version_with_beta() {
+# or fails. Stable tags are intentionally excluded so a beta-channel update
+# cannot switch to stable merely because a stable version has a higher semver.
+get_latest_beta_version() {
   versions=""
   if command -v git >/dev/null 2>&1; then
     # Strip peeled-tag refs (^{}), keep v-prefixed semver tags, dedupe.
@@ -173,12 +199,13 @@ get_latest_version_with_beta() {
     versions=$(GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=15 \
       git ls-remote --tags "https://github.com/${REPO}.git" 2>/dev/null \
       | awk -F'/' '{print $NF}' | sed 's/\^{}//' \
-      | grep -E '^v[0-9]' | sed 's/^v//' | sort -u)
+      | grep -Ei '^v[0-9].*-beta([.-].*)?$' | sed 's/^v//' | sort -u)
   fi
 
   if [ -z "$versions" ]; then
     response=$(gh_api "https://api.github.com/repos/${REPO}/tags?per_page=100") || true
-    versions=$(echo "$response" | grep -o '"name": *"v[^"]*"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    versions=$(echo "$response" | grep -o '"name": *"v[^"]*"' \
+      | sed 's/.*"v\([^"]*\)".*/\1/' | grep -Ei -- '-beta([.-].*)?$')
   fi
 
   if [ -z "$versions" ]; then
@@ -197,7 +224,7 @@ get_latest_version_with_beta() {
   done
 
   if [ -z "$best" ]; then
-    echo "Error: no valid versions found in tags." >&2
+    echo "Error: no valid beta versions found in tags." >&2
     exit 1
   fi
 
@@ -400,51 +427,36 @@ finish_install() {
 # ── Main ─────────────────────────────────────────────────────
 main() {
   local_ver=$(get_local_version)
+  local_channel=""
+  if [ -n "$local_ver" ]; then
+    local_channel=$(get_version_channel "$local_ver")
+  fi
 
-  if [ "$BETA_MODE" = true ]; then
-    # ── Beta mode: find latest version including pre-releases ──
-    target_ver=$(get_latest_version_with_beta)
-
-    if [ "$local_ver" = "$target_ver" ]; then
-      # Binary is current — but ensure workflows exist
-      if [ ! -d "$CACHE_DIR/workflows" ]; then
-        sync_workflows "v${local_ver}"
-      fi
-      finish_install
-      return 0
-    fi
+  if [ "$CHANNEL" = "beta" ]; then
+    target_ver=$(get_latest_beta_version)
   else
-    # ── Stable mode ──
+    target_ver=$(get_latest_stable_version)
+  fi
 
-    latest_stable=$(get_latest_stable_version)
-
-    if [ -z "$local_ver" ]; then
-      # Not installed — install latest stable
-      target_ver="$latest_stable"
-    elif [ "$local_ver" = "$latest_stable" ]; then
-      # Already on exact latest stable — but ensure workflows exist
-      if [ ! -d "$CACHE_DIR/workflows" ]; then
-        sync_workflows "v${local_ver}"
-      fi
-      finish_install
-      return 0
-    else
-      if semver_gt "$latest_stable" "$local_ver"; then
-        # Latest stable is newer than local (handles beta→stable upgrade too)
-        target_ver="$latest_stable"
-      else
-        # Local is same or newer (e.g., on a beta ahead of stable)
-        if [ ! -d "$CACHE_DIR/workflows" ]; then
-          sync_workflows "v${local_ver}"
-        fi
-        finish_install
-        return 0
-      fi
+  if [ -n "$local_ver" ] && [ "$local_channel" = "$CHANNEL" ] \
+    && ! semver_gt "$target_ver" "$local_ver"; then
+    if [ "$local_ver" != "$target_ver" ]; then
+      echo "Installed onchainos ${local_ver} is newer than the latest published ${CHANNEL} ${target_ver}; keeping local version."
     fi
+    # Binary is current or newer within the same channel — ensure workflows exist.
+    if [ ! -d "$CACHE_DIR/workflows" ]; then
+      sync_workflows "v${local_ver}"
+    fi
+    finish_install
+    return 0
   fi
 
   if [ -n "$local_ver" ]; then
-    echo "Updating ${BINARY} from ${local_ver} to ${target_ver}..."
+    if [ "$local_channel" != "$CHANNEL" ]; then
+      echo "Switching ${BINARY} from ${local_channel} ${local_ver} to ${CHANNEL} ${target_ver}..."
+    else
+      echo "Updating ${BINARY} from ${local_ver} to ${target_ver}..."
+    fi
   fi
 
   install_binary "v${target_ver}"
