@@ -103,9 +103,9 @@ fields together.
 
 ## `decision=ready`
 
-Use a confirmation card for task or subscription creation. The business
-reference defines which payload fields are required and how prices, trial, and
-auto-renewal are rendered.
+For task or subscription creation, use a confirmation card. Other phases such
+as Refund V2 have their own rendering rules below; `ready` does not by itself
+mean “creation confirmation.”
 
 ```text
 [Result]
@@ -152,6 +152,89 @@ generic task-creation confirmation card above. Open
 `a2mcp-direct-invoke.md`. Preserve `payload.serviceSnapshot` verbatim; that
 reference owns parameter collection, supported-token and balance display,
 funding recovery, and the final mutually exclusive Confirm/Cancel card.
+
+## Refund V2
+
+Read `task-user-refund.md` before rendering any `phase` beginning with
+`refund_`. Require `payload.schemaVersion=2`. Display exact decimal strings and
+the original token; never calculate a partial amount, unused-time adjustment,
+or fiat conversion.
+
+| Reason | Result | Required details |
+|---|---|---|
+| `refund_target_required` | A buyer-owned task must be selected first. | Ask for or list exactly one current `jobId` |
+| `trial_subscription_not_refundable` | This free trial has no paid amount to refund. | Service, trial end when returned, and that cancellation affects conversion only |
+| `trial_conversion_already_cancelled` / `trial_conversion_state_unknown` | No new trial-conversion cancellation is currently safe. | Current auto-renew fact and read actions only |
+| `zero_amount_close_confirmation_required` | This zero-price task can be closed; no funds will move. | Service, exact zero amount/token, current status |
+| `direct_refund_confirmation_required` | A direct full refund is ready for confirmation. | Service, ASP, scope, original amount/token |
+| `expired_subscription_refund_cause_ambiguous` | Subscription status 8 does not prove whether type-207 buyer finalization or backend auto-refund applies. | Fresh task/subscription status, original amount/token, and read-only actions only; no write action |
+| `refund_reason_required` / `refund_reason_too_long` | A valid User-authored refund reason is required. | Only `payload.input.requiredParams` and `reasonMaxChars` |
+| `refund_request_confirmation_required` | The full refund request is ready for confirmation. | Reason, Service, ASP, amount/token, ASP deadline, full/no-partial/no-proration rules |
+| `zero_amount_close_broadcast_submitted` | The zero-price close was broadcast; no refund occurred. | Required receipt identifiers, Transaction hash when present, and pending state |
+| `refund_broadcast_submitted` | The direct-refund transaction was broadcast and is pending final reconciliation. | Required receipt identifiers, Transaction hash when present, amount/token, pending state |
+| `refund_request_broadcast_submitted` | The refund request was broadcast and is awaiting reconciliation/ASP response. | Required receipt identifiers, Transaction hash when present, deadline, ASP notification state |
+| `trial_conversion_cancel_broadcast_submitted` | Trial-to-paid cancellation was broadcast; no refund occurred. | Required receipt identifiers, Transaction hash when present, and pending state |
+| `provider_response_pending` | The refund request is still awaiting the ASP. | Deadline and current notification states |
+| `arbitration_in_progress` | The refund is under arbitration; no refund has been decided. | Arbitration phase/round/deadlines only when returned |
+| `refund_confirmed` | The full original-token refund is confirmed. | Service, ASP, settled amount/token, valid refund-specific transaction hash |
+| `refund_settlement_details_incomplete` | Refund status is terminal, but proof details are incomplete; completion cannot be claimed. | `txHash: null` and only returned read actions |
+| `refund_operation_pending_reconciliation` | This device already started this write and authoritative state has not proved it advanced. | Saved pending state/Tx Hash when available; read actions only and no repeat write, even if revision/period formatting drifted |
+| `refund_not_approved_or_task_completed` | No confirmed refund can be reported. | Returned status and `settlement.state=not_refunded`; do not infer arbitration cause |
+| `trial_subscription_closed_without_refund` / `zero_amount_task_closed` | The task/cancellation flow is closed with no new refund action. | Exact task state and whether funds moved |
+| `task_closed_no_new_refund_action` | The subscription is Closed, but authoritative settlement cause/proof is unavailable; do not claim refund completion. | Exact task state, `txHash: null`, and read-only status/watch actions |
+| `accepted_task_refund_contract_required` / `direct_subscription_refund_contract_required` / `accept_expired_refund_contract_ambiguous` / `zero_amount_close_contract_required` / `subscription_period_contract_required` | This state/type has no proven unambiguous Refund V2 write contract. | Task type/status and read-only actions only; one-time status 8 must not reuse the subscription-only finalize-expired contract |
+| `refund_task_details_incomplete` | The ASP or Service identity needed for confirmation is incomplete. | Exact returned identifiers only; do not invent names |
+| `direct_refund_funding_not_verified` / `refund_payment_not_verified` | The client cannot prove funded escrow for this one-time task. | Payment mode and read-only actions only |
+| `zero_amount_subscription_not_refundable` | The formal subscription has no paid amount to refund. | Exact zero amount and read-only actions only |
+| `refund_context_stale` | Task facts changed; the prior refund confirmation is no longer valid. | Fresh status; offer only `prepare_refund` |
+| `refund_operation_not_available` | The requested operation is no longer allowed. | Render only the freshly returned action set |
+| `refund_execution_confirmation_required` | This exact Refund V2 write still needs confirmation. | Render the complete prepared action; never treat the reason as permission |
+| `refund_outcome_unknown` | The write outcome is not yet known. | Known operation/transaction facts; never suggest rebroadcast unless a later preparation explicitly offers it |
+| `refund_write_rejected` | The backend returned a definitive business rejection; no unknown write remains. | Diagnostic and a fresh `prepare_refund` action |
+| `refund_prebroadcast_failed` | Validation, local signing, or simulation failed before any broadcast request. | Diagnostic and a fresh `prepare_refund` action; never use this reason for a malformed/unknown broadcast response |
+| `refund_wallet_preflight_failed` / `refund_reconciliation_guard_unavailable` | Execution stopped before mutation. | Diagnostic and `stop`; do not bypass the guard |
+| `refund_not_available_for_status` | A refund is not available in the current state. | Current type/status and only the returned alternatives |
+
+For `direct_refund_confirmation_required`,
+`refund_request_confirmation_required`, and `refund_confirmed`, the CLI must
+return an ASP Agent ID and a Service name or ID. The ASP display name may be
+unavailable; say so alongside the ID instead of inventing one. If the CLI
+returns `refund_task_details_incomplete` or
+`refund_settlement_details_incomplete`, render the gap and do not reconstruct
+facts from conversation history.
+
+Write actions (`cancel_trial_conversion`, `close_zero_price`,
+`execute_direct_refund`, `submit_refund_request`) always require an explicit
+selection, even when they are the only non-`stop` action. Do not apply the
+common one-action auto-execution rule to them.
+
+`payload.settlement.state=broadcast_submitted` is pending. Render completion
+only for `reason=refund_confirmed`, which requires raw status 9 or a paid
+one-time direct-refund close at raw status 7 with `paymentMode=1`, plus a valid
+authoritative refund-specific detail hash and the required ASP/Service
+identity. Subscription status 7 does not qualify. For
+`refund_settlement_details_incomplete`, show `txHash: null` and do not claim
+completion. Never reuse a refund-complete heading for
+`refund_not_approved_or_task_completed`.
+
+For any Refund V2 `*_broadcast_submitted` result, a missing broadcast `txHash`
+is an allowed pending receipt shape when the required `pkgId`, `orderId`,
+`orderType`, and `bizUniqKey` are present. It is not evidence of failure or
+permission to retry, and is never final settlement proof. Continue only through
+the returned read-only reconciliation actions and require the normal
+refund-specific final Tx Hash before rendering `refund_confirmed`.
+
+For subscription events, render `job_asp_accept_expire` as acceptance-expiry
+pending authoritative cause support, `job_asp_reject_closed` as Closed without claiming
+refund settlement, and
+`job_asp_reject_expire` as automatic settlement pending. Event labels,
+`jobStatus=expired`, and human-readable event text never authorize a write or a
+refund-complete heading. Keep the session and terminal marker open until the
+normal Refund V2 finality gate passes.
+
+The current client exposes only ASP notification state as `not_requested` or
+`unknown`. Do not upgrade it to sent or send an extra peer message to
+compensate.
 
 ## `task_create_prepare` phase mapping
 

@@ -159,6 +159,10 @@ pub(super) fn notify_and_end(canonical_content: &str) -> String {
     )
 }
 
+/// Machine-readable prefix that must survive localization so a scoped watcher
+/// can stop on terminal notifications without parsing translated prose.
+pub(super) const TERMINAL_NOTIFICATION_MARKER: &str = "[onchainos:task-terminal]";
+
 /// Same as `notify_and_end` but appends the deposit address and Common QR output.
 /// This preserves the legacy subscription funding UX after the standalone
 /// `wallet qrcode` command was removed.
@@ -184,12 +188,13 @@ pub(super) fn notify_and_end_with_deposit(
 /// Same as `notify_and_end` but appends a terminal session hint.
 pub(super) fn notify_and_end_terminal(canonical_content: &str, terminal_hint: &str) -> String {
     format!(
-        "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
+        "**Localize first** — rewrite only the human-readable content below in the user's language. Preserve the exact `{marker}` prefix; do not translate, remove, or move it.\n\
          ```bash\n\
-         onchainos agent user-notify --content \"<localized content shown below>\"\n\
+         onchainos agent user-notify --content \"{marker} <localized content shown below>\"\n\
          ```\n\
-         Content: {canonical_content}\n\n\
-         {terminal_hint}\n"
+         Content after the marker: {canonical_content}\n\n\
+         {terminal_hint}\n",
+        marker = TERMINAL_NOTIFICATION_MARKER,
     )
 }
 
@@ -209,7 +214,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent asp-match --job-id {job_id} --agent-id <agentId>  # Search matching ASPs"),
             format!("  onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <sym> --token-amount <amt>  # Set A2A escrow payment mode"),
             format!("  onchainos agent confirm-accept {job_id}  # Confirm accept (reads provider/token/amount from task detail API)"),
-            format!("  onchainos agent close {job_id}          # Close task"),
+            format!("  onchainos agent refund-prepare {job_id} # Prepare a close/refund decision from fresh state; execute only the returned action after explicit confirmation"),
             format!("  onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <svc> --service-type A2A --service-params \"<params>\" --service-token-address <addr> --service-token-amount <amt>  # Re-set ASP + A2A service"),
             format!("  onchainos agent reject-apply {job_id}  # Reject the current provider's apply (off-chain)"),
         ],
@@ -240,17 +245,19 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Failed => vec![
             next_action("job_refunded"),
-            "(terminal) Task is FAILED — **funds refunded to user**".to_string(),
-            "  ▸ ASP agreed to refund (agree-refund) / auto-refund → funds returned along the original path".to_string(),
-            "  ▸ Evaluation user wins (dispute_resolved user-wins) → refund".to_string(),
-            "Keep the sub session (do not close), for later reference.".to_string(),
+            "Task is in backend refund state FAILED; status alone is not proof that funds arrived. Run the final-event path and require Refund V2 settlement evidence before saying the refund completed.".to_string(),
+            format!("  onchainos agent refund-prepare {job_id}  # Verify original-token amount and refund-specific Tx Hash"),
         ],
         Status::Close => vec![
-            "Task is closed (Close). Keep the sub session (do not close), for later reference.".to_string(),
+            "Task is closed (Close). For a paid escrow task, Closed alone is not refund proof.".to_string(),
+            format!("  onchainos agent refund-prepare {job_id}  # Reconcile whether this was a proven direct-refund close"),
         ],
         Status::Expired => vec![
-            "Task has expired (Expired).".to_string(),
-            format!("  onchainos agent claim-auto-refund {job_id}  # Claim auto-refund"),
+            "Task has expired (Expired); refund eligibility cannot be inferred from status alone."
+                .to_string(),
+            format!(
+                "  onchainos agent refund-prepare {job_id}  # Query authoritative Refund V2 status"
+            ),
         ],
         Status::AdminStopped => vec![
             "Task has been stopped by admin (AdminStopped). Please contact platform support to find out why.".to_string(),
@@ -366,7 +373,11 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 Event::JobDisputed => "okx-a2a session history → dispute upload (auto-submit chat history + manifest deliverables) → onchainos agent user-notify (notify)",
                 Event::DisputeResolved => "onchainos agent user-notify (notify evaluation result)",
                 Event::JobRefunded => "onchainos agent user-notify (notify refund complete)",
-                Event::JobAutoRefunded => "onchainos agent user-notify (claimAutoRefund tx receipt)",
+                Event::JobAutoRefunded => "onchainos agent user-notify (backend/Refund V2 settlement receipt)",
+                Event::JobAspAcceptExpire | Event::JobAspRejectExpire =>
+                    "onchainos agent user-notify (timeout is non-terminal) → refund-prepare",
+                Event::JobAspRejectClosed =>
+                    "fresh Closed(7) verification → notify without overclaiming settlement",
                 Event::NegotiateReply =>
                     "natural-language reply (max 2 rounds; over-limit → mark-failed + user decision card)",
                 Event::AttachmentAdded => "okx-a2a file upload → okx-a2a session send (upload + forward attachment to provider)",
@@ -429,13 +440,16 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id)
             .await
             .to_string(),
-        Event::DisputeResolved => super::flow_lifecycle::dispute_resolved(&ctx),
-        Event::JobRefunded => super::flow_lifecycle::job_refunded(&ctx),
-        Event::JobAutoRefunded => super::flow_lifecycle::job_auto_refunded(&ctx),
+        Event::DisputeResolved => super::flow_lifecycle::dispute_resolved(&ctx, message),
+        Event::JobRefunded => super::flow_lifecycle::job_refunded(&ctx, message),
+        Event::JobAutoRefunded => super::flow_lifecycle::job_auto_refunded(&ctx, message),
         Event::JobExpired => super::flow_lifecycle::job_expired(&ctx),
-        Event::JobClosed => super::flow_lifecycle::job_closed(&ctx),
+        Event::JobAspAcceptExpire => super::flow_lifecycle::job_asp_accept_expire(&ctx),
+        Event::JobAspRejectClosed => super::flow_lifecycle::job_asp_reject_closed(&ctx, message),
+        Event::JobAspRejectExpire => super::flow_lifecycle::job_asp_reject_expire(&ctx),
+        Event::JobClosed => super::flow_lifecycle::job_closed(&ctx, message),
         Event::SubmitExpired => super::flow_lifecycle::submit_expired(&ctx).await,
-        Event::RejectExpired => super::flow_lifecycle::reject_expired(&ctx).await,
+        Event::RejectExpired => super::flow_lifecycle::reject_expired(&ctx),
         Event::ReviewDeadlineWarn => super::flow_lifecycle::review_deadline_warn(&ctx),
         Event::RewardClaimed => super::flow_lifecycle::reward_claimed(&ctx),
         Event::WakeupNotify => super::flow_lifecycle::wakeup_notify(&ctx),
@@ -561,7 +575,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
                      \x20\x20• **`approve_review`** — user accepts the deliverable (typical intents: A / 通过 / 同意 / 满意 / 接受 / 验收 / approve / accept / agree / OK / 行 / 可以 — anything meaning satisfaction with the deliverable).\n\
-                     \x20\x20• **`reject_review`** — user rejects and wants revisions/refund (typical intents: B / 拒绝 / 不通过 / 不满意 / 不接受 / reject / refuse / 不行 / 不达标 — anything meaning dissatisfaction; extract the reason if the user provided one after `理由` / `reason` / `因为`; the reason is critical — it will be auto-submitted as evidence if the ASP files a dispute).\n\n\
+                     \x20\x20• **`reject_review`** — user rejects and wants revisions/refund (typical intents: B / 拒绝 / 不通过 / 不满意 / 不接受 / reject / refuse / 不行 / 不达标 — anything meaning dissatisfaction; extract the reason if the user provided one after `理由` / `reason` / `因为`; the exact reason is handed to Refund V2 and is submitted only after fresh preparation and explicit confirmation).\n\n\
                      If the reply approves, or rejects with an explicit reason → call:\n\
                      ```bash\n\
                      # For approve_review (no extra args needed):\n\
@@ -679,7 +693,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20[Job <shortJobId> — you are the User Agent] All matched ASPs have been tried; no match found. Choose next step:\n\
                      \x20\x20\x20\x20A. Specify an ASP — provide the ASP's agentId\n\
                      \x20\x20\x20\x20B. Close the job — cancel and refund\n\
-                     \x20\x20• **Close** — typical intents: B / `close` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
+                     \x20\x20• **Close** — typical intents: B / `close` / `cancel`. Action: run the read-only `onchainos agent refund-prepare {job_id}`, render its returned task/refund details and action, then execute only that exact action after explicit confirmation. Never call legacy `agent close`.\n\n\
                      If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (or none, if it says `[to: backup]` / you run in a backup sub — NEVER your own agentId) and `--source-event asp_match_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, see more ASPs, or cancel.\"\n"
                     )
                 },
@@ -741,7 +755,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
                      \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
                      \x20\x20\x20\x20If user said A / specify but **did NOT include an agentId** (e.g. just `A`, `选A`, `换一个 ASP`): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (or none, if it says `[to: backup]` / you run in a backup sub — NEVER your own agentId) and `--source-event {source}`; `--user-content` and `--list-label` must be localized to the user's language; `--user-content` must ask for the agentId (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
-                     \x20\x20• **B — Close** — typical intents: B / `close` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
+                     \x20\x20• **B — Close** — typical intents: B / `close` / `cancel`. Action: run the read-only `onchainos agent refund-prepare {job_id}`, render its returned task/refund details and action, then execute only that exact action after explicit confirmation. Never call legacy `agent close`.\n\n\
                      If ambiguous (unrelated chitchat / non-committal `hmm` / `got it`): re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=specify another ASP (include the agentId)  B=close the job\".\n"
                     )
                 },
@@ -804,7 +818,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20\x20\x20[SERVICE_CONTEXT providerAgentId=<agentId> serviceId=<sid> serviceType=<serviceType> serviceTokenAddress=<feeToken> serviceTokenAmount=<feeAmount>]\n\
                      \x20\x20\x20\x20**`--list-label` must be localized to the user's language**.\n\
                      \x20\x20\x20\x20If user said B / specify **without** an agentId: re-ask via `pending-decisions-v2 request --source-event negotiate_over_budget` asking for the agentId; **`--user-content` and `--list-label` must be localized to the user's language** (English ref: \"Please provide the 3-digit agentId of the ASP you want to use (e.g. `864`)\").\n\
-                     \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
+                     \x20\x20• **C — Close** — typical intents: C / 选C / `close` / `关闭` / `取消` / `cancel`. Action: run the read-only `onchainos agent refund-prepare {job_id}`, render its returned task/refund details and action, then execute only that exact action after explicit confirmation. Never call legacy `agent close`.\n\n\
                      If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event negotiate_over_budget`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=view ASP list  B=specify another ASP (include the agentId)  C=close the job\".\n"
                     )
                 },
@@ -821,7 +835,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20• **A — Browse ASP list** — typical intents: A / 选A / `推荐` / `列表` / `list` / `浏览`. Action: `onchainos agent asp-match --job-id {job_id}` → compose the ASP list as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick`. **All footer keywords must be localized**.\n\
                      \x20\x20• **B — Specify another ASP** — typical intents: B / 选B / `specify` / `指定`, **with a 3-digit agentId** (e.g. `B 864` / `指定 864`). Action (switch-asp flow):\n\
                      {switch_asp}\
-                     \x20\x20• **C — Close** — typical intents: C / `close` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
+                     \x20\x20• **C — Close** — typical intents: C / `close` / `cancel`. Action: run the read-only `onchainos agent refund-prepare {job_id}`, render its returned task/refund details and action, then execute only that exact action after explicit confirmation. Never call legacy `agent close`.\n\n\
                      If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized**.\n"
                 )},
                 "set_asp_params" => {
@@ -891,7 +905,8 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         "job_created" |
             "negotiate_reply" |
             "provider_applied" | "job_accepted" | "deliverable_received" | "approve_review" | "reject_review" | "job_completed" |
-            "job_expired" | "job_auto_refunded" |
+            "job_expired" | "job_asp_accept_expire" | "job_asp_reject_closed" |
+            "job_asp_reject_expire" | "job_auto_refunded" |
             "submit_expired" | "reject_expired" |
             "close" |
             // Subscription notifications are self-contained display bodies (they call only
@@ -942,6 +957,46 @@ mod tests {
             data,
             None,
             None,
+            Some(&msg),
+        )
+        .await
+    }
+
+    fn refund_prefetched(
+        status: i64,
+        amount: &str,
+    ) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+        crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+            &json!({
+                "jobType": 0,
+                "status": status,
+                "title": "My Sub",
+                "buyerAgentId": AGENT_ID,
+                "providerAgentId": "5263",
+                "providerAgentName": "Alice ASP",
+                "serviceId": "svc-1",
+                "serviceName": "Audit service",
+                "tokenAmount": amount,
+                "tokenSymbol": "USDT",
+                "tokenAddress": "0xtoken",
+                "refundTxHash": format!("0x{}", "ab".repeat(32)),
+            }),
+        )
+    }
+
+    async fn run_with_prefetched(
+        event: &str,
+        msg: serde_json::Value,
+        prefetched: &crate::commands::agent_commerce::task::common::PreFetchedTaskContext,
+    ) -> String {
+        generate_next_action(
+            JOB_ID,
+            event,
+            AGENT_ID,
+            Some("My Sub"),
+            None,
+            None,
+            Some(prefetched),
             Some(&msg),
         )
         .await
@@ -1293,29 +1348,43 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_subscription_events_carry_cleanup_hint() {
-        // Unconditionally terminal events always append the cleanup hint.
-        // V2 sub_complete_notify fetches task detail and verifies its terminal
-        // output in the V2 module without a live backend dependency.
-        const ALWAYS_TERMINAL: [&str; 3] =
-            ["sub_asp_agree", "sub_close_notify", "sub_failed_notify"];
+        // Only a normal completion is unconditionally terminal for the Buyer.
+        // `sub_failed_notify` lacks an authoritative failure cause/refund proof.
+        const ALWAYS_TERMINAL: [&str; 1] = ["sub_complete_notify"];
         for evt in ALWAYS_TERMINAL {
             let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
             assert!(
                 out.contains("session-cleanup"),
                 "{evt}: terminal event must append the cleanup hint"
             );
+            assert!(
+                out.contains(TERMINAL_NOTIFICATION_MARKER),
+                "{evt}: terminal notification must carry the stable watch marker"
+            );
         }
-        // `sub_cancel` terminal-ness branches on `trialType`: a trial cancel
-        // (trialType=1) closes the subscription (terminal → cleanup hint); a formal-period cancel
-        // (trialType=0) only turns auto-renew off (non-terminal → NO cleanup hint).
+        let failed = run(
+            "sub_failed_notify",
+            json!({ "event": "sub_failed_notify", "jobId": JOB_ID }),
+        )
+        .await;
+        assert!(failed.contains("refund-prepare"), "{failed}");
+        assert!(!failed.contains("session-cleanup"), "{failed}");
+        assert!(!failed.contains(TERMINAL_NOTIFICATION_MARKER), "{failed}");
+        // `sub_cancel` only changes future conversion/renewal. Both a trial
+        // (trialType=1) and a formal current period continue, so neither branch
+        // is terminal or carries a cleanup hint.
         let trial_cancel = run(
             "sub_cancel",
             json!({ "event": "sub_cancel", "jobId": JOB_ID, "cancelResult": "success", "trialType": 1 }),
         )
         .await;
         assert!(
-            trial_cancel.contains("session-cleanup"),
-            "sub_cancel trialType=1 is terminal → cleanup hint"
+            trial_cancel.contains("continues unaffected"),
+            "{trial_cancel}"
+        );
+        assert!(
+            !trial_cancel.contains("session-cleanup"),
+            "sub_cancel trialType=1 keeps the trial live → NO cleanup hint"
         );
         let formal_cancel = run(
             "sub_cancel",
@@ -1333,6 +1402,72 @@ mod tests {
                 "{evt}: non-terminal event must NOT append the cleanup hint"
             );
         }
+        let agree_without_hash = run(
+            "sub_asp_agree",
+            json!({"event": "sub_asp_agree", "jobId": JOB_ID}),
+        )
+        .await;
+        assert!(agree_without_hash.contains("Settlement Detail Incomplete"));
+        assert!(!agree_without_hash.contains("session-cleanup"));
+        let refund_detail = refund_prefetched(9, "12.34");
+        let agree_with_hash = run_with_prefetched(
+            "sub_asp_agree",
+            json!({
+                "event": "sub_asp_agree",
+                "jobId": JOB_ID,
+                "tokenAmount": "12.34",
+                "tokenSymbol": "USDT",
+                "txHash": format!("0x{}", "ab".repeat(32)),
+            }),
+            &refund_detail,
+        )
+        .await;
+        assert!(agree_with_hash.contains("session-cleanup"));
+        assert!(agree_with_hash.contains(TERMINAL_NOTIFICATION_MARKER));
+    }
+
+    #[tokio::test]
+    async fn sub_close_notify_plumbs_pre_acceptance_asp_reject_reason() {
+        let out = run(
+            "sub_close_notify",
+            json!({
+                "event": "sub_close_notify",
+                "jobId": JOB_ID,
+                "jobTitle": "My Sub",
+                "aspRejectReason": "unsupported region",
+            }),
+        )
+        .await;
+        assert!(
+            out.contains("ASP declined \"My Sub\" before activation"),
+            "{out}"
+        );
+        assert!(out.contains("ASP reason: unsupported region"), "{out}");
+        assert!(
+            out.contains("does not by itself confirm that a refund settled"),
+            "{out}"
+        );
+        assert!(!out.contains("refund completed"), "{out}");
+        assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn sub_close_without_authoritative_cause_keeps_buyer_refund_watch_open() {
+        let out = run(
+            "sub_close_notify",
+            json!({
+                "event": "sub_close_notify",
+                "jobId": JOB_ID,
+                "jobTitle": "My Sub",
+            }),
+        )
+        .await;
+        assert!(out.contains("authoritatively Closed"), "{out}");
+        assert!(out.contains("refund-specific settlement proof"), "{out}");
+        assert!(out.contains("refund-prepare"), "{out}");
+        assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
     }
 
     #[tokio::test]
@@ -1425,14 +1560,17 @@ mod tests {
 
     #[tokio::test]
     async fn sub_reject_refund_notify_is_display_only_auto_refund() {
-        let out = run(
+        let refund_detail = refund_prefetched(9, "0.0005");
+        let out = run_with_prefetched(
             "sub_reject_refund_notify",
             json!({
                 "event": "sub_reject_refund_notify", "jobId": JOB_ID, "jobTitle": "My Sub",
                 "subStartTime": 1_700_000_000, "subEndTime": 1_700_500_000,
                 "rejectWindowEndsAt": 1_700_600_000,
-                "tokenAmount": "0.0005", "tokenSymbol": "USDT"
+                "tokenAmount": "0.0005", "tokenSymbol": "USDT",
+                "txHash": format!("0x{}", "ab".repeat(32))
             }),
+            &refund_detail,
         )
         .await;
         // Product-confirmed (2026-07-24): backend auto-refunds; the client only displays the
@@ -1551,6 +1689,373 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reject_expired_waits_for_backend_settlement_without_client_claim() {
+        let out = run(
+            "reject_expired",
+            json!({ "event": "reject_expired", "jobId": JOB_ID }),
+        )
+        .await;
+        assert!(out.contains("auto-refund is in progress"), "{out}");
+        assert!(out.contains("final refund-settled notice"), "{out}");
+        assert!(!out.contains("claim-auto-refund"), "{out}");
+        assert!(!out.contains("claimAutoRefund"), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn submit_expired_is_notification_only_and_cannot_claim_from_local_event_input() {
+        let out = run(
+            "submit_expired",
+            json!({ "event": "submit_expired", "jobId": JOB_ID }),
+        )
+        .await;
+        assert!(out.contains("[Submit Deadline Expired]"), "{out}");
+        assert!(out.contains("did not send a refund transaction"), "{out}");
+        assert!(out.contains("refund-prepare"), "{out}");
+        assert!(!out.contains("claim-auto-refund"), "{out}");
+        assert!(!out.contains("claimAutoRefund"), "{out}");
+        assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn caller_supplied_close_status_cannot_mutate_without_authoritative_detail() {
+        let out = run("close", json!({ "event": "close", "jobId": JOB_ID })).await;
+        assert!(out.contains("[Job Close Detail Incomplete]"), "{out}");
+        assert!(out.contains("refund-prepare"), "{out}");
+        assert!(
+            out.contains("Do not report closure or refund completion"),
+            "{out}"
+        );
+        assert!(!out.contains("onchainos agent close"), "{out}");
+        assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn job_expired_is_nonterminal_and_routes_to_refund_v2() {
+        let out = run(
+            "job_expired",
+            json!({ "event": "job_expired", "jobId": JOB_ID }),
+        )
+        .await;
+        assert!(out.contains("refund-prepare"), "{out}");
+        assert!(
+            out.contains("not proof that escrow has been refunded"),
+            "{out}"
+        );
+        assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn asp_accept_expiry_is_nonterminal_and_routes_to_refund_v2() {
+        let out = run(
+            "job_asp_accept_expire",
+            json!({ "event": "job_asp_accept_expire", "jobId": JOB_ID }),
+        )
+        .await;
+        assert!(out.contains("[ASP Acceptance Expired]"), "{out}");
+        assert!(out.contains("refund-prepare"), "{out}");
+        assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
+        assert!(
+            !out.contains("**Core rules:**"),
+            "minimal event path: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn asp_reject_expiry_waits_for_backend_final_event_without_claim() {
+        let out = run(
+            "job_asp_reject_expire",
+            json!({ "event": "job_asp_reject_expire", "jobId": JOB_ID }),
+        )
+        .await;
+        assert!(out.contains("[Auto-Refund Processing]"), "{out}");
+        assert!(
+            out.contains("automatic refund settlement is in progress"),
+            "{out}"
+        );
+        assert!(out.contains("refund-prepare"), "{out}");
+        assert!(out.contains("job_auto_refunded"), "{out}");
+        assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
+        assert!(!out.contains("claim-auto-refund"), "{out}");
+        assert!(!out.contains("claimAutoRefund"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn asp_reject_closed_reuses_strict_closed_refund_proof() {
+        let mut refund_detail = refund_prefetched(7, "12.34");
+        refund_detail.payment_mode = Some(1);
+        let complete = run_with_prefetched(
+            "job_asp_reject_closed",
+            json!({
+                "event": "job_asp_reject_closed",
+                "jobId": JOB_ID,
+                "providerAgentName": "Alice ASP",
+                "providerAgentId": "5263",
+                "serviceName": "Audit service",
+                "refundAmount": "12.34",
+                "tokenSymbol": "USDT",
+                "tokenAddress": "0xtoken",
+                "txHash": format!("0x{}", "ab".repeat(32)),
+            }),
+            &refund_detail,
+        )
+        .await;
+        assert!(complete.contains("[Refund Settled]"), "{complete}");
+        assert!(
+            complete.contains(TERMINAL_NOTIFICATION_MARKER),
+            "{complete}"
+        );
+        assert!(complete.contains("session-cleanup"), "{complete}");
+
+        // Event hash is optional; fresh authoritative refundTxHash is the
+        // settlement proof and generic event txHash is ignored.
+        let event_without_hash = run_with_prefetched(
+            "job_asp_reject_closed",
+            json!({
+                "event": "job_asp_reject_closed",
+                "jobId": JOB_ID,
+                "providerAgentId": "5263",
+            }),
+            &refund_detail,
+        )
+        .await;
+        assert!(event_without_hash.contains("[Refund Settled]"));
+        assert!(event_without_hash.contains(TERMINAL_NOTIFICATION_MARKER));
+
+        let mut missing_authoritative_hash = refund_detail.clone();
+        missing_authoritative_hash.refund_tx_hash = None;
+        let incomplete = run_with_prefetched(
+            "job_asp_reject_closed",
+            json!({
+                "event": "job_asp_reject_closed",
+                "jobId": JOB_ID,
+                "providerAgentId": "5263",
+            }),
+            &missing_authoritative_hash,
+        )
+        .await;
+        assert!(
+            incomplete.contains("[Refund Settlement Detail Incomplete]"),
+            "{incomplete}"
+        );
+        assert!(
+            !incomplete.contains(TERMINAL_NOTIFICATION_MARKER),
+            "{incomplete}"
+        );
+        assert!(!incomplete.contains("session-cleanup"), "{incomplete}");
+
+        let subscription_detail =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "jobType": 1,
+                    "status": 7,
+                    "title": "My Sub",
+                    "buyerAgentId": AGENT_ID,
+                    "providerAgentId": "5263",
+                    "providerAgentName": "Alice ASP",
+                    "serviceId": "svc-1",
+                    "serviceName": "Audit service",
+                    "tokenAmount": "12.34",
+                    "tokenSymbol": "USDT",
+                    "tokenAddress": "0xtoken",
+                    "refundTxHash": format!("0x{}", "ab".repeat(32)),
+                }),
+            );
+        let subscription_complete = run_with_prefetched(
+            "job_asp_reject_closed",
+            json!({
+                "event": "job_asp_reject_closed",
+                "jobId": JOB_ID,
+                "providerAgentId": "5263",
+                "serviceName": "Audit service",
+                "refundAmount": "12.34",
+                "tokenSymbol": "USDT",
+                "tokenAddress": "0xtoken",
+                "txHash": format!("0x{}", "ab".repeat(32)),
+            }),
+            &subscription_detail,
+        )
+        .await;
+        assert!(
+            subscription_complete.contains("[Refund Settlement Detail Incomplete]"),
+            "{subscription_complete}"
+        );
+        assert!(
+            !subscription_complete.contains(TERMINAL_NOTIFICATION_MARKER),
+            "{subscription_complete}"
+        );
+        assert!(
+            !subscription_complete.contains("session-cleanup"),
+            "{subscription_complete}"
+        );
+
+        let mut zero_price_subscription_detail = subscription_detail;
+        zero_price_subscription_detail.token_amount = "0".to_string();
+        let zero_price_subscription = run_with_prefetched(
+            "job_asp_reject_closed",
+            json!({
+                "event": "job_asp_reject_closed",
+                "jobId": JOB_ID,
+                "providerAgentId": "5263",
+            }),
+            &zero_price_subscription_detail,
+        )
+        .await;
+        assert!(
+            zero_price_subscription.contains("[Refund Settlement Detail Incomplete]"),
+            "{zero_price_subscription}"
+        );
+        assert!(
+            !zero_price_subscription.contains(TERMINAL_NOTIFICATION_MARKER),
+            "{zero_price_subscription}"
+        );
+        assert!(
+            !zero_price_subscription.contains("session-cleanup"),
+            "{zero_price_subscription}"
+        );
+    }
+
+    #[tokio::test]
+    async fn refund_final_notice_uses_fresh_fields_and_requires_authoritative_hash() {
+        let tx_hash = format!("0x{}", "ab".repeat(32));
+        let refund_detail = refund_prefetched(9, "12.34");
+        let complete = run_with_prefetched(
+            "job_refunded",
+            json!({
+                "event": "job_refunded",
+                "jobId": JOB_ID,
+                "providerAgentName": "Forged Event ASP",
+                "providerAgentId": "5263",
+                "serviceName": "Audit service",
+                "tokenAmount": "12.34",
+                "tokenSymbol": "USDT",
+                "txHash": tx_hash,
+            }),
+            &refund_detail,
+        )
+        .await;
+        for expected in [
+            "[Refund Settled]",
+            "Alice ASP (5263)",
+            "Audit service",
+            "12.34 USDT",
+            "Tx Hash: 0x",
+            "session-cleanup",
+        ] {
+            assert!(
+                complete.contains(expected),
+                "missing {expected:?}: {complete}"
+            );
+        }
+        assert!(!complete.contains("Forged Event ASP"), "{complete}");
+
+        let incomplete = run(
+            "job_refunded",
+            json!({
+                "event": "job_refunded",
+                "jobId": JOB_ID,
+                "tokenAmount": "12.34",
+                "tokenSymbol": "USDT",
+            }),
+        )
+        .await;
+        assert!(incomplete.contains("[Refund Settlement Detail Incomplete]"));
+        assert!(!incomplete.contains("refund confirmed on-chain"));
+        assert!(!incomplete.contains("session-cleanup"));
+
+        let mismatched = run_with_prefetched(
+            "job_refunded",
+            json!({
+                "event": "job_refunded",
+                "jobId": JOB_ID,
+                "tokenAmount": "1",
+                "tokenSymbol": "USDT",
+                "txHash": format!("0x{}", "cd".repeat(32)),
+            }),
+            &refund_detail,
+        )
+        .await;
+        assert!(mismatched.contains("[Refund Settlement Detail Incomplete]"));
+        assert!(!mismatched.contains("session-cleanup"));
+    }
+
+    #[tokio::test]
+    async fn zero_price_close_says_no_refund_was_required() {
+        let zero_detail = refund_prefetched(7, "0.0000");
+        let out = run_with_prefetched(
+            "job_closed",
+            json!({
+                "event": "job_closed",
+                "jobId": JOB_ID,
+                "tokenAmount": "0.0000",
+                "tokenSymbol": "USDT",
+            }),
+            &zero_detail,
+        )
+        .await;
+        assert!(out.contains("task price was 0"));
+        assert!(out.contains("no refund was required"));
+        assert!(out.contains("session-cleanup"));
+
+        let paid_detail = refund_prefetched(7, "12.34");
+        let malformed = run_with_prefetched(
+            "job_closed",
+            json!({
+                "event": "job_closed",
+                "jobId": JOB_ID,
+                "tokenAmount": ".",
+                "tokenSymbol": "USDT",
+            }),
+            &paid_detail,
+        )
+        .await;
+        assert!(malformed.contains("Settlement Detail Incomplete"));
+        assert!(!malformed.contains("task price was 0"));
+
+        let missing_status =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "title": "My Sub",
+                    "buyerAgentId": AGENT_ID,
+                    "tokenAmount": "0",
+                    "tokenSymbol": "USDT",
+                }),
+            );
+        let not_authoritative = run_with_prefetched(
+            "job_closed",
+            json!({"event": "job_closed", "jobId": JOB_ID}),
+            &missing_status,
+        )
+        .await;
+        assert!(not_authoritative.contains("does not prove Closed(7) ownership"));
+        assert!(!not_authoritative.contains("session-cleanup"));
+
+        let wrong_owner =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "status": 7,
+                    "title": "My Sub",
+                    "buyerAgentId": "someone-else",
+                    "tokenAmount": "0",
+                    "tokenSymbol": "USDT",
+                }),
+            );
+        let wrong_owner_out = run_with_prefetched(
+            "job_closed",
+            json!({"event": "job_closed", "jobId": JOB_ID}),
+            &wrong_owner,
+        )
+        .await;
+        assert!(wrong_owner_out.contains("does not prove Closed(7) ownership"));
+        assert!(!wrong_owner_out.contains("session-cleanup"));
+    }
+
+    #[tokio::test]
     async fn dispute_resolved_uses_online_copy_for_subscriptions_too() {
         use crate::commands::agent_commerce::task::common::PreFetchedTaskContext;
         // Product decision 2026-07-24: arbitration copy uses the existing online version — a
@@ -1582,5 +2087,63 @@ mod tests {
             !out.contains("ruled in your favor"),
             "no subscription-specific evaluation copy: {out}"
         );
+        assert!(out.contains("settlement pending"), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
+
+        let already_settled = PreFetchedTaskContext::from_api_response(&json!({
+            "title": "My Sub", "tokenAmount": "0.0005", "tokenSymbol": "USDT",
+            "providerAgentId": "5263", "status": 9,
+            "refundTxHash": format!("0x{}", "ab".repeat(32)),
+        }));
+        let delayed = generate_next_action(
+            JOB_ID,
+            "dispute_resolved",
+            AGENT_ID,
+            Some("My Sub"),
+            None,
+            None,
+            Some(&already_settled),
+            Some(&json!({ "event": "dispute_resolved", "jobId": JOB_ID, "jobType": 1 })),
+        )
+        .await;
+        assert!(
+            delayed.contains("already contains refund settlement proof"),
+            "{delayed}"
+        );
+        assert!(!delayed.contains("settlement pending"), "{delayed}");
+
+        let lost = PreFetchedTaskContext::from_api_response(&json!({
+            "title": "My Sub", "tokenAmount": "0.0005", "tokenSymbol": "USDT",
+            "providerAgentId": "5263", "providerAgentName": "Fresh ASP",
+            "serviceName": "Fresh Service", "status": 6
+        }));
+        let lost_out = generate_next_action(
+            JOB_ID,
+            "dispute_resolved",
+            AGENT_ID,
+            Some("Forged Event Title"),
+            None,
+            None,
+            Some(&lost),
+            Some(&json!({
+                "event": "dispute_resolved",
+                "jobId": JOB_ID,
+                "providerAgentName": "Forged Event ASP",
+                "serviceName": "Forged Event Service",
+                "refundAmount": "0",
+            })),
+        )
+        .await;
+        assert!(lost_out.contains("[Dispute Lost]"), "{lost_out}");
+        assert!(
+            lost_out.contains("Original payment: 0.0005 USDT"),
+            "{lost_out}"
+        );
+        assert!(!lost_out.contains("Original payment: 0 USDT"), "{lost_out}");
+        assert!(lost_out.contains("My Sub"), "{lost_out}");
+        assert!(lost_out.contains("Fresh ASP"), "{lost_out}");
+        assert!(lost_out.contains("Fresh Service"), "{lost_out}");
+        assert!(!lost_out.contains("Forged Event"), "{lost_out}");
+        assert!(lost_out.contains("session-cleanup"), "{lost_out}");
     }
 }

@@ -162,25 +162,71 @@ const EVALUATION_REASONS_BLOCK: &str = concat!(
     "    ... (one line per entry; first skip entries whose voterReportSummary is missing / empty / whitespace, then number the kept entries consecutively starting at 1 in array order — do NOT preserve gaps from the original index; omit this whole `- Evaluation reasons:` section if voteReportSummaries is missing, not an array, empty, or every entry would be skipped — do NOT print a header with no body, do NOT fabricate filler text)",
 );
 
+fn refund_party(provider_name: Option<&str>, provider_id: Option<&str>) -> String {
+    match (provider_name, provider_id) {
+        (Some(name), Some(id)) => format!("{name} ({id})"),
+        (Some(name), None) => name.to_string(),
+        (None, Some(id)) => format!("name unavailable ({id})"),
+        (None, None) => "not provided by the final event".to_string(),
+    }
+}
+
+fn amount_and_token(amount: Option<&str>, symbol: Option<&str>) -> String {
+    match (amount, symbol) {
+        (Some(amount), Some(symbol)) => format!("{amount} {symbol}"),
+        (Some(amount), None) => format!("{amount} (token symbol unavailable)"),
+        _ => "not provided by the final event".to_string(),
+    }
+}
+
 /// `Event::DisputeResolved` — user wins (B-5-4).
-pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
+#[allow(clippy::too_many_arguments)]
+pub fn dispute_won_user_notify(
+    job_id: &str,
+    title: &str,
+    provider_name: Option<&str>,
+    provider_id: Option<&str>,
+    service_name: Option<&str>,
+    amount: Option<&str>,
+    symbol: Option<&str>,
+) -> String {
     format!(
         "[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
-         - Refund: <tokenAmount> <tokenSymbol>\n\
+         - Refund ASP: {}\n\
+         - Service: {}\n\
+         - Refund amount: {} (approved; settlement pending)\n\
          - Outcome: ClientWins\n\
          {EVALUATION_REASONS_BLOCK}\n\
-         This job is complete."
+         The ruling authorizes a refund but is not refund settlement proof. Wait for the dedicated final-refund event or reconcile through Refund V2 before reporting completion.",
+        refund_party(provider_name, provider_id),
+        service_name.unwrap_or("not provided by the final event"),
+        amount_and_token(amount, symbol),
     )
 }
 
 /// `Event::DisputeResolved` — user loses (B-5-5).
-pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
+#[allow(clippy::too_many_arguments)]
+pub fn dispute_lost_user_notify(
+    job_id: &str,
+    title: &str,
+    provider_name: Option<&str>,
+    provider_id: Option<&str>,
+    service_name: Option<&str>,
+    amount: Option<&str>,
+    symbol: Option<&str>,
+) -> String {
     format!(
-        "[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
-         - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
+        "[Dispute Lost] {title} (`{job_id}`) — the refund request was not approved; ASP wins.\n\
+         - Refund: Not issued\n\
+         - ASP: {}\n\
+         - Service: {}\n\
+         - Original payment: {} (funds released to the ASP)\n\
          - Outcome: ASPWins\n\
          {EVALUATION_REASONS_BLOCK}\n\
-         This job is complete."
+         This job is complete.",
+        refund_party(provider_name, provider_id),
+        service_name.unwrap_or("not provided by the final event"),
+        amount_and_token(amount, symbol),
     )
 }
 
@@ -214,7 +260,21 @@ pub fn job_auto_refunded_user_notify(job_id: &str, title: &str) -> String {
 /// `Event::JobExpired` — job expired (B-7-1).
 pub fn job_expired_user_notify(job_id: &str) -> String {
     format!(
-        "[Job Expired] Job `{job_id}` has expired (no ASP accepted before the accept deadline, or no deliverable submitted before the submit deadline). The job is now closed."
+        "[Job Expired] Job `{job_id}` is in Expired status after a deadline elapsed. Expired is not proof that escrow has been refunded. Run `onchainos agent refund-prepare {job_id}` to reconcile the authoritative refund state and keep watching for the final settlement event."
+    )
+}
+
+/// The designated ASP did not accept before the v2 acceptance deadline.
+pub fn job_asp_accept_expire_user_notify(job_id: &str, title: &str) -> String {
+    format!(
+        "[ASP Acceptance Expired] {title} (`{job_id}`) was not accepted before the deadline. The task is Expired, but refund settlement is not final. Run `onchainos agent refund-prepare {job_id}` and follow only the returned Refund V2 actions."
+    )
+}
+
+/// The ASP did not agree to refund or open a dispute before the response deadline.
+pub fn job_asp_reject_expire_user_notify(job_id: &str, title: &str) -> String {
+    format!(
+        "[Auto-Refund Processing] {title} (`{job_id}`): the ASP did not resolve the refund request before the deadline, so backend automatic refund settlement is in progress. Do not initiate a client-side refund claim. Run `onchainos agent refund-prepare {job_id}` to view the authoritative state and keep watching for `job_auto_refunded`; no refund is final until that settlement is verified."
     )
 }
 
@@ -243,15 +303,9 @@ pub fn close_user_notify(job_id: &str) -> String {
 
 /// `Event::SubmitExpired` — ASP missed the submit deadline (B-7-5).
 pub fn submit_expired_user_notify(job_id: &str) -> String {
-    if is_cli_mode() {
-        format!(
-            "Job `{job_id}` — the ASP did not submit the deliverable before the deadline. An auto-refund is in progress; funds will return to your wallet and a final refund-settled notice will follow shortly."
-        )
-    } else {
-        format!(
-            "Job `{job_id}` — the ASP did not submit the deliverable before the deadline. An auto-refund has been requested; funds will return to your wallet."
-        )
-    }
+    format!(
+        "[Submit Deadline Expired] Job `{job_id}` — the ASP did not submit the deliverable before the deadline. This notification did not send a refund transaction. Run `onchainos agent refund-prepare {job_id}` to inspect authoritative Refund V2 state. A cause-specific timeout claim remains unavailable until the backend exposes its V2 contract."
+    )
 }
 
 // ── Event::RejectExpired ───────────────────────────────────────────
@@ -612,11 +666,11 @@ pub fn sub_asp_dispute_user_notify(
     out
 }
 
-/// `sub_cancel` — cancellation outcome (user). Terminal-ness is decided by the caller from
-/// `cancelResult` + `trialType` (see `flow_lifecycle::subscription::sub_cancel`); this function only builds the copy:
+/// `sub_cancel` — cancellation outcome (user). Cancellation affects future
+/// conversion/renewal and is non-terminal because the current trial/period continues:
 /// - `cancel_result == "fail"` (either branch) → the free-text `failReason` is shown verbatim.
 /// - success + `trialType == 1` (trial cancel) → auto-conversion cancelled; the trial
-///   continues unaffected until `trialEndsAt` (`trialEndTime`, legacy fallback `trailEndTime`), no charge after it ends (terminal).
+///   continues unaffected until `trialEndsAt` (`trialEndTime`, legacy fallback `trailEndTime`), no charge after it ends.
 /// - success + `trialType == 0` (formal-period cancel) → auto-renew cancelled; the
 ///   current period stays active until `periodEnd` (`subEndTime`), then the job moves to Completed
 ///   (non-terminal). An absent `trialType` falls into this non-terminal branch
@@ -701,13 +755,20 @@ pub fn sub_complete_notify_user_notify(
     out
 }
 
-/// `sub_close_notify` (user side) — current period ended; service closed (terminal).
+/// `sub_close_notify` (user side) — service is Closed, but buyer refund
+/// settlement remains non-terminal until separately proven.
 pub fn sub_close_notify_user_notify(
     service_name: &str,
     job_id: &str,
     period_start: Option<i64>,
     period_end: Option<i64>,
+    asp_reject_reason: Option<&str>,
 ) -> String {
+    if let Some(reason) = asp_reject_reason.filter(|value| !value.trim().is_empty()) {
+        return format!(
+            "[Service Closed] The ASP declined \"{service_name}\" before activation. Job {job_id} status: Closed. ASP reason: {reason}. This closure notice does not by itself confirm that a refund settled."
+        );
+    }
     let mut out = format!("[Service Closed] \"{service_name}\"");
     if let (Some(s), Some(e)) = (fmt_epoch(period_start), fmt_epoch(period_end)) {
         out.push_str(&format!("'s current period ({s}–{e})"));
@@ -716,7 +777,8 @@ pub fn sub_close_notify_user_notify(
     out
 }
 
-/// `sub_failed_notify` (user side, terminal). Two variants selected by `trial_type`:
+/// `sub_failed_notify` user-side lifecycle copy. Two variants selected by `trial_type`;
+/// the caller must not treat this copy alone as refund finality.
 /// trial-conversion fail (`trialType == 1`) shows the verbatim `reason`; renewal terminal
 /// fail (otherwise) appends the service-ended date from `grace_ends_at` (`subBufferEndTime`)
 /// when present. `reason` is the verbatim `failReason` (`failReasopn` fallback), shown as-is.
@@ -777,7 +839,8 @@ pub fn sub_expire_warn_no_autorenew_notify(
     )
 }
 
-/// `sub_reject_refund_notify` — ASP missed rejection response window; user can claim refund.
+/// `sub_reject_refund_notify` — ASP missed the rejection response window;
+/// the backend has already initiated the automatic refund.
 pub fn sub_reject_refund_notify_user(
     service_name: &str,
     period_start: Option<i64>,
@@ -1551,6 +1614,7 @@ mod tests {
             "job-1",
             Some(1_700_000_000),
             Some(1_700_600_000),
+            None,
         );
         assert!(out.starts_with("[Service Closed]"));
         assert!(
@@ -1564,11 +1628,21 @@ mod tests {
             "closed subscriptions do not trigger a rating: {out}"
         );
         // period absent → degrade, no period clause.
-        let bare = sub_close_notify_user_notify("My Sub", "job-1", None, None);
+        let bare = sub_close_notify_user_notify("My Sub", "job-1", None, None, None);
         assert!(
             bare.contains("[Service Closed] \"My Sub\" has ended."),
             "degrade without period: {bare}"
         );
+    }
+
+    #[test]
+    fn sub_close_notify_distinguishes_pre_acceptance_asp_decline() {
+        let out =
+            sub_close_notify_user_notify("My Sub", "job-1", None, None, Some("unsupported region"));
+        assert!(out.contains("ASP declined \"My Sub\" before activation"));
+        assert!(out.contains("ASP reason: unsupported region"));
+        assert!(out.contains("does not by itself confirm that a refund settled"));
+        assert!(!out.contains("refund completed"));
     }
 
     #[test]

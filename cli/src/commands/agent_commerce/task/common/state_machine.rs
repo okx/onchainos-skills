@@ -23,13 +23,12 @@ pub enum Role {
 impl Role {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "user"      => Some(Role::User),
-            "asp"       => Some(Role::Asp),
+            "user" => Some(Role::User),
+            "asp" => Some(Role::Asp),
             "evaluator" => Some(Role::Evaluator),
-            _           => None,
+            _ => None,
         }
     }
-
 }
 
 // ─── Status ─────────────────────────────────────────────────────────────
@@ -61,35 +60,35 @@ impl Status {
     /// String parsing (for the CLI `--event` flag / event-name parsing); int fields in the spec should go through [`Self::from_int`].
     pub fn parse(s: &str) -> Self {
         match s {
-            "init"                               => Status::Init,
-            "created"                            => Status::Created,
-            "accepted"                           => Status::Accepted,
-            "submitted"                          => Status::Submitted,
-            "rejected"                           => Status::Rejected,
-            "disputed"                           => Status::Disputed,
-            "admin_stopped" | "adminstopped"     => Status::AdminStopped,
-            "completed" | "complete"             => Status::Completed,
-            "close" | "closed"                   => Status::Close,
-            "expired"                            => Status::Expired,
-            "failed"                             => Status::Failed,
-            other                                => Status::Other(other.to_string()),
+            "init" => Status::Init,
+            "created" => Status::Created,
+            "accepted" => Status::Accepted,
+            "submitted" => Status::Submitted,
+            "rejected" => Status::Rejected,
+            "disputed" => Status::Disputed,
+            "admin_stopped" | "adminstopped" => Status::AdminStopped,
+            "completed" | "complete" => Status::Completed,
+            "close" | "closed" => Status::Close,
+            "expired" => Status::Expired,
+            "failed" => Status::Failed,
+            other => Status::Other(other.to_string()),
         }
     }
 
     pub fn as_str(&self) -> &str {
         match self {
-            Status::Init         => "init",
-            Status::Created      => "created",
-            Status::Accepted     => "accepted",
-            Status::Submitted    => "submitted",
-            Status::Rejected     => "rejected",
-            Status::Disputed     => "disputed",
+            Status::Init => "init",
+            Status::Created => "created",
+            Status::Accepted => "accepted",
+            Status::Submitted => "submitted",
+            Status::Rejected => "rejected",
+            Status::Disputed => "disputed",
             Status::AdminStopped => "admin_stopped",
-            Status::Completed    => "completed",
-            Status::Close        => "close",
-            Status::Expired      => "expired",
-            Status::Failed       => "failed",
-            Status::Other(s)     => s.as_str(),
+            Status::Completed => "completed",
+            Status::Close => "close",
+            Status::Expired => "expired",
+            Status::Failed => "failed",
+            Status::Other(s) => s.as_str(),
         }
     }
 
@@ -99,16 +98,16 @@ impl Status {
     pub fn from_int(n: i32) -> Self {
         match n {
             -1 => Status::Init,
-             0 => Status::Created,
-             1 => Status::Accepted,
-             2 => Status::Submitted,
-             3 => Status::Rejected,
-             4 => Status::Disputed,
-             5 => Status::AdminStopped,
-             6 => Status::Completed,
-             7 => Status::Close,
-             8 => Status::Expired,
-             9 => Status::Failed,
+            0 => Status::Created,
+            1 => Status::Accepted,
+            2 => Status::Submitted,
+            3 => Status::Rejected,
+            4 => Status::Disputed,
+            5 => Status::AdminStopped,
+            6 => Status::Completed,
+            7 => Status::Close,
+            8 => Status::Expired,
+            9 => Status::Failed,
             other => Status::Other(format!("status_{other}")),
         }
     }
@@ -116,11 +115,13 @@ impl Status {
     /// Terminal states of the main task state machine — in these statuses the task is finished and
     /// no further chain events can advance it; any dispute subflow (if it exists) is also necessarily
     /// closed, and any commit/reveal vote will be slashed.
+    ///
+    /// `Expired(8)` is intentionally not terminal. The v2 task contracts use it as an
+    /// intermediate timeout state while the buyer still has to reconcile/finalize the
+    /// escrow refund; only a later closed/refunded state is terminal from the buyer's
+    /// funds-settlement perspective.
     pub fn is_terminal(&self) -> bool {
-        matches!(
-            self,
-            Status::Completed | Status::Close | Status::Expired | Status::Failed,
-        )
+        matches!(self, Status::Completed | Status::Close | Status::Failed,)
     }
 }
 
@@ -136,12 +137,12 @@ impl Status {
 /// INIT=0, COMMIT_PHASE=1, REVEAL_PHASE=2, COMPLETED=3, REJECTED=4, INVALIDATED=5.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DisputeRoundStatus {
-    Init,         // 0 — initialized (round started, waiting to enter the commit window)
-    CommitPhase,  // 1 — commit phase
-    RevealPhase,  // 2 — reveal phase
-    Completed,    // 3 — round completed (verdict reached)
-    Rejected,     // 4 — round rejected
-    Invalidated,  // 5 — round invalidated (insufficient votes / nobody revealed); wait for next-round redraw
+    Init,        // 0 — initialized (round started, waiting to enter the commit window)
+    CommitPhase, // 1 — commit phase
+    RevealPhase, // 2 — reveal phase
+    Completed,   // 3 — round completed (verdict reached)
+    Rejected,    // 4 — round rejected
+    Invalidated, // 5 — round invalidated (insufficient votes / nobody revealed); wait for next-round redraw
     /// A status code returned by the backend that this enum does not recognize (tolerantly preserved as-is).
     Other(i32),
 }
@@ -161,13 +162,13 @@ impl DisputeRoundStatus {
 
     pub fn as_str(&self) -> &str {
         match self {
-            DisputeRoundStatus::Init         => "init",
-            DisputeRoundStatus::CommitPhase  => "commit_phase",
-            DisputeRoundStatus::RevealPhase  => "reveal_phase",
-            DisputeRoundStatus::Completed    => "completed",
-            DisputeRoundStatus::Rejected     => "rejected",
-            DisputeRoundStatus::Invalidated  => "invalidated",
-            DisputeRoundStatus::Other(_)     => "unknown",
+            DisputeRoundStatus::Init => "init",
+            DisputeRoundStatus::CommitPhase => "commit_phase",
+            DisputeRoundStatus::RevealPhase => "reveal_phase",
+            DisputeRoundStatus::Completed => "completed",
+            DisputeRoundStatus::Rejected => "rejected",
+            DisputeRoundStatus::Invalidated => "invalidated",
+            DisputeRoundStatus::Other(_) => "unknown",
         }
     }
 }
@@ -210,9 +211,18 @@ pub enum Event {
     /// DisputeSettled arbitration verdict (status enters completed or refunded; notifies user/ASP/voters
     /// to call /claimable + /claim to collect rewards).
     DisputeResolved,
-    /// Task expired (no accept before the acceptance window, or no submit before the delivery window;
-    /// notifies user to close and reclaim funds).
+    /// Task expired (no accept before the acceptance window, or no submit before the delivery
+    /// window). Buyer-side funds remain subject to read-only Refund V2 reconciliation; this event
+    /// does not authorize a legacy close/claim write or prove settlement.
     JobExpired,
+    /// The designated ASP did not accept before the acceptance deadline. The task/subscription
+    /// is Expired(8), which is not yet proof that escrow was refunded.
+    JobAspAcceptExpire,
+    /// The designated ASP declined before acceptance. The task/subscription is Closed(7).
+    JobAspRejectClosed,
+    /// The ASP did not resolve a buyer rejection before the response deadline. Backend refund
+    /// settlement is in progress at Expired(8); finality requires the later refund receipt/state.
+    JobAspRejectExpire,
     /// TaskMarket.close on-chain / Close tx result (notifies the initiating client).
     JobClosed,
     /// TaskMarket.setPaymentMode on-chain (notifies the initiating client).
@@ -258,14 +268,16 @@ pub enum Event {
     RewardClaimed,
 
     // ── Timeout events ────────────────────────────────────────────────
-    /// Submit timeout — no delivery (notifies user to call claimAutoRefund).
+    /// Submit timeout — no delivery. Buyer handling is notification-only until
+    /// a cause-specific Refund V2 claim contract is available.
     SubmitExpired,
-    /// After reject, the provider failed to raise arbitration in time (notifies user to call claimAutoRefund).
+    /// After a refund request, the provider failed to respond in time; backend settlement begins.
     RejectExpired,
     /// Review timeout (after provider submit, the User Agent did not confirm; notifies provider to call claimAutoComplete).
     ReviewExpired,
     // ── Auto-refund tx receipt ────────────────────────────────────────
-    /// User Agent's claimAutoRefund tx on-chain result (after submit/reject timeout the User Agent pulls funds back; notifies user).
+    /// Final auto-refund settlement result. Submit timeout may be claimed by the
+    /// trusted User runtime; provider-response timeout is settled by the backend.
     JobAutoRefunded,
 
     // ── Deadline reminders (warn class, no status change) ─────────────
@@ -336,7 +348,7 @@ pub enum Event {
     SubCloseNotify,
     /// Subscription failed (notifies user + ASP).
     SubFailedNotify,
-    /// ASP missed the rejection response window; user can claim refund via claimAutoRefund.
+    /// ASP missed the rejection response window; backend automatic refund settlement notice.
     SubRejectRefundNotify,
 
     // ── Job notifications (display-only; no task action) ────────────────────
@@ -358,164 +370,164 @@ impl Event {
     pub fn parse(s: &str) -> Self {
         match s {
             // Main task flow
-            "job_created"               => Event::JobCreated,
-            "provider_applied"          => Event::ProviderApplied,
-            "job_provider_reject"       => Event::JobProviderReject,
-            "job_user_reject"           => Event::JobUserReject,
-            "job_asp_selected"          => Event::JobAspSelected,
-            "job_accepted"              => Event::JobAccepted,
-            "job_submitted"             => Event::JobSubmitted,
-            "job_completed"             => Event::JobCompleted,
-            "job_rejected"              => Event::JobRejected,
-            "dispute_approved"          => Event::DisputeApproved,
-            "job_disputed"              => Event::JobDisputed,
-            "job_refunded"              => Event::JobRefunded,
-            "dispute_resolved"          => Event::DisputeResolved,
-            "job_expired"               => Event::JobExpired,
-            "job_closed"                => Event::JobClosed,
-            "job_payment_mode_changed"  => Event::JobPaymentModeChanged,
-            // Arbitration lifecycle
-            "evaluator_selected"        => Event::EvaluatorSelected,
-            "reveal_started"            => Event::RevealStarted,
-            "vote_committed"            => Event::VoteCommitted,
-            "vote_revealed"             => Event::VoteRevealed,
-            "round_failed"              => Event::RoundFailed,
-            "vote_commit_deadline_warn" => Event::VoteCommitDeadlineWarn,
-            "vote_reveal_deadline_warn" => Event::VoteRevealDeadlineWarn,
-            // Staking lifecycle (first-time / additional both map to Staked — the real backend only emits one `staked` event)
-            "staked"                    => Event::Staked,
-            "unstake_requested"         => Event::UnstakeRequested,
-            "unstake_claimed"           => Event::UnstakeClaimed,
-            "unstake_cancelled"         => Event::UnstakeCancelled,
-            "reward_claimed"            => Event::RewardClaimed,
-            // Timeouts
-            "submit_expired"            => Event::SubmitExpired,
-            "reject_expired"            => Event::RejectExpired,
-            "review_expired"            => Event::ReviewExpired,
-            // Auto-refund tx receipt
-            "job_auto_refunded"         => Event::JobAutoRefunded,
-            // Reminders
-            "submit_deadline_warn"      => Event::SubmitDeadlineWarn,
-            "review_deadline_warn"      => Event::ReviewDeadlineWarn,
-            // Extra evaluator lifecycle
-            "stake_stopped"             => Event::StakeStopped,
-            "cooldown_entered"          => Event::CooldownEntered,
-            // Attachment relay (local dispatch)
-            "attachment_added"          => Event::AttachmentAdded,
-            "user_attachment_received" => Event::UserAttachmentReceived,
-            // Deliverable relay (user-local dispatch)
-            "deliverable_received"      => Event::DeliverableReceived,
-            // Negotiation relay (user-local dispatch)
-            "negotiate_reply"           => Event::NegotiateReply,
-            // Network / restart recovery
-            "wakeup_notify"             => Event::WakeupNotify,
-            // Subscription lifecycle (`sub_created` starts the ASP decision flow;
-            // later events are notifications/service-start signals).
-            "sub_open"                  => Event::SubOpen,
-            "sub_created"               => Event::SubCreated,
-            "sub_asp_selected"          => Event::SubAspSelected,
-            "sub_cancel"                => Event::SubCancel,
-            "sub_user_reject"           => Event::SubUserReject,
-            "sub_asp_agree"             => Event::SubAspAgree,
-            "sub_asp_dispute"           => Event::SubAspDispute,
-            "sub_trial_into_active"     => Event::SubTrialIntoActive,
-            "sub_renew"                 => Event::SubRenew,
-            "sub_expire_warn"           => Event::SubExpireWarn,
-            "sub_complete_notify"       => Event::SubCompleteNotify,
-            "sub_close_notify"          => Event::SubCloseNotify,
-            "sub_failed_notify"         => Event::SubFailedNotify,
-            "sub_reject_refund_notify"  => Event::SubRejectRefundNotify,
-            // Job notifications (display-only)
+            "job_created" => Event::JobCreated,
+            "provider_applied" => Event::ProviderApplied,
+            "job_provider_reject" => Event::JobProviderReject,
+            "job_user_reject" => Event::JobUserReject,
+            "job_asp_selected" => Event::JobAspSelected,
+            "job_accepted" => Event::JobAccepted,
+            "job_submitted" => Event::JobSubmitted,
+            "job_completed" => Event::JobCompleted,
+            "job_rejected" => Event::JobRejected,
+            "dispute_approved" => Event::DisputeApproved,
+            "job_disputed" => Event::JobDisputed,
+            "job_refunded" => Event::JobRefunded,
+            "dispute_resolved" => Event::DisputeResolved,
+            "job_expired" => Event::JobExpired,
             "job_asp_accept_expire" => Event::JobAspAcceptExpire,
             "job_asp_reject_closed" => Event::JobAspRejectClosed,
             "job_asp_reject_expire" => Event::JobAspRejectExpire,
+            "job_closed" => Event::JobClosed,
+            "job_payment_mode_changed" => Event::JobPaymentModeChanged,
+            // Arbitration lifecycle
+            "evaluator_selected" => Event::EvaluatorSelected,
+            "reveal_started" => Event::RevealStarted,
+            "vote_committed" => Event::VoteCommitted,
+            "vote_revealed" => Event::VoteRevealed,
+            "round_failed" => Event::RoundFailed,
+            "vote_commit_deadline_warn" => Event::VoteCommitDeadlineWarn,
+            "vote_reveal_deadline_warn" => Event::VoteRevealDeadlineWarn,
+            // Staking lifecycle (first-time / additional both map to Staked — the real backend only emits one `staked` event)
+            "staked" => Event::Staked,
+            "unstake_requested" => Event::UnstakeRequested,
+            "unstake_claimed" => Event::UnstakeClaimed,
+            "unstake_cancelled" => Event::UnstakeCancelled,
+            "reward_claimed" => Event::RewardClaimed,
+            // Timeouts
+            "submit_expired" => Event::SubmitExpired,
+            "reject_expired" => Event::RejectExpired,
+            "review_expired" => Event::ReviewExpired,
+            // Auto-refund tx receipt
+            "job_auto_refunded" => Event::JobAutoRefunded,
+            // Reminders
+            "submit_deadline_warn" => Event::SubmitDeadlineWarn,
+            "review_deadline_warn" => Event::ReviewDeadlineWarn,
+            // Extra evaluator lifecycle
+            "stake_stopped" => Event::StakeStopped,
+            "cooldown_entered" => Event::CooldownEntered,
+            // Attachment relay (local dispatch)
+            "attachment_added" => Event::AttachmentAdded,
+            "user_attachment_received" => Event::UserAttachmentReceived,
+            // Deliverable relay (user-local dispatch)
+            "deliverable_received" => Event::DeliverableReceived,
+            // Negotiation relay (user-local dispatch)
+            "negotiate_reply" => Event::NegotiateReply,
+            // Network / restart recovery
+            "wakeup_notify" => Event::WakeupNotify,
+            // Subscription lifecycle (`sub_created` starts the ASP decision flow;
+            // later events are notifications/service-start signals).
+            "sub_open" => Event::SubOpen,
+            "sub_created" => Event::SubCreated,
+            "sub_asp_selected" => Event::SubAspSelected,
+            "sub_cancel" => Event::SubCancel,
+            "sub_user_reject" => Event::SubUserReject,
+            "sub_asp_agree" => Event::SubAspAgree,
+            "sub_asp_dispute" => Event::SubAspDispute,
+            "sub_trial_into_active" => Event::SubTrialIntoActive,
+            "sub_renew" => Event::SubRenew,
+            "sub_expire_warn" => Event::SubExpireWarn,
+            "sub_complete_notify" => Event::SubCompleteNotify,
+            "sub_close_notify" => Event::SubCloseNotify,
+            "sub_failed_notify" => Event::SubFailedNotify,
+            "sub_reject_refund_notify" => Event::SubRejectRefundNotify,
+            // Display-only notification without task-status semantics.
             "sub_asp_claim_notify" => Event::SubAspClaimNotify,
-            other                       => Event::Other(other.to_string()),
+            other => Event::Other(other.to_string()),
         }
     }
 
     pub fn as_str(&self) -> &str {
         match self {
-            Event::JobCreated             => "job_created",
-            Event::ProviderApplied        => "provider_applied",
-            Event::JobProviderReject       => "job_provider_reject",
-            Event::JobUserReject          => "job_user_reject",
-            Event::JobAspSelected         => "job_asp_selected",
-            Event::JobAccepted            => "job_accepted",
-            Event::JobSubmitted           => "job_submitted",
-            Event::JobCompleted           => "job_completed",
-            Event::JobRejected            => "job_rejected",
-            Event::DisputeApproved        => "dispute_approved",
-            Event::JobDisputed            => "job_disputed",
-            Event::JobRefunded            => "job_refunded",
-            Event::DisputeResolved        => "dispute_resolved",
-            Event::JobExpired             => "job_expired",
-            Event::JobClosed              => "job_closed",
-            Event::JobPaymentModeChanged  => "job_payment_mode_changed",
-            Event::EvaluatorSelected      => "evaluator_selected",
-            Event::RevealStarted          => "reveal_started",
-            Event::VoteCommitted          => "vote_committed",
-            Event::VoteRevealed           => "vote_revealed",
-            Event::RoundFailed            => "round_failed",
-            Event::VoteCommitDeadlineWarn => "vote_commit_deadline_warn",
-            Event::VoteRevealDeadlineWarn => "vote_reveal_deadline_warn",
-            Event::Staked                 => "staked",
-            Event::UnstakeRequested       => "unstake_requested",
-            Event::UnstakeClaimed         => "unstake_claimed",
-            Event::UnstakeCancelled       => "unstake_cancelled",
-            Event::RewardClaimed          => "reward_claimed",
-            Event::SubmitExpired          => "submit_expired",
-            Event::RejectExpired          => "reject_expired",
-            Event::ReviewExpired          => "review_expired",
-            Event::JobAutoRefunded        => "job_auto_refunded",
-            Event::SubmitDeadlineWarn     => "submit_deadline_warn",
-            Event::ReviewDeadlineWarn     => "review_deadline_warn",
-            Event::StakeStopped           => "stake_stopped",
-            Event::CooldownEntered        => "cooldown_entered",
-            Event::AttachmentAdded        => "attachment_added",
-            Event::UserAttachmentReceived => "user_attachment_received",
-            Event::DeliverableReceived    => "deliverable_received",
-            Event::NegotiateReply         => "negotiate_reply",
-            Event::WakeupNotify           => "wakeup_notify",
-            Event::SubOpen                => "sub_open",
-            Event::SubCreated             => "sub_created",
-            Event::SubAspSelected         => "sub_asp_selected",
-            Event::SubCancel              => "sub_cancel",
-            Event::SubUserReject          => "sub_user_reject",
-            Event::SubAspAgree            => "sub_asp_agree",
-            Event::SubAspDispute          => "sub_asp_dispute",
-            Event::SubTrialIntoActive     => "sub_trial_into_active",
-            Event::SubRenew               => "sub_renew",
-            Event::SubExpireWarn          => "sub_expire_warn",
-            Event::SubCompleteNotify      => "sub_complete_notify",
-            Event::SubCloseNotify         => "sub_close_notify",
-            Event::SubFailedNotify        => "sub_failed_notify",
-            Event::SubRejectRefundNotify  => "sub_reject_refund_notify",
+            Event::JobCreated => "job_created",
+            Event::ProviderApplied => "provider_applied",
+            Event::JobProviderReject => "job_provider_reject",
+            Event::JobUserReject => "job_user_reject",
+            Event::JobAspSelected => "job_asp_selected",
+            Event::JobAccepted => "job_accepted",
+            Event::JobSubmitted => "job_submitted",
+            Event::JobCompleted => "job_completed",
+            Event::JobRejected => "job_rejected",
+            Event::DisputeApproved => "dispute_approved",
+            Event::JobDisputed => "job_disputed",
+            Event::JobRefunded => "job_refunded",
+            Event::DisputeResolved => "dispute_resolved",
+            Event::JobExpired => "job_expired",
             Event::JobAspAcceptExpire => "job_asp_accept_expire",
             Event::JobAspRejectClosed => "job_asp_reject_closed",
             Event::JobAspRejectExpire => "job_asp_reject_expire",
+            Event::JobClosed => "job_closed",
+            Event::JobPaymentModeChanged => "job_payment_mode_changed",
+            Event::EvaluatorSelected => "evaluator_selected",
+            Event::RevealStarted => "reveal_started",
+            Event::VoteCommitted => "vote_committed",
+            Event::VoteRevealed => "vote_revealed",
+            Event::RoundFailed => "round_failed",
+            Event::VoteCommitDeadlineWarn => "vote_commit_deadline_warn",
+            Event::VoteRevealDeadlineWarn => "vote_reveal_deadline_warn",
+            Event::Staked => "staked",
+            Event::UnstakeRequested => "unstake_requested",
+            Event::UnstakeClaimed => "unstake_claimed",
+            Event::UnstakeCancelled => "unstake_cancelled",
+            Event::RewardClaimed => "reward_claimed",
+            Event::SubmitExpired => "submit_expired",
+            Event::RejectExpired => "reject_expired",
+            Event::ReviewExpired => "review_expired",
+            Event::JobAutoRefunded => "job_auto_refunded",
+            Event::SubmitDeadlineWarn => "submit_deadline_warn",
+            Event::ReviewDeadlineWarn => "review_deadline_warn",
+            Event::StakeStopped => "stake_stopped",
+            Event::CooldownEntered => "cooldown_entered",
+            Event::AttachmentAdded => "attachment_added",
+            Event::UserAttachmentReceived => "user_attachment_received",
+            Event::DeliverableReceived => "deliverable_received",
+            Event::NegotiateReply => "negotiate_reply",
+            Event::WakeupNotify => "wakeup_notify",
+            Event::SubOpen => "sub_open",
+            Event::SubCreated => "sub_created",
+            Event::SubAspSelected => "sub_asp_selected",
+            Event::SubCancel => "sub_cancel",
+            Event::SubUserReject => "sub_user_reject",
+            Event::SubAspAgree => "sub_asp_agree",
+            Event::SubAspDispute => "sub_asp_dispute",
+            Event::SubTrialIntoActive => "sub_trial_into_active",
+            Event::SubRenew => "sub_renew",
+            Event::SubExpireWarn => "sub_expire_warn",
+            Event::SubCompleteNotify => "sub_complete_notify",
+            Event::SubCloseNotify => "sub_close_notify",
+            Event::SubFailedNotify => "sub_failed_notify",
+            Event::SubRejectRefundNotify => "sub_reject_refund_notify",
             Event::SubAspClaimNotify => "sub_asp_claim_notify",
-            Event::Other(s)               => s.as_str(),
+            Event::Other(s) => s.as_str(),
         }
     }
 
     pub fn failure_label(&self) -> &'static str {
         match self {
-            Event::JobAutoRefunded    => "auto-refund failed",
-            Event::JobClosed          => "close failed",
+            Event::JobAutoRefunded => "auto-refund failed",
+            Event::JobClosed => "close failed",
             Event::JobPaymentModeChanged => "payment mode switch failed",
-            Event::RewardClaimed      => "reward claim failed",
-            Event::DisputeApproved    => "dispute initiation failed",
-            Event::JobProviderReject   => "asp reject failed",
-            Event::Staked             => "staking failed",
-            Event::UnstakeRequested   => "unstake failed",
-            Event::UnstakeClaimed     => "unstake claim failed",
-            Event::UnstakeCancelled   => "unstake cancellation failed",
-            Event::StakeStopped       => "stop staking failed",
-            Event::CooldownEntered    => "cooldown entry failed",
-            Event::SubCancel          => "cancel subscription failed",
-            Event::SubUserReject      => "reject subscription delivery failed",
-            _                         => "transaction failed",
+            Event::RewardClaimed => "reward claim failed",
+            Event::DisputeApproved => "dispute initiation failed",
+            Event::JobProviderReject => "asp reject failed",
+            Event::Staked => "staking failed",
+            Event::UnstakeRequested => "unstake failed",
+            Event::UnstakeClaimed => "unstake claim failed",
+            Event::UnstakeCancelled => "unstake cancellation failed",
+            Event::StakeStopped => "stop staking failed",
+            Event::CooldownEntered => "cooldown entry failed",
+            Event::SubCancel => "cancel subscription failed",
+            Event::SubUserReject => "reject subscription delivery failed",
+            _ => "transaction failed",
         }
     }
 }
@@ -531,65 +543,83 @@ impl Event {
 pub fn status_when_event(e: &Event) -> Status {
     match e {
         // Main flow
-        Event::JobCreated | Event::ProviderApplied | Event::JobAspSelected
-        | Event::JobProviderReject | Event::JobUserReject
+        Event::JobCreated
+        | Event::ProviderApplied
+        | Event::JobAspSelected
+        | Event::JobProviderReject
+        | Event::JobUserReject
         | Event::NegotiateReply => Status::Created,
-        Event::JobAccepted | Event::DeliverableReceived                       => Status::Accepted,
-        Event::JobSubmitted                                                 => Status::Submitted,
-        Event::JobRejected | Event::RejectExpired                             => Status::Rejected,
-        // submit_expired: provider did not submit; status is still accepted (never entered submitted)
-        Event::SubmitExpired                                                => Status::Accepted,
+        Event::JobAccepted | Event::DeliverableReceived => Status::Accepted,
+        Event::JobSubmitted => Status::Submitted,
+        Event::JobRejected | Event::RejectExpired => Status::Rejected,
+        // Backend v2 state transition: the provider missed the submit deadline,
+        // so the task leaves Accepted and enters Expired pending refund reconciliation.
+        Event::SubmitExpired => Status::Expired,
         // dispute_approved is a pass-through event; status is still rejected (dispute phase 1, not yet truly disputed)
-        Event::DisputeApproved                                              => Status::Rejected,
-        Event::JobDisputed                                                  => Status::Disputed,
+        Event::DisputeApproved => Status::Rejected,
+        Event::JobDisputed => Status::Disputed,
         // review_expired only means the review window has ended; task is still submitted —
         // must wait for the provider's claimAutoComplete to enter completed
-        Event::ReviewExpired                                                => Status::Submitted,
+        Event::ReviewExpired => Status::Submitted,
         // Backend TaskStatusEnum: 6=COMPLETE (funds released to provider), 9=FAILED (funds returned to user).
         // The two terminal states are distinguished directly by the event.
-        Event::JobCompleted                                                 => Status::Completed,
-        Event::JobRefunded | Event::JobAutoRefunded                         => Status::Failed,
+        Event::JobCompleted => Status::Completed,
+        Event::JobRefunded | Event::JobAutoRefunded => Status::Failed,
         // DisputeResolved depends on the verdict (user-wins → Failed; seller-wins → Completed);
         // not determinable from the event alone — default to Completed and callers should prefer `agent status`.
-        Event::DisputeResolved  => Status::Completed,
+        Event::DisputeResolved => Status::Completed,
         // Arbitration sub state machine: all events fire while task=disputed
-        Event::EvaluatorSelected | Event::VoteCommitted
-        | Event::RevealStarted | Event::VoteRevealed
-        | Event::CooldownEntered | Event::RoundFailed
-        | Event::VoteCommitDeadlineWarn | Event::VoteRevealDeadlineWarn     => Status::Disputed,
+        Event::EvaluatorSelected
+        | Event::VoteCommitted
+        | Event::RevealStarted
+        | Event::VoteRevealed
+        | Event::CooldownEntered
+        | Event::RoundFailed
+        | Event::VoteCommitDeadlineWarn
+        | Event::VoteRevealDeadlineWarn => Status::Disputed,
         // Reminder class (no status change; task stays in its current status)
-        Event::SubmitDeadlineWarn                                           => Status::Accepted,
-        Event::ReviewDeadlineWarn                                           => Status::Submitted,
-        Event::JobExpired                                                   => Status::Expired,
-        Event::JobClosed                                                    => Status::Close,
+        Event::SubmitDeadlineWarn => Status::Accepted,
+        Event::ReviewDeadlineWarn => Status::Submitted,
+        Event::JobExpired | Event::JobAspAcceptExpire | Event::JobAspRejectExpire => {
+            Status::Expired
+        }
+        Event::JobClosed | Event::JobAspRejectClosed => Status::Close,
         // paymentMode is a pass-through event that does not change status; not allowed outside of created, so expect Created
-        Event::JobPaymentModeChanged                                        => Status::Created,
+        Event::JobPaymentModeChanged => Status::Created,
         // Staking / slashing / reward lifecycle is decoupled from task status
         Event::Staked
-        | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
-        | Event::StakeStopped                                               => Status::Other("staking".to_string()),
-        Event::RewardClaimed                                                     => Status::Other("reward_claimed".to_string()),
+        | Event::UnstakeRequested
+        | Event::UnstakeClaimed
+        | Event::UnstakeCancelled
+        | Event::StakeStopped => Status::Other("staking".to_string()),
+        Event::RewardClaimed => Status::Other("reward_claimed".to_string()),
         // attachment_added is dispatched by the user session; can fire at Created or Accepted —
         // multi-status, so freshness check is skipped via PSEUDO_EVENTS; placeholder here.
-        Event::AttachmentAdded                                                  => Status::Other("attachment".to_string()),
+        Event::AttachmentAdded => Status::Other("attachment".to_string()),
         // user_attachment_received fires on the provider when it receives [intent:attachment];
         // can occur in Created (negotiation) or Accepted (mid-task) — multi-status placeholder.
-        Event::UserAttachmentReceived                                          => Status::Other("attachment".to_string()),
+        Event::UserAttachmentReceived => Status::Other("attachment".to_string()),
         // wake-up is a pass-through event; the real status lives in envelope.message.jobStatus.
         // Return a placeholder status here — agents must not drive next-action with wakeup_notify.
-        Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),
+        Event::WakeupNotify => Status::Other("wakeup".to_string()),
         // Subscription lifecycle is display-only and drives no task status.
-        Event::SubOpen | Event::SubCreated | Event::SubAspSelected | Event::SubCancel
-        | Event::SubUserReject | Event::SubAspAgree | Event::SubAspDispute
-        | Event::SubTrialIntoActive | Event::SubRenew | Event::SubExpireWarn
-        | Event::SubCompleteNotify | Event::SubCloseNotify
-        | Event::SubFailedNotify | Event::SubRejectRefundNotify            => Status::Other("subscription".to_string()),
-        // These backend events are notification-only and do not drive or imply a task status.
-        Event::JobAspAcceptExpire
-        | Event::JobAspRejectClosed
-        | Event::JobAspRejectExpire
-        | Event::SubAspClaimNotify => Status::Other("notification".to_string()),
-        Event::Other(_)                                                     => Status::Other("unknown".to_string()),
+        Event::SubOpen
+        | Event::SubCreated
+        | Event::SubAspSelected
+        | Event::SubCancel
+        | Event::SubUserReject
+        | Event::SubAspAgree
+        | Event::SubAspDispute
+        | Event::SubTrialIntoActive
+        | Event::SubRenew
+        | Event::SubExpireWarn
+        | Event::SubCompleteNotify
+        | Event::SubCloseNotify
+        | Event::SubFailedNotify
+        | Event::SubRejectRefundNotify => Status::Other("subscription".to_string()),
+        // This backend event is notification-only and does not imply task status.
+        Event::SubAspClaimNotify => Status::Other("notification".to_string()),
+        Event::Other(_) => Status::Other("unknown".to_string()),
     }
 }
 
@@ -599,18 +629,18 @@ pub fn status_when_event(e: &Event) -> Status {
 /// - DisputeResolved is not canonical (the same event may land on either Completed or Failed)
 pub fn entry_event(s: &Status) -> Option<Event> {
     match s {
-        Status::Init         => None,
-        Status::Created         => Some(Event::JobCreated),
-        Status::Accepted     => Some(Event::JobAccepted),
-        Status::Submitted    => Some(Event::JobSubmitted),
-        Status::Rejected     => Some(Event::JobRejected),
-        Status::Disputed     => Some(Event::JobDisputed),
+        Status::Init => None,
+        Status::Created => Some(Event::JobCreated),
+        Status::Accepted => Some(Event::JobAccepted),
+        Status::Submitted => Some(Event::JobSubmitted),
+        Status::Rejected => Some(Event::JobRejected),
+        Status::Disputed => Some(Event::JobDisputed),
         Status::AdminStopped => None,
-        Status::Completed    => Some(Event::JobCompleted),
-        Status::Close        => Some(Event::JobClosed),
-        Status::Expired      => Some(Event::JobExpired),
-        Status::Failed       => Some(Event::JobRefunded),
-        Status::Other(_)     => None,
+        Status::Completed => Some(Event::JobCompleted),
+        Status::Close => Some(Event::JobClosed),
+        Status::Expired => Some(Event::JobExpired),
+        Status::Failed => Some(Event::JobRefunded),
+        Status::Other(_) => None,
     }
 }
 
@@ -638,82 +668,82 @@ pub fn parse_status_or_event(s: &str) -> Event {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubStatus {
     /// DB record created, not yet on-chain (transient; client rarely sees this).
-    Init,      // -1
+    Init, // -1
     /// Create-and-fund confirmed; waiting for the designated ASP to accept or decline.
-    Created,   // 0
+    Created, // 0
     /// Subscription active (trial if trialType=1, paid if trialType=0).
-    Active,    // 1
+    Active, // 1
     /// User rejected delivery; waiting for ASP response (1-day window).
-    Rejected,  // 3
+    Rejected, // 3
     /// ASP escalated to dispute; awaiting DM resolution.
-    Disputed,  // 4
+    Disputed, // 4
     /// Terminal: subscription completed normally or DM ruled ASP-wins.
     Completed, // 6
-    /// Terminal: closed (trial cancel / expired / on-chain failure).
-    Closed,    // 7
+    /// Service-lifecycle terminal: closed (trial cancel / expired / on-chain failure). For a
+    /// formal subscription this status alone is not buyer-side refund finality.
+    Closed, // 7
     /// ASP did not accept before the deadline; refund settlement is pending.
-    Expired,   // 8
+    Expired, // 8
     /// Terminal: refund settled (ASP agreed / auto-refund / DM ruled user-wins).
-    Failed,    // 9
+    Failed, // 9
 }
 
 impl SubStatus {
     pub fn from_code(code: i64) -> Self {
         match code {
             -1 => SubStatus::Init,
-             0 => SubStatus::Created,
-             1 => SubStatus::Active,
-             3 => SubStatus::Rejected,
-             4 => SubStatus::Disputed,
-             6 => SubStatus::Completed,
-             7 => SubStatus::Closed,
-             8 => SubStatus::Expired,
-             9 => SubStatus::Failed,
-             _ => SubStatus::Init,
+            0 => SubStatus::Created,
+            1 => SubStatus::Active,
+            3 => SubStatus::Rejected,
+            4 => SubStatus::Disputed,
+            6 => SubStatus::Completed,
+            7 => SubStatus::Closed,
+            8 => SubStatus::Expired,
+            9 => SubStatus::Failed,
+            _ => SubStatus::Init,
         }
     }
 
     pub fn code(self) -> i64 {
         match self {
-            SubStatus::Init      => -1,
-            SubStatus::Created   =>  0,
-            SubStatus::Active    =>  1,
-            SubStatus::Rejected  =>  3,
-            SubStatus::Disputed  =>  4,
-            SubStatus::Completed =>  6,
-            SubStatus::Closed    =>  7,
-            SubStatus::Expired   =>  8,
-            SubStatus::Failed    =>  9,
+            SubStatus::Init => -1,
+            SubStatus::Created => 0,
+            SubStatus::Active => 1,
+            SubStatus::Rejected => 3,
+            SubStatus::Disputed => 4,
+            SubStatus::Completed => 6,
+            SubStatus::Closed => 7,
+            SubStatus::Expired => 8,
+            SubStatus::Failed => 9,
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
-            SubStatus::Init      => "Init",
-            SubStatus::Created   => "Created",
-            SubStatus::Active    => "Active",
-            SubStatus::Rejected  => "Rejected",
-            SubStatus::Disputed  => "Disputed",
+            SubStatus::Init => "Init",
+            SubStatus::Created => "Created",
+            SubStatus::Active => "Active",
+            SubStatus::Rejected => "Rejected",
+            SubStatus::Disputed => "Disputed",
             SubStatus::Completed => "Completed",
-            SubStatus::Failed    => "Failed",
-            SubStatus::Closed    => "Closed",
-            SubStatus::Expired   => "Expired",
+            SubStatus::Failed => "Failed",
+            SubStatus::Closed => "Closed",
+            SubStatus::Expired => "Expired",
         }
     }
 
     pub fn is_terminal(self) -> bool {
-        matches!(self, SubStatus::Completed | SubStatus::Failed | SubStatus::Closed)
+        matches!(
+            self,
+            SubStatus::Completed | SubStatus::Failed | SubStatus::Closed
+        )
     }
 
     /// Valid transitions from this status.
     pub fn valid_targets(self) -> &'static [SubStatus] {
         match self {
             SubStatus::Init => &[SubStatus::Created],
-            SubStatus::Created => &[
-                SubStatus::Active,
-                SubStatus::Closed,
-                SubStatus::Expired,
-            ],
+            SubStatus::Created => &[SubStatus::Active, SubStatus::Closed, SubStatus::Expired],
             SubStatus::Active => &[
                 SubStatus::Active,    // trial→active (trialType flip) or renew
                 SubStatus::Rejected,  // user reject delivery
@@ -721,8 +751,8 @@ impl SubStatus {
                 SubStatus::Closed,    // trial cancel / renew fail beyond grace
             ],
             SubStatus::Rejected => &[
-                SubStatus::Failed,    // ASP agree refund / user claim auto-refund
-                SubStatus::Disputed,  // ASP escalate
+                SubStatus::Failed,   // ASP agree refund / user claim auto-refund
+                SubStatus::Disputed, // ASP escalate
             ],
             SubStatus::Disputed => &[
                 SubStatus::Completed, // DM rules ASP wins
@@ -743,20 +773,23 @@ impl SubStatus {
 /// or are ambiguous (e.g. `sub_renew` success keeps Active, failure may lead to Closed).
 pub fn sub_status_after_event(e: &Event) -> Option<SubStatus> {
     match e {
-        Event::SubOpen | Event::SubCreated         => Some(SubStatus::Created),
-        Event::SubAspSelected                      => Some(SubStatus::Active),
-        Event::SubTrialIntoActive                 => Some(SubStatus::Active),
-        Event::SubRenew                           => None, // success=Active, fail=eventually Closed
-        Event::SubExpireWarn                       => None, // warning only, no status change
-        Event::SubCancel                          => None, // trial=Closed, active=Active(termsHash cleared)
-        Event::SubUserReject                      => Some(SubStatus::Rejected),
-        Event::SubAspAgree                        => Some(SubStatus::Failed),
-        Event::SubAspDispute                      => Some(SubStatus::Disputed),
-        Event::SubCompleteNotify                  => Some(SubStatus::Completed),
-        Event::SubCloseNotify                     => Some(SubStatus::Closed),
-        Event::SubFailedNotify                    => Some(SubStatus::Failed),
-        Event::SubRejectRefundNotify              => Some(SubStatus::Rejected),
-        _                                         => None,
+        Event::SubOpen => Some(SubStatus::Created),
+        Event::SubCreated => Some(SubStatus::Created),
+        Event::SubAspSelected => Some(SubStatus::Active),
+        Event::SubTrialIntoActive => Some(SubStatus::Active),
+        Event::SubRenew => None, // success=Active, fail=eventually Closed
+        Event::SubExpireWarn => None, // warning only, no status change
+        Event::SubCancel => None, // trial=Closed, active=Active(termsHash cleared)
+        Event::SubUserReject => Some(SubStatus::Rejected),
+        Event::SubAspAgree => Some(SubStatus::Failed),
+        Event::SubAspDispute => Some(SubStatus::Disputed),
+        Event::SubCompleteNotify => Some(SubStatus::Completed),
+        Event::SubCloseNotify => Some(SubStatus::Closed),
+        Event::SubFailedNotify => Some(SubStatus::Failed),
+        // Backend timeout settlement already returned the current period's
+        // funds; this notification is terminal and must never offer another claim.
+        Event::SubRejectRefundNotify => Some(SubStatus::Failed),
+        _ => None,
     }
 }
 
@@ -767,16 +800,16 @@ pub fn parse_sub_status(s: &str) -> SubStatus {
         return SubStatus::from_code(code);
     }
     match s.to_ascii_lowercase().as_str() {
-        "init"      => SubStatus::Init,
-        "created"   => SubStatus::Created,
-        "active"    => SubStatus::Active,
-        "rejected"  => SubStatus::Rejected,
-        "disputed"  => SubStatus::Disputed,
+        "init" => SubStatus::Init,
+        "created" => SubStatus::Created,
+        "active" => SubStatus::Active,
+        "rejected" => SubStatus::Rejected,
+        "disputed" => SubStatus::Disputed,
         "completed" => SubStatus::Completed,
-        "failed"    => SubStatus::Failed,
-        "closed"    => SubStatus::Closed,
-        "expired"   => SubStatus::Expired,
-        _           => SubStatus::Init,
+        "failed" => SubStatus::Failed,
+        "closed" => SubStatus::Closed,
+        "expired" => SubStatus::Expired,
+        _ => SubStatus::Init,
     }
 }
 
@@ -790,20 +823,42 @@ mod tests {
         // Status::AdminStopped has no client-side entry event (entry_event returns None); skip.
         // Status::Completed → JobCompleted; Status::Failed → JobRefunded (user-wins / refund).
         for s in [
-            Status::Created, Status::Accepted, Status::Submitted, Status::Rejected,
-            Status::Disputed, Status::Completed, Status::Close, Status::Expired,
+            Status::Created,
+            Status::Accepted,
+            Status::Submitted,
+            Status::Rejected,
+            Status::Disputed,
+            Status::Completed,
+            Status::Close,
+            Status::Expired,
             Status::Failed,
         ] {
             let e = entry_event(&s).expect("non-Other status should have entry event");
-            assert_eq!(status_when_event(&e), s, "entry_event/status_when_event mismatch for {:?}", s);
+            assert_eq!(
+                status_when_event(&e),
+                s,
+                "entry_event/status_when_event mismatch for {:?}",
+                s
+            );
         }
     }
 
     #[test]
     fn parse_status_or_event_handles_both() {
-        assert_eq!(parse_status_or_event("provider_applied"), Event::ProviderApplied);
+        assert_eq!(
+            parse_status_or_event("provider_applied"),
+            Event::ProviderApplied
+        );
         assert_eq!(parse_status_or_event("created"), Event::JobCreated);
         assert_eq!(parse_status_or_event("submitted"), Event::JobSubmitted);
+    }
+
+    #[test]
+    fn expired_is_not_terminal_until_refund_or_close_settles() {
+        assert!(!Status::Expired.is_terminal());
+        assert_eq!(status_when_event(&Event::SubmitExpired), Status::Expired);
+        assert!(Status::Close.is_terminal());
+        assert!(Status::Failed.is_terminal());
     }
 
     #[test]
@@ -814,14 +869,21 @@ mod tests {
 
     #[test]
     fn parse_new_asp_events() {
-        assert_eq!(Event::parse("job_provider_reject"), Event::JobProviderReject);
+        assert_eq!(
+            Event::parse("job_provider_reject"),
+            Event::JobProviderReject
+        );
         assert_eq!(Event::parse("job_user_reject"), Event::JobUserReject);
         assert_eq!(Event::parse("job_asp_selected"), Event::JobAspSelected);
     }
 
     #[test]
     fn new_asp_events_as_str_roundtrip() {
-        for evt in [Event::JobProviderReject, Event::JobUserReject, Event::JobAspSelected] {
+        for evt in [
+            Event::JobProviderReject,
+            Event::JobUserReject,
+            Event::JobAspSelected,
+        ] {
             let s = evt.as_str();
             assert_eq!(Event::parse(s), evt, "roundtrip failed for {s}");
         }
@@ -829,26 +891,59 @@ mod tests {
 
     #[test]
     fn new_asp_events_keep_status_created() {
-        assert_eq!(status_when_event(&Event::JobProviderReject), Status::Created);
+        assert_eq!(
+            status_when_event(&Event::JobProviderReject),
+            Status::Created
+        );
         assert_eq!(status_when_event(&Event::JobUserReject), Status::Created);
         assert_eq!(status_when_event(&Event::JobAspSelected), Status::Created);
     }
 
     #[test]
     fn parse_status_or_event_new_asp_events() {
-        assert_eq!(parse_status_or_event("job_provider_reject"), Event::JobProviderReject);
-        assert_eq!(parse_status_or_event("job_user_reject"), Event::JobUserReject);
-        assert_eq!(parse_status_or_event("job_asp_selected"), Event::JobAspSelected);
+        assert_eq!(
+            parse_status_or_event("job_provider_reject"),
+            Event::JobProviderReject
+        );
+        assert_eq!(
+            parse_status_or_event("job_user_reject"),
+            Event::JobUserReject
+        );
+        assert_eq!(
+            parse_status_or_event("job_asp_selected"),
+            Event::JobAspSelected
+        );
     }
 
     #[test]
-    fn notification_events_roundtrip_without_task_status() {
-        let events = [
-            ("job_asp_accept_expire", Event::JobAspAcceptExpire),
-            ("job_asp_reject_closed", Event::JobAspRejectClosed),
-            ("job_asp_reject_expire", Event::JobAspRejectExpire),
-            ("sub_asp_claim_notify", Event::SubAspClaimNotify),
-        ];
+    fn refund_timeout_events_parse_roundtrip_and_map_to_documented_statuses() {
+        for (name, event, status) in [
+            (
+                "job_asp_accept_expire",
+                Event::JobAspAcceptExpire,
+                Status::Expired,
+            ),
+            (
+                "job_asp_reject_closed",
+                Event::JobAspRejectClosed,
+                Status::Close,
+            ),
+            (
+                "job_asp_reject_expire",
+                Event::JobAspRejectExpire,
+                Status::Expired,
+            ),
+        ] {
+            assert_eq!(Event::parse(name), event);
+            assert_eq!(event.as_str(), name);
+            assert_eq!(parse_status_or_event(name), event);
+            assert_eq!(status_when_event(&event), status);
+        }
+    }
+
+    #[test]
+    fn notification_event_roundtrips_without_task_status() {
+        let events = [("sub_asp_claim_notify", Event::SubAspClaimNotify)];
         for (name, event) in events {
             assert_eq!(Event::parse(name), event);
             assert_eq!(event.as_str(), name);
@@ -864,18 +959,19 @@ mod tests {
     #[test]
     fn sub_event_parse_roundtrip() {
         let events = [
-            ("sub_created",           Event::SubCreated),
-            ("sub_asp_selected",      Event::SubAspSelected),
-            ("sub_cancel",            Event::SubCancel),
-            ("sub_user_reject",       Event::SubUserReject),
-            ("sub_asp_agree",         Event::SubAspAgree),
-            ("sub_asp_dispute",       Event::SubAspDispute),
+            ("sub_open", Event::SubOpen),
+            ("sub_created", Event::SubCreated),
+            ("sub_asp_selected", Event::SubAspSelected),
+            ("sub_cancel", Event::SubCancel),
+            ("sub_user_reject", Event::SubUserReject),
+            ("sub_asp_agree", Event::SubAspAgree),
+            ("sub_asp_dispute", Event::SubAspDispute),
             ("sub_trial_into_active", Event::SubTrialIntoActive),
-            ("sub_renew",             Event::SubRenew),
-            ("sub_expire_warn",       Event::SubExpireWarn),
-            ("sub_complete_notify",   Event::SubCompleteNotify),
-            ("sub_close_notify",      Event::SubCloseNotify),
-            ("sub_failed_notify",     Event::SubFailedNotify),
+            ("sub_renew", Event::SubRenew),
+            ("sub_expire_warn", Event::SubExpireWarn),
+            ("sub_complete_notify", Event::SubCompleteNotify),
+            ("sub_close_notify", Event::SubCloseNotify),
+            ("sub_failed_notify", Event::SubFailedNotify),
             ("sub_reject_refund_notify", Event::SubRejectRefundNotify),
         ];
         for (s, expected) in events {
@@ -892,10 +988,19 @@ mod tests {
     #[test]
     fn sub_events_use_subscription_status_placeholder() {
         for event in [
-            Event::SubCreated, Event::SubAspSelected, Event::SubCancel,
-            Event::SubUserReject, Event::SubAspAgree, Event::SubAspDispute,
-            Event::SubTrialIntoActive, Event::SubRenew, Event::SubExpireWarn,
-            Event::SubCompleteNotify, Event::SubCloseNotify, Event::SubFailedNotify,
+            Event::SubOpen,
+            Event::SubCreated,
+            Event::SubAspSelected,
+            Event::SubCancel,
+            Event::SubUserReject,
+            Event::SubAspAgree,
+            Event::SubAspDispute,
+            Event::SubTrialIntoActive,
+            Event::SubRenew,
+            Event::SubExpireWarn,
+            Event::SubCompleteNotify,
+            Event::SubCloseNotify,
+            Event::SubFailedNotify,
             Event::SubRejectRefundNotify,
         ] {
             assert_eq!(
@@ -989,17 +1094,50 @@ mod tests {
 
     #[test]
     fn sub_status_after_event_mapping() {
-        assert_eq!(sub_status_after_event(&Event::SubOpen), Some(SubStatus::Created));
-        assert_eq!(sub_status_after_event(&Event::SubCreated), Some(SubStatus::Created));
-        assert_eq!(sub_status_after_event(&Event::SubAspSelected), Some(SubStatus::Active));
-        assert_eq!(sub_status_after_event(&Event::SubTrialIntoActive), Some(SubStatus::Active));
-        assert_eq!(sub_status_after_event(&Event::SubUserReject), Some(SubStatus::Rejected));
-        assert_eq!(sub_status_after_event(&Event::SubAspAgree), Some(SubStatus::Failed));
-        assert_eq!(sub_status_after_event(&Event::SubAspDispute), Some(SubStatus::Disputed));
-        assert_eq!(sub_status_after_event(&Event::SubCompleteNotify), Some(SubStatus::Completed));
-        assert_eq!(sub_status_after_event(&Event::SubCloseNotify), Some(SubStatus::Closed));
-        assert_eq!(sub_status_after_event(&Event::SubFailedNotify), Some(SubStatus::Failed));
-        assert_eq!(sub_status_after_event(&Event::SubRejectRefundNotify), Some(SubStatus::Rejected));
+        assert_eq!(
+            sub_status_after_event(&Event::SubOpen),
+            Some(SubStatus::Created)
+        );
+        assert_eq!(
+            sub_status_after_event(&Event::SubCreated),
+            Some(SubStatus::Created)
+        );
+        assert_eq!(
+            sub_status_after_event(&Event::SubAspSelected),
+            Some(SubStatus::Active)
+        );
+        assert_eq!(
+            sub_status_after_event(&Event::SubTrialIntoActive),
+            Some(SubStatus::Active)
+        );
+        assert_eq!(
+            sub_status_after_event(&Event::SubUserReject),
+            Some(SubStatus::Rejected)
+        );
+        assert_eq!(
+            sub_status_after_event(&Event::SubAspAgree),
+            Some(SubStatus::Failed)
+        );
+        assert_eq!(
+            sub_status_after_event(&Event::SubAspDispute),
+            Some(SubStatus::Disputed)
+        );
+        assert_eq!(
+            sub_status_after_event(&Event::SubCompleteNotify),
+            Some(SubStatus::Completed)
+        );
+        assert_eq!(
+            sub_status_after_event(&Event::SubCloseNotify),
+            Some(SubStatus::Closed)
+        );
+        assert_eq!(
+            sub_status_after_event(&Event::SubFailedNotify),
+            Some(SubStatus::Failed)
+        );
+        assert_eq!(
+            sub_status_after_event(&Event::SubRejectRefundNotify),
+            Some(SubStatus::Failed)
+        );
         // Ambiguous events return None
         assert_eq!(sub_status_after_event(&Event::SubRenew), None);
         assert_eq!(sub_status_after_event(&Event::SubExpireWarn), None);
@@ -1036,14 +1174,21 @@ mod tests {
         // `job_visibility_changed` must no longer parse to a dedicated Event variant —
         // it falls through to Event::Other (and, per parse_status_or_event, since it is
         // not a status name either, stays Event::Other).
-        assert_eq!(Event::parse("job_visibility_changed"), Event::Other("job_visibility_changed".to_string()));
+        assert_eq!(
+            Event::parse("job_visibility_changed"),
+            Event::Other("job_visibility_changed".to_string())
+        );
         assert_eq!(
             parse_status_or_event("job_visibility_changed"),
             Event::Other("job_visibility_changed".to_string())
         );
         // The event-string round-trip table contains no JobVisibilityChanged: no live
         // Event variant serialises back to "job_visibility_changed".
-        for evt in [Event::JobClosed, Event::JobPaymentModeChanged, Event::JobCreated] {
+        for evt in [
+            Event::JobClosed,
+            Event::JobPaymentModeChanged,
+            Event::JobCreated,
+        ] {
             assert_ne!(evt.as_str(), "job_visibility_changed");
         }
     }

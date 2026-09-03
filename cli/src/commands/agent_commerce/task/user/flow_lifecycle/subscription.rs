@@ -1,6 +1,8 @@
 //! Subscription lifecycle event handlers (user side).
 
-use super::super::flow::{notify_and_end, notify_and_end_terminal, FlowContext};
+use super::super::flow::{
+    notify_and_end, notify_and_end_terminal, FlowContext, TERMINAL_NOTIFICATION_MARKER,
+};
 use crate::commands::agent_commerce::task::common::okx_a2a;
 
 fn extract_str<'a>(message: Option<&'a serde_json::Value>, key: &str) -> Option<&'a str> {
@@ -15,7 +17,12 @@ fn extract_i64(message: Option<&serde_json::Value>, key: &str) -> Option<i64> {
 }
 
 fn service_name<'a>(message: Option<&'a serde_json::Value>, ctx: &'a FlowContext<'_>) -> &'a str {
-    extract_str(message, "jobTitle")
+    extract_str(message, "serviceName")
+        .or_else(|| {
+            ctx.prefetched
+                .and_then(|value| value.service_name.as_deref())
+        })
+        .or_else(|| extract_str(message, "jobTitle"))
         .or_else(|| extract_str(message, "title"))
         .or_else(|| {
             ctx.prefetched
@@ -23,6 +30,66 @@ fn service_name<'a>(message: Option<&'a serde_json::Value>, ctx: &'a FlowContext
                 .filter(|value| !value.is_empty())
         })
         .unwrap_or("subscription")
+}
+
+fn refund_provider(ctx: &FlowContext<'_>) -> String {
+    let name = ctx
+        .prefetched
+        .and_then(|value| value.provider_name.as_deref());
+    let id = ctx
+        .prefetched
+        .and_then(|value| value.provider_agent_id.as_deref());
+    match (name, id) {
+        (Some(name), Some(id)) => format!("{name} ({id})"),
+        (Some(name), None) => name.to_string(),
+        (None, Some(id)) => format!("name unavailable ({id})"),
+        (None, None) => "not provided by the final event".to_string(),
+    }
+}
+
+fn refund_amount(ctx: &FlowContext<'_>) -> String {
+    let amount = ctx
+        .prefetched
+        .map(|value| value.token_amount.as_str())
+        .filter(|value| !value.is_empty());
+    let symbol = ctx
+        .prefetched
+        .map(|value| value.token_symbol.as_str())
+        .filter(|value| !value.is_empty() && *value != "?");
+    match (amount, symbol) {
+        (Some(amount), Some(symbol)) => format!("{amount} {symbol}"),
+        (Some(amount), None) => format!("{amount} (token symbol unavailable)"),
+        _ => "not provided by the final event".to_string(),
+    }
+}
+
+fn incomplete_subscription_refund_notice(
+    ctx: &FlowContext<'_>,
+    _message: Option<&serde_json::Value>,
+) -> String {
+    let title = ctx
+        .prefetched
+        .map(|value| value.title.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Subscription title unavailable");
+    let service = ctx
+        .prefetched
+        .and_then(|value| value.service_name.as_deref())
+        .or_else(|| ctx.prefetched.and_then(|value| value.service_id.as_deref()))
+        .unwrap_or("unverified");
+    format!(
+        "[Refund Settlement Detail Incomplete] {} (`{}`)\n\
+         - Refund ASP: {}\n\
+         - Service: {}\n\
+         - Refund amount: {}\n\
+         - Tx Hash: unverified\n\
+         The event reports a refund-capable terminal state, but the required settlement proof is incomplete or inconsistent. Do not report the refund as complete; refresh Refund V2 status.",
+        title,
+        ctx.job_id,
+        refund_provider(ctx),
+        service,
+        refund_amount(ctx),
+    )
 }
 
 pub(crate) fn sub_open(_ctx: &FlowContext<'_>, _message: Option<&serde_json::Value>) -> String {
@@ -184,14 +251,11 @@ pub(crate) fn sub_cancel(ctx: &FlowContext<'_>, message: Option<&serde_json::Val
         trial_ends_at,
         sub_end,
     );
-    // Terminal only when the trial's auto-conversion was actually cancelled. A FAILED cancel
-    // leaves the subscription alive (the trial will still convert), so the session stays open.
-    let cancelled = cancel_result.is_none_or(|r| !r.eq_ignore_ascii_case("fail"));
-    if cancelled && trial_type == Some(1) {
-        notify_and_end_terminal(&content, &ctx.terminal_session_hint)
-    } else {
-        notify_and_end(&content)
-    }
+    // Cancelling trial-to-paid conversion does not end the trial: the copy
+    // explicitly promises that service continues until trialEndTime. Formal
+    // cancellation likewise affects only future renewal. Neither branch may
+    // emit a terminal marker or clean up the active User task session.
+    notify_and_end(&content)
 }
 
 pub(crate) fn sub_user_reject(
@@ -211,14 +275,29 @@ pub(crate) fn sub_user_reject(
 }
 
 pub(crate) fn sub_asp_agree(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
-    let svc = service_name(message, ctx);
-    let content = super::super::content::sub_asp_agree_user_notify(
-        svc,
-        extract_str(message, "tokenAmount"),
-        extract_str(message, "tokenSymbol"),
-        extract_i64(message, "subStartTime"),
-        extract_i64(message, "subEndTime"),
+    let Ok(evidence) = super::super::refund_v2::verify_final_refund_event(
+        message,
+        ctx.prefetched,
+        9,
+        ctx.agent_id,
+    ) else {
+        let content = incomplete_subscription_refund_notice(ctx, message);
+        return notify_and_end(&content);
+    };
+    let mut content = format!(
+        "[Refund Settled] {}",
+        super::super::content::sub_asp_agree_user_notify(
+            &evidence.service_name,
+            Some(&evidence.amount),
+            Some(&evidence.token_symbol),
+            extract_i64(message, "subStartTime"),
+            extract_i64(message, "subEndTime"),
+        )
     );
+    content.push_str(&format!(
+        "\n- Refund ASP: {} ({})\n- Service: {}\n- Tx Hash: {}",
+        evidence.provider_name, evidence.provider_agent_id, evidence.service_name, evidence.tx_hash,
+    ));
     notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
 
@@ -319,7 +398,10 @@ pub(crate) fn sub_trial_into_active(
     notify_and_end(&content)
 }
 
-pub(crate) async fn sub_renew(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
+pub(crate) async fn sub_renew(
+    ctx: &FlowContext<'_>,
+    message: Option<&serde_json::Value>,
+) -> String {
     let renew_result = extract_str(message, "renewResult");
     let fail_reason =
         extract_str(message, "failReason").or_else(|| extract_str(message, "failReasopn"));
@@ -339,16 +421,26 @@ pub(crate) async fn sub_renew(ctx: &FlowContext<'_>, message: Option<&serde_json
     // backend keeps retrying); the subscription ends later via sub_close_notify /
     // sub_failed_notify, and those events own the session-cleanup hint.
     if renew_result == Some("fail") {
-        if let (Some(symbol), Some(amount_str)) = (extract_str(message, "tokenSymbol"), extract_str(message, "tokenAmount")) {
+        if let (Some(symbol), Some(amount_str)) = (
+            extract_str(message, "tokenSymbol"),
+            extract_str(message, "tokenAmount"),
+        ) {
             if let Ok(required) = amount_str.parse::<f64>() {
                 if required > 0.0 {
-                    if let Ok((_account_id, address)) = crate::commands::agent_commerce::task::signing::resolve_wallet_by_agent_id(ctx.agent_id).await {
+                    if let Ok((_account_id, address)) =
+                        crate::commands::agent_commerce::task::signing::resolve_wallet_by_agent_id(
+                            ctx.agent_id,
+                        )
+                        .await
+                    {
                         if !address.is_empty() {
                             let balance_low = crate::commands::agent_commerce::task::common::query_xlayer_balance(&address, symbol)
                                 .await
                                 .map_or(true, |b| b < required);
                             if balance_low {
-                                return super::super::flow::notify_and_end_with_deposit(&content, &address);
+                                return super::super::flow::notify_and_end_with_deposit(
+                                    &content, &address,
+                                );
                             }
                         }
                     }
@@ -405,9 +497,7 @@ fn as_epoch_secs(v: &serde_json::Value, key: &str) -> Option<i64> {
 pub(crate) async fn sub_expire_warn(ctx: &FlowContext<'_>) -> String {
     use super::super::create_subscribe::SUBSCRIBE_API_PREFIX;
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-    use crate::commands::agent_commerce::task::common::subscription_identity::{
-        select_subscription_agent_id,
-    };
+    use crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id;
 
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
@@ -459,32 +549,58 @@ pub(crate) fn sub_close_notify(
     message: Option<&serde_json::Value>,
 ) -> String {
     let svc = service_name(message, ctx);
-    let content = super::super::content::sub_close_notify_user_notify(
+    let asp_reject_reason = extract_str(message, "aspRejectReason");
+    let mut content = super::super::content::sub_close_notify_user_notify(
         svc,
         ctx.job_id,
         extract_i64(message, "subStartTime"),
         extract_i64(message, "subEndTime"),
+        asp_reject_reason,
     );
-    notify_and_end_terminal(&content, &ctx.terminal_session_hint)
+    if asp_reject_reason.is_none() {
+        content.push_str(
+            "\n\nThe subscription is authoritatively Closed, but the current backend detail does not expose an authoritative close cause or refund-specific settlement proof. No refund completion is claimed; reconcile through `onchainos agent refund-prepare <jobId>` and follow only its returned actions.",
+        );
+    }
+    // Status 7 proves closure, not why the subscription closed. The event body
+    // is caller-provided and cannot safely select between an ordinary close and
+    // an ASP-decline refund. Keep the buyer watcher/session open until the
+    // backend exposes an authoritative cause or status-9 settlement proof.
+    notify_and_end(&content)
 }
 
 pub(crate) fn sub_reject_refund_notify(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,
 ) -> String {
-    // Auto-refund is executed by the backend (Sub-4-6, product-confirmed 2026-07-24): the ASP
-    // missed the response window and the system has already issued the full refund. This is a
-    // display-only terminal notice — the client neither prompts a decision nor calls
-    // claim-auto-refund; RefundSettled moves the subscription to Failed.
-    let svc = service_name(message, ctx);
-    let content = super::super::content::sub_reject_refund_notify_user(
-        svc,
-        extract_i64(message, "subStartTime"),
-        extract_i64(message, "subEndTime"),
-        extract_i64(message, "rejectWindowEndsAt"),
-        extract_str(message, "tokenAmount"),
-        extract_str(message, "tokenSymbol"),
+    // The backend owns this timeout refund, so the client never calls
+    // claim-auto-refund. The notification is terminal only when the event and
+    // fresh Failed(9) detail carry matching Refund V2 settlement proof; the
+    // newly documented timeout payload by itself is only a pending signal.
+    let Ok(evidence) = super::super::refund_v2::verify_final_refund_event(
+        message,
+        ctx.prefetched,
+        9,
+        ctx.agent_id,
+    ) else {
+        let content = incomplete_subscription_refund_notice(ctx, message);
+        return notify_and_end(&content);
+    };
+    let mut content = format!(
+        "[Auto-Refund Settled] {}",
+        super::super::content::sub_reject_refund_notify_user(
+            &evidence.service_name,
+            extract_i64(message, "subStartTime"),
+            extract_i64(message, "subEndTime"),
+            extract_i64(message, "rejectWindowEndsAt"),
+            Some(&evidence.amount),
+            Some(&evidence.token_symbol),
+        )
     );
+    content.push_str(&format!(
+        "\n- Refund ASP: {} ({})\n- Service: {}\n- Tx Hash: {}",
+        evidence.provider_name, evidence.provider_agent_id, evidence.service_name, evidence.tx_hash,
+    ));
     notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
 
@@ -501,17 +617,12 @@ pub(crate) fn sub_failed_notify(
         ctx.job_id,
         extract_i64(message, "subBufferEndTime"),
     );
-    let rating_block = build_auto_rating_block(ctx);
-    format!(
-        "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-         ```bash\n\
-         onchainos agent user-notify --content \"<localized content shown below>\"\n\
-         ```\n\
-         Content: {content}\n\n\
-         {rating_block}\
-         {}\n",
-        ctx.terminal_session_hint,
-    )
+    let content = format!(
+        "{content}\n\n\
+         [Settlement Check Required] Fresh subscription status is Failed(9), but `sub_failed_notify` does not provide an authoritative failure cause or refund-specific settlement proof. Do not report a refund as complete or clean up the Buyer session. Run `onchainos agent refund-prepare {}` and follow only its returned read/watch actions unless it proves `reason=refund_confirmed`.",
+        ctx.job_id
+    );
+    notify_and_end(&content)
 }
 
 /// Check whether the user has already rated this task; if not, gather
@@ -805,7 +916,7 @@ mod tests {
     }
 
     #[test]
-    fn sub_cancel_trial_success_is_terminal() {
+    fn sub_cancel_trial_success_keeps_trial_session_live() {
         let ctx = ctx_with_hint();
         let msg = serde_json::json!({
             "jobTitle": "My Sub", "cancelResult": "success", "trialType": 1
@@ -815,9 +926,10 @@ mod tests {
             out.contains("Auto-conversion for the \"My Sub\" free trial has been cancelled"),
             "trial cancel shows trial-unaffected copy: {out}"
         );
+        assert!(out.contains("continues unaffected"), "{out}");
         assert!(
-            out.contains(HINT_MARKER),
-            "successful trial cancel is terminal → session-cleanup hint appended: {out}"
+            !out.contains(HINT_MARKER),
+            "trial continues, so cancellation must not append session cleanup: {out}"
         );
     }
 
@@ -962,7 +1074,7 @@ mod tests {
     }
 
     #[test]
-    fn sub_failed_notify_plumbs_reason_and_is_terminal() {
+    fn sub_failed_notify_plumbs_reason_but_keeps_buyer_reconciliation_open() {
         let ctx = ctx_with_hint();
         let msg = serde_json::json!({
             "jobTitle": "My Sub", "trialType": 1, "failReason": "\u{4f59}\u{989d}\u{4e0d}\u{8db3}"
@@ -974,8 +1086,13 @@ mod tests {
             "failReason plumbed through the handler: {out}"
         );
         assert!(
-            out.contains(HINT_MARKER),
-            "sub_failed_notify is terminal by design: {out}"
+            out.contains("refund-prepare"),
+            "reconciliation route: {out}"
+        );
+        assert!(!out.contains(HINT_MARKER), "no cleanup before proof: {out}");
+        assert!(
+            !out.contains(TERMINAL_NOTIFICATION_MARKER),
+            "no terminal marker before proof: {out}"
         );
     }
 

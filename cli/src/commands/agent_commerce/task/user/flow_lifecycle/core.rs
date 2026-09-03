@@ -1426,6 +1426,7 @@ pub(crate) async fn deliverable_received_cli(
             crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
                 title: title.to_string(),
                 description: String::new(),
+                job_type: None,
                 token_symbol: sym.to_string(),
                 token_amount: amt.to_string(),
                 payment_mode: ctx.payment_mode,
@@ -1435,15 +1436,18 @@ pub(crate) async fn deliverable_received_cli(
                 } else {
                     Some(provider_id.to_string())
                 },
+                provider_name: None,
                 user_agent_id: None,
                 status: Some(2),
                 deliverable: None,
                 service_id: None,
+                service_name: None,
                 service_token_address: None,
                 service_token_amount: None,
                 service_params: None,
                 user_agent_address: None,
                 token_address: None,
+                refund_tx_hash: None,
                 expire_time: None,
                 test_flag: false,
             }
@@ -1754,9 +1758,9 @@ fn user_authored_rejection_reason(data: Option<&str>) -> Option<&str> {
     data.map(str::trim).filter(|reason| !reason.is_empty())
 }
 
-/// Runs `reject` in-process with the user's reason and returns its structured result.
+/// Hand a review rejection to Refund V2 with the exact user-authored reason.
+/// No mutation is executed from the caller-provided pseudo-event itself.
 pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
-    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
 
     let Some(reason) = user_authored_rejection_reason(ctx.data) else {
@@ -1768,24 +1772,15 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
         .to_string();
     };
 
-    let mut client = TaskApiClient::new();
-    match super::super::v2::reject::handle(&mut client, job_id, reason).await {
-        Ok(result) => result.to_string(),
-        Err(error) => serde_json::json!({
-            "phase": "deliverable_review",
-            "decision": "blocked",
-            "reason": "rejection_failed",
-            "nextAction": [{ "id": "stop" }],
-            "payload": {
-                "jobId": job_id,
-                "error": error.to_string(),
-            },
-        })
-        .to_string(),
-    }
+    let handoff = serde_json::json!({
+        "jobId": job_id,
+        "reason": reason,
+    });
+    format!(
+        "[reject_review] No mutation occurred. Continue through Refund V2 using this exact handoff: {handoff}\n\n\
+         Run the read-only `onchainos agent refund-prepare {job_id} --reason <exact user-authored reason above>`. Execute only a returned `submit_refund_request` action with its unchanged `refundContextId`, operation, reason, and explicit `--confirm`; if prepare returns any other action or block, do not call `reject` or `subscribe-reject`. The user already selected Reject, but fresh Refund V2 state remains authoritative.\n"
+    )
 }
-
-// --- Terminal states ---------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -1918,13 +1913,38 @@ mod tests {
         let output: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(output["decision"], "requires_user_input");
         assert_eq!(output["reason"], "rejection_reason_required");
+        assert_eq!(output["nextAction"][0]["id"], "request_rejection_reason");
         assert_eq!(
-            output["nextAction"][0]["id"],
-            "request_rejection_reason"
+            output["payload"]["requiredParams"],
+            serde_json::json!(["reason"])
         );
-        assert_eq!(output["payload"]["requiredParams"], serde_json::json!(["reason"]));
         assert!(!out.contains("did not meet acceptance criteria"));
         assert!(!out.contains("cli_failed"));
+    }
+
+    #[tokio::test]
+    async fn reject_review_with_reason_only_hands_off_to_refund_v2() {
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id: "0xabc",
+            agent_id: "426",
+            short_id: "0xabc",
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: None,
+            data: Some("  quality below SLA  "),
+        };
+
+        let out = reject_review(&ctx).await;
+        assert!(out.contains("No mutation occurred"), "{out}");
+        assert!(out.contains("\"reason\":\"quality below SLA\""), "{out}");
+        assert!(out.contains("refund-prepare 0xabc"), "{out}");
+        assert!(out.contains("submit_refund_request"), "{out}");
+        assert!(out.contains("--confirm"), "{out}");
+        assert!(!out.contains("onchainos agent reject "), "{out}");
+        assert!(!out.contains("broadcast"), "{out}");
     }
 
     struct EnvVarGuard {
@@ -2066,7 +2086,8 @@ mod tests {
         assert!(prompt.contains("task-subscription-signal-direct.md"));
         assert!(prompt.contains(r#""status":"active""#));
         assert!(prompt.contains(r#""copyTrading":true"#));
-        assert!(prompt.contains("Apply the Guide to the Signal using only the user's confirmed Consent"));
+        assert!(prompt
+            .contains("Apply the Guide to the Signal using only the user's confirmed Consent"));
         assert!(prompt.contains("autotrade-direct-claim"));
         assert!(prompt.contains("autotrade-direct-finalize"));
         assert!(prompt.contains("Never automatically retry"));
@@ -2468,11 +2489,13 @@ Part B continues
         PreFetchedTaskContext {
             title: "Test Task".to_string(),
             description: String::new(),
+            job_type: Some(0),
             token_symbol: "USDT".to_string(),
             token_amount: "10".to_string(),
             payment_mode: Some(1),
             max_budget: None,
             provider_agent_id: Some("558".to_string()),
+            provider_name: None,
             user_agent_id: None,
             status: Some(2),
             deliverable: Some(PreFetchedDeliverable {
@@ -2485,11 +2508,13 @@ Part B continues
                 text_content: Some("hello".to_string()),
             }),
             service_id: None,
+            service_name: None,
             service_token_address: None,
             service_token_amount: None,
             service_params: None,
             user_agent_address: None,
             token_address: None,
+            refund_tx_hash: None,
             expire_time,
             test_flag: false,
         }

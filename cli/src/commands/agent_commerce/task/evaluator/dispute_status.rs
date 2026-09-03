@@ -31,6 +31,13 @@ use serde::Deserialize;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::state_machine::{DisputeRoundStatus, Status};
 
+fn evaluator_task_is_terminal(status: &Status) -> bool {
+    matches!(
+        status,
+        Status::Completed | Status::Close | Status::Expired | Status::Failed
+    )
+}
+
 /// Raw response payload for the `dispute/status` endpoint.
 ///
 /// The `Response` suffix intentionally distinguishes this from
@@ -108,17 +115,25 @@ pub async fn precheck_round_gate(
 
     println!("dispute status (jobId={})", s.job_id);
     println!("  currentRound : {}", fmt_opt(s.current_round));
-    println!("  taskStatus   : {} ({})", s.task_status, task_status.as_str());
+    println!(
+        "  taskStatus   : {} ({})",
+        s.task_status,
+        task_status.as_str()
+    );
     println!(
         "  dispute_round_status: {} ({})",
         fmt_opt_i32(s.dispute_round_status),
-        dispute_round_status.as_ref().map(DisputeRoundStatus::as_str).unwrap_or("null"),
+        dispute_round_status
+            .as_ref()
+            .map(DisputeRoundStatus::as_str)
+            .unwrap_or("null"),
     );
     println!(
         "  selectedVoter: {}",
         match &s.selected_voter {
             Some(_) => "present (this account is selected as juror for current round)",
-            None => "null (not selected for current round / notification expired / no active dispute)",
+            None =>
+                "null (not selected for current round / notification expired / no active dispute)",
         },
     );
 
@@ -130,10 +145,16 @@ pub async fn precheck_round_gate(
     // on-chain currentRound is non-null → then verify req_round == currentRound
     // → then verify disputeStatus is non-null → then verify
     // disputeStatus == CommitPhase → finally verify this account was selected.
-    let reason: Option<String> = if task_status.is_terminal() {
+    // Evaluator finality is stricter than buyer refund-settlement finality:
+    // Expired(8) still ends the dispute/juror window even though the buyer may
+    // need a later refund reconciliation action. Keep this role-specific gate
+    // explicit instead of reusing Status::is_terminal().
+    let evaluator_terminal = evaluator_task_is_terminal(&task_status);
+    let reason: Option<String> = if evaluator_terminal {
         Some(format!(
             "taskStatus={} ({}) is terminal — task finished, dispute window closed",
-            s.task_status, task_status.as_str(),
+            s.task_status,
+            task_status.as_str(),
         ))
     } else {
         match round_num.parse::<i64>() {
@@ -174,6 +195,32 @@ pub async fn precheck_round_gate(
             println!("\nreason: {r}");
             println!("selected: no");
             Ok(false)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn evaluator_keeps_expired_as_a_terminal_dispute_state() {
+        for status in [
+            Status::Completed,
+            Status::Close,
+            Status::Expired,
+            Status::Failed,
+        ] {
+            assert!(evaluator_task_is_terminal(&status));
+        }
+        for status in [
+            Status::Created,
+            Status::Accepted,
+            Status::Submitted,
+            Status::Rejected,
+            Status::Disputed,
+        ] {
+            assert!(!evaluator_task_is_terminal(&status));
         }
     }
 }

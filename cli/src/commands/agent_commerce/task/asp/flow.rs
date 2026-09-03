@@ -329,6 +329,12 @@ pub async fn generate_next_action(
          onchainos agent session-cleanup --job-id {job_id}\n\
          ```\n\
          Then follow the command's output to close conversations (if applicable).");
+    let expired_assignment_session_hint = format!("\
+ℹ️ This ASP assignment has ended, while buyer refund settlement remains pending — run the ASP-side cleanup command (handles pending-decision cancellation automatically):\n\
+         ```bash\n\
+         onchainos agent session-cleanup --job-id {job_id}\n\
+         ```\n\
+         Then follow the command's output to close this ASP assignment conversation (if applicable).");
 
     let event = parse_status_or_event(event_str);
     match event {
@@ -788,6 +794,41 @@ pub async fn generate_next_action(
             event = event.as_str()
         ),
 
+        // V2 provider-decision deadline events can be delivered to both roles. On the
+        // ASP side they never authorize a money-moving action. Expired(8) is still a
+        // pending buyer settlement state even though this ASP's assignment has ended.
+        Event::JobAspAcceptExpire => sub_asp_notify(
+            "job_asp_accept_expire (acceptance deadline elapsed)",
+            &format!(
+                "[Assignment Expired] The acceptance deadline for job {job_id} elapsed before you accepted it. Stop work for this assignment. Refund reconciliation belongs to the buyer/backend; do not sign, claim, or report that a refund settled."
+            ),
+            Some(expired_assignment_session_hint.as_str()),
+        ),
+        Event::JobAspRejectExpire => sub_asp_notify(
+            "job_asp_reject_expire (refund response deadline elapsed)",
+            &format!(
+                "[Refund Response Expired] The response deadline for job {job_id} elapsed. Backend automatic refund settlement is still pending at Expired status. Stop delivery and do not agree, dispute, claim, or report a completed refund from this event."
+            ),
+            Some(expired_assignment_session_hint.as_str()),
+        ),
+        Event::JobAspRejectClosed => {
+            let reject_reason = message
+                .and_then(|value| value.get("aspRejectReason"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let reason_suffix = reject_reason
+                .map(|reason| format!(" Reason: {reason}"))
+                .unwrap_or_default();
+            sub_asp_notify(
+                "job_asp_reject_closed (provider decline closed)",
+                &format!(
+                    "[Assignment Closed] Your pre-acceptance decline closed job {job_id}.{reason_suffix} Stop work for this assignment. This event does not authorize any further funds action."
+                ),
+                Some(terminal_session_hint.as_str()),
+            )
+        }
+
         // ─── review_expired: review window timed out; ASP actively claims the payment ─────────────
         Event::ReviewExpired => format!(
             "[System notification] review_expired (review window expired; the User Agent did not accept in time)\n\
@@ -883,8 +924,8 @@ pub async fn generate_next_action(
             )
         }
 
-        // job_auto_refunded — User Agent-side tx receipt; not the ASP's concern
-        Event::JobAutoRefunded => "[System notification] job_auto_refunded (User Agent-side claimAutoRefund tx receipt; not the ASP's concern)\n\
+        // job_auto_refunded — buyer/backend Refund V2 settlement receipt; not the ASP's concern
+        Event::JobAutoRefunded => "[System notification] job_auto_refunded (buyer/backend Refund V2 settlement receipt; not the ASP's concern)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n".to_string(),
 
@@ -1070,9 +1111,13 @@ pub async fn generate_next_action(
                 .and_then(|m| m.get("jobTitle").or_else(|| m.get("title")))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty());
+            let asp_reject_reason = message
+                .and_then(|m| m.get("aspRejectReason"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
             display_notify(
                 "sub_close_notify (subscription closed)",
-                &super::content::sub_close_notify_asp_notify(title, job_id),
+                &super::content::sub_close_notify_asp_notify(title, job_id, asp_reject_reason),
                 Some(terminal_session_hint.as_str()),
             )
         }
@@ -1695,6 +1740,27 @@ mod tests {
             "ASP-10 tail: {out}"
         );
 
+        let declined = run_asp(
+            "sub_close_notify",
+            json!({
+                "event": "sub_close_notify",
+                "jobId": ASP_JOB_ID,
+                "jobTitle": "AlphaBot",
+                "aspRejectReason": "unsupported region",
+            }),
+        )
+        .await;
+        assert!(declined.contains("[Assignment Closed]"), "{declined}");
+        assert!(
+            declined.contains("Reason: unsupported region"),
+            "{declined}"
+        );
+        assert!(
+            declined.contains("does not confirm refund settlement"),
+            "{declined}"
+        );
+        assert!(!declined.contains("renewal charge failed"), "{declined}");
+
         let out = run_asp(
             "sub_failed_notify",
             json!({ "event": "sub_failed_notify", "jobId": ASP_JOB_ID, "jobTitle": "AlphaBot", "failReason": "insufficient balance" }),
@@ -1878,7 +1944,6 @@ mod tests {
         );
         assert!(!out.contains("+58692"), "no five-digit year: {out}");
     }
-
     #[tokio::test]
     async fn sub_complete_notify_ignores_legacy_title_field() {
         let out = run_asp(

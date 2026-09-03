@@ -5,8 +5,8 @@ legacy prose field `action`.
 
 | Action ID | Route | Confirmation | After completion |
 |---|---|---|---|
-| `login` | `okx-agentic-wallet` login flow | Owning Skill | Rerun prepare with the same `sid` |
-| `register_user_agent` | `identity-register.md` with User Agent role | Required | Rerun prepare with the same `sid` |
+| `login` | `okx-agentic-wallet` login flow | Owning Skill | Rerun the originating prepare with its returned binding (`params.jobId` for Refund V2; `sid` where another flow returns one) |
+| `register_user_agent` | `identity-register.md` with User Agent role | Required | Rerun the originating prepare with its returned binding (`params.jobId` for Refund V2; `sid` where another flow returns one) |
 | `invoke_a2mcp` | `a2mcp-direct-invoke.md` | Parameters are collected and validated automatically; only payment is confirmed in that playbook | Run the A2MCP direct-invocation flow |
 | `restore_subscription` | `task-user-duplicate-subscription-guide.md` | Required | Enter scoped watch |
 | `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |
@@ -18,6 +18,15 @@ legacy prose field `action`.
 | `finalize_user_subscription` | [`task-actions-completion.md` §Subscription Complete User](task-actions-completion.md#subscription-complete-user) | No | End turn |
 | `notify_and_cleanup_subscription` | [`task-actions-completion.md` §Subscription Complete ASP](task-actions-completion.md#subscription-complete-asp) | No | End turn |
 | `notify_user` | [`task-actions-completion.md` §Notification Only](task-actions-completion.md#notification-only) | No | End turn |
+| `resolve_refund_target` | `task-user-refund.md`, §Entry and target resolution | No | Ask for or list one buyer-owned `jobId`; then run `refund-prepare` |
+| `prepare_refund` | `task-user-refund.md`; rerun `refund-prepare` for `params.jobId` | No | Route the fresh progression result |
+| `provide_refund_reason` | `task-user-refund.md`, §Submitted one-time or Active formal subscription | No write; the reason must be authored by the User | Rerun `refund-prepare` with the verbatim reason |
+| `cancel_trial_conversion` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation cancel-trial-conversion` | Required | Route the returned structured result; never describe this as a refund |
+| `close_zero_price` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation close-zero` | Required | Route the returned structured result; no funds move |
+| `execute_direct_refund` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation direct-refund` | Required | Route the returned structured result, then watch when offered |
+| `submit_refund_request` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation request-refund` | Required; pass only the User-authored reason | Route the returned structured result, then watch when offered |
+| `view_refund_status` | `task-user-refund.md`; rerun `refund-prepare` for `params.jobId` | No | Route the fresh progression result |
+| `view_arbitration` | `task-arbitration.md`; run `arbitration-detail` for the returned job after resolving the current User identity as required there | No | Render only fields returned by the read-only query |
 | `stop` | End the current flow | No | Run no further command |
 
 ## Routing rules
@@ -34,6 +43,29 @@ legacy prose field `action`.
 - For `reason=duplicate_subscription`, read
   `task-user-duplicate-subscription-guide.md` before presenting or executing
   any returned action.
+- Refund action IDs are valid only for `payload.schemaVersion=2`. For refund
+  write actions, use `params.jobId`, `params.operation`, and
+  `params.refundContextId` unchanged.
+  Never reconstruct an operation from prose or substitute the disabled legacy
+  writes `close`, `reject`, `subscribe-reject`, or `claim-auto-refund` for a
+  missing Refund V2 action. `subscribe-cancel` is cancellation-only and never a
+  refund substitute.
+- `finalize_expired_refund` is not currently a routable action. The type-207
+  transport is wired, but subscription status 8 also represents a backend-owned
+  refund-response timeout. Until fresh detail supplies an authoritative cause
+  discriminator, `refund-prepare` returns
+  `expired_subscription_refund_cause_ambiguous` with read-only actions. Never
+  invoke `finalize-expired-refund` from an event or status alone. A one-time
+  status-8 task remains separately read-only with
+  `reason=accept_expired_refund_contract_ambiguous`.
+- `job_asp_accept_expire`, `job_asp_reject_closed`, and
+  `job_asp_reject_expire` are events, not action IDs or settlement proof. Route
+  only actions from a fresh `refund-prepare`; never execute, report refund
+  completion, or perform terminal cleanup from event prose alone.
+  In particular, `job_asp_reject_closed` does not exempt a subscription at
+  status 7 from the missing authoritative refund-cause contract.
+- `refund-execute` always requires explicit selection of the displayed write
+  action. Supplying a reason never substitutes for that confirmation.
 - Preserve the returned order; `recommend=true` marks the preferred option.
 - A number maps only to the matching action in the latest rendered list.
 - Do not execute an action not returned by the CLI.

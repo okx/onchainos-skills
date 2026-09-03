@@ -25,11 +25,12 @@ mod offline_receive;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
-pub(crate) use flow_lifecycle::try_recover_from_temp_file;
+pub(crate) use flow_lifecycle::{route_subscription_delivery_to_skill, try_recover_from_temp_file};
 mod flow_negotiate;
 pub(crate) mod my_tasks;
 pub(crate) mod negotiate;
 mod query;
+pub(crate) mod refund_v2;
 mod reject_apply;
 mod service_detail;
 pub(crate) mod service_param_update;
@@ -256,13 +257,36 @@ pub enum TaskCommand {
     ConfirmAccept { job_id: String },
     /// Client confirms task complete and releases payment
     Complete { job_id: String },
-    /// Client rejects deliverable
+    /// Disabled direct rejection; use Refund V2 preparation and confirmation.
     Reject {
         job_id: String,
         #[arg(long)]
         reason: String,
     },
-    /// Client closes task (only valid while Open)
+    /// Read-only Refund V2 eligibility and next-action preparation.
+    #[command(name = "refund-prepare")]
+    RefundPrepare {
+        job_id: String,
+        /// User-authored refund reason. Required only for an active refundable task.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Execute an explicitly confirmed operation returned by refund-prepare.
+    #[command(name = "refund-execute")]
+    RefundExecute {
+        job_id: String,
+        #[arg(long, value_enum)]
+        operation: refund_v2::RefundOperation,
+        #[arg(long = "refund-context-id")]
+        refund_context_id: String,
+        /// Exact user-authored reason returned through the prepare action params.
+        #[arg(long)]
+        reason: Option<String>,
+        /// Explicitly confirms the current prepared refund operation.
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
+    },
+    /// Disabled legacy close. Use Refund V2 preparation.
     Close {
         job_id: String,
         #[arg(long = "agent-id")]
@@ -274,7 +298,8 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Client claims auto-refund after seller timeout (submit_expired / reject_expired)
+    /// Disabled legacy write command. Use `refund-prepare`; a cause-specific
+    /// timeout claim requires a backend Refund V2 contract.
     ClaimAutoRefund { job_id: String },
     /// Reject a provider's apply (on-chain pass-through; status stays `created`)
     RejectApply {
@@ -297,7 +322,7 @@ pub enum TaskCommand {
     /// Enable auto-renew on a subscription (needs EIP-712 terms signing)
     #[command(name = "start-autorenew")]
     StartAutorenew { sub_id: String },
-    /// Reject a subscription delivery
+    /// Disabled direct subscription rejection; use Refund V2 preparation.
     #[command(name = "subscribe-reject")]
     SubscribeReject {
         sub_id: String,
@@ -2025,10 +2050,30 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             crate::output::success(result);
             Ok(())
         }
-        TaskCommand::Reject { job_id, reason } => {
-            let result = v2::reject::handle(&mut client, &job_id, &reason).await?;
-            crate::output::success(result);
-            Ok(())
+        TaskCommand::Reject { job_id, reason: _ } => {
+            anyhow::bail!(
+                "direct reject is disabled by Refund V2; run `onchainos agent refund-prepare {job_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
+            )
+        }
+        TaskCommand::RefundPrepare { job_id, reason } => {
+            refund_v2::handle_prepare(&mut client, &job_id, reason.as_deref()).await
+        }
+        TaskCommand::RefundExecute {
+            job_id,
+            operation,
+            refund_context_id,
+            reason,
+            confirm,
+        } => {
+            refund_v2::handle_execute(
+                &mut client,
+                &job_id,
+                operation,
+                &refund_context_id,
+                reason.as_deref(),
+                confirm,
+            )
+            .await
         }
         TaskCommand::Close { job_id, agent_id } => {
             close::handle_close(&mut client, &job_id, agent_id.as_deref()).await
@@ -2057,10 +2102,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::StartAutorenew { sub_id } => {
             subscription_ops::handle_start_autorenew(&mut client, &sub_id).await
         }
-        TaskCommand::SubscribeReject { sub_id, reason } => {
-            let result = v2::reject::handle(&mut client, &sub_id, &reason).await?;
-            crate::output::success(result);
-            Ok(())
+        TaskCommand::SubscribeReject { sub_id, reason: _ } => {
+            subscription_ops::handle_subscribe_reject(&mut client, &sub_id, "").await
         }
         TaskCommand::SubscribeDetail { sub_id, format } => {
             subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await

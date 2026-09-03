@@ -1,6 +1,6 @@
 //! Rejection / evaluation prompt generators.
 
-use super::super::flow::{FlowContext, notify_and_end};
+use super::super::flow::{notify_and_end, FlowContext, TERMINAL_NOTIFICATION_MARKER};
 use crate::commands::agent_commerce::task::common::okx_a2a;
 
 pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
@@ -33,10 +33,12 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
                 trimmed.to_string()
             }
         }
-        Err(e) => return format!(
-            "[job_disputed] `okx-a2a session history` failed: {e}\n\n\
+        Err(e) => {
+            return format!(
+                "[job_disputed] `okx-a2a session history` failed: {e}\n\n\
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
-        ),
+            )
+        }
     };
 
     format!(
@@ -73,15 +75,13 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn dispute_resolved(
+    ctx: &FlowContext<'_>,
+    _message: Option<&serde_json::Value>,
+) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-    let title_display = ctx.title_display;
     let terminal_session_hint = &ctx.terminal_session_hint;
-
-    let dispute_won = super::super::content::dispute_won_user_notify(job_id, title_display);
-    let dispute_lost = super::super::content::dispute_lost_user_notify(job_id, title_display);
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
 
     // dispute_resolved fires when the chain has settled the evaluation —
     // prefetched.status MUST be 6 (Completed, ASP wins) or 9 (Failed, user
@@ -107,6 +107,15 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
+    if user_won
+        && p.refund_tx_hash
+            .as_deref()
+            .is_some_and(super::super::refund_v2::valid_tx_hash)
+    {
+        return format!(
+            "[dispute_resolved] Authoritative detail already contains refund settlement proof for job {job_id}. Do not render another unresolved-settlement notice from this delayed/replayed verdict. Run `onchainos agent refund-prepare {job_id}` and route its final Refund V2 result."
+        );
+    }
     let provider_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
@@ -114,6 +123,44 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
+    let title_display = p
+        .title
+        .trim()
+        .is_empty()
+        .then_some("Task title unavailable")
+        .unwrap_or(p.title.trim());
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
+    let provider_name = p.provider_name.as_deref();
+    let service_name = p
+        .service_name
+        .as_deref()
+        .or_else(|| p.service_id.as_deref())
+        .or(Some("service unavailable"));
+    // A dispute result is a verdict, not the dedicated final-refund event.
+    // Always display the fresh original payment; never relabel refundAmount
+    // (which may be zero on an ASP win) as the original amount.
+    let amount = (!p.token_amount.is_empty()).then_some(p.token_amount.as_str());
+    let symbol =
+        (!p.token_symbol.is_empty() && p.token_symbol != "?").then_some(p.token_symbol.as_str());
+
+    let dispute_won = super::super::content::dispute_won_user_notify(
+        job_id,
+        title_display,
+        provider_name,
+        Some(provider_id),
+        service_name,
+        amount,
+        symbol,
+    );
+    let dispute_lost = super::super::content::dispute_lost_user_notify(
+        job_id,
+        title_display,
+        provider_name,
+        Some(provider_id),
+        service_name,
+        amount,
+        symbol,
+    );
 
     let winner_line = if user_won {
         "**Evaluation outcome: user WINS** (chain status = 9/failed).\n\n"
@@ -122,11 +169,22 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     };
     // Deliberate reuse: subscription evaluation results render the existing online
     // task-level notice rather than subscription-specific copy.
-    let dispatch_content = if user_won { &dispute_won } else { &dispute_lost };
+    let dispatch_content = if user_won {
+        dispute_won
+    } else {
+        format!("{TERMINAL_NOTIFICATION_MARKER} {dispute_lost}")
+    };
     let score_guide = if user_won {
         "provider at fault → 0.00–2.00"
     } else {
         "provider delivered adequately → 3.00–5.00"
+    };
+    let wrap_up = if user_won {
+        format!(
+            "Do not run terminal cleanup yet. Run `onchainos agent refund-prepare {job_id}` to follow refund settlement, and follow only its returned actions."
+        )
+    } else {
+        format!("{terminal_session_hint}\nEvaluation flow fully complete.")
     };
 
     format!(
@@ -148,7 +206,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in Step 3.\n\n\
      **Step 3 — Notify the user with a SINGLE consolidated message:**\n\
-     **Localize first** — translate the composed content into the user's language before sending.\n\
+     **Localize first** — translate the human-readable content into the user's language. Preserve any exact {TERMINAL_NOTIFICATION_MARKER} prefix.\n\
      ```bash\n\
      onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
@@ -158,9 +216,8 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      ▸ Rating info (include ONLY if Step 2's feedback-submit succeeded; if it failed, omit this entire half):\n\
      \x20\x20{rating_notify}\n\
      \x20\x20(fill `<score>` with the X.XX value used in Step 2, `<description>` with the comment from Step 2, `<title>` with the task title above)\n\n\
-     **Step 4 — Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     Evaluation flow fully complete.\n",
+     **Step 4 — Settlement-aware wrap-up:**\n\
+     {wrap_up}\n",
         title = p.title,
         amt = p.token_amount,
         sym = p.token_symbol,

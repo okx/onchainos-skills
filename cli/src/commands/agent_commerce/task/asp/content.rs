@@ -442,9 +442,19 @@ pub fn sub_complete_notify_asp_notify(
     out
 }
 
-/// ASP terminal notice: subscription ended because the renewal charge failed during grace (Closed).
-pub fn sub_close_notify_asp_notify(service_name: Option<&str>, job_id: &str) -> String {
+/// ASP terminal notice. An `aspRejectReason` identifies the v2 pre-acceptance
+/// provider-decline branch; without it, preserve the legacy renewal-failure copy.
+pub fn sub_close_notify_asp_notify(
+    service_name: Option<&str>,
+    job_id: &str,
+    asp_reject_reason: Option<&str>,
+) -> String {
     let svc = service_name_clause(" to", service_name);
+    if let Some(reason) = asp_reject_reason.filter(|value| !value.trim().is_empty()) {
+        return format!(
+            "[Assignment Closed] You declined the user's subscription{svc} before activation. Reason: {reason}. Job {job_id} status: Closed — do not start or continue delivery. This notice does not confirm refund settlement and authorizes no funds action."
+        );
+    }
     format!(
         "[Subscription Ended] The user's subscription{svc} has ended because the renewal charge failed during the grace period. Job {job_id} status: Closed — please stop delivering the service."
     )
@@ -755,7 +765,7 @@ mod tests {
         // away; a literal `<title>` placeholder must never appear in the body.
         let selected = sub_asp_selected_asp_notify(None, None, "job-1", None, None, None, None);
         let complete = sub_complete_notify_asp_notify(None, "job-1", None);
-        let closed = sub_close_notify_asp_notify(None, "job-1");
+        let closed = sub_close_notify_asp_notify(None, "job-1", None);
         let failed = sub_failed_notify_asp_notify(None, "job-1", None);
         for out in [&selected, &complete, &closed, &failed] {
             assert!(!out.contains("<title>"), "no literal placeholder: {out}");
@@ -767,6 +777,15 @@ mod tests {
             closed.contains("The user's subscription has ended because the renewal charge failed")
         );
         assert!(failed.contains("The user's free trial failed to convert to a paid subscription"));
+    }
+
+    #[test]
+    fn sub_close_asp_decline_copy_preserves_reason_without_refund_claim() {
+        let out = sub_close_notify_asp_notify(Some("My Sub"), "job-1", Some("unsupported region"));
+        assert!(out.contains("You declined the user's subscription to \"My Sub\""));
+        assert!(out.contains("Reason: unsupported region"));
+        assert!(out.contains("does not confirm refund settlement"));
+        assert!(!out.contains("renewal charge failed"));
     }
 
     #[test]

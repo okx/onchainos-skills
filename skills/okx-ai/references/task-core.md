@@ -98,10 +98,25 @@ When dealing with integer values of any of the fields below, **look up the table
 |---|---|
 | `paymentMode` | `0` = unset / `1` = escrow / `3` = legacy-disabled (stop; never execute the removed Task payment flow) |
 | `sender.role` (a2a-agent-chat) | Counterparty: `1` = User Agent (you are ASP) / `2` = ASP (you are User Agent) |
-| `vote` (by Evaluator) | `0` = Dispute upheld (User Agent wins, funds refunded) / `1` = Dispute not upheld (ASP wins, funds released to ASP) |
-| `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete (funds released to ASP) / `7`=close (funds returned to user) / `8`=expired / `9`=failed (evaluation refunds user) |
+| `vote` (by Evaluator) | `0` = Dispute upheld (User Agent wins; refund verdict) / `1` = Dispute not upheld (ASP wins; release verdict) |
+| `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete / `7`=close / `8`=expired / `9`=failed (backend refund terminal state) |
 
 🛑 **Iron rule**: before writing any semantic judgment about these fields, **cross-check the table above**. Misreading = wrong on-chain action.
+
+For User-facing refund finality, a status or vote is not enough: follow
+[`task-user-refund.md`](task-user-refund.md) and require its valid
+refund-specific settlement Tx Hash before saying funds were returned.
+
+## User Intent Routing
+
+> When the user-session receives free-form text targeting a specific task and no pending decision matches, load [`task-user-intent-routing.md`](task-user-intent-routing.md) and follow its routing flow.
+
+| Intent | Trigger examples | Detail |
+|---|---|---|
+| Take specific task (ASP) | "take {jobId} / accept task X / take task X / contact the User Agent of {jobId}" — **specific jobId** | [`task-asp-accept.md §1`](task-asp-accept.md) — ASPs are passive; there is no proactive-accept path. Designated tasks arrive via the `JobAspSelected` system event; reply with passive-readiness guidance and wait. **Do NOT directly `apply`** — apply is system-event-triggered only. |
+| Stake (Evaluator) | "I want to stake" | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
+| Re-submit / nudge / change terms | "re-submit / nudge / change currency" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
+| Task list / status / close / decision list | "my tasks / view decisions / close task" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
 
 ## Additional Resources
 
