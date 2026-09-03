@@ -7,11 +7,11 @@
 //!    status enums (`created`/`accepted` etc.) / CLI flags (`--*`) /
 //!    skill names (`okx-ai` etc.) /
 //!    status field names (`jobStatus`/`paymentMode`) are all banned.
-//!    **The string literals in this file are English** (escrow/x402, review window
+//!    **The string literals in this file are English** (escrow, review window
 //!    expired, task completed, etc.) and serve as the source-of-truth that the sub
 //!    agent localizes via LOCALIZATION_PREFIX — English users see them as-is,
 //!    non-English users see equivalents produced by the sub agent (e.g. Chinese
-//!    users see the equivalent of "escrow/x402, review window expired, task completed"). The no-technical-jargon
+//!    users see the equivalent of "escrow, review window expired, task completed"). The no-technical-jargon
 //!    rule applies to all languages, not just English.
 //!
 //! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
@@ -112,24 +112,6 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
          \x20\x20\x20\x20- Payment: <escrow>\n\
          \x20\x20\x20\x20- ASP: {agent_id}\n\
          \x20\x20\x20\x20Funds are now escrowed; the ASP has started execution."
-    )
-}
-
-/// `Event::JobAccepted` — x402 / A2MCP variant. Different from the escrow
-/// version: there is no negotiation (price is fixed by service registration),
-/// funds were paid up-front via the A2MCP endpoint (not escrowed), and the
-/// deliverable was already returned at request time. The agent fills in the
-/// `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` placeholders from
-/// the prefetched task context. Localize before sending.
-pub fn job_accepted_user_notify_a2mcp(job_id: &str, agent_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[Service Request Received] Job {job_id} — request received and paid via the A2MCP endpoint.\n\
-         \x20\x20\x20\x20- Title: <title>\n\
-         \x20\x20\x20\x20- Description: <description>\n\
-         \x20\x20\x20\x20- Price: <tokenAmount> <tokenSymbol>\n\
-         \x20\x20\x20\x20- Payment: A2MCP (paid at request time)\n\
-         \x20\x20\x20\x20- ASP: {agent_id}\n\
-         \x20\x20\x20\x20Deliverable was returned by the service endpoint at request time; awaiting on-chain completion receipt."
     )
 }
 

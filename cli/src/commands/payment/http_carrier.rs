@@ -5,6 +5,7 @@
 //! outbound request through [`build_request`] so a POST+body (or header/path)
 //! endpoint is honored instead of the old hardcoded `GET` + query string.
 
+use anyhow::{anyhow, bail, Result};
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde_json::{Map, Value};
 
@@ -95,6 +96,80 @@ pub fn build_request(
     rb
 }
 
+/// A2MCP-only request builder that preserves JSON types in body parameters.
+/// Non-body carriers are intentionally scalar-only and schema inconsistencies
+/// fail closed instead of dropping or coercing values.
+pub fn build_typed_request(
+    client: &reqwest::Client,
+    method: &str,
+    url: &str,
+    params: &Map<String, Value>,
+    plan: &[ParamSpec],
+) -> Result<reqwest::RequestBuilder> {
+    let body_bearing = is_body_bearing(method);
+    let http_method = reqwest::Method::from_bytes(method.as_bytes())
+        .map_err(|_| anyhow!("a2mcp_invalid_typed_params: invalid HTTP method"))?;
+    let mut final_url = url.to_string();
+    let mut query = Vec::new();
+    let mut body = Map::new();
+    let mut headers = Vec::new();
+
+    for (key, value) in params {
+        match carrier_for(key, plan, body_bearing) {
+            ParamCarrier::Body => {
+                if !body_bearing {
+                    bail!(
+                        "a2mcp_invalid_typed_params: body parameter '{key}' is invalid for {method}"
+                    );
+                }
+                body.insert(key.clone(), value.clone());
+            }
+            carrier => {
+                let scalar = scalar_text(value).ok_or_else(|| {
+                    anyhow!("a2mcp_invalid_typed_params: non-body parameter '{key}' must be scalar")
+                })?;
+                match carrier {
+                    ParamCarrier::Path => {
+                        let placeholder = format!("{{{key}}}");
+                        if !final_url.contains(&placeholder) {
+                            bail!(
+                                "a2mcp_invalid_typed_params: path placeholder '{placeholder}' is missing"
+                            );
+                        }
+                        let encoded = utf8_percent_encode(&scalar, NON_ALPHANUMERIC).to_string();
+                        final_url = final_url.replace(&placeholder, &encoded);
+                    }
+                    ParamCarrier::Query => query.push((key.clone(), scalar)),
+                    ParamCarrier::Header => headers.push((key.clone(), scalar)),
+                    ParamCarrier::Body => unreachable!(),
+                }
+            }
+        }
+    }
+
+    let mut request = client.request(http_method, final_url);
+    if !query.is_empty() {
+        request = request.query(&query);
+    }
+    if !body.is_empty() {
+        request = request.json(&Value::Object(body));
+    }
+    for (key, value) in headers {
+        request = request.header(key, value);
+    }
+    Ok(request)
+}
+
+fn scalar_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => Some("null".into()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::String(value) => Some(value.clone()),
+        Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +230,92 @@ mod tests {
                 "encoded segment must not contain raw `{ch}`: {encoded}"
             );
         }
+    }
+
+    #[test]
+    fn typed_request_preserves_json_body_types() {
+        let client = reqwest::Client::new();
+        let params = Map::from_iter([
+            ("count".into(), serde_json::json!(2)),
+            ("enabled".into(), serde_json::json!(true)),
+            ("filter".into(), serde_json::json!({"kind":"book"})),
+        ]);
+        let request = build_typed_request(&client, "POST", "https://example.com/pay", &params, &[])
+            .unwrap()
+            .build()
+            .unwrap();
+        let body: Value =
+            serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body["count"], serde_json::json!(2));
+        assert_eq!(body["enabled"], serde_json::json!(true));
+        assert_eq!(body["filter"], serde_json::json!({"kind":"book"}));
+    }
+
+    #[test]
+    fn typed_request_places_scalar_non_body_carriers() {
+        let client = reqwest::Client::new();
+        let params = Map::from_iter([
+            ("id".into(), serde_json::json!(42)),
+            ("q".into(), serde_json::json!(true)),
+            ("tenant".into(), serde_json::json!("alpha")),
+        ]);
+        let plan = vec![
+            spec("id", ParamCarrier::Path),
+            spec("q", ParamCarrier::Query),
+            spec("tenant", ParamCarrier::Header),
+        ];
+        let request = build_typed_request(
+            &client,
+            "GET",
+            "https://example.com/items/{id}",
+            &params,
+            &plan,
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+        assert_eq!(
+            request.url().as_str(),
+            "https://example.com/items/42?q=true"
+        );
+        assert_eq!(request.headers()["tenant"], "alpha");
+    }
+
+    #[test]
+    fn typed_request_rejects_schema_inconsistencies() {
+        let client = reqwest::Client::new();
+        let object = Map::from_iter([("q".into(), serde_json::json!({"x":1}))]);
+        assert!(
+            build_typed_request(&client, "GET", "https://example.com", &object, &[])
+                .unwrap_err()
+                .to_string()
+                .contains("must be scalar")
+        );
+
+        let body = Map::from_iter([("payload".into(), serde_json::json!(1))]);
+        let body_plan = vec![spec("payload", ParamCarrier::Body)];
+        assert!(
+            build_typed_request(&client, "GET", "https://example.com", &body, &body_plan)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid for GET")
+        );
+
+        let path = Map::from_iter([("id".into(), serde_json::json!(1))]);
+        let path_plan = vec![spec("id", ParamCarrier::Path)];
+        assert!(
+            build_typed_request(&client, "GET", "https://example.com", &path, &path_plan)
+                .unwrap_err()
+                .to_string()
+                .contains("placeholder")
+        );
+        assert!(build_typed_request(
+            &client,
+            "NOT A METHOD",
+            "https://example.com",
+            &Map::new(),
+            &[]
+        )
+        .is_err());
     }
 }
