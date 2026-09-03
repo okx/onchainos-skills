@@ -246,8 +246,8 @@ pub async fn resolve_agent_id_by_role(role_code: i64) -> Result<String> {
 }
 
 /// Build the broadcast `bizContext` object: the base `{ jobId, bizType }` plus
-/// any `biz_context_extra` object fields merged in (e.g. `paymentTxHash` for the
-/// x402 accept, FR-3). Pure + side-effect-free so the merge is unit-testable.
+/// any caller-owned extension fields. Pure and side-effect-free so the merge
+/// remains unit-testable.
 pub(crate) fn merge_biz_context(
     job_id: &str,
     biz_type: i64,
@@ -271,7 +271,7 @@ pub(crate) fn merge_biz_context(
 /// object (`data[0]`: `{ pkgId, orderId, orderType, txHash, bizUniqKey }`).
 ///
 /// Same flow as [`sign_uop_and_broadcast`]; used by callers that need the pkgId /
-/// orderId / bizUniqKey fields (e.g. task-402-pay's `broadcast{}` result shape),
+/// orderId / bizUniqKey fields used by command result envelopes,
 /// not just the txHash.
 #[allow(clippy::too_many_arguments)]
 pub async fn sign_uop_and_broadcast_full(
@@ -322,8 +322,8 @@ pub async fn sign_uop_and_broadcast_full(
     broadcast_body["bizContext"] = merge_biz_context(job_id, biz_type, biz_context_extra);
 
     // `.context` (not `anyhow!("...: {e}")`) so the underlying `ApiCodeError`
-    // survives in the chain — callers (task-402-pay fee-rejection) downcast to
-    // recover the backend `code` + `msg`. `{e:#}` still renders "broadcast failed: …".
+    // survives in the chain so callers can recover the backend `code` + `msg`.
+    // `{e:#}` still renders "broadcast failed: …".
     let bc_resp = client.post_mutation_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
         .context("broadcast failed")?;
 
@@ -589,32 +589,22 @@ mod tests {
     use super::merge_biz_context;
     use serde_json::json;
 
-    // FR-3: for bizType=7, biz_context_extra = { paymentTxHash } must be merged
-    // into the broadcast bizContext alongside the base jobId / bizType.
     #[test]
-    fn merge_biz_context_includes_payment_tx_hash() {
-        let extra = json!({ "paymentTxHash": "0xabc123" });
+    fn merge_biz_context_includes_extension_fields() {
+        let extra = json!({ "requestId": "req-123" });
         let ctx = merge_biz_context("job_1", 7, Some(&extra));
         assert_eq!(ctx["jobId"], "job_1");
         assert_eq!(ctx["bizType"], 7);
-        assert_eq!(ctx["paymentTxHash"], "0xabc123");
+        assert_eq!(ctx["requestId"], "req-123");
     }
 
-    // FR-2.3: an empty paymentTxHash is still threaded verbatim ("" when unknown).
-    #[test]
-    fn merge_biz_context_preserves_empty_payment_tx_hash() {
-        let extra = json!({ "paymentTxHash": "" });
-        let ctx = merge_biz_context("job_2", 7, Some(&extra));
-        assert_eq!(ctx["paymentTxHash"], "");
-    }
-
-    // No extra → base bizContext only, no spurious keys (non-402 callers pass None).
+    // No extra means base bizContext only, with no spurious extension keys.
     #[test]
     fn merge_biz_context_none_extra_is_base_only() {
         let ctx = merge_biz_context("job_3", 1, None);
         assert_eq!(ctx["jobId"], "job_3");
         assert_eq!(ctx["bizType"], 1);
-        assert!(ctx.get("paymentTxHash").is_none());
+        assert!(ctx.get("requestId").is_none());
         assert_eq!(ctx.as_object().unwrap().len(), 2);
     }
 }
