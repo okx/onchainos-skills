@@ -36,8 +36,9 @@ preserve IDs, URLs, raw tokens, and `A2A`/`A2MCP`.
 
 ## Preflight
 
-At thread start, run
-[`../okx-agentic-wallet/_shared/preflight.md`](../okx-agentic-wallet/_shared/preflight.md).
+Before the first CLI command that uses this skill, follow the shared
+[`../okx-agentic-wallet/_shared/preflight.md`](../okx-agentic-wallet/_shared/preflight.md)
+flow.
 
 ## Routing
 
