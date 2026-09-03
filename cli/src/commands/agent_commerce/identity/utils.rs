@@ -5,6 +5,7 @@
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::commands::Context;
 use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
@@ -1178,11 +1179,7 @@ fn read_agent_id(map: &serde_json::Map<String, Value>) -> Option<String> {
 //
 // Columns (references/identity-discover.md §My Agents), in order:
 //   Agent ID | Name | Role | Status | Approval status | Rating
-// Mirrors §1's rules: Name truncate-20; Role/Status via computed labels;
-// Approval status via approval_label, with `Review failed (reason: <remark>)`
-// when approvalDisplayStatus==5 and approvalRemark non-empty; Rating
-// `★ <ratingStars> (<count>)` or `No rating yet` (count 0 / no stars).
-// Unknown role/status/approval → `—` (a row keeps all columns).
+// Status and approval apply only to ASPs; other roles render `—`.
 fn build_agent_list_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     let agent_id = read_agent_id(map)
         .map(|id| format!("#{id}"))
@@ -1202,32 +1199,33 @@ fn build_agent_list_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
         .unwrap_or("—")
         .to_string();
 
-    let status = map
-        .get("status")
-        .and_then(status_label)
-        .unwrap_or("—")
-        .to_string();
-
-    // Approval status: approval_label, with §1's rejection parenthetical.
-    let approval_code = map.get("approvalDisplayStatus").and_then(Value::as_u64);
-    let approval = match approval_code.and_then(approval_label) {
-        Some(label) => {
-            let remark = map
-                .get("approvalRemark")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            match (approval_code, remark) {
-                (Some(5), Some(remark)) => format!("Review failed (reason: {remark})"),
-                (Some(5), None) => "Review failed".to_string(),
-                _ => label.to_string(),
+    let (status, approval) = if role == "ASP" {
+        let status = map
+            .get("status")
+            .and_then(status_label)
+            .unwrap_or("—")
+            .to_string();
+        let approval_code = map.get("approvalDisplayStatus").and_then(Value::as_u64);
+        let approval = match approval_code.and_then(approval_label) {
+            Some(label) => {
+                let remark = map
+                    .get("approvalRemark")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                match (approval_code, remark) {
+                    (Some(5), Some(remark)) => format!("Review failed (reason: {remark})"),
+                    (Some(5), None) => "Review failed".to_string(),
+                    _ => label.to_string(),
+                }
             }
-        }
-        None => "—".to_string(),
+            None => "—".to_string(),
+        };
+        (status, approval)
+    } else {
+        ("—".to_string(), "—".to_string())
     };
 
-    // Rating: `★ <ratingStars> (<count>)`, else `No rating yet`. §1 forbids
-    // `—` here — always `No rating yet` when there is no usable rating.
     let rating = match map.get("reputation").and_then(rating_stars) {
         Some(stars) => {
             let count = map
@@ -1547,6 +1545,19 @@ fn add_service_cells_to_node(node: &mut Value) {
         index += 1;
         if let Some(cells) = build_service_cells(index, service) {
             if let Value::Object(m) = service {
+                if let Some(guide) = m
+                    .get("serviceGuide")
+                    .and_then(Value::as_str)
+                    .filter(|guide| !guide.trim().is_empty())
+                {
+                    m.insert(
+                        "serviceGuideHash".to_string(),
+                        Value::String(format!(
+                            "sha256:{}",
+                            hex::encode(Sha256::digest(guide.as_bytes()))
+                        )),
+                    );
+                }
                 m.insert("cells".to_string(), Value::Array(cells));
             }
         } else {

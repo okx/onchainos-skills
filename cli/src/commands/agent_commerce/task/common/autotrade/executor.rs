@@ -68,8 +68,8 @@ struct ExecutionLatch {
     phase: ExecutionPhase,
     updated_at: u64,
     /// Present only for the Agent-direct path. It binds finalization to the
-    /// exact persisted policy amount without encoding or inspecting a target
-    /// venue command.
+    /// resolved fixed or percentage policy amount without encoding or
+    /// inspecting a target venue command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     direct_amount: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -98,6 +98,7 @@ struct AuthorizedTradeKitSettings {
     environment: Option<trade_kit::TradeEnvironment>,
     margin_mode: Option<consent::MarginMode>,
     order_policy: Option<consent::OrderPolicy>,
+    auth_mode: Option<consent::TradeKitAuthMode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -555,6 +556,20 @@ fn normalize_trade_kit_dash_values(args: &mut Vec<String>) {
     }
 }
 
+fn apply_trade_kit_auth_environment(
+    command: &mut Command,
+    auth_mode: Option<consent::TradeKitAuthMode>,
+) {
+    if auth_mode == Some(consent::TradeKitAuthMode::OAuth) {
+        // The OKX CLI prefers API-key credentials over a valid OAuth session
+        // and falls back to API-key values in its config when these variables
+        // are absent. Empty overrides mask both inherited and config-file AKs.
+        command.env("OKX_API_KEY", "")
+            .env("OKX_SECRET_KEY", "")
+            .env("OKX_PASSPHRASE", "");
+    }
+}
+
 fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.windows(2)
         .find(|pair| pair[0] == flag)
@@ -936,26 +951,14 @@ fn authorize(
             grants::check_grant(job_id, venue, action, &normalized)
                 .map_err(|error| anyhow::anyhow!(error.0))?;
         }
-        (ExecutionMode::Manual, consent::ConsentMode::Manual) => {
-            let stored = policy
-                .trade_amount_u
-                .as_deref()
-                .context("manual execution policy amount is missing")?;
-            if Decimal::parse(stored)?.to_plain_string() != normalized {
-                bail!("execution amount does not match the persisted manual policy");
-            }
-        }
         (ExecutionMode::OneTime, consent::ConsentMode::Auto) => {
             validate_one_time_permit(job_id, delivery_id, &normalized)?;
         }
-        (ExecutionMode::Auto, consent::ConsentMode::Manual) => {
-            bail!("automatic execution is not authorized by the manual policy")
-        }
         (ExecutionMode::Manual, consent::ConsentMode::Auto) => {
-            bail!("manual execution requires an explicit manual policy")
+            bail!("per-delivery manual execution is disabled")
         }
-        (ExecutionMode::OneTime, consent::ConsentMode::Manual) => {
-            bail!("one-time over-cap execution requires an active auto policy")
+        (_, consent::ConsentMode::Manual) => {
+            bail!("legacy manual policy is notify-only; automatic execution must be explicitly enabled")
         }
         (_, consent::ConsentMode::Decline) => bail!("copy-trade execution is declined"),
     }
@@ -965,6 +968,7 @@ fn authorize(
             environment: policy.trade_environment,
             margin_mode: policy.margin_mode,
             order_policy: policy.order_policy,
+            auth_mode: policy.auth_mode,
         },
     ))
 }
@@ -1444,6 +1448,7 @@ fn authorize_direct(
     job_id: &str,
     delivery_id: &str,
     amount: &str,
+    available_amount: Option<&str>,
     execution_mode: ExecutionMode,
 ) -> Result<String> {
     let normalized = Decimal::parse(amount)
@@ -1457,12 +1462,20 @@ fn authorize_direct(
         .context("copy-trade consent is missing or expired")?;
     match (execution_mode, policy.mode) {
         (ExecutionMode::Auto, consent::ConsentMode::Auto) => {
-            let stored = policy
-                .trade_amount_u
-                .as_deref()
-                .context("automatic execution policy amount is missing")?;
-            if Decimal::parse(stored)?.to_plain_string() != normalized {
-                bail!("execution amount does not match the persisted policy");
+            if consent::uses_percentage_amount(&policy.dynamic_settings) {
+                validate_percentage_policy_amount(
+                    &policy.dynamic_settings,
+                    &normalized,
+                    available_amount,
+                )?;
+            } else {
+                let stored = policy
+                    .trade_amount_u
+                    .as_deref()
+                    .context("automatic execution policy amount is missing")?;
+                if Decimal::parse(stored)?.to_plain_string() != normalized {
+                    bail!("execution amount does not match the persisted policy");
+                }
             }
             if let Some(cap) = policy.cap_u.as_deref() {
                 if !Decimal::parse(&normalized)?.le(&Decimal::parse(cap)?) {
@@ -1470,30 +1483,45 @@ fn authorize_direct(
                 }
             }
         }
-        (ExecutionMode::Manual, consent::ConsentMode::Manual) => {
-            let stored = policy
-                .trade_amount_u
-                .as_deref()
-                .context("manual execution policy amount is missing")?;
-            if Decimal::parse(stored)?.to_plain_string() != normalized {
-                bail!("execution amount does not match the persisted manual policy");
-            }
-        }
         (ExecutionMode::OneTime, consent::ConsentMode::Auto) => {
             validate_one_time_permit(job_id, delivery_id, &normalized)?;
         }
-        (ExecutionMode::Auto, consent::ConsentMode::Manual) => {
-            bail!("automatic execution is not authorized by the manual policy")
-        }
         (ExecutionMode::Manual, consent::ConsentMode::Auto) => {
-            bail!("manual execution requires an explicit manual policy")
+            bail!("per-delivery manual execution is disabled")
         }
-        (ExecutionMode::OneTime, consent::ConsentMode::Manual) => {
-            bail!("one-time execution requires an active auto policy")
+        (_, consent::ConsentMode::Manual) => {
+            bail!("legacy manual policy is notify-only; automatic execution must be explicitly enabled")
         }
         (_, consent::ConsentMode::Decline) => bail!("copy-trade execution is declined"),
     }
     Ok(normalized)
+}
+
+fn validate_percentage_policy_amount(
+    settings: &consent::DynamicConsentSettings,
+    resolved_amount: &str,
+    available_amount: Option<&str>,
+) -> Result<()> {
+    let ratio = consent::dynamic_decimal_setting(settings, "tradeAmountRatio")?;
+    let percentage = consent::dynamic_decimal_setting(settings, "tradeAmountPercent")?;
+    let available = Decimal::parse(
+        available_amount.context(
+            "--available-amount is required for a percentage execution policy",
+        )?,
+    )
+    .context("invalid available amount for percentage execution")?;
+    let expected = match (ratio, percentage) {
+        (Some(ratio), None) => Decimal::ratio_to_absolute(&available, &ratio)?,
+        (None, Some(percentage)) => Decimal::pct_to_absolute(&available, &percentage)?,
+        _ => bail!("percentage execution policy is incomplete or ambiguous"),
+    };
+    if expected.is_zero() {
+        bail!("percentage execution resolves to a zero amount");
+    }
+    if expected.to_plain_string() != resolved_amount {
+        bail!("execution amount does not match the persisted percentage policy");
+    }
+    Ok(())
 }
 
 /// Reserve one Agent-direct delivery immediately before its selected Skill/tool
@@ -1503,6 +1531,7 @@ pub fn claim_direct(
     job_id: &str,
     delivery_id: &str,
     amount: &str,
+    available_amount: Option<&str>,
     execution_mode: ExecutionMode,
 ) -> Result<DirectClaimResult> {
     use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
@@ -1512,7 +1541,13 @@ pub fn claim_direct(
     if context.execution_path != SubscriptionTradePath::AgentDirect {
         bail!("delivery is pinned to the legacy execution wrapper");
     }
-    let normalized = authorize_direct(job_id, delivery_id, amount, execution_mode)?;
+    let normalized = authorize_direct(
+        job_id,
+        delivery_id,
+        amount,
+        available_amount,
+        execution_mode,
+    )?;
     let path = outcome_path(job_id, delivery_id)?;
     if read_outcome(&path)?.is_some() {
         return Ok(DirectClaimResult {
@@ -1972,7 +2007,7 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
     }
 
     let started = now_secs();
-    let prepared = (|| -> Result<(String, PathBuf, Vec<String>)> {
+    let prepared = (|| -> Result<(String, PathBuf, Vec<String>, Option<consent::TradeKitAuthMode>)> {
         let (amount, authorized_settings) = authorize(
             request.job_id,
             request.delivery_id,
@@ -1999,10 +2034,13 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
                 bail!("Trade Kit command environment does not match persisted consent");
             }
             validate_trade_kit_execution_settings(&args, context, authorized_settings)?;
+            authorized_settings.auth_mode.context(
+                "Trade Kit authentication mode is not configured; choose oauth or api_key before execution",
+            )?;
         }
-        Ok((amount, program, args))
+        Ok((amount, program, args, authorized_settings.auth_mode))
     })();
-    let (amount, program, args) = match prepared {
+    let (amount, program, args, auth_mode) = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
             let amount = Decimal::parse(request.amount)
@@ -2041,6 +2079,9 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if request.venue == "trade_kit" {
+        apply_trade_kit_auth_environment(&mut command, auth_mode);
+    }
     if let Err(error) = update_execution_phase(
         request.job_id,
         request.delivery_id,
@@ -2864,6 +2905,35 @@ mod tests {
     }
 
     #[test]
+    fn oauth_auth_mode_masks_injected_and_config_api_keys() {
+        let mut oauth = Command::new("okx");
+        apply_trade_kit_auth_environment(&mut oauth, Some(consent::TradeKitAuthMode::OAuth));
+        let mut overrides = oauth
+            .as_std()
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().to_string(),
+                    value.map(|value| value.to_string_lossy().to_string()),
+                )
+            })
+            .collect::<Vec<_>>();
+        overrides.sort();
+        assert_eq!(
+            overrides,
+            [
+                ("OKX_API_KEY".to_string(), Some(String::new())),
+                ("OKX_PASSPHRASE".to_string(), Some(String::new())),
+                ("OKX_SECRET_KEY".to_string(), Some(String::new())),
+            ]
+        );
+
+        let mut api_key = Command::new("okx");
+        apply_trade_kit_auth_environment(&mut api_key, Some(consent::TradeKitAuthMode::ApiKey));
+        assert_eq!(api_key.as_std().get_envs().count(), 0);
+    }
+
+    #[test]
     fn trade_kit_execution_settings_are_bound_to_local_consent() {
         let market_perp = vec![
             "swap".into(),
@@ -2885,6 +2955,7 @@ mod tests {
                 environment: Some(trade_kit::TradeEnvironment::Demo),
                 margin_mode: Some(consent::MarginMode::Cross),
                 order_policy: Some(consent::OrderPolicy::Market),
+                auth_mode: Some(consent::TradeKitAuthMode::OAuth),
             },
         )
         .unwrap();
@@ -2896,6 +2967,7 @@ mod tests {
                 environment: Some(trade_kit::TradeEnvironment::Demo),
                 margin_mode: Some(consent::MarginMode::Cross),
                 order_policy: Some(consent::OrderPolicy::SignalPriceLimit),
+                auth_mode: Some(consent::TradeKitAuthMode::OAuth),
             },
         )
         .unwrap_err()
@@ -2919,6 +2991,7 @@ mod tests {
                 environment: Some(trade_kit::TradeEnvironment::Live),
                 margin_mode: None,
                 order_policy: Some(consent::OrderPolicy::SignalPriceLimit),
+                auth_mode: Some(consent::TradeKitAuthMode::OAuth),
             },
         )
         .unwrap_err()
@@ -2936,6 +3009,7 @@ mod tests {
                 environment: Some(trade_kit::TradeEnvironment::Live),
                 margin_mode: None,
                 order_policy: Some(consent::OrderPolicy::Market),
+                auth_mode: Some(consent::TradeKitAuthMode::OAuth),
             },
         )
         .unwrap_err()
@@ -2973,6 +3047,7 @@ mod tests {
                 environment: Some(trade_kit::TradeEnvironment::Demo),
                 margin_mode: Some(consent::MarginMode::Cross),
                 order_policy: Some(consent::OrderPolicy::Market),
+                auth_mode: Some(consent::TradeKitAuthMode::OAuth),
             },
         )
         .unwrap();
@@ -2996,6 +3071,7 @@ mod tests {
                 environment: Some(trade_kit::TradeEnvironment::Demo),
                 margin_mode: Some(consent::MarginMode::Isolated),
                 order_policy: Some(consent::OrderPolicy::Market),
+                auth_mode: Some(consent::TradeKitAuthMode::OAuth),
             },
         )
         .unwrap_err()
@@ -3009,6 +3085,7 @@ mod tests {
                 environment: Some(trade_kit::TradeEnvironment::Demo),
                 margin_mode: Some(consent::MarginMode::Cross),
                 order_policy: Some(consent::OrderPolicy::SignalPriceLimit),
+                auth_mode: Some(consent::TradeKitAuthMode::OAuth),
             },
         )
         .unwrap_err()
@@ -3076,12 +3153,24 @@ mod tests {
         )
         .unwrap();
 
-        assert!(claim_direct("job-direct", "delivery-1", "11", ExecutionMode::Auto)
+        assert!(claim_direct(
+            "job-direct",
+            "delivery-1",
+            "11",
+            None,
+            ExecutionMode::Auto,
+        )
             .unwrap_err()
             .to_string()
             .contains("does not match"));
-        let claimed =
-            claim_direct("job-direct", "delivery-1", "10.0", ExecutionMode::Auto).unwrap();
+        let claimed = claim_direct(
+            "job-direct",
+            "delivery-1",
+            "10.0",
+            None,
+            ExecutionMode::Auto,
+        )
+        .unwrap();
         assert!(claimed.allowed);
         assert_eq!(claimed.status, "claimed");
         assert_eq!(claimed.amount.as_deref(), Some("10"));
@@ -3090,8 +3179,14 @@ mod tests {
             RecoveryState::SubmissionUnknown
         );
 
-        let duplicate =
-            claim_direct("job-direct", "delivery-1", "10", ExecutionMode::Auto).unwrap();
+        let duplicate = claim_direct(
+            "job-direct",
+            "delivery-1",
+            "10",
+            None,
+            ExecutionMode::Auto,
+        )
+        .unwrap();
         assert!(!duplicate.allowed);
         assert_eq!(duplicate.status, "already_claimed");
 
@@ -3127,6 +3222,130 @@ mod tests {
     }
 
     #[test]
+    fn direct_claim_rejects_legacy_manual_policy_as_notify_only() {
+        use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
+
+        let _guard = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = test_tempdir();
+        std::env::set_var("ONCHAINOS_HOME", temp.path());
+        consent::register_delivery_context_with_path(
+            "job-manual-notify-only",
+            "7",
+            "8",
+            Some("session:test"),
+            "delivery-1",
+            "/tmp/signal.txt",
+            "text",
+            1,
+            SubscriptionTradePath::AgentDirect,
+        )
+        .unwrap();
+        consent::write_consent_with_trade_amount(
+            "job-manual-notify-only",
+            consent::ConsentMode::Manual,
+            None,
+            Some("10"),
+            Some("USDT"),
+            3600,
+        )
+        .unwrap();
+
+        let error = claim_direct(
+            "job-manual-notify-only",
+            "delivery-1",
+            "10",
+            None,
+            ExecutionMode::Manual,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("legacy manual policy is notify-only"));
+        assert_eq!(
+            recovery_state("job-manual-notify-only", "delivery-1").unwrap(),
+            RecoveryState::NoExecution
+        );
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn direct_claim_verifies_percentage_against_current_available_amount() {
+        use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
+
+        let _guard = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = test_tempdir();
+        std::env::set_var("ONCHAINOS_HOME", temp.path());
+        consent::register_delivery_context_with_path(
+            "job-percentage",
+            "7",
+            "8",
+            Some("session:test"),
+            "delivery-1",
+            "/tmp/signal.txt",
+            "text",
+            1,
+            SubscriptionTradePath::AgentDirect,
+        )
+        .unwrap();
+        let settings = consent::parse_dynamic_settings_json(
+            Some(
+                r#"{"tradeAmountMode":"available_balance_ratio","tradeAmountRatio":"0.25"}"#,
+            ),
+            "--settings-json",
+        )
+        .unwrap();
+        consent::write_consent_policy_with_dynamic_settings(
+            "job-percentage",
+            consent::ConsentMode::Auto,
+            Some("30"),
+            None,
+            Some("USDT"),
+            None,
+            None,
+            None,
+            None,
+            Some(&settings),
+            3600,
+        )
+        .unwrap();
+
+        assert!(claim_direct(
+            "job-percentage",
+            "delivery-1",
+            "25",
+            None,
+            ExecutionMode::Auto,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("--available-amount is required"));
+        assert!(claim_direct(
+            "job-percentage",
+            "delivery-1",
+            "20",
+            Some("100"),
+            ExecutionMode::Auto,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("percentage policy"));
+
+        let claimed = claim_direct(
+            "job-percentage",
+            "delivery-1",
+            "25.0",
+            Some("100"),
+            ExecutionMode::Auto,
+        )
+        .unwrap();
+        assert!(claimed.allowed);
+        assert_eq!(claimed.amount.as_deref(), Some("25"));
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
     fn direct_coordinator_refuses_a_legacy_delivery() {
         let _guard = crate::home::TEST_ENV_MUTEX
             .lock()
@@ -3153,10 +3372,16 @@ mod tests {
             3600,
         )
         .unwrap();
-        assert!(claim_direct("job-legacy", "delivery-1", "10", ExecutionMode::Auto)
-            .unwrap_err()
-            .to_string()
-            .contains("legacy execution wrapper"));
+        assert!(claim_direct(
+            "job-legacy",
+            "delivery-1",
+            "10",
+            None,
+            ExecutionMode::Auto,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("legacy execution wrapper"));
         std::env::remove_var("ONCHAINOS_HOME");
     }
 

@@ -505,7 +505,7 @@ fn build_agent_list_cells_full_asp_row() {
 }
 
 #[test]
-fn build_agent_list_cells_count_zero_no_rating_and_truncates_name() {
+fn build_agent_list_cells_user_role_and_truncated_name() {
     let row = json!({
         "agentId": "58",
         "name": "A really long agent name that exceeds twenty",
@@ -523,13 +523,10 @@ fn build_agent_list_cells_count_zero_no_rating_and_truncates_name() {
         ("Name".to_string(), "A really long agent …".to_string())
     );
     assert_eq!(pairs[2].1, "User");
-    // count 0 → No rating yet (never `—` in list view).
-    assert_eq!(
-        pairs[5],
-        ("Rating".to_string(), "No rating yet".to_string())
-    );
-    // no approvalDisplayStatus → `—`.
+    // User status and approval are not applicable.
+    assert_eq!(pairs[3], ("Status".to_string(), "—".to_string()));
     assert_eq!(pairs[4], ("Approval status".to_string(), "—".to_string()));
+    assert_eq!(pairs[5], ("Rating".to_string(), "No rating yet".to_string()));
 }
 
 #[test]
@@ -1131,6 +1128,9 @@ fn add_service_list_cells_preserves_service_guide_in_array_wrapper_shape() {
         svc["serviceGuide"],
         json!("## Summary\nSubscribe checklist body")
     );
+    assert!(svc["serviceGuideHash"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
     assert!(svc.get("cells").is_some());
 }
 
@@ -1149,7 +1149,11 @@ fn add_service_list_cells_preserves_service_guide_in_bare_object_shape() {
     });
     add_service_list_cells(&mut data);
     assert_eq!(data["list"][0]["serviceGuide"], json!("step 1; step 2"));
+    assert!(data["list"][0]["serviceGuideHash"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
     assert!(data["list"][1].get("serviceGuide").is_none());
+    assert!(data["list"][1].get("serviceGuideHash").is_none());
     assert!(data["list"][0].get("cells").is_some());
 }
 

@@ -16,22 +16,19 @@ onchainos agent service-match \
 
 Use the requested limit; otherwise **MUST** pass `--limit 3`.
 
-Read `services[]`, `searchAfter`, `hasMore`, `action`, and `tip`.
+Read `services[]`, `searchAfter`, `hasMore`, and `tip`.
 
 ## Display
 
-**MUST** group `services[]` by `asp.aspAgentId` in returned order and render each Agent using this layout:
+**MUST** group `services[]` by `asp.aspAgentId` in returned order and render
+them directly with `identity-output-templates.md`. For each group, put the
+Agent heading above its Service table:
 
 ```markdown
 ### <asp.aspName> (Agent ID: <asp.aspAgentId>) | Rating <asp.rating> | Sold Count <asp.soldCount>
-
-| # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description |
-|---|---|---|---|---|---|---|---|
-| 1 | <serviceName> | <serviceType> | <fee> | <subscription> | <freeTrial> | <endpoint> | <serviceDescription> |
 ```
 
-Render fields per [`identity-service-contract.md` §Display]. **MUST** render all Agent tables as above,
-then the CLI `tip` once.
+**MUST** render all Agent tables as above, then the localized CLI `tip` once.
 
 ```text
 <CLI-returned tip>
@@ -56,5 +53,3 @@ Use the selected Service's numeric `sid`.
 ```bash
 onchainos agent task-create-prepare --sid <selected-sid>
 ```
-
-Follow `data.action`.
