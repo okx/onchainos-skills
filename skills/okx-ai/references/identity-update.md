@@ -13,7 +13,7 @@ Actions:
 
 1. Run `agent get-agents` and render the target's current `card[]`.
 2. Stop if the identity does not belong to the current wallet.
-3. For an existing service update or deletion, run `agent service-list` and obtain its `serviceId`.
+3. For an existing service update or deletion, run `agent service-list --agent-id <id> --page 1 --page-size 3` and obtain its `serviceId`. If absent and `hasMore:true`, fetch `page+1` with `--page-size 3` after the user replies "view more".
 
 rules:
 
@@ -115,6 +115,6 @@ Prefix every command with `onchainos`. Do not add `--chain`, `--address`, or und
 | CLI | Usage | Response / rules |
 |---|---|---|
 | `agent get-agents` | `onchainos agent get-agents --agent-ids <id[,id...]>` | Read the returned agent array and render its display-ready `card[]`; use it to confirm the target identity. |
-| `agent service-list` | `onchainos agent service-list --agent-id <id> [--service-id <uuid>]` | Read `serviceId` and copy it into the update/delete payload's `id`; never use numeric raw `id`. Render display-ready `cells[]` and use `serviceGuide` when present. |
+| `agent service-list` | `onchainos agent service-list --agent-id <id> --page <n> --page-size 3 [--service-id <uuid>]` | Read `serviceId` and copy it into the update/delete payload's `id`; never use numeric raw `id`. Render display-ready `cells[]` and use `serviceGuide` when present. |
 | `agent validate-listing` (hidden, local) | `onchainos agent validate-listing --role <role> [--name <name>] [--description <text>] --service '<json-array>'` | Use only for ASP Update mode. Read `pass` and `findings[]`; never expose diagnostic `code`. |
 | `agent update` | `onchainos agent update --agent-id <id> [--name <name>] [--description <text>] [--picture <cdn-url>] [--service '<delta-json-array>']` | Omit unchanged identity fields. Send only service deltas from (`identity-service-contract.md`). `--description ""` does not clear a description. Success returns `txHash`; `agent` is optional. |

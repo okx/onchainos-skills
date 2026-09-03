@@ -1188,6 +1188,68 @@ fn add_service_list_cells_walks_array_of_wrappers_with_list_key() {
         svcs[1]["cells"][2],
         json!({ "label": "Type", "value": "agent-to-agent" })
     );
+    assert_eq!(data[0]["page"], json!(1));
+    assert_eq!(data[0]["pageSize"], json!(20));
+    assert_eq!(data[0]["total"], json!(2));
+    assert_eq!(data[0]["hasMore"], json!(false));
+}
+
+#[test]
+fn add_service_list_cells_preserves_empty_page_metadata() {
+    for total in [0, 12] {
+        let mut data = json!([{
+            "agentInfo": { "agentId": "392", "name": "Agent 392" },
+            "list": [],
+            "page": 3,
+            "pageSize": 5,
+            "total": total,
+        }]);
+
+        add_service_list_cells(&mut data);
+
+        assert_eq!(data[0]["list"], json!([]));
+        assert_eq!(data[0]["page"], json!(3));
+        assert_eq!(data[0]["pageSize"], json!(5));
+        assert_eq!(data[0]["total"], json!(total));
+        assert_eq!(data[0]["hasMore"], json!(false));
+    }
+}
+
+#[test]
+fn add_service_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in [
+        (1, 3, 7, true),
+        (2, 3, 7, true),
+        (3, 3, 7, false),
+        (1, 3, 3, false),
+        (1, 3, 0, false),
+    ] {
+        let mut data = json!([{
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        }]);
+
+        add_service_list_cells(&mut data);
+
+        assert_eq!(data[0]["hasMore"], json!(expected));
+    }
+}
+
+#[test]
+fn add_service_list_cells_derives_has_more_from_string_metadata() {
+    let mut data = json!([{
+        "list": [],
+        "page": "2",
+        "pageSize": "3",
+        "total": "7",
+    }]);
+
+    add_service_list_cells(&mut data);
+
+    assert_eq!(data[0]["hasMore"], json!(true));
 }
 
 #[test]

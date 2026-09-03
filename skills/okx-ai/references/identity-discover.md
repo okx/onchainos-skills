@@ -8,7 +8,7 @@ Use for read-only owned-Agent lists, Agent details, and Service lists.
 |---|---|
 | My Agents | `agent get-my-agents` |
 | Detail for explicit Agent IDs | `agent get-agents --agent-ids <ids>` |
-| Services for an explicit Agent ID | `agent service-list --agent-id <id>` |
+| Services for an explicit Agent ID | `agent service-list --agent-id <id> --page <n> --page-size 3` |
 
 ## My Agents
 
@@ -34,15 +34,23 @@ onchainos agent get-agents --agent-ids <id[,id...]>
 
 **MUST** render each Agent's display-ready `card[]` with `Agent detail` from
 `identity-output-templates.md`. For ASPs only, run
-`agent service-list --agent-id <id>` at most once and apply `## Service list`.
+`agent service-list --agent-id <id> --page 1 --page-size 3` and apply `## Service list`.
 
 ## Service list
 
 Run:
 
 ```bash
-onchainos agent service-list --agent-id <id>
+onchainos agent service-list --agent-id <id> --page <n> --page-size 3
 ```
 
 **MUST** use the `Service table` in `identity-output-templates.md` to render only
 returned `cells[]` in order.
+
+### Pagination
+
+When `hasMore == true` and the user asks for more, run:
+
+```bash
+onchainos agent service-list --agent-id <id> --page <page+1> --page-size 3
+```

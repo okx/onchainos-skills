@@ -1508,12 +1508,13 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     ])
 }
 
-/// Add `cells` (per §4) to every service. The `#` column is 1-based over the
-/// rendered services. Tolerates BOTH shapes:
+/// Add `cells` (per §4) to every service and derive `hasMore` for paginated
+/// wrappers. The `#` column is 1-based over the rendered services. Tolerates
+/// BOTH shapes:
 ///   • live backend: `data` is an ARRAY of `{ agentInfo, list:[service…] }`
 ///     wrappers — services live under each wrapper's `list`.
 ///   • older/synthetic: a single object carrying a flat `services` array.
-/// No-op when neither shape matches. Additive.
+/// Cell enrichment is a no-op when neither service-array shape matches.
 pub(super) fn add_service_list_cells(v: &mut Value) {
     match v {
         Value::Array(wrappers) => {
@@ -1525,12 +1526,22 @@ pub(super) fn add_service_list_cells(v: &mut Value) {
     }
 }
 
-/// Locate this node's service array (under `list` then `services`) and stamp a
-/// `cells` array onto each service object. No-op when no service array exists.
+/// Derive pagination metadata, then locate this node's service array (under
+/// `list` then `services`) and stamp `cells` onto each service object.
 fn add_service_cells_to_node(node: &mut Value) {
     let Some(map) = node.as_object_mut() else {
         return;
     };
+    if let (Some(page), Some(page_size), Some(total)) = (
+        pagination_value(map.get("page")),
+        pagination_value(map.get("pageSize")),
+        pagination_value(map.get("total")),
+    ) {
+        map.insert(
+            "hasMore".to_string(),
+            Value::Bool(page.saturating_mul(page_size) < total),
+        );
+    }
     let key = ["list", "services"]
         .into_iter()
         .find(|k| map.get(*k).map(Value::is_array).unwrap_or(false));
@@ -1564,6 +1575,14 @@ fn add_service_cells_to_node(node: &mut Value) {
             // No usable service name → don't consume an index number.
             index -= 1;
         }
+    }
+}
+
+fn pagination_value(value: Option<&Value>) -> Option<u64> {
+    match value? {
+        Value::Number(number) => number.as_u64(),
+        Value::String(value) => value.trim().parse().ok(),
+        _ => None,
     }
 }
 

@@ -16,9 +16,6 @@ const VALIDATE_LISTING: &str =
     include_str!("../../skills/okx-ai/references/identity-validate-listing.md");
 const ERRORS: &str = include_str!("../../skills/okx-ai/references/identity-errors.md");
 const TASK_CLI: &str = include_str!("../../skills/okx-ai/references/task-cli-reference.md");
-const TASK_PUBLISH: &str =
-    include_str!("../../skills/okx-ai/references/task-user-actions-publish.md");
-const AI_GUIDE: &str = include_str!("../../skills/okx-guide/references/ai-guide.md");
 const REGISTERED_HOME: &str = include_str!("../../skills/okx-guide/references/registered-home.md");
 const UNREGISTERED_ROLE_SELECTION: &str =
     include_str!("../../skills/okx-guide/references/unregistered-role-selection.md");
@@ -39,32 +36,40 @@ fn identity_cli_reference_is_compact_and_owns_shared_cli_rules() {
 }
 
 #[test]
-fn identity_cli_reference_preserves_command_contracts() {
+fn identity_cli_reference_contains_only_consumed_command_contracts() {
     for command in [
-        "agent pre-check --role <user|asp|evaluator> [--consent-key <uuid>]",
-        "agent upload --file <local-image-path>",
-        "agent create --role <role> --name <name>",
-        "agent update --agent-id <id>",
-        "agent validate-listing --role <role>",
-        "`agent get-my-agents`",
-        "`agent get-agents`",
-        "`agent service-list`",
         "`agent feedback-list`",
-        "agent activate --agent-id <id> --preferred-language <BCP-47>",
-        "agent deactivate --agent-id <id>",
-        "agent search --query <text>",
-        "agent get [--agent-ids <ids>]",
-        "agent get-by-address --communication-address <address>",
-        "agent xmtp-sign --key-uuid <uuid> --message <text>",
+        "`agent activate`",
+        "`agent deactivate`",
     ] {
         assert!(
             CLI_REFERENCE.contains(command),
             "missing contract: {command}"
         );
     }
+    for command in [
+        "agent pre-check",
+        "agent upload",
+        "agent create",
+        "agent update",
+        "agent validate-listing",
+        "agent get-my-agents",
+        "agent get-agents",
+        "agent service-list",
+        "agent search",
+        "agent get ",
+        "agent get-by-address",
+        "agent xmtp-sign",
+    ] {
+        assert!(
+            !CLI_REFERENCE.contains(command),
+            "unconsumed command leaked into shared reference: {command}"
+        );
+    }
     assert!(CLI_REFERENCE.contains("Never add `--chain`, `--address`, or undocumented `--format`"));
-    assert!(CLI_REFERENCE.contains("`agent consent` (the command does not exist)"));
-    assert!(!CLI_REFERENCE.contains("agent service-match [--keywords"));
+    assert!(REVIEWS.contains("Invoke `feedback-list` per `identity-cli-reference.md`"));
+    assert!(LISTING.contains("`deactivate` form in `identity-cli-reference.md`"));
+    assert!(LISTING.contains("`activate` form in `identity-cli-reference.md`"));
     assert!(SERVICE_SEARCH.contains(r"onchainos agent service-match \"));
     assert!(SERVICE_SEARCH.contains("onchainos agent service-match --search-after <cursor>"));
 }
@@ -118,12 +123,6 @@ fn task_flows_own_task_feedback_commands() {
     assert!(!CLI_REFERENCE.contains("agent feedback-submit"));
     assert!(!CLI_REFERENCE.contains("agent task-feedback"));
 
-    assert!(TASK_PUBLISH.contains("identity-cli-reference.md"));
-    assert!(!TASK_PUBLISH.contains("onchainos agent get-my-agents --role user"));
-    assert!(!TASK_PUBLISH.contains("onchainos agent service-list --agent-id"));
-
-    assert!(AI_GUIDE.contains("../../okx-ai/references/identity-cli-reference.md"));
-    assert!(REGISTERED_HOME.contains("../../okx-ai/references/identity-cli-reference.md"));
     assert!(REGISTERED_HOME.contains("./unregistered-role-selection.md"));
     assert!(UNREGISTERED_ROLE_SELECTION.contains("../../okx-ai/references/identity-register.md"));
     assert!(!REGISTERED_HOME.contains("onchainos agent search --query"));
@@ -137,7 +136,7 @@ fn identity_write_gates_are_preserved() {
     let service_contract = flatten(SERVICE_CONTRACT);
     let validate_listing = flatten(VALIDATE_LISTING);
     assert!(register.contains("`agent pre-check` **requires** `--role`"));
-    assert!(register.contains("Invoke the initial form from `identity-cli-reference.md`"));
+    assert!(register.contains("Run the initial `agent pre-check`"));
     assert!(register.contains("confirmation cannot be skipped or reused from an earlier action"));
     assert!(update.contains("Obtain fresh explicit confirmation for the final diff"));
     assert!(service_contract
@@ -268,6 +267,15 @@ fn identity_read_and_toggle_behavior_is_preserved() {
 }
 
 #[test]
+fn service_list_pagination_matches_service_search_pattern() {
+    let discover = flatten(DISCOVER);
+    let update = flatten(UPDATE);
+    assert!(discover.contains("When `hasMore == true` and the user asks for more"));
+    assert!(discover.contains("--page <page+1> --page-size 3"));
+    assert!(update.contains("If absent and `hasMore:true`, fetch `page+1` with `--page-size 3` after the user replies \"view more\""));
+}
+
+#[test]
 fn identity_historical_service_behavior_is_preserved() {
     let contract = flatten(SERVICE_CONTRACT);
     let qa = flatten(VALIDATE_LISTING);
@@ -359,10 +367,7 @@ fn identity_shared_rules_have_single_owners() {
     assert!(!discover.contains("Never display `serviceGuide`"));
     assert!(!search.contains("Never display `serviceGuide`"));
 
-    assert!(cli.contains("Use service `id` only to build an update/delete delta; never display it"));
-    assert!(
-        discover.contains("Command syntax and response fields live in `identity-cli-reference.md`")
-    );
+    assert!(UPDATE.contains("Never use the numeric raw `id`; use `serviceId`"));
     assert!(!discover.contains("Never display the raw `serviceId`"));
     assert!(!search.contains("Never display the raw `serviceId`"));
 
