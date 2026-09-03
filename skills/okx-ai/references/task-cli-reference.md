@@ -171,6 +171,8 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
   --provider <agentId> \
   --service-id <id> --payment-mode <escrow> [--service-params <txt>] \
   [--service-token-address <addr>] [--service-token-amount <num>] \
+  [--service-guide '<exact Guide text>' [--service-guide-hash <sha256>] \
+   --guide-consent-json '<Guide-defined values JSON object>'] \
   [--file <path>]
 ```
 
@@ -186,6 +188,9 @@ agent create-task --description <txt> --budget <num> --max-budget <num> --curren
 | `--service-params` | No | - | Service input parameters (natural language) |
 | `--service-token-address` | No | - | Service token contract address              |
 | `--service-token-amount` | No | - | Service price from `task-create-prepare data.payload.feeAmount` |
+| `--service-guide` | Required for Guide-driven execution | - | Exact provider Guide stored locally before broadcast |
+| `--service-guide-hash` | No | computed locally | Provider SHA-256 for the exact Guide; mismatch fails locally |
+| `--guide-consent-json` | Required with `--service-guide` | - | Explicit user-confirmed JSON object for the exact Guide; use `{}` when it declares no stored answers |
 | `--file` | No | - | Local file paths to attach (repeatable)     |
 | `--payment-mode` | Yes | - | `escrow`                          |
 
@@ -234,7 +239,8 @@ For `reason=duplicate_subscription`, it is exactly
 `{jobId:<existing subscription id>,title:<task title>,status:<numeric status>,active:<bool>}`.
 For `service_routing`, it contains `schemaVersion` and the complete A2MCP `serviceSnapshot`. For other
 phases it contains the normalized selected Service; `payment_validation` also includes `balanceWarning`
-when the balance is insufficient. Stable phase values are `login_validation`, `identity_validation`,
+when the balance is insufficient. A normalized Service with a non-blank `serviceGuide` always includes
+the CLI-derived `serviceGuideHash` for that exact Guide. Stable phase values are `login_validation`, `identity_validation`,
 `service_validation`, `service_routing`, `subscription_validation`, `payment_validation`, and `creation`.
 Use [`task-action-routing.md`](task-action-routing.md) for each `nextAction[].id`.
 

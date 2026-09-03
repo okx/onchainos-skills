@@ -10,7 +10,7 @@ legacy prose field `action`.
 | `invoke_a2mcp` | `a2mcp-direct-invoke.md` | Parameters are collected and validated automatically; only payment is confirmed in that playbook | Run the A2MCP direct-invocation flow |
 | `fund_account` | Wallet funding flow | Required | Rerun prepare with the same `sid` |
 | `restore_subscription` | `task-user-duplicate-subscription-guide.md` | Required | Enter scoped watch |
-| `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |
+| `open_create_playbook` | `task-user-actions-create.md` | No | Handled by the playbook |
 | `stop` | End the current flow | No | Run no further command |
 
 ## Routing rules

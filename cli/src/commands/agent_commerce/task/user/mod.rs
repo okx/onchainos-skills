@@ -114,6 +114,15 @@ pub enum TaskCommand {
         /// Service price (from asp/match feeAmount)
         #[arg(long = "service-token-amount")]
         service_token_amount: Option<String>,
+        /// Exact provider service Guide. Stored locally before broadcast.
+        #[arg(long = "service-guide")]
+        service_guide: Option<String>,
+        /// SHA-256 of the exact service Guide when supplied by the provider.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// User-confirmed values for the matching Guide.
+        #[arg(long = "guide-consent-json")]
+        guide_consent_json: Option<String>,
     },
     /// Create a subscription task (providerConfirmStatus → EIP-712 sign → create → broadcast)
     CreateSubscribe {
@@ -1839,6 +1848,9 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             service_params,
             service_token_address,
             service_token_amount,
+            service_guide,
+            service_guide_hash,
+            guide_consent_json,
         } => {
             create::handle_create(
                 &mut client,
@@ -1855,6 +1867,9 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                     service_params,
                     service_token_address,
                     service_token_amount,
+                    service_guide,
+                    service_guide_hash,
+                    guide_consent_json,
                 },
             )
             .await
