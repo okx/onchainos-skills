@@ -127,6 +127,15 @@ pub enum AgentCommand {
         /// Service price (from asp/match feeAmount)
         #[arg(long = "service-token-amount")]
         service_token_amount: Option<String>,
+        /// Exact provider service Guide. Stored locally before broadcast.
+        #[arg(long = "service-guide")]
+        service_guide: Option<String>,
+        /// SHA-256 of the exact service Guide when supplied by the provider.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// User-confirmed values for the matching Guide.
+        #[arg(long = "guide-consent-json")]
+        guide_consent_json: Option<String>,
         /// Accepted for compatibility but ignored — user identity is auto-resolved.
         #[arg(long = "agentId", alias = "agent-id", hide = true)]
         _agent_id: Option<String>,
@@ -1380,6 +1389,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             service_params,
             service_token_address,
             service_token_amount,
+            service_guide,
+            service_guide_hash,
+            guide_consent_json,
             _agent_id: _,
         } => {
             task::user::run_task(
@@ -1396,6 +1408,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     service_params,
                     service_token_address,
                     service_token_amount,
+                    service_guide,
+                    service_guide_hash,
+                    guide_consent_json,
                 },
                 ctx,
             )
