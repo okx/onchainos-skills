@@ -1132,7 +1132,7 @@ fn compute_drift(effective_cli: &str, skill_version: Option<&str>) -> Option<Str
 /// onchainos skills via the package manager — the same `npx skills add` the
 /// drift hint used to only recommend — instead of asking the user to run it by
 /// hand. Bounded and best-effort (mirrors [`remove_deprecated_skills`]): a
-/// missing npx, a non-zero exit, or a 30s timeout returns `false` so the caller
+/// missing npx, a non-zero exit, or a 120s timeout returns `false` so the caller
 /// falls back to the manual hint. `beta` selects the channel to match the CLI.
 async fn update_drifted_skills(beta: bool) -> bool {
     let pkg = if beta {
@@ -1151,7 +1151,7 @@ async fn update_drifted_skills(beta: bool) -> bool {
         Ok(c) => c,
         Err(_) => return false,
     };
-    match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
+    match tokio::time::timeout(Duration::from_secs(120), child.wait()).await {
         Ok(Ok(status)) => status.success(),
         _ => {
             let _ = child.kill().await;
