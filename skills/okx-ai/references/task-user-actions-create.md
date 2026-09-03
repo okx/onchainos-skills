@@ -140,13 +140,17 @@ After confirmation, run this read-only check exactly once:
 onchainos agent communication-check
 ```
 
-The check is advisory and never blocks creation:
+Handle the result as follows:
 
-- `data.ok=true`: continue silently.
-- `data.ok=false`: show a concise localized warning from `data.hint`, then
-  continue without another confirmation.
-- `data.note`, execution failure, or parse failure: show a concise localized
-  warning, then continue.
+- `data.ok=true` without `data.note`: continue silently.
+- Otherwise show the localized `data.hint`, `data.note`, or error and ask:
+  1. Repair communication (recommended)
+  2. Continue creation
+
+Do not choose for the user. End the turn and wait. For option 1, follow
+`chat-comm-init.md`; when it returns `ready=true`, continue creation. For option
+2, continue creation immediately. Reuse the confirmed parameters in both
+cases; do not rerun `communication-check` or the confirmation form.
 
 Branch only on `payload.supportSubscription`. Use `payload.serviceId` for
 `--service-id`; never pass `payload.sid`, which is only the preparation
