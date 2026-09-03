@@ -1437,7 +1437,7 @@ pub(super) fn build_search_table(v: &Value) -> Value {
 // serviceGuide is handled only by the guided register/update flows.
 // service-list returns PascalCase keys
 // (`ServiceName` / `ServiceType` / `Fee` / `Endpoint`); we read tolerantly.
-// Type: A2MCP → "API service", A2A → "agent-to-agent" (verbatim otherwise).
+// Type: display the canonical service type (`A2MCP` or `A2A`) verbatim.
 // Fee: `<n> USDT`; subscription-priced A2A → `—`; unpriced A2MCP → `—`, other
 // unpriced → `free`. Subscription: each
 // monthly tier `<n> USDT / month`, or `—` when there is none (or A2MCP). Free
@@ -1452,8 +1452,8 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
 
     let raw_type = first_str(s, &["serviceType", "ServiceType", "servicetype"]).unwrap_or("");
     let (type_label, is_a2a) = match raw_type.to_ascii_uppercase().as_str() {
-        "A2MCP" => ("API service".to_string(), false),
-        "A2A" => ("agent-to-agent".to_string(), true),
+        "A2MCP" => ("A2MCP".to_string(), false),
+        "A2A" => ("A2A".to_string(), true),
         "" => ("—".to_string(), false),
         other => (other.to_string(), false),
     };

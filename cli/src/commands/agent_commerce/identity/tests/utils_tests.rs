@@ -717,7 +717,7 @@ fn build_service_cells_a2mcp_pascalcase() {
         vec![
             ("#".to_string(), "1".to_string()),
             ("Name".to_string(), "TVL Query".to_string()),
-            ("Type".to_string(), "API service".to_string()),
+            ("Type".to_string(), "A2MCP".to_string()),
             ("Fee".to_string(), "10 USDT".to_string()),
             ("Subscription".to_string(), "—".to_string()),
             ("Free trial".to_string(), "—".to_string()),
@@ -1181,12 +1181,12 @@ fn add_service_list_cells_walks_array_of_wrappers_with_list_key() {
     );
     assert_eq!(
         svcs[0]["cells"][2],
-        json!({ "label": "Type", "value": "API service" })
+        json!({ "label": "Type", "value": "A2MCP" })
     );
     assert_eq!(svcs[1]["cells"][0], json!({ "label": "#", "value": "2" }));
     assert_eq!(
         svcs[1]["cells"][2],
-        json!({ "label": "Type", "value": "agent-to-agent" })
+        json!({ "label": "Type", "value": "A2A" })
     );
     assert_eq!(data[0]["page"], json!(1));
     assert_eq!(data[0]["pageSize"], json!(20));
