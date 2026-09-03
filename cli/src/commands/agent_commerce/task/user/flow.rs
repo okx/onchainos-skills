@@ -165,7 +165,7 @@ pub(super) fn notify_and_end(canonical_content: &str) -> String {
     )
 }
 
-/// Same as `notify_and_end` but appends a deposit-address hint for QR rendering.
+/// Same as `notify_and_end` but appends the deposit address so the user can top up.
 pub(super) fn notify_and_end_with_deposit(
     canonical_content: &str,
     deposit_address: &str,
@@ -173,11 +173,11 @@ pub(super) fn notify_and_end_with_deposit(
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content \"<localized content shown below>\" --image-path <tmp.png>\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {canonical_content}\n\n\
          Deposit address: {deposit_address} (XLayer)\n\
-         Run `onchainos wallet qrcode --address {deposit_address} --format png --output <tmp.png>` before `user-notify`. Keep all 4 options and the address; do not rely on tool output. TTY: show Unicode QR. Non-TTY: run `user-notify --image-path`; plain reply is not enough. If image sending fails, show the address text and do not claim QR is scannable. Keep `--content` text-only: no `![...](file://...)` or local image paths.\n\n\
+         Include the deposit address verbatim in the notification. Keep all 4 options and the address; do not rely on tool output. Keep `--content` text-only: no `![...](file://...)` or local image paths.\n\n\
          End turn after the call.\n"
     )
 }
@@ -1135,22 +1135,21 @@ mod tests {
     ];
 
     #[test]
-    fn deposit_notification_requires_visible_assistant_message() {
+    fn deposit_notification_has_no_wallet_qrcode_reference() {
         let out = notify_and_end_with_deposit(
             "Insufficient balance. 1. Scan or deposit. 2. Swap. 3. Bridge. 4. Withdraw.",
             "0x1234567890abcdef1234567890abcdef12345678",
         );
+        // The `wallet qrcode` subcommand was removed (spec §1.2 / §10.3) — the deposit
+        // notification playbook must NOT instruct the agent to shell out to it.
+        assert!(!out.contains("wallet qrcode"));
+        // Still a visible user-notify carrying the deposit address verbatim so the
+        // user can top up.
         assert!(out.contains("onchainos agent user-notify"));
-        assert!(out.contains("--image-path <tmp.png>"));
-        assert!(out.contains("onchainos wallet qrcode --address 0x1234567890abcdef1234567890abcdef12345678 --format png --output <tmp.png>"));
+        assert!(out.contains("0x1234567890abcdef1234567890abcdef12345678"));
         assert!(out.contains("<localized content shown below>"));
         assert!(out.contains("Keep all 4 options and the address"));
-        assert!(out.contains("do not rely on tool output"));
-        assert!(out.contains("TTY: show Unicode QR"));
-        assert!(out.contains("Non-TTY"));
-        assert!(out.contains("run `user-notify --image-path`"));
-        assert!(out.contains("plain reply is not enough"));
-        assert!(out.contains("do not claim QR is scannable"));
+        // Notification stays text-only — no inline image markdown / local image paths.
         assert!(out.contains("no `![...](file://...)`"));
     }
 

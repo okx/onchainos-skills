@@ -334,6 +334,48 @@ impl std::fmt::Display for CliSetupRequired {
 
 impl std::error::Error for CliSetupRequired {}
 
+// ── SceneError (shared flat exit-1 emission for the insufficient-balance scenes) ──
+//
+// The three insufficient-balance scenes (Wallet Send / Swap / A2A) each need a
+// top-level shape none of the existing emitters produce exactly: Wallet Send and
+// Swap are flat `{ok:false, scene, ...}`; A2A is `{ok:false, error, data:{scene,
+// ...}}`. Rather than teach `main.rs` about every scene, a handler builds its own
+// top-level `Value`, wraps it in `SceneError`, and returns it; `main.rs` downcasts
+// to this single marker and prints it verbatim via `error_flat`. This keeps exit
+// codes centralized in `main.rs` and the scene handlers free of `process::exit`.
+
+/// Marker error carrying a pre-built, top-level response [`Value`] that
+/// [`error_flat`] prints verbatim (no `JsonOutput` envelope). Returned by the
+/// insufficient-balance scene handlers so each scene owns its exact JSON shape
+/// while `main.rs` keeps the single exit-1 path.
+#[derive(Debug)]
+pub struct SceneError {
+    pub value: Value,
+}
+
+impl std::fmt::Display for SceneError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "scene error")
+    }
+}
+
+impl std::error::Error for SceneError {}
+
+/// Print a scene's pre-built top-level object to **stdout** verbatim via
+/// [`to_agent_json`] — no `JsonOutput` wrapping. Attaches drained
+/// `payment_notify` events as `notifications` only when non-empty (mirrors
+/// `error_coded_details`); otherwise emits the object exactly as given.
+pub fn error_flat(value: &Value) {
+    let events = payment_notify::drain_events();
+    if events.is_empty() {
+        println!("{}", to_agent_json(value).unwrap());
+        return;
+    }
+    let mut v = value.clone();
+    v["notifications"] = Value::Array(events);
+    println!("{}", to_agent_json(&v).unwrap());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,5 +488,38 @@ mod tests {
         assert_eq!(v["depositChain"], "XLayer");
         assert_eq!(v["currency"], "USDT");
         assert_eq!(v["shortfall"], "50");
+    }
+
+    // ── SceneError marker (shared flat exit-1 emission path) ──────────
+
+    // `.to_string()` is stable and non-empty (main.rs never prints it — the
+    // pre-built `value` is emitted via `error_flat` — but the Error trait
+    // requires a Display, and audit::log formats `{e:#}`).
+    #[test]
+    fn scene_error_display_is_stable_nonempty() {
+        let se = SceneError {
+            value: serde_json::json!({ "ok": false, "scene": "transfer_insufficient_balance" }),
+        };
+        let s = se.to_string();
+        assert!(!s.is_empty());
+        assert_eq!(s, "scene error");
+    }
+
+    // Boxes into anyhow::Error and `downcast_ref::<SceneError>()` recovers the
+    // exact `value` the handler built — this is the contract main.rs relies on.
+    #[test]
+    fn scene_error_downcast_from_anyhow_recovers_value() {
+        let value = serde_json::json!({
+            "ok": false,
+            "scene": "swap_insufficient_balance",
+            "fundingAddress": "0xDEADBEEF",
+        });
+        let err: anyhow::Error = SceneError {
+            value: value.clone(),
+        }
+        .into();
+        let downcasted = err.downcast_ref::<SceneError>();
+        assert!(downcasted.is_some());
+        assert_eq!(downcasted.unwrap().value, value);
     }
 }

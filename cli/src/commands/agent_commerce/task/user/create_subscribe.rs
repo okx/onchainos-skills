@@ -700,7 +700,7 @@ async fn subscribe_balance_warning(
     };
 
     match common::ensure_sufficient_balance(required, &symbol).await {
-        Ok(()) => Ok(None),
+        Ok(_) => Ok(None),
         Err(e) => match e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
             Some(ib) => {
                 let ib_owned = ib.clone();

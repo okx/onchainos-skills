@@ -8,7 +8,7 @@ legacy prose field `action`.
 | `login` | `okx-agentic-wallet` login flow | Owning Skill | Rerun prepare with the same `sid` |
 | `register_user_agent` | `identity-register.md` with User Agent role | Required | Rerun prepare with the same `sid` |
 | `route_payment_protocol` | `okx-agent-payments-protocol` | Owning Skill | End task creation |
-| `fund_account` | Wallet funding flow | Required | Rerun prepare with the same `sid` |
+| `fund_account` | [`funding.md`](../../_shared/funding.md) using the latest common Funding payload | Required | Verify balance, then let a user request to continue re-enter task creation from current context |
 | `restore_subscription` | `task-user-duplicate-subscription-guide.md` | Required | Enter scoped watch |
 | `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |
 | `stop` | End the current flow | No | Run no further command |

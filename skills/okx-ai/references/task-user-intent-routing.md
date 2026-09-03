@@ -131,13 +131,19 @@ Triggers (only when there's no active card the user might be answering): `close 
   2. **Outside Waiting state** → `onchainos agent close <jobId>` directly.
 - 🔴 I-9: case (1) mistakenly mis-routed. **Default when in doubt**: prefer `resolve-prompt`.
 
-## Funding completed (after balanceWarning)
+## Funding completed
 
-Trigger: `I topped up`, only with saved `balanceWarning`.
-No saved warning → ask which payment/task; do not Watch.
+Trigger: `I topped up`, only with the latest common Funding result. No current
+Funding result → ask which asset/network was funded; do not Watch and do not
+reuse an older confirmation.
 
 Action:
-- Saved pending create command → rerun it. If still insufficient, render `funding-notice` again and END TURN.
+- Task creation → first follow shared Funding's `wallet funding-check` using
+  the latest common payload. When sufficient, ask whether to continue the task
+  creation identified by current conversation context. If the user continues,
+  re-enter task creation as a new intent, resolve the current Service/sid again,
+  and rerun `task-create-prepare`. If ready, ask for a fresh confirmation through
+  `open_create_playbook`; never run a saved `create-task` write command directly.
 - Saved `jobId` only → Claude Code/Codex read `watch-core.md` and run scoped watch; Hermes/OpenClaw rely on native push and END TURN.
 
 ---

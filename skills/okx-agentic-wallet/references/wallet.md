@@ -56,6 +56,44 @@ Field rules:
 
 For a SUI contract call, provide the unsigned PTB from the maintained integration or SDK with `--sui-tx-bytes`.
 
+## Insufficient-Balance Top-up Recovery (Wallet Send)
+
+When `wallet send` returns `phase=transfer_funding`, `decision=blocked`,
+`reason=insufficient_balance`, and `scene=transfer_insufficient_balance`, use
+the returned `nextAction` only. Full field list:
+[wallet-cli-reference.md](wallet-cli-reference.md) → Insufficient-balance scene.
+
+The CLI produces this scene for a real backend `code=10004`, or when
+`executeResult=false` is followed by a fresh chain-and-token balance query that
+proves `requested > balance`. It must not classify from `executeErrorMsg` text
+alone. If that balance query cannot confirm a shortfall, keep the ordinary
+simulation-failure path and show `executeErrorMsg`. When `balance` is `null` the
+balance is unavailable — show "当前余额暂不可用".
+
+**Recovery flow**:
+
+1. Render the business-owned insufficient-balance result from
+   [wallet-output-templates.md](wallet-output-templates.md). It asks whether to
+   fund and must not display the address or QR yet.
+2. Route a selected `fund_account` only through
+   [funding-action-routing.md](../../_shared/funding-action-routing.md), then
+   follow [funding.md](../../_shared/funding.md). Only after the user selects
+   that action does the shared template display address + QR. Do not duplicate
+   its address, QR, network, or fallback rules here.
+3. After shared Funding verifies a sufficient balance, it asks whether to
+   continue the interrupted operation using the current conversation context.
+   If the user continues this transfer, treat that reply as a new Wallet Send
+   intent and rebuild the request from current user/context input.
+4. Run `wallet send` without `--force`. The new preview replaces every prior
+   result and requires the ordinary explicit confirmation. If the original
+   transfer details are no longer clear, ask for them instead of reconstructing
+   or guessing them.
+
+A “funded” event authorizes only the read-only refresh. A later explicit request
+to continue authorizes only a new preview request.
+It never authorizes the transfer, and no previous confirmation survives the new
+CLI result.
+
 ## Approvals (via contract-call)
 
 Never execute unlimited approvals. Do not set the approve amount to `type(uint256).max` / `2^256-1` / any "infinite" value, and do not call `setApprovalForAll(operator, true)`. If the user explicitly requests unlimited approval: warn it is irreversible and lets the spender drain all tokens, require a second explicit confirmation, and even then cap the amount to what is needed (e.g. swap amount + 10%). If the user still insists, refuse and suggest they execute manually via a block explorer.

@@ -277,6 +277,7 @@ async fn cmd_setup(
     // the setup result; no additional output wrapping is needed here.
     super::transfer::cmd_send(
         "1",
+        None,
         &ctx.addr_info.address,
         &ctx.chain_index_resolved,
         from,

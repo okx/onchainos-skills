@@ -47,6 +47,8 @@ Trading presets (slippage / gas):
 
 **Step 3 — Quote.** `onchainos swap quote --from <addr> --to <addr> --readable-amount <amt> --chain <chain>`. Display expected output, gas, price impact, routing path. The CLI appends `action` (`ok` / `warn` / `block`) and `reason` to each route (SW2, always-on) — read those and surface them; do not re-derive risk from raw `isHoneyPot` / `taxRate`. Run the MEV assessment below.
 
+The normal (sufficient-balance) quote response also carries `walletBalance` (the wallet's balance of the from-token). It is always present: a string on success, or JSON `null` when the balance query failed — branch on `walletBalance === null` to render "balance unavailable"; **NEVER** treat `null` as `0`. If the quote instead detects the balance is below the requested amount it returns the `swap_insufficient_balance` scene — see Insufficient-Balance Top-up Recovery below.
+
 **Step 4 — User confirmation.** Price impact >5% → warn prominently. Any route with `action: block` → halt and show its `reason`, do NOT broadcast; `action: warn` → surface the `reason` and ask. If >10s pass before the user confirms, re-fetch the quote; if price diff ≥ slippage → warn and re-confirm.
 
 **Step 5 — Execute.** `onchainos swap execute --from <addr> --to <addr> --readable-amount <amt> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection] [--force]`. CLI handles approve + sign + broadcast. Returns `approveTxHash?`, `swapTxHash`, `fromAmount`, `toAmount`, `priceImpact`, `gasUsed`, `nextSteps`. On error, see [swap-troubleshooting.md](swap-troubleshooting.md) (error-retry table, incl. risk-warning 81362 `--force` gate).
@@ -65,6 +67,31 @@ Tx hash: <swapTxHash>
 ```
 
 Use `nextSteps.checkSwapStatus` verbatim. After Reply 1, if `txStatus` is not `SUCCESS` / `FAIL` (empty / `PENDING` / no record), tell the user it hasn't landed and they can reply `1` again. Do not auto-poll.
+
+## Insufficient-Balance Top-up Recovery (Swap)
+
+When `swap quote` returns `phase=swap_funding`, `decision=blocked`,
+`reason=insufficient_balance`, and `scene=swap_insufficient_balance`, use only
+the current `nextAction`. Full field list:
+[swap-cli-reference.md](swap-cli-reference.md) → Insufficient-balance scene.
+
+**Recovery flow**:
+
+1. Render the business-owned insufficient-balance result from
+   [swap-output-templates.md](swap-output-templates.md). It asks whether to fund
+   and must not display the address or QR yet.
+2. Route `fund_account` only through
+   [funding-action-routing.md](../../_shared/funding-action-routing.md), then
+   follow [funding.md](../../_shared/funding.md). The shared address + QR
+   template starts only after the user selects the funding action.
+3. After shared Funding verifies a sufficient balance, it asks whether to
+   continue using the current conversation context. If the user continues the
+   swap, treat it as a new Swap intent and obtain a new quote from current
+   inputs. If the original inputs are no longer clear, ask for them.
+4. Branch only on that new CLI result: another structured insufficient-balance
+   result re-enters this recovery; a normal quote replaces the old quote and
+   requires the ordinary fresh Swap confirmation before execution. Any quote
+   display belongs to the normal Swap template, not the shared Funding template.
 
 ## Risk Controls
 

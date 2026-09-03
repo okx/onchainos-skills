@@ -151,7 +151,7 @@ If the user included file(s)/image(s) as task material → for each: `onchainos 
 
 After success:
 
-- `blockedReason=insufficient-balance`: save the exact `create-task` command + `balanceWarning`; if `fundingNoticeCommand` exists, run it. `terminal-unicode`: show `terminalQr` + full notice. `image-notify`: localize `contentCanonical`, run `notifyCommandArgs`, put `markdownImage` under option 1 in final. If missing, show `balanceWarning`. END TURN; do not create again or Watch.
+- `blockedReason=insufficient-balance`: save the selected Service sid + `balanceWarning`; if `fundingNoticeCommand` exists, run it. `terminal-unicode`: show `terminalQr` + full notice. `image-notify`: localize `contentCanonical`, run `notifyCommandArgs`, put `markdownImage` under option 1 in final. If missing, show `balanceWarning`. END TURN; do not create again or Watch. After the user says funded, rerun `task-create-prepare` with that sid and require a fresh creation confirmation; never rerun this saved write command directly.
 - No `balanceWarning`: tell the user directly: \"{create_designated}\"
 - Legacy submitted `balanceWarning`: save `jobId` + warning, render `funding-notice`; on Codex/Claude Code repeat the full notice in final. END TURN; do not Watch.
 
@@ -799,7 +799,9 @@ mod tests {
         let out = create_task_regular();
         assert!(out.contains("balanceWarning"));
         assert!(out.contains("blockedReason=insufficient-balance"));
-        assert!(out.contains("save the exact `create-task` command + `balanceWarning`"));
+        assert!(out.contains("save the selected Service sid + `balanceWarning`"));
+        assert!(out.contains("rerun `task-create-prepare` with that sid"));
+        assert!(out.contains("never rerun this saved write command directly"));
         assert!(out.contains("if `fundingNoticeCommand` exists, run it"));
         assert!(out.contains("`terminal-unicode`"));
         assert!(out.contains("show `terminalQr` + full notice"));

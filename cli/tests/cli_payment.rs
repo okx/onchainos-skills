@@ -24,7 +24,7 @@ mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use common::onchainos;
+use common::{onchainos, run_with_retry};
 use serde_json::Value;
 
 /// Per-test temp `ONCHAINOS_HOME` under the crate target dir (no hardcoded /tmp).
@@ -228,4 +228,74 @@ fn quote_malformed_param_is_invalid_input() {
         .output()
         .expect("run onchainos");
     assert_error_token(&out, "invalid_input");
+}
+
+// ── A2A insufficient-balance top-up scene (WWINFRA-3798) ──────────────────────
+//
+// IT-011 (live, error). When an `a2a-pay pay` credential comes back
+// `success=false` with `errorReason=insufficient_balance`, the CLI enriches the
+// failure with `data.scene=a2a_insufficient_balance`, `needsNewPaymentId=true`
+// and a populated `paymentChain.chainName` (spec §2.4, exit 1). Building that
+// scene requires a logged-in wallet (`wallet_store::load_wallets()` must resolve
+// an account) plus a payment that actually returns `insufficient_balance`.
+//
+// Without a logged-in wallet (or a provisioned insufficient-balance payment), the
+// pay flow fails earlier — the auth gate or a challenge-fetch miss for the fake
+// paymentId — but still exits 1 with a structured `ok:false` envelope. This test
+// validates the scene contract when it is reachable and otherwise confirms the
+// clean structured-failure / login-required path. It is `live`, so it goes
+// through `run_with_retry` in the ambient home (a provisioned login fixture is
+// picked up when present).
+#[test]
+fn a2a_pay_insufficient_balance_scene_or_structured_failure() {
+    let out = run_with_retry(&[
+        "payment",
+        "a2a-pay",
+        "pay",
+        "--payment-id",
+        "a2a_test_insufficient",
+        "--amount",
+        "1000000",
+        "--currency",
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "--recipient-address",
+        "0x1234567890abcdef1234567890abcdef12345678",
+    ]);
+    assert!(
+        !out.status.success(),
+        "a2a-pay pay must fail here (exit 1), got {:?}",
+        out.status.code()
+    );
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let json: Value = serde_json::from_str(&stdout).unwrap_or(Value::Null);
+
+    if json.pointer("/data/scene").and_then(|s| s.as_str()) == Some("a2a_insufficient_balance") {
+        assert_eq!(json["ok"], Value::Bool(false), "scene must be ok:false: {json}");
+        assert_eq!(
+            json["data"]["needsNewPaymentId"],
+            Value::Bool(true),
+            "scene must set needsNewPaymentId=true: {json}"
+        );
+        assert!(
+            json["data"]["paymentChain"]["chainName"].is_string(),
+            "scene must populate paymentChain.chainName: {json}"
+        );
+        return;
+    }
+
+    // Not reachable in this environment: must still be a structured ok:false
+    // failure (login-required or paymentId-not-found), never a crash.
+    let ok_false = json.get("ok").and_then(|v| v.as_bool()) == Some(false);
+    let login_marker = {
+        let hay = format!("{stdout}{stderr}").to_lowercase();
+        ["not logged in", "session expired", "please login", "login again"]
+            .iter()
+            .any(|m| hay.contains(m))
+    };
+    assert!(
+        ok_false || login_marker,
+        "expected a2a_insufficient_balance scene or a structured ok:false / login-required failure\nstdout: {stdout}\nstderr: {stderr}"
+    );
 }

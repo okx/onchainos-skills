@@ -3,7 +3,7 @@
 Load on a wallet operation failure or edge case.
 
 ## Send
-- **Insufficient balance**: only after the send command returns a backend insufficient-balance error, show the returned message and current balance; for EVM, include the returned gas estimate when available. Do not preemptively require a native-token top-up because backend-sponsored transactions may still succeed.
+- **Insufficient balance**: when the current operation has an insufficient-balance intent, ask whether the user wants to fund. If the user chooses funding, read [funding.md](../../_shared/funding.md).
 - **Wrong chain for token**: `--contract-token` must exist on the specified chain.
 
 ## History

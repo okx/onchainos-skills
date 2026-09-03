@@ -8,9 +8,10 @@ pub mod common;
 pub mod gas_station;
 pub mod geoblock;
 pub mod history;
-mod shared;
+pub(crate) mod shared;
 mod inscription;
 pub mod plugin;
+pub mod receive;
 pub mod sign;
 pub mod strategy;
 pub mod transfer;
@@ -18,7 +19,6 @@ mod utxo;
 
 use anyhow::{bail, Result};
 use clap::{Subcommand, ValueEnum};
-use std::path::PathBuf;
 
 /// Stage of the social-login flow. The skill orchestrates `init` → `open` →
 /// `poll` so the login URL is returned immediately (before the browser opens),
@@ -34,15 +34,6 @@ pub enum LoginPhase {
     Open,
     /// Poll for the login result (using state from `init`) and persist it.
     Poll,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Default)]
-pub enum QrcodeFormat {
-    /// Print Unicode block QR art to stdout.
-    #[default]
-    Unicode,
-    /// Write a PNG QR image to --output.
-    Png,
 }
 
 #[derive(Subcommand)]
@@ -82,17 +73,20 @@ pub enum WalletCommand {
         #[arg(long)]
         chain: Option<String>,
     },
-    /// Render a Unicode-block QR code for an address (or any string)
-    Qrcode {
-        /// Address (or arbitrary string) to encode verbatim into the QR
+    /// Show the active account's receive address and QR. Use --chain for one
+    /// network or --token to search and disambiguate a token across networks.
+    Receive {
+        /// Target chain name or ID. Conflicts with --token because an explicit
+        /// chain already determines the receive address.
+        #[arg(long, conflicts_with_all = ["token", "cursor"])]
+        chain: Option<String>,
+        /// Token name, symbol, or full contract address. The CLI searches all
+        /// wallet-supported chains and returns at most 10 candidates.
         #[arg(long)]
-        address: String,
-        /// Output format. Defaults to Unicode text on stdout.
-        #[arg(long, value_enum, default_value_t = QrcodeFormat::Unicode)]
-        format: QrcodeFormat,
-        /// File path for --format png.
-        #[arg(long)]
-        output: Option<PathBuf>,
+        token: Option<String>,
+        /// Opaque cursor returned by the previous --token page.
+        #[arg(long, requires = "token")]
+        cursor: Option<String>,
     },
     /// Logout and clear all stored credentials
     Logout,
@@ -116,6 +110,22 @@ pub enum WalletCommand {
         /// Use when the user explicitly asks to refresh/sync/update their wallet data.
         #[arg(long, default_value = "false")]
         force: bool,
+    },
+    /// Re-query one asset after a funding prompt and return a normalized
+    /// balance/shortfall decision for the shared funding flow.
+    FundingCheck {
+        /// Funding network name or chain ID.
+        #[arg(long)]
+        chain: String,
+        /// Token contract address. Omit for the chain's native asset.
+        #[arg(long)]
+        token_address: Option<String>,
+        /// Required amount in readable units.
+        #[arg(long)]
+        required: String,
+        /// Display symbol carried by the originating structured result.
+        #[arg(long)]
+        asset: String,
     },
     // Confirming-gate override (onchainos_check): the destructive wallet variants below
     // (Send / call-contract / broadcast / …) gate user confirmation via output::CliConfirming
@@ -573,35 +583,6 @@ async fn resolve_send_amount(
     bail!("Either --amt or --readable-amount is required")
 }
 
-fn cmd_qrcode(address: &str, format: QrcodeFormat, output: Option<PathBuf>) -> Result<()> {
-    let trimmed = address.trim();
-    if trimmed.is_empty() {
-        bail!("--address must not be empty");
-    }
-    match format {
-        QrcodeFormat::Unicode => {
-            if output.is_some() {
-                bail!("--output requires --format png");
-            }
-            // Delegate to the single shared in-process encoder (crate::qr).
-            let rendered = crate::qr::render_address_qr_unicode(trimmed)
-                .map_err(|e| anyhow::anyhow!("Failed to encode QR for {}: {}", trimmed, e))?;
-            println!("{}", rendered);
-        }
-        QrcodeFormat::Png => {
-            let Some(path) = output else {
-                bail!("--output is required when --format png");
-            };
-            let png = crate::qr::render_address_qr_png(trimmed)
-                .map_err(|e| anyhow::anyhow!("Failed to encode QR for {}: {}", trimmed, e))?;
-            std::fs::write(&path, png)
-                .map_err(|e| anyhow::anyhow!("failed to write QR PNG {}: {}", path.display(), e))?;
-            println!("{}", path.display());
-        }
-    }
-    Ok(())
-}
-
 /// Resolves `chain` and accepts it only when the UTXO command can use Bitcoin.
 async fn ensure_bitcoin_command_chain(chain: &str) -> Result<()> {
     let profile = chain_profile::resolve(chain).await?;
@@ -631,11 +612,11 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
         WalletCommand::Switch { account_id } => account::cmd_switch(&account_id).await,
         WalletCommand::Status { .. } => account::cmd_status().await,
         WalletCommand::Addresses { chain } => account::cmd_addresses(chain.as_deref()).await,
-        WalletCommand::Qrcode {
-            address,
-            format,
-            output,
-        } => cmd_qrcode(&address, format, output),
+        WalletCommand::Receive {
+            chain,
+            token,
+            cursor,
+        } => receive::cmd_receive(chain.as_deref(), token.as_deref(), cursor.as_deref()).await,
         WalletCommand::Logout => auth::cmd_logout().await,
         WalletCommand::Chains => chain::execute(chain::ChainCommand::List).await,
         WalletCommand::Geoblock => geoblock::cmd_check().await,
@@ -674,6 +655,20 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                     .as_deref()
                     .or(token_address.as_deref()),
                 force,
+            )
+            .await
+        }
+        WalletCommand::FundingCheck {
+            chain,
+            token_address,
+            required,
+            asset,
+        } => {
+            balance::cmd_funding_check(
+                &chain,
+                token_address.as_deref().unwrap_or(""),
+                &required,
+                &asset,
             )
             .await
         }
@@ -765,6 +760,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             .await?;
             transfer::cmd_send(
                 &raw_amt,
+                readable_amount.as_deref(),
                 &recipient,
                 &chain,
                 from.as_deref(),

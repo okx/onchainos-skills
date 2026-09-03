@@ -252,8 +252,27 @@ pub(crate) async fn handle_task_create_prepare(
 
     let currency = required_service_string(&service, "feeTokenSymbol")?;
     match common::ensure_sufficient_balance(required, &currency).await {
-        Ok(()) => {
-            emit(PHASE_CREATION, "ready", "all_checks_passed", next_action("open_create_playbook", true), service);
+        Ok(balance) => {
+            let mut payload = service;
+            if let Some(object) = payload.as_object_mut() {
+                object.insert(
+                    "paymentBalance".to_string(),
+                    json!({
+                        "chainIndex": "196",
+                        "chainName": "X Layer",
+                        "currency": currency,
+                        "required": format!("{required}"),
+                        "available": format!("{balance}"),
+                    }),
+                );
+            }
+            emit(
+                PHASE_CREATION,
+                "ready",
+                "all_checks_passed",
+                next_action("open_create_playbook", true),
+                payload,
+            );
             Ok(())
         }
         Err(error) => {
@@ -263,13 +282,29 @@ pub(crate) async fn handle_task_create_prepare(
             else {
                 return Err(error).context("failed to check the selected Service balance");
             };
-            let (warning, _) =
-                common::deposit_qr::balance_warning_json(&insufficient, &user_agent_id).await;
-            let mut payload = service;
-            if let Some(object) = payload.as_object_mut() {
-                object.insert("balanceWarning".to_string(), warning);
-            }
-            emit(PHASE_PAYMENT_VALIDATION, "blocked", "insufficient_balance", next_action("fund_account", true), payload);
+            let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
+                .await
+                .ok_or_else(|| anyhow!("failed to resolve the funding address"))?;
+            let bundle = crate::funding::build_funding_bundle_for_address(
+                "",
+                &deposit.chain_index,
+                &deposit.address,
+                None,
+            )?;
+            let fee_token = required_service_string(&service, "feeToken")?;
+            let result = crate::funding::build_funding_blocked_result(
+                &bundle,
+                crate::funding::FundingBlockedInput {
+                    phase: PHASE_PAYMENT_VALIDATION,
+                    reason: "insufficient_balance",
+                    asset: Some(&insufficient.currency),
+                    token_address: &fee_token,
+                    required: Some(&insufficient.required),
+                    balance: Some(&insufficient.available),
+                    business_payload: service,
+                },
+            );
+            crate::output::success(result);
             Ok(())
         }
     }

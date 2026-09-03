@@ -46,9 +46,32 @@ onchainos wallet addresses [--chain <chain>]
 
 Re-invoke this to copy any address verbatim — never reproduce an address from memory.
 
-### `wallet qrcode --address <addr>`
+### `wallet receive`
 
-Render a Unicode-block QR encoding `--address` verbatim (no URI scheme added). Output is plain art on stdout — render verbatim in a monospace block.
+Read-only active funding/receive entry. It refreshes the current account address
+facts before returning them.
+
+```bash
+onchainos wallet receive
+onchainos wallet receive --chain <chain>
+onchainos wallet receive --token <query> [--cursor <opaque-cursor>]
+```
+
+- No flags: `scene=receive_addresses`; returns `accountName`, the EVM address
+  and one `evmQr`, plus text addresses for X Layer when different, Solana,
+  Bitcoin, and Sui.
+- `--chain`: `scene=receive_address`; returns the Funding Target and Common QR.
+- `--token`: searches all wallet-supported chains with `limit=10`. Multiple
+  results return `scene=receive_token_selection`, ordered `list[]`, stable
+  `nextAction`, and an opaque next cursor. A single result returns its chain
+  address and QR directly.
+
+Every continuing result carries `phase`, `decision`, `reason`, `nextAction`, and
+`payload`. Candidate identity is the full `chainIndex + tokenContractAddress`;
+the CA abbreviation is display-only.
+
+> The standalone `wallet qrcode` subcommand has been removed. `wallet receive`
+> and insufficient-balance results emit Common QR in-process.
 
 ### `wallet logout`
 
@@ -74,6 +97,24 @@ onchainos wallet balance [--all] [--chain <chain>] [--token-address <addr>] [--f
 | `--chain` | all | Chain name or ID. Required with `--token-address`. |
 | `--token-address` | — | Single token identifier. Requires `--chain`: `btc-brc20-<ticker>` for BRC-20, a Coin Type for SUI, or a contract address on account-model chains. |
 | `--force` | false | Bypass caches; re-fetch accounts + balances. |
+
+Each token in `data[].tokenAssets[]` (or `data[].assets[]`) carries: `symbol`, `tokenName`, `chainIndex`, `tokenAddress` (`""` for native), `balance` (readable-decimal string), `rawBalance` (minimal units), `decimal`, `tokenPrice`, `usdValue`. **Recovery consumer**: identify the refreshed asset by **`(tokenAddress, chainIndex)`** — never by `symbol` alone (symbols repeat across chains) — and treat the returned balance fields as facts only. See [wallet.md](wallet.md) → Insufficient-Balance Top-up Recovery.
+
+### `wallet funding-check`
+
+```bash
+onchainos wallet funding-check --chain <chain> [--token-address <contract>] \
+  --required <readable-amount> --asset <symbol>
+```
+
+This is a read-only post-funding query. It returns
+`phase=funding_verification`, the freshly queried `currentBalance`, the exact
+CLI-calculated readable `shortfall`, and `sufficient`. A sufficient result
+returns no action; the Funding Reference uses conversation context only to ask
+whether to continue. An insufficient result includes `fundingTarget` and Common
+QR in `payload` and also returns no continuation action.
+A failed balance query returns the same phase with `reason=balance_unavailable`,
+`currentBalance=null`, and no action; the Skill must stop rather than guess.
 
 ### User-facing Reply Templates
 
@@ -125,7 +166,51 @@ onchainos wallet send --readable-amount <amount> --recipient <address> --chain <
 | `--force` | No | Re-run after a confirmed Confirming response. |
 | `--gas-token-address`, `--relayer-id`, `--enable-gas-station` | No | Gas Station (Solana). Second-phase values from a Confirming response — never on the first call. See [gas-station.md](gas-station.md). |
 
-Returns `txHash` (normal). Gas Station responses (`gasStationUsed`, `orderId`, Confirming scenes) → [gas-station.md](gas-station.md). On simulation failure, the CLI surfaces `executeErrorMsg` and does not broadcast.
+Returns `txHash` (normal). Gas Station responses (`gasStationUsed`, `orderId`, Confirming scenes) → [gas-station.md](gas-station.md). On simulation failure, the CLI never broadcasts. If a fresh balance query independently confirms that the requested transfer asset is insufficient, it returns the structured funding scene below; otherwise it surfaces `executeErrorMsg`.
+
+#### Insufficient-balance scene (`transfer_insufficient_balance`)
+
+Emitted on a real backend `code=10004`, or after `executeResult=false` when a fresh chain-and-token balance query proves `requested > balance`. The CLI never infers this state from simulation text alone. It is a flat top-level object (`ok:false` at the root — NOT the `JsonOutput` envelope); the original `error` string is preserved for backward compatibility. Business recovery: [wallet.md](wallet.md) → Insufficient-Balance Top-up Recovery. Presentation: [wallet-output-templates.md](wallet-output-templates.md).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `scene` | string | Always `"transfer_insufficient_balance"`. |
+| `phase` / `decision` / `reason` | string | `transfer_funding` / `blocked` / `insufficient_balance`. |
+| `nextAction` | array | Registered `fund_account` action with empty params. |
+| `payload` | object | Business scene fields plus common `fundingTarget`, `qr`, and `fundingNeed`. |
+| `error` / `errorMessage` | string | Original backend message (equal). |
+| `errorCode` | string \| null | Backend `"10004"` when present; `null` when the shortfall was independently confirmed after a simulation failure. |
+| `retryable` | bool | `true` — means "re-preview after top-up", NOT auto-retry or skipping re-confirmation. |
+| `chainIndex` | string | Chain index. |
+| `chainName` | string | Canonical chain display name (single source; see [Common `qr` object](#common-qr-object)). |
+| `sameNetworkRequired` | bool | `true` — the top-up must arrive on this same `chainName` network. |
+| `gasFree` | bool | `true` for X Layer (196) — render the gas-free note. |
+| `asset` | object | `{ symbol, tokenAddress }`; `tokenAddress` is `""` for native. `symbol` is a non-empty string, or `null` when it can't be read from the matched balance record — never `""`. |
+| `requested` | string | Requested send amount (readable units). |
+| `balance` | string \| null | Current balance (readable units). `null` when the balance query failed or the asset is absent; a real zero is the string `"0"`. |
+| `shortfall` | string \| null | Exact readable `requested - balance`; `null` when either input is unavailable or not a plain decimal. |
+| `depositChain` | string | Backward-compat alias, **same value as `chainName`**. |
+| `depositAddress` | string | The current account's own receive address on the chain. |
+| `qr` | object | Deposit-address QR — [Common `qr` object](#common-qr-object). |
+
+#### Common `qr` object
+
+Every recovery scene (`wallet send`, `swap quote`, `payment a2a-pay pay`, and
+task creation) embeds the same `qr` object, populated per `displayMode`
+(inapplicable fields are absent):
+
+| Field | Present when | Meaning |
+|---|---|---|
+| `requestedFormat` | always | Always `"auto"`. |
+| `resolvedFormat` | always | `"unicode"` or `"png"`. |
+| `displayMode` | always | `"terminal-unicode"` or `"image-notify"`. |
+| `terminalQr` | `displayMode=terminal-unicode` | Unicode QR block to render verbatim in a monospace block. |
+| `imagePath` | `displayMode=image-notify` | On-disk PNG path. |
+| `mimeType` | `displayMode=image-notify` | `"image/png"`. |
+| `markdownImage` | `displayMode=image-notify` | Markdown image reference. |
+| `notifyCommandArgs` | `displayMode=image-notify` | argv for the image-notify command. |
+
+The QR encodes only the bare receive address (no URI scheme, amount, or params). On any QR encode/write failure the scene still returns with the `qr` fields absent — degrade to showing `depositAddress` text.
 
 ---
 

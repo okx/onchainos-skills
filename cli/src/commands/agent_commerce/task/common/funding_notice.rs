@@ -5,7 +5,6 @@ use std::fs;
 use std::io::BufRead;
 use std::io::IsTerminal;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug, ValueEnum)]
 pub enum FundingNoticeFormat {
@@ -107,10 +106,6 @@ impl FundingDisplayMode {
             Self::ImageNotify => "image-notify",
         }
     }
-
-    fn is_image_notify(self) -> bool {
-        self == Self::ImageNotify
-    }
 }
 
 pub fn funding_display_mode() -> &'static str {
@@ -183,11 +178,11 @@ pub fn funding_blocked_envelope(
         } else {
             "TTY: run fundingNoticeCommand, show terminalQr and full notice; do not claim PNG was sent."
         },
-        "resumeAction": "After the user says topped up, rerun the saved original command.",
+        "resumeAction": "After the user says topped up, re-enter the owning Reference and run its fresh read-only balance or prepare check. Never rerun a saved write command directly.",
         "guidance": if must_run_funding_notice {
-            format!("{action} was blocked by insufficient balance. Save the command. Run fundingNoticeCommand, then follow its displayMode. End turn.")
+            format!("{action} was blocked by insufficient balance. Save the current business context. Run fundingNoticeCommand, then follow its displayMode. End turn.")
         } else {
-            format!("{action} was blocked by insufficient balance. Save the command. Show balanceWarning and missing deposit address. End turn.")
+            format!("{action} was blocked by insufficient balance. Save the current business context. Show balanceWarning and missing deposit address. End turn.")
         },
     })
 }
@@ -360,61 +355,45 @@ pub fn execute(args: FundingNoticeArgs) -> Result<()> {
 fn build_funding_notice(
     input: FundingNoticeInput,
 ) -> Result<(FundingNoticeOutput, Option<PathBuf>)> {
-    build_funding_notice_with_mode(input, detect_funding_display_mode())
+    // Delegate QR rendering, display-mode resolution, PNG write, markdown, and
+    // notify argv to the Common QR module (spec Appendix B). `build_qr_output`
+    // never fails: on any encode/write error it degrades to an address-only
+    // `QrOutput` carrying no QR fields (FR-6), so the notice is always produced.
+    let qr = crate::qr::build_qr_output(&input.deposit_address, input.image_dir.as_deref());
+    Ok(build_funding_notice_from_qr(input, qr))
 }
 
-fn build_funding_notice_with_mode(
+/// Map a Common QR [`crate::qr::QrOutput`] onto the Agent-Commerce funding notice.
+///
+/// The QR-derived fields (`terminal_qr`, `image_path`, `markdown_image`,
+/// `notify_command_args`, `display_mode`) come straight from `qr`; every other
+/// field is funding-notice business copy or the notify-command protocol owned
+/// here (`notify_command` shell string, `must_*` flags, `display_policy`). Whether
+/// the notice runs the image-notify protocol is gated on a PNG actually being
+/// written (`qr.image_path`), so the FR-6 degrade case (image mode, encode failed)
+/// coherently falls back to the address-only text path with no notify command.
+fn build_funding_notice_from_qr(
     input: FundingNoticeInput,
-    display_mode: FundingDisplayMode,
-) -> Result<(FundingNoticeOutput, Option<PathBuf>)> {
-    let image_path = if display_mode.is_image_notify() || input.image_dir.is_some() {
-        Some(write_qr_png(
-            &input.deposit_address,
-            input.image_dir.as_deref(),
-        )?)
-    } else {
-        None
-    };
-    let terminal_qr = if display_mode == FundingDisplayMode::TerminalUnicode {
-        Some(
-            crate::qr::render_address_qr_unicode(&input.deposit_address).map_err(|e| {
-                anyhow::anyhow!("Failed to encode QR for {}: {}", input.deposit_address, e)
-            })?,
-        )
-    } else {
-        None
-    };
+    qr: crate::qr::QrOutput,
+) -> (FundingNoticeOutput, Option<PathBuf>) {
+    let image_path = qr.image_path.as_deref().map(PathBuf::from);
+    let image_notify = image_path.is_some();
     let content_canonical = render_content(&input);
     let fallback_content_canonical = render_fallback_content(&input);
-    let notify_command_args = image_path.as_ref().map(|path| {
-        vec![
-            "onchainos".to_string(),
-            "agent".to_string(),
-            "user-notify".to_string(),
-            "--content".to_string(),
-            "<localized contentCanonical>".to_string(),
-            "--image-path".to_string(),
-            path.display().to_string(),
-        ]
-    });
-    let notify_command = image_path.as_ref().map(|path| {
+    let notify_command = qr.image_path.as_ref().map(|path| {
         format!(
             "onchainos agent user-notify --content \"$ONCHAINOS_FUNDING_NOTICE_CONTENT\" --image-path {}",
-            shell_quote(&path.display().to_string())
+            shell_quote(path)
         )
     });
-    let markdown_image = image_path
-        .as_ref()
-        .map(|path| markdown_image_for_path(path));
-    let image_notify = display_mode.is_image_notify();
 
     let notice = FundingNoticeOutput {
         content_canonical,
         fallback_content_canonical,
-        image_path: image_path.as_ref().map(|path| path.display().to_string()),
-        markdown_image,
-        terminal_qr,
-        display_mode: display_mode.as_str().to_string(),
+        image_path: qr.image_path,
+        markdown_image: qr.markdown_image,
+        terminal_qr: qr.terminal_qr,
+        display_mode: qr.display_mode,
         deposit_address: input.deposit_address,
         chain: input.chain,
         deposit_chain: input.deposit_chain,
@@ -437,32 +416,13 @@ fn build_funding_notice_with_mode(
         .to_string(),
         end_turn: true,
         notify_command,
-        notify_command_args,
+        notify_command_args: qr.notify_command_args,
     };
-    Ok((notice, image_path))
+    (notice, image_path)
 }
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn markdown_image_for_path(path: &std::path::Path) -> String {
-    let target = if path.is_absolute() {
-        std::env::current_dir()
-            .ok()
-            .and_then(|cwd| {
-                path.strip_prefix(cwd)
-                    .ok()
-                    .map(|rel| PathBuf::from(".").join(rel))
-            })
-            .unwrap_or_else(|| path.to_path_buf())
-    } else {
-        PathBuf::from(".").join(path)
-    };
-    format!(
-        "![QR Code](<{}>)",
-        target.to_string_lossy().replace('>', "%3E")
-    )
 }
 
 impl TryFrom<FundingNoticeArgs> for FundingNoticeInput {
@@ -582,42 +542,6 @@ fn reason_name(reason: &FundingNoticeReason) -> &'static str {
     }
 }
 
-fn write_qr_png(address: &str, image_dir: Option<&std::path::Path>) -> Result<PathBuf> {
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let filename = format!("onchainos-funding-qr-{}-{ts}.png", std::process::id());
-    let png = crate::qr::render_address_qr_png(address)
-        .map_err(|e| anyhow::anyhow!("Failed to encode QR for {}: {}", address, e))?;
-    let mut last_error = None;
-    let mut dirs = Vec::new();
-    if let Some(dir) = image_dir {
-        dirs.push(dir.to_path_buf());
-    }
-    if let Some(dir) = std::env::var_os("ONCHAINOS_FUNDING_IMAGE_DIR") {
-        dirs.push(PathBuf::from(dir));
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        dirs.push(cwd.join(".onchainos").join("tmp").join("funding-qr"));
-    }
-    dirs.extend([std::env::temp_dir(), PathBuf::from("/tmp")]);
-    for dir in dirs {
-        if let Err(err) = std::fs::create_dir_all(&dir) {
-            last_error = Some((dir.join(&filename), err));
-            continue;
-        }
-        let path = dir.join(&filename);
-        match std::fs::write(&path, &png) {
-            Ok(()) => return Ok(path),
-            Err(err) => last_error = Some((path, err)),
-        }
-    }
-    let (path, err) = last_error.expect("at least one candidate path");
-    Err(anyhow::anyhow!(
-        "failed to write QR PNG {}: {}",
-        path.display(),
-        err
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,11 +584,53 @@ mod tests {
         );
     }
 
+    /// A terminal-unicode `QrOutput` exactly as `qr::build_qr_output` produces in
+    /// TTY mode: a real Unicode block, no image fields.
+    fn terminal_qr_output(address: &str) -> crate::qr::QrOutput {
+        crate::qr::QrOutput {
+            requested_format: "auto".to_string(),
+            resolved_format: "unicode".to_string(),
+            display_mode: "terminal-unicode".to_string(),
+            terminal_qr: Some(
+                crate::qr::render_address_qr_unicode(address).expect("unicode render"),
+            ),
+            image_path: None,
+            mime_type: None,
+            markdown_image: None,
+            notify_command_args: None,
+        }
+    }
+
+    /// An image-notify `QrOutput` mirroring `qr::build_qr_output`'s image-mode
+    /// shape (a written PNG at `png_path`, markdown + notify argv populated).
+    fn image_qr_output(png_path: &str) -> crate::qr::QrOutput {
+        crate::qr::QrOutput {
+            requested_format: "auto".to_string(),
+            resolved_format: "png".to_string(),
+            display_mode: "image-notify".to_string(),
+            terminal_qr: None,
+            image_path: Some(png_path.to_string()),
+            mime_type: Some("image/png".to_string()),
+            markdown_image: Some(format!("![QR Code](<{png_path}>)")),
+            notify_command_args: Some(vec![
+                "onchainos".to_string(),
+                "agent".to_string(),
+                "user-notify".to_string(),
+                "--content".to_string(),
+                "<localized content>".to_string(),
+                "--image-path".to_string(),
+                png_path.to_string(),
+            ]),
+        }
+    }
+
+    // Terminal-unicode QrOutput → terminal_qr carried, image fields empty, no
+    // notify command; business copy + policy intact.
     #[test]
-    fn terminal_mode_returns_unicode_qr_without_notify_command() {
-        let (notice, image_path) =
-            build_funding_notice_with_mode(test_input(), FundingDisplayMode::TerminalUnicode)
-                .expect("funding notice");
+    fn terminal_unicode_qr_maps_to_funding_output() {
+        let input = test_input();
+        let addr = input.deposit_address.clone();
+        let (notice, image_path) = build_funding_notice_from_qr(input, terminal_qr_output(&addr));
 
         assert!(image_path.is_none());
         assert_eq!(notice.display_mode, "terminal-unicode");
@@ -679,25 +645,31 @@ mod tests {
         );
         assert!(!notice.must_notify_with_image_path);
         assert!(!notice.must_run_notify_command);
+        assert!(!notice.must_render_markdown_image_below_first_option);
         assert!(notice.notify_command.is_none());
+        assert!(notice.notify_command_args.is_none());
+        // Business copy / notify protocol preserved.
+        assert!(notice.content_canonical.contains(&addr));
+        assert!(notice.must_repeat_in_final_response);
+        assert!(notice.forbid_funding_summary);
+        assert!(notice.display_policy.contains("show terminalQr"));
     }
 
+    // Image-notify QrOutput → image_path/markdownImage/notifyCommandArgs carried,
+    // must_* flags + display_policy business fields unchanged, notify command shell
+    // string rebuilt from the QR image path.
     #[test]
-    fn image_mode_requires_notify_and_full_final_notice() {
-        let mut input = test_input();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("test_tmp")
-            .join("funding_notice_image");
-        input.image_dir = Some(dir);
-
-        let (notice, image_path) =
-            build_funding_notice_with_mode(input, FundingDisplayMode::ImageNotify)
-                .expect("funding notice");
+    fn image_notify_qr_maps_to_funding_output() {
+        let input = test_input();
+        let addr = input.deposit_address.clone();
+        let png_path = "/tmp/onchainos-funding-qr-42-99.png";
+        let (notice, image_path) = build_funding_notice_from_qr(input, image_qr_output(png_path));
 
         assert_eq!(notice.display_mode, "image-notify");
-        assert!(image_path.as_ref().is_some_and(|path| path.exists()));
+        assert_eq!(image_path.as_deref(), Some(std::path::Path::new(png_path)));
+        assert_eq!(notice.image_path.as_deref(), Some(png_path));
         assert!(notice.terminal_qr.is_none());
+        assert!(notice.must_notify_with_image_path);
         assert!(notice.must_run_notify_command);
         assert!(notice.must_render_markdown_image_below_first_option);
         assert!(notice.must_repeat_in_final_response);
@@ -706,6 +678,10 @@ mod tests {
             .markdown_image
             .as_deref()
             .is_some_and(|value| value.contains("onchainos-funding-qr-")));
+        assert!(notice
+            .notify_command_args
+            .as_ref()
+            .is_some_and(|args| args.iter().any(|a| a == "--image-path")));
         assert!(
             notice
                 .display_policy
@@ -718,18 +694,31 @@ mod tests {
                 .unwrap_or_default()
                 .contains("--image-path")
         );
-        if let Some(path) = image_path {
-            let _ = std::fs::remove_file(path);
-        }
+        // Business copy preserved.
+        assert!(notice.content_canonical.contains(&addr));
     }
 
+    // FR-6: an over-capacity deposit address makes the QR encoder fail; the Common
+    // QR module degrades silently, so `build_funding_notice` still returns Ok with
+    // the address-only notice and no QR fields — no Err bubbled from the QR step.
     #[test]
-    fn default_image_dir_uses_funding_qr_subdir() {
-        let path = write_qr_png(&test_input().deposit_address, None).expect("qr png");
-        assert!(path
-            .to_string_lossy()
-            .contains(".onchainos/tmp/funding-qr"));
-        let _ = std::fs::remove_file(path);
+    fn qr_encode_failure_still_produces_notice() {
+        let mut input = test_input();
+        input.deposit_address = format!("0x{}", "a".repeat(8000));
+        let addr = input.deposit_address.clone();
+
+        let (notice, image_path) = build_funding_notice(input).expect("notice still produced");
+
+        assert!(image_path.is_none());
+        assert!(notice.terminal_qr.is_none());
+        assert!(notice.image_path.is_none());
+        assert!(notice.markdown_image.is_none());
+        assert!(notice.notify_command.is_none());
+        assert!(notice.notify_command_args.is_none());
+        assert!(!notice.must_notify_with_image_path);
+        assert!(!notice.must_run_notify_command);
+        // Address text is still present so the user can fund manually.
+        assert!(notice.content_canonical.contains(&addr));
     }
 
     #[test]

@@ -84,6 +84,102 @@ mod tests {
         assert!(summary.get("postLoginSubscriptions").is_none());
         assert!(summary.get("devices").is_none());
     }
+
+    // ── resolve_account_address_for_chain ─────────────────────────────
+
+    fn addr(chain_index: &str, address: &str) -> crate::wallet_store::AddressInfo {
+        crate::wallet_store::AddressInfo {
+            account_id: "account-1".to_string(),
+            address: address.to_string(),
+            chain_index: chain_index.to_string(),
+            chain_name: String::new(),
+            address_type: String::new(),
+            chain_path: String::new(),
+        }
+    }
+
+    /// Build a `WalletsJson` whose selected account (`account-1`) owns the
+    /// given address list.
+    fn wallets_with_addresses(address_list: Vec<crate::wallet_store::AddressInfo>) -> WalletsJson {
+        let mut accounts_map = std::collections::HashMap::new();
+        accounts_map.insert(
+            "account-1".to_string(),
+            crate::wallet_store::AccountMapEntry { address_list },
+        );
+        WalletsJson {
+            selected_account_id: "account-1".to_string(),
+            accounts_map,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resolve_account_address_for_chain_evm_returns_shared_evm_address() {
+        let wallets =
+            wallets_with_addresses(vec![addr("1", "0xEvmShared"), addr("501", "SoLaNaAddr")]);
+
+        // Exact EVM chain match.
+        assert_eq!(
+            resolve_account_address_for_chain(&wallets, "1").unwrap(),
+            "0xEvmShared"
+        );
+        // Another EVM chain with no dedicated entry shares the common EVM
+        // address (spec §7.1 "EVM address (shared)").
+        assert_eq!(
+            resolve_account_address_for_chain(&wallets, "42161").unwrap(),
+            "0xEvmShared"
+        );
+    }
+
+    #[test]
+    fn resolve_account_address_for_chain_solana_returns_solana_address() {
+        let wallets =
+            wallets_with_addresses(vec![addr("1", "0xEvmShared"), addr("501", "SoLaNaAddr")]);
+
+        assert_eq!(
+            resolve_account_address_for_chain(&wallets, "501").unwrap(),
+            "SoLaNaAddr"
+        );
+    }
+
+    #[test]
+    fn resolve_account_address_for_chain_missing_chain_errs() {
+        // Account has only an EVM address — Bitcoin (0) must NOT fall back to
+        // the EVM address; it is a real resolution failure (spec §3.2).
+        let wallets = wallets_with_addresses(vec![addr("1", "0xEvmShared")]);
+
+        assert!(resolve_account_address_for_chain(&wallets, "0").is_err());
+    }
+
+    #[test]
+    fn resolve_account_address_for_chain_tron_and_ton_never_fall_back_to_evm() {
+        // Tron (195) / TON (607) are non-EVM account-model chains with their
+        // own native address format — an account with only an EVM address
+        // must NOT resolve a Tron/TON top-up target to it (adversarial review
+        // Finding 1: wrong deposit address risk).
+        let wallets = wallets_with_addresses(vec![addr("1", "0xEvmShared")]);
+
+        assert!(resolve_account_address_for_chain(&wallets, "195").is_err());
+        assert!(resolve_account_address_for_chain(&wallets, "607").is_err());
+    }
+
+    #[test]
+    fn resolve_account_address_for_chain_uses_selected_account_only() {
+        let mut wallets = wallets_with_addresses(vec![addr("1", "0xSelected")]);
+        wallets.accounts_map.insert(
+            "account-2".to_string(),
+            crate::wallet_store::AccountMapEntry {
+                address_list: vec![addr("1", "0xOther")],
+            },
+        );
+
+        // selected_account_id is "account-1" → resolves that account's address,
+        // never account-2's.
+        assert_eq!(
+            resolve_account_address_for_chain(&wallets, "1").unwrap(),
+            "0xSelected"
+        );
+    }
 }
 
 // ── status ───────────────────────────────────────────────────────────
@@ -310,4 +406,70 @@ pub fn resolve_active_account_id(wallets: &WalletsJson) -> Result<String> {
         .next()
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("no wallet accounts found"))
+}
+
+// ── resolve_account_address_for_chain ─────────────────────────────────
+
+/// Chains that keep their own dedicated address in `accounts_map` and must
+/// resolve to that address only — never the shared EVM address: Solana (501),
+/// Bitcoin (0 / 5), SUI (784), Tron (195), TON (607). Every other chain is
+/// EVM-family and shares the common EVM address (spec §7.1). Tron/TON are
+/// excluded because they are non-EVM account-model chains with their own
+/// native address format (`chains::native_token_address`; TRANSFER_10004_COVERED_CHAINS
+/// in transfer/mod.rs treats them the same way) — falling back to the shared
+/// EVM address for them would surface a wrong deposit address/QR.
+fn shares_evm_address(chain_index: &str) -> bool {
+    !matches!(chain_index, "501" | "0" | "5" | "195" | "607" | "784")
+}
+
+/// Resolve the **selected** account's own receive address for `chain_index`
+/// from the locally-cached `accounts_map` in `wallets.json` (spec §2.5
+/// `FundingTarget.receive_address`, §6.2, §7.1). This is a local lookup — no
+/// external address input is accepted (§8.2 anti-spoof), the address always
+/// belongs to the caller's own selected account.
+///
+/// Resolution order (spec §7.1):
+/// 1. Exact `chain_index` match — covers Solana (501), Bitcoin, SUI, an
+///    independent X Layer (196) address, and any specific EVM chain.
+/// 2. EVM-family fallback — EVM chains (including X Layer without its own
+///    entry) share one common EVM address, so any EVM-family address is used.
+///
+/// Returns `Err` when the selected account has no address for the target chain,
+/// so callers can branch (T8/T10/T11 treat Wallet-Send/Swap as an error; A2A
+/// degrades — spec §3.2 "Address resolution failure").
+///
+/// `pub` so sibling scenes (funding-target resolver) and external modules can
+/// call it; refreshing a stale cache via `ensure_wallet_accounts_fresh` is the
+/// caller's responsibility before invoking this pure lookup.
+pub fn resolve_account_address_for_chain(
+    wallets: &WalletsJson,
+    chain_index: &str,
+) -> Result<String> {
+    let account_id = resolve_active_account_id(wallets)?;
+    let entry = wallets
+        .accounts_map
+        .get(&account_id)
+        .ok_or_else(|| anyhow::anyhow!("account not found"))?;
+
+    // 1. Exact chain-index match on the selected account only.
+    if let Some(a) = entry
+        .address_list
+        .iter()
+        .find(|a| a.chain_index == chain_index && !a.address.is_empty())
+    {
+        return Ok(a.address.clone());
+    }
+
+    // 2. EVM-family chains share the common EVM address.
+    if shares_evm_address(chain_index) {
+        if let Some(a) = entry
+            .address_list
+            .iter()
+            .find(|a| shares_evm_address(&a.chain_index) && !a.address.is_empty())
+        {
+            return Ok(a.address.clone());
+        }
+    }
+
+    bail!("no address for chain \"{chain_index}\" on the selected account")
 }

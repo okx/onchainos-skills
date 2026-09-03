@@ -24,6 +24,7 @@ use zeroize::Zeroize;
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
+use crate::funding::{build_funding_bundle, FundingBundle};
 use crate::output;
 use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
@@ -454,6 +455,25 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
             .get("errorReason")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
+        // Enrich ONLY the insufficient_balance refusal with the §2.4 funding
+        // scene (deposit address + QR on the payment chain), emitted via the
+        // shared `SceneError` (exit 1 in main.rs, keeps the top-level
+        // `{ok:false, error}`). Any address-resolution failure degrades to the
+        // original hard-failure path (§3.2 — no partial scene); every other
+        // errorReason is unchanged (§11.1).
+        if reason == "insufficient_balance" {
+            if let Some(value) = build_a2a_insufficient_balance_scene(
+                &p.payment_id,
+                chain_id,
+                &chain_index,
+                &currency,
+                &amount,
+            )
+            .await
+            {
+                return Err(output::SceneError { value }.into());
+            }
+        }
         bail!("payment {} rejected (reason={reason})", p.payment_id);
     }
 
@@ -468,6 +488,116 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         tx_hash: cred_resp["txHash"].as_str().map(|s| s.to_string()),
         signature: signature_hex,
     })
+}
+
+// ── A2A insufficient-balance scene (§2.4) ────────────────────────────────
+
+/// Build the §2.4 `a2a_insufficient_balance` top-level `{ok, error, data}` value.
+///
+/// Pure/hermetic: the caller resolves the [`FundingBundle`] (deposit address + QR
+/// on the payment chain) and passes it in, so this is unit-testable with no disk
+/// or network. Keeps the backward-compatible top-level `{ok:false, error}` (the
+/// exact string the non-enriched path bails with) and adds the structured `data`.
+/// `chain_id` is the raw EVM id from `challenge.methodDetails.chainId`; the
+/// resolved `chainIndex`, canonical `chainName` (was `networkName`, TBC[1]),
+/// `depositAddress`, and full `qr` all come from the bundle so `chainName` renders
+/// identically to the other scenes.
+fn build_a2a_insufficient_balance_value(
+    payment_id: &str,
+    chain_id: &str,
+    currency: &str,
+    asset_symbol: Option<&str>,
+    required: Option<&str>,
+    balance: Option<&str>,
+    bundle: &FundingBundle,
+) -> Value {
+    let shortfall = required
+        .zip(balance)
+        .and_then(|(required, balance)| crate::funding::readable_shortfall(required, balance));
+    let mut value = crate::funding::build_funding_blocked_result(
+        bundle,
+        crate::funding::FundingBlockedInput {
+            phase: "a2a_funding",
+            reason: "insufficient_balance",
+            asset: asset_symbol,
+            token_address: currency,
+            required,
+            balance,
+            business_payload: json!({
+                "scene": "a2a_insufficient_balance",
+                "paymentId": payment_id,
+                "needsNewPaymentId": true,
+                "paymentChain": {
+                    "chainId": chain_id,
+                    "chainIndex": bundle.target.chain_index,
+                    "chainName": bundle.target.chain_name,
+                },
+                "paymentAsset": {
+                    "currency": currency,
+                    "symbol": asset_symbol,
+                },
+                // Backward-compatible aliases; Funding consumers use
+                // payload.fundingNeed as the single common contract.
+                "required": required,
+                "balance": balance,
+                "shortfall": shortfall,
+                "sameNetworkRequired": bundle.target.same_network_required,
+                "gasFree": bundle.target.gas_free,
+                "depositAddress": bundle.target.receive_address,
+            }),
+        },
+    );
+    value["ok"] = Value::Bool(false);
+    value["error"] = Value::String(format!(
+        "payment {payment_id} rejected (reason=insufficient_balance)"
+    ));
+    value["data"] = value["payload"].clone();
+    value
+}
+
+/// Resolve the payment chain's [`FundingBundle`] from the current account, then
+/// build the §2.4 scene value.
+///
+/// Returns `None` on any wallet-load or address-resolution failure so the caller
+/// degrades to the original hard-failure path (§3.2) — never a partial scene.
+/// `chain_index` is the already-resolved payment `chainIndex`; `image_dir` is left
+/// `None` so `build_qr_output` uses its default `<ONCHAINOS_HOME>/tmp/funding-qr`
+/// → system-temp fallback (spec §4.4).
+async fn build_a2a_insufficient_balance_scene(
+    payment_id: &str,
+    chain_id: u64,
+    chain_index: &str,
+    currency: &str,
+    amount: &str,
+) -> Option<Value> {
+    let wallets = wallet_store::load_wallets().ok().flatten()?;
+    let bundle = build_funding_bundle(&wallets, chain_index, None).ok()?;
+    let matched_query =
+        crate::commands::agentic_wallet::balance::query_token_readable(chain_index, currency).await;
+    let balance = match &matched_query {
+        Ok(Some(token)) => Some(token.balance.clone()),
+        Ok(None) => Some("0".to_string()),
+        Err(_) => None,
+    };
+    let matched = matched_query.ok().flatten();
+    let required = matched.as_ref().and_then(|token| {
+        token.decimals.and_then(|decimals| {
+            crate::commands::agentic_wallet::shared::common::amount::minimal_to_readable(
+                amount, decimals,
+            )
+            .ok()
+        })
+    });
+    let asset_symbol = matched.as_ref().and_then(|token| token.symbol.as_deref());
+    Some(build_a2a_insufficient_balance_value(
+        payment_id,
+        &chain_id.to_string(),
+        currency,
+        asset_symbol,
+        required.as_deref(),
+        balance.as_deref(),
+        &bundle,
+    ))
 }
 
 // ── Buyer side: sign_escrow (offline TEE sign, no payment-server I/O) ───
@@ -947,6 +1077,114 @@ mod tests {
         let b2 = parse_bytes32_hex(&s[2..], "test").unwrap();
         assert_eq!(b, b2);
         assert!(parse_bytes32_hex("0x01", "test").is_err());
+    }
+
+    // ── T12: A2A insufficient-balance scene (§2.4) ───────────────────
+    use crate::funding::FundingTarget;
+    use crate::qr::QrOutput;
+
+    /// Hermetic `FundingBundle` fixture on X Layer (196), terminal-unicode mode —
+    /// no disk, no network (every field is public), so the Value-builder test is
+    /// fully self-contained.
+    fn x_layer_bundle(receive_address: &str) -> FundingBundle {
+        FundingBundle {
+            target: FundingTarget {
+                account_name: "Trading".to_string(),
+                chain_index: "196".to_string(),
+                chain_name: "X Layer".to_string(),
+                receive_address: receive_address.to_string(),
+                gas_free: true,
+                same_network_required: true,
+            },
+            qr: QrOutput {
+                requested_format: "auto".to_string(),
+                resolved_format: "unicode".to_string(),
+                display_mode: "terminal-unicode".to_string(),
+                terminal_qr: Some("▟▙ unicode-qr-block ▟▙".to_string()),
+                image_path: None,
+                mime_type: None,
+                markdown_image: None,
+                notify_command_args: None,
+            },
+        }
+    }
+
+    // §2.4: the enriched value keeps the backward-compatible top-level
+    // `{ok:false, error}` and adds the structured `data` sub-object (scene +
+    // payment chain/asset + deposit address + the full Common QR field set).
+    #[test]
+    fn a2a_insufficient_balance_value_matches_spec_2_4() {
+        // Full token contract address (currency) carried verbatim from the challenge.
+        let currency = "0x382bb369d343125bfb2117af9c149795c6c65c50";
+        let bundle = x_layer_bundle("0xBuyerXLayerAddr");
+
+        let v = build_a2a_insufficient_balance_value(
+            "pay_abc123",
+            "196",
+            currency,
+            Some("USDT"),
+            Some("10"),
+            Some("0.08504764"),
+            &bundle,
+        );
+
+        // Top-level envelope: {ok:false} + the exact hard-failure error string.
+        assert_eq!(v["ok"], serde_json::json!(false));
+        assert_eq!(v["phase"], "a2a_funding");
+        assert_eq!(v["decision"], "blocked");
+        assert_eq!(v["reason"], "insufficient_balance");
+        assert_eq!(
+            v["nextAction"],
+            serde_json::json!([{"id": "fund_account", "recommend": true, "params": {}}])
+        );
+        assert_eq!(v["payload"]["scene"], "a2a_insufficient_balance");
+        assert_eq!(v["payload"]["fundingNeed"]["shortfall"], "9.91495236");
+        assert_eq!(
+            v["payload"]["fundingTarget"]["receiveAddress"],
+            "0xBuyerXLayerAddr"
+        );
+        assert_eq!(
+            v["error"],
+            "payment pay_abc123 rejected (reason=insufficient_balance)"
+        );
+
+        // data enrichment.
+        let data = &v["data"];
+        assert_eq!(data["scene"], "a2a_insufficient_balance");
+        assert_eq!(data["paymentId"], "pay_abc123");
+        assert_eq!(data["needsNewPaymentId"], serde_json::json!(true));
+
+        // paymentChain: raw chainId + resolved chainIndex + canonical chainName
+        // (the field formerly `networkName`, TBC[1]).
+        assert_eq!(data["paymentChain"]["chainId"], "196");
+        assert_eq!(data["paymentChain"]["chainIndex"], "196");
+        assert_eq!(data["paymentChain"]["chainName"], "X Layer");
+        assert!(
+            data["paymentChain"].get("networkName").is_none(),
+            "networkName must be renamed to chainName"
+        );
+
+        // paymentAsset.currency = full challenge value; depositAddress = receive addr.
+        assert_eq!(data["paymentAsset"]["currency"], currency);
+        assert_eq!(data["paymentAsset"]["symbol"], "USDT");
+        assert_eq!(data["balance"], "0.08504764");
+        assert_eq!(data["required"], "10");
+        assert_eq!(data["shortfall"], "9.91495236");
+        assert_eq!(data["depositAddress"], "0xBuyerXLayerAddr");
+
+        // Consumable scene flags projected from the FundingTarget (§2.5): X Layer
+        // (196) is both same-network-required and gas-free.
+        assert_eq!(data["sameNetworkRequired"], serde_json::json!(true));
+        assert_eq!(data["gasFree"], serde_json::json!(true));
+
+        // Full Common QR field set embedded (camelCase, terminal-unicode mode).
+        assert_eq!(data["qr"]["requestedFormat"], "auto");
+        assert_eq!(data["qr"]["resolvedFormat"], "unicode");
+        assert_eq!(data["qr"]["displayMode"], "terminal-unicode");
+        assert!(
+            data["qr"]["terminalQr"].is_string(),
+            "terminal-unicode qr must carry terminalQr"
+        );
     }
 
     /// Lock in escrow nonce determinism for fixed input — guards against

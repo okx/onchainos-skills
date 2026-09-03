@@ -228,8 +228,14 @@ Every successful response contains exactly `phase`, `decision`, `reason`, `nextA
 under `data`. Route by `decision`, then execute or present only the actions returned in `nextAction`;
 there is no `action` field. `payload` is empty for `login_validation` and `identity_validation`.
 For `reason=duplicate_subscription`, it is exactly `{jobId:<existing subscription id>,active:<bool>}`.
-For other phases it contains the normalized selected Service; `payment_validation` also includes
-`balanceWarning` when the balance is insufficient. Stable phase values are `login_validation`,
+For other phases it contains the normalized selected Service. When
+`payment_validation` reports insufficient balance, the same payload also carries
+the shared `fundingTarget`, `qr`, and `fundingNeed` fields and returns
+`fund_account` with empty params. It carries no saved `sid`, create command,
+or prior confirmation and never authorizes `create-task`.
+After a successful paid-Service balance check, `creation` includes `paymentBalance` with
+`chainIndex`, `chainName`, `currency`, `required`, and the freshly queried total `available` balance.
+Stable phase values are `login_validation`,
 `identity_validation`, `service_validation`, `subscription_validation`, `payment_validation`, and
 `creation`. Use [`task-action-routing.md`](task-action-routing.md) for each `nextAction[].id`.
 

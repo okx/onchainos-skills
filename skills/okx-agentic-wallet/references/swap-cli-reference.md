@@ -20,6 +20,33 @@ onchainos swap quote --from <addr> --to <addr> --readable-amount <amt> --chain <
 
 `--readable-amount` (human units, CLI converts) or `--amount` (raw minimal units) — one of. Key return: `toTokenAmount`, `fromTokenAmount`, `estimateGasFee`, `tradeFee` (USD), `priceImpactPercent`, `dexRouterList[]` (`dexName`, `percentage`), and per-side `fromToken` / `toToken` with `isHoneyPot`, `taxRate`, `decimal`, `tokenUnitPrice`. Each route also carries the always-on SW2 fields `action` (`ok` / `warn` / `block`) and `reason` (semicolon-joined, deduplicated; empty string when `ok`) — the CLI classifies honeypot / tax-rate risk per route; read the returned verdict and do not recompute it.
 
+The normal-quote response also carries **`walletBalance`** — the wallet's from-token balance. Always present: a string on success, JSON `null` when the balance query failed (never `0`, never omitted, never a string sentinel).
+
+### Insufficient-balance scene (`swap_insufficient_balance`)
+
+When the quote detects the from-token balance is below the requested amount, it emits a flat top-level object (`ok:false` at the root, NOT the `JsonOutput` envelope) instead of a normal quote. Business recovery: [swap.md](swap.md) → Insufficient-Balance Top-up Recovery. Presentation before the user chooses funding: [swap-output-templates.md](swap-output-templates.md).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `scene` | string | Always `"swap_insufficient_balance"`. |
+| `phase` / `decision` / `reason` | string | `swap_funding` / `blocked` / `insufficient_balance`. |
+| `nextAction` | array | Registered `fund_account` action with empty params. |
+| `payload` | object | Business scene fields plus common `fundingTarget`, `qr`, and `fundingNeed`. |
+| `chainIndex` | string | Source chain index. |
+| `chainName` | string | Canonical chain display name. |
+| `sameNetworkRequired` | bool | `true` — the top-up must arrive on this same `chainName` network. |
+| `gasFree` | bool | `true` for X Layer (196) — render the gas-free note. |
+| `fromAsset` | object | `{ symbol, tokenAddress }` (full from-token CA). |
+| `requestedAmount` | string | Requested swap amount (readable units). |
+| `walletBalance` | string | Current from-token balance (readable units). |
+| `shortfall` | string \| null | Exact readable `requestedAmount - walletBalance`; `null` when either value is not a plain decimal. |
+| `fundingAddress` | string | Current account's own receive address on the source chain. |
+| `qr` | object | Deposit-address QR — same shape as [wallet-cli-reference.md](wallet-cli-reference.md#common-qr-object). |
+
+The common `payload.fundingTarget`, `payload.qr`, and `payload.fundingNeed`
+fields are owned by the CLI Funding helper. The result carries no saved quote,
+resume token, executable command, or prior confirmation.
+
 ## `swap execute`
 
 One-shot: quote → approve (if needed) → sign → broadcast. Honeypot and price impact >10% are blocked internally.

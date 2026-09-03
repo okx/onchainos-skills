@@ -156,7 +156,9 @@ never advertise `pay anyway` or ask generic `yes/no`. Route: `funded` → re-quo
 alternative → show other sufficient entries from `candidates[] + alternatives[]`
 (re-quote first if expired), then confirm once using `acceptsIndex`; `cancel` → stop. An unsolicited, unambiguous
 request to pay despite the shortfall is that single authorization; ambiguous
-`yes` is not. Do not run `funding-check` or add a hard balance gate.
+`yes` is not. In this HTTP 402 candidate flow, do not run `funding-check` or
+add a hard balance gate. That prohibition does not apply to the separate
+structured `payment a2a-pay pay` recovery routed by `a2a_charge.md`.
 
 Pass the chosen candidate's **`acceptsIndex`** as `--selected-index`
 (NOT its position in `candidates[]`/`alternatives[]`) so the CLI signs exactly the
