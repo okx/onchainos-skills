@@ -458,7 +458,7 @@ Separate user-initiated intent (`outstanding decisions` / `pending decisions` / 
 🛑 **The ONLY valid stop conditions:**
 - Background recovery cannot confirm that the old task exited or stopped; invalidate that generation and do not start a replacement (see `watch-background-recovery.md`).
 - The user explicitly says `stop watching` / `unsubscribe`.
-- **Scoped session + this task reached a terminal state.** When the watch is running with `--job-id <X>` (scoped session per §Session-scoped sticky) AND any `notification` in the complete returned batch has `userContent` containing any of: `[Job Completed]` / `[Job Auto-Completed]` / `[x402 Job Completed]` / `[Job Expired]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]`, mark that Watch generation no longer current as soon as the marker is detected, render the complete batch per §Dispatch, then **stop the watch loop** — do not re-enter. This jobId is terminal; continuing to long-poll on a dead jobId is pure churn (no new events will ever arrive for this `--job-id`).
+- **Scoped session + this task reached a terminal state.** When the watch is running with `--job-id <X>` (scoped session per §Session-scoped sticky) AND any `notification` in the complete returned batch has `userContent` containing any of: `[Job Completed]` / `[Job Auto-Completed]` / `[Job Expired]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]`, mark that Watch generation no longer current as soon as the marker is detected, render the complete batch per §Dispatch, then **stop the watch loop** — do not re-enter. This jobId is terminal; continuing to long-poll on a dead jobId is pure churn (no new events will ever arrive for this `--job-id`).
   - **Global session** (no `--job-id`) does NOT apply this stop — other tasks may still produce new events. See §"NOT stop conditions" below.
 
 ### Re-enter after processing
@@ -468,10 +468,10 @@ After processing all returned items, **always** call `okx-a2a user watch --json`
 🚫 **NOT stop conditions** — every one of these requires re-entering watch:
 
 - A `notification` was just rendered (auto-consumed by watch — no claim step exists for notifications).
-- A `notification` whose content contains any terminal-state marker (`[Job Completed]` / `[Job Auto-Completed]` / `[x402 Job Completed]` / `[Job Expired]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]`) **in a global session** — the global watch monitors the user-session-wide inbox; one task's terminal state ≠ the loop's terminal state (other tasks may still produce events). **In a scoped session (with `--job-id <X>`) these markers ARE stop signals** — see §Stop condition above for the scoped terminal-state rule.
+- A `notification` whose content contains any terminal-state marker (`[Job Completed]` / `[Job Auto-Completed]` / `[Job Expired]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]`) **in a global session** — the global watch monitors the user-session-wide inbox; one task's terminal state ≠ the loop's terminal state (other tasks may still produce events). **In a scoped session (with `--job-id <X>`) these markers ARE stop signals** — see §Stop condition above for the scoped terminal-state rule.
 - A watch-originated `decision_request` was just deferred or handled — outcomes 1 / 3 / 4 / 5 all re-enter the exact originating global or scoped command. An independently list-opened decision ends normally because it has no active watch to resume.
 - Watch returned 0 items (empty result / long-poll elapsed with no new events) — re-enter watch and keep waiting.
 - **Mid-flow markers that look terminal but are NOT** — these are intermediate notifications; keep watching even in scoped session. Common offenders:
-  - `[Deliverable Received]` / `[x402 Deliverable Received]` — payment settled + deliverable in hand, but the terminal marker is `[x402 Job Completed]`.
-  - `[Job Accepted]` / `[Payment Mode Set]` / `[Connecting ASP]` / `[Job Created]` / `[x402 Replay Failed]` / `[Rejection Confirmed]` / `[📝 Rating Submitted]` — all mid-flow status updates, never terminal on their own.
+  - `[Deliverable Received]` — a deliverable is available, but the Task has not reached a terminal marker yet.
+  - `[Job Accepted]` / `[Payment Mode Set]` / `[Connecting ASP]` / `[Job Created]` / `[Rejection Confirmed]` / `[📝 Rating Submitted]` — all mid-flow status updates, never terminal on their own.
   - **Rule of thumb**: if the marker is not in the literal list under §Stop condition, it is NOT a stop signal — re-enter watch unconditionally.

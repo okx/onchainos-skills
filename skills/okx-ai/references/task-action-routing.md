@@ -7,7 +7,7 @@ legacy prose field `action`.
 |---|---|---|---|
 | `login` | `okx-agentic-wallet` login flow | Owning Skill | Rerun prepare with the same `sid` |
 | `register_user_agent` | `identity-register.md` with User Agent role | Required | Rerun prepare with the same `sid` |
-| `route_payment_protocol` | `okx-agent-payments-protocol` | Owning Skill | End task creation |
+| `invoke_a2mcp` | `a2mcp-direct-invoke.md` | Parameters are collected and validated automatically; only payment is confirmed in that playbook | Run the A2MCP direct-invocation flow |
 | `fund_account` | Wallet funding flow | Required | Rerun prepare with the same `sid` |
 | `restore_subscription` | `task-user-duplicate-subscription-guide.md` | Required | Enter scoped watch |
 | `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |
@@ -16,6 +16,10 @@ legacy prose field `action`.
 ## Routing rules
 
 - Read this file when a CLI result contains `nextAction`.
+- `invoke_a2mcp` is valid only with `phase=service_routing`,
+  `decision=ready`, `reason=a2mcp_service_confirmed`,
+  `payload.schemaVersion=1`, and `payload.serviceSnapshot`. A mismatch blocks;
+  do not infer or fall back to a payment route.
 - For `reason=duplicate_subscription`, read
   `task-user-duplicate-subscription-guide.md` before presenting or executing
   any returned action.
