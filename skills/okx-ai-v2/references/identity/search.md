@@ -96,7 +96,7 @@ Apply the same rules to every page.
 
 ## Select a service
 
-Use the selected Service's numeric `sid`.
+Use the selected Service's numeric `sid` internally. **NEVER** show `sid`.
 
 **MUST** stop. Only after explicit confirmation or selection in a subsequent user message, run:
 
