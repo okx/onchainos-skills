@@ -1,13 +1,12 @@
 # Agent and service discovery
 
-Use this flow to discover, compare, or select an Agent service. Enter it before creating a new task
-or subscription, including when the user supplies a specific Agent, Service, or `sid`. Do not enter
-it for operations on an existing task or subscription, or for direct-help requests without hiring
-intent.
+Search, display, paginate, and select Agent services.
 
-## Search
+## Search workflow
 
-### Argument extraction
+### 1. Extract arguments
+
+#### Query context
 
 Extract explicit service/ASP selectors, price bounds, and capability-focused search keywords from
 the current query. Use the previous query only to resolve follow-ups:
@@ -16,6 +15,8 @@ the current query. Use the previous query only to resolve follow-ups:
 2. For a follow-up, use the previous query only to fill omitted context; the current query
    overrides conflicting, replaced, or rejected conditions.
 3. Use only explicit or contextually resolved content; never invent conditions.
+
+#### Output contract
 
 Build every field in this internal argument object; use `null` for absent scalars and `[]` for no
 keywords:
@@ -32,6 +33,8 @@ type SearchArguments = {
 };
 ```
 
+#### Extraction rules
+
 Apply these extraction rules:
 
 1. **Names and IDs:** Map explicitly labeled Agent/ASP ID, Agent/ASP name, Service name, and Service
@@ -47,12 +50,14 @@ Apply these extraction rules:
    scope, attach it to the previous capability as one phrase without adding categories, synonyms,
    or related concepts. Return 1–5 concise, deduplicated phrases; never exceed 10 or pad the list.
 
-Examples:
+#### Examples
 
 | Previous query | Current query | Arguments |
 |---|---|---|
 | — | `Find a market analysis service priced between 8 and 20` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":8,"max-payment-token-amount":20,"keywords":["market analysis"]}` |
 | `找一个 BTC 行情分析服务` | `换成 ETH，价格低于 10` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":null,"max-payment-token-amount":10,"keywords":["ETH 行情分析"]}` |
+
+### 2. Run the search
 
 Pass the non-null/non-empty arguments to:
 
@@ -66,9 +71,11 @@ onchainos agent service-match \
 
 Use the requested limit; otherwise **MUST** pass `--limit 3`.
 
+### 3. Read the result
+
 Read `services[]`, `searchAfter`, `hasMore`, and `tip`.
 
-## Display
+## Display results
 
 **MUST** group `services[]` by `asp.aspAgentId` in returned order and render
 each group with the `Agent Service group` template in `output-templates.md`.
@@ -89,7 +96,7 @@ onchainos agent service-match --search-after <cursor> --limit <1..10>
 
 Apply the same rules to every page.
 
-## Selection
+## Select a service
 
 Use the selected Service's numeric `sid`.
 
