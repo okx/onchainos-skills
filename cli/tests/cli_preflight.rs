@@ -148,7 +148,7 @@ fn preflight_help_lists_force_flag() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Bypass the 12-hour throttle and always perform a fresh online check"),
+        stdout.contains("Bypass the 24-hour throttle and always perform a fresh online check"),
         "--help must document the --force flag with its help copy: {stdout}"
     );
 }
