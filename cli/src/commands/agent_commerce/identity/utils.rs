@@ -4,6 +4,7 @@
 //! here are deliberately small and dependency-light.
 
 use anyhow::{anyhow, bail, Context as _, Result};
+use chrono::TimeZone;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -1592,60 +1593,79 @@ fn derive_has_more(map: &mut serde_json::Map<String, Value>) {
 
 // ─── §5 feedback-list row cells ───────────────────────────────────────────
 //
-// references/identity/reputation.md §Result is a prose entry per review rather than a strict
-// table, but we surface the same fields as ordered cells so the skill can lay
-// them out directly. Fields (per §Result):
-//   Score (`★ <score>` — score is ALREADY a 0.00–5.00 float, set by
-//     convert_feedback_list_scores; render directly, trailing zeros trimmed),
-//   Reviewer (creatorId → `#<id>`), Task (taskId), Date (createdAt),
-//   Comment (description verbatim, or `(no comment)` when empty).
+// references/identity/output-templates.md §Reputation list renders these
+// ordered cells directly. Fields:
+//   Score (`valueString` / `value` divided by 20 and displayed on a 5-point
+//     scale without a suffix; legacy `score` stays supported as an
+//     already-normalized 5-point value),
+//   Reviewer (`agentName`, with legacy creatorId → `#<id>` fallback),
+//   Date (`time` Unix milliseconds → local date, with legacy createdAt fallback),
+//   Comment (`content`, with legacy description fallback).
 // Missing optional fields render `—` (the row keeps all cells) EXCEPT comment
 // which uses §5's `(no comment)` placeholder.
 fn build_feedback_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
-    // score: already a 0.00–5.00 float (convert_feedback_list_scores ran).
-    let score = match map.get("score") {
-        Some(Value::Number(n)) => match n.as_f64() {
-            Some(v) => format!("★ {}", format_search_rate(v)),
-            None => "—".to_string(),
-        },
-        _ => "—".to_string(),
-    };
-
-    let reviewer = map
-        .get("creatorId")
-        .and_then(|v| {
-            v.as_u64()
-                .map(|n| n.to_string())
-                .or_else(|| v.as_str().map(str::to_string))
+    let score_100 = ["valueString", "value"].into_iter().find_map(|key| {
+        map.get(key).and_then(|value| match value {
+            Value::String(value) => {
+                value
+                    .trim()
+                    .strip_suffix("/100")
+                    .unwrap_or(value.trim())
+                    .parse::<f64>()
+                    .ok()
+            }
+            Value::Number(value) => value.as_f64(),
+            _ => None,
         })
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(|id| format!("#{id}"))
+    });
+    let score = score_100
+        .map(|value| format_search_rate(value / 20.0))
+        .or_else(|| {
+            map.get("score")
+                .and_then(Value::as_f64)
+                .map(format_search_rate)
+        })
         .unwrap_or_else(|| "—".to_string());
 
-    let task = map
-        .get("taskId")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+    let reviewer = first_str(map, &["agentName"])
         .map(str::to_string)
+        .or_else(|| {
+            map.get("creatorId")
+                .and_then(|value| {
+                    value
+                        .as_u64()
+                        .map(|number| number.to_string())
+                        .or_else(|| value.as_str().map(str::to_string))
+                })
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .map(|id| format!("#{id}"))
+        })
         .unwrap_or_else(|| "—".to_string());
 
-    let date = map
-        .get("createdAt")
-        .and_then(|v| {
-            v.as_str()
-                .map(str::to_string)
-                .or_else(|| v.as_u64().map(|n| n.to_string()))
+    let date = map.get("time")
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|value| value.trim().parse().ok()))
         })
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .and_then(|timestamp| chrono::Local.timestamp_millis_opt(timestamp).single())
+        .map(|date_time| date_time.format("%Y-%m-%d").to_string())
+        .or_else(|| {
+            map.get("createdAt")
+                .and_then(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .or_else(|| value.as_u64().map(|number| number.to_string()))
+                })
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
         .unwrap_or_else(|| "—".to_string());
 
     // Comment: §5 placeholder `(no comment)` when empty / missing.
-    let comment = map
-        .get("description")
-        .and_then(Value::as_str)
+    let comment = first_str(map, &["content", "description"])
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
@@ -1654,7 +1674,6 @@ fn build_feedback_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     vec![
         cell("Score", score),
         cell("Reviewer", reviewer),
-        cell("Task", task),
         cell("Date", date),
         cell("Comment", comment),
     ]

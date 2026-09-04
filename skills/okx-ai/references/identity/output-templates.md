@@ -72,9 +72,9 @@ Shared Agent/Service/Review templates and display rules.
 ## Reputation list
 
 ```markdown
-| Date | Reviewer | Task | Rating | Comment |
-|---|---|---|---|---|
-| <date> | <reviewer> | <task> | <rating> | <comment> |
+| Reviewer | Comment | Date | Score |
+|---|---|---|---|
+| <reviewer> | <comment> | <date> | <score> |
 ```
 
 ### Rules
