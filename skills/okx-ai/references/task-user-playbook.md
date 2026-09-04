@@ -25,13 +25,6 @@ communication rules; it does not match free-text user intents.
   persistence failures are fail-closed and never create an acceptance decision.
 - A successful task-detail prefetch identifies a one-time task. If its authoritative status is already
   `submitted`, create the acceptance decision immediately; otherwise save and wait for `job_submitted`.
-- A delivery absent from the one-time task registry must pass the ACTIVE subscription lookup. Without
-  an active local Service Guide + matching Guide Consent, save and display the Signal only. With an
-  active Guide contract, apply the exact Guide to the saved Signal using only user-confirmed Consent.
-  Before a money-moving command, require `tradeRecordsV1.ok=true`, query the exact
-  `(jobId, deliveryId)`, and stop when any record exists; then reserve the delivery with
-  `autotrade-direct-claim`. After the one execution attempt, call `autotrade-direct-finalize` and persist
-  the terminal trade record. A post-submit persistence failure must never trigger a retry or replay.
 
 ## §1.8 `job_submitted`
 
