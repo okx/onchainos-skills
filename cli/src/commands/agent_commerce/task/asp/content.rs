@@ -14,7 +14,7 @@
 //!    users see the equivalent of "escrow, review window expired, task completed"). The no-technical-jargon
 //!    rule applies to all languages, not just English.
 //!
-//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
+//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a session send`
 //!    to the User Agent's sub agent. Naming suffix: `_to_buyer`.
 //!    Rule: protocol literals are allowed (`[intent:*]` / `fileKey`/`digest` etc.);
 //!    **do NOT instruct the peer to run CLIs** — the peer has its own flow.rs and
@@ -145,17 +145,6 @@ pub fn job_submitted_user_notify(job_id: &str) -> String {
     format!(
         "[Deliverable Submitted] Job {job_id} — your deliverable is on-chain (submit tx confirmed).\n\
          \x20\x20Waiting for the User Agent's review (approve or reject)."
-    )
-}
-
-/// `Event::JobCompleted` Step 2 — task-completed notice pushed to the user.
-pub fn job_completed_user_notify(job_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[💰 Job Completed] Job {job_id} (<title>) — approved by the User Agent; funds received.\n\
-         \x20\x20\x20\x20  - Income: <tokenAmount> <tokenSymbol>\n\
-         \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
-         \x20\x20\x20\x20\n\
-         \x20\x20\x20\x20This job is complete."
     )
 }
 
@@ -308,7 +297,7 @@ pub fn deliver_file_to_user(job_id: &str) -> String {
     )
 }
 
-/// Build the actual text-deliver XMTP message with real content (used by deliver.rs).
+/// Build the actual text-deliver A2A session message with real content (used by deliver.rs).
 pub fn build_text_deliver_message(job_id: &str, text: &str) -> String {
     format!(
         "jobId: {job_id}\n\
@@ -320,7 +309,7 @@ pub fn build_text_deliver_message(job_id: &str, text: &str) -> String {
     )
 }
 
-/// Build the actual file-deliver XMTP message with real upload metadata (used by deliver.rs).
+/// Build the actual file-deliver A2A session message with real upload metadata (used by deliver.rs).
 pub fn build_file_deliver_message(
     job_id: &str,
     upload: &crate::commands::agent_commerce::task::common::okx_a2a::FileUploadResult,
@@ -401,7 +390,7 @@ pub fn sub_asp_selected_asp_notify(
 /// `sub_asp_selected` with `trialType=1` — the subscriber is on a free trial, so nothing
 /// has been charged yet; the ASP must NOT be told a payment was received (the real payment
 /// is announced on conversion via `sub_trial_into_active`). Mirrors the buyer-side
-/// `sub_created_trial_user_notify` trial variant.
+/// Buyer-side `sub_asp_selected_trial_user_notify` trial variant.
 pub fn sub_asp_selected_trial_asp_notify(
     service_name: Option<&str>,
     buyer_agent_id: Option<&str>,
@@ -516,9 +505,184 @@ pub fn sub_user_reject_asp_decision_copy(
     out
 }
 
+// ── Job notification events ────────────────────────────────────────
+
+/// `job_asp_accept_expire` — subscription-task copy.
+pub fn subscription_job_asp_accept_expire_asp_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+) -> String {
+    format!(
+        "[Job Timed Out] You did not respond to {job_name} within 3 hours, and the job has timed out.\n\
+         Job ID: {job_id}\n\n\
+         The escrowed amount of {amount} {token_symbol} will be returned automatically to the user's wallet address."
+    )
+}
+
+/// `job_asp_accept_expire` — ordinary-task copy, split by whether payment was made.
+pub fn regular_job_asp_accept_expire_asp_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    is_paid: bool,
+) -> String {
+    let payment = if is_paid {
+        format!(
+            " The escrowed amount of {amount} {token_symbol} will be returned automatically to the User Agent's wallet."
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "[Job Expired] You did not respond to {job_name} within 3 hours, and the job has expired.{payment}\n\n\
+         Job ID: {job_id}\n\
+         Job status: Expired"
+    )
+}
+
+/// `job_asp_reject_closed` — subscription-task copy.
+pub fn subscription_job_asp_reject_closed_asp_notify(
+    job_name: &str,
+    job_id: &str,
+    reason: &str,
+) -> String {
+    format!(
+        "[Task Declined] You have declined {job_name}.\n\
+         Job ID: {job_id}\n\
+         Reason: {reason}"
+    )
+}
+
+/// `job_asp_reject_closed` — ordinary-task copy (the price does not change it).
+pub fn regular_job_asp_reject_closed_asp_notify(
+    job_name: &str,
+    job_id: &str,
+    reason: &str,
+) -> String {
+    format!(
+        "[Job Declined] You have declined {job_name}.\n\n\
+         Job ID: {job_id}\n\
+         Reason: {reason}\n\
+         Job status: Closed"
+    )
+}
+
+/// `job_asp_reject_expire` — subscription-task copy.
+pub fn subscription_job_asp_reject_expire_asp_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+) -> String {
+    format!(
+        "[Automatic Refund] You did not process the refund request for {job_name} by the deadline. The refund of {amount} {token_symbol} will be returned automatically to the user's wallet.\n\
+         Job ID: {job_id}\n\
+         Job status: Closed\n\
+         No further service delivery is required."
+    )
+}
+
+/// `job_asp_reject_expire` — ordinary-task copy, split by whether payment was made.
+pub fn regular_job_asp_reject_expire_asp_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    is_paid: bool,
+) -> String {
+    if is_paid {
+        format!(
+            "[Automatic Refund] You did not process the refund request for {job_name} by the deadline. The refund of {amount} {token_symbol} will be returned automatically to the User Agent's wallet.\n\n\
+             Job ID: {job_id}\n\
+             Job status: Failed"
+        )
+    } else {
+        format!(
+            "[Refund Response Timed Out] You did not process the refund request for {job_name} by the deadline. No payment was made for this job, so no refund is required.\n\n\
+             Job ID: {job_id}\n\
+             Job status: Failed"
+        )
+    }
+}
+
+/// `sub_asp_claim_notify` — subscription income was collected for the ASP.
+pub fn sub_asp_claim_notify_asp_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    tx_hash: &str,
+) -> String {
+    format!(
+        "[Income Collected] The system has automatically collected subscription income of {amount} {token_symbol} for {job_name}. Please monitor your wallet balance.\n\
+         \n\
+         Job ID: {job_id}\n\
+         Transaction: {tx_hash}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn job_notification_copy_matches_spec() {
+        assert_eq!(
+            subscription_job_asp_accept_expire_asp_notify(
+                "BTC Signals",
+                "job-1",
+                "12.34",
+                "USDT",
+            ),
+            "[Job Timed Out] You did not respond to BTC Signals within 3 hours, and the job has timed out.\nJob ID: job-1\n\nThe escrowed amount of 12.34 USDT will be returned automatically to the user's wallet address."
+        );
+        assert_eq!(
+            subscription_job_asp_reject_closed_asp_notify(
+                "BTC Signals",
+                "job-1",
+                "capacity unavailable",
+            ),
+            "[Task Declined] You have declined BTC Signals.\nJob ID: job-1\nReason: capacity unavailable"
+        );
+        assert_eq!(
+            subscription_job_asp_reject_expire_asp_notify(
+                "BTC Signals",
+                "job-1",
+                "12.34",
+                "USDT",
+            ),
+            "[Automatic Refund] You did not process the refund request for BTC Signals by the deadline. The refund of 12.34 USDT will be returned automatically to the user's wallet.\nJob ID: job-1\nJob status: Closed\nNo further service delivery is required."
+        );
+        assert_eq!(
+            sub_asp_claim_notify_asp_notify(
+                "BTC Signals",
+                "job-1",
+                "12.34",
+                "USDT",
+                "0xreceive",
+            ),
+            "[Income Collected] The system has automatically collected subscription income of 12.34 USDT for BTC Signals. Please monitor your wallet balance.\n\nJob ID: job-1\nTransaction: 0xreceive"
+        );
+        assert_eq!(
+            regular_job_asp_accept_expire_asp_notify(
+                "One-off analysis", "job-2", "0", "USDT", false,
+            ),
+            "[Job Expired] You did not respond to One-off analysis within 3 hours, and the job has expired.\n\nJob ID: job-2\nJob status: Expired"
+        );
+        assert_eq!(
+            regular_job_asp_reject_closed_asp_notify("One-off analysis", "job-2", "policy"),
+            "[Job Declined] You have declined One-off analysis.\n\nJob ID: job-2\nReason: policy\nJob status: Closed"
+        );
+        assert_eq!(
+            regular_job_asp_reject_expire_asp_notify(
+                "One-off analysis", "job-2", "5", "USDT", true,
+            ),
+            "[Automatic Refund] You did not process the refund request for One-off analysis by the deadline. The refund of 5 USDT will be returned automatically to the User Agent's wallet.\n\nJob ID: job-2\nJob status: Failed"
+        );
+    }
 
     // ── job_rejected_user_decision_prompt decision-deadline reminder (FR-4) ──
 

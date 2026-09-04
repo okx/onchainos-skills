@@ -4,7 +4,7 @@
 >
 > The state machine itself is payment-mode-agnostic — for payment details see [`payment-modes.md`](./payment-modes.md); for entry differences see [`entry-points.md`](./entry-points.md).
 >
-> **Important layering**: this system strictly distinguishes between **task status** (Status, 11 real enums) and **system events** (Event, 54 total). **Events are not states** — some events are transient (don't change status, e.g. `provider_applied` / `dispute_approved`), some trigger state transitions, and some are entirely decoupled from task status (e.g. staking events).
+> **Important layering**: this system strictly distinguishes between **task status** (Status, 11 real enums) and **system events** (Event, 58 total). **Events are not states** — some events are transient (don't change status, e.g. `provider_applied` / `dispute_approved`), some trigger state transitions, and some are entirely decoupled from task status (e.g. staking events).
 
 ---
 
@@ -16,7 +16,7 @@ Backend `status` int field → local `Status` enum mapping (`state_machine.rs::S
 |---|---|---|---|---|
 | `-1` | `init` | `Status::Init` | Internal initialization state | — |
 | `0` | `created` | `Status::Created` | Task on-chain, awaiting acceptance | `job_created` |
-| `1` | `accepted` | `Status::Accepted` | User Agent confirmed acceptance (funds escrowed) | `job_accepted` |
+| `1` | `accepted` | `Status::Accepted` | Designated ASP accepted the buyer-created-and-funded task; execution starts | `job_accepted` |
 | `2` | `submitted` | `Status::Submitted` | ASP deliverable on-chain | `job_submitted` |
 | `3` | `rejected` | `Status::Rejected` | User Agent rejected deliverable; 24h decision window (dispute / agree-refund) | `job_rejected` |
 | `4` | `disputed` | `Status::Disputed` | Dispute in progress (evidence period + commit/reveal) | `job_disputed` |

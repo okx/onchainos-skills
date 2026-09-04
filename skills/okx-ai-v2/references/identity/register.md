@@ -30,18 +30,50 @@ Rules:
 
 ### 3. Field collection
 
-Actions:
+Follow the flow for the confirmed role.
 
-1. User / Evaluator: collect the user-provided Name. Avatar and Description are optional; do not prompt for Description. If Description was not provided, omit `--description`.
-2. ASP Step 1: ask for Name, Description, and the required Avatar in one message. Name must be a brand name with no test markers or celebrity names; Description is a required one-sentence summary of the Agent. Once all three are ready, immediately render the Identity card (Role / Name / Description / Profile photo) with the uploaded CDN URL. Reply `1` advances to Step 2; it never runs create.
-3. ASP Step 2: follow `service-contract.md` end to end. Continue only after explicit Done, using
-   only its A2MCP endpoint rules.
-4. Reject avatar URLs. Upload a user-provided image with `agent upload` and pass the returned URL as `--picture`. ASP requires an uploaded avatar; for User / Evaluator without one, omit `--picture`.
+#### Shared rules
 
-Rules:
+1. Name, Description, and Avatar must come from the user. Never invent capabilities, metrics, or optional content.
+2. Reject avatar URLs. Upload user-provided images with `agent upload` and pass the returned URL as `--picture`.
+3. Upload images as-is; never resize, crop, or convert them. Non-square images are acceptable; 1:1 is only recommended.
 
-1. Any supplied Name, Description, or picture must come from the user. Never invent capabilities, metrics, or optional content.
-2. Upload images as-is; never resize, crop, or convert them. Non-square images are acceptable; 1:1 is only recommended.
+#### User / Evaluator flow
+
+1. Collect Name.
+2. Accept Avatar and Description only when supplied; do not prompt for Description.
+3. Upload a supplied Avatar. Omit `--picture` or `--description` when the corresponding optional field is absent.
+
+#### ASP flow
+
+##### Step 1: Identity profile
+
+1. Ask for Name, Description, and Avatar in one message.
+2. Require a brand Name with no test markers or celebrity names, a one-sentence Agent Description, and an uploaded Avatar.
+3. Once all three fields are ready, immediately render the Identity card with Role / Name / Description / Profile photo, using the uploaded CDN URL.
+4. Wait for reply `1` before proceeding to Step 2. This reply never runs `agent create`.
+
+##### Step 2: Service collection
+
+First collect and confirm [`serviceType`](service-contract.md#servicetype), then strictly follow the matching order below. For batched answers, validate fields in this order and do not advance past a missing or invalid field. Keep valid later-step values and do not ask for them again.
+
+###### A2A service order
+
+1. Collect the billing choice and price; derive [`fee`](service-contract.md#fee), [`subscription`](service-contract.md#subscription), and [`freeTrial`](service-contract.md#freetrial).
+2. Collect [`serviceName`](service-contract.md#servicename) and [`serviceDescription`](service-contract.md#servicedescription) together.
+3. Collect or explicitly skip [`serviceGuide`](service-contract.md#serviceguide).
+
+###### A2MCP service order
+
+1. Collect [`fee`](service-contract.md#fee).
+2. Collect [`serviceName`](service-contract.md#servicename) and [`serviceDescription`](service-contract.md#servicedescription) together.
+3. Collect and verify [`endpoint`](service-contract.md#endpoint), including its match with the request example.
+
+###### Service collection completion
+
+1. Ask **1. Add another service / 2. Done**.
+2. On 1, collect `serviceType` for the next service and repeat the matching order.
+3. On 2, continue to [§4. Service validation](#4-service-validation).
 
 ### 4. Service validation
 
@@ -80,8 +112,8 @@ Rules:
 Actions:
 
 1. Report registration success. If an Agent ID is available, display it; otherwise state that it was not returned and tell the user to say `list my agents` to find it.
-2. For every role, run (`../chat-comm-init.md`) and complete its communication setup/readiness check.
-3. For Evaluator only, after communication setup, ask whether the user wants to stake now. If yes, hand off to (`../task-core.md`) §Pre-flight and then (`../task-evaluator-staking.md`); if no, finish registration.
+2. For every role, follow [Runtime Transport](../runtime/transport.md) and complete its communication setup/readiness check.
+3. For Evaluator only, after communication setup, ask whether the user wants to stake now. If yes, hand off to [A2A Evaluator Staking](../a2a/evaluator/staking.md); if no, finish registration.
 
 Rules:
 

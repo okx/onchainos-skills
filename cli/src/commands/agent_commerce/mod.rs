@@ -97,36 +97,36 @@ pub enum AgentCommand {
     #[command(name = "create-task")]
     CreateTask {
         #[arg(long)]
+        title: String,
+        #[arg(long)]
         description: String,
-        #[arg(long)]
-        budget: f64,
-        #[arg(long = "max-budget")]
-        max_budget: f64,
-        #[arg(long)]
-        currency: String,
-        #[arg(long)]
-        title: Option<String>,
-        /// Specified provider agentId (required; skip asp-match and negotiate directly)
-        #[arg(long)]
-        provider: String,
+        #[arg(long = "description-summary")]
+        description_summary: Option<String>,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
+        #[arg(long = "payment-token-symbol")]
+        payment_token_symbol: String,
+        #[arg(long = "payment-token-amount")]
+        payment_token_amount: String,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
-        /// Payment mode to set at creation time (required; escrow only).
-        #[arg(long = "payment-mode")]
-        payment_mode: String,
-        /// Service ID from asp/match response (required)
         #[arg(long = "service-id")]
         service_id: String,
-        /// Service input parameters (natural language string)
-        #[arg(long = "service-params")]
-        service_params: Option<String>,
-        /// Service token contract address
+        #[arg(long = "service-params", default_value = "{}")]
+        service_params: String,
         #[arg(long = "service-token-address")]
-        service_token_address: Option<String>,
-        /// Service price (from asp/match feeAmount)
+        service_token_address: String,
         #[arg(long = "service-token-amount")]
-        service_token_amount: Option<String>,
+        service_token_amount: String,
+        #[arg(long = "category-code")]
+        category_code: Option<String>,
+        #[arg(long = "min-credit-score")]
+        min_credit_score: Option<f64>,
+        #[arg(long, default_value = "private", value_parser = ["private", "public"])]
+        visibility: String,
+        #[arg(long = "chain-id", default_value_t = 196)]
+        chain_id: u64,
         /// Exact provider service Guide. Stored locally before broadcast.
         #[arg(long = "service-guide")]
         service_guide: Option<String>,
@@ -136,9 +136,6 @@ pub enum AgentCommand {
         /// User-confirmed values for the matching Guide.
         #[arg(long = "guide-consent-json")]
         guide_consent_json: Option<String>,
-        /// Accepted for compatibility but ignored — user identity is auto-resolved.
-        #[arg(long = "agentId", alias = "agent-id", hide = true)]
-        _agent_id: Option<String>,
     },
 
     /// Create a subscription task
@@ -164,7 +161,7 @@ pub enum AgentCommand {
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
         #[arg(long = "provider-agent-id")]
-        provider_agent_id: Option<String>,
+        provider_agent_id: String,
         /// Exact provider service Guide. Stored locally before broadcast.
         #[arg(long = "service-guide")]
         service_guide: Option<String>,
@@ -178,9 +175,22 @@ pub enum AgentCommand {
         service_interval: String,
         #[arg(long, default_value = "")]
         format: String,
-        /// Legacy compatibility input. Create-time device selection is rejected.
-        #[arg(long = "exclude-device", hide = true)]
-        exclude_device: Option<Vec<String>>,
+    },
+
+    /// Replace the complete serviceParams during a v2 provider clarification round.
+    #[command(name = "service-param-update")]
+    ServiceParamUpdate {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long = "task-type", value_enum)]
+        task_type: task::user::service_param_update::ServiceParamTaskType,
+        #[arg(long = "request-id")]
+        request_id: String,
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
+        round: u8,
+        #[arg(long = "service-params")]
+        service_params: String,
     },
 
     /// Cancel a subscription (unified: trial cancel + close auto-renew)
@@ -577,8 +587,6 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long, default_value = "")]
         file: String,
-        #[arg(long, default_value = "Task completed, please review")]
-        message: String,
         /// Text deliverable content for auto-save. When non-empty and --file is empty,
         /// the CLI writes this to a temp file and persists it as a text deliverable.
         #[arg(long = "deliverable-text", default_value = "")]
@@ -586,10 +594,6 @@ pub enum AgentCommand {
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Deprecated compatibility argument. Accepted but ignored; only the
-        /// explicit text/file deliverable is sent and processed.
-        #[arg(long, default_value = "")]
-        autotrade: String,
     },
 
     /// Check deterministic local Trade Kit CLI/version/capability compatibility.
@@ -872,6 +876,24 @@ pub enum AgentCommand {
         agent_id: String,
         /// Optional decline reason recorded by the backend.
         #[arg(long, default_value = "")]
+        reason: String,
+    },
+
+    /// Accept a designated one-time task created and funded by the buyer.
+    #[command(name = "accept-job-by-provider")]
+    AcceptJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
+    /// Decline a designated one-time task and trigger its refund flow.
+    #[command(name = "decline-job-by-provider")]
+    DeclineJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
         reason: String,
     },
 
@@ -1206,7 +1228,7 @@ pub enum AgentCommand {
     ///                                              from the inbound notification
     ///
     /// All other inputs (`jobId`, `event`, `code`, `jobTitle`, `provider`, `data`,
-    /// `peerTaskMinVersion`, etc.) are extracted from inside the `--message` JSON.
+    /// etc.) are extracted from inside the `--message` JSON.
     /// This keeps the LLM-facing surface minimal: copy the envelope through, the
     /// CLI parses out whatever it needs.
     #[command(name = "next-action")]
@@ -1220,7 +1242,7 @@ pub enum AgentCommand {
         role: String,
         /// Full system event envelope as a JSON string — the entire `message` object.
         /// Required. Must contain at least `event` and `jobId`; optional fields the
-        /// CLI reads: `code` / `jobTitle` / `provider` / `data` / `taskMinVersion`
+        /// CLI reads: `code` / `jobTitle` / `provider` / `data`
         /// (plus any task-detail fields like `paymentMode` /
         /// `tokenAmount` / `tokenSymbol` / `serviceParams` that downstream scenes
         /// may consume directly).
@@ -1377,37 +1399,42 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         // ── Client (user) task commands ────────────────────────────
         AgentCommand::CreateTask {
-            description,
-            budget,
-            max_budget,
-            currency,
             title,
-            provider,
+            description,
+            description_summary,
+            provider_agent_id,
+            payment_token_symbol,
+            payment_token_amount,
             attachments,
-            payment_mode,
             service_id,
             service_params,
             service_token_address,
             service_token_amount,
+            category_code,
+            min_credit_score,
+            visibility,
+            chain_id,
             service_guide,
             service_guide_hash,
             guide_consent_json,
-            _agent_id: _,
         } => {
             task::user::run_task(
                 T::Create {
-                    description,
-                    budget,
-                    max_budget,
-                    currency,
                     title,
-                    provider,
+                    description,
+                    description_summary,
+                    provider_agent_id,
+                    payment_token_symbol,
+                    payment_token_amount,
                     attachments,
-                    payment_mode,
                     service_id,
                     service_params,
                     service_token_address,
                     service_token_amount,
+                    category_code,
+                    min_credit_score,
+                    visibility,
+                    chain_id,
                     service_guide,
                     service_guide_hash,
                     guide_consent_json,
@@ -1433,7 +1460,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             guide_consent_json,
             service_interval,
             format,
-            exclude_device,
         } => {
             task::user::run_task(
                 T::CreateSubscribe {
@@ -1452,9 +1478,29 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     guide_consent_json,
                     service_interval,
                     format,
-                    exclude_device,
                 },
                 ctx,
+            )
+            .await
+        }
+
+        AgentCommand::ServiceParamUpdate {
+            job_id,
+            agent_id,
+            task_type,
+            request_id,
+            round,
+            service_params,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::user::service_param_update::handle(
+                &mut client,
+                &job_id,
+                &agent_id,
+                task_type,
+                &request_id,
+                round,
+                &service_params,
             )
             .await
         }
@@ -1854,19 +1900,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Deliver {
             job_id,
             file,
-            message,
             deliverable_text,
             agent_id,
-            autotrade,
         } => {
             task::asp::run_provider(
                 task::asp::ProviderCommand::Deliver {
                     job_id,
                     file,
-                    message,
                     deliverable_text,
                     agent_id,
-                    autotrade,
                 },
                 ctx,
             )
@@ -2023,9 +2065,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             amount,
         } => {
             crate::output::success(task::common::autotrade::executor::authorize_one_time(
-                    &job_id,
-                    &delivery_id,
-                    &amount,
+                &job_id,
+                &delivery_id,
+                &amount,
             )?);
             Ok(())
         }
@@ -2594,6 +2636,30 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             .await
         }
 
+        AgentCommand::AcceptJobByProvider { job_id, agent_id } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::AcceptJobByProvider { job_id, agent_id },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::DeclineJobByProvider {
+            job_id,
+            agent_id,
+            reason,
+        } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::DeclineJobByProvider {
+                    job_id,
+                    agent_id,
+                    reason,
+                },
+                ctx,
+            )
+            .await
+        }
+
         AgentCommand::SubscribeActive { agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
             task::asp::subscription::handle_active(&mut client, &agent_id).await
@@ -2772,17 +2838,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let job_title: Option<String> = msg_str("jobTitle");
             let provider: Option<String> = msg_str("provider");
             let data: Option<String> = msg_str("data");
-            let peer_task_min_version: Option<u32> = parsed_message
-                .get("taskMinVersion")
-                .and_then(|v| v.as_u64())
-                .and_then(|v| u32::try_from(v).ok())
-                .or_else(|| {
-                    parsed_message
-                        .get("payload")
-                        .and_then(|p| p.get("taskMinVersion"))
-                        .and_then(|v| v.as_u64())
-                        .and_then(|v| u32::try_from(v).ok())
-                });
             let parsed_message = Some(parsed_message);
             if !job_id.is_empty() {
                 if let Err(msg) = task::common::util::validate_job_id(&job_id) {
@@ -2791,46 +2846,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }
             if DEBUG_LOG {
                 eprintln!(
-                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
+                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}",
                     title = job_title.as_deref().unwrap_or("(none)"),
                     provider = provider.as_deref().unwrap_or("(none)"),
-                    peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
                 );
             }
-
-            // Version handshake: when peer's required minimum version is higher than the local TASK_MIN_VERSION,
-            // only prepend a notice line at the top of the script (so the agent can push an upgrade suggestion to the user);
-            // **do not block the flow** — the role flow continues to execute under the current protocol, and any actual
-            // compatibility issues (if any) are escalated when subsequent CLI / business layer errors surface.
-            let version_notice: Option<String> = if let Some(peer_min) = peer_task_min_version {
-                let local = task::common::config::TASK_MIN_VERSION;
-                if local < peer_min {
-                    if task::common::version_notice::should_show() {
-                        if DEBUG_LOG {
-                            eprintln!(
-                                "[next-action] version notice (non-blocking): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                            );
-                        }
-                        task::common::version_notice::mark_shown();
-                        Some("Before executing the scene below, run `onchainos agent user-notify` to notify the user (recommend upgrade but do **not** halt the flow). The `--content` template below is a sample — translate it to the user's language before sending:\n\
-                             ```bash\n\
-                             onchainos agent user-notify --content 'Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.'\n\
-                             ```\n\
-                             Then proceed to the scene below normally.\n\n".to_string())
-                    } else {
-                        if DEBUG_LOG {
-                            eprintln!(
-                                "[next-action] version notice suppressed (last shown within 48h): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                            );
-                        }
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
 
             // When --provider is passed, write the designated-provider file so generate_next_action takes the specified-provider path
             if let Some(ref pid) = provider {
@@ -2936,8 +2956,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
-            let (freshness_warning, prefetched) =
-                check_status_freshness(&job_id, &event, &agent_id).await;
+            let (freshness_warning, prefetched) = if handler_fetches_own_task_detail(
+                &resolved_role,
+                &event,
+            ) {
+                (None, None)
+            } else {
+                check_status_freshness(&job_id, &event, &agent_id).await
+            };
             if let Some(w) = freshness_warning {
                 println!("{w}");
                 return Ok(());
@@ -2960,7 +2986,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    if payment_mode == Some(3) {
+                    if should_block_legacy_a2mcp_flow(payment_mode, &event) {
                         format!(
                             "legacy_a2mcp_flow_removed: task-based A2MCP processing is disabled for job {job_id}. Stop; do not deliver, complete, sign, or pay."
                         )
@@ -3027,9 +3053,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
                 other => anyhow::bail!("--role 必须是 asp/user/evaluator，当前: {other}"),
             };
-            if let Some(notice) = &version_notice {
-                print!("{notice}");
-            }
             println!("{prompt}");
             Ok(())
         }
@@ -3176,26 +3199,34 @@ pub(crate) fn escape_control_chars_in_strings(s: &str) -> String {
     out
 }
 
-fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
+fn is_path_under_canonical_dir(path: &std::path::Path, dir: &std::path::Path) -> bool {
+    let Ok(c_path) = path.canonicalize() else {
+        return false;
+    };
+    let Ok(c_dir) = dir.canonicalize() else {
+        return false;
+    };
+    c_path.starts_with(c_dir)
+}
+
+fn is_safe_a2a_file_path_with_spool_dir(
+    path: &std::path::Path,
+    configured_spool_dir: Option<&std::path::Path>,
+) -> bool {
     if path.as_os_str().is_empty() {
         return false;
     }
-    let c_path = match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
+    if configured_spool_dir.is_some_and(|dir| is_path_under_canonical_dir(path, dir)) {
+        return true;
+    }
     let tmp_dir = std::env::temp_dir();
-    if let Ok(c_tmp) = tmp_dir.canonicalize() {
-        if c_path.starts_with(c_tmp) {
-            return true;
-        }
+    if is_path_under_canonical_dir(path, &tmp_dir) {
+        return true;
     }
     #[cfg(unix)]
     {
-        if let Ok(c_tmp) = std::path::Path::new("/tmp").canonicalize() {
-            if c_path.starts_with(c_tmp) {
-                return true;
-            }
+        if is_path_under_canonical_dir(path, std::path::Path::new("/tmp")) {
+            return true;
         }
     }
     #[cfg(test)]
@@ -3203,32 +3234,23 @@ fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
         let test_tmp = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp");
-        if let Ok(c_tmp) = test_tmp.canonicalize() {
-            if c_path.starts_with(c_tmp) {
-                return true;
-            }
+        if is_path_under_canonical_dir(path, &test_tmp) {
+            return true;
         }
     }
     false
 }
 
+fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
+    let configured_spool_dir = std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from);
+    is_safe_a2a_file_path_with_spool_dir(path, configured_spool_dir.as_deref())
+}
+
 fn parse_a2a_json_arg(raw: &str) -> anyhow::Result<serde_json::Value> {
-    match serde_json::from_str(raw) {
-        Ok(v) => Ok(v),
-        Err(strict_err) => {
-            let repaired = escape_control_chars_in_strings(raw);
-            match serde_json::from_str::<serde_json::Value>(&repaired) {
-                Ok(v) => {
-                    eprintln!(
-                        "[next-action] --a2a-file payload had raw control chars inside string values; \
-                         auto-repaired. Strict parse error was: {strict_err}"
-                    );
-                    Ok(v)
-                }
-                Err(_) => anyhow::bail!("--a2a-file payload is not valid JSON: {strict_err}"),
-            }
-        }
-    }
+    serde_json::from_str(raw)
+        .map_err(|error| anyhow::anyhow!("--a2a-file payload is not valid JSON: {error}"))
 }
 
 fn write_secure_temp_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
@@ -3272,6 +3294,11 @@ fn write_secure_temp_file(path: &std::path::Path, contents: &[u8]) -> std::io::R
 }
 
 fn a2a_intake_spool_dir() -> std::path::PathBuf {
+    if let Some(path) =
+        std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR").filter(|value| !value.is_empty())
+    {
+        return std::path::PathBuf::from(path);
+    }
     #[cfg(test)]
     {
         return std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -3326,18 +3353,21 @@ fn validate_a2a_file_arg(
 ) -> anyhow::Result<String> {
     let fp = std::path::Path::new(path);
     if !is_safe_a2a_file_path(fp) {
-        anyhow::bail!("--a2a-file must point to a file under the OS temp directory");
+        anyhow::bail!(
+            "--a2a-file must point to a file under the OS temp directory or the configured A2A spool directory"
+        );
+    }
+    let metadata = std::fs::symlink_metadata(fp)
+        .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?;
+    if !metadata.file_type().is_file() {
+        anyhow::bail!("--a2a-file must be a regular file, not a symlink or directory");
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(fp)
-            .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?
-            .permissions()
-            .mode()
-            & 0o777;
-        if mode & 0o077 != 0 {
-            anyhow::bail!("--a2a-file must not be readable, writable, or executable by group/others; use chmod 600");
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode != 0o600 {
+            anyhow::bail!("--a2a-file must have mode 0600; run chmod 600");
         }
     }
     let raw =
@@ -3363,19 +3393,35 @@ fn validate_a2a_file_arg(
             "--a2a-file payload jobId {pj} does not match --message jobId {message_job_id}"
         );
     }
-    if let Some(receiver) = payload.get("receiverAgentId").and_then(|v| v.as_str()) {
-        if receiver != agent_id {
-            anyhow::bail!(
-                "--a2a-file receiverAgentId {receiver} does not match --agentId {agent_id}"
-            );
-        }
+    let receiver = payload
+        .get("receiverAgentId")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.receiverAgentId is required"))?;
+    if receiver != agent_id {
+        anyhow::bail!("--a2a-file receiverAgentId {receiver} does not match --agentId {agent_id}");
     }
     let content = payload
         .get("content")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.content is required"))?;
-    if !content.contains("[intent:deliver]") {
-        anyhow::bail!("--a2a-file content must contain [intent:deliver]");
+    if content
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(str::trim)
+        != Some("[intent:deliver]")
+    {
+        anyhow::bail!("--a2a-file content must end with [intent:deliver]");
+    }
+    let embedded_job_id = content
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("jobId:"))
+        .map(str::trim)
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file content.jobId is required"))?;
+    if embedded_job_id != pj {
+        anyhow::bail!(
+            "--a2a-file content jobId {embedded_job_id} does not match payload jobId {pj}"
+        );
     }
     let canonical = serde_json::to_string(&payload)?;
     persist_validated_a2a_spool(pj, &canonical)
@@ -3509,8 +3555,8 @@ mod auto_consent_permit_tests {
         assert!(completed.complete);
 
         run(auto_command(Some(completed.continuation_id.clone())), &ctx)
-        .await
-        .unwrap();
+            .await
+            .unwrap();
         assert_eq!(
             consent::load_consent("job-1").unwrap().unwrap().mode,
             ConsentMode::Auto
@@ -3529,7 +3575,43 @@ mod auto_consent_permit_tests {
 
 #[cfg(test)]
 mod escape_control_chars_tests {
-    use super::{escape_control_chars_in_strings, validate_a2a_file_arg};
+    use super::{
+        escape_control_chars_in_strings, handler_fetches_own_task_detail,
+        is_safe_a2a_file_path_with_spool_dir, should_block_legacy_a2mcp_flow,
+        validate_a2a_file_arg,
+    };
+
+    #[test]
+    fn accepts_a2a_file_under_configured_spool_dir() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("configured-a2a-spool-tests");
+        let spool = root.join("spool");
+        std::fs::create_dir_all(&spool).unwrap();
+        let path = spool.join("envelope.json");
+        std::fs::write(&path, "{}").unwrap();
+
+        assert!(is_safe_a2a_file_path_with_spool_dir(&path, Some(&spool)));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_a2a_file_outside_configured_spool_dir() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("configured-a2a-spool-boundary-tests");
+        let spool = root.join("spool");
+        let sibling = root.join("spool-other");
+        std::fs::create_dir_all(&spool).unwrap();
+        std::fs::create_dir_all(&sibling).unwrap();
+        let path = sibling.join("envelope.json");
+        std::fs::write(&path, "{}").unwrap();
+
+        assert!(!is_safe_a2a_file_path_with_spool_dir(&path, Some(&spool)));
+
+        std::fs::remove_dir_all(root).ok();
+    }
 
     #[test]
     fn escapes_raw_lf_inside_string() {
@@ -3633,22 +3715,16 @@ mod escape_control_chars_tests {
     }
 
     #[test]
-    fn canonicalizes_repaired_a2a_file_arg_for_downstream_strict_parse() {
+    fn rejects_a2a_file_arg_with_raw_control_char_json() {
         let path = write_temp_a2a(
             "raw-control-char.json",
             "{ \"msgType\":\"a2a-agent-chat\", \"jobId\":\"0xabc123\", \"receiverAgentId\":\"1696\", \"content\":\"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]\" }",
         );
 
-        let original = std::fs::read_to_string(&path).unwrap();
-        let got = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
-        let rewritten = std::fs::read_to_string(&got).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
-        assert_eq!(
-            parsed["content"].as_str().unwrap().lines().next(),
-            Some("jobId: 0xabc123")
-        );
-        std::fs::remove_file(got).ok();
+        let error = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("current A2A envelope must be strict JSON")
+            .to_string();
+        assert!(error.contains("payload is not valid JSON"));
     }
 
     #[test]
@@ -3704,7 +3780,7 @@ mod escape_control_chars_tests {
         let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
             .expect_err("missing intent must fail")
             .to_string();
-        assert!(err.contains("content must contain [intent:deliver]"));
+        assert!(err.contains("content must end with [intent:deliver]"));
     }
 
     #[test]
@@ -3737,6 +3813,43 @@ mod escape_control_chars_tests {
         assert!(err.contains("chmod 600"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a2a_file_arg_with_non_exact_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = write_temp_a2a(
+            "owner-executable.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("the new envelope contract requires exact mode 0600")
+            .to_string();
+        assert!(err.contains("mode 0600"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a2a_file_arg_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let target = write_temp_a2a(
+            "symlink-target.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+        let link = target.with_file_name("symlink-envelope.json");
+        std::fs::remove_file(&link).ok();
+        symlink(&target, &link).unwrap();
+
+        let err = validate_a2a_file_arg(link.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("symlinked envelopes must fail closed")
+            .to_string();
+        assert!(err.contains("regular file"));
+        std::fs::remove_file(link).ok();
+    }
+
     #[test]
     fn rejects_a2a_file_arg_for_wrong_receiver() {
         let path = write_temp_a2a(
@@ -3749,12 +3862,128 @@ mod escape_control_chars_tests {
             .to_string();
         assert!(err.contains("receiverAgentId 8779 does not match --agentId 1696"));
     }
+
+    #[test]
+    fn rejects_a2a_file_arg_without_receiver() {
+        let path = write_temp_a2a(
+            "missing-receiver.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("missing receiver must fail")
+            .to_string();
+        assert!(err.contains("payload.receiverAgentId is required"));
+    }
+
+    #[test]
+    fn rejects_a2a_file_arg_with_mismatched_embedded_job_id() {
+        let path = write_temp_a2a(
+            "wrong-embedded-job.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xother\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("embedded jobId mismatch must fail")
+            .to_string();
+        assert!(err.contains("content jobId 0xother does not match payload jobId 0xabc123"));
+    }
+
+    #[test]
+    fn completion_handlers_own_their_task_detail_requests() {
+        assert!(handler_fetches_own_task_detail("user", "job_completed"));
+        assert!(handler_fetches_own_task_detail("asp", "job_completed"));
+        assert!(!handler_fetches_own_task_detail("evaluator", "job_completed"));
+        assert!(handler_fetches_own_task_detail("user", "sub_complete_notify"));
+        assert!(!handler_fetches_own_task_detail("asp", "sub_complete_notify"));
+        assert!(!handler_fetches_own_task_detail("user", "sub_close_notify"));
+    }
+
+    #[test]
+    fn asp_subscription_completion_never_blocks_as_legacy_a2mcp() {
+        assert!(!should_block_legacy_a2mcp_flow(
+            Some(3),
+            "sub_complete_notify"
+        ));
+    }
+
+    #[test]
+    fn job_completed_never_uses_a2mcp_flow() {
+        assert!(!should_block_legacy_a2mcp_flow(
+            Some(3),
+            "job_completed"
+        ));
+    }
+
+    #[test]
+    fn other_payment_mode_three_events_block_as_legacy_a2mcp() {
+        assert!(should_block_legacy_a2mcp_flow(Some(3), "job_submitted"));
+    }
+}
+
+fn handler_fetches_own_task_detail(role: &str, event: &str) -> bool {
+    (matches!(role, "user" | "asp") && event == "job_completed")
+        || (role == "user" && event == "sub_complete_notify")
+}
+
+fn should_block_legacy_a2mcp_flow(payment_mode: Option<i64>, event: &str) -> bool {
+    matches!(payment_mode, Some(3))
+        && !matches!(event, "sub_complete_notify" | "job_completed")
+}
+
+fn detail_path_for_event(
+    client: &task::common::network::task_api_client::TaskApiClient,
+    job_id: &str,
+    event: &str,
+) -> String {
+    if matches!(event, "sub_created" | "sub_asp_selected") {
+        client.subscribe_path(job_id)
+    } else {
+        client.task_path(job_id)
+    }
+}
+
+fn subscription_acceptance_status(detail: &serde_json::Value) -> Option<i64> {
+    detail["subStatus"]
+        .as_i64()
+        .or_else(|| {
+            detail["subStatus"]
+                .as_str()
+                .and_then(|value| value.parse().ok())
+        })
+        .or_else(|| detail["status"].as_i64())
+        .or_else(|| {
+            detail["status"]
+                .as_str()
+                .and_then(|value| value.parse().ok())
+        })
+}
+
+fn subscription_event_block_reason(
+    detail: &serde_json::Value,
+    event: &str,
+    expected_status: i64,
+    expected_name: &str,
+) -> Option<String> {
+    match subscription_acceptance_status(detail) {
+        Some(status) if status == expected_status => None,
+        Some(status) => Some(format!(
+            "[next-action blocked] Latest subscription status is {status}, not {expected_name}({expected_status}). Do not execute the {event} flow."
+        )),
+        None => Some(
+            format!(
+                "[next-action blocked] Latest subscription detail has no valid subStatus/status. Do not execute the {event} flow."
+            ),
+        ),
+    }
 }
 
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).
 ///
 /// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
-/// returns None on network/parse failure (does not block script output, graceful fallback).
+/// Most network failures degrade to no prefetch. Active-subscription startup
+/// notifications are stricter: they require authoritative detail and are blocked
+/// on fetch error.
 async fn check_status_freshness(
     job_id: &str,
     job_status_or_event: &str,
@@ -3771,9 +4000,9 @@ async fn check_status_freshness(
         "job_provider_reject",
         "attachment_added",
         "provider_conversation",
-        // Subscription lifecycle: display-class notifications with no corresponding
-        // standard task status — freshness check is meaningless (task stays `accepted`
-        // while sub events flow on top), but prefetch is kept for service_name fallback.
+        // Subscription lifecycle events use subscription status rather than the
+        // standard task status. Keep prefetching here; the strict CREATED/ACTIVE
+        // checks for sub_created/sub_asp_selected run below.
         "sub_created",
         "sub_cancel",
         "sub_user_reject",
@@ -3814,6 +4043,12 @@ async fn check_status_freshness(
         "round_failed",
         "reward_claimed",
         "wakeup_notify",
+        // Self-contained display events. Their message carries every copy field, and
+        // no task-status freshness check or detail request is required.
+        "job_asp_accept_expire",
+        "job_asp_reject_closed",
+        "job_asp_reject_expire",
+        "sub_asp_claim_notify",
     ];
 
     let is_prefetch_only = PREFETCH_ONLY_EVENTS.contains(&job_status_or_event);
@@ -3825,13 +4060,10 @@ async fn check_status_freshness(
     // For non-skip events, parse and check if the event is recognized.
     let event = parse_status_or_event(job_status_or_event);
     let expected = status_when_event(&event);
-    // Display-class subscription events (sub_*) are notification-only: they emit no on-chain
-    // action script and hold no task status of their own (status_when_event maps them all to the
-    // synthetic "subscription" status that no real task ever reports). The freshness gate exists
-    // to stop a sub from running a STALE on-chain action; it must NOT gate these, or every sub_*
-    // notification is dropped on a live subscription (whose real status is accepted/closed/...).
-    // Skip the gate but keep the pre-fetched context so the notification still renders title/service name.
-    let is_display_only_sub = matches!(expected, Status::Other(ref s) if s == "subscription");
+    // Subscription events use a separate subStatus lifecycle, so skip the generic
+    // task-status gate. Strict event-specific checks below require CREATED(0) for
+    // sub_created and ACTIVE(1) for sub_asp_selected.
+    let is_subscription_event = matches!(expected, Status::Other(ref s) if s == "subscription");
     if !is_prefetch_only && matches!(expected, Status::Other(ref s) if s == "unknown") {
         if DEBUG_LOG {
             eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
@@ -3841,16 +4073,45 @@ async fn check_status_freshness(
 
     // Fetch task data — shared by both freshness-check and pre-fetch paths.
     let mut c = TaskApiClient::new();
-    let resp = match c.get_with_identity(&c.task_path(job_id), agent_id).await {
+    let detail_path = detail_path_for_event(&c, job_id, job_status_or_event);
+    let resp = match c.get_with_identity(&detail_path, agent_id).await {
         Ok(r) => r,
+        Err(error)
+            if matches!(
+                job_status_or_event,
+                "job_accepted" | "sub_created" | "sub_asp_selected"
+            ) =>
+        {
+            return (
+                Some(format!(
+                    "[next-action blocked] Cannot fetch latest task detail for {job_status_or_event}: {error:#}. Do not display an acceptance notice from stale or incomplete event data."
+                )),
+                None,
+            );
+        }
         Err(_) => return (None, None),
     };
+
+    let subscription_status_expectation = match job_status_or_event {
+        "sub_created" => Some((0, "CREATED")),
+        "sub_asp_selected" => Some((1, "ACTIVE")),
+        _ => None,
+    };
+    if let Some((expected_status, expected_name)) = subscription_status_expectation {
+        if let Some(reason) = subscription_event_block_reason(
+            &resp,
+            job_status_or_event,
+            expected_status,
+            expected_name,
+        ) {
+            return (Some(reason), None);
+        }
+    }
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
 
     // For job_submitted: prefer an unprocessed spool delivery over an existing
-    // manifest. Subscription manifests are append-only, so checking the
-    // manifest first could keep selecting an old delivery forever while a new
-    // inbound signal remained stranded in the spool.
+    // manifest. This event belongs to a one-time task; subscription deliveries
+    // use their own event flow and must never be routed from this recovery path.
     //   ① temp file present → recover + save the oldest unprocessed delivery
     //   ② manifest present  → populate the newest saved delivery
     //   ③ neither           → leave ctx.deliverable=None; prompt outputs "wait"
@@ -3878,18 +4139,6 @@ async fn check_status_freshness(
                 original_name: String::new(),
                 text_content: recovered.text_content.clone(),
             });
-            if let Some(prompt) = task::user::route_subscription_delivery_to_skill(
-                job_id,
-                agent_id,
-                &recovered.saved_path,
-                &recovered.deliverable_type,
-                "recover",
-                recovered.transport_identity.as_ref(),
-            )
-            .await
-            {
-                return (Some(prompt), Some(ctx));
-            }
         } else if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("user", job_id)
         {
             if let Some(entry) = manifest.entries.last() {
@@ -3916,7 +4165,7 @@ async fn check_status_freshness(
     let prefetched = Some(ctx);
 
     // Pre-fetch-only events + display-class sub_* events: return data without freshness validation.
-    if is_prefetch_only || is_display_only_sub {
+    if is_prefetch_only || is_subscription_event {
         return (None, prefetched);
     }
 
@@ -3955,4 +4204,84 @@ async fn check_status_freshness(
          **MUST NOT**: do NOT guess the next step; do NOT call any task CLI before getting a fresh playbook; do NOT push this warning to the user via `onchainos agent user-notify`.\n",
         expected_str = expected.as_str(),
     )), prefetched)
+}
+
+#[cfg(test)]
+mod authoritative_detail_path_tests {
+    use super::{
+        detail_path_for_event, subscription_acceptance_status, subscription_event_block_reason,
+    };
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+
+    #[test]
+    fn lifecycle_events_use_authoritative_detail_endpoint() {
+        let client = TaskApiClient::new();
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "job_accepted"),
+            "/priapi/v1/aieco/task/job-1"
+        );
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "sub_created"),
+            "/priapi/v1/aieco/task/subscribe/job-1"
+        );
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "sub_asp_selected"),
+            "/priapi/v1/aieco/task/subscribe/job-1"
+        );
+    }
+
+    #[test]
+    fn subscription_events_require_their_authoritative_status() {
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"subStatus": 1})),
+            Some(1)
+        );
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"status": "1"})),
+            Some(1)
+        );
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"subStatus": 0})),
+            Some(0)
+        );
+        assert_eq!(subscription_acceptance_status(&serde_json::json!({})), None);
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 0}),
+            "sub_created",
+            0,
+            "CREATED"
+        )
+        .is_none());
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 1}),
+            "sub_created",
+            0,
+            "CREATED"
+        )
+        .is_some());
+        assert!(
+            subscription_event_block_reason(
+                &serde_json::json!({}),
+                "sub_asp_selected",
+                1,
+                "ACTIVE"
+            )
+            .is_some()
+        );
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 1}),
+            "sub_asp_selected",
+            1,
+            "ACTIVE"
+        )
+        .is_none());
+        let blocked = subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 0}),
+            "sub_asp_selected",
+            1,
+            "ACTIVE",
+        )
+        .unwrap();
+        assert!(blocked.contains("sub_asp_selected"));
+    }
 }

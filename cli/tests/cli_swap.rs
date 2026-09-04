@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{assert_ok_and_extract_data, onchainos, run_with_retry, tokens};
+use common::{assert_ok_and_extract_data, fresh_home, onchainos, run_with_retry, tokens};
 use predicates::prelude::*;
 
 const VITALIK: &str = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
@@ -391,4 +391,292 @@ fn swap_quote_solana_appends_risk_action_per_route() {
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert_routes_have_action(&data, "IT-007 swap quote solana");
+}
+
+// ─── Insufficient-balance top-up recovery + walletBalance (WWINFRA-3798) ─────
+//
+// Integration-plan rows IT-001, IT-002, IT-003, IT-005, IT-006, IT-010. The
+// swap quote now reports the caller's wallet balance (spec §2.3) and, when the
+// wallet holds less than the requested amount, degrades to a structured
+// `swap_insufficient_balance` funding scene (spec §2.2).
+//
+// ── walletBalance placement (Stage-7 confirmation of the IT-005 CSV note) ──
+// The real aggregator quote `data` is an ARRAY of routes, and the enhancement
+// attaches `walletBalance` to EVERY route object (verified in
+// `swap.rs::attach_wallet_balance*` unit tests) — NOT as a single `$.data`
+// sibling. So the field lives at `$.data[N].walletBalance`. It is ALWAYS present
+// and is JSON `null` (never `0`, never omitted) when the balance query fails or
+// the wallet is not logged in (spec §2.3 / TBC[2]).
+//
+// ── Login dependency ──
+// A `swap quote` is a read-only endpoint that works without a logged-in wallet
+// (walletBalance is then `null`). The `swap_insufficient_balance` scene, by
+// contrast, can only fire when a logged-in wallet reports a balance below the
+// requested amount; IT-010 therefore validates the scene contract when reachable
+// and otherwise accepts the normal-quote path. All rows are `live` and go through
+// `run_with_retry` (IT-005 uses a home-isolated variant — see below).
+
+/// True when every route in an array-shaped `data` (or the object itself, for the
+/// object-shaped fallback) carries a `walletBalance` field. Robust to both shapes
+/// the enhancement supports without asserting a specific route count.
+#[track_caller]
+fn each_route_has_wallet_balance(data: &serde_json::Value) -> bool {
+    match data {
+        serde_json::Value::Array(routes) => {
+            !routes.is_empty() && routes.iter().all(|r| r.get("walletBalance").is_some())
+        }
+        serde_json::Value::Object(_) => data.get("walletBalance").is_some(),
+        _ => false,
+    }
+}
+
+/// True when every route's `walletBalance` is present AND JSON `null` (the
+/// not-logged-in / balance-unavailable representation, spec §2.3).
+#[track_caller]
+fn wallet_balance_all_null(data: &serde_json::Value) -> bool {
+    let is_null = |v: &serde_json::Value| v.get("walletBalance").map(|b| b.is_null()) == Some(true);
+    match data {
+        serde_json::Value::Array(routes) => !routes.is_empty() && routes.iter().all(is_null),
+        serde_json::Value::Object(_) => is_null(data),
+        _ => false,
+    }
+}
+
+/// Run a `swap quote` in an isolated (guaranteed logged-out) `ONCHAINOS_HOME`
+/// with the same retry-on-rate-limit contract as `common::run_with_retry`.
+///
+/// A dedicated wrapper is required because `run_with_retry` builds its own
+/// `Command` with no way to pin a per-test home, and IT-005 must prove the
+/// *not-logged-in* balance representation deterministically regardless of any
+/// login fixture present in the ambient home. Only `ONCHAINOS_HOME` is
+/// overridden; the inherited `OKX_*` API credentials are kept so the read-only
+/// quote still authenticates.
+fn run_quote_isolated_home(home: &std::path::Path, args: &[&str]) -> std::process::Output {
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(attempt));
+        }
+        let output = onchainos()
+            .env("ONCHAINOS_HOME", home)
+            .args(args)
+            .output()
+            .expect("failed to execute");
+        if output.status.success() {
+            return output;
+        }
+        if !String::from_utf8_lossy(&output.stdout).contains("Rate limited") {
+            return output;
+        }
+    }
+    onchainos()
+        .env("ONCHAINOS_HOME", home)
+        .args(args)
+        .output()
+        .expect("failed to execute")
+}
+
+/// IT-001 — a normal ETH→USDC quote on Ethereum reports `walletBalance` on each
+/// route (spec §2.3). Extends `swap_quote_eth_to_usdc` with the balance check
+/// rather than duplicating the base quote assertions.
+#[test]
+fn swap_quote_eth_to_usdc_reports_wallet_balance() {
+    let output = run_with_retry(&[
+        "swap",
+        "quote",
+        "--from",
+        tokens::EVM_NATIVE,
+        "--to",
+        tokens::ETH_USDC,
+        "--amount",
+        "10000000000000000",
+        "--chain",
+        "ethereum",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        each_route_has_wallet_balance(&data),
+        "quote must report walletBalance per route: {data}"
+    );
+}
+
+/// IT-002 — per-chain coverage: the same walletBalance enhancement is present on
+/// a Solana (WSOL→USDC) quote, confirming it is chain-agnostic (spec §7).
+#[test]
+fn swap_quote_solana_reports_wallet_balance() {
+    let output = run_with_retry(&[
+        "swap",
+        "quote",
+        "--from",
+        tokens::SOL_WSOL,
+        "--to",
+        tokens::SOL_USDC,
+        "--amount",
+        "100000000",
+        "--chain",
+        "solana",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        each_route_has_wallet_balance(&data),
+        "solana quote must report walletBalance per route: {data}"
+    );
+}
+
+/// IT-003 — per-chain coverage on X Layer (the gas-free chain). The `gasFree`
+/// flag is an internal display hint and is deliberately NOT asserted (spec §2.5).
+/// X Layer route availability is backend-dependent, so the walletBalance contract
+/// is asserted when the quote succeeds and a benign no-route / no-liquidity
+/// failure is tolerated (still a structured `ok:false` envelope).
+#[test]
+fn swap_quote_xlayer_reports_wallet_balance() {
+    // X Layer USDT.
+    const XLAYER_USDT: &str = "0x1E4a5963aBFD975d8c9021ce480b42188849D41d";
+    let output = run_with_retry(&[
+        "swap",
+        "quote",
+        "--from",
+        tokens::EVM_NATIVE,
+        "--to",
+        XLAYER_USDT,
+        "--amount",
+        "1000000000000000000",
+        "--chain",
+        "xlayer",
+    ]);
+    if output.status.success() {
+        let data = assert_ok_and_extract_data(&output);
+        assert!(
+            each_route_has_wallet_balance(&data),
+            "xlayer quote must report walletBalance per route: {data}"
+        );
+    } else {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or(serde_json::Value::Null);
+        assert_eq!(
+            json.get("ok"),
+            Some(&serde_json::Value::Bool(false)),
+            "xlayer quote must succeed with walletBalance or fail as a structured ok:false envelope\nstdout: {stdout}"
+        );
+    }
+}
+
+/// IT-005 — not-logged-in edge: in a fresh, logged-out sandbox the read-only
+/// quote still succeeds and every route reports `walletBalance` as JSON `null`
+/// (never `0`, never omitted, never a string sentinel — spec §2.3 / TBC[2]).
+#[test]
+fn swap_quote_not_logged_in_wallet_balance_is_null() {
+    let (_guard, home) = fresh_home("cli_swap_walletbalance_null");
+    let output = run_quote_isolated_home(
+        &home,
+        &[
+            "swap",
+            "quote",
+            "--from",
+            tokens::ETH_USDC,
+            "--to",
+            tokens::EVM_NATIVE,
+            "--amount",
+            "1000000",
+            "--chain",
+            "ethereum",
+        ],
+    );
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        wallet_balance_all_null(&data),
+        "not-logged-in quote must report walletBalance=null on every route: {data}"
+    );
+}
+
+/// IT-006 — flag-variant edge: `--readable-amount` (instead of `--amount`) still
+/// produces a normal quote that reports `walletBalance` (spec §2.2). exactIn is
+/// the default swap mode and is passed explicitly here to mirror the plan row.
+#[test]
+fn swap_quote_readable_amount_reports_wallet_balance() {
+    let output = run_with_retry(&[
+        "swap",
+        "quote",
+        "--from",
+        tokens::EVM_NATIVE,
+        "--to",
+        tokens::ETH_USDC,
+        "--readable-amount",
+        "0.01",
+        "--chain",
+        "ethereum",
+        "--swap-mode",
+        "exactIn",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        each_route_has_wallet_balance(&data),
+        "readable-amount quote must report walletBalance per route: {data}"
+    );
+}
+
+/// IT-010 — swap insufficient-balance scene: a quote for more than the wallet
+/// holds surfaces the structured `swap_insufficient_balance` result with the
+/// common Funding target, QR, and need (spec §2.2,
+/// exit 1). This requires a logged-in wallet whose balance
+/// is below the requested amount; without one the CLI cannot detect a shortfall
+/// and returns a normal quote (exit 0) whose routes carry `walletBalance`. The
+/// scene contract is validated when it fires; otherwise the normal-quote /
+/// structured-failure path is accepted.
+#[test]
+fn swap_quote_insufficient_balance_scene_or_normal_quote() {
+    let output = run_with_retry(&[
+        "swap",
+        "quote",
+        "--from",
+        tokens::EVM_NATIVE,
+        "--to",
+        tokens::ETH_USDC,
+        "--amount",
+        "100000000000000000000",
+        "--chain",
+        "ethereum",
+    ]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or(serde_json::Value::Null);
+
+    if json.pointer("/data/phase").and_then(|s| s.as_str()) == Some("funding_required")
+        && json.pointer("/data/payload/operation").and_then(|s| s.as_str()) == Some("swap")
+    {
+        // CSV IT-010 is an `error` row with exit_code=1; the scene path exits 1
+        // (spec §3.1 / §3.2). Assert it here so the scene contract also pins the
+        // process outcome, not just the JSON body.
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "swap_insufficient_balance scene must exit 1: {json}"
+        );
+        assert_eq!(json["ok"], serde_json::Value::Bool(false), "scene must be ok:false: {json}");
+        assert!(
+            json.pointer("/data/payload/fundingTarget/receiveAddress").is_some(),
+            "swap_insufficient_balance must carry fundingTarget.receiveAddress: {json}"
+        );
+        assert_eq!(
+            json["data"]["nextAction"],
+            serde_json::json!([]),
+            "funding is entered immediately and must not require an intermediate action: {json}"
+        );
+        assert!(
+            json["data"]["payload"]["fundingTarget"].is_object()
+                && json["data"]["payload"]["qr"].is_object()
+                && json["data"]["payload"]["fundingNeed"].is_object(),
+            "scene must carry the common funding payload: {json}"
+        );
+    } else if output.status.success() {
+        let data = assert_ok_and_extract_data(&output);
+        assert!(
+            each_route_has_wallet_balance(&data),
+            "normal quote must report walletBalance per route: {data}"
+        );
+    } else {
+        assert_eq!(
+            json.get("ok"),
+            Some(&serde_json::Value::Bool(false)),
+            "expected swap_insufficient_balance scene, a walletBalance quote, or a structured ok:false failure\nstdout: {stdout}"
+        );
+    }
 }

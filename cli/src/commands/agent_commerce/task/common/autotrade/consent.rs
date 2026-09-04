@@ -1236,9 +1236,14 @@ pub enum ConsentDecision {
     AutoOverCap,
 }
 
-/// `<onchainos_home>/autotrade/consent/<jobId>.md`. Caller MUST have
-/// charset-checked `job_id` first (path-traversal defense).
+/// `<onchainos_home>/autotrade/consent/<jobId>.md`. Self-validates `job_id`
+/// BEFORE any `onchainos_home().join(...)`, so a direct caller such
+/// as `clear_consent("../../x")` cannot reach an out-of-root `remove_file`
+/// (reuses the CONSENT_UNREADABLE bespoke exit).
 fn consent_path(job_id: &str) -> Result<PathBuf, ConsentError> {
+    if !job_id_is_safe(job_id) {
+        return Err(ConsentError(CONSENT_UNREADABLE));
+    }
     let home = crate::home::onchainos_home().map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
     Ok(home
         .join("autotrade")
@@ -1249,6 +1254,9 @@ fn consent_path(job_id: &str) -> Result<PathBuf, ConsentError> {
 /// Read-only compatibility path for records written before the Markdown
 /// contract. New writes never target this file.
 fn legacy_consent_path(job_id: &str) -> Result<PathBuf, ConsentError> {
+    if !job_id_is_safe(job_id) {
+        return Err(ConsentError(CONSENT_UNREADABLE));
+    }
     let home = crate::home::onchainos_home().map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
     Ok(home
         .join("autotrade")
@@ -1449,6 +1457,9 @@ pub fn write_consent_policy(
 /// Persist the complete local execution policy. Omitted Trade Kit settings
 /// preserve an existing choice, which makes cap/amount changes safe and lets
 /// older callers remain source-compatible.
+// 9 independently-optional settings; a params struct would only move the same
+// fields into another type without reducing the call-site surface.
+#[allow(clippy::too_many_arguments)]
 pub fn write_consent_policy_with_settings(
     job_id: &str,
     mode: ConsentMode,
@@ -1980,6 +1991,8 @@ pub fn clear_pending_delivery(job_id: &str, delivery_id: &str) {
 /// the user explicitly restores or updates the policy. Best-effort (already-absent is
 /// fine). Grant file + pending signal are cleared by the caller.
 pub fn clear_consent(job_id: &str) {
+    // `consent_path` self-validates job_id, so an unsafe path such as
+    // `../../x` yields `Err` here and no `remove_file` is ever attempted.
     if let Ok(path) = consent_path(job_id) {
         let _ = std::fs::remove_file(path);
     }
@@ -2835,6 +2848,45 @@ mod tests {
                 evaluate_consent("job1", Some(&dec("5"))).unwrap(),
                 ConsentDecision::FirstTime
             );
+        });
+    }
+
+    /// A direct `clear_consent("../../x")` must delete nothing. Both the current
+    /// Markdown path and the legacy JSON path reject the unsafe id before any
+    /// `remove_file`; this does not rely on the outer Pause command guard.
+    ///
+    /// The sentinel is placed at the EXACT target a vulnerable (guard-removed)
+    /// path builders would resolve to for `job_id = "../../consent_sentinel"`.
+    #[test]
+    fn clear_consent_traversal_deletes_nothing() {
+        with_home(|| {
+            let home = crate::home::onchainos_home().unwrap();
+            // Legitimate current and legacy consent artefacts inside the root.
+            let consent_dir = home.join("autotrade").join("consent");
+            std::fs::create_dir_all(&consent_dir).unwrap();
+            let legit_md = consent_dir.join("legit.md");
+            let legit_json = consent_dir.join("legit.json");
+            std::fs::write(&legit_md, "DO_NOT_TOUCH").unwrap();
+            std::fs::write(&legit_json, "DO_NOT_TOUCH").unwrap();
+            let sentinel_md = home.join("consent_sentinel.md");
+            let sentinel_json = home.join("consent_sentinel.json");
+            std::fs::write(&sentinel_md, "DO_NOT_TOUCH").unwrap();
+            std::fs::write(&sentinel_json, "DO_NOT_TOUCH").unwrap();
+
+            // Direct call with an unsafe, path-shaped jobId: no-op, no panic.
+            clear_consent("../../consent_sentinel");
+            clear_consent("../../x");
+
+            for path in [&legit_md, &legit_json, &sentinel_md, &sentinel_json] {
+                assert_eq!(
+                    std::fs::read_to_string(path).unwrap(),
+                    "DO_NOT_TOUCH",
+                    "consent path must be byte-for-byte unchanged: {}",
+                    path.display()
+                );
+            }
+            let _ = std::fs::remove_file(&sentinel_md);
+            let _ = std::fs::remove_file(&sentinel_json);
         });
     }
 

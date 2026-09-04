@@ -126,3 +126,41 @@ auto-renewal are rendered.
 
 Reply with a number.
 ```
+
+For `task_create_prepare`, `nextAction.id=open_create_playbook` means to open
+the task-creation reference and continue its confirmation flow; it does not
+mean that the subscription has already been created.
+
+For `agent create-task`, `phase=creation`, `decision=ready`, and
+`reason=broadcast_submitted` mean the create-and-fund UserOperation was
+submitted but is not yet final. Render `payload.jobId`, `payload.broadcast.txHash`
+when present, and the locally saved attachment count. Then execute the returned
+`nextAction.id=watch_task`; do not offer `set-payment-mode`, ASP apply, or Buyer
+accept.
+
+For `agent create-subscribe`, the same progression state means the subscription
+UserOperation was submitted but is not yet final. Require
+`payload.type=204`, `payload.bizType=204`, and use `payload.jobId` as the sole
+subscription identifier. Render the broadcast transaction hash when present,
+attachment count, and `guideStatus` / `consentStatus` / `executionProfileSaved`.
+Then execute
+the returned `nextAction.id=watch_task`. Do not establish the A2A session in
+this creation step; the `sub_created` event owns that transition.
+
+For `phase=service_routing` and `nextAction.id=invoke_a2mcp`, do not render the
+generic task-creation confirmation card above. Open
+`a2mcp-direct-invoke.md`. Preserve `payload.serviceSnapshot` verbatim; that
+reference owns parameter collection, supported-token and balance display,
+funding recovery, and the final mutually exclusive Confirm/Cancel card.
+
+## `task_create_prepare` phase mapping
+
+| Phase | Decision | Next action IDs |
+|---|---|---|
+| `login_validation` | `blocked` | `login` |
+| `identity_validation` | `blocked` | `register_user_agent` |
+| `service_validation` | `blocked` | `stop` |
+| `service_routing` | `ready` | `invoke_a2mcp` |
+| `subscription_validation` | `blocked` | `restore_subscription`, `stop` |
+| `funding_required` | `blocked` | none; enter shared Funding directly |
+| `creation` | `ready` | `open_create_playbook` |

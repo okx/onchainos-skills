@@ -9,11 +9,15 @@
 #   # or
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1))) --beta
 #
+# Usage (explicit stable):
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1))) --stable
+#
 # Behavior:
 #   - Default (stable): fetches latest stable release from GitHub,
 #     compares with local version, installs/upgrades if needed.
-#   - Beta: fetches all tags, finds the latest version (including
-#     pre-releases) by semver, and installs it.
+#   - Beta: fetches beta tags only and installs the latest beta.
+#   - Stable: fetches and installs the latest stable release.
+#   - Switching channels is explicit and may install a lower semver.
 #   - Every invocation checks the requested release channel. Automatic
 #     update throttling is handled by `onchainos preflight` / `upgrade --throttle`.
 #
@@ -22,7 +26,8 @@
 # ──────────────────────────────────────────────────────────────
 
 param(
-    [switch]$beta
+    [switch]$beta,
+    [switch]$stable
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,14 +41,22 @@ try {
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 } catch {}
 
-# Support --beta via remaining args (PowerShell treats -- as param terminator)
+# Support --beta / --stable via remaining args (PowerShell treats -- as a
+# parameter terminator in some invocation forms).
 if ($args -contains "beta" -or $args -contains "--beta") {
     $beta = [switch]::new($true)
 }
-# Support ONCHAINOS_BETA env var (for irm | iex which cannot pass args)
-if ($env:ONCHAINOS_BETA) {
+if ($args -contains "stable" -or $args -contains "--stable") {
+    $stable = [switch]::new($true)
+}
+if ($beta -and $stable) {
+    throw "--beta and --stable cannot be used together."
+}
+# Support ONCHAINOS_BETA for irm | iex, unless a channel was explicitly set.
+if (-not $beta -and -not $stable -and $env:ONCHAINOS_BETA) {
     $beta = [switch]::new($true)
 }
+$CHANNEL = if ($beta) { "beta" } else { "stable" }
 
 $REPO = "okx/onchainos-skills"
 $BINARY = "onchainos"
@@ -68,6 +81,11 @@ function Get-LocalVersion {
         if ($output -match "\S+\s+(\S+)") { return $Matches[1] }
     }
     return $null
+}
+
+function Get-VersionChannel([string]$ver) {
+    if ($ver -match '(?i)beta') { return "beta" }
+    return "stable"
 }
 
 function Get-BaseVersion([string]$ver) {
@@ -147,12 +165,12 @@ function Get-LatestStableVersion {
     throw "Could not fetch latest version from GitHub. Check your network connection or install manually from https://github.com/${REPO}"
 }
 
-# Fetch latest version including betas.
+# Fetch latest beta version.
 # Primary path lists tags via git smart-http (git ls-remote), which does NOT
 # count against the API limit. Falls back to the tags API if git is unavailable
-# or fails. Returns the highest by semver using Test-SemverGt (which correctly
-# orders pre-releases below their base version).
-function Get-LatestVersionWithBeta {
+# or fails. Stable tags are intentionally excluded so a beta-channel update
+# cannot switch to stable merely because a stable version has a higher semver.
+function Get-LatestBetaVersion {
     $versions = @()
 
     if (Get-Command git -ErrorAction SilentlyContinue) {
@@ -175,7 +193,9 @@ function Get-LatestVersionWithBeta {
             }
             foreach ($line in $lines) {
                 $ref = (($line -split "/")[-1]) -replace '\^\{\}', ''
-                if ($ref -match '^v[0-9]') { $versions += ($ref -replace '^v', '') }
+                if ($ref -match '(?i)^v[0-9].*-beta(?:[.-].*)?$') {
+                    $versions += ($ref -replace '^v', '')
+                }
             }
             $versions = @($versions | Sort-Object -Unique)
         } catch {}
@@ -186,7 +206,7 @@ function Get-LatestVersionWithBeta {
             $response = Invoke-GitHubApi "https://api.github.com/repos/${REPO}/tags?per_page=100"
             foreach ($tag in $response) {
                 $v = $tag.name -replace '^v', ''
-                if ($v) { $versions += $v }
+                if ($v -match '(?i)-beta(?:[.-].*)?$') { $versions += $v }
             }
         } catch {}
     }
@@ -201,7 +221,7 @@ function Get-LatestVersionWithBeta {
             $best = $v
         }
     }
-    if (-not $best) { throw "No valid versions found in tags." }
+    if (-not $best) { throw "No valid beta versions found in tags." }
     return $best
 }
 
@@ -331,52 +351,96 @@ function Add-ToPath {
     Write-Host ""
 }
 
+# ── Optional companion tools ─────────────────────────────────────────────────────
+# okx-a2a environment readiness is owned by `okx-a2a doctor --fix`; this hook
+# installs the latest CLI package and hands the rest to doctor. Every step is
+# best-effort and silent on failure.
+function Get-A2ACommandPath {
+    foreach ($commandName in @("okx-a2a.cmd", "okx-a2a.exe", "okx-a2a")) {
+        $command = Get-Command $commandName -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($command -and $command.Path) { return $command.Path }
+    }
+    return $null
+}
+
+function Get-A2AVersion([string]$CommandPath) {
+    if (-not $CommandPath) { return $null }
+    try {
+        $output = & $CommandPath --version 2>$null
+        return (($output | Out-String).Trim())
+    } catch {
+        return $null
+    }
+}
+
+function Finish-Install {
+    $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $npmCommand) {
+        $npmCommand = Get-Command npm -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if (-not $npmCommand) { return }
+
+    Write-Host ""
+    Write-Host "Installing the latest okx-a2a and ensuring the A2A environment (non-fatal)..."
+
+    $a2aCommandPath = Get-A2ACommandPath
+    $beforeVer = Get-A2AVersion -CommandPath $a2aCommandPath
+    try { & $npmCommand.Path install -g "@okxweb3/a2a-node@latest" *> $null } catch {}
+
+    # A running daemon keeps executing the old code after the package directory
+    # is replaced, so restart it when the installed version actually changed.
+    $a2aCommandPath = Get-A2ACommandPath
+    $afterVer = Get-A2AVersion -CommandPath $a2aCommandPath
+    if ($afterVer -and $afterVer -ne $beforeVer) {
+        try {
+            $daemonStatus = & $a2aCommandPath daemon status 2>$null | Select-Object -First 1
+            if ("$daemonStatus" -match '^running') {
+                try { & $a2aCommandPath daemon restart *> $null } catch {}
+            }
+        } catch {}
+    }
+
+    if ($a2aCommandPath) {
+        try { & $a2aCommandPath doctor --fix --non-interactive *> $null } catch {}
+    }
+    Write-Host "okx-a2a environment check completed."
+}
+
 # ── Main ─────────────────────────────────────────────────────
 function Main {
     $localVer = Get-LocalVersion
+    $localChannel = if ($localVer) { Get-VersionChannel $localVer } else { $null }
 
-    if ($beta) {
-        # ── Beta mode: find latest version including pre-releases ──
-        $targetVer = Get-LatestVersionWithBeta
-
-        if ($localVer -eq $targetVer) {
-            $wfDir = Join-Path $CACHE_DIR "workflows"
-            if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
-            return
-        }
+    if ($CHANNEL -eq "beta") {
+        $targetVer = Get-LatestBetaVersion
     } else {
-        # ── Stable mode ──
+        $targetVer = Get-LatestStableVersion
+    }
 
-        $latestStable = Get-LatestStableVersion
-
-        if (-not $localVer) {
-            # Not installed — install latest stable
-            $targetVer = $latestStable
-        } elseif ($localVer -eq $latestStable) {
-            # Already on exact latest stable
-            $wfDir = Join-Path $CACHE_DIR "workflows"
-            if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
-            return
-        } else {
-            if (Test-SemverGt $latestStable $localVer) {
-                # Latest stable is newer than local (handles beta→stable upgrade too)
-                $targetVer = $latestStable
-            } else {
-                # Local is same or newer (e.g., on a beta ahead of stable)
-                $wfDir = Join-Path $CACHE_DIR "workflows"
-                if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
-                return
-            }
+    # Within one channel, update only when the published target is newer.
+    if ($localVer -and $localChannel -eq $CHANNEL -and
+        -not (Test-SemverGt $targetVer $localVer)) {
+        if ($localVer -ne $targetVer) {
+            Write-Host "Installed onchainos ${localVer} is newer than the latest published ${CHANNEL} ${targetVer}; keeping local version."
         }
+        $wfDir = Join-Path $CACHE_DIR "workflows"
+        if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
+        Finish-Install
+        return
     }
 
     if ($localVer) {
-        Write-Host "Updating ${BINARY} from ${localVer} to ${targetVer}..."
+        if ($localChannel -ne $CHANNEL) {
+            Write-Host "Switching ${BINARY} from ${localChannel} ${localVer} to ${CHANNEL} ${targetVer}..."
+        } else {
+            Write-Host "Updating ${BINARY} from ${localVer} to ${targetVer}..."
+        }
     }
 
     Install-Binary -Tag "v${targetVer}"
     Sync-Workflows -Tag "v${targetVer}"
     Add-ToPath
+    Finish-Install
 }
 
 Main

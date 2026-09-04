@@ -8,9 +8,7 @@
 //! - `flow_negotiate.rs` — negotiation / matching phase
 //! - `flow_lifecycle.rs` — task execution + arbitration + terminal states
 
-use crate::commands::agent_commerce::task::common::config::{
-    SubscriptionTradePath, TASK_MIN_VERSION,
-};
+use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 use crate::commands::agent_commerce::task::common::util::short_job_id;
 use crate::commands::agent_commerce::task::common::DEBUG_LOG;
@@ -115,7 +113,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20Then send SKILL_PREFETCH:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\"\n\
+                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\" --json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x207. **Upload pending attachments (if any):**\n\
                      \x20\x20\x20\x20```bash\n\
@@ -123,7 +121,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20If non-empty JSON array, iterate each file:\n\
                      \x20\x20\x20\x20a) `okx-a2a file upload --file-path <path> --agent-id {agent_id} --job-id {job_id}` → obtain fileKey + decryption-metadata.\n\
-                     \x20\x20\x20\x20b) `okx-a2a xmtp-send --job-id {job_id} --to-agent-id <agentId>` with attachment content (all fields verbatim from upload output).\n\
+                     \x20\x20\x20\x20b) `okx-a2a session send --job-id {job_id} --to-agent-id <agentId> --content \"<attachment content; all upload fields verbatim>\" --json`.\n\
                      \x20\x20\x20\x20⚠️ Failure MUST NOT block — skip failed files.\n\
                      \x20\x20\x20\x20If empty (`[]`), skip.\n\
                      \x20\x20\x20\x20End the turn. Wait for `provider_applied`.\n\
@@ -161,19 +159,24 @@ pub(super) fn notify_and_end(canonical_content: &str) -> String {
     )
 }
 
-/// Same as `notify_and_end` but appends a deposit-address hint for QR rendering.
+/// Same as `notify_and_end` but appends the deposit address and Common QR output.
+/// This preserves the legacy subscription funding UX after the standalone
+/// `wallet qrcode` command was removed.
 pub(super) fn notify_and_end_with_deposit(
     canonical_content: &str,
     deposit_address: &str,
 ) -> String {
+    let qr = crate::qr::build_qr_output(deposit_address, None);
+    let qr_json = serde_json::to_string(&qr).unwrap_or_else(|_| "{}".to_string());
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content \"<localized content shown below>\" --image-path <tmp.png>\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {canonical_content}\n\n\
          Deposit address: {deposit_address} (XLayer)\n\
-         Run `onchainos wallet qrcode --address {deposit_address} --format png --output <tmp.png>` before `user-notify`. Keep all 4 options and the address; do not rely on tool output. TTY: show Unicode QR. Non-TTY: run `user-notify --image-path`; plain reply is not enough. If image sending fails, show the address text and do not claim QR is scannable. Keep `--content` text-only: no `![...](file://...)` or local image paths.\n\n\
+         Common QR output: {qr_json}\n\
+         Keep all 4 options and the address. Preserve the existing QR behavior using the returned fields: TTY renders `terminalQr`; non-TTY runs `notifyCommandArgs` and renders `markdownImage`. Put the QR immediately after the deposit address. If the QR fields are absent, show the address and do not claim a QR is scannable. Keep `--content` text-only: no local image path in the content itself.\n\n\
          End turn after the call.\n"
     )
 }
@@ -267,6 +270,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 ///
 /// The `event_str` parameter accepts both event names (job_created / provider_applied / ...)
 /// and status names (created / submitted / ...), uniformly parsed by state_machine.
+// Each parameter is an independently-optional piece of prefetched event context;
+// bundling them into a struct would just move the same 8 fields one level out.
+#[allow(clippy::too_many_arguments)]
 pub async fn generate_next_action(
     job_id: &str,
     event_str: &str,
@@ -280,10 +286,6 @@ pub async fn generate_next_action(
     use crate::commands::agent_commerce::task::common::state_machine::{
         parse_status_or_event, Event,
     };
-
-    let version_prefix = format!(
-        "[Protocol version] When calling `okx-a2a xmtp-send`, the `--payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
-    );
 
     // Short jobId, used in pending-decisions-v2 request --user-content / --list-label as the `[Job <shortID>]` prefix.
     // Serves as a dual disambiguation anchor for the user and user agent when multiple prompts run concurrently. See user-sub-playbook.md §Communication Contract.
@@ -307,7 +309,7 @@ pub async fn generate_next_action(
     // This file only tells the agent **what content to send where at each step**, without re-explaining tool usage.
     //
     // Three communication CLI commands:
-    //   - okx-a2a xmtp-send: send to provider (peer sub session), params --job-id + --to-agent-id + --message
+    //   - okx-a2a session send: send to provider (peer sub session), params --job-id + --to-agent-id + --content
     //   - onchainos agent user-notify: notify the user (no user decision needed), params: --content
     //   - onchainos agent pending-decisions-v2 request: needs user interaction (confirm / decide), params: --user-content + --list-label + --source-event
     //     (internally pushes via the okx-a2a user_attention table; the user-session agent then renders + relays the user's reply back to the sub)
@@ -355,7 +357,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             "[user-flow] parsed event: {:?} | okx-a2a commands involved: {}",
             event,
             match &event {
-                Event::JobCreated => "okx-a2a session create (create group) → okx-a2a xmtp-send (send negotiation message)",
+                Event::JobCreated => "okx-a2a session create (create group) → okx-a2a session send (send negotiation message)",
                 Event::ProviderApplied => "in-process branch by over_most_budget: confirm-accept (within budget) OR reject-apply + 3/4-option card (over budget)",
                 Event::JobProviderReject => "in-process POST /reset/asp → playbook tells agent to localize + 3/4-option card",
                 Event::JobAccepted => "onchainos agent user-notify (notify accept success)",
@@ -367,7 +369,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 Event::JobAutoRefunded => "onchainos agent user-notify (claimAutoRefund tx receipt)",
                 Event::NegotiateReply =>
                     "natural-language reply (max 2 rounds; over-limit → mark-failed + user decision card)",
-                Event::AttachmentAdded => "okx-a2a file upload → okx-a2a xmtp-send (upload + forward attachment to provider)",
+                Event::AttachmentAdded => "okx-a2a file upload → okx-a2a session send (upload + forward attachment to provider)",
                 Event::DeliverableReceived => "task-deliverable-save (download + save deliverable immediately)",
                 _ => "none",
             }
@@ -424,7 +426,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::Other(ref s) if s == "reject_review" => {
             super::flow_lifecycle::reject_review(&ctx).await
         }
-        Event::JobCompleted => super::flow_lifecycle::job_completed(&ctx, message),
+        Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id)
+            .await
+            .to_string(),
         Event::DisputeResolved => super::flow_lifecycle::dispute_resolved(&ctx),
         Event::JobRefunded => super::flow_lifecycle::job_refunded(&ctx),
         Event::JobAutoRefunded => super::flow_lifecycle::job_auto_refunded(&ctx),
@@ -466,7 +470,11 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             }
         }
         // ─── Subscription lifecycle events ──────────────────────────────────────────────
+        Event::SubOpen => super::flow_lifecycle::subscription::sub_open(&ctx, message),
         Event::SubCreated => super::flow_lifecycle::subscription::sub_created(&ctx, message),
+        Event::SubAspSelected => {
+            super::flow_lifecycle::subscription::sub_asp_selected(&ctx, message)
+        }
         Event::SubCancel => super::flow_lifecycle::subscription::sub_cancel(&ctx, message),
         Event::SubUserReject => super::flow_lifecycle::subscription::sub_user_reject(&ctx, message),
         Event::SubAspAgree => super::flow_lifecycle::subscription::sub_asp_agree(&ctx, message),
@@ -476,9 +484,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         }
         Event::SubRenew => super::flow_lifecycle::subscription::sub_renew(&ctx, message).await,
         Event::SubExpireWarn => super::flow_lifecycle::subscription::sub_expire_warn(&ctx).await,
-        Event::SubCompleteNotify => {
-            super::flow_lifecycle::subscription::sub_complete_notify(&ctx, message)
-        }
+        Event::SubCompleteNotify => super::v2::sub_complete_notify::handle(agent_id, message)
+            .await
+            .to_string(),
         Event::SubCloseNotify => {
             super::flow_lifecycle::subscription::sub_close_notify(&ctx, message)
         }
@@ -487,6 +495,18 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         }
         Event::SubRejectRefundNotify => {
             super::flow_lifecycle::subscription::sub_reject_refund_notify(&ctx, message)
+        }
+        Event::JobAspAcceptExpire => {
+            super::v2::notification::job_asp_accept_expire(job_id, message).to_string()
+        }
+        Event::JobAspRejectClosed => {
+            super::v2::notification::job_asp_reject_closed(job_id, message).to_string()
+        }
+        Event::JobAspRejectExpire => {
+            super::v2::notification::job_asp_reject_expire(job_id, message).to_string()
+        }
+        Event::SubAspClaimNotify => {
+            super::v2::notification::sub_asp_claim_notify(job_id).to_string()
         }
         // ─── Events the user never receives + unknown fallback ──────────────────────────
         Event::Staked
@@ -831,7 +851,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```\n\
                      Then send SKILL_PREFETCH:\n\
                      ```bash\n\
-                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\"\n\
+                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\" --json\n\
                      ```\n\
                      5. **Upload pending attachments (if any):**\n\
                      ```bash\n\
@@ -839,7 +859,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```\n\
                      If non-empty JSON array, iterate each file:\n\
                      a) `okx-a2a file upload --file-path <path> --agent-id {agent_id} --job-id {job_id}` → obtain fileKey + decryption-metadata.\n\
-                     b) `okx-a2a xmtp-send --job-id {job_id} --to-agent-id <providerAgentId>` with attachment content (all fields verbatim from upload output).\n\
+                     b) `okx-a2a session send --job-id {job_id} --to-agent-id <providerAgentId> --content \"<attachment content; all upload fields verbatim>\" --json`.\n\
                      ⚠️ Failure MUST NOT block — skip failed files.\n\
                      If empty (`[]`), skip.\n\
                      6. On failure → relay the error to the user and re-ask via `pending-decisions-v2 request` with `--source-event set_asp_params`.\n\
@@ -863,36 +883,33 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
     };
 
     // Minimal-output short-circuit: applies to events whose body is self-contained
-    // and does NOT call any of the IRON-RULE-governed commands (okx-a2a xmtp-send /
+    // and does NOT call any of the IRON-RULE-governed commands (okx-a2a session send /
     // okx-a2a session status / sessions_spawn / pending-decisions-v2 request).
-    // Skip every preamble (the IRON RULEs do not apply) and version_prefix
-    // (no `okx-a2a xmtp-send` call to validate).
+    // Skip every preamble (the IRON RULEs do not apply).
     let use_cli_minimal = matches!(
         event_str,
         "job_created" |
             "negotiate_reply" |
-            "provider_applied" | "job_accepted" | "deliverable_received" | "approve_review" | "job_completed" |
+            "provider_applied" | "job_accepted" | "deliverable_received" | "approve_review" | "reject_review" | "job_completed" |
             "job_expired" | "job_auto_refunded" |
             "submit_expired" | "reject_expired" |
             "close" |
             // Subscription notifications are self-contained display bodies (they call only
             // `user-notify` / `session-cleanup`, no IRON-RULE commands), so skip the shared
             // preamble + xmtp version prefix.
-            "sub_created" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
+            "sub_open" | "sub_created" | "sub_asp_selected" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
             "sub_trial_into_active" | "sub_renew" | "sub_expire_warn" |
             "sub_complete_notify" | "sub_close_notify" | "sub_failed_notify" |
-            "sub_reject_refund_notify"
+            "sub_reject_refund_notify" |
+            "job_asp_accept_expire" | "job_asp_reject_closed" | "job_asp_reject_expire" |
+            "sub_asp_claim_notify"
     );
     let core = if use_cli_minimal || event_str == "create_task" {
         body
     } else {
         format!("{preamble_slim}{prefetched_block}{body}")
     };
-    let result = if use_cli_minimal {
-        core
-    } else {
-        format!("{version_prefix}{core}")
-    };
+    let result = core;
     if DEBUG_LOG {
         let preview: String = result.chars().take(200).collect();
         eprintln!(
@@ -928,6 +945,22 @@ mod tests {
             Some(&msg),
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn reject_review_without_reason_returns_only_structured_progression() {
+        let output = run(
+            "reject_review",
+            json!({ "event": "reject_review", "jobId": JOB_ID }),
+        )
+        .await;
+        let progression: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(progression["decision"], "requires_user_input");
+        assert_eq!(
+            progression["nextAction"][0]["id"],
+            "request_rejection_reason"
+        );
     }
 
     #[tokio::test]
@@ -976,8 +1009,9 @@ mod tests {
     }
 
     // Every user-side subscription event renders a display notification, never a decision.
-    const USER_NON_TERMINAL: [&str; 5] = [
+    const USER_NON_TERMINAL: [&str; 6] = [
         "sub_created",
+        "sub_asp_selected",
         "sub_trial_into_active",
         "sub_renew",
         "sub_user_reject",
@@ -992,23 +1026,27 @@ mod tests {
     ];
 
     #[test]
-    fn deposit_notification_requires_visible_assistant_message() {
+    fn deposit_notification_uses_common_qr_without_wallet_qrcode() {
         let out = notify_and_end_with_deposit(
             "Insufficient balance. 1. Scan or deposit. 2. Swap. 3. Bridge. 4. Withdraw.",
             "0x1234567890abcdef1234567890abcdef12345678",
         );
+        // The `wallet qrcode` subcommand was removed (spec §1.2 / §10.3) — the deposit
+        // notification playbook must NOT instruct the agent to shell out to it.
+        assert!(!out.contains("wallet qrcode"));
+        // Still a visible user-notify carrying the deposit address and Common QR
+        // contract so the existing funding UX remains available.
         assert!(out.contains("onchainos agent user-notify"));
-        assert!(out.contains("--image-path <tmp.png>"));
-        assert!(out.contains("onchainos wallet qrcode --address 0x1234567890abcdef1234567890abcdef12345678 --format png --output <tmp.png>"));
+        assert!(out.contains("0x1234567890abcdef1234567890abcdef12345678"));
+        assert!(out.contains("Common QR output"));
+        assert!(out.contains("terminalQr"));
+        assert!(out.contains("notifyCommandArgs"));
+        assert!(out.contains("markdownImage"));
+        assert!(out.contains("immediately after the deposit address"));
         assert!(out.contains("<localized content shown below>"));
         assert!(out.contains("Keep all 4 options and the address"));
-        assert!(out.contains("do not rely on tool output"));
-        assert!(out.contains("TTY: show Unicode QR"));
-        assert!(out.contains("Non-TTY"));
-        assert!(out.contains("run `user-notify --image-path`"));
-        assert!(out.contains("plain reply is not enough"));
-        assert!(out.contains("do not claim QR is scannable"));
-        assert!(out.contains("no `![...](file://...)`"));
+        assert!(out.contains("do not claim a QR is scannable"));
+        assert!(out.contains("no local image path in the content itself"));
     }
 
     #[tokio::test]
@@ -1027,7 +1065,8 @@ mod tests {
         assert!(out.contains("never create or re-request either retired card"));
         assert!(out.contains("serviceDescription"));
         assert!(out.contains("execution_policy_not_configured"));
-        assert!(out.contains("restore or update"));
+        assert!(out.contains("configured from the Service Guide during subscription setup"));
+        assert!(out.contains("do not offer a legacy policy restore/update flow"));
         assert!(!out.contains("autotrade-consent-set --job-id"));
     }
 
@@ -1087,7 +1126,8 @@ mod tests {
         assert!(out.contains("do not execute a transaction"));
         assert!(out.contains("never create or re-request either retired card"));
         assert!(out.contains("execution_policy_not_configured"));
-        assert!(out.contains("restore or update"));
+        assert!(out.contains("configured from the Service Guide during subscription setup"));
+        assert!(out.contains("do not offer a legacy policy restore/update flow"));
         assert!(out.contains("serviceDescription"));
         assert!(out.contains("[Persisted delivery context unavailable]"));
         assert!(out.contains("Fail closed: do not submit an order"));
@@ -1134,7 +1174,8 @@ mod tests {
         assert!(out.contains("do not execute a transaction"));
         assert!(out.contains("never create or re-request either retired card"));
         assert!(out.contains("execution_policy_not_configured"));
-        assert!(out.contains("restore or update"));
+        assert!(out.contains("configured from the Service Guide during subscription setup"));
+        assert!(out.contains("do not offer a legacy policy restore/update flow"));
         assert!(!out.contains("autotrade-direct-claim"));
         assert!(!out.contains("autotrade-direct-finalize"));
         assert!(!out.contains("onchainos agent autotrade-execute"));
@@ -1155,7 +1196,8 @@ mod tests {
         )
         .await;
         assert!(out.contains("Retired manual-signal relay"));
-        assert!(out.contains("notify-only"));
+        assert!(out.contains("delivery was saved and no trade was submitted"));
+        assert!(out.contains("configured only during subscription setup"));
         assert!(out.contains("execution_policy_not_configured"));
         assert!(out.contains("do not execute a transaction"));
         assert!(!out.contains("autotrade-execute --execution-mode manual"));
@@ -1176,7 +1218,8 @@ mod tests {
         assert!(out.contains("autotrade-once-authorize"));
         assert!(out.contains("--execution-mode one_time"));
         assert!(out.contains("autotrade-delivery-report"));
-        assert!(out.contains("Never invoke a final money-moving command directly"));
+        assert!(out.contains("invoke the normal final command directly exactly once"));
+        assert!(out.contains("Never use `autotrade-execute`"));
     }
 
     #[tokio::test]
@@ -1191,8 +1234,9 @@ mod tests {
         )
         .await;
         assert!(out.contains("normal visible installation/configuration flow"));
-        assert!(out.contains("subscription-route-set"));
-        assert!(out.contains("Never call plugin-skip/plugin-clarify/tool-reselect"));
+        assert!(out.contains("autotrade-direct-claim"));
+        assert!(out.contains("autotrade-direct-finalize"));
+        assert!(out.contains("Do not persist a route"));
     }
 
     #[tokio::test]
@@ -1206,9 +1250,12 @@ mod tests {
             }),
         )
         .await;
-        assert!(out.contains("migration from an older card"));
-        assert!(out.contains("subscription-route-set"));
-        assert!(out.contains("Never call tool-selected/tool-skip"));
+        assert!(
+            out.contains("migration from an older card for a delivery pinned to `agent_direct`")
+        );
+        assert!(out.contains("autotrade-direct-claim"));
+        assert!(out.contains("autotrade-direct-finalize"));
+        assert!(out.contains("Do not persist a route"));
     }
 
     #[tokio::test]
@@ -1224,7 +1271,10 @@ mod tests {
             // from the scaffold assertion here. Restoring the user-notify
             // behavior for that branch belongs in its own dedicated MR. Every
             // event — dispute included — must still never push a decision.
-            if *evt != "sub_asp_dispute" {
+            // V2 sub_complete_notify fetches task detail in-process. Its
+            // notification rendering is covered in the V2 module without a
+            // live backend dependency.
+            if *evt != "sub_asp_dispute" && *evt != "sub_complete_notify" {
                 assert!(
                     out.contains("onchainos agent user-notify"),
                     "{evt}: must use the user-notify scaffold"
@@ -1244,12 +1294,10 @@ mod tests {
     #[tokio::test]
     async fn terminal_subscription_events_carry_cleanup_hint() {
         // Unconditionally terminal events always append the cleanup hint.
-        const ALWAYS_TERMINAL: [&str; 4] = [
-            "sub_asp_agree",
-            "sub_complete_notify",
-            "sub_close_notify",
-            "sub_failed_notify",
-        ];
+        // V2 sub_complete_notify fetches task detail and verifies its terminal
+        // output in the V2 module without a live backend dependency.
+        const ALWAYS_TERMINAL: [&str; 3] =
+            ["sub_asp_agree", "sub_close_notify", "sub_failed_notify"];
         for evt in ALWAYS_TERMINAL {
             let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
             assert!(
@@ -1298,11 +1346,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_created_trial_branch_renders_trial_started_not_first_charge() {
+    async fn sub_created_is_created_and_waits_for_asp() {
         let out = run(
             "sub_created",
             json!({
-                "event": "sub_created", "jobId": JOB_ID, "trialType": 1,
+                "event": "sub_created", "jobId": JOB_ID, "trialType": 0,
+                "providerAgentId": "9967", "tokenSymbol": "USDT", "tokenAmount": "12.34"
+            }),
+        )
+        .await;
+        assert!(
+            out.contains("[Subscription Created]"),
+            "created copy: {out}"
+        );
+        assert!(
+            out.contains("waiting for the ASP to accept"),
+            "waiting state: {out}"
+        );
+        assert!(
+            out.contains("12.34 USDT has been funded"),
+            "funding copy: {out}"
+        );
+        assert!(
+            !out.contains("status: Active"),
+            "must not claim active: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sub_open_is_an_ignored_compatibility_event() {
+        let out = run("sub_open", json!({ "event": "sub_open", "jobId": JOB_ID })).await;
+        assert!(out.contains("obsolete"), "legacy marker: {out}");
+        assert!(!out.contains("user-notify"), "must stay silent: {out}");
+        assert!(
+            !out.contains("session create"),
+            "must not create a session: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sub_asp_selected_trial_branch_renders_trial_started_not_first_charge() {
+        let out = run(
+            "sub_asp_selected",
+            json!({
+                "event": "sub_asp_selected", "jobId": JOB_ID, "trialType": 1,
                 "tokenSymbol": "USDT", "tokenAmount": "12.34",
                 "trialStartTime": 1_700_000_000, "trialEndTime": 1_700_500_000
             }),
@@ -1319,12 +1406,12 @@ mod tests {
 
         // trialType=0 and absent trialType must both keep the paid-subscribe copy.
         for msg in [
-            json!({ "event": "sub_created", "jobId": JOB_ID, "trialType": 0,
+            json!({ "event": "sub_asp_selected", "jobId": JOB_ID, "trialType": 0,
                     "tokenSymbol": "USDT", "tokenAmount": "12.34" }),
-            json!({ "event": "sub_created", "jobId": JOB_ID,
+            json!({ "event": "sub_asp_selected", "jobId": JOB_ID,
                     "tokenSymbol": "USDT", "tokenAmount": "12.34" }),
         ] {
-            let out = run("sub_created", msg).await;
+            let out = run("sub_asp_selected", msg).await;
             assert!(
                 out.contains("[Subscribed]"),
                 "paid path keeps Sub-1-2 copy: {out}"
@@ -1368,6 +1455,99 @@ mod tests {
         );
         // Terminal notice (RefundSettled → Failed): carries the user-notify display scaffold.
         assert!(out.contains("user-notify"), "display notification: {out}");
+    }
+
+    #[tokio::test]
+    async fn subscription_job_notifications_render_user_copy() {
+        let common = json!({
+            "jobId": JOB_ID,
+            "jobTitle": "BTC Signals",
+            "tokenAmount": "12.34",
+            "tokenSymbol": "USDT",
+            "providerName": "Signal ASP",
+            "providerAgentId": "5263",
+            "jobType": 1
+        });
+
+        let mut accept_expire = common.clone();
+        accept_expire["event"] = json!("job_asp_accept_expire");
+        let out = run("job_asp_accept_expire", accept_expire).await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(out.contains("[Job Timed Out] The ASP did not accept BTC Signals within 3 hours."));
+        assert!(out.contains("12.34 USDT"));
+        assert!(out.contains("ASP: Signal ASP (5263)"));
+        assert!(out.contains("trial eligibility remains unaffected"));
+        assert_eq!(progression["nextAction"][0]["id"], "notify_user");
+        assert_eq!(progression["payload"]["role"], "user");
+
+        let mut reject_closed = common.clone();
+        reject_closed["event"] = json!("job_asp_reject_closed");
+        reject_closed["aspRejectReason"] = json!("capacity unavailable");
+        let out = run("job_asp_reject_closed", reject_closed).await;
+        assert!(out.contains("[ASP Declined] The ASP declined BTC Signals."));
+        assert!(out.contains("Reason: capacity unavailable"));
+        assert!(out.contains("subscription did not begin"));
+
+        let mut reject_expire = common;
+        reject_expire["event"] = json!("job_asp_reject_expire");
+        let out = run("job_asp_reject_expire", reject_expire).await;
+        assert!(out.contains("[Automatic Refund]"));
+        assert!(!out.contains("response deadline:"));
+        assert!(out.contains("Job status: Closed"));
+    }
+
+    #[tokio::test]
+    async fn ordinary_job_notifications_split_free_and_paid_copy() {
+        let base = json!({
+            "jobId": JOB_ID,
+            "jobTitle": "One-off analysis",
+            "tokenSymbol": "USDT",
+            "providerName": "Analyst",
+            "providerAgentId": "42",
+            "jobType": 0
+        });
+
+        let mut free = base.clone();
+        free["event"] = json!("job_asp_accept_expire");
+        free["tokenAmount"] = json!("0");
+        let out = run("job_asp_accept_expire", free).await;
+        assert!(out.contains("[Job Expired]"));
+        assert!(!out.contains("escrowed amount"));
+
+        let mut paid = base.clone();
+        paid["event"] = json!("job_asp_reject_closed");
+        paid["tokenAmount"] = json!("5");
+        paid["aspRejectReason"] = json!("policy");
+        let out = run("job_asp_reject_closed", paid).await;
+        assert!(out.contains("escrowed amount of 5 USDT"));
+        assert!(out.contains("Job status: Closed"));
+
+        let mut free_refund = base;
+        free_refund["event"] = json!("job_asp_reject_expire");
+        free_refund["tokenAmount"] = json!("0.000");
+        let out = run("job_asp_reject_expire", free_refund).await;
+        assert!(out.contains("[Refund Process Completed]"));
+        assert!(out.contains("Job status: Failed"));
+    }
+
+    #[tokio::test]
+    async fn sub_asp_claim_notify_is_silent_for_user_role() {
+        let out = run(
+            "sub_asp_claim_notify",
+            json!({
+                "event": "sub_asp_claim_notify",
+                "jobId": JOB_ID,
+                "jobTitle": "BTC Signals",
+                "tokenAmount": "12.34",
+                "tokenSymbol": "USDT",
+                "txHash": "0xreceive"
+            }),
+        )
+        .await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(progression["reason"], "notification_not_required");
+        assert_eq!(progression["nextAction"][0]["id"], "stop");
+        assert!(progression["payload"].get("notification").is_none());
     }
 
     #[tokio::test]

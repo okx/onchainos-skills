@@ -38,16 +38,10 @@ Shared Agent/Service templates and display rules.
 
 ## Service value display
 
-Apply these mappings to service create confirmations and update diffs:
-
-- `serviceDescription`: render verbatim with all line breaks; never summarize, rewrite, or omit.
-- `serviceType`: display raw `A2MCP` or `A2A` unchanged.
-- `fee`: `"0"` → localized Free without suffix; positive `"N"` → `N USDT`; empty/inapplicable →
-  `—`.
-- `subscription` fee: `"0"` → localized Free without suffix; positive `"N"` → `N USDT / month`;
-  absent/inapplicable → `—`.
-- `freeTrial`: `"72"` → `3 days`; absent/inapplicable → `—`.
-- `serviceGuide`: show non-blank text verbatim; omit when absent/blank.
+- Show missing values as `—`.
+- Show `serviceDescription` verbatim and `serviceType` unchanged (`A2MCP` or `A2A`).
+- For `fee` / `subscription`: `"0"` → localized Free; positive `"N"` → `N USDT` / `N USDT / month`, respectively. Map `freeTrial: "72"` to `3 days`.
+- In create confirmations and update diffs, show non-blank `serviceGuide` verbatim; otherwise omit it.
 
 ## Service table
 

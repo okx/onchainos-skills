@@ -106,7 +106,7 @@ pub async fn handle_set_payment_mode(
         bail!(
             "legacy task-based A2MCP/x402 payment was removed; use the invoke_a2mcp direct-invocation flow"
     );
-        }
+    }
 
     // Check whether the current paymentMode is already the target (only when explicitly provided).
     let current_mode = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
@@ -114,23 +114,23 @@ pub async fn handle_set_payment_mode(
         explicitly_provided && current_mode == payment_mode && current_mode != PaymentMode::None;
 
     // A2A escrow balance pre-check.
-        let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, "set-payment-mode")?;
-        let amt: f64 = amt_str.parse().unwrap_or(0.0);
-        if amt > 0.0 {
-            if let Err(e) = common::ensure_sufficient_balance(amt, &sym).await {
+    let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, "set-payment-mode")?;
+    let amt: f64 = amt_str.parse().unwrap_or(0.0);
+    if amt > 0.0 {
+        if let Err(e) = common::ensure_sufficient_balance(amt, &sym).await {
             return print_payment_funding_block_from_error(e, &agent_id, "Payment mode update")
                 .await;
-            }
         }
+    }
 
     // If paymentMode is already the target, skip the on-chain call (the chain would not emit `job_payment_mode_changed`).
     if !already_set {
         let mode_int = payment_mode.as_int();
         let resp = client
             .post_with_identity(
-            &client.endpoint(job_id, "setPaymentMode"),
-            &serde_json::json!({ "paymentMode": mode_int }),
-            &agent_id,
+                &client.endpoint(job_id, "setPaymentMode"),
+                &serde_json::json!({ "paymentMode": mode_int }),
+                &agent_id,
             )
             .await?;
 
@@ -174,21 +174,21 @@ pub async fn handle_set_payment_mode(
         );
     }
 
-        let mode_str = payment_mode.as_str();
-        if already_set {
-            println!("✓ Payment mode is already {mode_str}; skipping on-chain call.");
-            crate::output::success(serde_json::json!({
-                "alreadySet": true,
-                "paymentMode": mode_str,
-                "next": "Payment mode already on-chain. Call next-action with `event=job_payment_mode_changed` in --message to get the script; then wait for the provider to submit their apply on-chain before confirm-accept.",
-            }));
-        } else {
-            println!("✓ Payment mode set to {mode_str}; awaiting on-chain confirmation...");
-            crate::output::confirming(
-                &format!("setPaymentMode({mode_str}) complete."),
-                "Wait for the on-chain confirmation, then the system will proceed automatically.",
-            );
-        }
+    let mode_str = payment_mode.as_str();
+    if already_set {
+        println!("✓ Payment mode is already {mode_str}; skipping on-chain call.");
+        crate::output::success(serde_json::json!({
+            "alreadySet": true,
+            "paymentMode": mode_str,
+            "next": "Payment mode already on-chain. Call next-action with `event=job_payment_mode_changed` in --message to get the script; then wait for the provider to submit their apply on-chain before confirm-accept.",
+        }));
+    } else {
+        println!("✓ Payment mode set to {mode_str}; awaiting on-chain confirmation...");
+        crate::output::confirming(
+            &format!("setPaymentMode({mode_str}) complete."),
+            "Wait for the on-chain confirmation, then the system will proceed automatically.",
+        );
+    }
     Ok(())
 }
 
@@ -216,61 +216,61 @@ pub async fn handle_confirm_accept(
         let user_addr = p
             .user_agent_address
             .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("prefetched missing buyerAgentAddress"))?;
+            .ok_or_else(|| anyhow::anyhow!("prefetched missing buyerAgentAddress"))?;
         let agent_id = p
             .user_agent_id
             .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("prefetched missing buyerAgentId"))?
-                .to_string();
-            let (acct, addr) = signing::resolve_wallet(None, Some(user_addr))?;
+            .ok_or_else(|| anyhow::anyhow!("prefetched missing buyerAgentId"))?
+            .to_string();
+        let (acct, addr) = signing::resolve_wallet(None, Some(user_addr))?;
         let prov = p
             .provider_agent_id
             .as_deref()
-                .filter(|s| !s.is_empty())
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| {
                 anyhow::anyhow!("task {job_id} has no providerAgentId; cannot confirm-accept")
             })?
-                .to_string();
-            let sym = if p.token_symbol == "?" || p.token_symbol.is_empty() {
-                bail!("task {job_id} has no tokenSymbol");
-            } else {
-                p.token_symbol.clone()
-            };
-            let amt = if p.token_amount.is_empty() {
-                bail!("task {job_id} has no tokenAmount");
-            } else {
-                p.token_amount.clone()
-            };
-            let pm = PaymentMode::from_int(p.payment_mode.unwrap_or(0) as i32);
-            let ta = p.token_address.clone();
-            (acct, addr, agent_id, prov, sym, amt, pm, ta)
+            .to_string();
+        let sym = if p.token_symbol == "?" || p.token_symbol.is_empty() {
+            bail!("task {job_id} has no tokenSymbol");
         } else {
-            let (acct, addr, aid) =
-                signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
+            p.token_symbol.clone()
+        };
+        let amt = if p.token_amount.is_empty() {
+            bail!("task {job_id} has no tokenAmount");
+        } else {
+            p.token_amount.clone()
+        };
+        let pm = PaymentMode::from_int(p.payment_mode.unwrap_or(0) as i32);
+        let ta = p.token_address.clone();
+        (acct, addr, agent_id, prov, sym, amt, pm, ta)
+    } else {
+        let (acct, addr, aid) =
+            signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
         let task_resp = client
             .get_with_identity(&client.task_path(job_id), &aid)
             .await?;
         let prov = task_resp["providerAgentId"]
             .as_str()
-                .filter(|s| !s.is_empty())
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| {
                 anyhow::anyhow!("task {job_id} has no providerAgentId; cannot confirm-accept")
             })?
-                .to_string();
+            .to_string();
         let sym = task_resp["tokenSymbol"]
             .as_str()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenSymbol"))?
-                .to_string();
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenSymbol"))?
+            .to_string();
         let amt = task_resp["tokenAmount"]
             .as_str()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenAmount"))?
-                .to_string();
-            let pm = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
-            let ta = task_resp["tokenAddress"].as_str().map(String::from);
-            (acct, addr, aid, prov, sym, amt, pm, ta)
-        };
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("task {job_id} has no tokenAmount"))?
+            .to_string();
+        let pm = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
+        let ta = task_resp["tokenAddress"].as_str().map(String::from);
+        (acct, addr, aid, prov, sym, amt, pm, ta)
+    };
 
     if payment_mode == PaymentMode::None {
         bail!(
@@ -482,7 +482,7 @@ async fn confirm_accept_escrow(
             format!("jobId={job_id}"),
             format!("agentId={agent_id}"),
             format!("provider={provider}"),
-            format!("paymentMode=escrow"),
+            "paymentMode=escrow".to_string(),
             format!("tokenSymbol={symbol}"),
             format!("tokenAmount={amount}"),
             format!("txHash={tx_hash}"),
