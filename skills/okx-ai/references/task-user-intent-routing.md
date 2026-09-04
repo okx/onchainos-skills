@@ -34,13 +34,12 @@ User-session needs to forward free-form user instructions targeting a specific t
 5. Dispatch the user's instruction to the sub via `okx-a2a session send` — the daemon resolves the session from `--job-id` + `--to-agent-id`:
 
    ```bash
-   okx-a2a session send \
+   okx-a2a session send --no-wait \
      --job-id <jobId> --to-agent-id <counterpartyAgentId> \
      --content "<user verbatim>
 
    ---
-   Reply to the user via `onchainos agent user-notify --content \"<localized natural-language reply>\"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `task-user-sub-playbook.md` §Communication Contract)." \
-     --json
+   Reply to the user via `onchainos agent user-notify --content \"<localized natural-language reply>\"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `task-user-sub-playbook.md` §Communication Contract)."
    ```
 
    Forward verbatim then append reply-path instruction. End turn.
@@ -161,16 +160,35 @@ See [`entry-points.md`](./entry-points.md#multi-task-context-management) for the
 
 ## Task list / "what am I working on"
 
-When the user asks for **their task list without a specific jobId**, the user session answers directly (do NOT 6-step forward). Triggers include `my tasks` / `what am I working on` / `list my tasks` / `active tasks` / `ongoing tasks` / `show all my tasks` / `task list` / `ended tasks` / `one-time tasks` and semantically equivalent wording in any language. Subscription-specific requests route through §Subscriptions below.
+Task-list intents are read-only Task operations. The user session answers list requests directly. Select the command from the requested identity and filter. Subscription-specific requests route through §Subscriptions below.
 
-Run `onchainos agent my-tasks --task-type <type> --status-type <status> --page 1`, choosing each parameter independently:
+| Intent | Command |
+|---|---|
+| User task list, active tasks, ended tasks, subscription tasks, or one-time tasks | `onchainos agent my-tasks --task-type <type> --status-type <status> --page 1` |
+| Existing tasks for ASP `agentId` | `onchainos agent tasks --agent-id <aspAgentId> --page 1 --limit 20` |
+| Rejected one-time tasks / tasks that can be arbitrated / refund-decision candidates for ASP `agentId` | `onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20` |
+| Rejected subscription periods for the ASP provider view | `onchainos agent my-subscriptions --role provider --status rejected` |
+
+Triggers for the first row include `my tasks`, `what am I working on`, `active tasks`, `ended tasks`, `subscription tasks`, and `one-time tasks`. Triggers for the ASP rows include `my ASP tasks`, `tasks for ASP <agentId>`, `rejected tasks`, `tasks that can be arbitrated`, `which tasks can I arbitrate`, `哪些可以仲裁`, `可以仲裁的任务`, `refused deliveries`, `pending refund decisions`, and semantic equivalents in any language.
+
+For a User task list, choose the two `my-tasks` parameters independently:
 
 | Parameter | User intent → value |
 |---|---|
 | `<type>` | all → `all`; subscription → `subscription`; one-time → `one-time` |
 | `<status>` | all → `0`; active → `1`; ended → `2` |
 
-Render and paginate per [`task-user-playbook.md` §Unified My Tasks](task-user-playbook.md#unified-my-tasks). `active-tasks` is reserved for the task-scoped sub-session routing flow at the top of this file; do not use it for a list-only request or mix this flow with the decision list.
+Render and paginate the User result per [`task-user-playbook.md` §Unified My Tasks](task-user-playbook.md#unified-my-tasks). Render an ASP `tasks` result from its current page with the returned `jobId`, title, amount, and status. Present every rejected row as an arbitration candidate.
+
+For a rejected-task or arbitration-candidate list, append one localized line below the existing list template:
+
+```text
+Tip: An ASP merchant can start arbitration for a task in `rejected` status.
+```
+
+Resolve an explicit ASP Agent ID directly. With an ASP identity in the current task context, retain that `agentId`. Otherwise run `onchainos agent my-agents`, retain role ASP (`2`) candidates, display them, and wait for the user's selection.
+
+`active-tasks` remains the task-scoped sub-session routing command. `arbitration-list` remains the list of cases where arbitration has already been filed.
 
 ⚠️ **"all my tasks" / "show all tasks"** map to the caller's own tasks (→ this section). There is no public marketplace pool to browse.
 
@@ -219,7 +237,7 @@ The legacy `agent close` entry is disabled and never performs the write.
 
 | Intent                                                                        | Action | Detail |
 |-------------------------------------------------------------------------------|---|---|
-| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity-service-search.md`](identity-service-search.md) commissioning search. Confirm its single `service-match` result and run `task-create-prepare`. A structured insufficient-balance result enters shared Funding immediately; otherwise route its `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md). Never read `data.action` from `task-create-prepare`; that field does not exist in its response. | user publish flow |
+| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity/search.md`](identity/search.md) commissioning search. Confirm its single `service-match` result and run `task-create-prepare`. A structured insufficient-balance result enters shared Funding immediately; otherwise route its `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md). Never read `data.action` from `task-create-prepare`; that field does not exist in its response. | user publish flow |
 | Take specific task (ASP) — `take {jobId}` / `contact the User Agent of {jobId}` | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | task-asp-accept.md §1 |
 | Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |
@@ -229,6 +247,8 @@ The legacy `agent close` entry is disabled and never performs the write.
 ---
 
 ## Status / progress query (specific task)
+
+Route arbitration creation, filed-case lists, and case details through `task-arbitration.md`. Keep rejected-task and pending-refund-decision lists in §Task list with the rejected Task filter.
 
 | Trigger | Action |
 |---|---|

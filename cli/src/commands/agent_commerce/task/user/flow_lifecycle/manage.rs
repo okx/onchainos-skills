@@ -42,7 +42,7 @@ Step 2 -- Basic validation
 Step 3 -- Search-intent parsing and service selection
 ================================================
 
-For the initial search, pass the user's original utterance verbatim to [`intent-keyword-extraction.md`], then use its output unchanged as `<args>` in:
+For the initial search, pass the user's original utterance verbatim to the argument-extraction flow in `skills/okx-ai/references/identity/search.md`, then use its output unchanged as `<args>` in:
 
 ```bash
 onchainos agent task-service-select <args> --agentic-id <buyerAgentId> --sid <sid> --limit 1 --format json

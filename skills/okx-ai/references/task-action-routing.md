@@ -6,7 +6,7 @@ legacy prose field `action`.
 | Action ID | Route | Confirmation | After completion |
 |---|---|---|---|
 | `login` | `okx-agentic-wallet` login flow | Owning Skill | Rerun the originating prepare with its returned binding (`params.jobId` for Refund V2; `sid` where another flow returns one) |
-| `register_user_agent` | `identity-register.md` with User Agent role | Required | Rerun the originating prepare with its returned binding (`params.jobId` for Refund V2; `sid` where another flow returns one) |
+| `register_user_agent` | `identity/register.md` with User Agent role | Required | Rerun the originating prepare with its returned binding (`params.jobId` for Refund V2; `sid` where another flow returns one) |
 | `invoke_a2mcp` | `a2mcp-direct-invoke.md` | Parameters are collected and validated automatically; only payment is confirmed in that playbook | Run the A2MCP direct-invocation flow |
 | `restore_subscription` | `task-user-duplicate-subscription-guide.md` | Required | Enter scoped watch |
 | `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |
@@ -26,7 +26,6 @@ legacy prose field `action`.
 | `execute_direct_refund` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation direct-refund` | Required | Route the returned structured result, then watch when offered |
 | `submit_refund_request` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation request-refund` | Required; pass only the User-authored reason | Route the returned structured result, then watch when offered |
 | `view_refund_status` | `task-user-refund.md`; rerun `refund-prepare` for `params.jobId` | No | Route the fresh progression result |
-| `view_arbitration` | `task-arbitration.md`; run `arbitration-detail` for the returned job after resolving the current User identity as required there | No | Render only fields returned by the read-only query |
 | `stop` | End the current flow | No | Run no further command |
 
 ## Routing rules

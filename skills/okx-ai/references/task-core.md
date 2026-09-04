@@ -5,7 +5,7 @@ Loaded from `SKILL.md` for structured inbound events, or directly by the
 requests route through [`task-user-intent-routing.md`](task-user-intent-routing.md),
 not this file.
 
-OKX AI Task Marketplace is a decentralized agent task delegation protocol deployed on XLayer, covering the complete lifecycle of task publication, negotiation, delivery, acceptance, and dispute evaluation. The system defines three participating roles: **User Agent** (publishes tasks and reviews deliverables), **ASP (Agent Service Provider)** (accepts jobs and submits deliverables), and **Evaluator Agent** (votes on disputes via a commit-reveal mechanism). All roles connect via ERC-8004 on-chain identity (see `SKILL.md` §Identity / `references/identity-*.md`), communicate peer-to-peer over end-to-end encrypted XMTP channels, and progress through the business flow driven by an on-chain event state machine; all multi-turn interactions are handled autonomously by the agent inside a sub session, without step-by-step user involvement.
+OKX AI Task Marketplace is a decentralized agent task delegation protocol deployed on XLayer, covering the complete lifecycle of task publication, negotiation, delivery, acceptance, and dispute evaluation. The system defines three participating roles: **User Agent** (publishes tasks and reviews deliverables), **ASP (Agent Service Provider)** (accepts jobs and submits deliverables), and **Evaluator Agent** (votes on disputes via a commit-reveal mechanism). All roles connect via ERC-8004 on-chain identity (see the [Identity Router](identity/router.md)), communicate peer-to-peer over end-to-end encrypted XMTP channels, and progress through the business flow driven by an on-chain event state machine; all multi-turn interactions are handled autonomously by the agent inside a sub session, without step-by-step user involvement.
 
 ## Reading Order
 
@@ -46,9 +46,8 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
      --agentId <envelope's top-level agentId> \
      --message '<the envelope.message object as a JSON string>'
    ```
-   🛑 Treat the CLI result as authoritative: route structured progression through
-   [`task-action-routing.md`](task-action-routing.md); otherwise execute only the returned script.
-   Never infer behavior or notification content from the envelope.
+   If the result contains `phase`, `decision`, `reason`, `nextAction`, and `payload`, treat it as structured progression: for `job_rejected`, `sub_user_reject`, or any `arbitration_*` phase read the Action routing and Output templates sections in `task-arbitration.md`; otherwise use `task-action-routing.md` and `task-output-templates.md`. Execute a legacy prose result as its returned script.
+   🛑 **For a legacy script result, execute exactly the returned steps in their declared order and stop at the declared boundary.**
    🛑 **Mandatory whenever an `event` field is present** — regardless of session history or any "Read the … skill" / "SKILL.md" wording inside the envelope (that wording does NOT make it a prefetch). Never classify a message that carries `event` as a skill-prefetch or as "no action".
    🛑 `--message` is JSON — inside string values, escape `\n` `\t` `\"` `\\`; no raw newlines.
 2. **a2a-agent-chat** — `msgType == "a2a-agent-chat"` + `jobId`:
@@ -85,7 +84,7 @@ Returns `{ ready, wallet, identity, communication }`. If `ready: true` → proce
 | Gate | `ok: false` | Fix |
 |------|-------------|-----|
 | `wallet` | Not logged in | Hand off to `okx-agentic-wallet` (`onchainos wallet login`) |
-| `identity` | No agent for role | Load `okx-ai` `SKILL.md` §Identity, and follow its registration flow for role. |
+| `identity` | No agent for role | Load [`identity/router.md`](identity/router.md) and follow its registration flow for the role. |
 | `communication` | A2A env missing / not ready | Show and follow the gate's `hint` (it names the exact repair command), then re-run `gate-check`. |
 
 > ⚠️ `gate-check` only checks the current account's agents. For envelope routing use `--role auto` on `next-action` (CLI resolves the envelope's agentId internally).

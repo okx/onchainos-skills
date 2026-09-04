@@ -52,14 +52,14 @@ returned without blocking the caller, which may warn and continue.
 
 ### pending-decisions-v2
 
-Pending-decisions queue with four subcommands. Same `(jobId, role, agentId, toAgentId?)` key re-`request` overwrites in place (idempotent).
+Pending-decisions queue commands: `request`, `request-prompt`, `resolve`, `resolve-with-sessionkey`, `resolve-prompt`, `pick`, `list`, and `cancel`. Arbitration requests use `decisionId` as the idempotency key; other requests use `(jobId, role, agentId, toAgentId?)`.
 
 #### request
 
 Push a decision to the user
 
 ```
-agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --user-content "<text>" --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>] [--continuation-id <id>]
+agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] [--user-content "<text>" | --user-content-file <path>] --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>] [--decision-id <id>] [--choices-json '<json>'] [--expires-at <unix-seconds>]
 ```
 
 | Param | Required | Default | Description |
@@ -68,18 +68,31 @@ agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> 
 | `--role` | Yes | - | `user` / `asp` / `evaluator` |
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--to-agent-id` | No | - | Peer agentId (omit for backup sub) |
-| `--user-content` | Yes | - | Full content shown to user verbatim |
+| `--user-content` | Required unless `--user-content-file` | - | Full content shown to user verbatim |
+| `--user-content-file` | Required unless `--user-content` | - | File containing the full user-facing content |
 | `--list-label` | Yes | - | Short label for multi-decision list view |
 | `--llm-content` | No | - | Custom llmContent override |
 | `--source-event` | No | - | Chain event name; used to build `user_decision_<source_event>` on resolve |
-| `--continuation-id` | No | - | Opaque state binding persisted with the pending entry and relayed as `message.continuationId`; cannot be combined with `--llm-content` |
+| `--decision-id` | Arbitration | derived current instance | Stable rejection-instance key |
+| `--choices-json` | Arbitration | event defaults | Exact `key` → `actionId` + `params` mapping |
+| `--expires-at` | No | - | Decision deadline in unix seconds |
+
+#### request-prompt
+
+Deliver a decision card synchronously:
+
+```text
+agent pending-decisions-v2 request-prompt --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--user-content "<text>" | --user-content-file <path>] --list-label "<label>" [--decision-id <id>] [--choices-json '<json>'] [--expires-at <unix-seconds>] [--template-vars-b64 <base64-json>]
+```
+
+`--user-content` is Required unless `--user-content-file` is supplied, and `--user-content-file` is Required unless `--user-content` is supplied. `--template-vars-b64` applies whitelisted values only where the value originates in an input template; each value is inserted literally and is not scanned or expanded again. An `OK` result confirms card delivery. The next user reply is resolved through the active decision metadata.
 
 #### resolve-prompt
 
 Relay the user's reply back to the sub session
 
 ```
-agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <event> [--continuation-id <id>]
+agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <event> [--decision-id <id>]
 ```
 
 | Param | Required | Default | Description |
@@ -90,7 +103,7 @@ agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jo
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--to-agent-id` | No | - | Must match the original request |
 | `--source-event` | Yes | - | Chain event name from the original request |
-| `--continuation-id` | No | - | Exact binding embedded by the original request's default resolver; relayed unchanged |
+| `--decision-id` | Arbitration | - | Exact decision instance embedded by the original request |
 
 #### cancel
 
@@ -118,7 +131,7 @@ agent pending-decisions-v2 list --format markdown
 
 ### next-action
 
-Output the action result based on `(event, role)`
+Return the next progression result based on `(event, role)`. `job_rejected` and `sub_user_reject` return the structured arbitration contract; other flows may return a script.
 
 ```
 agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message '<JSON>' [--a2a-file <path>]
@@ -287,8 +300,8 @@ First search:
 agent task-service-select [--keywords <kw>...] [--asp-agent-id <id>] [--asp-name <name>] [--service-name <name>] [--sid <sid>] [--min-payment-token-amount <amount>] [--max-payment-token-amount <amount>] [--agentic-id <buyerAgentId>] --limit 1 --format json
 ```
 
-For the initial search, pass the user's original utterance verbatim to
-[`intent-keyword-extraction.md`](intent-keyword-extraction.md), then use its output as the base
+For the initial search, pass the user's original utterance verbatim to the argument-extraction flow in
+[`identity/search.md`](identity/search.md), then use its output as the base
 `task-service-select` arguments. Use the canonical
 `service-match` argument shape: emit `--keywords` at most once, followed by all extracted keyword
 values in their original order. For `--sid`, prefer the extracted value; otherwise use the
@@ -407,6 +420,8 @@ agent status <jobId> [--agent-id <id>]
 | `<jobId>` | Yes | - | Task ID (positional) |
 | `--agent-id` | No | auto-resolved | Caller's agentId |
 
+For a filed arbitration case, prefer `arbitration-detail`. It returns the normalized arbitration phase, verdict, deadlines, amount, token, rounds, destination, refund, and transaction fields that are available from the backend.
+
 ### my-tasks
 
 List subscription and one-time tasks for the current account's User identity.
@@ -457,6 +472,8 @@ agent tasks [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 | `--page` | No | `1` | Page number |
 | `--limit` | No | `20` | Items per page |
 | `--agent-id` | No | auto-resolved | Caller's agentId |
+
+Use `tasks --status rejected --agent-id <aspAgentId>` for rejected tasks that can enter arbitration. Use `arbitration-list` for cases where arbitration has already been filed. The legacy `tasks --status disputed` form delegates to the arbitration-list contract.
 
 ### active-tasks
 
@@ -511,9 +528,7 @@ agent arbitration-list --agent-id <userOrAspAgentId> [--page <n>] [--page-size <
 | `--page` | No | `1` | One-based page number |
 | `--page-size` | No | `20` | Positive page size |
 
-The response preserves backend pagination fields: `total`, `page`, `pageSize`, and `list[]`. Each list
-item preserves `jobId`, `title`, `status`, and `createTime`; the CLI adds `statusName` when `status` is
-numeric.
+The response uses `phase=arbitration_list`. `payload.items[]` contains the stable `jobId`, description, task status, arbitration phase, verdict, and occurrence time. `nextAction.id=view_arbitration` carries the current page's `allowedJobIds` and requires confirmation before the selected detail is displayed. An empty result uses `reason=no_arbitrations` and an empty action list.
 
 ### arbitration-detail
 
@@ -523,18 +538,7 @@ Show the current arbitration state visible to one User or ASP identity.
 agent arbitration-detail <jobId> --agent-id <userOrAspAgentId>
 ```
 
-The response preserves all fields from `GET /task/{jobId}/dispute/status`, including `jobId`,
-`jobType`, `currentRound`, `selectedVoter`, `taskStatus`, `disputeRoundStatus`, `prepareEndTime`, and
-`roundEndTime`. The CLI adds:
-
-| Field | Description |
-|---|---|
-| `taskStatusName` | Normalized task status when `taskStatus` is numeric |
-| `disputeRoundStatusName` | `init`, `commit_phase`, `reveal_phase`, `completed`, `rejected`, `invalidated`, or `unknown` |
-| `phase` | `evidence_preparation`, `arbitrating`, `resolved`, `rejected`, `invalidated`, or `unknown` |
-
-Additional settlement fields are passed through unchanged when the backend returns them. Their
-absence must not be interpreted as a verdict, transfer, refund, or transaction.
+The response uses `phase=arbitration_detail`, `decision=ready`, and `reason=arbitration_found`. `payload` contains normalized `arbitrationPhase` (`evidence_preparation`, `in_progress`, `resolved`, or `unknown`), verdict (`asp_won`, `asp_lost_auto_refund`, or null), and the available backend facts. Missing fields remain null.
 
 ### refund-prepare / refund-execute — Refund V2
 
