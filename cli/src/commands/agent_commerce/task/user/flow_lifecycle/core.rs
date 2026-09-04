@@ -539,6 +539,30 @@ pub(crate) async fn route_subscription_delivery_to_skill(
     subscription_signal_prompt(&runtime_context, execution_path)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeliverableTaskRoute {
+    OneTime,
+    Subscription,
+    Unknown,
+}
+
+/// Classify a received deliverable from the authoritative `jobType` whenever a
+/// task snapshot exists. A missing task snapshot keeps the legacy subscription
+/// lookup fallback; a present snapshot with a missing/unsupported `jobType`
+/// must fail closed instead of being treated as a one-time task.
+fn deliverable_task_route(
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+) -> DeliverableTaskRoute {
+    match prefetched {
+        None => DeliverableTaskRoute::Subscription,
+        Some(task) => match task.job_type {
+            Some(0) => DeliverableTaskRoute::OneTime,
+            Some(1) => DeliverableTaskRoute::Subscription,
+            _ => DeliverableTaskRoute::Unknown,
+        },
+    }
+}
+
 /// Re-enter a delivery released from the local FIFO. The trusted context keeps
 /// the original saved path and exact session identity; subscription state and
 /// consent are fetched again so queued work never reuses stale authorization.
@@ -1313,24 +1337,32 @@ pub(crate) async fn deliverable_received_cli(
         );
     }
 
-    // A successful `/task/{jobId}` prefetch identifies a one-time task. Only when
-    // that registry has no detail do we enter the subscription admission and
-    // copy-trade path. This prevents a one-time delivery from being misclassified
-    // when `/subscribe/{jobId}` correctly returns not-found.
-    if ctx.prefetched.is_none() {
-        if let Some(prompt) = route_subscription_delivery_to_skill(
-            job_id,
-            agent_id,
-            &saved_path,
-            &deliverable_type,
-            "live",
-            transport_identity.as_ref(),
-        )
-        .await
-        {
-            return prompt;
+    // `/task/{jobId}` also returns subscription jobs, so snapshot presence is
+    // not a task-type discriminator. Route by authoritative `jobType`: 1 enters
+    // subscription admission, while only 0 may continue to one-time review.
+    match deliverable_task_route(ctx.prefetched) {
+        DeliverableTaskRoute::Subscription => {
+            if let Some(prompt) = route_subscription_delivery_to_skill(
+                job_id,
+                agent_id,
+                &saved_path,
+                &deliverable_type,
+                "live",
+                transport_identity.as_ref(),
+            )
+            .await
+            {
+                return prompt;
+            }
+            return deliverable_intake_failed(
+                ctx,
+                "subscription type/status could not be verified",
+            );
         }
-        return deliverable_intake_failed(ctx, "subscription type/status could not be verified");
+        DeliverableTaskRoute::OneTime => {}
+        DeliverableTaskRoute::Unknown => {
+            return deliverable_intake_failed(ctx, "task type could not be verified");
+        }
     }
 
     // Pre-decide the ASP rating + pre-translate the rating_submitted notify
@@ -1849,6 +1881,33 @@ mod tests {
         assert!(!single_review_ready(Some(1), false));
         assert!(single_review_ready(Some(2), false));
         assert!(single_review_ready(Some(1), true));
+    }
+
+    #[test]
+    fn deliverable_route_uses_authoritative_job_type_not_snapshot_presence() {
+        let mut prefetched = escrow_ctx_with_expire(None);
+
+        prefetched.job_type = Some(1);
+        assert_eq!(
+            deliverable_task_route(Some(&prefetched)),
+            DeliverableTaskRoute::Subscription
+        );
+
+        prefetched.job_type = Some(0);
+        assert_eq!(
+            deliverable_task_route(Some(&prefetched)),
+            DeliverableTaskRoute::OneTime
+        );
+
+        prefetched.job_type = None;
+        assert_eq!(
+            deliverable_task_route(Some(&prefetched)),
+            DeliverableTaskRoute::Unknown
+        );
+        assert_eq!(
+            deliverable_task_route(None),
+            DeliverableTaskRoute::Subscription
+        );
     }
 
     #[test]

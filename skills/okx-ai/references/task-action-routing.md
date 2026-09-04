@@ -6,7 +6,7 @@ legacy prose field `action`.
 | Action ID | Route | Confirmation | After completion |
 |---|---|---|---|
 | `login` | `okx-agentic-wallet` login flow | Owning Skill | Rerun the originating prepare with its returned binding (`params.jobId` for Refund V2; `sid` where another flow returns one) |
-| `register_user_agent` | `identity-register.md` with User Agent role | Required | Rerun the originating prepare with its returned binding (`params.jobId` for Refund V2; `sid` where another flow returns one) |
+| `register_user_agent` | `identity/register.md` with User Agent role | Required | Rerun the originating prepare with its returned binding (`params.jobId` for Refund V2; `sid` where another flow returns one) |
 | `invoke_a2mcp` | `a2mcp-direct-invoke.md` | Parameters are collected and validated automatically; only payment is confirmed in that playbook | Run the A2MCP direct-invocation flow |
 | `restore_subscription` | `task-user-duplicate-subscription-guide.md` | Required | Enter scoped watch |
 | `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |

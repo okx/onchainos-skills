@@ -703,7 +703,7 @@ fn build_search_table_has_fixed_columns_and_walks_flat_list() {
 
 #[test]
 fn build_service_cells_a2mcp_pascalcase() {
-    // service-list returns PascalCase keys per references/identity-discover.md §Service list.
+    // service-list returns PascalCase keys per references/identity/profile.md §Services for an explicit Agent ID.
     let svc = json!({
         "ServiceName": "TVL Query",
         "ServiceType": "A2MCP",

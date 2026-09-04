@@ -287,8 +287,8 @@ First search:
 agent task-service-select [--keywords <kw>...] [--asp-agent-id <id>] [--asp-name <name>] [--service-name <name>] [--sid <sid>] [--min-payment-token-amount <amount>] [--max-payment-token-amount <amount>] [--agentic-id <buyerAgentId>] --limit 1 --format json
 ```
 
-For the initial search, pass the user's original utterance verbatim to
-[`intent-keyword-extraction.md`](intent-keyword-extraction.md), then use its output as the base
+For the initial search, pass the user's original utterance verbatim to the argument-extraction flow in
+[`identity/search.md`](identity/search.md), then use its output as the base
 `task-service-select` arguments. Use the canonical
 `service-match` argument shape: emit `--keywords` at most once, followed by all extracted keyword
 values in their original order. For `--sid`, prefer the extracted value; otherwise use the

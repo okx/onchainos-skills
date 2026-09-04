@@ -52,7 +52,7 @@ communication rules; it does not match free-text user intents.
 
 | Intent | Trigger examples | Route to |
 |---|---|---|
-| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`identity-service-search.md`](identity-service-search.md) commissioning search, then route the `task-create-prepare` response's `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md); do not read `data.action` from that response |
+| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`identity/search.md`](identity/search.md) commissioning search, then route the `task-create-prepare` response's `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md); do not read `data.action` from that response |
 | Add attachment / image | "attach a file/image to a task" | [`task-user-actions.md`](task-user-actions.md) §2 |
 | Stop task | "stop task / close task" | [`task-user-actions.md`](task-user-actions.md) §3 |
 | View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
