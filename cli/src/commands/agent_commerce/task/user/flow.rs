@@ -426,11 +426,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::Other(ref s) if s == "reject_review" => {
             super::flow_lifecycle::reject_review(&ctx).await
         }
-        Event::JobCompleted => {
-            super::v2::job_completed::handle(job_id, agent_id)
-                .await
-                .to_string()
-        }
+        Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id)
+            .await
+            .to_string(),
         Event::DisputeResolved => super::flow_lifecycle::dispute_resolved(&ctx),
         Event::JobRefunded => super::flow_lifecycle::job_refunded(&ctx),
         Event::JobAutoRefunded => super::flow_lifecycle::job_auto_refunded(&ctx),
@@ -497,6 +495,18 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         }
         Event::SubRejectRefundNotify => {
             super::flow_lifecycle::subscription::sub_reject_refund_notify(&ctx, message)
+        }
+        Event::JobAspAcceptExpire => {
+            super::v2::notification::job_asp_accept_expire(job_id, message).to_string()
+        }
+        Event::JobAspRejectClosed => {
+            super::v2::notification::job_asp_reject_closed(job_id, message).to_string()
+        }
+        Event::JobAspRejectExpire => {
+            super::v2::notification::job_asp_reject_expire(job_id, message).to_string()
+        }
+        Event::SubAspClaimNotify => {
+            super::v2::notification::sub_asp_claim_notify(job_id).to_string()
         }
         // ─── Events the user never receives + unknown fallback ──────────────────────────
         Event::Staked
@@ -890,7 +900,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             "sub_open" | "sub_created" | "sub_asp_selected" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
             "sub_trial_into_active" | "sub_renew" | "sub_expire_warn" |
             "sub_complete_notify" | "sub_close_notify" | "sub_failed_notify" |
-            "sub_reject_refund_notify"
+            "sub_reject_refund_notify" |
+            "job_asp_accept_expire" | "job_asp_reject_closed" | "job_asp_reject_expire" |
+            "sub_asp_claim_notify"
     );
     let core = if use_cli_minimal || event_str == "create_task" {
         body
@@ -1238,7 +1250,9 @@ mod tests {
             }),
         )
         .await;
-        assert!(out.contains("migration from an older card for a delivery pinned to `agent_direct`"));
+        assert!(
+            out.contains("migration from an older card for a delivery pinned to `agent_direct`")
+        );
         assert!(out.contains("autotrade-direct-claim"));
         assert!(out.contains("autotrade-direct-finalize"));
         assert!(out.contains("Do not persist a route"));
@@ -1282,11 +1296,8 @@ mod tests {
         // Unconditionally terminal events always append the cleanup hint.
         // V2 sub_complete_notify fetches task detail and verifies its terminal
         // output in the V2 module without a live backend dependency.
-        const ALWAYS_TERMINAL: [&str; 3] = [
-            "sub_asp_agree",
-            "sub_close_notify",
-            "sub_failed_notify",
-        ];
+        const ALWAYS_TERMINAL: [&str; 3] =
+            ["sub_asp_agree", "sub_close_notify", "sub_failed_notify"];
         for evt in ALWAYS_TERMINAL {
             let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
             assert!(
@@ -1364,14 +1375,13 @@ mod tests {
 
     #[tokio::test]
     async fn sub_open_is_an_ignored_compatibility_event() {
-        let out = run(
-            "sub_open",
-            json!({ "event": "sub_open", "jobId": JOB_ID }),
-        )
-        .await;
+        let out = run("sub_open", json!({ "event": "sub_open", "jobId": JOB_ID })).await;
         assert!(out.contains("obsolete"), "legacy marker: {out}");
         assert!(!out.contains("user-notify"), "must stay silent: {out}");
-        assert!(!out.contains("session create"), "must not create a session: {out}");
+        assert!(
+            !out.contains("session create"),
+            "must not create a session: {out}"
+        );
     }
 
     #[tokio::test]
@@ -1445,6 +1455,99 @@ mod tests {
         );
         // Terminal notice (RefundSettled → Failed): carries the user-notify display scaffold.
         assert!(out.contains("user-notify"), "display notification: {out}");
+    }
+
+    #[tokio::test]
+    async fn subscription_job_notifications_render_user_copy() {
+        let common = json!({
+            "jobId": JOB_ID,
+            "jobTitle": "BTC Signals",
+            "tokenAmount": "12.34",
+            "tokenSymbol": "USDT",
+            "providerName": "Signal ASP",
+            "providerAgentId": "5263",
+            "jobType": 1
+        });
+
+        let mut accept_expire = common.clone();
+        accept_expire["event"] = json!("job_asp_accept_expire");
+        let out = run("job_asp_accept_expire", accept_expire).await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(out.contains("[Job Timed Out] The ASP did not accept BTC Signals within 3 hours."));
+        assert!(out.contains("12.34 USDT"));
+        assert!(out.contains("ASP: Signal ASP (5263)"));
+        assert!(out.contains("trial eligibility remains unaffected"));
+        assert_eq!(progression["nextAction"][0]["id"], "notify_user");
+        assert_eq!(progression["payload"]["role"], "user");
+
+        let mut reject_closed = common.clone();
+        reject_closed["event"] = json!("job_asp_reject_closed");
+        reject_closed["aspRejectReason"] = json!("capacity unavailable");
+        let out = run("job_asp_reject_closed", reject_closed).await;
+        assert!(out.contains("[ASP Declined] The ASP declined BTC Signals."));
+        assert!(out.contains("Reason: capacity unavailable"));
+        assert!(out.contains("subscription did not begin"));
+
+        let mut reject_expire = common;
+        reject_expire["event"] = json!("job_asp_reject_expire");
+        let out = run("job_asp_reject_expire", reject_expire).await;
+        assert!(out.contains("[Automatic Refund]"));
+        assert!(!out.contains("response deadline:"));
+        assert!(out.contains("Job status: Closed"));
+    }
+
+    #[tokio::test]
+    async fn ordinary_job_notifications_split_free_and_paid_copy() {
+        let base = json!({
+            "jobId": JOB_ID,
+            "jobTitle": "One-off analysis",
+            "tokenSymbol": "USDT",
+            "providerName": "Analyst",
+            "providerAgentId": "42",
+            "jobType": 0
+        });
+
+        let mut free = base.clone();
+        free["event"] = json!("job_asp_accept_expire");
+        free["tokenAmount"] = json!("0");
+        let out = run("job_asp_accept_expire", free).await;
+        assert!(out.contains("[Job Expired]"));
+        assert!(!out.contains("escrowed amount"));
+
+        let mut paid = base.clone();
+        paid["event"] = json!("job_asp_reject_closed");
+        paid["tokenAmount"] = json!("5");
+        paid["aspRejectReason"] = json!("policy");
+        let out = run("job_asp_reject_closed", paid).await;
+        assert!(out.contains("escrowed amount of 5 USDT"));
+        assert!(out.contains("Job status: Closed"));
+
+        let mut free_refund = base;
+        free_refund["event"] = json!("job_asp_reject_expire");
+        free_refund["tokenAmount"] = json!("0.000");
+        let out = run("job_asp_reject_expire", free_refund).await;
+        assert!(out.contains("[Refund Process Completed]"));
+        assert!(out.contains("Job status: Failed"));
+    }
+
+    #[tokio::test]
+    async fn sub_asp_claim_notify_is_silent_for_user_role() {
+        let out = run(
+            "sub_asp_claim_notify",
+            json!({
+                "event": "sub_asp_claim_notify",
+                "jobId": JOB_ID,
+                "jobTitle": "BTC Signals",
+                "tokenAmount": "12.34",
+                "tokenSymbol": "USDT",
+                "txHash": "0xreceive"
+            }),
+        )
+        .await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(progression["reason"], "notification_not_required");
+        assert_eq!(progression["nextAction"][0]["id"], "stop");
+        assert!(progression["payload"].get("notification").is_none());
     }
 
     #[tokio::test]

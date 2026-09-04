@@ -17,6 +17,7 @@ legacy prose field `action`.
 | `finalize_asp_task` | [`task-actions-completion.md` §Job Completed ASP](task-actions-completion.md#job-completed-asp) | No | End turn |
 | `finalize_user_subscription` | [`task-actions-completion.md` §Subscription Complete User](task-actions-completion.md#subscription-complete-user) | No | End turn |
 | `notify_and_cleanup_subscription` | [`task-actions-completion.md` §Subscription Complete ASP](task-actions-completion.md#subscription-complete-asp) | No | End turn |
+| `notify_user` | [`task-actions-completion.md` §Notification Only](task-actions-completion.md#notification-only) | No | End turn |
 | `stop` | End the current flow | No | Run no further command |
 
 ## Routing rules
