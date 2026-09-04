@@ -61,16 +61,55 @@ The CLI fetches the on-server challenge, TEE-signs the EIP-3009 authorization, a
 
 **Accepted** — `ok:true`, exit 0; `data` carries `payment_id` / `status` / `tx_hash` / `signature`. Proceed to Step 2 (auto-poll).
 
-**Rejected** — server returned `data.success:false` (e.g. `errorReason:"insufficient_balance"`). CLI surfaces it as a hard failure: `ok:false`, exit code 1, message embeds the reason verbatim:
+**Rejected** — server returned `data.success:false` (e.g. `errorReason:"insufficient_balance"`). CLI surfaces it as a hard failure: `ok:false`, exit code 1, message embeds the reason verbatim. A generic rejection is just:
+
+```json
+{ "ok": false, "error": "payment a2a_xxx rejected (reason=<errorReason>)" }
+```
+
+When the reason is `insufficient_balance`, the CLI returns the standard
+structured blocked result under `data` (see Insufficient-balance top-up below):
 
 ```json
 {
   "ok": false,
-  "error": "payment a2a_xxx rejected (reason=<errorReason>)"
+  "data": {
+    "phase": "funding_required",
+    "decision": "blocked",
+    "reason": "insufficient_balance",
+    "nextAction": [],
+    "payload": {
+      "operation": "a2a_payment",
+      "fundingTarget": {},
+      "qr": {},
+      "fundingNeed": {}
+    }
+  }
 }
 ```
 
-**Treat as terminal — do NOT retry `pay`.** Every retry produces a fresh EIP-3009 nonce + signature; if the reason is `insufficient_balance` or similar, retrying wastes a signature without changing the outcome. Tell the user what failed, suggest the obvious remedy (top up balance / ask the seller for a new link), and stop.
+This paymentId is terminal; `pay` is not retried on it. The Funding payload does
+not carry the paymentId or other payment-specific state. Keep that rule in this
+Reference and use current conversation context when the user later continues.
+With `data` present, run Insufficient-balance top-up below; without it, relay
+what failed, suggest the obvious remedy, and stop.
+
+### Troubleshooting — insufficient-balance top-up
+
+When `data` carries `phase=funding_required`, `decision=blocked`,
+and `reason=insufficient_balance`:
+
+1. Follow the Wallet Skill's common
+   [funding.md](../../okx-agentic-wallet/references/funding.md) immediately. Its
+   shared Funding-required template displays the balance, shortfall, address,
+   and QR in the same response.
+2. After shared Funding verifies a sufficient balance, it asks whether to
+   continue using the current conversation context. If the user continues the
+   payment, require a new seller-issued paymentId/link; the failed paymentId is
+   terminal. If the original payment is no longer clear, ask for it.
+3. Once a new paymentId arrives, re-enter the ordinary Buyer — Pay/task-creation
+   Reference and its existing confirmation rules. The new CLI result replaces
+   the old funding result.
 
 ### Step 2 — Auto-poll status to terminal
 
@@ -141,10 +180,11 @@ Convert `amount` / `fee_amount` per **`../_shared/amount-display.md`**.
 
 | Scenario | Handling |
 |---|---|
+| Insufficient-balance intent | Enter the Wallet Skill's common [funding.md](../../okx-agentic-wallet/references/funding.md) immediately and render its shared balance, address, and QR template. |
 | `onchainos wallet status` reports not logged in | Prompt user to run `onchainos wallet login`. Never attempt to sign without a live session. |
 | User provides no `paymentId` | STOP and ask the user for the seller-issued paymentId. |
 | CLI reports `payment ... not payable` / expired challenge / unsupported intent | Relay the error verbatim and surface as a **terminal failure** — do NOT retry signing. |
-| CLI reports `payment ... rejected (reason=<errorReason>)` (post-signing credential refusal — `insufficient_balance`, etc.) | Relay verbatim and surface as a **terminal failure**. Map common `errorReason` values to user remedies: `insufficient_balance` → top up wallet via `okx-agentic-wallet`; otherwise relay the reason and ask seller for a new link. **Do NOT retry `pay`** — burns a fresh nonce + signature without changing the outcome. |
+| CLI reports `payment ... rejected (reason=<errorReason>)` (post-signing credential refusal — `insufficient_balance`, etc.) | **Terminal for this paymentId**. Structured `insufficient_balance` data → enter shared Funding immediately and show its balance, address, and QR template. Other reasons → relay and ask the seller for a new link. **Do NOT retry `pay`** — burns a fresh nonce + signature without changing the outcome. |
 | `paymentId` not found / 404 from server | Relay the error and ask the user to confirm the paymentId with the seller or upstream caller. |
 | `pay` succeeded but status still `pending` / `settling` after 60s poll budget | Return the current status verbatim + paymentId; tell the user `Status is still <status> after 60s; you can run status again later`. |
 | Server returns 5xx | Surface status code and any `errorMessage` verbatim. **Do not auto-retry `pay`** — every retry produces a fresh EIP-3009 nonce + signature; let the upstream decide. `status` is read-only and safe to retry manually. |

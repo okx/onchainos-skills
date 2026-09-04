@@ -2,4 +2,4 @@
 //! chain-specific adapters.
 
 pub(super) mod adapters;
-pub(super) mod common;
+pub(crate) mod common;
