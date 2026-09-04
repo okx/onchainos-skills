@@ -26,7 +26,6 @@ legacy prose field `action`.
 | `execute_direct_refund` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation direct-refund` | Required | Route the returned structured result, then watch when offered |
 | `submit_refund_request` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation request-refund` | Required; pass only the User-authored reason | Route the returned structured result, then watch when offered |
 | `view_refund_status` | `task-user-refund.md`; rerun `refund-prepare` for `params.jobId` | No | Route the fresh progression result |
-| `view_arbitration` | `task-arbitration.md`; run `arbitration-detail` for the returned job after resolving the current User identity as required there | No | Render only fields returned by the read-only query |
 | `stop` | End the current flow | No | Run no further command |
 
 ## Routing rules
