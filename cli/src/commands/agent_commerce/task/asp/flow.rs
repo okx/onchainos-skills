@@ -213,16 +213,6 @@ fn arbitration_decision_json(
         token_symbol,
         Some(&decision_context),
     );
-    crate::commands::agent_commerce::task::common::network::api_trace::record_contract(
-        "arbitration-decision",
-        &serde_json::json!({
-            "sourceEvent": source_event,
-            "jobId": job_id,
-            "message": decision_context,
-        }),
-        Some(&result),
-        None,
-    );
     serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
 }
 

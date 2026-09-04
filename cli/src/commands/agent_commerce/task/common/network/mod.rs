@@ -2,5 +2,4 @@
 //!
 //! Uses `ensure_tokens_refreshed` to manage JWT lifecycle (aligned with the identity module).
 
-pub mod api_trace;
 pub mod task_api_client;

@@ -479,17 +479,6 @@ pub async fn handle_arbitration_list(
     let items = response["list"].as_array().cloned().unwrap_or_default();
     let total = response["total"].as_u64().unwrap_or(0);
     let result = build_list_result(page, total, &items);
-    super::common::network::api_trace::record_contract(
-        "arbitration-list",
-        &json!({
-            "agentId": agent_id,
-            "page": page,
-            "pageSize": page_size,
-            "backendResponse": response,
-        }),
-        Some(&result),
-        None,
-    );
     crate::output::success(result);
     Ok(())
 }
@@ -527,17 +516,6 @@ pub async fn handle_arbitration_detail(
             .unwrap_or_else(|_| json!({}))
     };
     let result = build_detail_result(job_id, &supplement, Some(&arbitration));
-    super::common::network::api_trace::record_contract(
-        "arbitration-detail",
-        &json!({
-            "agentId": agent_id,
-            "jobId": job_id,
-            "backendResponse": backend_response,
-            "supplement": supplement,
-        }),
-        Some(&result),
-        None,
-    );
     crate::output::success(result);
     Ok(())
 }

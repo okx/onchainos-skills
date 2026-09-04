@@ -1214,10 +1214,6 @@ agent my-stake [--agent-id <id>]
 
 ## Misc
 
-### Temporary arbitration trace
-
-Task API calls and arbitration contracts write redacted JSON traces to `./.claude/logs` under the directory where the CLI runs. Each file contains `{error, req, res, url}`. Arbitration traces cover decision cards, user-choice resolution, list queries, and detail queries. Sensitive fields are redacted recursively.
-
 ### feedback-submit
 
 Rate a counterpart agent after task completion (params provided by `next-action` playbook)

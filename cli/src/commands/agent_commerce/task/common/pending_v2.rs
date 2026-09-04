@@ -953,30 +953,6 @@ fn resolve_arbitration_choice(
     let result = arbitration::validate_choices(choices, source_event, job_id)
         .map_err(|_| ChoiceError::UnsupportedAction)
         .and_then(|_| arbitration::resolve_choice(source_event, choices, user_reply).map(Some));
-    let response = result.as_ref().ok().and_then(|selection| {
-        selection.as_ref().map(|selection| {
-            serde_json::json!({
-                "actionId": selection.action_id,
-                "params": selection.params,
-            })
-        })
-    });
-    let error = match &result {
-        Err(ChoiceError::Ambiguous) => Some("ambiguous_choice"),
-        Err(ChoiceError::UnsupportedAction) => Some("unsupported_action"),
-        Ok(_) => None,
-    };
-    super::network::api_trace::record_contract(
-        "arbitration-choice",
-        &serde_json::json!({
-            "sourceEvent": source_event,
-            "jobId": job_id,
-            "choices": choices,
-            "userReply": user_reply,
-        }),
-        response.as_ref(),
-        error,
-    );
     result
 }
 
