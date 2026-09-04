@@ -268,6 +268,30 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
     if DEBUG_LOG {
         eprintln!("[task-create] user identity check passed (agentId: {user_agent_id})");
     }
+
+    // Repeat the prepare-time balance check immediately before the V2
+    // create-and-fund write boundary. A typed shortfall returns the shared
+    // Funding contract without creating or broadcasting the task.
+    let required = params
+        .payment_token_amount
+        .parse::<f64>()
+        .context("--payment-token-amount is outside the supported numeric range")?;
+    if let Err(error) = common::ensure_sufficient_balance(required, &validated.token_symbol).await {
+        if let Some(insufficient) = error
+            .downcast_ref::<common::deposit_qr::InsufficientBalanceError>()
+        {
+            let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("failed to resolve the funding address"))?;
+            crate::output::success(build_task_creation_funding_result(
+                insufficient,
+                &deposit,
+                &params.service_token_address,
+            )?);
+            return Ok(());
+        }
+    }
+
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
     let receipt = super::v2::execute(
         client,
@@ -370,6 +394,27 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
         }
     }));
     Ok(())
+}
+
+fn build_task_creation_funding_result(
+    insufficient: &common::deposit_qr::InsufficientBalanceError,
+    deposit: &common::deposit_qr::DepositInfo,
+    token_address: &str,
+) -> Result<serde_json::Value> {
+    crate::funding::build_funding_bundle_for_address(
+        "",
+        &deposit.chain_index,
+        &deposit.address,
+        crate::funding::FundingBlockedInput {
+            asset: &insufficient.currency,
+            token_address,
+            required: &insufficient.required,
+            balance: Some(&insufficient.available),
+            operation: Some(crate::funding::FUNDING_OPERATION_TASK_CREATION),
+            error_code: None,
+            error_message: None,
+        },
+    )
 }
 
 fn validate_title(title: &str) -> Result<()> {
@@ -511,5 +556,31 @@ mod tests {
         assert!(value.validate().is_err());
         value.title = "任".repeat(MAX_TITLE_CHARS);
         assert!(value.validate().is_ok());
+    }
+
+    #[test]
+    fn task_create_funding_block_uses_common_funding_contract() {
+        let insufficient = common::deposit_qr::InsufficientBalanceError::new(
+            "insufficient".to_string(),
+            "USDT",
+            0.01,
+            0.0,
+        );
+        let deposit = common::deposit_qr::deposit_info_for_address(
+            "0x1234567890abcdef1234567890abcdef12345678",
+        );
+        let result = build_task_creation_funding_result(
+            &insufficient,
+            &deposit,
+            "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+        )
+        .expect("common Funding result");
+        assert_eq!(result["phase"], "funding_required");
+        assert_eq!(result["decision"], "blocked");
+        assert_eq!(result["reason"], "insufficient_balance");
+        assert_eq!(result["nextAction"], serde_json::json!([]));
+        assert_eq!(result["payload"]["operation"], "task_creation");
+        assert_eq!(result["payload"]["fundingNeed"]["required"], "0.01");
+        assert!(result["payload"]["qr"].is_object());
     }
 }

@@ -162,5 +162,5 @@ funding recovery, and the final mutually exclusive Confirm/Cancel card.
 | `service_validation` | `blocked` | `stop` |
 | `service_routing` | `ready` | `invoke_a2mcp` |
 | `subscription_validation` | `blocked` | `restore_subscription`, `stop` |
-| `payment_validation` | `blocked` | `fund_account` |
+| `funding_required` | `blocked` | none; enter shared Funding directly |
 | `creation` | `ready` | `open_create_playbook` |
