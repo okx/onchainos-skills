@@ -1,0 +1,63 @@
+{
+  "skill_name": "okx-ai",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "查看 Agent #42 的评价和评分。",
+      "expected_output": "查询 Agent #42 的信誉，并展示返回的平均评分、评价总数和评价内容，不得改写数值。",
+      "files": ["evals/fixtures/reputation-page-1.json"],
+      "expectations": [
+        "Calls `onchainos agent feedback-list --agent-id 42` exactly once.",
+        "Does not call a write command.",
+        "Reports the returned average rating, total review count, and review data."
+      ],
+      "assertions": {
+        "required_commands": ["onchainos agent feedback-list --agent-id 42"],
+        "forbidden_commands": [
+          "onchainos agent activate",
+          "onchainos agent deactivate",
+          "onchainos agent feedback ",
+          "onchainos agent register",
+          "onchainos agent update"
+        ],
+        "response_includes": ["4.80", "5.00", "4.60"]
+      }
+    },
+    {
+      "id": 2,
+      "prompt": "Market Maker 这个 Agent 的信誉怎么样？",
+      "expected_output": "要求用户提供 Agent ID，而不是根据 Agent 名称推断 ID。",
+      "files": [],
+      "expectations": [
+        "Does not invoke `onchainos`.",
+        "Does not guess or fabricate an Agent ID.",
+        "Asks the user to provide or select an Agent ID."
+      ],
+      "assertions": {
+        "forbidden_commands": ["onchainos "],
+        "response_includes": ["ID"],
+        "response_excludes": ["#42"]
+      }
+    },
+    {
+      "id": 3,
+      "prompt": "发布 Agent #42 到市场。",
+      "expected_output": "使用用户的中文语言偏好发布 Agent #42，并说明该上架申请已提交审核。",
+      "files": ["evals/fixtures/listing-submitted.json"],
+      "expectations": [
+        "Calls `onchainos agent activate --agent-id 42 --preferred-language zh-CN` exactly once.",
+        "Does not make a follow-up read.",
+        "States that the listing was submitted for review."
+      ],
+      "assertions": {
+        "required_commands": ["onchainos agent activate --agent-id 42 --preferred-language zh-CN"],
+        "forbidden_commands": [
+          "onchainos agent detail",
+          "onchainos agent my-agents",
+          "onchainos agent search"
+        ],
+        "response_includes": ["审核"]
+      }
+    }
+  ]
+}
