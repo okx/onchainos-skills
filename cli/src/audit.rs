@@ -468,6 +468,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
             match command {
                 A2mcpProbeCommand::Probe(_) => "a2mcp-probe probe".into(),
                 A2mcpProbeCommand::RefreshBalance(_) => "a2mcp-probe refresh-balance".into(),
+                A2mcpProbeCommand::Funding(_) => "a2mcp-probe funding".into(),
                 A2mcpProbeCommand::PreparePayment(_) => "a2mcp-probe prepare-payment".into(),
             }
         }

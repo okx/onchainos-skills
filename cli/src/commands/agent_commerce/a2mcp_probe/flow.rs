@@ -304,6 +304,44 @@ pub(super) async fn run_refresh_balance(args: &RefreshBalanceArgs) -> Result<Pro
     })
 }
 
+pub(super) async fn run_funding(args: &FundingArgs) -> Result<ProbeDecision> {
+    use crate::commands::payment::a2mcp::load_a2mcp_prepared_payment;
+
+    let owner_account_id = crate::commands::payment::state::current_owner_id()
+        .ok_or_else(|| anyhow!("wallet_login_required: no selected wallet"))?;
+    let loaded_at = crate::commands::payment::session_state::now_unix();
+    let prepared = load_a2mcp_prepared_payment(&args.prepared_id, &owner_account_id, loaded_at)?;
+    let candidate = prepared
+        .candidates()
+        .iter()
+        .find(|candidate| candidate.candidate_id() == args.candidate_id)
+        .ok_or_else(|| anyhow!("a2mcp_invalid_payment_candidate: unknown candidate"))?;
+    if candidate.balance_status() == "sufficient" {
+        return Err(anyhow!("a2mcp_funding_not_required: selected candidate is sufficient"));
+    }
+    let funding = crate::funding::build_funding_bundle_for_address(
+        "",
+        candidate.chain_id(),
+        candidate.deposit_address(),
+        crate::funding::FundingBlockedInput {
+            asset: candidate.symbol(),
+            token_address: candidate.raw_accept().get("asset").and_then(Value::as_str).unwrap_or(""),
+            required: candidate.required_amount(),
+            balance: Some(candidate.available_amount()),
+            operation: Some("a2mcp"),
+            error_code: None,
+            error_message: None,
+        },
+    )?;
+    Ok(ProbeDecision {
+        phase: "funding_required".to_string(),
+        decision: "blocked".to_string(),
+        reason: "insufficient_balance".to_string(),
+        next_action: Vec::new(),
+        payload: funding["payload"].clone(),
+    })
+}
+
 pub(super) async fn run_prepare_payment(args: &PreparePaymentArgs) -> Result<ProbeDecision> {
     use crate::commands::payment::a2mcp::{
         claim_a2mcp_prepared_payment, create_a2mcp_payment_intent, load_a2mcp_prepared_payment,

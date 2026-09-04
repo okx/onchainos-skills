@@ -26,6 +26,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 pub enum A2mcpProbeCommand {
     Probe(ProbeArgs),
     RefreshBalance(RefreshBalanceArgs),
+    Funding(FundingArgs),
     PreparePayment(PreparePaymentArgs),
 }
 
@@ -41,6 +42,14 @@ pub struct ProbeArgs {
 pub struct RefreshBalanceArgs {
     #[arg(long = "prepared-id")]
     pub prepared_id: String,
+}
+
+#[derive(Args, Debug)]
+pub struct FundingArgs {
+    #[arg(long = "prepared-id")]
+    pub prepared_id: String,
+    #[arg(long = "candidate-id")]
+    pub candidate_id: String,
 }
 
 #[derive(Args, Debug)]
@@ -225,6 +234,7 @@ pub async fn run(command: A2mcpProbeCommand, _ctx: &CommandContext) -> Result<()
     let decision = match command {
         A2mcpProbeCommand::Probe(args) => run_probe(&args).await?,
         A2mcpProbeCommand::RefreshBalance(args) => run_refresh_balance(&args).await?,
+        A2mcpProbeCommand::Funding(args) => run_funding(&args).await?,
         A2mcpProbeCommand::PreparePayment(args) => run_prepare_payment(&args).await?,
     };
     crate::output::success(decision);
