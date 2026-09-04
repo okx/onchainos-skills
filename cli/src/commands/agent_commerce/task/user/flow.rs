@@ -245,12 +245,12 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Failed => vec![
             next_action("job_refunded"),
-            "Task is in backend refund state FAILED; status alone is not proof that funds arrived. Run the final-event path and require Refund V2 settlement evidence before saying the refund completed.".to_string(),
-            format!("  onchainos agent refund-prepare {job_id}  # Verify original-token amount and refund-specific Tx Hash"),
+            "Run Refund V2 against fresh task detail. For a one-time task, Failed(9) is the backend's post-chain refund result and may confirm completion even when no Tx Hash is exposed. Subscription Failed(9) remains cause-ambiguous.".to_string(),
+            format!("  onchainos agent refund-prepare {job_id}  # Reconcile the lifecycle result and original-token refund"),
         ],
         Status::Close => vec![
-            "Task is closed (Close). For a paid escrow task, Closed alone is not refund proof.".to_string(),
-            format!("  onchainos agent refund-prepare {job_id}  # Reconcile whether this was a proven direct-refund close"),
+            "Task is Closed(7). Refund V2 distinguishes a zero-price close, a paid one-time escrow refund, and a subscription close; a Tx Hash is optional display metadata.".to_string(),
+            format!("  onchainos agent refund-prepare {job_id}  # Reconcile the authoritative close result"),
         ],
         Status::Expired => vec![
             "Task has expired (Expired); refund eligibility cannot be inferred from status alone."
@@ -966,22 +966,54 @@ mod tests {
         status: i64,
         amount: &str,
     ) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
-        crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
-            &json!({
-                "jobType": 0,
-                "status": status,
-                "title": "My Sub",
-                "buyerAgentId": AGENT_ID,
-                "providerAgentId": "5263",
-                "providerAgentName": "Alice ASP",
-                "serviceId": "svc-1",
-                "serviceName": "Audit service",
-                "tokenAmount": amount,
-                "tokenSymbol": "USDT",
-                "tokenAddress": "0xtoken",
-                "refundTxHash": format!("0x{}", "ab".repeat(32)),
-            }),
-        )
+        let mut context =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "jobType": 0,
+                    "status": status,
+                    "title": "My Sub",
+                    "buyerAgentId": AGENT_ID,
+                    "providerAgentId": "5263",
+                    "providerAgentName": "Alice ASP",
+                    "serviceId": "svc-1",
+                    "serviceName": "Audit service",
+                    "tokenAmount": amount,
+                    "tokenSymbol": "USDT",
+                    "tokenAddress": "0xtoken",
+                }),
+            );
+        // Optional transaction metadata established by Refund V2's local
+        // order reconciliation. The fresh backend lifecycle establishes the
+        // one-time refund outcome even when this field is absent.
+        context.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
+        context
+    }
+
+    fn subscription_refund_prefetched(
+        status: i64,
+        amount: &str,
+    ) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+        let mut context =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "jobType": 1,
+                    "status": status,
+                    "title": "My Sub",
+                    "buyerAgentId": AGENT_ID,
+                    "providerAgentId": "5263",
+                    "providerAgentName": "Alice ASP",
+                    "serviceId": "svc-1",
+                    "serviceName": "Audit service",
+                    "tokenAmount": amount,
+                    "tokenSymbol": "USDT",
+                    "tokenAddress": "0xtoken",
+                }),
+            );
+        // Even a transaction hash that was verified for some operation cannot
+        // disambiguate subscription Failed(9), which also represents charge
+        // failure. A server-readable refund cause/result is still required.
+        context.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
+        context
     }
 
     async fn run_with_prefetched(
@@ -1072,7 +1104,7 @@ mod tests {
         "sub_user_reject",
         "sub_asp_dispute",
     ];
-    const USER_TERMINAL: [&str; 5] = [
+    const USER_ADDITIONAL_DISPLAY_EVENTS: [&str; 5] = [
         "sub_cancel",
         "sub_asp_agree",
         "sub_complete_notify",
@@ -1315,7 +1347,10 @@ mod tests {
 
     #[tokio::test]
     async fn subscription_events_render_notify_and_never_decide() {
-        for evt in USER_NON_TERMINAL.iter().chain(USER_TERMINAL.iter()) {
+        for evt in USER_NON_TERMINAL
+            .iter()
+            .chain(USER_ADDITIONAL_DISPLAY_EVENTS.iter())
+        {
             let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
             assert!(!out.is_empty(), "{evt}: body must be non-empty");
             // sub_asp_dispute reconciled with master after MR !187 review
@@ -1409,7 +1444,7 @@ mod tests {
         .await;
         assert!(agree_without_hash.contains("Settlement Detail Incomplete"));
         assert!(!agree_without_hash.contains("session-cleanup"));
-        let refund_detail = refund_prefetched(9, "12.34");
+        let refund_detail = subscription_refund_prefetched(9, "12.34");
         let agree_with_hash = run_with_prefetched(
             "sub_asp_agree",
             json!({
@@ -1422,8 +1457,28 @@ mod tests {
             &refund_detail,
         )
         .await;
-        assert!(agree_with_hash.contains("session-cleanup"));
-        assert!(agree_with_hash.contains(TERMINAL_NOTIFICATION_MARKER));
+        assert!(agree_with_hash.contains("Settlement Detail Incomplete"));
+        assert!(!agree_with_hash.contains("session-cleanup"));
+        assert!(!agree_with_hash.contains(TERMINAL_NOTIFICATION_MARKER));
+
+        let one_time_detail = refund_prefetched(9, "12.34");
+        for event in ["sub_asp_agree", "sub_reject_refund_notify"] {
+            let out = run_with_prefetched(
+                event,
+                json!({"event": event, "jobId": JOB_ID}),
+                &one_time_detail,
+            )
+            .await;
+            assert!(
+                out.contains("Settlement Detail Incomplete"),
+                "{event}: {out}"
+            );
+            assert!(!out.contains("session-cleanup"), "{event}: {out}");
+            assert!(
+                !out.contains(TERMINAL_NOTIFICATION_MARKER),
+                "{event}: {out}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1448,6 +1503,7 @@ mod tests {
             "{out}"
         );
         assert!(!out.contains("refund completed"), "{out}");
+        assert!(out.contains(&format!("refund-prepare {JOB_ID}")), "{out}");
         assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
         assert!(!out.contains("session-cleanup"), "{out}");
     }
@@ -1464,8 +1520,9 @@ mod tests {
         )
         .await;
         assert!(out.contains("authoritatively Closed"), "{out}");
-        assert!(out.contains("refund-specific settlement proof"), "{out}");
+        assert!(out.contains("authoritative refund cause"), "{out}");
         assert!(out.contains("refund-prepare"), "{out}");
+        assert!(out.contains(&format!("refund-prepare {JOB_ID}")), "{out}");
         assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
         assert!(!out.contains("session-cleanup"), "{out}");
     }
@@ -1559,8 +1616,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_reject_refund_notify_is_display_only_auto_refund() {
-        let refund_detail = refund_prefetched(9, "0.0005");
+    async fn caller_supplied_sub_reject_refund_notify_does_not_prove_settlement() {
+        let refund_detail = subscription_refund_prefetched(9, "0.0005");
         let out = run_with_prefetched(
             "sub_reject_refund_notify",
             json!({
@@ -1573,15 +1630,13 @@ mod tests {
             &refund_detail,
         )
         .await;
-        // Product-confirmed (2026-07-24): backend auto-refunds; the client only displays the
-        // Sub-4-6 auto-refund notice. NO decision card, NO client-side claim, NO auto-execute.
+        // The backend's real transaction-result notification is authoritative,
+        // but this local `next-action --message` payload is caller-supplied.
+        // Fresh subscription Failed(9) is also used for charge failure, so the
+        // local event name/hash cannot terminalize the refund flow.
         assert!(
-            out.contains("[Auto-Refund]"),
-            "Sub-4-6 auto-refund copy: {out}"
-        );
-        assert!(
-            out.contains("automatically issued a full refund of 0.0005 USDT to your wallet"),
-            "amount slot verbatim: {out}"
+            out.contains("[Refund Settlement Detail Incomplete]"),
+            "{out}"
         );
         assert!(
             !out.contains("pending-decisions"),
@@ -1591,8 +1646,9 @@ mod tests {
             !out.contains("claim-auto-refund") && !out.contains("claimAutoRefund"),
             "client must not claim (backend auto-refunds): {out}"
         );
-        // Terminal notice (RefundSettled → Failed): carries the user-notify display scaffold.
         assert!(out.contains("user-notify"), "display notification: {out}");
+        assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
     }
 
     #[tokio::test]
@@ -1812,8 +1868,9 @@ mod tests {
         );
         assert!(complete.contains("session-cleanup"), "{complete}");
 
-        // Event hash is optional; fresh authoritative refundTxHash is the
-        // settlement proof and generic event txHash is ignored.
+        // Event hash is optional. Fresh paid one-time Closed(7) is the
+        // backend's post-chain-event confirmation; wallet-order reconciliation
+        // may enrich the notification with a Tx Hash but is not required.
         let event_without_hash = run_with_prefetched(
             "job_asp_reject_closed",
             json!({
@@ -1827,27 +1884,34 @@ mod tests {
         assert!(event_without_hash.contains("[Refund Settled]"));
         assert!(event_without_hash.contains(TERMINAL_NOTIFICATION_MARKER));
 
-        let mut missing_authoritative_hash = refund_detail.clone();
-        missing_authoritative_hash.refund_tx_hash = None;
-        let incomplete = run_with_prefetched(
+        let mut without_transaction_hash = refund_detail.clone();
+        without_transaction_hash.verified_transaction_hash = None;
+        let confirmed_without_hash = run_with_prefetched(
             "job_asp_reject_closed",
             json!({
                 "event": "job_asp_reject_closed",
                 "jobId": JOB_ID,
                 "providerAgentId": "5263",
             }),
-            &missing_authoritative_hash,
+            &without_transaction_hash,
         )
         .await;
         assert!(
-            incomplete.contains("[Refund Settlement Detail Incomplete]"),
-            "{incomplete}"
+            confirmed_without_hash.contains("[Refund Settled]"),
+            "{confirmed_without_hash}"
         );
         assert!(
-            !incomplete.contains(TERMINAL_NOTIFICATION_MARKER),
-            "{incomplete}"
+            confirmed_without_hash.contains("Tx Hash: unavailable"),
+            "{confirmed_without_hash}"
         );
-        assert!(!incomplete.contains("session-cleanup"), "{incomplete}");
+        assert!(
+            confirmed_without_hash.contains(TERMINAL_NOTIFICATION_MARKER),
+            "{confirmed_without_hash}"
+        );
+        assert!(
+            confirmed_without_hash.contains("session-cleanup"),
+            "{confirmed_without_hash}"
+        );
 
         let subscription_detail =
             crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
@@ -1863,7 +1927,6 @@ mod tests {
                     "tokenAmount": "12.34",
                     "tokenSymbol": "USDT",
                     "tokenAddress": "0xtoken",
-                    "refundTxHash": format!("0x{}", "ab".repeat(32)),
                 }),
             );
         let subscription_complete = run_with_prefetched(
@@ -1921,7 +1984,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refund_final_notice_uses_fresh_fields_and_requires_authoritative_hash() {
+    async fn refund_final_notice_uses_fresh_lifecycle_and_optional_transaction_metadata() {
         let tx_hash = format!("0x{}", "ab".repeat(32));
         let refund_detail = refund_prefetched(9, "12.34");
         let complete = run_with_prefetched(
@@ -2090,11 +2153,12 @@ mod tests {
         assert!(out.contains("settlement pending"), "{out}");
         assert!(!out.contains("session-cleanup"), "{out}");
 
-        let already_settled = PreFetchedTaskContext::from_api_response(&json!({
+        let mut ambiguous_subscription = PreFetchedTaskContext::from_api_response(&json!({
+            "jobType": 1,
             "title": "My Sub", "tokenAmount": "0.0005", "tokenSymbol": "USDT",
             "providerAgentId": "5263", "status": 9,
-            "refundTxHash": format!("0x{}", "ab".repeat(32)),
         }));
+        ambiguous_subscription.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
         let delayed = generate_next_action(
             JOB_ID,
             "dispute_resolved",
@@ -2102,15 +2166,60 @@ mod tests {
             Some("My Sub"),
             None,
             None,
-            Some(&already_settled),
+            Some(&ambiguous_subscription),
             Some(&json!({ "event": "dispute_resolved", "jobId": JOB_ID, "jobType": 1 })),
         )
         .await;
+        assert!(delayed.contains("settlement pending"), "{delayed}");
         assert!(
-            delayed.contains("already contains refund settlement proof"),
+            !delayed.contains("already confirms refund settlement"),
             "{delayed}"
         );
-        assert!(!delayed.contains("settlement pending"), "{delayed}");
+
+        let confirmed_one_time = PreFetchedTaskContext::from_api_response(&json!({
+            "jobType": 0,
+            "title": "My Task",
+            "buyerAgentId": AGENT_ID,
+            "providerAgentId": "5263",
+            "serviceId": "svc-1",
+            "tokenAmount": "0.0005",
+            "tokenSymbol": "USDT",
+            "tokenAddress": "0xtoken",
+            "status": 9,
+        }));
+        let confirmed_out = generate_next_action(
+            JOB_ID,
+            "dispute_resolved",
+            AGENT_ID,
+            Some("My Task"),
+            None,
+            None,
+            Some(&confirmed_one_time),
+            Some(&json!({ "event": "dispute_resolved", "jobId": JOB_ID })),
+        )
+        .await;
+        assert!(
+            confirmed_out.contains("already confirms refund settlement"),
+            "{confirmed_out}"
+        );
+
+        let mut wrong_owner = confirmed_one_time;
+        wrong_owner.user_agent_id = Some("someone-else".to_string());
+        let wrong_owner_out = generate_next_action(
+            JOB_ID,
+            "dispute_resolved",
+            AGENT_ID,
+            Some("My Task"),
+            None,
+            None,
+            Some(&wrong_owner),
+            Some(&json!({ "event": "dispute_resolved", "jobId": JOB_ID })),
+        )
+        .await;
+        assert!(
+            !wrong_owner_out.contains("already confirms refund settlement"),
+            "{wrong_owner_out}"
+        );
 
         let lost = PreFetchedTaskContext::from_api_response(&json!({
             "title": "My Sub", "tokenAmount": "0.0005", "tokenSymbol": "USDT",

@@ -1447,7 +1447,7 @@ pub(crate) async fn deliverable_received_cli(
                 service_params: None,
                 user_agent_address: None,
                 token_address: None,
-                refund_tx_hash: None,
+                verified_transaction_hash: None,
                 expire_time: None,
                 test_flag: false,
             }
@@ -2514,7 +2514,7 @@ Part B continues
             service_params: None,
             user_agent_address: None,
             token_address: None,
-            refund_tx_hash: None,
+            verified_transaction_hash: None,
             expire_time,
             test_flag: false,
         }

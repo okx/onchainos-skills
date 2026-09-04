@@ -318,14 +318,17 @@ Translate the CLI's canonical `statusName` to the user's locked language. Use th
 | `completed` | `Completed` |
 | `close` | `Closed` |
 | `expired` | `Expired` |
-| `failed` | `Refund settlement` |
+| `failed` | `Failed / refund terminal` |
 
-`failed` is the backend refund terminal state, not proof that the refund is
-confirmed on-chain. When the User asks whether funds arrived, run
-`refund-prepare` and say "refund completed" only for
-`reason=refund_confirmed`. Render `status_<n>` as `Unknown status (<n>)` or its
-faithful translation. If `statusName` is absent or malformed, render `—`;
-never infer from numeric `status`.
+`failed` is task-kind dependent. For a one-time task, fresh backend
+chain-projected Failed(9) represents a successful refund transition. For a
+subscription it may instead represent terminal charge failure, so never label
+the list row itself as a completed refund. When the User asks about the refund,
+run `refund-prepare` and say "refund completed" only for
+`reason=refund_confirmed`; a missing Tx Hash may be shown as unavailable and
+does not by itself invalidate that result. Render `status_<n>` as `Unknown
+status (<n>)` or its faithful translation. If `statusName` is absent or
+malformed, render `—`; never infer from numeric `status`.
 
 ### Independent pagination
 

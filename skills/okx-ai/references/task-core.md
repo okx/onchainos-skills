@@ -99,13 +99,18 @@ When dealing with integer values of any of the fields below, **look up the table
 | `paymentMode` | `0` = unset / `1` = escrow / `3` = legacy-disabled (stop; never execute the removed Task payment flow) |
 | `sender.role` (a2a-agent-chat) | Counterparty: `1` = User Agent (you are ASP) / `2` = ASP (you are User Agent) |
 | `vote` (by Evaluator) | `0` = Dispute upheld (User Agent wins; refund verdict) / `1` = Dispute not upheld (ASP wins; release verdict) |
-| `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete / `7`=close / `8`=expired / `9`=failed (backend refund terminal state) |
+| `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete / `7`=close / `8`=expired / `9`=failed (one-time refund terminal; subscription refund-or-charge-failure terminal) |
 
 🛑 **Iron rule**: before writing any semantic judgment about these fields, **cross-check the table above**. Misreading = wrong on-chain action.
 
-For User-facing refund finality, a status or vote is not enough: follow
-[`task-user-refund.md`](task-user-refund.md) and require its valid
-refund-specific settlement Tx Hash before saying funds were returned.
+For User-facing refund finality, follow
+[`task-user-refund.md`](task-user-refund.md). Fresh backend chain-projected
+one-time Failed(9), or positive-amount escrow Closed(7), can confirm the refund
+without a Tx Hash. Subscription Failed(9) is overloaded with charge failure and
+requires an authoritative backend cause/query or server-verifiable source plus
+matching fresh facts; a caller-supplied event name is insufficient. A vote,
+pending broadcast receipt, or `uopData.executeResult` preflight is not refund
+finality.
 
 ## User Intent Routing
 

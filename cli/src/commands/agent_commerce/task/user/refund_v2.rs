@@ -20,6 +20,7 @@ use crate::commands::agent_commerce::task::common::{
 };
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
+use crate::wallet_api::WalletApiClient;
 
 use super::create_subscribe::SUBSCRIBE_API_PREFIX;
 
@@ -77,12 +78,24 @@ struct RefundSnapshot {
     original_amount: String,
     response_deadline: Option<i64>,
     requested_at: Option<i64>,
+    settlement_confirmed: bool,
     settlement_tx_hash: Option<String>,
+    settlement_provenance: Option<RefundSettlementProvenance>,
     settlement_time: Option<i64>,
     dispute_round: Option<i64>,
     dispute_phase: Option<String>,
     dispute_prepare_end_time: Option<i64>,
     dispute_round_end_time: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RefundSettlementProvenance {
+    source: &'static str,
+    operation: String,
+    order_id: String,
+    biz_type: i64,
+    chain_index: String,
+    lifecycle_status: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,7 +127,37 @@ struct PendingRefundMutation {
     biz_uniq_key: Option<String>,
     #[serde(default)]
     tx_hash: Option<String>,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    address: Option<String>,
+    #[serde(default)]
+    chain_index: Option<String>,
+    #[serde(default)]
+    biz_type: Option<i64>,
+    #[serde(default)]
+    original_amount: Option<String>,
+    #[serde(default)]
+    token_address: Option<String>,
+    #[serde(default)]
+    token_symbol: Option<String>,
+    #[serde(default)]
+    provider_agent_id: Option<String>,
+    #[serde(default)]
+    service_id: Option<String>,
+    #[serde(default)]
+    service_name: Option<String>,
+    #[serde(default)]
+    payment_mode: Option<i64>,
     updated_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RefundOrderStatus {
+    Pending,
+    Succeeded(Option<String>),
+    Failed,
+    Unknown,
 }
 
 fn pending_state_path(job_id: &str, user_agent_id: &str) -> Result<PathBuf> {
@@ -149,34 +192,315 @@ fn read_pending_mutation(
     }
 }
 
-fn active_pending_mutation(snapshot: &RefundSnapshot) -> Result<Option<PendingRefundMutation>> {
-    let Some(state) = read_pending_mutation(&snapshot.job_id, &snapshot.buyer_agent_id)? else {
-        return Ok(None);
-    };
-    if pending_mutation_resolved(&state, snapshot) {
-        // The authoritative lifecycle has advanced to a state that cannot
-        // safely repeat this operation. Cleanup is best-effort: even if it
-        // fails, the same state will still be recognized as resolved next time.
-        let _ = remove_pending_mutation(&snapshot.job_id, &snapshot.buyer_agent_id);
-        return Ok(None);
-    }
-    Ok(Some(state))
-}
-
 fn pending_mutation_resolved(state: &PendingRefundMutation, snapshot: &RefundSnapshot) -> bool {
     match state.operation.as_str() {
-        // Both operations are legal only from Created(0). Once the
-        // authoritative lifecycle has moved forward, replaying the unknown
-        // mutation can no longer be safe even when the eventual terminal
-        // state was produced by another actor.
-        "close-zero" | "direct-refund" => {
-            matches!(snapshot.status, 1 | 2 | 3 | 4 | 6 | 7 | 8 | 9)
-        }
+        // A paid direct refund keeps its operation-scoped broadcast receipt
+        // through Closed(7), because that receipt is the only documented way
+        // to identify the transaction that this client submitted. Other
+        // lifecycle states make the original Created-only write unavailable.
+        "direct-refund" => matches!(snapshot.status, 1 | 2 | 3 | 4 | 6 | 8 | 9),
+        "close-zero" => matches!(snapshot.status, 1 | 2 | 3 | 4 | 6 | 7 | 8 | 9),
         "request-refund" => matches!(snapshot.status, 3 | 4 | 6 | 7 | 8 | 9),
         "cancel-trial-conversion" => snapshot.status != 1 || snapshot.auto_renew == Some(0),
         "finalize-expired-refund" => snapshot.status != 8,
         _ => false,
     }
+}
+
+fn order_detail_item(data: &Value) -> Option<&Value> {
+    match data {
+        Value::Array(items) if items.len() == 1 => items.first(),
+        Value::Object(_) => Some(data),
+        _ => None,
+    }
+}
+
+fn has_durable_broadcast_receipt(state: &PendingRefundMutation) -> bool {
+    [
+        state.pkg_id.as_deref(),
+        state.order_id.as_deref(),
+        state.order_type.as_deref(),
+        state.biz_uniq_key.as_deref(),
+    ]
+    .into_iter()
+    .all(|value| value.is_some_and(|value| !value.trim().is_empty()))
+}
+
+fn parse_refund_order_status(data: &Value, submitted_tx_hash: Option<&str>) -> RefundOrderStatus {
+    let Some(detail) = order_detail_item(data) else {
+        return RefundOrderStatus::Unknown;
+    };
+    let status = scalar_string(detail.get("txStatus"))
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    match status.as_str() {
+        "1" | "2" | "PENDING" => RefundOrderStatus::Pending,
+        "3" | "6" | "ERROR" | "FAIL" | "FAILED" | "CANCELLED" => RefundOrderStatus::Failed,
+        "4" | "SUCCESS" => {
+            let observed = match scalar_string(detail.get("txHash")) {
+                Some(value) if valid_tx_hash(&value) => Some(value),
+                Some(_) => return RefundOrderStatus::Unknown,
+                None => None,
+            };
+            let submitted = match submitted_tx_hash
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                Some(value) if valid_tx_hash(value) => Some(value.to_string()),
+                Some(_) => return RefundOrderStatus::Unknown,
+                None => None,
+            };
+            match (observed, submitted) {
+                (Some(observed), Some(submitted)) if !observed.eq_ignore_ascii_case(&submitted) => {
+                    RefundOrderStatus::Unknown
+                }
+                (Some(observed), _) => RefundOrderStatus::Succeeded(Some(observed)),
+                // SUCCESS is useful optional audit evidence even when the
+                // wallet response does not expose a transaction hash. Never
+                // substitute the submitted candidate as the confirmed hash.
+                (None, _) => RefundOrderStatus::Succeeded(None),
+            }
+        }
+        _ => RefundOrderStatus::Unknown,
+    }
+}
+
+async fn query_refund_order_status(state: &PendingRefundMutation) -> Result<RefundOrderStatus> {
+    let resolved_wallet = if state.account_id.is_none() || state.address.is_none() {
+        Some(signing::resolve_wallet_by_agent_id(&state.user_agent_id).await?)
+    } else {
+        None
+    };
+    let account_id = state
+        .account_id
+        .as_deref()
+        .or_else(|| resolved_wallet.as_ref().map(|wallet| wallet.0.as_str()))
+        .ok_or_else(|| anyhow::anyhow!("Refund V2 journal is missing the broadcast account"))?;
+    let address = state
+        .address
+        .as_deref()
+        .or_else(|| resolved_wallet.as_ref().map(|wallet| wallet.1.as_str()))
+        .ok_or_else(|| anyhow::anyhow!("Refund V2 journal is missing the broadcast address"))?;
+    let access_token = ensure_tokens_refreshed().await?;
+    let chain_index = state
+        .chain_index
+        .as_deref()
+        .unwrap_or(common::XLAYER_CHAIN_INDEX);
+    let mut query = vec![
+        ("accountId", account_id),
+        ("chainIndex", chain_index),
+        ("address", address),
+    ];
+    if let Some(order_id) = state.order_id.as_deref() {
+        query.push(("orderId", order_id));
+    } else if let Some(tx_hash) = state.tx_hash.as_deref() {
+        query.push(("txHash", tx_hash));
+    } else {
+        return Ok(RefundOrderStatus::Unknown);
+    }
+
+    let mut client = WalletApiClient::new()?;
+    let detail = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/order/detail",
+            &access_token,
+            &query,
+        )
+        .await
+        .context("query Refund V2 broadcast order status")?;
+    validate_refund_order_detail_binding(&detail, state)?;
+    Ok(parse_refund_order_status(&detail, state.tx_hash.as_deref()))
+}
+
+fn validate_refund_order_detail_binding(
+    detail: &Value,
+    state: &PendingRefundMutation,
+) -> Result<()> {
+    let Some(detail) = order_detail_item(detail) else {
+        return Ok(());
+    };
+    if let (Some(expected), Some(actual)) = (
+        state.order_id.as_deref(),
+        scalar_string(detail.get("orderId")),
+    ) {
+        if expected != actual {
+            bail!("wallet order detail returned a mismatched orderId");
+        }
+    }
+    if let (Some(expected), Some(actual)) = (
+        state.chain_index.as_deref(),
+        scalar_string(detail.get("chainIndex")),
+    ) {
+        if expected != actual {
+            bail!("wallet order detail returned a mismatched chainIndex");
+        }
+    }
+    Ok(())
+}
+
+fn direct_refund_provenance_matches(
+    snapshot: &RefundSnapshot,
+    state: &PendingRefundMutation,
+) -> bool {
+    let service_matches = match (state.service_id.as_deref(), snapshot.service_id.as_deref()) {
+        (Some(recorded), Some(fresh)) => recorded == fresh,
+        _ => state
+            .service_name
+            .as_deref()
+            .zip(snapshot.service_name.as_deref())
+            .is_some_and(|(recorded, fresh)| recorded == fresh),
+    };
+
+    if state.operation != "direct-refund"
+        || snapshot.status != 7
+        || snapshot.job_type != 0
+        || snapshot.payment_mode != Some(1)
+        || is_zero_decimal(&snapshot.original_amount)
+        || !has_durable_broadcast_receipt(state)
+        || !state.biz_type.is_some_and(|value| value > 0)
+        || state
+            .account_id
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+        || state
+            .address
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+        || state.chain_index.as_deref() != Some(common::XLAYER_CHAIN_INDEX)
+        || !state
+            .original_amount
+            .as_deref()
+            .is_some_and(|value| decimal_equal(value, &snapshot.original_amount))
+        || !state
+            .token_address
+            .as_deref()
+            .zip(snapshot.token_address.as_deref())
+            .is_some_and(|(expected, actual)| expected.eq_ignore_ascii_case(actual))
+        || !state
+            .token_symbol
+            .as_deref()
+            .zip(snapshot.token_symbol.as_deref())
+            .is_some_and(|(expected, actual)| expected.eq_ignore_ascii_case(actual))
+        || !state
+            .provider_agent_id
+            .as_deref()
+            .zip(snapshot.provider_agent_id.as_deref())
+            .is_some_and(|(expected, actual)| expected == actual)
+        || !service_matches
+        || state.payment_mode != Some(1)
+    {
+        return false;
+    }
+    true
+}
+
+fn apply_confirmed_direct_refund(
+    snapshot: &mut RefundSnapshot,
+    state: &PendingRefundMutation,
+) -> bool {
+    if state.state != "confirmed" || !direct_refund_provenance_matches(snapshot, state) {
+        return false;
+    }
+    let Some(tx_hash) = state
+        .tx_hash
+        .as_deref()
+        .filter(|value| valid_tx_hash(value))
+    else {
+        return false;
+    };
+    let (Some(order_id), Some(biz_type), Some(chain_index)) = (
+        state.order_id.clone(),
+        state.biz_type,
+        state.chain_index.clone(),
+    ) else {
+        return false;
+    };
+    snapshot.settlement_tx_hash = Some(tx_hash.to_string());
+    snapshot.settlement_provenance = Some(RefundSettlementProvenance {
+        source: "wallet_order_detail",
+        operation: state.operation.clone(),
+        order_id,
+        biz_type,
+        chain_index,
+        lifecycle_status: snapshot.status,
+    });
+    true
+}
+
+async fn reconcile_pending_mutation_locked(
+    snapshot: &mut RefundSnapshot,
+) -> Result<Option<PendingRefundMutation>> {
+    let Some(mut state) = read_pending_mutation(&snapshot.job_id, &snapshot.buyer_agent_id)? else {
+        return Ok(None);
+    };
+
+    if apply_confirmed_direct_refund(snapshot, &state) {
+        return Ok(None);
+    }
+
+    if state.operation == "direct-refund" && snapshot.status == 7 {
+        if matches!(
+            state.state.as_str(),
+            "broadcast_failed" | "lifecycle_advanced_without_receipt" | "confirmed_without_hash"
+        ) {
+            return Ok(None);
+        }
+        if !has_durable_broadcast_receipt(&state) {
+            state.state = "lifecycle_advanced_without_receipt".to_string();
+            state.updated_at = chrono::Utc::now().timestamp();
+            write_pending_mutation(&state)?;
+            return Ok(None);
+        }
+        if !direct_refund_provenance_matches(snapshot, &state) {
+            state.state = "provenance_incomplete".to_string();
+            state.updated_at = chrono::Utc::now().timestamp();
+            write_pending_mutation(&state)?;
+            return Ok(None);
+        }
+
+        match query_refund_order_status(&state).await {
+            Ok(RefundOrderStatus::Succeeded(tx_hash)) => {
+                state.state = if tx_hash.is_some() {
+                    "confirmed".to_string()
+                } else {
+                    "confirmed_without_hash".to_string()
+                };
+                state.tx_hash = tx_hash;
+                state.updated_at = chrono::Utc::now().timestamp();
+                write_pending_mutation(&state)?;
+                if state.tx_hash.is_some() && !apply_confirmed_direct_refund(snapshot, &state) {
+                    bail!(
+                        "confirmed Refund V2 order no longer matches its direct-refund provenance"
+                    );
+                }
+                return Ok(None);
+            }
+            Ok(RefundOrderStatus::Failed) => {
+                state.state = "broadcast_failed".to_string();
+                state.updated_at = chrono::Utc::now().timestamp();
+                write_pending_mutation(&state)?;
+                return Ok(None);
+            }
+            Ok(RefundOrderStatus::Pending | RefundOrderStatus::Unknown) | Err(_) => {
+                // Fresh Closed(7) is itself the backend's post-chain-event
+                // settlement confirmation for a paid one-time escrow task.
+                // Keep the receipt for later Tx Hash enrichment, but do not
+                // downgrade the confirmed refund to a blocked state merely
+                // because wallet-order projection is slower or unavailable.
+                return Ok(None);
+            }
+        }
+    }
+
+    if pending_mutation_resolved(&state, snapshot) {
+        // Non-settlement operations no longer need their local replay guard
+        // once authoritative lifecycle state makes the original write
+        // unavailable. Direct-refund Closed(7) is handled above and retains
+        // its receipt as durable settlement provenance.
+        let _ = remove_pending_mutation(&snapshot.job_id, &snapshot.buyer_agent_id);
+        return Ok(None);
+    }
+    Ok(Some(state))
 }
 
 fn acquire_pending_lock(job_id: &str, user_agent_id: &str) -> Result<File> {
@@ -195,6 +519,30 @@ fn acquire_pending_lock(job_id: &str, user_agent_id: &str) -> Result<File> {
     lock.lock_exclusive()
         .context("lock Refund V2 reconciliation state")?;
     Ok(lock)
+}
+
+async fn reconcile_pending_mutation(
+    snapshot: &mut RefundSnapshot,
+) -> Result<Option<PendingRefundMutation>> {
+    // Reconciliation can update or retire the journal. Serialize every such
+    // transition with refund-execute so a read-only status check cannot
+    // overwrite a receipt that an in-flight execution just persisted.
+    let _lock = acquire_pending_lock(&snapshot.job_id, &snapshot.buyer_agent_id)?;
+    reconcile_pending_mutation_locked(snapshot).await
+}
+
+async fn reconcile_without_downgrading_confirmed_settlement(
+    snapshot: &mut RefundSnapshot,
+) -> Result<Option<PendingRefundMutation>> {
+    match reconcile_pending_mutation(snapshot).await {
+        Ok(pending) => Ok(pending),
+        // Wallet-order reconciliation only enriches a backend-confirmed
+        // lifecycle result with an optional Tx Hash. A corrupt/stale local
+        // journal or unavailable wallet query must never turn an already
+        // confirmed refund back into an unresolved business outcome.
+        Err(_) if snapshot.has_confirmed_settlement() => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn write_pending_mutation(state: &PendingRefundMutation) -> Result<()> {
@@ -257,31 +605,15 @@ fn pending_reconciliation_payload(
     let mut payload = snapshot.payload(reason, plan);
     payload["capability"]["clientOperation"] = Value::Null;
     payload["settlement"]["state"] = Value::String(pending.state.clone());
-    payload["settlement"]["txHash"] = pending
-        .tx_hash
-        .clone()
-        .map(Value::String)
-        .unwrap_or(Value::Null);
-    payload["settlement"]["pkgId"] = pending
-        .pkg_id
-        .clone()
-        .map(Value::String)
-        .unwrap_or(Value::Null);
-    payload["settlement"]["orderId"] = pending
-        .order_id
-        .clone()
-        .map(Value::String)
-        .unwrap_or(Value::Null);
-    payload["settlement"]["orderType"] = pending
-        .order_type
-        .clone()
-        .map(Value::String)
-        .unwrap_or(Value::Null);
-    payload["settlement"]["bizUniqKey"] = pending
-        .biz_uniq_key
-        .clone()
-        .map(Value::String)
-        .unwrap_or(Value::Null);
+    payload["settlement"]["txHash"] = Value::Null;
+    payload["settlement"]["broadcastReceipt"] = json!({
+        "pkgId": pending.pkg_id.clone(),
+        "orderId": pending.order_id.clone(),
+        "orderType": pending.order_type.clone(),
+        "bizUniqKey": pending.biz_uniq_key.clone(),
+        "bizType": pending.biz_type,
+        "txHash": pending.tx_hash.clone(),
+    });
     payload["settlement"]["retrySafe"] = Value::Bool(false);
     payload["settlement"]["diagnostic"] =
         Value::String("query_authoritative_state_before_retry".to_string());
@@ -406,23 +738,44 @@ pub(crate) struct RefundSettlementEvidence {
     pub(crate) service_name: String,
     pub(crate) amount: String,
     pub(crate) token_symbol: String,
-    pub(crate) tx_hash: String,
+    pub(crate) tx_hash: Option<String>,
 }
 
-/// Verify a dedicated final-refund event against the fresh authoritative task
-/// detail fetched by `next-action`. The event kind supplies the settlement
-/// semantics; a hash-shaped string by itself is never enough.
+/// Whether fresh authoritative task facts prove refund settlement.
+///
+/// The backend lifecycle contract defines paid one-time escrow Closed(7) and
+/// one-time Failed(9) as states projected after the corresponding on-chain
+/// refund event. A wallet-order Tx Hash may enrich that conclusion, but never
+/// creates it by itself. Subscription Failed(9) stays ambiguous because that
+/// lifecycle also represents charge failure in the current subscription API.
+pub(crate) fn authoritative_refund_settlement_confirmed(
+    detail: &common::PreFetchedTaskContext,
+    expected_status: i64,
+) -> bool {
+    if detail.status != Some(expected_status) || !matches!(expected_status, 7 | 9) {
+        return false;
+    }
+    detail.job_type == Some(0)
+        && !detail.token_amount.trim().is_empty()
+        && !is_zero_decimal(detail.token_amount.trim())
+        && (expected_status == 9 || (expected_status == 7 && detail.payment_mode == Some(1)))
+}
+
+/// Verify a refund lifecycle event against fresh authoritative task facts.
+/// Caller-supplied event fields may veto an inconsistent notification, but
+/// they never create settlement proof or replace authoritative display data.
 pub(crate) fn verify_final_refund_event(
     message: Option<&Value>,
     prefetched: Option<&common::PreFetchedTaskContext>,
     expected_status: i64,
     expected_buyer_agent_id: &str,
 ) -> Result<RefundSettlementEvidence> {
-    let message = message.ok_or_else(|| anyhow::anyhow!("final refund event is missing"))?;
+    let empty_message = Value::Null;
+    let message = message.unwrap_or(&empty_message);
     let detail =
         prefetched.ok_or_else(|| anyhow::anyhow!("fresh authoritative task detail is missing"))?;
     if !matches!(expected_status, 7 | 9) || detail.status != Some(expected_status) {
-        bail!("fresh task status does not match the dedicated final-refund event");
+        bail!("fresh task status does not match a refund-capable lifecycle state");
     }
     if expected_status == 7 {
         match detail.job_type {
@@ -442,38 +795,36 @@ pub(crate) fn verify_final_refund_event(
     if detail.user_agent_id.as_deref() != Some(expected_buyer_agent_id) {
         bail!("fresh task detail is not owned by the current User Agent");
     }
+    if !authoritative_refund_settlement_confirmed(detail, expected_status) {
+        bail!("fresh task detail does not confirm refund settlement");
+    }
+    if first_string(&[(message, &["code", "txStatus"])]).is_some_and(|value| {
+        matches!(
+            value.to_ascii_lowercase().as_str(),
+            "failed" | "failure" | "error"
+        )
+    }) {
+        bail!("refund transaction-result notification reports failure");
+    }
 
     let authoritative_tx_hash = detail
-        .refund_tx_hash
+        .verified_transaction_hash
         .as_deref()
         .filter(|value| valid_tx_hash(value))
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "fresh authoritative detail is missing a refund-specific settlement Tx Hash"
-            )
-        })?;
-    // The backend event schema does not guarantee a Tx Hash. Fresh detail is
-    // authoritative; an event-side refund-specific hash, when present, may
-    // only corroborate it. Generic event txHash fields can refer to a lifecycle
-    // or dispute transaction and are never refund proof.
-    if let Some(event_tx_hash) = first_string(&[(message, &["refundTxHash", "settlementTxHash"])]) {
-        if !valid_tx_hash(&event_tx_hash) {
-            bail!("final refund event contains an invalid refund-specific Tx Hash");
-        }
-        if !event_tx_hash.eq_ignore_ascii_case(authoritative_tx_hash) {
-            bail!(
-                "final refund event Tx Hash does not match authoritative refund settlement proof"
-            );
-        }
-    }
+        .map(ToOwned::to_owned);
+    // Event payloads are caller-provided routing input. Their generic txHash
+    // may identify a request, dispute, or unrelated lifecycle transaction, so
+    // it neither creates nor overrides the verified operation proof above.
 
     let event_provider_id = first_string(&[(message, &["providerAgentId", "aspAgentId"])]);
     let provider_agent_id = detail
         .provider_agent_id
         .clone()
-        .ok_or_else(|| anyhow::anyhow!("fresh authoritative detail is missing the refund ASP Agent ID"))?;
-    if let Some(event) = event_provider_id.as_deref() {
-        let fresh = provider_agent_id.as_str();
+        .unwrap_or_else(|| "unavailable".to_string());
+    if let (Some(event), Some(fresh)) = (
+        event_provider_id.as_deref(),
+        detail.provider_agent_id.as_deref(),
+    ) {
         if event != fresh {
             bail!("refund event provider does not match fresh task detail");
         }
@@ -494,9 +845,7 @@ pub(crate) fn verify_final_refund_event(
         .service_name
         .clone()
         .or_else(|| detail.service_id.clone())
-        .ok_or_else(|| {
-            anyhow::anyhow!("fresh authoritative detail is missing the refund service identity")
-        })?;
+        .unwrap_or_else(|| "service unavailable".to_string());
     if let (Some(event), Some(fresh)) = (
         first_string(&[(message, &["serviceName"])]).as_deref(),
         detail.service_name.as_deref(),
@@ -564,7 +913,7 @@ pub(crate) fn verify_final_refund_event(
         service_name,
         amount: original_amount.to_string(),
         token_symbol,
-        tx_hash: authoritative_tx_hash.to_string(),
+        tx_hash: authoritative_tx_hash,
     })
 }
 
@@ -709,7 +1058,8 @@ impl RefundSnapshot {
             bail!("subscription detail returned an invalid billing period");
         }
 
-        Ok(Self {
+        let payment_mode = lookup_i64(&["paymentMode"], &["paymentMode"]);
+        let mut snapshot = Self {
             job_id: job_id.to_string(),
             job_type,
             status,
@@ -738,7 +1088,7 @@ impl RefundSnapshot {
             token_address,
             token_symbol: Some(token_symbol),
             chain_id: lookup_i64(&["chainId", "chainIndex"], &["chainId", "chainIndex"]),
-            payment_mode: lookup_i64(&["paymentMode"], &["paymentMode"]),
+            payment_mode,
             original_amount,
             response_deadline: lookup_i64(
                 &["rejectWindowEndsAt", "responseDeadline"],
@@ -748,19 +1098,36 @@ impl RefundSnapshot {
                 &["refundRequestedAt", "rejectTime"],
                 &["refundRequestedAt", "rejectTime"],
             ),
-            // Only refund-specific keys are accepted here. A generic task txHash
-            // may be the creation transaction and must never be shown as refund proof.
-            settlement_tx_hash: lookup(
-                &["refundTxHash", "settlementTxHash"],
-                &["refundTxHash", "settlementTxHash"],
-            )
-            .filter(|value| valid_tx_hash(value)),
+            // Tx Hash is optional display/audit metadata. The authoritative
+            // task status is projected only after the backend consumes the
+            // corresponding on-chain event, so it can prove settlement even
+            // when the detail response does not expose a transaction hash.
+            settlement_confirmed: false,
+            settlement_tx_hash: None,
+            settlement_provenance: None,
             settlement_time: lookup_i64(&["refundTime", "settledAt"], &["refundTime", "settledAt"]),
             dispute_round: lookup_i64(&["currentRound"], &["currentRound"]),
             dispute_phase: lookup(&["disputePhase"], &["disputePhase"]),
             dispute_prepare_end_time: lookup_i64(&["prepareEndTime"], &["prepareEndTime"]),
             dispute_round_end_time: lookup_i64(&["roundEndTime"], &["roundEndTime"]),
-        })
+        };
+
+        // The backend lifecycle contract defines paid one-time Closed(7) as a
+        // completed close/refund transaction and Failed(9) as a completed
+        // refund outcome (ASP agree, timeout auto-refund, or User-won
+        // arbitration). The task row is updated after the on-chain event is
+        // parsed, so these fresh one-time states are authoritative settlement
+        // confirmation. Closed(7) additionally requires verified escrow mode;
+        // Failed(9) is itself the backend's one-time refund terminal. Keep Tx
+        // Hash optional; same-device wallet-order reconciliation may enrich it.
+        if snapshot.job_type == 0
+            && !is_zero_decimal(&snapshot.original_amount)
+            && (snapshot.status == 9 || (snapshot.status == 7 && snapshot.payment_mode == Some(1)))
+        {
+            snapshot.settlement_confirmed = true;
+        }
+
+        Ok(snapshot)
     }
 
     fn is_subscription(&self) -> bool {
@@ -780,6 +1147,15 @@ impl RefundSnapshot {
     fn has_required_refund_display_details(&self) -> bool {
         self.provider_agent_id.is_some()
             && (self.service_name.is_some() || self.service_id.is_some())
+    }
+
+    fn has_confirmed_settlement(&self) -> bool {
+        self.settlement_confirmed
+    }
+
+    fn settlement_confirmation_source(&self) -> Option<&'static str> {
+        self.has_confirmed_settlement()
+            .then_some("backend_onchain_lifecycle")
     }
 
     fn context_id(&self, reason: Option<&str>) -> String {
@@ -952,18 +1328,14 @@ impl RefundSnapshot {
             // (backend auto-refunds), without a cause discriminator or exact
             // claim response bizType.
             8 => Plan::blocked("accept_expired_refund_contract_ambiguous"),
-            9 if self.settlement_tx_hash.is_some()
-                && self.has_required_refund_display_details() =>
-            {
-                Plan {
-                    phase: "refund_resolution",
-                    decision: "ready",
-                    reason: "refund_confirmed",
-                    operation: None,
-                    action_id: None,
-                    recommend_stop: true,
-                }
-            }
+            9 if self.has_confirmed_settlement() => Plan {
+                phase: "refund_resolution",
+                decision: "ready",
+                reason: "refund_confirmed",
+                operation: None,
+                action_id: None,
+                recommend_stop: true,
+            },
             9 => Plan {
                 phase: "refund_resolution",
                 decision: "blocked",
@@ -982,8 +1354,7 @@ impl RefundSnapshot {
             },
             7 if !self.is_subscription()
                 && self.payment_mode == Some(1)
-                && self.settlement_tx_hash.is_some()
-                && self.has_required_refund_display_details() =>
+                && self.has_confirmed_settlement() =>
             {
                 Plan {
                     phase: "refund_resolution",
@@ -1010,7 +1381,8 @@ impl RefundSnapshot {
                 action_id: None,
                 // Subscription Closed(7) proves closure but not whether a
                 // refund settled. Keep read-only reconciliation available
-                // until status 9 plus authoritative settlement proof arrives.
+                // until an authoritative refund cause/result becomes
+                // available for the subscription lifecycle.
                 recommend_stop: false,
             },
             _ => Plan::blocked("refund_not_available_for_status"),
@@ -1029,16 +1401,11 @@ impl RefundSnapshot {
 
     fn settlement_state(&self) -> &'static str {
         match self.status {
-            9 if self.settlement_tx_hash.is_some()
-                && self.has_required_refund_display_details() =>
-            {
-                "confirmed"
-            }
+            9 if self.has_confirmed_settlement() => "confirmed",
             9 => "details_incomplete",
             7 if !self.is_subscription()
                 && self.payment_mode == Some(1)
-                && self.settlement_tx_hash.is_some()
-                && self.has_required_refund_display_details() =>
+                && self.has_confirmed_settlement() =>
             {
                 "confirmed"
             }
@@ -1056,7 +1423,9 @@ impl RefundSnapshot {
             3 => "provider_pending",
             4 => "arbitrating",
             8 => "settlement_pending",
-            6 | 7 | 9 => "resolved",
+            6 => "resolved",
+            7 | 9 if self.has_confirmed_settlement() => "resolved",
+            7 | 9 => "settlement_unverified",
             _ => "unavailable",
         }
     }
@@ -1086,9 +1455,10 @@ impl RefundSnapshot {
             "refund_reason_required" | "refund_reason_too_long" => json!(["reason"]),
             _ => json!([]),
         };
-        // A hash is user-visible settlement evidence only when all finality
-        // invariants passed. Keeping it null for an incomplete result prevents
-        // callers from accidentally promoting a partial proof to completion.
+        // Tx Hash is optional display/audit metadata, not the source of truth
+        // for refund completion. Keep it null for unverified states; a
+        // confirmed backend lifecycle result may legitimately have no hash in
+        // the current detail response.
         let settlement_tx_hash = if matches!(
             plan.reason,
             "refund_settlement_details_incomplete" | "task_closed_no_new_refund_action"
@@ -1097,6 +1467,20 @@ impl RefundSnapshot {
         } else {
             self.settlement_tx_hash.clone()
         };
+        let settlement_provenance = (plan.reason == "refund_confirmed")
+            .then(|| {
+                self.settlement_provenance.as_ref().map(|proof| {
+                    json!({
+                        "source": proof.source,
+                        "operation": proof.operation,
+                        "orderId": proof.order_id,
+                        "bizType": proof.biz_type,
+                        "chainIndex": proof.chain_index,
+                        "lifecycleStatus": proof.lifecycle_status,
+                    })
+                })
+            })
+            .flatten();
         let subscription = if self.is_subscription() {
             json!({
                 "kind": if self.is_trial() { "trial" } else { "formal" },
@@ -1166,6 +1550,9 @@ impl RefundSnapshot {
                 "state": self.settlement_state(),
                 "cause": Value::Null,
                 "txHash": settlement_tx_hash,
+                "confirmationSource": self.settlement_confirmation_source(),
+                "provenance": settlement_provenance,
+                "broadcastReceipt": Value::Null,
                 "confirmedAt": self.settlement_time,
                 "onchainConfirmationRequired": refund_flow_verified,
             },
@@ -1365,7 +1752,7 @@ impl From<RefundSnapshot> for common::PreFetchedTaskContext {
             service_params: None,
             user_agent_address: None,
             token_address: snapshot.token_address,
-            refund_tx_hash: snapshot.settlement_tx_hash,
+            verified_transaction_hash: snapshot.settlement_tx_hash,
             expire_time: None,
             test_flag: false,
         }
@@ -1379,9 +1766,9 @@ pub(crate) async fn fetch_authoritative_refund_context(
     job_id: &str,
     user_agent_id: &str,
 ) -> Result<common::PreFetchedTaskContext> {
-    fetch_snapshot(client, job_id, user_agent_id)
-        .await
-        .map(Into::into)
+    let mut snapshot = fetch_snapshot(client, job_id, user_agent_id).await?;
+    let _ = reconcile_without_downgrading_confirmed_settlement(&mut snapshot).await?;
+    Ok(snapshot.into())
 }
 
 /// Compose task/subscription detail for provider-side lifecycle freshness.
@@ -1416,9 +1803,10 @@ pub async fn handle_prepare(
     let Some(user_agent_id) = current_user_agent_id(job_id).await? else {
         return Ok(());
     };
-    let snapshot = fetch_snapshot(client, job_id, &user_agent_id).await?;
+    let mut snapshot = fetch_snapshot(client, job_id, &user_agent_id).await?;
+    let pending = reconcile_without_downgrading_confirmed_settlement(&mut snapshot).await?;
     let plan = snapshot.plan(reason);
-    if let Some(pending) = active_pending_mutation(&snapshot)? {
+    if let Some(pending) = pending {
         emit_decision(
             "refund_reconciliation",
             "blocked",
@@ -1477,6 +1865,18 @@ fn lifecycle_biz_type(response: &Value, expected_biz_type: Option<i64>) -> Resul
     Ok(biz_type)
 }
 
+fn validate_lifecycle_preflight(uop_data: &Value) -> Result<()> {
+    match uop_data.get("executeResult").and_then(Value::as_bool) {
+        Some(true) => Ok(()),
+        Some(false) => {
+            let detail = scalar_string(uop_data.get("executeErrorMsg"))
+                .unwrap_or_else(|| "no error detail returned".to_string());
+            bail!("backend transaction preflight failed: {detail}")
+        }
+        None => bail!("lifecycle uopData is missing a boolean executeResult preflight result"),
+    }
+}
+
 async fn sign_response(
     client: &mut TaskApiClient,
     response: &Value,
@@ -1495,9 +1895,10 @@ async fn sign_response(
     if response_job_id != snapshot.job_id {
         bail!("lifecycle endpoint returned a mismatched jobId");
     }
+    validate_lifecycle_preflight(uop_data)?;
     let biz_type = lifecycle_biz_type(response, expected_biz_type)?;
     let extra = reason.map(|reason| json!({"reason": reason}));
-    let receipt = signing::sign_uop_and_broadcast_full(
+    let mut receipt = signing::sign_uop_and_broadcast_full(
         client,
         uop_data,
         account_id,
@@ -1508,7 +1909,9 @@ async fn sign_response(
         extra.as_ref(),
     )
     .await?;
-    strict_broadcast_receipt(receipt).context("broadcast receipt result is unknown")
+    receipt = strict_broadcast_receipt(receipt).context("broadcast receipt result is unknown")?;
+    receipt["bizType"] = json!(biz_type);
+    Ok(receipt)
 }
 
 async fn execute_regular_reject(
@@ -1661,7 +2064,8 @@ pub async fn handle_execute(
     let Some(user_agent_id) = current_user_agent_id(job_id).await? else {
         return Ok(());
     };
-    let snapshot = fetch_snapshot(client, job_id, &user_agent_id).await?;
+    let mut snapshot = fetch_snapshot(client, job_id, &user_agent_id).await?;
+    let pending = reconcile_without_downgrading_confirmed_settlement(&mut snapshot).await?;
     let plan = snapshot.plan(reason);
 
     if snapshot.context_id(reason) != refund_context_id {
@@ -1688,7 +2092,7 @@ pub async fn handle_execute(
         );
         return Ok(());
     }
-    if let Some(pending) = active_pending_mutation(&snapshot)? {
+    if let Some(pending) = pending {
         emit_decision(
             "refund_reconciliation",
             "blocked",
@@ -1754,7 +2158,12 @@ pub async fn handle_execute(
     // A second read under the per-task execution lock closes the gap between
     // confirmation and mutation, including another local process winning the
     // lock while this command was resolving its wallet.
-    let snapshot = fetch_snapshot(client, job_id, &user_agent_id).await?;
+    let mut snapshot = fetch_snapshot(client, job_id, &user_agent_id).await?;
+    let pending = match reconcile_pending_mutation_locked(&mut snapshot).await {
+        Ok(pending) => pending,
+        Err(_) if snapshot.has_confirmed_settlement() => None,
+        Err(error) => return Err(error),
+    };
     let plan = snapshot.plan(reason);
     if snapshot.context_id(reason) != refund_context_id || plan.operation != Some(operation) {
         emit_decision(
@@ -1770,7 +2179,7 @@ pub async fn handle_execute(
         );
         return Ok(());
     }
-    if let Some(pending) = active_pending_mutation(&snapshot)? {
+    if let Some(pending) = pending {
         emit_decision(
             "refund_reconciliation",
             "blocked",
@@ -1796,6 +2205,20 @@ pub async fn handle_execute(
         order_type: None,
         biz_uniq_key: None,
         tx_hash: None,
+        account_id: Some(account_id.clone()),
+        address: Some(address.clone()),
+        // Task UserOperations are broadcast on X Layer by signing.rs. Persist
+        // the actual broadcast chain rather than a display-chain field from
+        // task detail, so later order reconciliation queries the same domain.
+        chain_index: Some(common::XLAYER_CHAIN_INDEX.to_string()),
+        biz_type: None,
+        original_amount: Some(snapshot.original_amount.clone()),
+        token_address: snapshot.token_address.clone(),
+        token_symbol: snapshot.token_symbol.clone(),
+        provider_agent_id: snapshot.provider_agent_id.clone(),
+        service_id: snapshot.service_id.clone(),
+        service_name: snapshot.service_name.clone(),
+        payment_mode: snapshot.payment_mode,
         updated_at: chrono::Utc::now().timestamp(),
     };
     if let Err(error) = write_pending_mutation(&pending) {
@@ -1898,6 +2321,7 @@ pub async fn handle_execute(
     pending.order_type = scalar_string(receipt.get("orderType"));
     pending.biz_uniq_key = scalar_string(receipt.get("bizUniqKey"));
     pending.tx_hash = scalar_string(receipt.get("txHash"));
+    pending.biz_type = scalar_i64(receipt.get("bizType"));
     pending.updated_at = chrono::Utc::now().timestamp();
     if let Err(error) = write_pending_mutation(&pending) {
         // The broadcast was accepted, but without a durable local copy of its
@@ -1970,7 +2394,10 @@ pub async fn handle_execute(
     };
     let mut payload = snapshot.payload(reason, &plan);
     payload["settlement"]["state"] = Value::String("broadcast_submitted".to_string());
-    payload["settlement"]["txHash"] = receipt.get("txHash").cloned().unwrap_or(Value::Null);
+    // `settlement.txHash` is optional metadata exposed only after wallet-order
+    // confirmation. The broadcast candidate remains inside
+    // `broadcastReceipt` while its exact wallet order is pending.
+    payload["settlement"]["txHash"] = Value::Null;
     payload["settlement"]["broadcastReceipt"] = receipt;
     if operation == RefundOperation::RequestRefund {
         payload["request"]["providerNotification"]["system"] = Value::String("unknown".to_string());
@@ -2025,6 +2452,34 @@ mod tests {
         RefundSnapshot::from_details("job-1", &task, subscription.as_ref(), "buyer-1").unwrap()
     }
 
+    fn confirmed_direct_refund(snapshot: &RefundSnapshot, tx_hash: &str) -> PendingRefundMutation {
+        PendingRefundMutation {
+            schema_version: SCHEMA_VERSION,
+            job_id: snapshot.job_id.clone(),
+            user_agent_id: snapshot.buyer_agent_id.clone(),
+            snapshot_id: snapshot.context_id(None),
+            operation: "direct-refund".to_string(),
+            state: "confirmed".to_string(),
+            pkg_id: Some("pkg-1".to_string()),
+            order_id: Some("order-1".to_string()),
+            order_type: Some("AA".to_string()),
+            biz_uniq_key: Some("refund-job-1".to_string()),
+            tx_hash: Some(tx_hash.to_string()),
+            account_id: Some("account-1".to_string()),
+            address: Some("0xbuyer".to_string()),
+            chain_index: Some("196".to_string()),
+            biz_type: Some(200),
+            original_amount: Some(snapshot.original_amount.clone()),
+            token_address: snapshot.token_address.clone(),
+            token_symbol: snapshot.token_symbol.clone(),
+            provider_agent_id: snapshot.provider_agent_id.clone(),
+            service_id: snapshot.service_id.clone(),
+            service_name: snapshot.service_name.clone(),
+            payment_mode: snapshot.payment_mode,
+            updated_at: 1,
+        }
+    }
+
     #[test]
     fn accepts_numeric_strings_for_job_type_and_status() {
         let snapshot = snapshot(json!("1"), json!("1"), "10.00");
@@ -2034,7 +2489,7 @@ mod tests {
     }
 
     #[test]
-    fn final_event_context_reuses_subscription_first_alias_resolution() {
+    fn undocumented_raw_detail_hash_alias_is_ignored() {
         let task = json!({
             "jobType": 1,
             "status": 1,
@@ -2064,7 +2519,7 @@ mod tests {
         assert_eq!(context.token_amount, "10");
         assert_eq!(context.token_symbol, "USDT");
         assert_eq!(context.token_address.as_deref(), Some("0xtoken"));
-        assert!(context.refund_tx_hash.is_some());
+        assert!(context.verified_transaction_hash.is_none());
     }
 
     #[test]
@@ -2271,10 +2726,7 @@ mod tests {
 
         let expired_subscription = snapshot(json!(1), json!(8), "10");
         let plan = expired_subscription.plan(None);
-        assert_eq!(
-            plan.reason,
-            "expired_subscription_refund_cause_ambiguous"
-        );
+        assert_eq!(plan.reason, "expired_subscription_refund_cause_ambiguous");
         assert_eq!(plan.operation, None);
         assert_eq!(plan.action_id, None);
         let actions = plan_actions(&expired_subscription, &plan, None);
@@ -2361,7 +2813,7 @@ mod tests {
     }
 
     #[test]
-    fn paid_write_and_final_confirmation_require_asp_and_service_display_details() {
+    fn paid_write_requires_display_details_but_finality_does_not_depend_on_labels() {
         let mut missing_provider_identity = task(json!(0), json!(0), "10");
         missing_provider_identity
             .as_object_mut()
@@ -2382,29 +2834,51 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("serviceId");
-        final_without_service["refundTxHash"] = json!(format!("0x{}", "ab".repeat(32)));
         let snapshot =
             RefundSnapshot::from_details("job-1", &final_without_service, None, "buyer-1").unwrap();
+        assert_eq!(snapshot.plan(None).reason, "refund_confirmed");
+        assert_eq!(snapshot.settlement_state(), "confirmed");
+        let confirmed_plan = snapshot.plan(None);
         assert_eq!(
-            snapshot.plan(None).reason,
-            "refund_settlement_details_incomplete"
-        );
-        assert_eq!(snapshot.settlement_state(), "details_incomplete");
-        let incomplete_plan = snapshot.plan(None);
-        assert_eq!(
-            snapshot.payload(None, &incomplete_plan)["settlement"]["txHash"],
+            snapshot.payload(None, &confirmed_plan)["settlement"]["txHash"],
             Value::Null
         );
+        assert_eq!(
+            snapshot.payload(None, &confirmed_plan)["settlement"]["confirmationSource"],
+            "backend_onchain_lifecycle"
+        );
+        assert!(snapshot.payload(None, &confirmed_plan)["settlement"]["provenance"].is_null());
     }
 
     #[test]
     fn final_status_does_not_offer_duplicate_refund() {
-        let missing_proof = snapshot(json!(0), json!(9), "10").plan(None);
-        assert_eq!(missing_proof.reason, "refund_settlement_details_incomplete");
-        assert_eq!(missing_proof.operation, None);
+        let backend_confirmed = snapshot(json!(0), json!(9), "10").plan(None);
+        assert_eq!(backend_confirmed.reason, "refund_confirmed");
+        assert_eq!(backend_confirmed.operation, None);
         assert_eq!(
             snapshot(json!(0), json!(9), "10").settlement_state(),
-            "details_incomplete"
+            "confirmed"
+        );
+
+        let mut failed_without_payment_mode = task(json!(0), json!(9), "10");
+        failed_without_payment_mode
+            .as_object_mut()
+            .unwrap()
+            .remove("paymentMode");
+        let failed_without_payment_mode =
+            RefundSnapshot::from_details("job-1", &failed_without_payment_mode, None, "buyer-1")
+                .unwrap();
+        assert_eq!(
+            failed_without_payment_mode.plan(None).reason,
+            "refund_confirmed"
+        );
+        assert!(failed_without_payment_mode.settlement_tx_hash.is_none());
+
+        let mut ambiguous_subscription = snapshot(json!(1), json!(9), "10");
+        ambiguous_subscription.settlement_tx_hash = Some(format!("0x{}", "ef".repeat(32)));
+        assert_eq!(
+            ambiguous_subscription.plan(None).reason,
+            "refund_settlement_details_incomplete"
         );
 
         let mut refunded_task = task(json!(0), json!(9), "10");
@@ -2415,12 +2889,35 @@ mod tests {
         assert_eq!(refunded.reason, "refund_confirmed");
         assert_eq!(refunded.operation, None);
         assert_eq!(refunded_snapshot.settlement_state(), "confirmed");
+        assert!(refunded_snapshot.settlement_tx_hash.is_none());
 
         let mut closed_task = task(json!(0), json!(7), "10");
         closed_task["refundTxHash"] = json!(format!("0x{}", "cd".repeat(32)));
-        let closed = RefundSnapshot::from_details("job-1", &closed_task, None, "buyer-1").unwrap();
+        let mut closed =
+            RefundSnapshot::from_details("job-1", &closed_task, None, "buyer-1").unwrap();
+        assert_eq!(closed.plan(None).reason, "refund_confirmed");
+        assert!(closed.settlement_tx_hash.is_none());
+        let proof = confirmed_direct_refund(&closed, &format!("0x{}", "cd".repeat(32)));
+        assert!(apply_confirmed_direct_refund(&mut closed, &proof));
         assert_eq!(closed.plan(None).reason, "refund_confirmed");
         assert_eq!(closed.settlement_state(), "confirmed");
+        let confirmed_payload = closed.payload(None, &closed.plan(None));
+        assert_eq!(
+            confirmed_payload["settlement"]["provenance"]["source"],
+            "wallet_order_detail"
+        );
+        assert_eq!(
+            confirmed_payload["settlement"]["provenance"]["operation"],
+            "direct-refund"
+        );
+        assert_eq!(
+            confirmed_payload["settlement"]["provenance"]["orderId"],
+            "order-1"
+        );
+        assert_eq!(
+            confirmed_payload["settlement"]["confirmationSource"],
+            "backend_onchain_lifecycle"
+        );
         let lost = snapshot(json!(0), json!(6), "10").plan(None);
         assert_eq!(lost.reason, "refund_not_approved_or_task_completed");
         assert_eq!(lost.operation, None);
@@ -2445,6 +2942,150 @@ mod tests {
         let mut with_hash = base;
         with_hash["txHash"] = json!(format!("0x{}", "ab".repeat(32)));
         assert!(strict_broadcast_receipt(with_hash).is_ok());
+    }
+
+    #[test]
+    fn wallet_order_status_requires_success_and_keeps_transaction_hash_optional() {
+        let hash = format!("0x{}", "ab".repeat(32));
+        assert_eq!(
+            parse_refund_order_status(&json!([{"txStatus":"2", "txHash":hash}]), None),
+            RefundOrderStatus::Pending
+        );
+        assert_eq!(
+            parse_refund_order_status(&json!([{"txStatus":"3", "txHash":hash}]), None),
+            RefundOrderStatus::Failed
+        );
+        assert_eq!(
+            parse_refund_order_status(&json!([{"txStatus":"4", "txHash":hash}]), None),
+            RefundOrderStatus::Succeeded(Some(hash.clone()))
+        );
+        assert_eq!(
+            parse_refund_order_status(
+                &json!([{"txStatus":"4", "txHash":hash}]),
+                Some(&format!("0x{}", "cd".repeat(32)))
+            ),
+            RefundOrderStatus::Unknown
+        );
+        assert_eq!(
+            parse_refund_order_status(&json!([{"txStatus":"4"}]), None),
+            RefundOrderStatus::Succeeded(None)
+        );
+        assert_eq!(
+            parse_refund_order_status(&json!([{"txStatus":"4"}]), Some(&hash)),
+            RefundOrderStatus::Succeeded(None)
+        );
+        assert_eq!(
+            parse_refund_order_status(
+                &json!([{"txStatus":"4", "txHash":"not-a-hash"}]),
+                Some(&hash)
+            ),
+            RefundOrderStatus::Unknown
+        );
+        assert_eq!(
+            parse_refund_order_status(
+                &json!([
+                    {"txStatus":"4", "txHash":hash},
+                    {"txStatus":"4", "txHash":hash}
+                ]),
+                None
+            ),
+            RefundOrderStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn direct_refund_confirmation_requires_complete_operation_provenance() {
+        let mut closed = snapshot(json!(0), json!(7), "10");
+        let hash = format!("0x{}", "ab".repeat(32));
+        let proof = confirmed_direct_refund(&closed, &hash);
+        assert!(direct_refund_provenance_matches(&closed, &proof));
+        assert!(apply_confirmed_direct_refund(&mut closed, &proof));
+
+        let mut missing_type = proof.clone();
+        missing_type.biz_type = None;
+        assert!(!direct_refund_provenance_matches(&closed, &missing_type));
+
+        let mut missing_account = proof.clone();
+        missing_account.account_id = None;
+        assert!(!direct_refund_provenance_matches(&closed, &missing_account));
+
+        let mut wrong_chain = proof.clone();
+        wrong_chain.chain_index = Some("1".to_string());
+        assert!(!direct_refund_provenance_matches(&closed, &wrong_chain));
+
+        let mut wrong_amount = proof.clone();
+        wrong_amount.original_amount = Some("11".to_string());
+        assert!(!direct_refund_provenance_matches(&closed, &wrong_amount));
+
+        let mut wrong_token = proof.clone();
+        wrong_token.token_address = Some("0xother".to_string());
+        assert!(!direct_refund_provenance_matches(&closed, &wrong_token));
+
+        let mut missing_symbol = proof.clone();
+        missing_symbol.token_symbol = None;
+        assert!(!direct_refund_provenance_matches(&closed, &missing_symbol));
+
+        let mut wrong_provider = proof.clone();
+        wrong_provider.provider_agent_id = Some("asp-2".to_string());
+        assert!(!direct_refund_provenance_matches(&closed, &wrong_provider));
+
+        let mut missing_service = proof.clone();
+        missing_service.service_id = None;
+        missing_service.service_name = None;
+        assert!(!direct_refund_provenance_matches(&closed, &missing_service));
+
+        let mut service_name_fallback = proof.clone();
+        service_name_fallback.service_id = None;
+        assert!(direct_refund_provenance_matches(
+            &closed,
+            &service_name_fallback
+        ));
+
+        let mut wrong_service = proof.clone();
+        wrong_service.service_id = Some("svc-2".to_string());
+        assert!(!direct_refund_provenance_matches(&closed, &wrong_service));
+
+        let mut missing_payment_mode = proof;
+        missing_payment_mode.payment_mode = None;
+        assert!(!direct_refund_provenance_matches(
+            &closed,
+            &missing_payment_mode
+        ));
+    }
+
+    #[test]
+    fn wallet_order_detail_cannot_cross_order_or_chain_binding() {
+        let snapshot = snapshot(json!(0), json!(7), "10");
+        let proof = confirmed_direct_refund(&snapshot, &format!("0x{}", "ab".repeat(32)));
+        assert!(validate_refund_order_detail_binding(
+            &json!([{"orderId":"order-1", "chainIndex":"196"}]),
+            &proof
+        )
+        .is_ok());
+        assert!(validate_refund_order_detail_binding(
+            &json!([{"orderId":"other", "chainIndex":"196"}]),
+            &proof
+        )
+        .is_err());
+        assert!(validate_refund_order_detail_binding(
+            &json!([{"orderId":"order-1", "chainIndex":"1"}]),
+            &proof
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn pending_receipt_hash_is_not_rendered_as_final_settlement_hash() {
+        let snapshot = snapshot(json!(0), json!(0), "10");
+        let mut pending = confirmed_direct_refund(&snapshot, &format!("0x{}", "ab".repeat(32)));
+        pending.state = "broadcast_submitted".to_string();
+        let plan = snapshot.plan(None);
+        let payload = pending_reconciliation_payload(&snapshot, None, &plan, &pending);
+        assert_eq!(payload["settlement"]["txHash"], Value::Null);
+        assert_eq!(
+            payload["settlement"]["broadcastReceipt"]["txHash"],
+            pending.tx_hash.clone().unwrap()
+        );
     }
 
     #[test]
@@ -2474,6 +3115,17 @@ mod tests {
             order_type: None,
             biz_uniq_key: None,
             tx_hash: None,
+            account_id: None,
+            address: None,
+            chain_index: None,
+            biz_type: None,
+            original_amount: None,
+            token_address: None,
+            token_symbol: None,
+            provider_agent_id: None,
+            service_id: None,
+            service_name: None,
+            payment_mode: None,
             updated_at: 1,
         };
         write_pending_mutation(&pending).unwrap();
@@ -2517,8 +3169,25 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_uop_requires_explicit_successful_backend_preflight() {
+        assert!(validate_lifecycle_preflight(&json!({"executeResult": true})).is_ok());
+        let rejected = validate_lifecycle_preflight(&json!({
+            "executeResult": false,
+            "executeErrorMsg": "execution reverted"
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(rejected.contains("backend transaction preflight failed"));
+        assert!(rejected.contains("execution reverted"));
+        assert!(validate_lifecycle_preflight(&json!({})).is_err());
+        assert!(validate_lifecycle_preflight(&json!({"executeResult": null})).is_err());
+        assert!(validate_lifecycle_preflight(&json!({"executeResult": "true"})).is_err());
+    }
+
+    #[test]
     fn final_refund_evidence_requires_fresh_full_original_payment() {
         let detail = common::PreFetchedTaskContext::from_api_response(&json!({
+            "jobType": 0,
             "status": 9,
             "buyerAgentId": "buyer-1",
             "providerAgentId": "asp-1",
@@ -2528,7 +3197,6 @@ mod tests {
             "paymentTokenAmount": "10.00",
             "paymentTokenSymbol": "USDT",
             "paymentTokenAddress": "0xtoken",
-            "refundTxHash": format!("0x{}", "ab".repeat(32)),
         }));
         let event = json!({
             "buyerAgentId": "buyer-1",
@@ -2543,37 +3211,22 @@ mod tests {
             verify_final_refund_event(Some(&event), Some(&detail), 9, "buyer-1").unwrap();
         assert_eq!(evidence.amount, "10.00");
         assert_eq!(evidence.token_symbol, "USDT");
+        assert!(evidence.tx_hash.is_none());
 
         let mut partial = event.clone();
         partial["refundAmount"] = json!("9.99");
-        assert!(verify_final_refund_event(
-            Some(&partial),
-            Some(&detail),
-            9,
-            "buyer-1"
-        )
-        .is_err());
+        assert!(verify_final_refund_event(Some(&partial), Some(&detail), 9, "buyer-1").is_err());
         assert!(verify_final_refund_event(Some(&partial), None, 9, "buyer-1").is_err());
 
-        let mut wrong_hash = partial;
-        wrong_hash["refundAmount"] = json!("10");
-        wrong_hash["refundTxHash"] = json!(format!("0x{}", "cd".repeat(32)));
-        assert!(verify_final_refund_event(
-            Some(&wrong_hash),
-            Some(&detail),
-            9,
-            "buyer-1"
-        )
-        .is_err());
-        assert!(verify_final_refund_event(
-            Some(&event),
-            Some(&detail),
-            9,
-            "buyer-2"
-        )
-        .is_err());
+        let mut unrelated_hash = partial;
+        unrelated_hash["refundAmount"] = json!("10");
+        unrelated_hash["txHash"] = json!(format!("0x{}", "cd".repeat(32)));
+        assert!(
+            verify_final_refund_event(Some(&unrelated_hash), Some(&detail), 9, "buyer-1").is_ok()
+        );
+        assert!(verify_final_refund_event(Some(&event), Some(&detail), 9, "buyer-2").is_err());
 
-        let non_escrow_close = common::PreFetchedTaskContext::from_api_response(&json!({
+        let mut non_escrow_close = common::PreFetchedTaskContext::from_api_response(&json!({
             "jobType": 0,
             "status": 7,
             "buyerAgentId": "buyer-1",
@@ -2584,17 +3237,13 @@ mod tests {
             "paymentTokenAmount": "10.00",
             "paymentTokenSymbol": "USDT",
             "paymentTokenAddress": "0xtoken",
-            "refundTxHash": format!("0x{}", "ab".repeat(32)),
         }));
-        assert!(verify_final_refund_event(
-            Some(&event),
-            Some(&non_escrow_close),
-            7,
-            "buyer-1"
-        )
-        .is_err());
+        non_escrow_close.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
+        assert!(
+            verify_final_refund_event(Some(&event), Some(&non_escrow_close), 7, "buyer-1").is_err()
+        );
 
-        let subscription_decline = common::PreFetchedTaskContext::from_api_response(&json!({
+        let mut subscription_decline = common::PreFetchedTaskContext::from_api_response(&json!({
             "jobType": 1,
             "status": 7,
             "buyerAgentId": "buyer-1",
@@ -2604,27 +3253,22 @@ mod tests {
             "paymentTokenAmount": "10.00",
             "paymentTokenSymbol": "USDT",
             "paymentTokenAddress": "0xtoken",
-            "refundTxHash": format!("0x{}", "ab".repeat(32)),
         }));
-        assert!(verify_final_refund_event(
-            Some(&event),
-            Some(&subscription_decline),
-            7,
-            "buyer-1"
-        )
-        .is_err());
-        assert!(verify_final_refund_event(
-            Some(&event),
-            Some(&subscription_decline),
-            7,
-            "buyer-1"
-        )
-        .is_err());
+        subscription_decline.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
+        assert!(
+            verify_final_refund_event(Some(&event), Some(&subscription_decline), 7, "buyer-1")
+                .is_err()
+        );
+        assert!(
+            verify_final_refund_event(Some(&event), Some(&subscription_decline), 7, "buyer-1")
+                .is_err()
+        );
     }
 
     #[test]
-    fn final_refund_evidence_never_fills_authoritative_identity_from_event() {
+    fn final_refund_evidence_uses_authoritative_labels_or_unavailable_fallbacks() {
         let base = json!({
+            "jobType": 0,
             "status": 9,
             "buyerAgentId": "buyer-1",
             "providerAgentId": "asp-1",
@@ -2632,7 +3276,6 @@ mod tests {
             "paymentTokenAmount": "10.00",
             "paymentTokenSymbol": "USDT",
             "paymentTokenAddress": "0xtoken",
-            "refundTxHash": format!("0x{}", "ab".repeat(32)),
         });
         let event = json!({
             "buyerAgentId": "buyer-1",
@@ -2646,16 +3289,28 @@ mod tests {
             "txHash": format!("0x{}", "ab".repeat(32)),
         });
 
-        for missing in ["providerAgentId", "serviceId", "paymentTokenSymbol"] {
+        for (missing, expected_provider, expected_service) in [
+            ("providerAgentId", "unavailable", "svc-1"),
+            ("serviceId", "asp-1", "service unavailable"),
+        ] {
             let mut detail = base.clone();
             detail.as_object_mut().unwrap().remove(missing);
             let detail = common::PreFetchedTaskContext::from_api_response(&detail);
-            assert!(
-                verify_final_refund_event(Some(&event), Some(&detail), 9, "buyer-1")
-                    .is_err(),
-                "event payload must not fill missing authoritative field {missing}"
-            );
+            let evidence =
+                verify_final_refund_event(Some(&event), Some(&detail), 9, "buyer-1").unwrap();
+            assert_eq!(evidence.provider_agent_id, expected_provider);
+            assert_eq!(evidence.service_name, expected_service);
         }
+
+        let mut missing_symbol = base.clone();
+        missing_symbol
+            .as_object_mut()
+            .unwrap()
+            .remove("paymentTokenSymbol");
+        let missing_symbol = common::PreFetchedTaskContext::from_api_response(&missing_symbol);
+        assert!(
+            verify_final_refund_event(Some(&event), Some(&missing_symbol), 9, "buyer-1").is_err()
+        );
 
         let detail = common::PreFetchedTaskContext::from_api_response(&base);
         let event_without_hash = json!({
@@ -2666,18 +3321,16 @@ mod tests {
             "tokenSymbol": "USDT",
             "paymentTokenAddress": "0xtoken",
         });
-        assert!(verify_final_refund_event(
-            Some(&event_without_hash),
-            Some(&detail),
-            9,
-            "buyer-1"
-        )
-        .is_ok());
+        assert!(
+            verify_final_refund_event(Some(&event_without_hash), Some(&detail), 9, "buyer-1")
+                .is_ok()
+        );
 
         let evidence =
             verify_final_refund_event(Some(&event), Some(&detail), 9, "buyer-1").unwrap();
         assert_eq!(evidence.provider_name, "name unavailable");
         assert_eq!(evidence.service_name, "svc-1");
+        assert!(evidence.tx_hash.is_none());
     }
 
     #[test]
@@ -2709,6 +3362,17 @@ mod tests {
             order_type: None,
             biz_uniq_key: None,
             tx_hash: None,
+            account_id: None,
+            address: None,
+            chain_index: None,
+            biz_type: None,
+            original_amount: None,
+            token_address: None,
+            token_symbol: None,
+            provider_agent_id: None,
+            service_id: None,
+            service_name: None,
+            payment_mode: None,
             updated_at: 1,
         };
         assert!(!pending_mutation_resolved(&pending, &active_snapshot));

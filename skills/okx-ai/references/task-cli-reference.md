@@ -680,7 +680,7 @@ never the joined string.
     "jobName": "<name>",
     "jobType": "one_time|subscription",
     "rawJobType": 0,
-    "refundState": "created|active|provider_pending|arbitrating|settlement_pending|resolved|unavailable",
+    "refundState": "created|active|provider_pending|arbitrating|settlement_pending|settlement_unverified|resolved|unavailable",
     "rawStatus": 0,
     "statusName": "created",
     "buyerAgentId": "<id>",
@@ -729,6 +729,9 @@ never the joined string.
     "state": "not_started|pending|broadcast_submitted|confirmed|details_incomplete|not_refunded|unknown",
     "cause": null,
     "txHash": null,
+    "confirmationSource": "backend_onchain_lifecycle|null",
+    "provenance": null,
+    "broadcastReceipt": null,
     "confirmedAt": null,
     "onchainConfirmationRequired": false
   },
@@ -746,6 +749,21 @@ never the joined string.
   }
 }
 ```
+
+`settlement.txHash` and `settlement.provenance` are optional audit details, not
+mandatory refund-finality fields. `confirmationSource=backend_onchain_lifecycle`
+records that fresh backend chain projection established the business outcome;
+it is not transaction provenance. `settlement.provenance` is reserved for the
+optional same-device, operation-scoped wallet-order correlation and may identify
+its source, operation, `orderId`, `bizType`, and `chainIndex`. During broadcast
+or reconciliation, candidate handles and any unconfirmed hash appear only under
+`settlement.broadcastReceipt`. A fresh backend chain-projected one-time refund
+terminal may set `settlement.state=confirmed` and
+`confirmationSource=backend_onchain_lifecycle` while `settlement.txHash` and
+`settlement.provenance` remain null because no transaction metadata was exposed.
+`job.refundState=resolved` follows that confirmed business outcome;
+`settlement_unverified` is used for a terminal-looking state whose refund cause
+is still unresolved, notably bare subscription Failed(9).
 
 For a subscription, `subscription` is:
 
@@ -789,17 +807,37 @@ Refund policy invariants:
   `pkgId`, `orderId`, `orderType`, and `bizUniqKey`; its `txHash` may be absent
   until publication. In that case `settlement.txHash=null` is a pending state,
   not finality, failure proof, or permission to retry;
-- `broadcast_submitted` is not confirmation. Only authoritative raw status 9;
-  or raw status 7 with `paymentMode=1` for the paid one-time direct-refund close,
-  with a valid refund-specific detail hash, ASP Agent ID, and Service
-  name or ID produces `reason=refund_confirmed`. Subscription status 7 has no
-  authoritative refund-cause contract and never qualifies;
+- `broadcast_submitted` is not confirmation. The same-device receipt binds and
+  de-duplicates the pending client operation, but a later fresh backend chain
+  projection is authoritative for the business outcome;
+- for one-time tasks, fresh Failed(9) is reserved for successful refund
+  transitions: ASP agreement, refund-response timeout, or User-won
+  arbitration. Fresh paid-escrow Closed(7) with positive amount and
+  `paymentMode=1` likewise means the escrow return completed. With matching
+  User and original payment, either can produce
+  `reason=refund_confirmed` even when no Tx Hash is available. Subscription
+  Closed(7) never gets this one-time escrow interpretation. Missing ASP or
+  Service display labels are rendered unavailable and do not alter finality;
+- subscription Failed(9) is overloaded with terminal charge failure, so it
+  remains `refund_settlement_details_incomplete` until an authoritative
+  backend cause/query, authenticated server event record, or typed source
+  disambiguates the cause. The current caller-supplied event name cannot. A
+  `request-refund` or finalize receipt proves only the submitted client
+  operation, not that later backend-owned outcome;
+- transaction evidence, when returned, is selected by operation-scoped, typed
+  provenance rather than a required property name. It must bind to this job,
+  User, original payment/refund scope, and operation. Its absence alone does
+  not invalidate a refund already established by an authoritative backend
+  chain projection;
 - a valid refund transaction hash is lowercase-prefix `0x` followed by exactly
-  64 hexadecimal characters; generic task hashes are never accepted as proof;
+  64 hexadecimal characters; a generic task or event hash with no qualifying
+  provenance is never displayed as the refund Tx Hash;
 - either refund-capable terminal status with any required settlement invariant
   missing returns
-  `refund_settlement_details_incomplete`. Its `settlement.txHash` is `null`;
-  display it as such and never substitute a generic task transaction hash;
+  `refund_settlement_details_incomplete`. Required invariants are lifecycle
+  state/cause and User/payment binding, not ASP/Service display labels or Tx
+  Hash availability; never promote an unconfirmed or untyped candidate
+  transaction into the normalized final settlement field;
 - `refund_not_approved_or_task_completed` has
   `settlement.state=not_refunded`; the client cannot distinguish a User-lost
   arbitration from generic task completion in this state;
@@ -816,17 +854,30 @@ Refund policy invariants:
 - after stale context, pending/unknown outcome, or any broadcast result, use only the
   returned read-only reconciliation action. Never retry automatically.
 
+Backend `job_closed` and `job_auto_refunded` notifications represent successful,
+confirmed transaction-result handling; they are distinct from `uopData.executeResult`,
+which is only the backend pre-broadcast preflight result. Either success event
+may omit a Tx Hash. The current `next-action --event` value is caller-supplied,
+so treat it as a trigger for fresh detail rather than authenticated evidence or
+a new write. For a one-time task, matching fresh positive-amount paid-escrow
+Closed(7) or Failed(9) can confirm the refund independently. For a subscription,
+even caller-supplied `job_auto_refunded` plus Failed(9) remains ambiguous until
+an authoritative cause/query or server-verifiable event source exists.
+
 The subscription backend may also emit `job_asp_accept_expire`,
-`job_asp_reject_closed`, and `job_asp_reject_expire`. They are lifecycle
-signals, not refund-finality proof: the acceptance-expiry event documents a
-type-207 backend path, but cannot authorize it without an authoritative cause
-discriminator in fresh detail; the
-ASP-decline event proves only that the subscription is Closed, not that its
-refund settled; and the ASP refund-response timeout says automatic settlement
-is pending. None may render refund
-completion or trigger terminal cleanup without its required fresh status and
-refund-specific settlement evidence. Event payload `jobStatus=expired` alone
-must not be used to select the type-207 operation for either task kind.
+`job_asp_reject_closed`, and `job_asp_reject_expire`. These are lifecycle
+signals, not write permission or successful-refund result: the
+acceptance-expiry event documents a type-207 backend path but cannot authorize
+it without a cause discriminator; the ASP-decline event proves only Closed;
+and the ASP refund-response-timeout event means automatic refund is pending.
+Event payload `jobStatus=expired` alone must not select type 207 for either task
+kind. Wait for a matching successful backend result/projection, not a mandatory
+Tx Hash.
+
+For every Refund V2 lifecycle response, `uopData.executeResult` is backend
+preflight. Only boolean `true` passes. `false`, null, missing, or a wrong type
+must fail closed before signing/broadcast; even `true` does not prove that a
+transaction was broadcast, succeeded, projected to task state, or refunded.
 
 ### set-payment-mode
 

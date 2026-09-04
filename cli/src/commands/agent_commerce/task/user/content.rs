@@ -197,7 +197,7 @@ pub fn dispute_won_user_notify(
          - Refund amount: {} (approved; settlement pending)\n\
          - Outcome: ClientWins\n\
          {EVALUATION_REASONS_BLOCK}\n\
-         The ruling authorizes a refund but is not refund settlement proof. Wait for the dedicated final-refund event or reconcile through Refund V2 before reporting completion.",
+         The ruling authorizes a refund, but the caller-supplied verdict message does not by itself establish a subscription refund result. Reconcile through Refund V2 before reporting completion.",
         refund_party(provider_name, provider_id),
         service_name.unwrap_or("not provided by the final event"),
         amount_and_token(amount, symbol),
@@ -1290,8 +1290,7 @@ mod tests {
     fn sub_asp_selected_trial_degrades_without_amount_or_dates() {
         let bare = sub_asp_selected_trial_user_notify(None, None, None, None);
         assert_eq!(
-            bare,
-            "[Trial Started] Your free trial is active.",
+            bare, "[Trial Started] Your free trial is active.",
             "no amount → whole conversion sentence omitted; no dates → no range"
         );
         let no_dates = sub_asp_selected_trial_user_notify(Some("1.5"), None, None, None);

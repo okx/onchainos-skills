@@ -64,6 +64,15 @@ legacy prose field `action`.
   completion, or perform terminal cleanup from event prose alone.
   In particular, `job_asp_reject_closed` does not exempt a subscription at
   status 7 from the missing authoritative refund-cause contract.
+- `job_closed` and `job_auto_refunded` are backend successful, confirmed
+  transaction-result notifications, not write actions and not
+  `uopData.executeResult` preflight. They may omit Tx Hash, but the current
+  event argument is caller-supplied and its name is not authoritative. Route it
+  through a fresh Refund V2 read: matching one-time positive-amount paid-escrow
+  Closed(7) or Failed(9) may independently return `refund_confirmed`;
+  subscription Failed(9) remains ambiguous until an authoritative cause/query
+  or server-verifiable event source exists. Follow only the fresh result's
+  actions/terminal marker.
 - `refund-execute` always requires explicit selection of the displayed write
   action. Supplying a reason never substitutes for that confirmation.
 - Preserve the returned order; `recommend=true` marks the preferred option.

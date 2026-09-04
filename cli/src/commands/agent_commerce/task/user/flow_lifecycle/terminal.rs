@@ -3,7 +3,7 @@
 use super::super::flow::{notify_and_end, notify_and_end_terminal, FlowContext};
 
 fn display_or_unavailable(value: Option<&str>) -> &str {
-    value.unwrap_or("unverified")
+    value.unwrap_or("unavailable")
 }
 
 fn authoritative_title<'a>(ctx: &'a FlowContext<'_>) -> &'a str {
@@ -64,7 +64,7 @@ fn final_refund_notice(
         );
         service = evidence.service_name.clone();
         amount_display = format!("{} {}", evidence.amount, evidence.token_symbol);
-        tx_hash = Some(evidence.tx_hash.clone());
+        tx_hash = evidence.tx_hash.clone();
     }
     let complete = verified.is_ok();
     let heading = if complete {
@@ -77,7 +77,11 @@ fn final_refund_notice(
         "[Refund Settlement Detail Incomplete]"
     };
     let status = if complete {
-        "Refund confirmed by the authoritative final event and fresh terminal task detail; funds returned to your wallet. This job is complete.".to_string()
+        if tx_hash.is_some() {
+            "Refund confirmed by the backend's on-chain lifecycle result and fresh task detail; funds returned to your wallet. The verified Tx Hash is shown above. This job is complete.".to_string()
+        } else {
+            "Refund confirmed by the backend's on-chain lifecycle result and fresh task detail; funds returned to your wallet. The backend did not expose the Tx Hash in the current response. This job is complete.".to_string()
+        }
     } else {
         format!(
             "Refund completion cannot be verified: {}. Do not claim completion from this message; refresh Refund V2 status.",
@@ -197,7 +201,7 @@ pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
 
 pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {
     // Refund V2 makes the ASP-response timeout settlement a backend
-    // responsibility. Wait for job_auto_refunded carrying settlement proof.
+    // responsibility. Wait for its backend transaction-result projection.
     let content = super::super::content::reject_expired_user_notify(ctx.job_id);
     notify_and_end(&content)
 }

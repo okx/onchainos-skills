@@ -82,8 +82,8 @@ fn incomplete_subscription_refund_notice(
          - Refund ASP: {}\n\
          - Service: {}\n\
          - Refund amount: {}\n\
-         - Tx Hash: unverified\n\
-         The event reports a refund-capable terminal state, but the required settlement proof is incomplete or inconsistent. Do not report the refund as complete; refresh Refund V2 status.",
+         - Tx Hash: unavailable\n\
+         The subscription lifecycle result or refund cause is incomplete or ambiguous. Do not report the refund as complete; refresh Refund V2 status.",
         title,
         ctx.job_id,
         refund_provider(ctx),
@@ -275,6 +275,10 @@ pub(crate) fn sub_user_reject(
 }
 
 pub(crate) fn sub_asp_agree(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
+    if ctx.prefetched.and_then(|value| value.job_type) != Some(1) {
+        let content = incomplete_subscription_refund_notice(ctx, message);
+        return notify_and_end(&content);
+    }
     let Ok(evidence) = super::super::refund_v2::verify_final_refund_event(
         message,
         ctx.prefetched,
@@ -296,7 +300,10 @@ pub(crate) fn sub_asp_agree(ctx: &FlowContext<'_>, message: Option<&serde_json::
     );
     content.push_str(&format!(
         "\n- Refund ASP: {} ({})\n- Service: {}\n- Tx Hash: {}",
-        evidence.provider_name, evidence.provider_agent_id, evidence.service_name, evidence.tx_hash,
+        evidence.provider_name,
+        evidence.provider_agent_id,
+        evidence.service_name,
+        evidence.tx_hash.as_deref().unwrap_or("unavailable"),
     ));
     notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
@@ -559,13 +566,17 @@ pub(crate) fn sub_close_notify(
     );
     if asp_reject_reason.is_none() {
         content.push_str(
-            "\n\nThe subscription is authoritatively Closed, but the current backend detail does not expose an authoritative close cause or refund-specific settlement proof. No refund completion is claimed; reconcile through `onchainos agent refund-prepare <jobId>` and follow only its returned actions.",
+            "\n\nThe subscription is authoritatively Closed, but the current backend contract does not expose an authoritative refund cause for this close. No refund completion is claimed.",
         );
     }
+    content.push_str(&format!(
+        "\n\nReconcile through `onchainos agent refund-prepare {}` and follow only its returned actions.",
+        ctx.job_id
+    ));
     // Status 7 proves closure, not why the subscription closed. The event body
     // is caller-provided and cannot safely select between an ordinary close and
     // an ASP-decline refund. Keep the buyer watcher/session open until the
-    // backend exposes an authoritative cause or status-9 settlement proof.
+    // backend exposes an authoritative refund cause/result for status 9.
     notify_and_end(&content)
 }
 
@@ -575,8 +586,12 @@ pub(crate) fn sub_reject_refund_notify(
 ) -> String {
     // The backend owns this timeout refund, so the client never calls
     // claim-auto-refund. The notification is terminal only when the event and
-    // fresh Failed(9) detail carry matching Refund V2 settlement proof; the
-    // newly documented timeout payload by itself is only a pending signal.
+    // fresh Failed(9) detail carry an authoritative Refund V2 refund result. A
+    // transaction hash is optional display metadata once settlement is proven.
+    if ctx.prefetched.and_then(|value| value.job_type) != Some(1) {
+        let content = incomplete_subscription_refund_notice(ctx, message);
+        return notify_and_end(&content);
+    }
     let Ok(evidence) = super::super::refund_v2::verify_final_refund_event(
         message,
         ctx.prefetched,
@@ -599,7 +614,10 @@ pub(crate) fn sub_reject_refund_notify(
     );
     content.push_str(&format!(
         "\n- Refund ASP: {} ({})\n- Service: {}\n- Tx Hash: {}",
-        evidence.provider_name, evidence.provider_agent_id, evidence.service_name, evidence.tx_hash,
+        evidence.provider_name,
+        evidence.provider_agent_id,
+        evidence.service_name,
+        evidence.tx_hash.as_deref().unwrap_or("unavailable"),
     ));
     notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
@@ -619,7 +637,7 @@ pub(crate) fn sub_failed_notify(
     );
     let content = format!(
         "{content}\n\n\
-         [Settlement Check Required] Fresh subscription status is Failed(9), but `sub_failed_notify` does not provide an authoritative failure cause or refund-specific settlement proof. Do not report a refund as complete or clean up the Buyer session. Run `onchainos agent refund-prepare {}` and follow only its returned read/watch actions unless it proves `reason=refund_confirmed`.",
+         [Settlement Check Required] Fresh subscription status is Failed(9), but `sub_failed_notify` does not provide an authoritative failure/refund cause. Do not report a refund as complete or clean up the Buyer session. Run `onchainos agent refund-prepare {}` and follow only its returned read/watch actions unless it proves `reason=refund_confirmed`.",
         ctx.job_id
     );
     notify_and_end(&content)

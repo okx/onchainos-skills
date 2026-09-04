@@ -4146,20 +4146,7 @@ fn refund_final_context_ready(
         return true;
     }
 
-    let close_funding_proven = context.job_type == Some(0) && context.payment_mode == Some(1);
-
-    context
-        .refund_tx_hash
-        .as_deref()
-        .is_some_and(task::user::refund_v2::valid_tx_hash)
-        && context.provider_agent_id.is_some()
-        && (context.service_name.is_some() || context.service_id.is_some())
-        && !context.token_amount.trim().is_empty()
-        && !task::user::refund_v2::is_zero_decimal(context.token_amount.trim())
-        && !context.token_symbol.trim().is_empty()
-        && context.token_symbol != "?"
-        && context.token_address.is_some()
-        && (!closed_refund_event || close_funding_proven)
+    task::user::refund_v2::authoritative_refund_settlement_confirmed(context, expected_status)
 }
 
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).
@@ -4255,12 +4242,12 @@ async fn check_status_freshness(
 
     // Refund lifecycle events use Refund V2's exact task/subscription parser
     // and buyer-ownership checks. A short bounded re-read absorbs the common
-    // race where the event arrives just before status/hash projection. The two
-    // Expired(8) events validate status+ownership only: they are explicitly not
-    // final and do not require a refund hash.
+    // race where the event arrives just before lifecycle/order reconciliation.
+    // The two Expired(8) events validate status+ownership only: they are
+    // explicitly not final and do not require a confirmed refund outcome.
     let mut c = TaskApiClient::new();
     const REFUND_RETRY_DELAYS_MS: [u64; 3] = [250, 750, 1_500];
-    if let Some((expected_status, requires_final_proof)) = refund_status_policy {
+    if let Some((expected_status, requires_confirmed_outcome)) = refund_status_policy {
         let mut latest_context = None;
         let mut latest_error = None;
         for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
@@ -4272,7 +4259,7 @@ async fn check_status_freshness(
                 Ok(context) => {
                     let ready = context.status == Some(expected_status)
                         && context.user_agent_id.as_deref() == Some(agent_id)
-                        && (!requires_final_proof
+                        && (!requires_confirmed_outcome
                             || refund_final_context_ready(&context, job_status_or_event, agent_id));
                     latest_context = Some(context);
                     latest_error = None;
@@ -4622,10 +4609,11 @@ mod authoritative_detail_path_tests {
     }
 
     #[test]
-    fn refund_final_readiness_requires_owner_and_complete_proof() {
+    fn refund_final_readiness_uses_one_time_lifecycle_and_rejects_ambiguous_subscription() {
         let detail =
             crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
                 &serde_json::json!({
+                    "jobType": 0,
                     "status": 9,
                     "buyerAgentId": "buyer-1",
                     "providerAgentId": "asp-1",
@@ -4633,18 +4621,26 @@ mod authoritative_detail_path_tests {
                     "paymentTokenAmount": "10",
                     "paymentTokenSymbol": "USDT",
                     "paymentTokenAddress": "0xtoken",
-                    "refundTxHash": format!("0x{}", "ab".repeat(32)),
                 }),
             );
         assert!(refund_final_context_ready(
             &detail,
-            "sub_reject_refund_notify",
+            "job_auto_refunded",
             "buyer-1"
         ));
         assert!(!refund_final_context_ready(
             &detail,
-            "sub_reject_refund_notify",
+            "job_auto_refunded",
             "buyer-2"
+        ));
+
+        let mut subscription = detail.clone();
+        subscription.job_type = Some(1);
+        subscription.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
+        assert!(!refund_final_context_ready(
+            &subscription,
+            "sub_reject_refund_notify",
+            "buyer-1"
         ));
     }
 
@@ -4675,7 +4671,6 @@ mod authoritative_detail_path_tests {
                     "paymentTokenAmount": "10",
                     "paymentTokenSymbol": "USDT",
                     "paymentTokenAddress": "0xtoken",
-                    "refundTxHash": format!("0x{}", "cd".repeat(32)),
                 }),
             );
         assert!(refund_final_context_ready(
@@ -4695,7 +4690,6 @@ mod authoritative_detail_path_tests {
                     "paymentTokenAmount": "10",
                     "paymentTokenSymbol": "USDT",
                     "paymentTokenAddress": "0xtoken",
-                    "refundTxHash": format!("0x{}", "ef".repeat(32)),
                 }),
             );
         assert!(!refund_final_context_ready(

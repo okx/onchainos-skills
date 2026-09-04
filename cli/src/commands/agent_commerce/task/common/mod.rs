@@ -163,9 +163,9 @@ pub struct PreFetchedTaskContext {
     pub service_params: Option<String>,
     pub user_agent_address: Option<String>,
     pub token_address: Option<String>,
-    /// Refund-specific settlement proof from authoritative detail. Generic
-    /// task transaction hashes are deliberately excluded.
-    pub refund_tx_hash: Option<String>,
+    /// Optional transaction metadata verified by Refund V2's local order
+    /// reconciliation. Raw task-detail hash aliases never populate it.
+    pub verified_transaction_hash: Option<String>,
     /// Acceptance/review deadline (unix seconds). `Some` when the API returned a
     /// positive `expireTime`, else `now()+expireConfig.reviewDeadline` when that
     /// is positive, else `None` (no reminder — backward compatible).
@@ -234,7 +234,7 @@ impl PreFetchedTaskContext {
             service_params: v["serviceParams"].as_str().map(String::from),
             user_agent_address: v["buyerAgentAddress"].as_str().map(String::from),
             token_address: string(&["paymentTokenAddress", "tokenAddress"]),
-            refund_tx_hash: string(&["refundTxHash", "settlementTxHash"]),
+            verified_transaction_hash: None,
             expire_time,
             // FR-2: additive, backward compatible — absent/non-bool testFlag ⇒ false.
             test_flag: v["testFlag"].as_bool().unwrap_or(false),

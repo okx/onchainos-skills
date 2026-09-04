@@ -108,12 +108,11 @@ pub(crate) fn dispute_resolved(
         ),
     };
     if user_won
-        && p.refund_tx_hash
-            .as_deref()
-            .is_some_and(super::super::refund_v2::valid_tx_hash)
+        && super::super::refund_v2::verify_final_refund_event(None, Some(p), 9, ctx.agent_id)
+            .is_ok()
     {
         return format!(
-            "[dispute_resolved] Authoritative detail already contains refund settlement proof for job {job_id}. Do not render another unresolved-settlement notice from this delayed/replayed verdict. Run `onchainos agent refund-prepare {job_id}` and route its final Refund V2 result."
+            "[dispute_resolved] Refund V2 context already confirms refund settlement from the fresh backend on-chain lifecycle for job {job_id}. Do not render another unresolved-settlement notice from this delayed/replayed verdict. Run `onchainos agent refund-prepare {job_id}` and route its final Refund V2 result."
         );
     }
     let provider_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
@@ -136,7 +135,7 @@ pub(crate) fn dispute_resolved(
         .as_deref()
         .or_else(|| p.service_id.as_deref())
         .or(Some("service unavailable"));
-    // A dispute result is a verdict, not the dedicated final-refund event.
+    // A dispute result is a verdict, not by itself a subscription refund cause.
     // Always display the fresh original payment; never relabel refundAmount
     // (which may be zero on an ASP win) as the original amount.
     let amount = (!p.token_amount.is_empty()).then_some(p.token_amount.as_str());
