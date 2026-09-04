@@ -12,7 +12,7 @@ use crate::commands::agent_commerce::task::common::okx_a2a;
 use crate::commands::agent_commerce::task::common::subscription_identity::{
     select_subscription_agent_id,
 };
-use crate::commands::agent_commerce::task::common::DEBUG_LOG;
+use crate::commands::agent_commerce::task::common::{self, DEBUG_LOG};
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 
@@ -148,6 +148,31 @@ fn prepare_guide_consent(
 fn activate_guide_consent(job_id: &str) -> Result<()> {
     super::super::common::autotrade::guide::activate_prepared_consent(job_id)
 }
+
+fn build_duplicate_subscription_block(
+    service_id: &str,
+    existing: &super::subscription_ops::ExistingSubscriptionSummary,
+) -> serde_json::Value {
+    let base = format!(
+        "Service {service_id} already has a subscription task, jobId: {}. It cannot be created again.",
+        existing.job_id
+    );
+    let prompt = if existing.restore_listening_available {
+        format!("{base} Would you like to restore listening?")
+    } else {
+        base
+    };
+    let mut block = serde_json::json!({
+        "blockedReason": "duplicate-subscription",
+        "userFacingPrompt": prompt,
+        "existingSubscription": existing,
+    });
+    if existing.restore_listening_available {
+        block["nextAfterUserChoice"] = serde_json::json!(["restore-listening"]);
+    }
+    block
+}
+
 pub async fn handle_create_subscribe(
     client: &mut TaskApiClient,
     params: CreateSubscribeParams,
@@ -167,6 +192,43 @@ pub async fn handle_create_subscribe(
     let user_agent_id = select_subscription_agent_id(&user_agent_id, "")?;
     if DEBUG_LOG {
         eprintln!("[create-subscribe] user identity check passed (agentId: {user_agent_id})");
+    }
+
+    // Repeat the selection-time duplicate and balance checks immediately
+    // before the V2 subscription write boundary.
+    let existing_subscriptions =
+        super::subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
+            client,
+            &user_agent_id,
+        )
+        .await?;
+    if let Some(existing) = super::subscription_ops::existing_subscription_for_service(
+        &existing_subscriptions,
+        &params.service_id,
+    ) {
+        return Err(crate::output::CliDuplicateSubscription {
+            data: build_duplicate_subscription_block(&params.service_id, existing),
+        }
+        .into());
+    }
+
+    if let Some(insufficient) = subscribe_balance_shortfall(
+        &params.service_token_amount,
+        &params.service_token_address,
+    )
+    .await?
+    {
+        let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("failed to resolve the funding address"))?;
+        return Err(crate::output::CliFundingBlocked {
+            data: build_subscription_funding_block(
+                &insufficient,
+                &deposit,
+                &params.service_token_address,
+            )?,
+        }
+        .into());
     }
 
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
@@ -263,6 +325,62 @@ pub async fn handle_create_subscribe(
         "payload": payload,
     }));
     Ok(())
+}
+
+async fn subscribe_balance_shortfall(
+    service_token_amount: &str,
+    service_token_address: &str,
+) -> Result<Option<common::deposit_qr::InsufficientBalanceError>> {
+    let required: f64 = service_token_amount.parse().unwrap_or(0.0);
+    if required <= 0.0 {
+        return Ok(None);
+    }
+
+    let symbol = match common::util::resolve_token_symbol_by_address(
+        common::XLAYER_CHAIN_INDEX,
+        service_token_address,
+    )
+    .await
+    {
+        Ok(symbol) => symbol,
+        Err(error) => {
+            if DEBUG_LOG {
+                eprintln!(
+                    "[create-subscribe] token symbol resolution failed; skipping balance pre-check: {error}"
+                );
+            }
+            return Ok(None);
+        }
+    };
+
+    match common::ensure_sufficient_balance(required, &symbol).await {
+        Ok(()) => Ok(None),
+        Err(error) => match error.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
+            Some(insufficient) => Ok(Some(insufficient.clone())),
+            None => Err(error),
+        },
+    }
+}
+
+fn build_subscription_funding_block(
+    insufficient: &common::deposit_qr::InsufficientBalanceError,
+    deposit: &common::deposit_qr::DepositInfo,
+    token_address: &str,
+) -> Result<serde_json::Value> {
+    crate::funding::build_funding_bundle_for_address(
+        "",
+        &deposit.chain_index,
+        &deposit.address,
+        crate::funding::FundingBlockedInput {
+            asset: &insufficient.currency,
+            token_address,
+            required: &insufficient.required,
+            balance: Some(&insufficient.available),
+            operation: Some(crate::funding::FUNDING_OPERATION_TASK_CREATION),
+            error_code: None,
+            error_message: None,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -544,6 +662,32 @@ mod tests {
             .validate()
             .expect_err("a missing attachment must stop subscription creation");
         assert!(error.to_string().contains("attachment file is not readable"));
+    }
+
+    #[test]
+    fn subscription_funding_block_uses_common_funding_contract() {
+        let insufficient = common::deposit_qr::InsufficientBalanceError::new(
+            "insufficient".to_string(),
+            "USDT",
+            0.0001,
+            0.0,
+        );
+        let deposit = common::deposit_qr::deposit_info_for_address(
+            "0x1234567890abcdef1234567890abcdef12345678",
+        );
+        let output = build_subscription_funding_block(
+            &insufficient,
+            &deposit,
+            "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+        )
+        .expect("common Funding result");
+        assert_eq!(output["phase"], "funding_required");
+        assert_eq!(output["decision"], "blocked");
+        assert_eq!(output["reason"], "insufficient_balance");
+        assert_eq!(output["nextAction"], serde_json::json!([]));
+        assert_eq!(output["payload"]["operation"], "task_creation");
+        assert_eq!(output["payload"]["fundingNeed"]["required"], "0.0001");
+        assert!(output["payload"]["qr"].is_object());
     }
 
     #[test]

@@ -699,6 +699,68 @@ pub(crate) async fn force_refresh_access_token() -> Result<String> {
     Ok(resp.access_token)
 }
 
+/// Unwrap a parsed wallet-API response envelope (`{code, msg, data}`), given the HTTP
+/// status that carried it.
+///
+/// - `code == 0` (string `"0"` or numeric `0`) → returns the `data` field verbatim.
+/// - any non-zero backend `code` → returns an [`ApiCodeError`] that preserves the backend's
+///   original `code` and `msg` (only auth-code `50114` is augmented, by
+///   `augment_auth_error_msg`).
+///
+/// The send/transfer path (`pre_transaction_unsigned_info` → `handle_response`) relies on
+/// this to recover a real `code=10004` + `msg` and map it downstream (transfer/mod.rs, T10):
+/// callers `downcast_ref::<ApiCodeError>()` and branch on `code`. We MUST NOT collapse a
+/// backend code into a generic string, nor synthesize a `10004` from anything here — an
+/// `executeResult=false` body arrives as a `code=0` success envelope and is passed through
+/// as `Ok(data)`, leaving the simulation-failure verdict to the downstream
+/// `executeResult` / `executeErrorMsg` contract.
+///
+/// Pure / no `self` — factored out of `handle_response` so this envelope-unwrap contract is
+/// unit-testable without a live HTTP response.
+fn unwrap_wallet_envelope(http_status: u16, body: &Value) -> Result<Value> {
+    // Handle code as either string "0" or number 0.
+    let code_ok = match &body["code"] {
+        Value::String(s) => s == "0",
+        Value::Number(n) => n.as_i64() == Some(0),
+        _ => false,
+    };
+    if !code_ok {
+        let code_str = match &body["code"] {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            other => other.to_string(),
+        };
+        let msg_raw = body["msg"]
+            .as_str()
+            .or_else(|| body["errorMessage"].as_str())
+            .or_else(|| body["error_message"].as_str())
+            .or_else(|| body["message"].as_str())
+            .or_else(|| body["detailMsg"].as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                eprintln!(
+                    "[WalletAPI] no msg field in error response (HTTP {}), raw body: {}",
+                    http_status, body
+                );
+                let s = body.to_string();
+                if s.len() <= 200 {
+                    s
+                } else {
+                    format!("{}…", &s[..200])
+                }
+            });
+        let msg = crate::client::augment_auth_error_msg(&code_str, &msg_raw);
+        return Err(ApiCodeError {
+            code: code_str,
+            msg,
+            http_status,
+        }
+        .into());
+    }
+
+    Ok(body["data"].clone())
+}
+
 impl WalletApiClient {
     pub fn new() -> Result<Self> {
         Self::with_base_url(None)
@@ -1128,40 +1190,11 @@ impl WalletApiClient {
             )
         })?;
 
-        // Handle code as either string "0" or number 0
-        let code_ok = match &body["code"] {
-            Value::String(s) => s == "0",
-            Value::Number(n) => n.as_i64() == Some(0),
-            _ => false,
-        };
-        if !code_ok {
-            let code_str = match &body["code"] {
-                Value::String(s) => s.clone(),
-                Value::Number(n) => n.to_string(),
-                other => other.to_string(),
-            };
-            let msg_raw = body["msg"]
-                .as_str()
-                .or_else(|| body["errorMessage"].as_str())
-                .or_else(|| body["error_message"].as_str())
-                .or_else(|| body["message"].as_str())
-                .or_else(|| body["detailMsg"].as_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| {
-                    eprintln!("[WalletAPI] no msg field in error response (HTTP {}), raw body: {}", status.as_u16(), body);
-                    let s = body.to_string();
-                    if s.len() <= 200 { s } else { format!("{}…", &s[..200]) }
-                });
-            let msg = crate::client::augment_auth_error_msg(&code_str, &msg_raw);
-            return Err(ApiCodeError {
-                code: code_str,
-                msg,
-                http_status: status.as_u16(),
-            }
-            .into());
-        }
-
-        Ok(body["data"].clone())
+        // Envelope unwrap (code check → data passthrough, or a code+msg-preserving
+        // ApiCodeError). Factored into `unwrap_wallet_envelope` so the contract — notably
+        // the backend `code=10004` passthrough the send/transfer path depends on — stays
+        // unit-testable without a live HTTP response.
+        unwrap_wallet_envelope(status.as_u16(), &body)
     }
 
     /// GET without Authorization header (for public buyer payment links etc).
@@ -1883,6 +1916,77 @@ mod tests {
         assert!(!is_invalid_token_error(&anyhow::anyhow!(
             "Network unavailable — check your connection and try again"
         )));
+    }
+
+    #[test]
+    fn send_unwrap_preserves_backend_10004_code_and_msg() {
+        // Real backend insufficient-balance envelope on the send/transfer path.
+        // The unwrap MUST preserve the original code=10004 + msg so transfer/mod.rs (T10)
+        // can detect a real 10004 and map it — NOT collapse it into a bare anyhow!("...").
+        let body: Value = serde_json::from_str(
+            r#"{
+                "code": "10004",
+                "msg": "insufficient balance",
+                "data": []
+            }"#,
+        )
+        .unwrap();
+        let err = unwrap_wallet_envelope(200, &body).expect_err("non-zero code must be an error");
+        let coded = err
+            .downcast_ref::<ApiCodeError>()
+            .expect("must preserve a structured {code,msg}, not a generic error string");
+        assert_eq!(coded.code, "10004");
+        // msg preserved verbatim (only auth-code 50114 is ever augmented).
+        assert_eq!(coded.msg, "insufficient balance");
+        assert_eq!(coded.http_status, 200);
+    }
+
+    #[test]
+    fn send_unwrap_preserves_non_10004_code_verbatim() {
+        // A non-10004 backend error must keep surfacing exactly as before: a structured
+        // ApiCodeError carrying the backend's own code + msg (no special-casing, no rewrite).
+        let body: Value = serde_json::from_str(
+            r#"{ "code": "51000", "msg": "some other backend error", "data": [] }"#,
+        )
+        .unwrap();
+        let err = unwrap_wallet_envelope(200, &body).unwrap_err();
+        let coded = err
+            .downcast_ref::<ApiCodeError>()
+            .expect("structured error preserved");
+        assert_eq!(coded.code, "51000");
+        assert_eq!(coded.msg, "some other backend error");
+    }
+
+    #[test]
+    fn send_unwrap_does_not_synthesize_10004_from_execute_result_false() {
+        // A code=0 success envelope whose data[0].executeResult=false is a *simulation
+        // failure*, owned by the executeResult / executeErrorMsg contract downstream.
+        // The envelope unwrap MUST pass the data through as Ok — it must NOT rewrite an
+        // executeResult=false into a synthesized code=10004 (anti-synthesis rule, spec §2.1.1).
+        let body: Value = serde_json::from_str(
+            r#"{
+                "code": "0",
+                "msg": "",
+                "data": [{
+                    "executeResult": false,
+                    "executeErrorMsg": "simulation failed: gas required exceeds allowance"
+                }]
+            }"#,
+        )
+        .unwrap();
+        let data = unwrap_wallet_envelope(200, &body)
+            .expect("code=0 envelope must unwrap to Ok(data), never a synthesized 10004");
+        let item = data
+            .as_array()
+            .and_then(|a| a.first())
+            .expect("data[0] present");
+        // Parses as a simulation failure (execute_result=false), NOT an ApiCodeError(10004).
+        let resp: UnsignedInfoResponse = serde_json::from_value(item.clone()).unwrap();
+        assert_eq!(resp.execute_result, Value::Bool(false));
+        assert_eq!(
+            resp.execute_error_msg,
+            "simulation failed: gas required exceeds allowance"
+        );
     }
 
     #[test]

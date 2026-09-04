@@ -82,11 +82,16 @@ use the Action routing and Output templates sections in
 
 ```json
 {
-  "phase": "balance_validation",
+  "phase": "funding_required",
   "decision": "blocked",
   "reason": "insufficient_balance",
-  "nextAction": [{"id": "fund_account", "recommend": true}],
-  "payload": {}
+  "nextAction": [],
+  "payload": {
+    "operation": "task_creation",
+    "fundingTarget": {},
+    "qr": {},
+    "fundingNeed": {}
+  }
 }
 ```
 
@@ -101,6 +106,12 @@ Route by `decision`, then use `reason`, `nextAction`, and `payload`:
 - `ready`: execute or present `nextAction`.
 - `blocked`: stop the current path and handle `reason`.
 - `requires_user_input`: collect only the missing input indicated by `payload`, then retry the selected `nextAction`.
+
+A structured `phase=funding_required`, `decision=blocked`,
+`reason=insufficient_balance` result has no action-routing entry. Open
+[`funding.md`](../okx-agentic-wallet/references/funding.md) immediately; that
+Reference owns balance verification and the handoff back to a fresh task
+preview.
 
 Render `nextAction` as a numbered list when user choice is required. Execute a
 single safe action directly when its routing reference requires no confirmation.
