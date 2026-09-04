@@ -4149,6 +4149,37 @@ fn refund_final_context_ready(
     task::user::refund_v2::refund_event_settlement_confirmed(context, expected_status, event)
 }
 
+/// Whether the outer freshness retry has enough authoritative context to hand
+/// a buyer-side refund lifecycle event to its handler.
+///
+/// `job_asp_reject_closed` is overloaded across task kinds. For a subscription,
+/// Closed(7) proves only that the service lifecycle closed; its existing handler
+/// deliberately renders closure without claiming refund settlement. Requiring
+/// final refund proof here would only exhaust the retry window before reaching
+/// that safe handler. A one-time close still needs the normal refund-finality
+/// check before the retry loop considers it ready.
+fn buyer_refund_freshness_ready(
+    context: &task::common::PreFetchedTaskContext,
+    event: &str,
+    expected_user_agent_id: &str,
+    expected_status: i64,
+    requires_confirmed_outcome: bool,
+) -> bool {
+    if context.status != Some(expected_status)
+        || context.user_agent_id.as_deref() != Some(expected_user_agent_id)
+    {
+        return false;
+    }
+
+    if !requires_confirmed_outcome
+        || (event == "job_asp_reject_closed" && context.job_type == Some(1))
+    {
+        return true;
+    }
+
+    refund_final_context_ready(context, event, expected_user_agent_id)
+}
+
 /// A user-side arbitration result is allowed to emit verdict, rating,
 /// notification, and cleanup side effects only after a fresh composed
 /// task/subscription read binds the job to the current buyer. Subscription
@@ -4421,10 +4452,13 @@ async fn check_status_freshness(
             .await
             {
                 Ok(context) => {
-                    let ready = context.status == Some(expected_status)
-                        && context.user_agent_id.as_deref() == Some(agent_id)
-                        && (!requires_confirmed_outcome
-                            || refund_final_context_ready(&context, job_status_or_event, agent_id));
+                    let ready = buyer_refund_freshness_ready(
+                        &context,
+                        job_status_or_event,
+                        agent_id,
+                        expected_status,
+                        requires_confirmed_outcome,
+                    );
                     latest_context = Some(context);
                     latest_error = None;
                     if ready {
@@ -4672,9 +4706,9 @@ async fn check_status_freshness(
 #[cfg(test)]
 mod authoritative_detail_path_tests {
     use super::{
-        asp_refund_context_block_reason, buyer_refund_event_status_policy, detail_path_for_event,
-        dispute_result_context_block_reason, refund_event_status_policy,
-        refund_final_context_ready, subscription_acceptance_status,
+        asp_refund_context_block_reason, buyer_refund_event_status_policy,
+        buyer_refund_freshness_ready, detail_path_for_event, dispute_result_context_block_reason,
+        refund_event_status_policy, refund_final_context_ready, subscription_acceptance_status,
         subscription_event_block_reason, subscription_failed_context_block_reason,
         subscription_refund_final_block_reason, subscription_side_effect_context_block_reason,
         subscription_side_effect_event_status_policy,
@@ -4938,6 +4972,84 @@ mod authoritative_detail_path_tests {
             &zero_price_subscription_closed,
             "job_asp_reject_closed",
             "buyer-1"
+        ));
+    }
+
+    #[test]
+    fn subscription_asp_reject_closed_freshness_requires_only_buyer_owned_closed() {
+        let subscription_closed =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "status": 7,
+                    "buyerAgentId": "buyer-1",
+                    "paymentTokenAmount": "10",
+                    "paymentTokenSymbol": "USDT",
+                    "paymentTokenAddress": "0xtoken",
+                }),
+            );
+
+        // Subscription Closed(7) is fresh enough for the safe close handler,
+        // even though it deliberately does not prove refund finality.
+        assert!(!refund_final_context_ready(
+            &subscription_closed,
+            "job_asp_reject_closed",
+            "buyer-1"
+        ));
+        assert!(buyer_refund_freshness_ready(
+            &subscription_closed,
+            "job_asp_reject_closed",
+            "buyer-1",
+            7,
+            true,
+        ));
+
+        let mut stale = subscription_closed.clone();
+        stale.status = Some(1);
+        assert!(!buyer_refund_freshness_ready(
+            &stale,
+            "job_asp_reject_closed",
+            "buyer-1",
+            7,
+            true,
+        ));
+        assert!(!buyer_refund_freshness_ready(
+            &subscription_closed,
+            "job_asp_reject_closed",
+            "buyer-2",
+            7,
+            true,
+        ));
+
+        // The exception is event-specific; a generic subscription job_closed
+        // still does not become refund-final merely because status is Closed.
+        assert!(!buyer_refund_freshness_ready(
+            &subscription_closed,
+            "job_closed",
+            "buyer-1",
+            7,
+            true,
+        ));
+
+        // One-time paid closes retain the existing final-refund requirement.
+        let one_time_unconfirmed =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 0,
+                    "status": 7,
+                    "buyerAgentId": "buyer-1",
+                    "paymentMode": 3,
+                    "paymentTokenAmount": "10",
+                    "paymentTokenSymbol": "USDT",
+                    "paymentTokenAddress": "0xtoken",
+                }),
+            );
+        assert!(!buyer_refund_freshness_ready(
+            &one_time_unconfirmed,
+            "job_asp_reject_closed",
+            "buyer-1",
+            7,
+            true,
         ));
     }
 

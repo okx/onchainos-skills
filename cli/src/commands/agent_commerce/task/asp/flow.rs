@@ -329,13 +329,6 @@ pub async fn generate_next_action(
          onchainos agent session-cleanup --job-id {job_id}\n\
          ```\n\
          Then follow the command's output to close conversations (if applicable).");
-    let expired_assignment_session_hint = format!("\
-ℹ️ This ASP assignment has ended, while buyer refund settlement remains pending — run the ASP-side cleanup command (handles pending-decision cancellation automatically):\n\
-         ```bash\n\
-         onchainos agent session-cleanup --job-id {job_id}\n\
-         ```\n\
-         Then follow the command's output to close this ASP assignment conversation (if applicable).");
-
     let event = parse_status_or_event(event_str);
     match event {
         // ─── Scene 3: Apply has been recorded on-chain (escrow path; the User Agent issues the payment) ──
@@ -761,15 +754,30 @@ pub async fn generate_next_action(
         .await,
 
         // ─── Job notifications (display-only) ──────────────────────────────
-        Event::JobAspAcceptExpire => {
-            super::v2::notification::job_asp_accept_expire(job_id, message)
-        }
-        Event::JobAspRejectClosed => {
-            super::v2::notification::job_asp_reject_closed(job_id, message)
-        }
-        Event::JobAspRejectExpire => {
-            super::v2::notification::job_asp_reject_expire(job_id, message)
-        }
+        Event::JobAspAcceptExpire => match prefetched {
+            Some(task) => super::v2::notification::job_asp_accept_expire(job_id, task),
+            None => super::v2::notification::authoritative_context_required(
+                job_id,
+                "job_asp_accept_expire",
+                &["taskDetail"],
+            ),
+        },
+        Event::JobAspRejectClosed => match prefetched {
+            Some(task) => super::v2::notification::job_asp_reject_closed(job_id, task, message),
+            None => super::v2::notification::authoritative_context_required(
+                job_id,
+                "job_asp_reject_closed",
+                &["taskDetail"],
+            ),
+        },
+        Event::JobAspRejectExpire => match prefetched {
+            Some(task) => super::v2::notification::job_asp_reject_expire(job_id, task),
+            None => super::v2::notification::authoritative_context_required(
+                job_id,
+                "job_asp_reject_expire",
+                &["taskDetail"],
+            ),
+        },
         Event::SubAspClaimNotify => {
             super::v2::notification::sub_asp_claim_notify(job_id, message)
         }
@@ -793,41 +801,6 @@ pub async fn generate_next_action(
              Silently ignore; end this turn.\n",
             event = event.as_str()
         ),
-
-        // V2 provider-decision deadline events can be delivered to both roles. On the
-        // ASP side they never authorize a money-moving action. Expired(8) is still a
-        // pending buyer settlement state even though this ASP's assignment has ended.
-        Event::JobAspAcceptExpire => sub_asp_notify(
-            "job_asp_accept_expire (acceptance deadline elapsed)",
-            &format!(
-                "[Assignment Expired] The acceptance deadline for job {job_id} elapsed before you accepted it. Stop work for this assignment. Refund reconciliation belongs to the buyer/backend; do not sign, claim, or report that a refund settled."
-            ),
-            Some(expired_assignment_session_hint.as_str()),
-        ),
-        Event::JobAspRejectExpire => sub_asp_notify(
-            "job_asp_reject_expire (refund response deadline elapsed)",
-            &format!(
-                "[Refund Response Expired] The response deadline for job {job_id} elapsed. Backend automatic refund settlement is still pending at Expired status. Stop delivery and do not agree, dispute, claim, or report a completed refund from this event."
-            ),
-            Some(expired_assignment_session_hint.as_str()),
-        ),
-        Event::JobAspRejectClosed => {
-            let reject_reason = message
-                .and_then(|value| value.get("aspRejectReason"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            let reason_suffix = reject_reason
-                .map(|reason| format!(" Reason: {reason}"))
-                .unwrap_or_default();
-            sub_asp_notify(
-                "job_asp_reject_closed (provider decline closed)",
-                &format!(
-                    "[Assignment Closed] Your pre-acceptance decline closed job {job_id}.{reason_suffix} Stop work for this assignment. This event does not authorize any further funds action."
-                ),
-                Some(terminal_session_hint.as_str()),
-            )
-        }
 
         // ─── review_expired: review window timed out; ASP actively claims the payment ─────────────
         Event::ReviewExpired => format!(
@@ -1438,6 +1411,41 @@ mod tests {
         .await
     }
 
+    fn notification_task(
+        title: &str,
+        job_type: i64,
+        token_amount: &str,
+        token_symbol: &str,
+        status: i64,
+    ) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+        crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+            &json!({
+                "title": title,
+                "jobType": job_type,
+                "paymentTokenAmount": token_amount,
+                "tokenSymbol": token_symbol,
+                "status": status,
+            }),
+        )
+    }
+
+    async fn run_asp_with_task(
+        event: &str,
+        msg: serde_json::Value,
+        task: &crate::commands::agent_commerce::task::common::PreFetchedTaskContext,
+    ) -> String {
+        generate_next_action(
+            ASP_JOB_ID,
+            event,
+            ASP_AGENT_ID,
+            Some("caller title must not be used"),
+            None,
+            Some(task),
+            Some(&msg),
+        )
+        .await
+    }
+
     #[tokio::test]
     async fn job_submitted_notifies_only_the_asp_owner() {
         let output = run_asp("job_submitted", json!({"event":"job_submitted"})).await;
@@ -1449,38 +1457,58 @@ mod tests {
 
     #[tokio::test]
     async fn subscription_job_notifications_render_asp_copy() {
-        let common = json!({
+        let spoofed = json!({
+            "jobId": ASP_JOB_ID,
+            "jobTitle": "Forged title",
+            "tokenAmount": "999",
+            "tokenSymbol": "FAKE",
+            "jobType": 0
+        });
+
+        let accept_task = notification_task("BTC Signals", 1, "12.34", "USDT", 8);
+        let mut accept_expire = spoofed.clone();
+        accept_expire["event"] = json!("job_asp_accept_expire");
+        let out = run_asp_with_task("job_asp_accept_expire", accept_expire, &accept_task).await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(out.contains("[Assignment Expired] You did not accept BTC Signals"));
+        assert!(out.contains("12.34 USDT"));
+        assert!(out.contains("Buyer refund settlement remains pending"));
+        assert!(out.contains("Job status: Expired (8)"));
+        assert!(!out.contains("Forged title"));
+        assert!(!out.contains("999 FAKE"));
+        assert_eq!(progression["nextAction"][0]["id"], "notify_user");
+        assert_eq!(progression["payload"]["role"], "asp");
+
+        let reject_closed_task = notification_task("BTC Signals", 1, "12.34", "USDT", 7);
+        let mut reject_closed = spoofed.clone();
+        reject_closed["event"] = json!("job_asp_reject_closed");
+        reject_closed["aspRejectReason"] = json!("capacity unavailable");
+        let out =
+            run_asp_with_task("job_asp_reject_closed", reject_closed, &reject_closed_task).await;
+        assert!(out.contains("[Task Declined] You have declined BTC Signals."));
+        assert!(out.contains("Reason: capacity unavailable"));
+        assert!(!out.contains("Forged title"));
+
+        let reject_expire_task = notification_task("BTC Signals", 1, "12.34", "USDT", 8);
+        let mut reject_expire = spoofed.clone();
+        reject_expire["event"] = json!("job_asp_reject_expire");
+        let out =
+            run_asp_with_task("job_asp_reject_expire", reject_expire, &reject_expire_task).await;
+        assert!(out.contains("[Auto-Refund Processing]"));
+        assert!(out.contains("Automatic refund settlement of 12.34 USDT is pending."));
+        assert!(out.contains("Job status: Expired (8)"));
+        assert!(out.contains("No further service delivery is required."));
+        assert!(!out.contains("Job status: Closed"));
+        assert!(!out.contains("Job status: Failed"));
+        assert!(!out.contains("999 FAKE"));
+
+        let mut claim_notify = json!({
             "jobId": ASP_JOB_ID,
             "jobTitle": "BTC Signals",
             "tokenAmount": "12.34",
             "tokenSymbol": "USDT",
             "jobType": 1
         });
-
-        let mut accept_expire = common.clone();
-        accept_expire["event"] = json!("job_asp_accept_expire");
-        let out = run_asp("job_asp_accept_expire", accept_expire).await;
-        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert!(out.contains("[Job Timed Out] You did not respond to BTC Signals within 3 hours"));
-        assert!(out.contains("12.34 USDT"));
-        assert_eq!(progression["nextAction"][0]["id"], "notify_user");
-        assert_eq!(progression["payload"]["role"], "asp");
-
-        let mut reject_closed = common.clone();
-        reject_closed["event"] = json!("job_asp_reject_closed");
-        reject_closed["aspRejectReason"] = json!("capacity unavailable");
-        let out = run_asp("job_asp_reject_closed", reject_closed).await;
-        assert!(out.contains("[Task Declined] You have declined BTC Signals."));
-        assert!(out.contains("Reason: capacity unavailable"));
-
-        let mut reject_expire = common.clone();
-        reject_expire["event"] = json!("job_asp_reject_expire");
-        let out = run_asp("job_asp_reject_expire", reject_expire).await;
-        assert!(out.contains("[Automatic Refund]"));
-        assert!(!out.contains("Response deadline:"));
-        assert!(out.contains("No further service delivery is required."));
-
-        let mut claim_notify = common;
         claim_notify["event"] = json!("sub_asp_claim_notify");
         claim_notify["txHash"] = json!("0xreceive");
         let out = run_asp("sub_asp_claim_notify", claim_notify).await;
@@ -1495,41 +1523,47 @@ mod tests {
 
     #[tokio::test]
     async fn ordinary_job_notifications_split_free_and_paid_copy() {
-        let base = json!({
+        let spoofed = json!({
             "jobId": ASP_JOB_ID,
-            "jobTitle": "One-off analysis",
-            "tokenSymbol": "USDT",
-            "jobType": 0
+            "jobTitle": "Forged subscription",
+            "tokenAmount": "999",
+            "tokenSymbol": "FAKE",
+            "jobType": 1
         });
 
-        let mut free = base.clone();
+        let free_task = notification_task("One-off analysis", 0, "0", "USDT", 8);
+        let mut free = spoofed.clone();
         free["event"] = json!("job_asp_accept_expire");
-        free["tokenAmount"] = json!("0");
-        let out = run_asp("job_asp_accept_expire", free).await;
-        assert!(out.contains("[Job Expired]"));
-        assert!(!out.contains("escrowed amount"));
+        let out = run_asp_with_task("job_asp_accept_expire", free, &free_task).await;
+        assert!(out.contains("[Assignment Expired]"));
+        assert!(out.contains("No paid amount needs to be returned."));
+        assert!(!out.contains("Buyer refund settlement remains pending"));
 
-        let mut paid = base.clone();
+        let paid_task = notification_task("One-off analysis", 0, "5", "USDT", 8);
+        let mut paid = spoofed.clone();
         paid["event"] = json!("job_asp_accept_expire");
-        paid["tokenAmount"] = json!("5");
-        let out = run_asp("job_asp_accept_expire", paid).await;
-        assert!(out.contains("escrowed amount of 5 USDT"));
-        assert!(out.contains("User Agent's wallet"));
+        let out = run_asp_with_task("job_asp_accept_expire", paid, &paid_task).await;
+        assert!(out.contains("Escrowed amount: 5 USDT"));
+        assert!(out.contains("Buyer refund settlement remains pending"));
+        assert!(!out.contains("999 FAKE"));
 
-        let mut declined = base.clone();
+        let declined_task = notification_task("One-off analysis", 0, "0", "USDT", 7);
+        let mut declined = spoofed.clone();
         declined["event"] = json!("job_asp_reject_closed");
-        declined["tokenAmount"] = json!("0");
         declined["aspRejectReason"] = json!("policy");
-        let out = run_asp("job_asp_reject_closed", declined).await;
+        let out = run_asp_with_task("job_asp_reject_closed", declined, &declined_task).await;
         assert!(out.contains("[Job Declined]"));
         assert!(out.contains("Job status: Closed"));
 
-        let mut free_refund = base;
+        let free_refund_task = notification_task("One-off analysis", 0, "0.000", "USDT", 8);
+        let mut free_refund = spoofed;
         free_refund["event"] = json!("job_asp_reject_expire");
-        free_refund["tokenAmount"] = json!("0.000");
-        let out = run_asp("job_asp_reject_expire", free_refund).await;
-        assert!(out.contains("[Refund Response Timed Out]"));
-        assert!(out.contains("Job status: Failed"));
+        let out = run_asp_with_task("job_asp_reject_expire", free_refund, &free_refund_task).await;
+        assert!(out.contains("[Refund Response Expired]"));
+        assert!(out.contains("Job status: Expired (8)"));
+        assert!(out.contains("No further service delivery is required."));
+        assert!(!out.contains("Job status: Failed"));
+        assert!(!out.contains("Job status: Closed"));
     }
 
     #[tokio::test]

@@ -525,9 +525,11 @@ pub fn subscription_job_asp_accept_expire_asp_notify(
     token_symbol: &str,
 ) -> String {
     format!(
-        "[Job Timed Out] You did not respond to {job_name} within 3 hours, and the job has timed out.\n\
-         Job ID: {job_id}\n\n\
-         The escrowed amount of {amount} {token_symbol} will be returned automatically to the user's wallet address."
+        "[Assignment Expired] You did not accept {job_name} before the deadline.\n\
+         Job ID: {job_id}\n\
+         Job status: Expired (8)\n\
+         Escrowed amount: {amount} {token_symbol}\n\
+         No further service delivery is required. Buyer refund settlement remains pending; this notification is not proof of completed settlement or funds receipt."
     )
 }
 
@@ -541,15 +543,16 @@ pub fn regular_job_asp_accept_expire_asp_notify(
 ) -> String {
     let payment = if is_paid {
         format!(
-            " The escrowed amount of {amount} {token_symbol} will be returned automatically to the User Agent's wallet."
+            "\nEscrowed amount: {amount} {token_symbol}\nBuyer refund settlement remains pending; this notification is not proof of completed settlement or funds receipt."
         )
     } else {
-        String::new()
+        "\nNo paid amount needs to be returned.".to_string()
     };
     format!(
-        "[Job Expired] You did not respond to {job_name} within 3 hours, and the job has expired.{payment}\n\n\
+        "[Assignment Expired] You did not accept {job_name} before the deadline.\n\n\
          Job ID: {job_id}\n\
-         Job status: Expired"
+         Job status: Expired (8){payment}\n\
+         No further service delivery is required."
     )
 }
 
@@ -588,10 +591,11 @@ pub fn subscription_job_asp_reject_expire_asp_notify(
     token_symbol: &str,
 ) -> String {
     format!(
-        "[Automatic Refund] You did not process the refund request for {job_name} by the deadline. The refund of {amount} {token_symbol} will be returned automatically to the user's wallet.\n\
+        "[Auto-Refund Processing] You did not process the refund request for {job_name} by the deadline. Automatic refund settlement of {amount} {token_symbol} is pending.\n\
          Job ID: {job_id}\n\
-         Job status: Closed\n\
-         No further service delivery is required."
+         Job status: Expired (8)\n\
+         No further service delivery is required.\n\
+         This notification is not proof of completed settlement or funds receipt."
     )
 }
 
@@ -605,15 +609,19 @@ pub fn regular_job_asp_reject_expire_asp_notify(
 ) -> String {
     if is_paid {
         format!(
-            "[Automatic Refund] You did not process the refund request for {job_name} by the deadline. The refund of {amount} {token_symbol} will be returned automatically to the User Agent's wallet.\n\n\
+            "[Auto-Refund Processing] You did not process the refund request for {job_name} by the deadline. Automatic refund settlement of {amount} {token_symbol} is pending.\n\n\
              Job ID: {job_id}\n\
-             Job status: Failed"
+             Job status: Expired (8)\n\
+             No further service delivery is required.\n\
+             This notification is not proof of completed settlement or funds receipt."
         )
     } else {
         format!(
-            "[Refund Response Timed Out] You did not process the refund request for {job_name} by the deadline. No payment was made for this job, so no refund is required.\n\n\
+            "[Refund Response Expired] You did not process the refund request for {job_name} by the deadline. No paid amount needs to be returned.\n\n\
              Job ID: {job_id}\n\
-             Job status: Failed"
+             Job status: Expired (8)\n\
+             No further service delivery is required.\n\
+             This notification is not proof of completed settlement or funds receipt."
         )
     }
 }
@@ -647,7 +655,7 @@ mod tests {
                 "12.34",
                 "USDT",
             ),
-            "[Job Timed Out] You did not respond to BTC Signals within 3 hours, and the job has timed out.\nJob ID: job-1\n\nThe escrowed amount of 12.34 USDT will be returned automatically to the user's wallet address."
+            "[Assignment Expired] You did not accept BTC Signals before the deadline.\nJob ID: job-1\nJob status: Expired (8)\nEscrowed amount: 12.34 USDT\nNo further service delivery is required. Buyer refund settlement remains pending; this notification is not proof of completed settlement or funds receipt."
         );
         assert_eq!(
             subscription_job_asp_reject_closed_asp_notify(
@@ -664,7 +672,7 @@ mod tests {
                 "12.34",
                 "USDT",
             ),
-            "[Automatic Refund] You did not process the refund request for BTC Signals by the deadline. The refund of 12.34 USDT will be returned automatically to the user's wallet.\nJob ID: job-1\nJob status: Closed\nNo further service delivery is required."
+            "[Auto-Refund Processing] You did not process the refund request for BTC Signals by the deadline. Automatic refund settlement of 12.34 USDT is pending.\nJob ID: job-1\nJob status: Expired (8)\nNo further service delivery is required.\nThis notification is not proof of completed settlement or funds receipt."
         );
         assert_eq!(
             sub_asp_claim_notify_asp_notify(
@@ -680,7 +688,7 @@ mod tests {
             regular_job_asp_accept_expire_asp_notify(
                 "One-off analysis", "job-2", "0", "USDT", false,
             ),
-            "[Job Expired] You did not respond to One-off analysis within 3 hours, and the job has expired.\n\nJob ID: job-2\nJob status: Expired"
+            "[Assignment Expired] You did not accept One-off analysis before the deadline.\n\nJob ID: job-2\nJob status: Expired (8)\nNo paid amount needs to be returned.\nNo further service delivery is required."
         );
         assert_eq!(
             regular_job_asp_reject_closed_asp_notify("One-off analysis", "job-2", "policy"),
@@ -690,7 +698,13 @@ mod tests {
             regular_job_asp_reject_expire_asp_notify(
                 "One-off analysis", "job-2", "5", "USDT", true,
             ),
-            "[Automatic Refund] You did not process the refund request for One-off analysis by the deadline. The refund of 5 USDT will be returned automatically to the User Agent's wallet.\n\nJob ID: job-2\nJob status: Failed"
+            "[Auto-Refund Processing] You did not process the refund request for One-off analysis by the deadline. Automatic refund settlement of 5 USDT is pending.\n\nJob ID: job-2\nJob status: Expired (8)\nNo further service delivery is required.\nThis notification is not proof of completed settlement or funds receipt."
+        );
+        assert_eq!(
+            regular_job_asp_reject_expire_asp_notify(
+                "One-off analysis", "job-3", "0", "USDT", false,
+            ),
+            "[Refund Response Expired] You did not process the refund request for One-off analysis by the deadline. No paid amount needs to be returned.\n\nJob ID: job-3\nJob status: Expired (8)\nNo further service delivery is required.\nThis notification is not proof of completed settlement or funds receipt."
         );
     }
 

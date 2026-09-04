@@ -318,7 +318,7 @@ Translate the CLI's canonical `statusName` to the user's locked language. Use th
 | `completed` | `Completed` |
 | `close` | `Closed` |
 | `expired` | `Expired` |
-| `failed` | `Failed / refund terminal` |
+| `failed` | `Failed` |
 
 `failed` is task-kind dependent. For a one-time task, fresh backend
 chain-projected Failed(9) represents a successful refund transition. For a

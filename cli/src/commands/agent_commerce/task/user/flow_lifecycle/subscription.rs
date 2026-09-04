@@ -1,8 +1,8 @@
 //! Subscription lifecycle event handlers (user side).
 
-use super::super::flow::{
-    notify_and_end, notify_and_end_terminal, FlowContext, TERMINAL_NOTIFICATION_MARKER,
-};
+#[cfg(test)]
+use super::super::flow::TERMINAL_NOTIFICATION_MARKER;
+use super::super::flow::{notify_and_end, notify_and_end_terminal, FlowContext};
 use crate::commands::agent_commerce::task::common::okx_a2a;
 
 fn extract_str<'a>(message: Option<&'a serde_json::Value>, key: &str) -> Option<&'a str> {

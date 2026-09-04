@@ -510,15 +510,6 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::SubRejectRefundNotify => {
             super::flow_lifecycle::subscription::sub_reject_refund_notify(&ctx, message)
         }
-        Event::JobAspAcceptExpire => {
-            super::v2::notification::job_asp_accept_expire(job_id, message).to_string()
-        }
-        Event::JobAspRejectClosed => {
-            super::v2::notification::job_asp_reject_closed(job_id, message).to_string()
-        }
-        Event::JobAspRejectExpire => {
-            super::v2::notification::job_asp_reject_expire(job_id, message).to_string()
-        }
         Event::SubAspClaimNotify => {
             super::v2::notification::sub_asp_claim_notify(job_id).to_string()
         }
@@ -916,7 +907,6 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             "sub_trial_into_active" | "sub_renew" | "sub_expire_warn" |
             "sub_complete_notify" | "sub_close_notify" | "sub_failed_notify" |
             "sub_reject_refund_notify" |
-            "job_asp_accept_expire" | "job_asp_reject_closed" | "job_asp_reject_expire" |
             "sub_asp_claim_notify"
     );
     let core = if use_cli_minimal || event_str == "create_task" {
@@ -1378,22 +1368,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn terminal_subscription_events_carry_cleanup_hint() {
-        // Normal completion is unconditionally terminal for the Buyer.
-        // `sub_failed_notify` remains read-only because Failed(9) does not
-        // expose a trusted refund-vs-charge-failure cause.
-        const ALWAYS_TERMINAL: [&str; 1] = ["sub_complete_notify"];
-        for evt in ALWAYS_TERMINAL {
-            let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
-            assert!(
-                out.contains("session-cleanup"),
-                "{evt}: terminal event must append the cleanup hint"
-            );
-            assert!(
-                out.contains(TERMINAL_NOTIFICATION_MARKER),
-                "{evt}: terminal notification must carry the stable watch marker"
-            );
-        }
+    async fn subscription_refund_events_require_authoritative_terminal_handling() {
+        // V2 sub_complete_notify owns its own authoritative fetch and
+        // structured finalization. Refund-related Failed(9) notifications do
+        // not bypass Refund V2 finality or clean up a session by themselves.
         let mut ambiguous_failed = subscription_refund_prefetched(9, "12.34");
         ambiguous_failed.refund_request_provenance = false;
         let failed = run_with_prefetched(
@@ -1640,79 +1618,6 @@ mod tests {
         );
         assert!(out.contains("user-notify"), "display notification: {out}");
         assert!(out.contains("session-cleanup"), "{out}");
-    }
-
-    #[tokio::test]
-    async fn subscription_job_notifications_render_user_copy() {
-        let common = json!({
-            "jobId": JOB_ID,
-            "jobTitle": "BTC Signals",
-            "tokenAmount": "12.34",
-            "tokenSymbol": "USDT",
-            "providerName": "Signal ASP",
-            "providerAgentId": "5263",
-            "jobType": 1
-        });
-
-        let mut accept_expire = common.clone();
-        accept_expire["event"] = json!("job_asp_accept_expire");
-        let out = run("job_asp_accept_expire", accept_expire).await;
-        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert!(out.contains("[Job Timed Out] The ASP did not accept BTC Signals within 3 hours."));
-        assert!(out.contains("12.34 USDT"));
-        assert!(out.contains("ASP: Signal ASP (5263)"));
-        assert!(out.contains("trial eligibility remains unaffected"));
-        assert_eq!(progression["nextAction"][0]["id"], "notify_user");
-        assert_eq!(progression["payload"]["role"], "user");
-
-        let mut reject_closed = common.clone();
-        reject_closed["event"] = json!("job_asp_reject_closed");
-        reject_closed["aspRejectReason"] = json!("capacity unavailable");
-        let out = run("job_asp_reject_closed", reject_closed).await;
-        assert!(out.contains("[ASP Declined] The ASP declined BTC Signals."));
-        assert!(out.contains("Reason: capacity unavailable"));
-        assert!(out.contains("subscription did not begin"));
-
-        let mut reject_expire = common;
-        reject_expire["event"] = json!("job_asp_reject_expire");
-        let out = run("job_asp_reject_expire", reject_expire).await;
-        assert!(out.contains("[Automatic Refund]"));
-        assert!(!out.contains("response deadline:"));
-        assert!(out.contains("Job status: Closed"));
-    }
-
-    #[tokio::test]
-    async fn ordinary_job_notifications_split_free_and_paid_copy() {
-        let base = json!({
-            "jobId": JOB_ID,
-            "jobTitle": "One-off analysis",
-            "tokenSymbol": "USDT",
-            "providerName": "Analyst",
-            "providerAgentId": "42",
-            "jobType": 0
-        });
-
-        let mut free = base.clone();
-        free["event"] = json!("job_asp_accept_expire");
-        free["tokenAmount"] = json!("0");
-        let out = run("job_asp_accept_expire", free).await;
-        assert!(out.contains("[Job Expired]"));
-        assert!(!out.contains("escrowed amount"));
-
-        let mut paid = base.clone();
-        paid["event"] = json!("job_asp_reject_closed");
-        paid["tokenAmount"] = json!("5");
-        paid["aspRejectReason"] = json!("policy");
-        let out = run("job_asp_reject_closed", paid).await;
-        assert!(out.contains("escrowed amount of 5 USDT"));
-        assert!(out.contains("Job status: Closed"));
-
-        let mut free_refund = base;
-        free_refund["event"] = json!("job_asp_reject_expire");
-        free_refund["tokenAmount"] = json!("0.000");
-        let out = run("job_asp_reject_expire", free_refund).await;
-        assert!(out.contains("[Refund Process Completed]"));
-        assert!(out.contains("Job status: Failed"));
     }
 
     #[tokio::test]

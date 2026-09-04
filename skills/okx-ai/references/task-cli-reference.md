@@ -10,7 +10,7 @@
 
 - **Common (any role)**: `common context` · `communication-check` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
 - **Arbitration (User/ASP)**: `arbitration-list` · `arbitration-detail`
-- **User**: `create-task` · `task-create-prepare` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `refund-prepare` · `refund-execute` · `set-payment-mode` · `confirm-accept` · `task-402-pay` · `complete` · disabled legacy `reject` / `close` / `claim-auto-refund` · `task-attach`
+- **User**: `create-task` · `task-create-prepare` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `refund-prepare` · `refund-execute` · `set-payment-mode` · `confirm-accept` · `complete` · disabled legacy `reject` / `close` / `claim-auto-refund` · `task-attach`
 - **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · disabled legacy `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
 - **ASP**: `accept-job-by-provider` · `decline-job-by-provider` · `accept-subscription` · `decline-subscription` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`

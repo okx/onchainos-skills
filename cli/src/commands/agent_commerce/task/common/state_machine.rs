@@ -352,12 +352,6 @@ pub enum Event {
     SubRejectRefundNotify,
 
     // ── Job notifications (display-only; no task action) ────────────────────
-    /// The designated ASP did not accept the job within three hours.
-    JobAspAcceptExpire,
-    /// The designated ASP declined the job, so it was closed.
-    JobAspRejectClosed,
-    /// The ASP did not process the refund request before its deadline.
-    JobAspRejectExpire,
     /// Subscription income was collected and should be announced to the ASP.
     SubAspClaimNotify,
 

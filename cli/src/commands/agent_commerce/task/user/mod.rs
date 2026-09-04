@@ -25,7 +25,7 @@ mod offline_receive;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
-pub(crate) use flow_lifecycle::{route_subscription_delivery_to_skill, try_recover_from_temp_file};
+pub(crate) use flow_lifecycle::try_recover_from_temp_file;
 mod flow_negotiate;
 pub(crate) mod my_tasks;
 pub(crate) mod negotiate;
