@@ -1,18 +1,73 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+
+const ONCHAINOS_HOME_ENV: &str = "ONCHAINOS_HOME";
 
 /// Returns the path to `~/.onchainos` (or `%USERPROFILE%\.onchainos` on Windows).
 ///
 /// Can be overridden via the `ONCHAINOS_HOME` environment variable.
 pub fn onchainos_home() -> Result<PathBuf> {
-    if let Ok(p) = std::env::var("ONCHAINOS_HOME") {
-        return Ok(PathBuf::from(p));
+    if let Some(path) = std::env::var_os(ONCHAINOS_HOME_ENV).filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path));
     }
 
     let home = dirs::home_dir().context("cannot determine home directory")?;
     Ok(home.join(".onchainos"))
+}
+
+/// Root directory for task-scoped runtime state.
+pub fn task_state_root() -> Result<PathBuf> {
+    Ok(onchainos_home()?.join("task"))
+}
+
+/// Directory for one task's runtime state.
+pub fn task_state_dir(job_id: &str) -> Result<PathBuf> {
+    Ok(task_state_root()?.join(job_id))
+}
+
+/// Verify that task state can be created and written before a remote task is
+/// created. This prevents a backend job from being allocated when the local
+/// sandbox will reject the state write required before signing/broadcasting.
+pub fn ensure_task_state_writable() -> Result<PathBuf> {
+    let dir = task_state_root()?;
+    ensure_dir_0700(&dir).context("failed to prepare task state directory")?;
+
+    let probe = dir.join(format!(
+        ".write-probe-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let result = (|| -> Result<()> {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&probe)
+            .with_context(|| format!("task state directory is not writable: {}", dir.display()))?;
+        file.write_all(b"ok")
+            .with_context(|| format!("task state directory is not writable: {}", dir.display()))?;
+        file.flush()
+            .with_context(|| format!("task state directory is not writable: {}", dir.display()))?;
+        drop(file);
+        fs::remove_file(&probe)
+            .with_context(|| format!("failed to remove task state write probe {}", probe.display()))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&probe);
+    }
+    result?;
+    Ok(dir)
 }
 
 /// Shared mutex for tests that manipulate the `ONCHAINOS_HOME` environment variable.
@@ -269,6 +324,32 @@ mod tests {
         assert_eq!(mode, 0o700);
         std::env::remove_var("ONCHAINOS_HOME");
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn task_state_paths_respect_onchainos_home() {
+        with_temp_home("task_state_paths", |home| {
+            assert_eq!(task_state_root().unwrap(), home.join("task"));
+            assert_eq!(
+                task_state_dir("job-123").unwrap(),
+                home.join("task").join("job-123")
+            );
+        });
+    }
+
+    #[test]
+    fn ensure_task_state_writable_creates_and_cleans_probe() {
+        with_temp_home("task_state_writable", |home| {
+            let task = ensure_task_state_writable().unwrap();
+            assert_eq!(task, home.join("task"));
+            assert!(task.is_dir());
+            let probes: Vec<_> = fs::read_dir(&task)
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".write-probe-"))
+                .collect();
+            assert!(probes.is_empty(), "task-state write probe was not cleaned up");
+        });
     }
 
     /// Set up a sandbox `ONCHAINOS_HOME` under `target/test_tmp/<name>`, run `f`

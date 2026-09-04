@@ -94,7 +94,7 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
         "{task_block}\
          [Negotiation] negotiate_reply (ASP sent a natural-language message)\n\
          [Role] User (User)\n\n\
-         **2-round limit**: count how many user replies (your `okx-a2a xmtp-send` calls) have already been sent in this sub session's conversation history.\n\
+         **2-round limit**: count how many user replies (your `okx-a2a session send` calls) have already been sent in this sub session's conversation history.\n\
          - Rounds sent < 2 → reply normally (see below).\n\
          - Rounds sent ≥ 2 → negotiation exceeded the 2-round limit. **Do NOT reply.** Jump to **[Over-limit]** below.\n\n\
          **Reply about**: scope, requirements, deliverable format, timeline, clarifying questions.\n\n\
@@ -103,11 +103,11 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
          \x20\x20❌ `set-payment-mode` / `confirm-accept` / `reject-apply` / `apply` — no on-chain action belongs in this event.\n\n\
          [Normal reply — single CLI call, then end the turn]\n\n\
          ```bash\n\
-         okx-a2a xmtp-send \\\n\
+         okx-a2a session send \\\n\
          \x20\x20--job-id {job_id} \\\n\
          \x20\x20--to-agent-id {provider_agent_id} \\\n\
-         \x20\x20--message '<natural-language reply, {reply_hint}>' \\\n\
-         \x20\x20--no-wait\n\
+         \x20\x20--content '<natural-language reply, {reply_hint}>' \\\n\
+         \x20\x20--json\n\
          ```\n\n\
          ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, treat as over-limit (see below).\n\n\
          {over_limit_section}",
@@ -132,9 +132,9 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>) -> String {
     let mut client = TaskApiClient::new();
     let reset_result = client
         .post_with_identity(
-        &client.endpoint(job_id, "reset/asp"),
-        &serde_json::json!({}),
-        agent_id,
+            &client.endpoint(job_id, "reset/asp"),
+            &serde_json::json!({}),
+            agent_id,
         )
         .await;
 
@@ -157,10 +157,10 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>) -> String {
             "user",
             agent_id,
             None,
-        &user_content,
-        &format!("[Reject {short_id}] next-step decision"),
-        "job_provider_reject",
-    );
+            &user_content,
+            &format!("[Reject {short_id}] next-step decision"),
+            "job_provider_reject",
+        );
 
     format!(
     "[job_provider_reject] ✅ ASP binding reset (reset/asp) completed in-process.\n\n\

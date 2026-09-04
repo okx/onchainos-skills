@@ -2655,7 +2655,7 @@ mod tests {
     }
 
     #[test]
-    fn unconfigured_policy_skip_notification_invites_an_explicit_policy_update() {
+    fn unconfigured_legacy_policy_skip_notification_does_not_offer_restore() {
         let _guard = crate::home::TEST_ENV_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -2683,8 +2683,9 @@ mod tests {
 
         let rendered = notification(&outcome);
         assert!(rendered.contains("deliverable was saved"));
-        assert!(rendered.contains("no active copy-trade execution policy"));
-        assert!(rendered.contains("Update this subscription's copy-trade execution policy"));
+        assert!(rendered.contains("fixed-field legacy execution policy is retired"));
+        assert!(rendered.contains("cannot create or restore execution configuration"));
+        assert!(!rendered.contains("Update this subscription's copy-trade execution policy"));
         std::env::remove_var("ONCHAINOS_HOME");
     }
 

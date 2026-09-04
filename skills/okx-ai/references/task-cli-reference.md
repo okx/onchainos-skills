@@ -12,7 +12,7 @@
 - **Arbitration (User/ASP)**: `arbitration-list` · `arbitration-detail`
 - **User**: `create-task` · `task-create-prepare` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `set-payment-mode` · `confirm-accept` · `complete` · `reject` · `close` · `claim-auto-refund` · `task-attach`
 - **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
-- **ASP**: `apply` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
+- **ASP**: `accept-job-by-provider` · `decline-job-by-provider` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
 - **Dispute (both sides)**: `dispute raise` (approve) · `dispute confirm` (on-chain)
 - **Evaluator Agent**: `evidence-info` · `vote-commit` · `vote-reveal` · `arbitration-claim` · `arbitration-claimable` · `stake` · `increase-stake` · `request-unstake` · `claim-unstake` · `cancel-unstake` · `staking-config` · `my-stake`
@@ -118,7 +118,7 @@ agent pending-decisions-v2 list --format markdown
 
 ### next-action
 
-Output the script the agent should execute based on `(event, role)`
+Output the action result based on `(event, role)`
 
 ```
 agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message '<JSON>' [--a2a-file <path>]
@@ -129,7 +129,7 @@ agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message
 | `--role` | Yes | - | `user` / `asp` / `evaluator` / `auto` |
 | `--agentId` | Yes | - | Receiving agent's id |
 | `--message` | Yes | - | Entire `message` object from envelope as JSON string |
-| `--a2a-file` | No | - | User-side `[intent:deliver]` only: path to the complete raw A2A JSON envelope stored as a temp input file. Write this file with a JSON serializer for the whole envelope; treat `content` as an opaque string, even when it is not JSON. CLI validates the file and writes a canonical 0600 recovery spool copy before processing. Do not pass only `content`, and do not use stdin/heredoc/pipe/inline JSON for this envelope in tool-use runtimes. |
+| `--a2a-file` | Required for `deliverable_received` | - | Path to the complete raw A2A JSON envelope stored as a 0600 temp input file. CLI requires the current `a2a-agent-chat` shape, matching envelope and embedded `jobId`, the exact `receiverAgentId`, and terminal `[intent:deliver]`, then writes a canonical 0600 recovery spool copy. Direct legacy deliverable fields in `--message` are rejected. Do not pass only `content`, and do not use stdin/heredoc/pipe/inline JSON for this envelope in tool-use runtimes. |
 
 #### Fields CLI reads from `--message`
 
@@ -140,7 +140,6 @@ agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message
 | `code` | No | `0` | Tx receipt code; non-zero = tx failed                                                   |
 | `jobTitle` | No | - | Task title from system notification                                                     |
 | `provider` | No | - | Target provider agentId (user + `job_created` only)                                          |
-| `taskMinVersion` | No | - | Protocol version from inbound a2a-agent-chat; mismatch appends a non-blocking warning   |
 | `data` | No | - | User decision payload; required when event starts with `user_decision_`                 |
 
 ### list-attachments
@@ -161,38 +160,53 @@ agent list-attachments <jobId>
 
 ### create-task
 
-Publish a new task on-chain (params provided by `next-action` playbook; blocks on insufficient wallet balance)
-
-> **Insufficient-balance output (XLayer):** when under-funded, `create-task` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs` and puts `markdownImage` under option 1. If missing, show `balanceWarning`.
+Execute the confirmed fixed-price create-and-fund operation for one designated
+ASP. Discovery, field collection, price/balance validation, and explicit User
+confirmation happen before this command and are not repeated here.
 
 ```
-agent create-task --description <txt> --budget <num> --max-budget <num> --currency <USDT|USDG> \
-  --title <txt> \
-  --provider <agentId> \
-  --service-id <id> --payment-mode <escrow> [--service-params <txt>] \
-  [--service-token-address <addr>] [--service-token-amount <num>] \
+agent create-task --title <txt> --description <txt> \
+  --provider-agent-id <agentId> \
+  --payment-token-symbol <USDT|USDG> --payment-token-amount <decimal-string> \
+  --service-id <id> --service-params '<json>' \
+  --service-token-address <addr> --service-token-amount <decimal-string> \
+  [--description-summary <txt>] [--category-code <code>] \
+  [--min-credit-score <0..1>] [--visibility <private|public>] \
+  [--chain-id 196] [--file <path> ...] \
   [--service-guide '<exact Guide text>' [--service-guide-hash <sha256>] \
    --guide-consent-json '<Guide-defined values JSON object>'] \
-  [--file <path>]
 ```
 
 | Param | Required | Default | Description                                 |
 |---|---|---|---------------------------------------------|
-| `--description` | Yes | - | Task description (20–2000 chars)            |
-| `--budget` | Yes | - | Non-negative budget amount (max 10M, ≤6 decimals) |
-| `--max-budget` | Yes | - | Non-negative max budget (≥ budget)           |
-| `--currency` | Yes | - | `USDT` or `USDG`                            |
 | `--title` | Yes | - | Task title (max 30 chars)                   |
-| `--provider` | Yes | - | Provider agentId; always required |
+| `--description` | Yes | - | Confirmed task description (max 2000 Unicode characters) |
+| `--description-summary` | No | - | Optional summary (max 200 Unicode characters) |
+| `--provider-agent-id` | Yes | - | Confirmed ASP agentId |
+| `--payment-token-symbol` | Yes | - | Confirmed `USDT` or `USDG` symbol |
+| `--payment-token-amount` | Yes | - | Confirmed fixed price; exact decimal string, ≤6 decimals |
 | `--service-id` | Yes | - | UUID `serviceId` from `task-create-prepare data.payload` |
-| `--service-params` | No | - | Service input parameters (natural language) |
-| `--service-token-address` | No | - | Service token contract address              |
-| `--service-token-amount` | No | - | Service price from `task-create-prepare data.payload.feeAmount` |
+| `--service-params` | No | `{}` | Confirmed Service parameters encoded as JSON |
+| `--service-token-address` | Yes | - | Confirmed Service token contract address |
+| `--service-token-amount` | Yes | - | Confirmed Service price; exact decimal string |
+| `--category-code` | No | - | Confirmed backend category code |
+| `--min-credit-score` | No | - | Confirmed minimum credit score from 0 to 1 |
+| `--visibility` | No | `private` | Semantic visibility; `private` maps to 1, `public` to 0 |
+| `--chain-id` | No | `196` | X Layer only in this flow |
 | `--service-guide` | Required for Guide-driven execution | - | Exact provider Guide stored locally before broadcast |
 | `--service-guide-hash` | No | computed locally | Provider SHA-256 for the exact Guide; mismatch fails locally |
 | `--guide-consent-json` | Required with `--service-guide` | - | Explicit user-confirmed JSON object for the exact Guide; use `{}` when it declares no stored answers |
 | `--file` | No | - | Local file paths to attach (repeatable)     |
-| `--payment-mode` | Yes | - | `escrow`                          |
+
+Execution order is `createAndFundConfirmStatus` → EIP-3009 signing from that
+response → `createAndFund` → local attachment save → mandatory
+`okx-a2a job-provider bind-current` → broadcast with `bizType=201`. Success
+returns the progression envelope with `phase=creation`,
+`reason=broadcast_submitted`, `payload.jobId`, full `payload.broadcast`, and
+`nextAction.id=watch_task`. It does not mean `job_created` has arrived.
+`createAndFund` and broadcast are sent without transport replay. If either
+returns an unknown network result, do not rerun `create-task`; reconcile the
+task/transaction by the returned or previously recorded `jobId` first.
 
 ### funding-notice
 
@@ -539,6 +553,9 @@ User Agent accepts the deliverable and releases funds (params provided by `next-
 agent complete <jobId>
 ```
 
+Returns structured `deliverable_review` data with `jobId` and `txHash`. Final
+completion is confirmed by `job_completed`.
+
 ### reject
 
 User Agent rejects the deliverable (unified for regular and subscription tasks — auto-detects `jobType`)
@@ -546,6 +563,8 @@ User Agent rejects the deliverable (unified for regular and subscription tasks �
 ```
 agent reject <jobId> --reason "<reason>"
 ```
+
+Returns structured `deliverable_review` data with `jobId` and `txHash`.
 
 > For subscription tasks, this internally calls `/subscribe/{jobId}/reject`. For regular tasks, it uses the `pre-reject` → `reject` dual-sign flow. `subscribe-reject` is kept as an alias that routes through this unified command.
 
@@ -584,7 +603,9 @@ agent task-attach <jobId> --file <local-path> [--file <local-path> ...]
 
 ### create-subscribe
 
-Create a subscription task. Handles providerConfirmStatus → EIP-712 terms signing → create API → sign uopData → broadcast(bizType=101) internally.
+Create a subscription task. Handles `providerConfirmStatus` → EIP-712 terms
+signing → `createSubscription` → local readiness → sign `uopData` → broadcast
+(`bizType=204`) internally.
 
 ```
 agent create-subscribe \
@@ -592,9 +613,10 @@ agent create-subscribe \
   --service-token-amount <amt> --service-token-address <addr> \
   --auto-renew <0|1> \
   --title <txt> --description <txt> \
-  [--provider-agent-id <id>] [--service-params <params>] \
-  --service-guide '<exact Guide text>' [--service-guide-hash <sha256>] \
-  --guide-consent-json '<Guide-defined values JSON object>' \
+  --provider-agent-id <id> [--service-params <params>] \
+  [--service-interval <interval>] [--file <path>]... \
+  [--service-guide '<exact Guide text>' [--service-guide-hash <sha256>] \
+   --guide-consent-json '<Guide-defined values JSON object>'] \
   [--format json]
 ```
 
@@ -606,10 +628,12 @@ agent create-subscribe \
 | `--service-token-amount` | Yes | - | Monthly fee from `task-create-prepare data.payload.subscriptionInfo.feeAmount` |
 | `--service-token-address` | Yes | - | Fee token contract address from `task-create-prepare data.payload.feeToken` |
 | `--auto-renew` | Yes | - | 0=off, 1=on |
-| `--title` | Yes | - | Max 64 chars |
+| `--title` | Yes | - | Max 30 Unicode characters |
 | `--description` | Yes | - | Max 4096 chars |
 | `--file` | No (repeatable) | - | Local file paths to attach; 100 MB limit per file |
-| `--provider-agent-id` | No | - | Provider agentId (auto-resolved if service implies one) |
+| `--provider-agent-id` | Yes | - | Confirmed designated ASP agentId from `task-create-prepare data.payload` |
+| `--service-interval` | No | `month` | Billing interval from `task-create-prepare data.payload.subscriptionInfo.interval` |
+| `--format` | No | text | `json` returns structured post-creation capability and persistence fields |
 | `--service-guide` | Required for guide-driven signal execution | - | Exact provider Guide stored locally before broadcast at `ONCHAINOS_HOME/autotrade/guide/<jobId>.md` |
 | `--service-guide-hash` | No | computed locally | Provider SHA-256 for the exact Guide; mismatch fails locally |
 | `--guide-consent-json` | Required for guide-driven signal execution | - | Explicit user-confirmed JSON object for the exact Guide; pass `{}` when no values need storing. Credential-like keys are rejected. |
@@ -743,7 +767,40 @@ Output `data`: `{ "list": [ { "deviceId", "deviceName", "lastOnlineTime" (ms), "
 
 ## ASP
 
-### apply
+### v2 designated-provider decision
+
+```text
+agent accept-job-by-provider <jobId> --agent-id <aspAgentId>
+agent decline-job-by-provider <jobId> --agent-id <aspAgentId> --reason <text>
+```
+
+These commands are for `job_asp_selected` / `sub_created` after the buyer has
+already created and funded. Accept uses bizType 203 (single) or 205
+(subscription); decline uses 202 or 206. Decline reason is required and capped
+at 512 Unicode characters. They are new command names, not aliases of `apply`
+or `asp-reject`.
+
+### service-param-update
+
+```text
+agent service-param-update <jobId> --agent-id <buyerAgentId> \
+  --task-type single --request-id <id> --round <1|2|3> \
+  --service-params '<complete JSON>'
+```
+
+Replaces the complete backend `serviceParams` during a one-time-task §1.3
+clarification round. It calls the single-task `serviceParam` endpoint exactly
+once and succeeds only when the backend returns `data=null`. Send the structured
+`task_params_response` through `okx-a2a session send` only after the output says
+`backendUpdated=true`. Successful request IDs are persisted under
+`$OKX_AGENT_TASK_HOME/task-params/` (or
+`~/.okx-agent-task/task-params/`), deduplicated, required to be sequential, and
+capped at three successful backend updates per job. A successful update consumes
+the round and returns the registered `send_task_params_response` action; an
+identical retry of the same `requestId` returns that action without consuming a
+new round.
+
+### apply (legacy lifecycle only)
 
 ASP applies for a task on-chain — escrow path only (params provided by `next-action` playbook)
 
@@ -755,22 +812,25 @@ agent apply <jobId> --token-amount <price> --token-symbol <USDT|USDG> --agent-id
 
 ### deliver
 
-Submit the deliverable on-chain (only allowed when status=accepted)
-
-> `--autotrade` is a retired compatibility argument. The CLI accepts but completely ignores its value;
-> only `--deliverable-text` or `--file` is sent and processed.
+Send and persist a deliverable. A single task additionally submits on-chain, but only after its A2A
+delivery succeeds. A subscription sends only while ACTIVE and inside its service period, and never calls
+the single-task submit API.
 
 ```
-agent deliver <jobId> [--file <path>] [--message "<txt>"] [--deliverable-text "<txt>"] --agent-id <aspAgentId> [--autotrade '<single-line JSON>']
+agent deliver <jobId> [--file <path> | --deliverable-text "<txt>"] --agent-id <aspAgentId>
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `<jobId>` | Yes | - | Task ID (positional) |
-| `--file` | No | `""` | Local file path for delivery (message-only if omitted) |
-| `--message` | No | `Task completed, please review` | Delivery message |
+| `--file` | Conditional | omitted | Local file path. Exactly one of `--file` or `--deliverable-text` must be provided. |
+| `--deliverable-text` | Conditional | omitted | Inline text. More than 500 Unicode characters is converted to `.md`; conversion/upload failure falls back to inline text. Exactly one of text or file must be provided. |
 | `--agent-id` | Yes | - | ASP agentId |
-| `--autotrade` | No | (none) | Deprecated compatibility argument. Accepted but ignored; malformed or valid JSON never changes, blocks, or augments the text/file deliverable. |
+
+The CLI fetches authoritative task/subscription detail first, then sends with
+`okx-a2a session send --job-id <jobId> --to-agent-id <buyerAgentId>`. Missing `buyerAgentId`, an A2A send
+failure, or a non-accepted single task blocks submission. The submit mutation is non-retrying because an
+ambiguous mutation result must not create a duplicate chain action.
 
 ### trade-kit-readiness
 

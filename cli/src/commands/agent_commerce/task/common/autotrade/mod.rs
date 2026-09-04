@@ -6,7 +6,7 @@
 //! helpers; it no longer parses or executes delivered signal text.
 //!
 //! This module is shared by:
-//! - the retired ASP `agent deliver --autotrade` argument (accepted but ignored);
+//! - legacy ASP delivery metadata is no longer accepted by `agent deliver`;
 //! - the Active-subscription route cache and consent/grant commands used by the
 //!   model-selected Skill/tool;
 //! - compatibility rendering for decisions produced by earlier releases.
