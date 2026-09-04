@@ -34,8 +34,14 @@ fn scoped_terminal_detection_requires_a_canonical_leading_marker() {
     assert!(WATCH_CORE.contains("never a substring inside business data"));
     assert!(WATCH_CORE
         .contains("`[Job Expired]` / `[ASP Acceptance Expired]` / `[Auto-Refund Processing]`"));
-    assert!(WATCH_CORE.contains("status 8 is an ambiguous timeout state"));
-    assert!(WATCH_CORE.contains("Do not choose a claim/type-207 write from status or event prose"));
+    assert!(WATCH_CORE.contains(
+        "Fresh paid non-trial Expired(8) produces `refund_confirmed` plus the terminal marker"
+    ));
+    assert!(WATCH_CORE.contains(
+        "fresh trial or zero-amount Expired(8) produces `expired_without_refundable_payment`"
+    ));
+    assert!(WATCH_CORE.contains("No later Failed(9), Tx Hash, request provenance"));
+    assert!(WATCH_CORE.contains("Never choose `claim-auto-refund` or another Buyer write"));
     let legacy_terminal_sentence = WATCH_CORE
         .lines()
         .find(|line| line.contains("Legacy notifications may instead begin with"))

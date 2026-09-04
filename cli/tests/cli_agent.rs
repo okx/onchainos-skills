@@ -91,13 +91,13 @@ fn refund_v2_commands_expose_the_prepare_confirm_contract() {
         "direct-refund",
         "request-refund",
         "cancel-trial-conversion",
-        "finalize-expired-refund",
     ] {
         assert!(
             execute_help.contains(expected),
             "refund-execute help missing {expected:?}: {execute_help}"
         );
     }
+    assert!(!execute_help.contains("finalize-expired-refund"));
 }
 
 #[test]
@@ -135,6 +135,7 @@ fn legacy_claim_auto_refund_is_blocked_before_network_access() {
         &[
             "direct claim-auto-refund is disabled by Refund V2",
             "refund-prepare job-1",
+            "Expired(8) is terminal",
         ],
     );
 }

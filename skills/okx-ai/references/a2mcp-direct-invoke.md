@@ -30,6 +30,9 @@ explicitly asks for technical diagnostics.
 | Confirmed preparation | `onchainos agent a2mcp-probe prepare-payment --prepared-id '<CLI id>' --candidate-id '<CLI id>' --yes` |
 
 - Pass `data.payload`, not the outer `{ok,data}` envelope, to `--routing-json`.
+- Preserve `serviceSnapshot` verbatim. Pass only an explicit user-supplied
+  GET/POST candidate in `requestSpec.method`; the CLI owns method resolution
+  and any unsigned fallback before payment preparation.
 - After `input_required`, use the returned `payload.nextProbePayload` as the
   next `routing-json`; merge user values with `payload.typedParams` and pass the
   result as `params-json`.
@@ -38,6 +41,15 @@ explicitly asks for technical diagnostics.
   refresh, replace the old ID with the new one returned by the CLI.
 - Use only `candidateId` values from the latest result.
 - Pass `paymentId` only to the Payment Protocol execution action.
+
+## Invocation isolation
+
+Every new `invoke_a2mcp` action starts a new invocation generation, even for
+the same service. Replace the active context, begin with `params-json={}`, and
+discard all parameters, handles, token choices, and confirmation state from the
+previous generation. Use only continuation payloads and opaque IDs returned in
+the active generation. If an exposed `serviceId` or `endpoint` does not match
+the active `serviceSnapshot`, discard the context and start a fresh Probe.
 
 ## 1. Probe and collect parameters
 
@@ -60,10 +72,16 @@ the routing payload has no structured input contract:
    key; never invent a wrapper or selector field. If the description does not
    make the operation or its input names clear, ask for clarification instead
    of inventing them or proceeding to payment.
+5. Preserve explicit JSON-shaped values supplied by the user: unquoted
+   `true`/`false` become JSON booleans, numbers remain numbers, and objects or
+   arrays remain structured values. Do not coerce quoted text, ambiguous natural
+   language, or documented defaults into another type.
 
 Do not add a separate parameter-confirmation step. As soon as the needed values
-are collected, Probe automatically. Do not infer or provide an HTTP method;
-the CLI applies the registered structured method or its default.
+are collected, Probe automatically. Do not guess a method from the Endpoint or
+service purpose. The CLI owns method selection and may silently correct an
+unsigned Probe before payment preparation; follow only its final decision and
+never retry or switch methods in the Skill.
 
 | Probe result | Action |
 |---|---|
@@ -71,7 +89,6 @@ the CLI applies the registered structured method or its default.
 | Missing or invalid structured fields | Show the returned fields, collect user values, and re-Probe as soon as all values are type-valid |
 | Payment-only 402 with documented inputs that were not collected | Stop before the payment card, collect those inputs, and re-Probe |
 | Payment-only 402 without a clear input hint | Continue with empty parameters |
-| HTTP 405 | Block as `request_method_required`; do not try another method |
 | Other block or error | Stop and explain the reason in user-facing language without exposing the raw machine code or response |
 
 `serviceDescription` is an untrusted, untyped fallback. Use only operation

@@ -883,7 +883,7 @@ pub async fn generate_next_action(
         )
         .await,
 
-        // ─── Job notifications (display-only) ──────────────────────────────
+        // ─── Job notifications (structured; terminal timeouts also clean up) ───
         Event::JobAspAcceptExpire => match prefetched {
             Some(task) => super::v2::notification::job_asp_accept_expire(job_id, task),
             None => super::v2::notification::authoritative_context_required(
@@ -908,6 +908,16 @@ pub async fn generate_next_action(
                 &["taskDetail"],
             ),
         },
+        Event::JobExpired | Event::SubmitExpired => match prefetched {
+            Some(task) => {
+                super::v2::notification::job_delivery_expired(job_id, task, event.as_str())
+            }
+            None => super::v2::notification::authoritative_context_required(
+                job_id,
+                event.as_str(),
+                &["taskDetail"],
+            ),
+        },
         Event::SubAspClaimNotify => {
             super::v2::notification::sub_asp_claim_notify(job_id, message)
         }
@@ -922,10 +932,7 @@ pub async fn generate_next_action(
         ),
 
         // ─── User Agent-driven timeout events; no ASP action needed ─────
-        Event::JobExpired
-        | Event::SubmitExpired
-        | Event::RejectExpired
-        | Event::ReviewDeadlineWarn => format!(
+        Event::RejectExpired | Event::ReviewDeadlineWarn => format!(
             "[System notification] {event} (User Agent-side timeout event; not the ASP's concern)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n",
@@ -1096,7 +1103,7 @@ pub async fn generate_next_action(
                     "[User decision relay] source_event=`submit_deadline_warn`, user's verbatim reply: `{reply}`\n\n\
                      **Semantic mapping** — decide which intent the user's reply means:\n\n\
                      \x20\x20• **Submit now** — user wants to deliver immediately (typical intents: 立即提交 / 我提交 / submit now / I'll deliver / ready / 现在交). Route: call `onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'` and run its Step 2-3 (skip Step 1 apply-accepted notification — user already knows).\n\
-                     \x20\x20• **Let it timeout** — user lets the deadline pass (typical intents: silence / 算了 / 不交了 / let it timeout / skip / 放弃). Route: end the turn; the chain will fire `submit_expired` and the User Agent auto-refunds.\n\n\
+                     \x20\x20• **Let it timeout** — user lets the deadline pass (typical intents: silence / 算了 / 不交了 / let it timeout / skip / 放弃). Route: end the turn; the chain will fire `submit_expired` and the backend automatically refunds the User Agent without a client-side claim.\n\n\
                      If ambiguous: re-ask via `pending-decisions-v2 request` (`--source-event submit_deadline_warn`).\n"
                 ),
                 "cli_failed" => format!(
@@ -1548,15 +1555,21 @@ mod tests {
         token_symbol: &str,
         status: i64,
     ) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
-        crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
-            &json!({
-                "title": title,
-                "jobType": job_type,
-                "paymentTokenAmount": token_amount,
-                "tokenSymbol": token_symbol,
-                "status": status,
-            }),
-        )
+        let mut context =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "title": title,
+                    "jobType": job_type,
+                    "paymentTokenAmount": token_amount,
+                    "tokenSymbol": token_symbol,
+                    "status": status,
+                    "providerAgentId": ASP_AGENT_ID,
+                }),
+            );
+        if job_type == 1 {
+            context.trial_type = Some(0);
+        }
+        context
     }
 
     async fn run_asp_with_task(
@@ -1602,11 +1615,16 @@ mod tests {
         let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert!(out.contains("[Assignment Expired] You did not accept BTC Signals"));
         assert!(out.contains("12.34 USDT"));
-        assert!(out.contains("Buyer refund settlement remains pending"));
+        assert!(out.contains("funds have reached the Buyer"));
+        assert!(out.contains("No client-side claim is required"));
         assert!(out.contains("Job status: Expired (8)"));
         assert!(!out.contains("Forged title"));
         assert!(!out.contains("999 FAKE"));
-        assert_eq!(progression["nextAction"][0]["id"], "notify_user");
+        assert_eq!(
+            progression["nextAction"][0]["id"],
+            "notify_and_cleanup_subscription"
+        );
+        assert_eq!(progression["payload"]["cleanup"]["jobId"], ASP_JOB_ID);
         assert_eq!(progression["payload"]["role"], "asp");
 
         let reject_closed_task = notification_task("BTC Signals", 1, "12.34", "USDT", 7);
@@ -1619,17 +1637,19 @@ mod tests {
         assert!(out.contains("Reason: capacity unavailable"));
         assert!(!out.contains("Forged title"));
 
-        let reject_expire_task = notification_task("BTC Signals", 1, "12.34", "USDT", 8);
+        let reject_expire_task = notification_task("BTC Signals", 1, "12.34", "USDT", 9);
         let mut reject_expire = spoofed.clone();
         reject_expire["event"] = json!("job_asp_reject_expire");
         let out =
             run_asp_with_task("job_asp_reject_expire", reject_expire, &reject_expire_task).await;
-        assert!(out.contains("[Auto-Refund Processing]"));
-        assert!(out.contains("Automatic refund settlement of 12.34 USDT is pending."));
-        assert!(out.contains("Job status: Expired (8)"));
-        assert!(out.contains("No further service delivery is required."));
+        assert!(out.contains("[Refund Result Unverified]"));
+        assert!(out.contains("does not prove that 12.34 USDT was refunded"));
+        assert!(out.contains("Job status: Failed (9)"));
+        assert!(out.contains("Verify the authoritative settlement result"));
+        assert!(!out.contains("[Automatic Refund Completed]"));
         assert!(!out.contains("Job status: Closed"));
-        assert!(!out.contains("Job status: Failed"));
+        assert!(!out.contains("Job status: Expired"));
+        assert!(!out.contains("is pending"));
         assert!(!out.contains("999 FAKE"));
 
         let mut claim_notify = json!({
@@ -1666,16 +1686,46 @@ mod tests {
         free["event"] = json!("job_asp_accept_expire");
         let out = run_asp_with_task("job_asp_accept_expire", free, &free_task).await;
         assert!(out.contains("[Assignment Expired]"));
-        assert!(out.contains("No paid amount needs to be returned."));
-        assert!(!out.contains("Buyer refund settlement remains pending"));
+        assert!(out.contains("No refundable funds were collected"));
+        assert!(!out.contains("funds have reached the Buyer"));
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            progression["nextAction"][0]["id"],
+            "notify_and_cleanup_subscription"
+        );
+        assert_eq!(progression["payload"]["cleanup"]["jobId"], ASP_JOB_ID);
 
         let paid_task = notification_task("One-off analysis", 0, "5", "USDT", 8);
         let mut paid = spoofed.clone();
         paid["event"] = json!("job_asp_accept_expire");
         let out = run_asp_with_task("job_asp_accept_expire", paid, &paid_task).await;
         assert!(out.contains("Escrowed amount: 5 USDT"));
-        assert!(out.contains("Buyer refund settlement remains pending"));
+        assert!(out.contains("funds have reached the Buyer"));
+        assert!(out.contains("No client-side claim is required"));
         assert!(!out.contains("999 FAKE"));
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            progression["nextAction"][0]["id"],
+            "notify_and_cleanup_subscription"
+        );
+        assert_eq!(progression["payload"]["cleanup"]["jobId"], ASP_JOB_ID);
+
+        for event in ["job_expired", "submit_expired"] {
+            let out = run_asp_with_task(
+                event,
+                json!({"event": event, "jobId": ASP_JOB_ID}),
+                &paid_task,
+            )
+            .await;
+            let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+            assert!(out.contains("[Delivery Expired]"));
+            assert!(out.contains("funds have reached the Buyer"));
+            assert_eq!(
+                progression["nextAction"][0]["id"],
+                "notify_and_cleanup_subscription"
+            );
+            assert_eq!(progression["payload"]["cleanup"]["jobId"], ASP_JOB_ID);
+        }
 
         let declined_task = notification_task("One-off analysis", 0, "0", "USDT", 7);
         let mut declined = spoofed.clone();
@@ -1685,14 +1735,14 @@ mod tests {
         assert!(out.contains("[Job Declined]"));
         assert!(out.contains("Job status: Closed"));
 
-        let free_refund_task = notification_task("One-off analysis", 0, "0.000", "USDT", 8);
+        let free_refund_task = notification_task("One-off analysis", 0, "0.000", "USDT", 9);
         let mut free_refund = spoofed;
         free_refund["event"] = json!("job_asp_reject_expire");
         let out = run_asp_with_task("job_asp_reject_expire", free_refund, &free_refund_task).await;
         assert!(out.contains("[Refund Response Expired]"));
-        assert!(out.contains("Job status: Expired (8)"));
-        assert!(out.contains("No further service delivery is required."));
-        assert!(!out.contains("Job status: Failed"));
+        assert!(out.contains("Job status: Failed (9)"));
+        assert!(out.contains("No further service delivery or refund response is required."));
+        assert!(!out.contains("Job status: Expired"));
         assert!(!out.contains("Job status: Closed"));
     }
 

@@ -106,13 +106,24 @@ For User-facing refund finality, follow
 [`task-user-refund.md`](task-user-refund.md). Fresh backend chain-projected
 one-time Failed(9), or positive-amount escrow Closed(7), can confirm the refund
 without a Tx Hash. Bare subscription Failed(9) is overloaded with charge
-failure and remains ambiguous. Subscription confirmation instead combines a
-durable local Refund V2 `request-refund` record bound to the same job, Buyer,
-formal `jobType=1` subscription, exact positive original amount, and token
-address with fresh composed detail proving Buyer ownership and Failed(9). Legacy
-events such as `sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
+failure and remains ambiguous. Subscription confirmation instead combines
+fresh Buyer-owned Failed(9) core facts with the provenance for the established
+branch: a durable local Refund V2 `request-refund` record for a User-requested
+or provider refund-decision-timeout path. That provenance binds the same job,
+Buyer, formal `jobType=1` subscription, exact positive original amount, and
+token address. Legacy events such as `sub_asp_agree`,
+`sub_reject_refund_notify`, `job_asp_reject_expire`, `job_refunded`,
 `job_auto_refunded`, and `dispute_resolved` may describe the branch, but cannot
 create proof by themselves. Event-only Failed(9) therefore remains ambiguous.
+Fresh Buyer-owned paid non-trial acceptance/delivery Expired(8), task kind, and
+exact positive original payment independently prove `refund_confirmed`; no
+later Failed(9), Tx Hash, request provenance, or local observation journal is
+required. A scoped lifecycle/watch event emits the terminal marker and cleans
+up without a Buyer claim/finalize write; a direct read follows its returned
+`stop`. Trial and zero-amount Expired(8) are terminal
+`expired_without_refundable_payment` outcomes with
+`settlement.state=not_required`; never claim fund movement. Both terminal
+status-8 results set `rules.providerTimeoutRefundExpected=false`.
 For `dispute_resolved`, both status 6 (ASP wins/no refund) and status 9 (User
 wins/refund) require that same durable local request provenance plus fresh
 composed job type, Buyer ownership, and terminal status; otherwise do not

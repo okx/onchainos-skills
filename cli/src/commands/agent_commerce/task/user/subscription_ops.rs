@@ -1092,6 +1092,9 @@ mod tests {
         assert!(!should_ensure_subscription_session(
             SubStatus::Failed.code()
         ));
+        assert!(!should_ensure_subscription_session(
+            SubStatus::Expired.code()
+        ));
     }
 
     #[test]

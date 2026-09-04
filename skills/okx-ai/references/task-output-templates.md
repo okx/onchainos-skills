@@ -148,9 +148,9 @@ the returned `nextAction.id=watch_task`. Do not establish the A2A session in
 this creation step; the `sub_open` event owns that transition.
 
 For `phase=service_routing` and `nextAction.id=invoke_a2mcp`, do not render the
-generic task-creation confirmation card above. Open
-`a2mcp-direct-invoke.md`. Preserve `payload.serviceSnapshot` verbatim; that
-reference owns parameter collection, supported-token and balance display,
+generic task-creation confirmation card above. Continue through the owning
+A2MCP route selected by `SKILL.md`. Preserve `payload.serviceSnapshot` verbatim;
+that route owns parameter collection, supported-token and balance display,
 funding recovery, and the final mutually exclusive Confirm/Cancel card.
 
 ## Refund V2
@@ -167,7 +167,6 @@ or fiat conversion.
 | `trial_conversion_already_cancelled` / `trial_conversion_state_unknown` | No new trial-conversion cancellation is currently safe. | Current auto-renew fact and read actions only |
 | `zero_amount_close_confirmation_required` | This zero-price task can be closed; no funds will move. | Service, exact zero amount/token, current status |
 | `direct_refund_confirmation_required` | A direct full refund is ready for confirmation. | The ordered `refund_task_details` presentation contract below |
-| `expired_subscription_refund_cause_ambiguous` | Subscription status 8 does not prove whether type-207 buyer finalization or backend auto-refund applies. | Fresh task/subscription status, original amount/token, and read-only actions only; no write action |
 | `refund_reason_required` / `refund_reason_too_long` | A valid User-authored refund reason is required. | Only `payload.input.requiredParams` and `reasonMaxChars` |
 | `refund_request_confirmation_required` | The full refund request is ready for confirmation. | The ordered `refund_task_details` and `refund_rules` presentation contracts below, including the verbatim User reason |
 | `zero_amount_close_broadcast_submitted` | The zero-price close was broadcast; no refund occurred. | Required receipt identifiers, Transaction hash when present, and pending state |
@@ -176,13 +175,14 @@ or fiat conversion.
 | `trial_conversion_cancel_broadcast_submitted` | Trial-to-paid cancellation was broadcast; no refund occurred. | Required receipt identifiers, Transaction hash when present, and pending state |
 | `provider_response_pending` | The refund request is still awaiting the ASP. | Deadline and current notification states |
 | `arbitration_in_progress` | The refund is under arbitration; no refund has been decided. | Arbitration phase/round/deadlines only when returned |
-| `refund_confirmed` | The full original-token refund is confirmed by fresh one-time lifecycle state, or for a subscription by durable local `request-refund` provenance bound to job, Buyer, formal job type, exact positive original amount, and token address plus fresh Buyer-owned Failed(9). | Settled amount/token; Service, ASP, and Tx Hash when available. Render unavailable display fields explicitly without downgrading the result |
-| `refund_settlement_details_incomplete` | A possible subscription refund terminal is present, but durable request provenance or a required core binding/fresh Buyer-status fact is missing or conflicting; completion cannot be claimed. | Exact core gap and only returned read actions; optional Provider/Service, period, token-symbol, `paymentMode`, and Tx Hash absence alone never select this reason |
+| `refund_confirmed` | The full original-token refund is confirmed by fresh authoritative paid non-trial Expired(8); by an ordinary-polling authoritative one-time lifecycle state; by `job_asp_reject_expire` plus matching durable `request-refund` provenance and fresh Failed(9) owner/type/payment facts; or by the existing proven User-requested subscription path. The Expired(8) path needs no Failed(9), Tx Hash, or local request provenance. | Settled amount/token; Service, ASP, and Tx Hash when available. For Expired(8), require `job.refundState=resolved`, `settlement.state=confirmed`, and `rules.providerTimeoutRefundExpected=false`. A direct read follows `stop`; a scoped lifecycle/watch event emits the terminal marker and cleans up |
+| `expired_without_refundable_payment` | Fresh authoritative Expired(8) is terminal, but the task was a trial or had an exact zero original amount, so no refundable payment existed. | `job.refundState=resolved`, `settlement.state=not_required`, and `rules.providerTimeoutRefundExpected=false`. A direct read follows `stop`; a scoped lifecycle/watch event emits the terminal marker and cleans up without claiming a refund or fund movement |
+| `refund_settlement_details_incomplete` | A possible refund terminal is present, but the required durable request provenance or a core job/Buyer/type/payment/fresh-status fact is missing or conflicting; completion cannot be claimed. | Exact core gap and only returned read actions; optional Provider/Service, period, token-symbol, `paymentMode`, and Tx Hash absence alone never select this reason |
 | `refund_operation_pending_reconciliation` | This device already started this write and authoritative state has not proved it advanced. | Saved pending state/Tx Hash when available; read actions only and no repeat write, even if revision/period formatting drifted |
 | `refund_not_approved_or_task_completed` | No confirmed refund can be reported. | Returned status and `settlement.state=not_refunded`; do not infer arbitration cause |
 | `trial_subscription_closed_without_refund` / `zero_amount_task_closed` | The task/cancellation flow is closed with no new refund action. | Exact task state and whether funds moved |
 | `task_closed_no_new_refund_action` | The subscription is Closed, so refund settlement is not established; do not claim refund completion. | Exact task state; retain read-only refund reconciliation only when matching durable local `request-refund` intent exists |
-| `accepted_task_refund_contract_required` / `direct_subscription_refund_contract_required` / `accept_expired_refund_contract_ambiguous` / `zero_amount_close_contract_required` / `subscription_period_contract_required` | This state/type has no proven unambiguous Refund V2 write contract. | Task type/status and read-only actions only; one-time status 8 must not reuse the subscription-only finalize-expired contract |
+| `accepted_task_refund_contract_required` / `direct_subscription_refund_contract_required` / `zero_amount_close_contract_required` / `subscription_period_contract_required` | This state/type has no proven unambiguous Refund V2 write contract. | Task type/status and read-only actions only; Expired(8) instead uses terminal `refund_confirmed` for paid non-trial tasks or `expired_without_refundable_payment` for trial/zero-amount tasks |
 | `refund_task_details_incomplete` | The ASP or Service identity needed for a pre-write confirmation card is incomplete. | Exact returned identifiers only; do not invent names. Terminal refund finality does not depend on these display labels |
 | `direct_refund_funding_not_verified` / `refund_payment_not_verified` | The client cannot prove funded escrow for this one-time task. | Payment mode and read-only actions only |
 | `zero_amount_subscription_not_refundable` | The formal subscription has no paid amount to refund. | Exact zero amount and read-only actions only |
@@ -271,15 +271,20 @@ only for `reason=refund_confirmed`. For a one-time task, fresh backend
 chain-projected Failed(9), or fresh paid-escrow Closed(7) with
 positive amount and `paymentMode=1`, confirms the refund when User/payment facts
 match. A Tx Hash and same-device receipt are optional audit details, not
-completion prerequisites. Bare subscription Failed(9) remains ambiguous because
-it also represents terminal charge failure. Subscription confirmation requires
-durable local Refund V2 `request-refund` provenance bound to the same job,
-Buyer, formal `jobType=1` subscription, exact positive original amount, and
-token address plus fresh Buyer-owned Failed(9). Provider/Service, period,
+completion prerequisites. `job_asp_reject_expire` additionally requires
+durable `request-refund` provenance plus fresh Failed(9) owner/type/payment
+facts before event-driven terminal output for either task kind. Bare
+subscription Failed(9) remains ambiguous because it also represents terminal
+charge failure. Subscription confirmation requires durable local Refund V2
+`request-refund` provenance for a User-requested/provider-decision-timeout path,
+bound to the same job, Buyer, formal `jobType=1` subscription, exact positive
+original amount, and token address plus fresh Buyer-owned Failed(9).
+Fresh paid non-trial Expired(8) is a separate direct finality path for both task
+kinds; it needs no Failed(9) or local provenance. Provider/Service, period,
 token-symbol, and `paymentMode` fields veto only when both recorded and fresh
-values exist and conflict; missing values reduce detail/display only. Legacy
-events (`sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
-`job_auto_refunded`, or `dispute_resolved`) may describe the branch but cannot
+values exist and conflict; missing values reduce detail/display only. Result
+events (`sub_asp_agree`, `sub_reject_refund_notify`, `job_asp_reject_expire`,
+`job_refunded`, `job_auto_refunded`, or `dispute_resolved`) may describe the branch but cannot
 create proof. Event-only Failed(9) remains incomplete. `sub_failed_notify` does
 not prove a refund. Subscription Closed(7) does not qualify. Never
 reuse a refund-complete heading for `refund_not_approved_or_task_completed`.
@@ -326,14 +331,16 @@ The unchanged backend contract defines `job_closed`, `job_refunded`, and
 `job_auto_refunded` as transaction-result notifications that may omit Tx Hash.
 Re-read detail before rendering: a matching one-time positive-amount
 paid-escrow Closed(7) or Failed(9) can confirm independently without a hash.
-For subscriptions, legacy events `sub_asp_agree`,
-`sub_reject_refund_notify`, `job_refunded`, `job_auto_refunded`, and
-`dispute_resolved` may select branch wording only after fresh ownership and
-composed facts are verified; they cannot create refund proof. Durable local
-`request-refund` provenance bound to job, Buyer, formal `jobType=1`, exact
-positive original amount, and token address plus fresh Buyer-owned Failed(9) is
-the confirmation gate. Event-only
-and bare subscription Failed(9) remain insufficient.
+For subscriptions, result events `sub_asp_agree`,
+`sub_reject_refund_notify`, `job_asp_reject_expire`, `job_refunded`,
+`job_auto_refunded`, and `dispute_resolved` may select branch wording only after
+fresh ownership and composed facts are verified; they cannot create refund
+proof. User-requested paths, including `job_asp_reject_expire`, require durable
+local `request-refund` provenance bound to job, Buyer, formal `jobType=1`, exact
+positive original amount, and token address plus fresh Buyer-owned Failed(9).
+An acceptance/delivery timeout instead confirms directly from fresh
+Buyer-owned paid non-trial Expired(8), task kind, and exact original payment.
+Event-only and bare subscription Failed(9) remain insufficient.
 `dispute_resolved` additionally requires matching durable local
 `request-refund` provenance and fresh composed job type/Buyer/status for **both**
 status 9 (User wins) and status 6 (ASP wins); otherwise render no verdict and
@@ -346,15 +353,31 @@ must render settlement-incomplete/read-only output: no fund-direction claim,
 terminal copy, terminal marker, or cleanup. Only independently trustworthy
 cause provenance returned by the CLI may select terminal charge-failure copy.
 
-For the other subscription events, render `job_asp_accept_expire` as
-acceptance-expiry pending cause resolution,
-`job_asp_reject_closed` as Closed without claiming refund settlement, and
-`job_asp_reject_expire` as automatic settlement pending. Event labels,
-`jobStatus=expired`, and human-readable event text never authorize a write or a
-refund-complete heading. Keep the session and terminal marker open until an
-existing durable local refund intent and the core job/Buyer/formal-job-type/
-exact-positive-amount/token-address binding plus fresh Failed(9) pass the normal
-Refund V2 gate; an event alone does not.
+Render `job_asp_accept_expire` (ASP acceptance timeout) and `job_expired` /
+legacy `submit_expired` (ASP delivery timeout) only after a fresh authoritative
+read. For a paid non-trial task, fresh Buyer-owned Expired(8), task kind, and
+exact positive original payment produce `refund_confirmed`: state that the
+automatic refund has arrived. No Failed(9), Tx Hash, or request provenance is
+needed. Never offer `claim-auto-refund` or another Buyer write. For a trial or
+zero-amount task, render terminal `expired_without_refundable_payment` with
+`settlement.state=not_required` without claiming fund movement. A direct
+`refund-prepare` read follows its returned `stop` action and does not imply a
+separate session-cleanup command. A scoped lifecycle/watch event emits the
+terminal marker, cleans up that scoped session, and stops re-entry. If a
+trial's future configured price is shown, label it as a configured post-trial
+amount, never as a paid or escrowed amount.
+
+Render `job_asp_reject_expire` (ASP refund-decision timeout) as a Failed(9)
+backend automatic-refund terminal only after durable `request-refund`
+provenance plus fresh matching Buyer ownership, task type, exact positive
+original amount, and token address pass the proof gate. Tx Hash is optional.
+The caller event alone cannot produce terminal copy, a marker, or cleanup.
+The ASP-side checkout does not possess that Buyer-local durable provenance.
+For a subscription, its replayable `job_asp_reject_expire` input plus fresh
+provider-owned Failed(9) therefore renders a neutral refund-result-unverified
+notice; it must not claim that funds were returned. This restriction does not
+change the User-side terminal result after the full proof gate passes.
+Render `job_asp_reject_closed` as Closed without claiming refund settlement.
 
 The current client exposes only ASP notification state as `not_requested` or
 `unknown`. Do not upgrade it to sent or send an extra peer message to

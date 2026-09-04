@@ -43,8 +43,6 @@ pub enum RefundOperation {
     RequestRefund,
     /// Cancel trial-to-paid conversion. This is not a refund.
     CancelTrialConversion,
-    /// Reserved type-207 transport; prepare blocks it until expiry cause is authoritative.
-    FinalizeExpiredRefund,
 }
 
 impl RefundOperation {
@@ -54,7 +52,6 @@ impl RefundOperation {
             Self::DirectRefund => "direct-refund",
             Self::RequestRefund => "request-refund",
             Self::CancelTrialConversion => "cancel-trial-conversion",
-            Self::FinalizeExpiredRefund => "finalize-expired-refund",
         }
     }
 }
@@ -226,7 +223,9 @@ fn pending_mutation_resolved(state: &PendingRefundMutation, snapshot: &RefundSna
         "close-zero" => matches!(snapshot.status, 1 | 2 | 3 | 4 | 6 | 7 | 8 | 9),
         "request-refund" => matches!(snapshot.status, 3 | 4 | 6 | 7 | 8 | 9),
         "cancel-trial-conversion" => snapshot.status != 1 || snapshot.auto_renew == Some(0),
-        "finalize-expired-refund" => snapshot.status != 8,
+        // Read-only migration support for journals written by older releases;
+        // the operation is no longer exposed or executable.
+        "finalize-expired-refund" => true,
         _ => false,
     }
 }
@@ -652,6 +651,13 @@ fn apply_confirmed_direct_refund(
 async fn reconcile_pending_mutation_locked(
     snapshot: &mut RefundSnapshot,
 ) -> Result<Option<PendingRefundMutation>> {
+    // Expired(8) is already the backend's authoritative terminal result. It
+    // must not read, query, or depend on any local mutation journal, including
+    // stale journals written by releases that exposed timeout finalization.
+    if snapshot.status == 8 {
+        let _ = remove_pending_mutation(&snapshot.job_id, &snapshot.buyer_agent_id);
+        return Ok(None);
+    }
     let Some(mut state) = read_pending_mutation(&snapshot.job_id, &snapshot.buyer_agent_id)? else {
         return Ok(None);
     };
@@ -1000,18 +1006,27 @@ pub(crate) struct RefundSettlementEvidence {
 
 /// Whether fresh authoritative task facts prove refund settlement.
 ///
-/// The backend lifecycle contract defines paid one-time escrow Closed(7) and
-/// one-time Failed(9) as states projected after the corresponding on-chain
-/// refund event. A wallet-order Tx Hash may enrich that conclusion, but never
-/// creates it by itself. Subscription Failed(9) needs the existing semantic
-/// refund event because legacy subscription notifications also use status 9
-/// for non-refund failure copy.
+/// The backend lifecycle contract defines paid Expired(8), paid one-time escrow
+/// Closed(7), and one-time Failed(9) as states projected after the corresponding
+/// on-chain refund result. A wallet-order Tx Hash may enrich that conclusion,
+/// but never creates it by itself. Subscription Failed(9) still needs an
+/// established semantic refund event plus request provenance because legacy
+/// subscription notifications also use status 9 for non-refund failure copy.
 pub(crate) fn authoritative_refund_settlement_confirmed(
     detail: &common::PreFetchedTaskContext,
     expected_status: i64,
 ) -> bool {
-    if detail.status != Some(expected_status) || !matches!(expected_status, 7 | 9) {
+    if detail.status != Some(expected_status) || !matches!(expected_status, 7 | 8 | 9) {
         return false;
+    }
+    if expected_status == 8 {
+        return validate_decimal(detail.token_amount.trim())
+            && !is_zero_decimal(detail.token_amount.trim())
+            && match detail.job_type {
+                Some(0) => true,
+                Some(1) => detail.trial_type == Some(0),
+                _ => false,
+            };
     }
     detail.job_type == Some(0)
         && !detail.token_amount.trim().is_empty()
@@ -1063,6 +1078,8 @@ pub(crate) fn refund_event_settlement_confirmed(
 /// Verify a refund lifecycle event against fresh authoritative task facts.
 /// Caller-supplied event fields may veto an inconsistent notification, but
 /// they never create settlement proof or replace authoritative display data.
+/// For Expired(8), fresh status and ownership are the complete business result,
+/// so caller-supplied event fields cannot veto or reinterpret it.
 pub(crate) fn verify_final_refund_event(
     message: Option<&Value>,
     prefetched: Option<&common::PreFetchedTaskContext>,
@@ -1070,10 +1087,14 @@ pub(crate) fn verify_final_refund_event(
     expected_buyer_agent_id: &str,
 ) -> Result<RefundSettlementEvidence> {
     let empty_message = Value::Null;
-    let message = message.unwrap_or(&empty_message);
+    let message = if expected_status == 8 {
+        &empty_message
+    } else {
+        message.unwrap_or(&empty_message)
+    };
     let detail =
         prefetched.ok_or_else(|| anyhow::anyhow!("fresh authoritative task detail is missing"))?;
-    if !matches!(expected_status, 7 | 9) || detail.status != Some(expected_status) {
+    if !matches!(expected_status, 7 | 8 | 9) || detail.status != Some(expected_status) {
         bail!("fresh task status does not match a refund-capable lifecycle state");
     }
     if expected_status == 7 {
@@ -1188,14 +1209,17 @@ pub(crate) fn verify_final_refund_event(
         .token_address
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!("fresh task detail is missing the original token address")
-        })?;
-    if let Some(event_token_address) = first_string(&[(
-        message,
-        &["refundTokenAddress", "paymentTokenAddress", "tokenAddress"],
-    )]) {
+        .filter(|value| !value.is_empty());
+    if expected_status != 8 && original_token_address.is_none() {
+        bail!("fresh task detail is missing the original token address");
+    }
+    if let (Some(event_token_address), Some(original_token_address)) = (
+        first_string(&[(
+            message,
+            &["refundTokenAddress", "paymentTokenAddress", "tokenAddress"],
+        )]),
+        original_token_address,
+    ) {
         if !event_token_address.eq_ignore_ascii_case(original_token_address) {
             bail!("refund event token address does not match the original payment token");
         }
@@ -1329,7 +1353,7 @@ impl RefundSnapshot {
             &["paymentTokenAddress", "tokenAddress"],
             &["paymentTokenAddress", "tokenAddress"],
         );
-        if !is_zero_decimal(&original_amount) && token_address.is_none() {
+        if status != 8 && !is_zero_decimal(&original_amount) && token_address.is_none() {
             bail!("task detail is missing the original token address");
         }
 
@@ -1414,18 +1438,23 @@ impl RefundSnapshot {
             refund_request_provenance: false,
         };
 
-        // The backend lifecycle contract defines paid one-time Closed(7) as a
-        // completed close/refund transaction and Failed(9) as a completed
-        // refund outcome (ASP agree, timeout auto-refund, or User-won
-        // arbitration). The task row is updated after the on-chain event is
-        // parsed, so these fresh one-time states are authoritative settlement
-        // confirmation. Closed(7) additionally requires verified escrow mode;
-        // Failed(9) is itself the backend's one-time refund terminal. Keep Tx
-        // Hash optional; same-device wallet-order reconciliation may enrich it.
-        if snapshot.job_type == 0
+        // Expired(8) is projected only after any paid timeout refund reaches
+        // the buyer. It is therefore authoritative settlement for a positive
+        // one-time payment or formal subscription payment; trial and zero
+        // expiry are terminal no-funds outcomes. Existing one-time Closed(7)
+        // and Failed(9) finality remains unchanged.
+        let paid_expired = snapshot.status == 8
             && !is_zero_decimal(&snapshot.original_amount)
-            && (snapshot.status == 9 || (snapshot.status == 7 && snapshot.payment_mode == Some(1)))
-        {
+            && match snapshot.job_type {
+                0 => true,
+                1 => snapshot.trial_type == Some(0),
+                _ => false,
+            };
+        let paid_one_time_final = snapshot.job_type == 0
+            && !is_zero_decimal(&snapshot.original_amount)
+            && (snapshot.status == 9
+                || (snapshot.status == 7 && snapshot.payment_mode == Some(1)));
+        if paid_expired || paid_one_time_final {
             snapshot.settlement_confirmed = true;
         }
 
@@ -1462,7 +1491,7 @@ impl RefundSnapshot {
     fn settlement_confirmation_source(&self) -> Option<&'static str> {
         if !self.has_confirmed_settlement() {
             None
-        } else if self.is_subscription() && self.refund_request_provenance {
+        } else if self.status != 8 && self.is_subscription() && self.refund_request_provenance {
             Some("backend_onchain_lifecycle_with_local_refund_request")
         } else {
             Some("backend_onchain_lifecycle")
@@ -1520,6 +1549,14 @@ impl RefundSnapshot {
                     action_id: None,
                     recommend_stop: true,
                 },
+                8 => Plan {
+                    phase: "refund_resolution",
+                    decision: "ready",
+                    reason: "expired_without_refundable_payment",
+                    operation: None,
+                    action_id: None,
+                    recommend_stop: true,
+                },
                 _ => Plan::blocked("trial_subscription_not_refundable"),
             };
         }
@@ -1540,17 +1577,35 @@ impl RefundSnapshot {
                     action_id: None,
                     recommend_stop: true,
                 },
+                8 => Plan {
+                    phase: "refund_resolution",
+                    decision: "ready",
+                    reason: "expired_without_refundable_payment",
+                    operation: None,
+                    action_id: None,
+                    recommend_stop: true,
+                },
                 _ => Plan::blocked("zero_amount_close_contract_required"),
             };
         }
 
         if self.is_subscription() && is_zero_decimal(&self.original_amount) {
+            if self.status == 8 {
+                return Plan {
+                    phase: "refund_resolution",
+                    decision: "ready",
+                    reason: "expired_without_refundable_payment",
+                    operation: None,
+                    action_id: None,
+                    recommend_stop: true,
+                };
+            }
             return Plan::blocked("zero_amount_subscription_not_refundable");
         }
 
         let requires_refund_display_details = (!self.is_subscription()
             && matches!(self.status, 0 | 2))
-            || (self.is_subscription() && matches!(self.status, 1 | 8));
+            || (self.is_subscription() && self.status == 1);
         if requires_refund_display_details && !self.has_required_refund_display_details() {
             return Plan::blocked("refund_task_details_incomplete");
         }
@@ -1626,19 +1681,15 @@ impl RefundSnapshot {
                 action_id: Some("view_arbitration"),
                 recommend_stop: false,
             },
-            // Subscription Expired(8) is overloaded too: accept-timeout uses
-            // finalizeExpired/type 207, while refund-response timeout is
-            // backend auto-refund. The current detail contract exposes no
-            // authoritative cause discriminator, so the wired type-207
-            // operation must not be selected from status alone.
-            8 if self.is_subscription() => {
-                Plan::blocked("expired_subscription_refund_cause_ambiguous")
-            }
-            // The one-time backend document likewise uses EXPIRED(8) for both
-            // accept-timeout (buyer must claim) and provider-response timeout
-            // (backend auto-refunds), without a cause discriminator or exact
-            // claim response bizType.
-            8 => Plan::blocked("accept_expired_refund_contract_ambiguous"),
+            8 if self.has_confirmed_settlement() => Plan {
+                phase: "refund_resolution",
+                decision: "ready",
+                reason: "refund_confirmed",
+                operation: None,
+                action_id: None,
+                recommend_stop: true,
+            },
+            8 => Plan::blocked("refund_settlement_details_incomplete"),
             9 if self.has_confirmed_settlement() => Plan {
                 phase: "refund_resolution",
                 decision: "ready",
@@ -1712,6 +1763,8 @@ impl RefundSnapshot {
 
     fn settlement_state(&self) -> &'static str {
         match self.status {
+            8 if self.has_confirmed_settlement() => "confirmed",
+            8 => "not_required",
             9 if self.has_confirmed_settlement() => "confirmed",
             9 => "details_incomplete",
             7 if !self.is_subscription()
@@ -1722,7 +1775,7 @@ impl RefundSnapshot {
             }
             7 => "details_incomplete",
             6 => "not_refunded",
-            3 | 4 | 8 => "pending",
+            3 | 4 => "pending",
             _ => "not_started",
         }
     }
@@ -1733,7 +1786,7 @@ impl RefundSnapshot {
             1 | 2 => "active",
             3 => "provider_pending",
             4 => "arbitrating",
-            8 => "settlement_pending",
+            8 => "resolved",
             6 => "resolved",
             7 | 9 if self.has_confirmed_settlement() => "resolved",
             7 | 9 => "settlement_unverified",
@@ -1750,7 +1803,6 @@ impl RefundSnapshot {
                 | "refund_request_confirmation_required"
                 | "provider_response_pending"
                 | "arbitration_in_progress"
-                | "expired_subscription_refund_cause_ambiguous"
                 | "refund_confirmed"
                 | "refund_settlement_details_incomplete"
         );
@@ -2047,6 +2099,7 @@ impl From<RefundSnapshot> for common::PreFetchedTaskContext {
             title: snapshot.title,
             description: String::new(),
             job_type: Some(snapshot.job_type),
+            trial_type: snapshot.trial_type,
             token_symbol: snapshot.token_symbol.unwrap_or_else(|| "?".to_string()),
             token_amount: snapshot.original_amount,
             payment_mode: snapshot.payment_mode,
@@ -2337,26 +2390,6 @@ async fn execute_operation(
             } else {
                 execute_regular_reject(client, snapshot, reason, account_id, address).await
             }
-        }
-        RefundOperation::FinalizeExpiredRefund => {
-            let response = client
-                .post_mutation_with_identity(
-                    &format!("{SUBSCRIBE_API_PREFIX}/{}/finalizeExpired", snapshot.job_id),
-                    &json!({}),
-                    &snapshot.buyer_agent_id,
-                )
-                .await
-                .context("expired subscription finalization result is unknown")?;
-            sign_response(
-                client,
-                &response,
-                account_id,
-                address,
-                snapshot,
-                None,
-                Some(207),
-            )
-            .await
         }
     }
 }
@@ -2682,7 +2715,7 @@ pub async fn handle_execute(
         RefundOperation::CancelTrialConversion => {
             let _ = common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(job_id);
         }
-        RefundOperation::RequestRefund | RefundOperation::FinalizeExpiredRefund => {}
+        RefundOperation::RequestRefund => {}
     }
 
     audit::log(
@@ -2711,7 +2744,6 @@ pub async fn handle_execute(
         RefundOperation::DirectRefund => "refund_broadcast_submitted",
         RefundOperation::RequestRefund => "refund_request_broadcast_submitted",
         RefundOperation::CancelTrialConversion => "trial_conversion_cancel_broadcast_submitted",
-        RefundOperation::FinalizeExpiredRefund => "expired_subscription_refund_broadcast_submitted",
     };
     let mut payload = snapshot.payload(reason, &plan);
     payload["settlement"]["state"] = Value::String("broadcast_submitted".to_string());
@@ -3053,7 +3085,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_and_arbitration_states_do_not_repeat_the_refund_request() {
+    fn pending_arbitration_does_not_repeat_and_expired_is_terminal() {
         for status in [3, 4] {
             let plan = snapshot(json!(1), json!(status), "10").plan(Some("reason"));
             assert_eq!(plan.operation, None);
@@ -3061,25 +3093,35 @@ mod tests {
 
         let expired_subscription = snapshot(json!(1), json!(8), "10");
         let plan = expired_subscription.plan(None);
-        assert_eq!(plan.reason, "expired_subscription_refund_cause_ambiguous");
+        assert_eq!(plan.reason, "refund_confirmed");
         assert_eq!(plan.operation, None);
         assert_eq!(plan.action_id, None);
         let actions = plan_actions(&expired_subscription, &plan, None);
-        assert_eq!(actions[0]["id"], "view_refund_status");
-        assert_eq!(actions[1]["id"], "watch_task");
+        assert_eq!(actions[0]["id"], "stop");
+        let payload = expired_subscription.payload(None, &plan);
+        assert_eq!(payload["payment"]["refundableAmount"], "10");
+        assert_eq!(payload["settlement"]["state"], "confirmed");
         assert_eq!(
-            expired_subscription.payload(None, &plan)["payment"]["refundableAmount"],
-            "10"
+            payload["settlement"]["confirmationSource"],
+            "backend_onchain_lifecycle"
         );
+        assert_eq!(payload["settlement"]["txHash"], Value::Null);
+        assert_eq!(payload["rules"]["providerTimeoutRefundExpected"], false);
+        assert_eq!(payload["capability"]["clientOperation"], Value::Null);
 
         let expired_one_time = snapshot(json!(0), json!(8), "10");
         let plan = expired_one_time.plan(None);
-        assert_eq!(plan.reason, "accept_expired_refund_contract_ambiguous");
+        assert_eq!(plan.reason, "refund_confirmed");
         assert_eq!(plan.operation, None);
+        assert_eq!(plan.action_id, None);
+        assert_eq!(
+            expired_one_time.payload(None, &plan)["capability"]["clientOperation"],
+            Value::Null
+        );
     }
 
     #[test]
-    fn expired_subscription_equal_period_placeholder_parses_but_does_not_prove_cause() {
+    fn expired_subscription_equal_period_placeholder_is_refund_final() {
         let task = task(json!(1), json!(8), "10");
         let subscription = json!({
             "status": 8,
@@ -3095,7 +3137,8 @@ mod tests {
         let snapshot =
             RefundSnapshot::from_details("job-1", &task, Some(&subscription), "buyer-1").unwrap();
         let plan = snapshot.plan(None);
-        assert_eq!(plan.reason, "expired_subscription_refund_cause_ambiguous");
+        assert_eq!(plan.reason, "refund_confirmed");
+        assert_eq!(snapshot.settlement_state(), "confirmed");
         assert_eq!(plan.operation, None);
     }
 
@@ -3675,6 +3718,62 @@ mod tests {
     }
 
     #[test]
+    fn expired_status_is_self_sufficient_refund_finality_for_paid_tasks() {
+        for job_type in [0, 1] {
+            let expired = snapshot(json!(job_type), json!(8), "10.00");
+            assert!(expired.has_confirmed_settlement());
+            assert_eq!(expired.plan(None).reason, "refund_confirmed");
+            assert_eq!(expired.settlement_state(), "confirmed");
+            assert_eq!(
+                expired.settlement_confirmation_source(),
+                Some("backend_onchain_lifecycle")
+            );
+            assert!(expired.settlement_tx_hash.is_none());
+
+            let context: common::PreFetchedTaskContext = expired.into();
+            assert!(authoritative_refund_settlement_confirmed(&context, 8));
+            assert!(verify_final_refund_event(None, Some(&context), 8, "buyer-1").is_ok());
+        }
+    }
+
+    #[test]
+    fn expired_status_does_not_need_token_address_or_escrow_mode() {
+        let mut detail = task(json!(0), json!(8), "10");
+        detail.as_object_mut().unwrap().remove("tokenAddress");
+        detail["paymentMode"] = json!(3);
+        let expired = RefundSnapshot::from_details("job-1", &detail, None, "buyer-1").unwrap();
+        assert!(expired.has_confirmed_settlement());
+        assert_eq!(expired.plan(None).reason, "refund_confirmed");
+    }
+
+    #[test]
+    fn trial_and_zero_amount_expiry_are_terminal_without_refund_funds() {
+        let task = task(json!(1), json!(8), "10");
+        let trial = json!({
+            "status": 8,
+            "buyerAgentId": "buyer-1",
+            "paymentTokenAmount": "10",
+            "tokenSymbol": "USDT",
+            "trialType": 1,
+        });
+        let trial = RefundSnapshot::from_details("job-1", &task, Some(&trial), "buyer-1").unwrap();
+        let trial_plan = trial.plan(None);
+        assert!(!trial.has_confirmed_settlement());
+        assert_eq!(trial_plan.reason, "expired_without_refundable_payment");
+        assert_eq!(trial.settlement_state(), "not_required");
+        assert_eq!(plan_actions(&trial, &trial_plan, None)[0]["id"], "stop");
+
+        for job_type in [0, 1] {
+            let zero = snapshot(json!(job_type), json!(8), "0");
+            let plan = zero.plan(None);
+            assert!(!zero.has_confirmed_settlement());
+            assert_eq!(plan.reason, "expired_without_refundable_payment");
+            assert_eq!(zero.settlement_state(), "not_required");
+            assert_eq!(plan_actions(&zero, &plan, None)[0]["id"], "stop");
+        }
+    }
+
+    #[test]
     fn wallet_order_detail_cannot_cross_order_or_chain_binding() {
         let snapshot = snapshot(json!(0), json!(7), "10");
         let proof = confirmed_direct_refund(&snapshot, &format!("0x{}", "ab".repeat(32)));
@@ -3782,17 +3881,14 @@ mod tests {
     }
 
     #[test]
-    fn expired_subscription_requires_exact_finalize_biz_type() {
-        assert_eq!(
-            lifecycle_biz_type(&json!({"type": 207}), Some(207)).unwrap(),
-            207
-        );
-        assert!(lifecycle_biz_type(&json!({"type": 206}), Some(207)).is_err());
-        assert!(lifecycle_biz_type(&json!({"type": 0}), Some(207)).is_err());
+    fn lifecycle_biz_type_requires_a_positive_integer() {
         assert_eq!(
             lifecycle_biz_type(&json!({"type": 999}), None).unwrap(),
             999
         );
+        assert!(lifecycle_biz_type(&json!({"type": 0}), None).is_err());
+        assert!(lifecycle_biz_type(&json!({"type": -1}), None).is_err());
+        assert!(lifecycle_biz_type(&json!({}), None).is_err());
     }
 
     #[test]
@@ -4093,15 +4189,20 @@ mod tests {
         accepted.status = 1;
         assert!(pending_mutation_resolved(&close_pending, &accepted));
 
-        let finalize_pending = PendingRefundMutation {
+        // Read-only migration support for a journal written by an older CLI.
+        // The current RefundOperation enum exposes no matching write.
+        let legacy_finalize_pending = PendingRefundMutation {
             operation: "finalize-expired-refund".to_string(),
             ..close_pending
         };
         let expired = snapshot(json!(1), json!(8), "10");
-        assert!(!pending_mutation_resolved(&finalize_pending, &expired));
+        assert!(pending_mutation_resolved(
+            &legacy_finalize_pending,
+            &expired
+        ));
         let mut failed = expired;
         failed.status = 9;
-        assert!(pending_mutation_resolved(&finalize_pending, &failed));
+        assert!(pending_mutation_resolved(&legacy_finalize_pending, &failed));
     }
 
     #[test]

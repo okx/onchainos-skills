@@ -146,6 +146,10 @@ pub struct PreFetchedTaskContext {
     pub description: String,
     /// Authoritative task kind: 0 = one-time, 1 = subscription.
     pub job_type: Option<i64>,
+    /// Authoritative subscription trial kind: 0 = formal, 1 = trial.
+    /// Irrelevant for one-time tasks; a missing subscription value must not be
+    /// interpreted as proof that refundable escrow was collected.
+    pub trial_type: Option<i64>,
     pub token_symbol: String,
     pub token_amount: String,
     pub payment_mode: Option<i64>,
@@ -213,6 +217,9 @@ impl PreFetchedTaskContext {
             job_type: v["jobType"]
                 .as_i64()
                 .or_else(|| v["jobType"].as_str().and_then(|value| value.parse().ok())),
+            trial_type: v["trialType"]
+                .as_i64()
+                .or_else(|| v["trialType"].as_str().and_then(|value| value.parse().ok())),
             token_symbol: string(&["tokenSymbol", "paymentTokenSymbol"])
                 .unwrap_or_else(|| "?".to_string()),
             token_amount: string(&["paymentTokenAmount", "tokenAmount"]).unwrap_or_default(),

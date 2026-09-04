@@ -276,21 +276,56 @@ pub fn job_auto_refunded_user_notify(job_id: &str, title: &str) -> String {
 /// `Event::JobExpired` — job expired (B-7-1).
 pub fn job_expired_user_notify(job_id: &str) -> String {
     format!(
-        "[Job Expired] Job `{job_id}` is in Expired status after a deadline elapsed. Expired is not proof that escrow has been refunded. Run `onchainos agent refund-prepare {job_id}` to reconcile the authoritative refund state and keep watching for the final settlement event."
+        "[Job Expired] Job `{job_id}` is in authoritative Expired(8) status after a deadline elapsed. Any applicable automatic refund has reached the buyer, and no buyer-side refund claim or finalization is required."
     )
 }
 
 /// The designated ASP did not accept before the v2 acceptance deadline.
-pub fn job_asp_accept_expire_user_notify(job_id: &str, title: &str) -> String {
+#[allow(clippy::too_many_arguments)]
+pub fn job_asp_accept_expire_user_notify(
+    job_id: &str,
+    title: &str,
+    task_type: &str,
+    provider_name: &str,
+    provider_agent_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    is_paid: bool,
+    is_trial: bool,
+) -> String {
+    let refund_note = if is_trial {
+        "The ASP did not accept before the deadline. This subscription was still in its trial period, so no refundable escrow payment was collected and no refund action is required."
+            .to_string()
+    } else if is_paid {
+        format!(
+            "The ASP did not accept before the deadline. The backend completed the automatic full refund of {amount} {token_symbol}, and the funds have reached your wallet. No buyer-side claim or finalization is required. Expired(8) is the authoritative refund result; a Tx Hash is optional metadata and may be absent."
+        )
+    } else {
+        "The ASP did not accept before the deadline. No payment was made, so no refund action is required."
+            .to_string()
+    };
+    let amount_label = if is_trial {
+        "Configured post-trial amount"
+    } else {
+        "Payment amount"
+    };
     format!(
-        "[ASP Acceptance Expired] {title} (`{job_id}`) was not accepted before the deadline. The task is Expired, but refund settlement is not final. Run `onchainos agent refund-prepare {job_id}` and follow only the returned Refund V2 actions."
+        "[Refund Task Details]\n\
+         Job name: {title}\n\
+         Job ID: {job_id}\n\
+         Task type: {task_type}\n\
+         Service provider: {provider_name} ({provider_agent_id})\n\
+         Current status: Expired (8)\n\
+         {amount_label}: {amount} {token_symbol}\n\
+         \n\
+         {refund_note}"
     )
 }
 
 /// The ASP did not agree to refund or open a dispute before the response deadline.
 pub fn job_asp_reject_expire_user_notify(job_id: &str, title: &str) -> String {
     format!(
-        "[Auto-Refund Processing] {title} (`{job_id}`): the ASP did not resolve the refund request before the deadline, so backend automatic refund settlement is in progress. Do not initiate a client-side refund claim. Run `onchainos agent refund-prepare {job_id}` to view the authoritative state and keep watching for `job_auto_refunded`; no refund is final until that settlement is verified."
+        "[Automatic Refund Settled] {title} (`{job_id}`): the ASP did not resolve the refund request before the deadline. The backend completed the automatic full refund and returned the original payment to your wallet. The task is Failed(9), and this refund flow is complete."
     )
 }
 
@@ -320,7 +355,7 @@ pub fn close_user_notify(job_id: &str) -> String {
 /// `Event::SubmitExpired` — ASP missed the submit deadline (B-7-5).
 pub fn submit_expired_user_notify(job_id: &str) -> String {
     format!(
-        "[Submit Deadline Expired] Job `{job_id}` — the ASP did not submit the deliverable before the deadline. This notification did not send a refund transaction. Run `onchainos agent refund-prepare {job_id}` to inspect authoritative Refund V2 state. A cause-specific timeout claim remains unavailable until the backend exposes its V2 contract."
+        "[Submit Deadline Expired] Job `{job_id}` — the ASP did not submit the deliverable before the deadline. Authoritative Expired(8) confirms that the backend returned any refundable payment to your wallet. This notification did not send a refund transaction, and no buyer-side claim or finalization is required."
     )
 }
 
