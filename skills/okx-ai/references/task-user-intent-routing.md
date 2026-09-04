@@ -169,14 +169,14 @@ Triggers (only when there's no active card the user might be answering): `close 
   2. **Outside Waiting state** → `onchainos agent close <jobId>` directly.
 - 🔴 I-9: case (1) mistakenly mis-routed. **Default when in doubt**: prefer `resolve-prompt`.
 
-## Funding completed (after balanceWarning)
+## Funding completed
 
-Trigger: `I topped up`, only with saved `balanceWarning`.
-No saved warning → ask which payment/task; do not Watch.
-
-Action:
-- Saved pending create command → rerun it. If still insufficient, render `funding-notice` again and END TURN.
-- Saved `jobId` only → Claude Code/Codex read `watch-core.md` and run scoped watch; Hermes/OpenClaw rely on native push and END TURN.
+- Latest shared Funding result → route the funding-complete intent to
+  [`funding.md`](../../okx-agentic-wallet/references/funding.md). That Reference owns balance
+  verification and the plain-language handoff back to task creation.
+- Legacy saved `balanceWarning` with a `jobId` only → Claude Code/Codex read
+  `watch-core.md` and run scoped watch; Hermes/OpenClaw rely on native push and
+  END TURN.
 
 ---
 
@@ -184,7 +184,7 @@ Action:
 
 | Intent                                                                        | Action | Detail |
 |-------------------------------------------------------------------------------|---|---|
-| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity-service-search.md`](identity-service-search.md) commissioning search. Confirm its single `service-match` result, run `task-create-prepare`, then route its `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md). Never read `data.action` from `task-create-prepare`; that field does not exist in its response. | user publish flow |
+| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity-service-search.md`](identity-service-search.md) commissioning search. Confirm its single `service-match` result and run `task-create-prepare`. A structured insufficient-balance result enters shared Funding immediately; otherwise route its `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md). Never read `data.action` from `task-create-prepare`; that field does not exist in its response. | user publish flow |
 | Take specific task (ASP) — `take {jobId}` / `contact the User Agent of {jobId}` | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | task-asp-accept.md §1 |
 | Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |

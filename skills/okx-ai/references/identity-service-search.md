@@ -48,3 +48,10 @@ Use the selected Service's numeric `sid`.
 ```bash
 onchainos agent task-create-prepare --sid <selected-sid>
 ```
+
+Read the structured result. A `phase=funding_required`, `decision=blocked`,
+`reason=insufficient_balance` result enters
+[`funding.md`](../../okx-agentic-wallet/references/funding.md) immediately; render its common balance,
+address, and QR template without asking the user to choose Funding. For every
+other result, continue through [`task-action-routing.md`](task-action-routing.md)
+using only the returned `nextAction` items.

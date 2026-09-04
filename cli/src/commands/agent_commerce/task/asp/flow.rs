@@ -185,7 +185,9 @@ pub async fn generate_next_action(
     message: Option<&serde_json::Value>,
 ) -> String {
     let _ = message; // currently used only by event handlers that opt in (see JobAspSelected below); silence the unused-arg warning when no scene reads it.
-    use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
+    use crate::commands::agent_commerce::task::common::state_machine::{
+        parse_status_or_event, Event,
+    };
 
     // Protocol compatibility is enforced by preflight before task execution,
     // not by tagging individual A2A messages with a legacy payload field.
@@ -215,22 +217,70 @@ pub async fn generate_next_action(
             let mut any = false;
             for f in fields {
                 let line = match *f {
-                    "title" if !p.title.is_empty() => Some(format!("\x20\x20- title: {}\n", p.title)),
-                    "description" if !p.description.is_empty() => Some(format!("\x20\x20- description: {}\n", p.description)),
-                    "tokenAmount" if !p.token_amount.is_empty() => Some(format!("\x20\x20- tokenAmount: {}\n", p.token_amount)),
-                    "tokenSymbol" if !p.token_symbol.is_empty() && p.token_symbol != "?" => Some(format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol)),
-                    "buyerAgentId" => p.user_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- buyerAgentId: {v}\n")),
-                    "providerAgentId" => p.provider_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- providerAgentId: {v}\n")),
-                    "paymentMode" => p.payment_mode.map(|v| format!("\x20\x20- paymentMode: {v} ({})\n", match v { 1 => "escrow", 3 => "x402", _ => "unknown" })),
-                    "serviceId" => p.service_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceId: {v}\n")),
-                    "serviceTokenAddress" => p.service_token_address.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAddress: {v}\n")),
-                    "serviceTokenAmount" => p.service_token_amount.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAmount: {v}\n")),
-                    "serviceParams" => p.service_params.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceParams: {v}\n")),
+                    "title" if !p.title.is_empty() => {
+                        Some(format!("\x20\x20- title: {}\n", p.title))
+                    }
+                    "description" if !p.description.is_empty() => {
+                        Some(format!("\x20\x20- description: {}\n", p.description))
+                    }
+                    "tokenAmount" if !p.token_amount.is_empty() => {
+                        Some(format!("\x20\x20- tokenAmount: {}\n", p.token_amount))
+                    }
+                    "tokenSymbol" if !p.token_symbol.is_empty() && p.token_symbol != "?" => {
+                        Some(format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol))
+                    }
+                    "buyerAgentId" => p
+                        .user_agent_id
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- buyerAgentId: {v}\n")),
+                    "providerAgentId" => p
+                        .provider_agent_id
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- providerAgentId: {v}\n")),
+                    "paymentMode" => p.payment_mode.map(|v| {
+                        format!(
+                            "\x20\x20- paymentMode: {v} ({})\n",
+                            match v {
+                                1 => "escrow",
+                                3 => "x402",
+                                _ => "unknown",
+                            }
+                        )
+                    }),
+                    "serviceId" => p
+                        .service_id
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceId: {v}\n")),
+                    "serviceTokenAddress" => p
+                        .service_token_address
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceTokenAddress: {v}\n")),
+                    "serviceTokenAmount" => p
+                        .service_token_amount
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceTokenAmount: {v}\n")),
+                    "serviceParams" => p
+                        .service_params
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceParams: {v}\n")),
                     _ => None,
                 };
-                if let Some(l) = line { out.push_str(&l); any = true; }
+                if let Some(l) = line {
+                    out.push_str(&l);
+                    any = true;
+                }
             }
-            if any { Some(out) } else { None }
+            if any {
+                Some(out)
+            } else {
+                None
+            }
         };
         match prefetched.and_then(render) {
             Some(s) => s,
@@ -704,6 +754,20 @@ pub async fn generate_next_action(
         )
         .await,
 
+        // ─── Job notifications (display-only) ──────────────────────────────
+        Event::JobAspAcceptExpire => {
+            super::v2::notification::job_asp_accept_expire(job_id, message)
+        }
+        Event::JobAspRejectClosed => {
+            super::v2::notification::job_asp_reject_closed(job_id, message)
+        }
+        Event::JobAspRejectExpire => {
+            super::v2::notification::job_asp_reject_expire(job_id, message)
+        }
+        Event::SubAspClaimNotify => {
+            super::v2::notification::sub_asp_claim_notify(job_id, message)
+        }
+
         // ─── User Agent-driven tx receipt notifications; no ASP action needed ─────
         Event::JobClosed
         | Event::JobPaymentModeChanged => format!(
@@ -1006,7 +1070,7 @@ pub async fn generate_next_action(
                 .and_then(|m| m.get("jobTitle").or_else(|| m.get("title")))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty());
-            sub_asp_notify(
+            display_notify(
                 "sub_close_notify (subscription closed)",
                 &super::content::sub_close_notify_asp_notify(title, job_id),
                 Some(terminal_session_hint.as_str()),
@@ -1021,7 +1085,7 @@ pub async fn generate_next_action(
                 .and_then(|m| m.get("failReason").or_else(|| m.get("reason")))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty());
-            sub_asp_notify(
+            display_notify(
                 "sub_failed_notify (subscription failed)",
                 &super::content::sub_failed_notify_asp_notify(title, job_id, reason),
                 Some(terminal_session_hint.as_str()),
@@ -1117,8 +1181,8 @@ pub async fn generate_next_action(
 
 /// Render an ASP-side display notification: the localize-then-user-notify scaffold wrapping the
 /// canonical English `content`, optionally followed by the terminal session-cleanup hint. Used by
-/// the subscription arms, which are notify-only (no state transition, no on-chain action).
-fn sub_asp_notify(header: &str, content: &str, terminal_hint: Option<&str>) -> String {
+/// display-only arms, which have no state transition or on-chain action.
+fn display_notify(header: &str, content: &str, terminal_hint: Option<&str>) -> String {
     let tail = match terminal_hint {
         Some(h) => format!("\n{h}\n"),
         None => String::new(),
@@ -1181,17 +1245,32 @@ fn user_attachment_received_cli(
     let salt = msg_str("salt");
     let nonce = msg_str("nonce");
     let secret = msg_str("secret");
-    let filename = message.and_then(|m| m.get("filename")).and_then(|v| v.as_str());
+    let filename = message
+        .and_then(|m| m.get("filename"))
+        .and_then(|v| v.as_str());
 
-    if file_key.is_empty() || digest.is_empty() || salt.is_empty()
-        || nonce.is_empty() || secret.is_empty()
+    if file_key.is_empty()
+        || digest.is_empty()
+        || salt.is_empty()
+        || nonce.is_empty()
+        || secret.is_empty()
     {
         let mut missing = Vec::new();
-        if file_key.is_empty() { missing.push("fileKey"); }
-        if digest.is_empty() { missing.push("digest"); }
-        if salt.is_empty() { missing.push("salt"); }
-        if nonce.is_empty() { missing.push("nonce"); }
-        if secret.is_empty() { missing.push("secret"); }
+        if file_key.is_empty() {
+            missing.push("fileKey");
+        }
+        if digest.is_empty() {
+            missing.push("digest");
+        }
+        if salt.is_empty() {
+            missing.push("salt");
+        }
+        if nonce.is_empty() {
+            missing.push("nonce");
+        }
+        if secret.is_empty() {
+            missing.push("secret");
+        }
         let fields = missing.join(", ");
         return format!(
             "[user_attachment_received_cli] ERROR: encryption metadata incomplete — missing: {fields}. \
@@ -1230,7 +1309,8 @@ fn user_attachment_received_cli(
         }
         let dir = attachments_dir(job_id).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir failed: {e}"))?;
-        let file_name = src.file_name()
+        let file_name = src
+            .file_name()
             .ok_or_else(|| format!("invalid file path: {local_path}"))?;
         let dest = dedup_dest(&dir, file_name);
         if std::fs::rename(src, &dest).is_err() {
@@ -1319,10 +1399,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn subscription_job_notifications_render_asp_copy() {
+        let common = json!({
+            "jobId": ASP_JOB_ID,
+            "jobTitle": "BTC Signals",
+            "tokenAmount": "12.34",
+            "tokenSymbol": "USDT",
+            "jobType": 1
+        });
+
+        let mut accept_expire = common.clone();
+        accept_expire["event"] = json!("job_asp_accept_expire");
+        let out = run_asp("job_asp_accept_expire", accept_expire).await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(out.contains("[Job Timed Out] You did not respond to BTC Signals within 3 hours"));
+        assert!(out.contains("12.34 USDT"));
+        assert_eq!(progression["nextAction"][0]["id"], "notify_user");
+        assert_eq!(progression["payload"]["role"], "asp");
+
+        let mut reject_closed = common.clone();
+        reject_closed["event"] = json!("job_asp_reject_closed");
+        reject_closed["aspRejectReason"] = json!("capacity unavailable");
+        let out = run_asp("job_asp_reject_closed", reject_closed).await;
+        assert!(out.contains("[Task Declined] You have declined BTC Signals."));
+        assert!(out.contains("Reason: capacity unavailable"));
+
+        let mut reject_expire = common.clone();
+        reject_expire["event"] = json!("job_asp_reject_expire");
+        let out = run_asp("job_asp_reject_expire", reject_expire).await;
+        assert!(out.contains("[Automatic Refund]"));
+        assert!(!out.contains("Response deadline:"));
+        assert!(out.contains("No further service delivery is required."));
+
+        let mut claim_notify = common;
+        claim_notify["event"] = json!("sub_asp_claim_notify");
+        claim_notify["txHash"] = json!("0xreceive");
+        let out = run_asp("sub_asp_claim_notify", claim_notify).await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(out.contains("[Income Collected]"));
+        assert!(!out.contains("Subscription income collected\n"));
+        assert!(out.contains("12.34 USDT for BTC Signals"));
+        assert!(out.contains("Transaction: 0xreceive"));
+        assert_eq!(progression["nextAction"][0]["id"], "notify_user");
+        assert_eq!(progression["payload"]["event"], "sub_asp_claim_notify");
+    }
+
+    #[tokio::test]
+    async fn ordinary_job_notifications_split_free_and_paid_copy() {
+        let base = json!({
+            "jobId": ASP_JOB_ID,
+            "jobTitle": "One-off analysis",
+            "tokenSymbol": "USDT",
+            "jobType": 0
+        });
+
+        let mut free = base.clone();
+        free["event"] = json!("job_asp_accept_expire");
+        free["tokenAmount"] = json!("0");
+        let out = run_asp("job_asp_accept_expire", free).await;
+        assert!(out.contains("[Job Expired]"));
+        assert!(!out.contains("escrowed amount"));
+
+        let mut paid = base.clone();
+        paid["event"] = json!("job_asp_accept_expire");
+        paid["tokenAmount"] = json!("5");
+        let out = run_asp("job_asp_accept_expire", paid).await;
+        assert!(out.contains("escrowed amount of 5 USDT"));
+        assert!(out.contains("User Agent's wallet"));
+
+        let mut declined = base.clone();
+        declined["event"] = json!("job_asp_reject_closed");
+        declined["tokenAmount"] = json!("0");
+        declined["aspRejectReason"] = json!("policy");
+        let out = run_asp("job_asp_reject_closed", declined).await;
+        assert!(out.contains("[Job Declined]"));
+        assert!(out.contains("Job status: Closed"));
+
+        let mut free_refund = base;
+        free_refund["event"] = json!("job_asp_reject_expire");
+        free_refund["tokenAmount"] = json!("0.000");
+        let out = run_asp("job_asp_reject_expire", free_refund).await;
+        assert!(out.contains("[Refund Response Timed Out]"));
+        assert!(out.contains("Job status: Failed"));
+    }
+
+    #[tokio::test]
     async fn provider_assignment_duplicate_accept_is_idempotent() {
-        let single = crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
-            &json!({"status": 1}),
-        );
+        let single =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({"status": 1}),
+            );
         let output = provider_assignment_playbook(
             ASP_JOB_ID,
             ASP_AGENT_ID,
@@ -1334,7 +1500,6 @@ mod tests {
         assert!(output.contains("duplicate trigger"));
         assert!(output.contains("Do NOT repeat the mutation or broadcast"));
         assert!(!output.contains("accept-job-by-provider 0xsub01"));
-
     }
 
     #[tokio::test]
@@ -1376,11 +1541,7 @@ mod tests {
 
     #[tokio::test]
     async fn asp_handled_subscription_events_render_notify() {
-        for evt in [
-            "sub_asp_selected",
-            "sub_close_notify",
-            "sub_failed_notify",
-        ] {
+        for evt in ["sub_asp_selected", "sub_close_notify", "sub_failed_notify"] {
             let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
             assert!(
                 out.contains("onchainos agent user-notify"),
@@ -1395,10 +1556,7 @@ mod tests {
 
     #[tokio::test]
     async fn asp_terminal_subscription_events_carry_cleanup_hint() {
-        for evt in [
-            "sub_close_notify",
-            "sub_failed_notify",
-        ] {
+        for evt in ["sub_close_notify", "sub_failed_notify"] {
             let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
             assert!(
                 out.contains("session-cleanup"),
@@ -1560,11 +1718,7 @@ mod tests {
         // auto-upload playbook (Event::SubAspDispute arm).
         // `sub_asp_agree` IS ignored here: it is the ASP's own action, so per product
         // copy SSOT it gets no ASP-side push (owned by the action-command flow).
-        for evt in [
-            "sub_cancel",
-            "sub_trial_into_active",
-            "sub_asp_agree",
-        ] {
+        for evt in ["sub_cancel", "sub_trial_into_active", "sub_asp_agree"] {
             let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
             assert!(
                 out.contains("Silently ignore"),
@@ -1582,12 +1736,19 @@ mod tests {
         // Renewal = the previous period's income became claimable (§2.9 aspClaim).
         // The ASP arm must route to the deterministic claim command, NOT silently
         // ignore it (which left accrued income unclaimed in the contract).
-        let out = run_asp("sub_renew", json!({ "event": "sub_renew", "jobId": ASP_JOB_ID })).await;
+        let out = run_asp(
+            "sub_renew",
+            json!({ "event": "sub_renew", "jobId": ASP_JOB_ID }),
+        )
+        .await;
         assert!(
             out.contains("subscribe-asp-claim"),
             "sub_renew must guide the ASP to claim: {out}"
         );
-        assert!(out.contains(ASP_JOB_ID) && out.contains(ASP_AGENT_ID), "got: {out}");
+        assert!(
+            out.contains(ASP_JOB_ID) && out.contains(ASP_AGENT_ID),
+            "got: {out}"
+        );
         assert!(!out.contains("Silently ignore"), "got: {out}");
         // No buyer involvement: never instruct an XMTP send toward the User Agent.
         assert!(out.contains("Do NOT `okx-a2a session send`"), "got: {out}");
@@ -1667,7 +1828,10 @@ mod tests {
             degraded.contains("within about 1 day"),
             "deadline fallback: {degraded}"
         );
-        assert!(!degraded.contains(" by .") && !degraded.contains("of  "), "no empty slot: {degraded}");
+        assert!(
+            !degraded.contains(" by .") && !degraded.contains("of  "),
+            "no empty slot: {degraded}"
+        );
     }
 
     #[tokio::test]
@@ -1679,7 +1843,10 @@ mod tests {
             json!({ "event": "sub_dispute", "jobId": ASP_JOB_ID }),
         )
         .await;
-        assert!(out.contains("subscribe-dispute"), "must call subscribe-dispute: {out}");
+        assert!(
+            out.contains("subscribe-dispute"),
+            "must call subscribe-dispute: {out}"
+        );
         assert!(
             out.contains("--reason"),
             "sub_dispute guidance must pass --reason (on-chain bizContext): {out}"
@@ -1705,7 +1872,10 @@ mod tests {
             json!({ "event": "sub_complete_notify", "subEndTime": 1_790_000_000_000i64 }),
         )
         .await;
-        assert!(out.contains("2026-"), "ms timestamp rendered as seconds date: {out}");
+        assert!(
+            out.contains("2026-"),
+            "ms timestamp rendered as seconds date: {out}"
+        );
         assert!(!out.contains("+58692"), "no five-digit year: {out}");
     }
 
@@ -1717,9 +1887,11 @@ mod tests {
         )
         .await;
 
-        assert!(!out.contains("Legacy title"), "legacy title must be ignored: {out}");
+        assert!(
+            !out.contains("Legacy title"),
+            "legacy title must be ignored: {out}"
+        );
     }
 
     // ── FR-3: price gate test_flag short-circuit (sandbox ASP review) ────
-
 }

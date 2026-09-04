@@ -20,6 +20,25 @@ onchainos swap quote --from <addr> --to <addr> --readable-amount <amt> --chain <
 
 `--readable-amount` (human units, CLI converts) or `--amount` (raw minimal units) — one of. Key return: `toTokenAmount`, `fromTokenAmount`, `estimateGasFee`, `tradeFee` (USD), `priceImpactPercent`, `dexRouterList[]` (`dexName`, `percentage`), and per-side `fromToken` / `toToken` with `isHoneyPot`, `taxRate`, `decimal`, `tokenUnitPrice`. Each route also carries the always-on SW2 fields `action` (`ok` / `warn` / `block`) and `reason` (semicolon-joined, deduplicated; empty string when `ok`) — the CLI classifies honeypot / tax-rate risk per route; read the returned verdict and do not recompute it.
 
+The normal-quote response also carries **`walletBalance`** — the wallet's from-token balance. Always present: a string on success, JSON `null` when the balance query failed (never `0`, never omitted, never a string sentinel).
+
+### Common insufficient-balance result
+
+When the quote detects the from-token balance is below the required from-token amount, it emits the standard `{ok:false,data:{phase,decision,reason,nextAction,payload}}` envelope instead of a normal quote. For `exactOut`, the required amount comes from the quote's `fromTokenAmount`, not the requested destination-token amount. Business recovery: [swap.md](swap.md) → Insufficient-Balance Top-up Recovery. The same result immediately uses [funding.md](funding.md) → Output templates to display the balance, address, and QR.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `data.phase` / `decision` / `reason` | string | `funding_required` / `blocked` / `insufficient_balance`. |
+| `data.nextAction` | array | Empty; the result enters shared Funding immediately. |
+| `data.payload.operation` | string | Optional origin operation identifier; Swap returns `swap`. |
+| `data.payload.fundingTarget` | object | Current account, canonical chain, receive address, same-network and gas facts. |
+| `data.payload.fundingNeed` | object | `{asset,tokenAddress,required,balance,shortfall}` in readable units. |
+| `data.payload.qr` | object | QR for `fundingTarget.receiveAddress`; same shape as [wallet-cli-reference.md](wallet-cli-reference.md#common-qr-object). |
+
+The common `payload.fundingTarget`, `payload.qr`, and `payload.fundingNeed`
+fields are owned by the CLI Funding helper. The result carries no saved quote,
+resume token, executable command, or prior confirmation.
+
 ## `swap execute`
 
 One-shot: quote → approve (if needed) → sign → broadcast. Honeypot and price impact >10% are blocked internally.
