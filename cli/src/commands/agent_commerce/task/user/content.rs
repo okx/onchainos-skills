@@ -18,7 +18,7 @@
 //!    Decision prompts (❓) carry the `[Job {short_id} — you are the User Agent]` prefix.
 //!    User reply instructions use descriptive phrasing (naturally translatable by the sub agent).
 //!
-//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
+//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a session send`
 //!    to the provider sub agent. Naming suffix: `_to_seller`.
 //!    Rule: may contain protocol literals (`[intent:*]` etc.);
 //!    **never instruct the peer to call CLI** (the peer has its own flow.rs and decides based on chain events;
@@ -363,8 +363,53 @@ pub(crate) fn fmt_epoch(ts: Option<i64>) -> Option<String> {
         .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
 }
 
-/// `sub_created` — subscription confirmed, first charge taken (user).
+/// `sub_created` — subscription create-and-fund confirmed, awaiting ASP action.
 pub fn sub_created_user_notify(
+    job_id: &str,
+    service_name: &str,
+    token_amount: Option<&str>,
+    token_symbol: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "[Subscription Created] Job {job_id} (subscribing to {service_name}) is on-chain and waiting for the ASP to accept."
+    );
+    match (token_amount, token_symbol) {
+        (Some(amount), Some(symbol)) => out.push_str(&format!(
+            " {amount} {symbol} has been funded for the subscription but the subscription is not active yet."
+        )),
+        (Some(amount), None) => out.push_str(&format!(
+            " {amount} has been funded for the subscription but the subscription is not active yet."
+        )),
+        _ => out.push_str(" The subscription is not active yet."),
+    }
+    out
+}
+
+/// Trial variant of `sub_created`; the trial starts only after ASP acceptance.
+pub fn sub_created_trial_user_notify(
+    job_id: &str,
+    service_name: &str,
+    token_amount: Option<&str>,
+    token_symbol: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "[Trial Subscription Created] Job {job_id} (subscribing to {service_name}) is on-chain and waiting for the ASP to accept. The free trial has not started yet."
+    );
+    if let Some(amount) = token_amount {
+        match token_symbol {
+            Some(symbol) => out.push_str(&format!(
+                " If accepted, {amount} {symbol} is the paid-period price after the trial."
+            )),
+            None => out.push_str(&format!(
+                " If accepted, {amount} is the paid-period price after the trial."
+            )),
+        }
+    }
+    out
+}
+
+/// `sub_asp_selected` — ASP accepted; subscription is active and service starts.
+pub fn sub_asp_selected_user_notify(
     job_id: &str,
     service_name: &str,
     token_amount: Option<&str>,
@@ -398,13 +443,13 @@ pub fn sub_created_user_notify(
     out
 }
 
-/// `sub_created` with `trialType=1` — free trial started, nothing charged yet (user).
+/// `sub_asp_selected` with `trialType=1` — ASP accepted and the free trial started.
 /// Renders the trial-start copy: the trial window is charge-free, so the
-/// immediate-first-charge copy from `sub_created_user_notify` must never be shown
+/// immediate-first-charge copy from `sub_asp_selected_user_notify` must never be shown
 /// for a trial order (the real first charge is announced by `sub_trial_into_active`).
 /// The duration label slot (`{trialDisplay}`) has no envelope source, so only the
 /// date range renders; the charge sentence needs an amount and degrades away without one.
-pub fn sub_created_trial_user_notify(
+pub fn sub_asp_selected_trial_user_notify(
     token_amount: Option<&str>,
     token_symbol: Option<&str>,
     trial_start: Option<i64>,
@@ -762,9 +807,219 @@ pub fn sub_reject_refund_notify_user(
     out
 }
 
+// ── Job notification events ────────────────────────────────────────
+
+/// `job_asp_accept_expire` — subscription-task copy.
+#[allow(clippy::too_many_arguments)]
+pub fn subscription_job_asp_accept_expire_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    provider_name: &str,
+    provider_agent_id: &str,
+) -> String {
+    format!(
+        "[Job Timed Out] The ASP did not accept {job_name} within 3 hours. The job has timed out, and the subscription did not begin. The escrowed amount of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance.\n\
+         Job ID: {job_id}\n\
+         ASP: {provider_name} ({provider_agent_id})\n\n\
+         If the service offers a free trial, your trial eligibility remains unaffected."
+    )
+}
+
+/// `job_asp_accept_expire` — ordinary-task copy, split by whether payment was made.
+#[allow(clippy::too_many_arguments)]
+pub fn regular_job_asp_accept_expire_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    provider_name: &str,
+    provider_agent_id: &str,
+    is_paid: bool,
+) -> String {
+    let payment = if is_paid {
+        format!(
+            " The escrowed amount of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance."
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "[Job Expired] The ASP did not accept {job_name} within 3 hours, and the job has expired.{payment}\n\n\
+         Job ID: {job_id}\n\
+         ASP: {provider_name} ({provider_agent_id})\n\
+         Job status: Expired"
+    )
+}
+
+/// `job_asp_reject_closed` — subscription-task copy.
+#[allow(clippy::too_many_arguments)]
+pub fn subscription_job_asp_reject_closed_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    provider_name: &str,
+    provider_agent_id: &str,
+    reason: &str,
+) -> String {
+    format!(
+        "[ASP Declined] The ASP declined {job_name}. The escrowed amount of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance.\n\n\
+         Job ID: {job_id}\n\
+         ASP: {provider_name} ({provider_agent_id})\n\
+         Reason: {reason}\n\n\
+         The job is closed, and the subscription did not begin. If the service offers a free trial, your trial eligibility remains unaffected."
+    )
+}
+
+/// `job_asp_reject_closed` — ordinary-task copy, split by whether payment was made.
+#[allow(clippy::too_many_arguments)]
+pub fn regular_job_asp_reject_closed_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    provider_name: &str,
+    provider_agent_id: &str,
+    reason: &str,
+    is_paid: bool,
+) -> String {
+    let payment = if is_paid {
+        format!(
+            " The escrowed amount of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance."
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "[ASP Declined] The ASP declined {job_name}.{payment}\n\n\
+         Job ID: {job_id}\n\
+         ASP: {provider_name} ({provider_agent_id})\n\
+         Reason: {reason}\n\
+         Job status: Closed"
+    )
+}
+
+/// `job_asp_reject_expire` — subscription-task copy.
+pub fn subscription_job_asp_reject_expire_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+) -> String {
+    format!(
+        "[Automatic Refund] The ASP did not process the refund request for {job_name} by the deadline. The refund of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance.\n\n\
+         Job ID: {job_id}\n\
+         Job status: Closed"
+    )
+}
+
+/// `job_asp_reject_expire` — ordinary-task copy, split by whether payment was made.
+pub fn regular_job_asp_reject_expire_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    is_paid: bool,
+) -> String {
+    if is_paid {
+        format!(
+            "[Automatic Refund] The ASP did not process the refund request for {job_name} by the deadline. The refund of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance.\n\n\
+             Job ID: {job_id}\n\
+             Job status: Failed"
+        )
+    } else {
+        format!(
+            "[Refund Process Completed] The ASP did not process the refund request for {job_name} by the deadline. No payment was made for this job, so no refund is required.\n\n\
+             Job ID: {job_id}\n\
+             Job status: Failed"
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn job_notification_copy_matches_spec() {
+        assert_eq!(
+            subscription_job_asp_accept_expire_user_notify(
+                "BTC Signals",
+                "job-1",
+                "12.34",
+                "USDT",
+                "Signal ASP",
+                "5263",
+            ),
+            "[Job Timed Out] The ASP did not accept BTC Signals within 3 hours. The job has timed out, and the subscription did not begin. The escrowed amount of 12.34 USDT will be returned automatically to your wallet address. Please monitor your wallet balance.\nJob ID: job-1\nASP: Signal ASP (5263)\n\nIf the service offers a free trial, your trial eligibility remains unaffected."
+        );
+        assert_eq!(
+            subscription_job_asp_reject_closed_user_notify(
+                "BTC Signals",
+                "job-1",
+                "12.34",
+                "USDT",
+                "Signal ASP",
+                "5263",
+                "capacity unavailable",
+            ),
+            "[ASP Declined] The ASP declined BTC Signals. The escrowed amount of 12.34 USDT will be returned automatically to your wallet address. Please monitor your wallet balance.\n\nJob ID: job-1\nASP: Signal ASP (5263)\nReason: capacity unavailable\n\nThe job is closed, and the subscription did not begin. If the service offers a free trial, your trial eligibility remains unaffected."
+        );
+        assert_eq!(
+            subscription_job_asp_reject_expire_user_notify(
+                "BTC Signals",
+                "job-1",
+                "12.34",
+                "USDT",
+            ),
+            "[Automatic Refund] The ASP did not process the refund request for BTC Signals by the deadline. The refund of 12.34 USDT will be returned automatically to your wallet address. Please monitor your wallet balance.\n\nJob ID: job-1\nJob status: Closed"
+        );
+        assert_eq!(
+            regular_job_asp_accept_expire_user_notify(
+                "One-off analysis",
+                "job-2",
+                "0",
+                "USDT",
+                "Analyst",
+                "42",
+                false,
+            ),
+            "[Job Expired] The ASP did not accept One-off analysis within 3 hours, and the job has expired.\n\nJob ID: job-2\nASP: Analyst (42)\nJob status: Expired"
+        );
+        assert_eq!(
+            regular_job_asp_accept_expire_user_notify(
+                "One-off analysis",
+                "job-2",
+                "5",
+                "USDT",
+                "Analyst",
+                "42",
+                true,
+            ),
+            "[Job Expired] The ASP did not accept One-off analysis within 3 hours, and the job has expired. The escrowed amount of 5 USDT will be returned automatically to your wallet address. Please monitor your wallet balance.\n\nJob ID: job-2\nASP: Analyst (42)\nJob status: Expired"
+        );
+        assert_eq!(
+            regular_job_asp_reject_closed_user_notify(
+                "One-off analysis",
+                "job-2",
+                "0",
+                "USDT",
+                "Analyst",
+                "42",
+                "policy",
+                false,
+            ),
+            "[ASP Declined] The ASP declined One-off analysis.\n\nJob ID: job-2\nASP: Analyst (42)\nReason: policy\nJob status: Closed"
+        );
+        assert_eq!(
+            regular_job_asp_reject_expire_user_notify(
+                "One-off analysis", "job-2", "0", "USDT", false,
+            ),
+            "[Refund Process Completed] The ASP did not process the refund request for One-off analysis by the deadline. No payment was made for this job, so no refund is required.\n\nJob ID: job-2\nJob status: Failed"
+        );
+    }
 
     #[test]
     fn scoped_watch_handoff_requires_nonterminal_reentry() {
@@ -851,8 +1106,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_created_renders_active_and_first_charge_verbatim() {
-        let out = sub_created_user_notify(
+    fn sub_asp_selected_renders_active_and_first_charge_verbatim() {
+        let out = sub_asp_selected_user_notify(
             "job-1",
             "My Sub",
             Some("1.500000"),
@@ -878,8 +1133,28 @@ mod tests {
     }
 
     #[test]
-    fn sub_created_auto_renew_off() {
-        let out = sub_created_user_notify(
+    fn sub_created_paid_is_created_but_not_active() {
+        let out = sub_created_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
+        assert!(out.starts_with("[Subscription Created]"));
+        assert!(out.contains("waiting for the ASP to accept"));
+        assert!(out.contains("1.5 USDT has been funded"));
+        assert!(out.contains("not active yet"));
+        assert!(!out.contains("First charge"));
+    }
+
+    #[test]
+    fn sub_created_trial_does_not_claim_trial_started() {
+        let out = sub_created_trial_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
+        assert!(out.starts_with("[Trial Subscription Created]"));
+        assert!(out.contains("waiting for the ASP to accept"));
+        assert!(out.contains("free trial has not started yet"));
+        assert!(out.contains("1.5 USDT is the paid-period price"));
+        assert!(!out.contains("Trial Started"));
+    }
+
+    #[test]
+    fn sub_asp_selected_auto_renew_off() {
+        let out = sub_asp_selected_user_notify(
             "job-1",
             "My Sub",
             Some("1.5"),
@@ -899,8 +1174,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_created_conditional_next_charge_and_degrades() {
-        let with = sub_created_user_notify(
+    fn sub_asp_selected_conditional_next_charge_and_degrades() {
+        let with = sub_asp_selected_user_notify(
             "job-1",
             "My Sub",
             Some("1.5"),
@@ -910,7 +1185,7 @@ mod tests {
             true,
         );
         assert!(with.contains("next charge date:"), "clause present: {with}");
-        let bare = sub_created_user_notify("job-1", "My Sub", None, None, None, None, false);
+        let bare = sub_asp_selected_user_notify("job-1", "My Sub", None, None, None, None, false);
         assert!(bare.contains("Job job-1"));
         assert!(!bare.contains("First charge"));
         assert!(!bare.contains("current period"));
@@ -922,8 +1197,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_created_trial_renders_trial_started_no_charge() {
-        let out = sub_created_trial_user_notify(
+    fn sub_asp_selected_trial_renders_trial_started_no_charge() {
+        let out = sub_asp_selected_trial_user_notify(
             Some("1.500000"),
             Some("USDT"),
             Some(1_700_000_000),
@@ -949,13 +1224,14 @@ mod tests {
     }
 
     #[test]
-    fn sub_created_trial_degrades_without_amount_or_dates() {
-        let bare = sub_created_trial_user_notify(None, None, None, None);
+    fn sub_asp_selected_trial_degrades_without_amount_or_dates() {
+        let bare = sub_asp_selected_trial_user_notify(None, None, None, None);
         assert_eq!(
-            bare, "[Trial Started] Your free trial is active.",
+            bare,
+            "[Trial Started] Your free trial is active.",
             "no amount → whole conversion sentence omitted; no dates → no range"
         );
-        let no_dates = sub_created_trial_user_notify(Some("1.5"), None, None, None);
+        let no_dates = sub_asp_selected_trial_user_notify(Some("1.5"), None, None, None);
         assert!(
             no_dates.contains("After it ends, 1.5 will be auto-charged to convert"),
             "amount without symbol/date still announces conversion: {no_dates}"

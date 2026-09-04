@@ -346,19 +346,25 @@ pub(crate) async fn handle_task_create_prepare(
             else {
                 return Err(error).context("failed to check the selected Service balance");
             };
-            let (warning, _) =
-                common::deposit_qr::balance_warning_json(&insufficient, &user_agent_id).await;
-            let mut payload = service;
-            if let Some(object) = payload.as_object_mut() {
-                object.insert("balanceWarning".to_string(), warning);
-            }
-            emit(
-                PHASE_PAYMENT_VALIDATION,
-                "blocked",
-                "insufficient_balance",
-                next_action("fund_account", true),
-                payload,
-            );
+            let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
+                .await
+                .ok_or_else(|| anyhow!("failed to resolve the funding address"))?;
+            let fee_token = required_service_string(&service, "feeToken")?;
+            let result = crate::funding::build_funding_bundle_for_address(
+                "",
+                &deposit.chain_index,
+                &deposit.address,
+                crate::funding::FundingBlockedInput {
+                    asset: &insufficient.currency,
+                    token_address: &fee_token,
+                    required: &insufficient.required,
+                    balance: Some(&insufficient.available),
+                    operation: Some(crate::funding::FUNDING_OPERATION_TASK_CREATION),
+                    error_code: None,
+                    error_message: None,
+                },
+            )?;
+            crate::output::success(result);
             Ok(())
         }
     }
