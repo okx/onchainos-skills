@@ -62,6 +62,26 @@ Do not implement or push the shared change to `codex/dacs-dev` first. Preserve
 the merge ancestry between the two branches; do not replace this promotion
 flow with a force push or an `ours` merge that discards source-branch content.
 
+### `codex/dacs-dev` local-development exception
+
+The checkout-local development tooling is intentionally absent from
+`codex/a2a-skill-cli-contract` and must remain available only on
+`codex/dacs-dev`. When merging `codex/a2a-skill-cli-contract` into
+`codex/dacs-dev`, preserve the `codex/dacs-dev` version of all related changes,
+including:
+
+- `scripts/onchainos-local-dev-setup.sh`,
+  `scripts/test-onchainos-local-dev-setup.sh`, and
+  `scripts/test-onchainos-update.sh`;
+- the `dev:init`, `dev:init:test`, `dev:skills`, and `dev:cli` package scripts;
+- checkout-local development documentation and `.codex/bin` wrapper usage;
+- `ONCHAINOS_SKIP_CLIENT_VERSION_GATE` handling;
+- `ONCHAINOS_A2A_SPOOL_DIR` handling and checkout-local A2A spool routing.
+
+Resolve those paths and hunks in favor of `codex/dacs-dev` during the merge,
+then validate the merged tree before pushing it. Do not merge the deletion of
+these branch-specific facilities into `codex/dacs-dev`.
+
 ## CLI Composite Commands
 
 | Command | What it does |
