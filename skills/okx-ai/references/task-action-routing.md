@@ -11,7 +11,7 @@ legacy prose field `action`.
 | `fund_account` | Wallet funding flow | Required | Rerun prepare with the same `sid` |
 | `restore_subscription` | `task-user-duplicate-subscription-guide.md` | Required | Enter scoped watch |
 | `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |
-| `send_task_params_response` | `task-asp-accept.md`, `NEED_PARAMS`; send the returned `params` unchanged through `okx-a2a session send` | No | ASP fetches latest detail and reevaluates the complete `serviceParams` |
+| `send_task_params_response` | `task-asp-accept.md`, `NEED_PARAMS` for one-time tasks; send the returned `params` unchanged through `okx-a2a session send` | No | ASP fetches latest detail and reevaluates the complete `serviceParams` |
 | `watch_task` | `watch-core.md`, scoped watch for `params.jobId` | No | Continue until the Watch stop condition |
 | `stop` | End the current flow | No | Run no further command |
 

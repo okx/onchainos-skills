@@ -365,6 +365,46 @@ pub struct ServiceListArgs {
     /// service page. Omitted → the backend returns all services.
     #[arg(long = "service-id")]
     pub service_id: Option<String>,
+    /// Page number (1-based). Defaults to 1.
+    #[arg(long, default_value = "1")]
+    pub page: Option<String>,
+    /// Services per page. Defaults to 3.
+    #[arg(long = "page-size", default_value = "3")]
+    pub page_size: Option<String>,
+}
+
+#[cfg(test)]
+mod service_list_args_tests {
+    use super::ServiceListArgs;
+    use clap::Parser;
+
+    #[derive(Debug, Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        service_list: ServiceListArgs,
+    }
+
+    #[test]
+    fn service_list_defaults_to_first_page_with_three_services() {
+        let cli = TestCli::parse_from(["test", "--agent-id", "42"]);
+        assert_eq!(cli.service_list.page.as_deref(), Some("1"));
+        assert_eq!(cli.service_list.page_size.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn service_list_accepts_explicit_pagination() {
+        let cli = TestCli::parse_from([
+            "test",
+            "--agent-id",
+            "42",
+            "--page",
+            "3",
+            "--page-size",
+            "20",
+        ]);
+        assert_eq!(cli.service_list.page.as_deref(), Some("3"));
+        assert_eq!(cli.service_list.page_size.as_deref(), Some("20"));
+    }
 }
 
 /// `onchainos agent service-match`: search marketplace services directly.

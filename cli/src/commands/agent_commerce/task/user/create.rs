@@ -1,6 +1,7 @@
 //! Buyer create-and-fund entry point for a one-time A2A task.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::audit;
@@ -34,15 +35,57 @@ pub struct CreateTaskParams {
     pub min_credit_score: Option<f64>,
     pub visibility: String,
     pub chain_id: u64,
+    pub service_guide: Option<String>,
+    pub service_guide_hash: Option<String>,
+    pub guide_consent_json: Option<String>,
 }
 
 struct ValidatedParams {
     title: String,
     token_symbol: String,
     visibility: i64,
+    guide_consent: Option<GuideConsentInput>,
+}
+
+#[derive(Debug)]
+struct GuideConsentInput {
+    draft: super::super::common::autotrade::guide::GuideDraft,
+    consent_values: BTreeMap<String, serde_json::Value>,
 }
 
 impl CreateTaskParams {
+    fn guide_draft(&self) -> Result<Option<super::super::common::autotrade::guide::GuideDraft>> {
+        super::super::common::autotrade::guide::parse_draft(
+            self.service_guide.as_deref(),
+            self.service_guide_hash.as_deref(),
+        )
+    }
+
+    fn guide_consent_values(&self) -> Result<BTreeMap<String, serde_json::Value>> {
+        let Some(raw) = self.guide_consent_json.as_deref() else {
+            return Ok(BTreeMap::new());
+        };
+        serde_json::from_str(raw).context("--guide-consent-json must be a JSON object")
+    }
+
+    fn validated_guide_consent(&self) -> Result<Option<GuideConsentInput>> {
+        let Some(draft) = self.guide_draft()? else {
+            if self.service_guide_hash.is_some() || self.guide_consent_json.is_some() {
+                bail!("Guide Consent requires --service-guide");
+            }
+            return Ok(None);
+        };
+        if self.guide_consent_json.is_none() {
+            bail!("--guide-consent-json is required with --service-guide, including {{}} when the Guide declares no consent fields");
+        }
+        let consent_values = self.guide_consent_values()?;
+        super::super::common::autotrade::guide::validate_consent_values(&consent_values)?;
+        Ok(Some(GuideConsentInput {
+            draft,
+            consent_values,
+        }))
+    }
+
     fn validate(&self) -> Result<ValidatedParams> {
         validate_title(&self.title)?;
         let description_len = self.description.chars().count();
@@ -100,6 +143,7 @@ impl CreateTaskParams {
             title: common::util::sanitize_title_for_shell(&self.title),
             token_symbol,
             visibility,
+            guide_consent: self.validated_guide_consent()?,
         })
     }
 }
@@ -127,6 +171,27 @@ fn validate_decimal_amount(value: &str, flag: &str) -> Result<()> {
     }
     Ok(())
 }
+
+fn prepare_guide_consent(
+    job_id: &str,
+    params: &CreateTaskParams,
+    execution: &GuideConsentInput,
+) -> Result<()> {
+    let guide_file = execution.draft.clone().into_file(
+        job_id,
+        &params.service_id,
+        Some(&params.provider_agent_id),
+    );
+    super::super::common::autotrade::guide::write_guide(&guide_file, &execution.draft.source)?;
+    super::super::common::autotrade::guide::write_prepared_consent(
+        job_id,
+        &guide_file,
+        execution.consent_values.clone(),
+        super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
+    )
+}
+
+// ─── Validation helpers ─────────────────────────────────────────────────
 
 pub fn normalize_currency(currency: &str) -> Result<String> {
     let normalized: String = currency
@@ -221,10 +286,27 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
         &account_id,
         &address,
         &user_agent_id,
+        |job_id| {
+            if let Some(ref guide_consent) = validated.guide_consent {
+                prepare_guide_consent(job_id, &params, guide_consent)?;
+            }
+            Ok(())
+        },
     )
     .await?;
 
     let tx_hash = receipt.broadcast["txHash"].as_str().unwrap_or("pending");
+    let guide_and_consent_active = if validated.guide_consent.is_some() {
+        match super::super::common::autotrade::guide::activate_prepared_consent(&receipt.job_id) {
+            Ok(()) => true,
+            Err(err) => {
+                eprintln!("[guide-execution] task created, but Guide Consent could not be activated: {err}");
+                false
+            }
+        }
+    } else {
+        false
+    };
     audit::log(
         "cli",
         "user/task_create_and_fund_submitted",
@@ -237,6 +319,22 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
             format!("paymentTokenAmount={}", params.payment_token_amount),
             format!("designatedProvider={}", params.provider_agent_id),
             "bizType=201".to_string(),
+            format!(
+                "guideStatus={}",
+                if guide_and_consent_active {
+                    "active"
+                } else {
+                    "none"
+                }
+            ),
+            format!(
+                "consentStatus={}",
+                if guide_and_consent_active {
+                    "active"
+                } else {
+                    "none"
+                }
+            ),
             format!("txHash={tx_hash}"),
         ]),
         None,
@@ -260,6 +358,8 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
             "paymentTokenSymbol": validated.token_symbol,
             "paymentTokenAmount": params.payment_token_amount,
             "runtimeBound": true,
+            "guideStatus": if guide_and_consent_active { "active" } else { "none" },
+            "consentStatus": if guide_and_consent_active { "active" } else { "none" },
             "attachments": receipt.attachments,
             "broadcast": receipt.broadcast
         }
@@ -378,6 +478,9 @@ mod tests {
             min_credit_score: Some(0.5),
             visibility: "private".to_string(),
             chain_id: 196,
+            service_guide: None,
+            service_guide_hash: None,
+            guide_consent_json: None,
         }
     }
 

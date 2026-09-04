@@ -11,32 +11,19 @@ use crate::commands::agent_commerce::task::common::util::short_job_id;
 #[derive(Clone, Copy)]
 enum ProviderAssignmentType {
     Single,
-    Subscription,
 }
 
 async fn provider_assignment_playbook(
     job_id: &str,
     agent_id: &str,
-    assignment_type: ProviderAssignmentType,
+    _assignment_type: ProviderAssignmentType,
     prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
     message: Option<&serde_json::Value>,
 ) -> String {
-    let task_type = match assignment_type {
-        ProviderAssignmentType::Single => "single",
-        ProviderAssignmentType::Subscription => "subscription",
-    };
-    let event_name = match assignment_type {
-        ProviderAssignmentType::Single => "job_asp_selected",
-        ProviderAssignmentType::Subscription => "sub_open",
-    };
-    let accept_command = match assignment_type {
-        ProviderAssignmentType::Single => "accept-job-by-provider",
-        ProviderAssignmentType::Subscription => "accept-subscription",
-    };
-    let decline_command = match assignment_type {
-        ProviderAssignmentType::Single => "decline-job-by-provider",
-        ProviderAssignmentType::Subscription => "decline-subscription",
-    };
+    let task_type = "single";
+    let event_name = "job_asp_selected";
+    let accept_command = "accept-job-by-provider";
+    let decline_command = "decline-job-by-provider";
     let p = match prefetched {
         Some(value) => value,
         None => {
@@ -159,10 +146,7 @@ async fn provider_assignment_playbook(
          okx-a2a session send --job-id {job_id} --to-agent-id {agent_id} --content \"[intent:task_params_response]\\n{{\\\"version\\\":1,\\\"jobId\\\":\\\"{job_id}\\\",\\\"requestId\\\":\\\"<request-id>\\\",\\\"round\\\":<same-round>,\\\"backendUpdated\\\":true}}\" --json\n\
          ```\n",
         description = p.description,
-        accept_type = match assignment_type {
-            ProviderAssignmentType::Single => 203,
-            ProviderAssignmentType::Subscription => 205,
-        },
+        accept_type = 203,
     )
 }
 
@@ -1120,15 +1104,6 @@ pub async fn generate_next_action(
 
         // sub_asp_agree is the ASP's OWN action (agree refund); the existing action-command
         // flow (subscribe-agree-refund) owns that lifecycle, not this notification path.
-        Event::SubOpen => provider_assignment_playbook(
-            job_id,
-            agent_id,
-            ProviderAssignmentType::Subscription,
-            prefetched,
-            message,
-        )
-        .await,
-
         Event::SubCreated
         | Event::SubCancel
         | Event::SubTrialIntoActive
@@ -1364,19 +1339,6 @@ mod tests {
         assert!(output.contains("Do NOT repeat the mutation or broadcast"));
         assert!(!output.contains("accept-job-by-provider 0xsub01"));
 
-        let subscription = crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
-            &json!({"subStatus": 1}),
-        );
-        let output = provider_assignment_playbook(
-            ASP_JOB_ID,
-            ASP_AGENT_ID,
-            ProviderAssignmentType::Subscription,
-            Some(&subscription),
-            None,
-        )
-        .await;
-        assert!(output.contains("ACCEPTED/ACTIVE"));
-        assert!(!output.contains("accept-subscription 0xsub01"));
     }
 
     #[tokio::test]
@@ -1475,7 +1437,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn asp_subscription_acceptance_falls_back_to_authoritative_detail() {
+    async fn asp_subscription_startup_falls_back_to_authoritative_detail() {
         let prefetched =
             crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
                 &json!({

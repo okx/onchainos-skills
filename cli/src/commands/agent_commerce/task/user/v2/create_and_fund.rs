@@ -188,13 +188,17 @@ fn validate_create_response(expected_job_id: &str, value: &Value) -> Result<(Str
     Ok((job_id.to_string(), biz_type))
 }
 
-pub(in super::super) async fn execute(
+pub(in super::super) async fn execute<F>(
     client: &mut TaskApiClient,
     input: CreateAndFundInput<'_>,
     account_id: &str,
     address: &str,
     user_agent_id: &str,
-) -> Result<CreationReceipt> {
+    establish_local_readiness: F,
+) -> Result<CreationReceipt>
+where
+    F: FnOnce(&str) -> Result<()>,
+{
     let confirmation_value = client
         .post_with_identity(
             "/priapi/v1/aieco/task/createAndFundConfirmStatus",
@@ -262,9 +266,18 @@ pub(in super::super) async fn execute(
         &job_id,
         input.attachments,
     )?;
-    let prebind = common::a2a_binding::bind_job_provider_to_current_runtime_required(&job_id)
+    establish_local_readiness(&job_id)
+        .context("task local Guide/Consent configuration could not be persisted")?;
+    let prebind = match common::a2a_binding::bind_job_provider_to_current_runtime_required(&job_id)
         .await
-        .context("cannot bind task to the current AI runtime; creation was not broadcast")?;
+        .context("cannot bind task to the current AI runtime; creation was not broadcast")
+    {
+        Ok(prebind) => prebind,
+        Err(error) => {
+            common::autotrade::guide::abort_prepared_consent(&job_id);
+            return Err(error);
+        }
+    };
 
     let broadcast = match signing::sign_uop_and_broadcast_full(
         client,
@@ -281,6 +294,7 @@ pub(in super::super) async fn execute(
         Ok(value) => value,
         Err(error) => {
             prebind.rollback_if_created().await;
+            common::autotrade::guide::abort_prepared_consent(&job_id);
             return Err(error).with_context(|| {
                 format!("broadcast failed or returned an unknown result for jobId={job_id}")
             });
@@ -288,6 +302,7 @@ pub(in super::super) async fn execute(
     };
     if broadcast.is_null() {
         prebind.rollback_if_created().await;
+        common::autotrade::guide::abort_prepared_consent(&job_id);
         bail!("broadcast returned no receipt");
     }
 

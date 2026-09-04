@@ -1,18 +1,16 @@
 # ASP — Designated Provider Decision (v2)
 
-This reference implements Lark flow §1.3. The buyer has already created and funded
-the task/subscription. The ASP no longer applies or counter-applies.
+This reference implements Lark flow §1.3 for one-time tasks. The buyer has
+already created and funded the task. The ASP no longer applies or counter-applies.
 
 ## Trigger and authoritative status
 
 - Single task trigger: `job_asp_selected`.
-- Subscription trigger: `sub_open`.
 - Fetch the latest detail before every decision.
-- Continue only when `status/subStatus == CREATED (0)`.
-- `ACCEPTED/ACTIVE (1)` means a duplicate trigger: end successfully without a
+- Continue only when `status == CREATED (0)`.
+- `ACCEPTED (1)` means a duplicate trigger: end successfully without a
   second mutation or broadcast.
 - Any other status is an idempotent stop.
-- `subId == jobId`.
 
 ## Registered Service check
 
@@ -44,13 +42,10 @@ Reconfirm the latest status is CREATED, then run exactly one command:
 ```bash
 # single task — backend type/broadcast bizType 203
 onchainos agent accept-job-by-provider <jobId> --agent-id <aspAgentId>
-
-# subscription — backend type/broadcast bizType 205
-onchainos agent accept-subscription <jobId> --agent-id <aspAgentId>
 ```
 
-Both commands call the documented mutation once, validate `jobId`, `uopData`,
-and response type, sign, and require a full broadcast receipt. Unknown network
+The command calls the documented mutation once, validates `jobId`, `uopData`,
+and response type, signs, and requires a full broadcast receipt. Unknown network
 results are not automatically retried; reconcile from the latest detail.
 
 ## REJECT
@@ -60,10 +55,6 @@ A concrete reason is mandatory and capped at 512 Unicode characters:
 ```bash
 # single task — type/bizType 202
 onchainos agent decline-job-by-provider <jobId> \
-  --agent-id <aspAgentId> --reason "<reason>"
-
-# subscription — type/bizType 206
-onchainos agent decline-subscription <jobId> \
   --agent-id <aspAgentId> --reason "<reason>"
 ```
 
@@ -81,7 +72,7 @@ okx-a2a session send \
   --content '<natural-language request>
 
 [intent:task_params_request]
-{"version":1,"jobId":"<jobId>","taskType":"single|subscription","requestId":"<unique-id>","round":1,"missing":["<field>"]}' \
+{"version":1,"jobId":"<jobId>","taskType":"single","requestId":"<unique-id>","round":1,"missing":["<field>"]}' \
   --json
 ```
 
@@ -90,7 +81,7 @@ The buyer constructs a complete replacement JSON value and updates the backend:
 ```bash
 onchainos agent service-param-update <jobId> \
   --agent-id <buyerAgentId> \
-  --task-type single|subscription \
+  --task-type single \
   --request-id <same-request-id> \
   --round <same-round> \
   --service-params '<complete JSON>'
