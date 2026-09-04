@@ -24,6 +24,13 @@ fn gate_path(job_id: &str) -> Result<PathBuf> {
 
 pub fn mark_pending(job_id: &str) -> Result<()> {
     let path = gate_path(job_id)?;
+    // A delayed/replayed job_submitted event must not undo an approval.
+    if matches!(
+        std::fs::read_to_string(&path).as_deref().map(str::trim),
+        Ok("pending" | "approved")
+    ) {
+        return Ok(());
+    }
     std::fs::write(&path, "pending")?;
     if DEBUG_LOG {
         eprintln!("[review-gate] mark_pending: {}", path.display());

@@ -524,11 +524,11 @@ pub async fn handle_deliver(
         print_deliver_result(&DeliverOutcome::Delivered { delivery_id: signal_delivery_id.clone() }, job_id);
     } else {
         let tx_hash = tx_hash.expect("one-shot delivery always runs the on-chain submit");
-        println!("✓ Deliverable submitted, waiting for on-chain confirmation (job_submitted)");
+        println!("✓ Deliverable submitted; backend confirmation will open the Buyer review");
         println!("  txHash: {tx_hash}");
         println!();
         println!("⚠️  Next steps are driven by system notifications — do not proactively message the User Agent:");
-        println!("    - You will receive a `job_submitted` system notification after on-chain confirmation");
+        println!("    - Wait for `job_completed` or `job_rejected`; ASP-side `job_submitted` is optional and not required for progress");
     }
     Ok(())
 }

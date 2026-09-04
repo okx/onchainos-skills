@@ -257,6 +257,23 @@ pub fn delete_review_marker(job_id: &str) {
         let _ = std::fs::remove_file(p);
     }
 }
+
+// Durable per-job idempotency marker shared by the delivery-first and
+// job_submitted-first review paths. It is written only after card delivery.
+fn review_card_sent_marker_path(job_id: &str) -> Result<PathBuf> {
+    Ok(deliverables_dir("user", job_id)?.join("review_card_sent"))
+}
+
+pub fn has_review_card_sent_marker(job_id: &str) -> bool {
+    review_card_sent_marker_path(job_id).map(|p| p.is_file()).unwrap_or(false)
+}
+
+pub fn mark_review_card_sent(job_id: &str) -> Result<()> {
+    let path = review_card_sent_marker_path(job_id)?;
+    std::fs::create_dir_all(path.parent().expect("review marker has a parent"))?;
+    std::fs::write(path, "")?;
+    Ok(())
+}
 // ── List (single job) ────────────────────────────────────────────────
 
 pub fn handle_list(job_id: &str, role: &str) -> Result<()> {
@@ -458,6 +475,16 @@ mod tests {
                 role_dir.join(&emoji_dir),
                 "emoji-title dir must resolve via prefix scan"
             );
+        });
+    }
+
+    #[test]
+    fn review_card_sent_marker_is_durable_per_job() {
+        with_home(|| {
+            assert!(!has_review_card_sent_marker("job-review-marker"));
+            mark_review_card_sent("job-review-marker").unwrap();
+            assert!(has_review_card_sent_marker("job-review-marker"));
+            assert!(!has_review_card_sent_marker("another-job"));
         });
     }
 }

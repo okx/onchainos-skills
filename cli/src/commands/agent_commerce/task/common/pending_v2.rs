@@ -888,6 +888,17 @@ fn request_prompt_inner(
     ));
 
     if cli_mode {
+        let is_buyer_review = role == "user" && source_event.as_deref() == Some("job_submitted");
+        // CLI mode has no queue entry to deduplicate. Reuse the queue lock so
+        // concurrent delivery-first and event-first requests serialize.
+        let _review_lock = if is_buyer_review { Some(acquire_lock()?) } else { None };
+        if is_buyer_review && super::deliverables::has_review_card_sent_marker(&job_id) {
+            trace_log(&format!(
+                "request_prompt CLI_MODE: buyer review already sent for job_id={job_id}"
+            ));
+            if print_ok { println!("OK"); }
+            return Ok(());
+        }
         let now = Utc::now();
         let entry = PendingEntry {
             job_id,
@@ -905,6 +916,9 @@ fn request_prompt_inner(
         let llm_content = resolve_llm_content_cli(&entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        if is_buyer_review {
+            super::deliverables::mark_review_card_sent(&entry.job_id)?;
+        }
         if print_ok {
             println!("OK");
         }
@@ -929,6 +943,14 @@ fn request_prompt_inner(
         };
 
         let _lock = acquire_lock()?;
+        let is_buyer_review = role == "user" && source_event.as_deref() == Some("job_submitted");
+        if is_buyer_review && super::deliverables::has_review_card_sent_marker(&job_id) {
+            trace_log(&format!(
+                "request_prompt QUEUE_MODE: buyer review already sent for job_id={job_id}"
+            ));
+            if print_ok { println!("OK"); }
+            return Ok(());
+        }
         let mut q = read_queue()?;
         let original_created_at = q
             .entries
@@ -950,6 +972,9 @@ fn request_prompt_inner(
         let llm_content = resolve_llm_content_prompt_user(entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
         okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        if is_buyer_review {
+            super::deliverables::mark_review_card_sent(&entry.job_id)?;
+        }
         if print_ok {
             println!("OK");
         }

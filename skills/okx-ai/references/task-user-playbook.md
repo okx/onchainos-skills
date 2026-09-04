@@ -37,6 +37,8 @@ communication rules; it does not match free-text user intents.
 
 - If the single-task deliverable is already saved and its local path is still a regular file, create
   the acceptance decision card. Stale prefetched/manifest metadata never counts as a deliverable.
+  Card delivery is exactly-once per job: delivery-first and `job_submitted`-first paths share a
+  durable CLI marker, and a replay/concurrent request becomes a successful no-op.
 - If no deliverable is available, write only the internal out-of-order marker and take no user-facing
   action: no notification, no decision card, and no manual chat-history extraction. The later validated
   `[intent:deliver]` intake consumes the marker and creates the card after persistence succeeds. If

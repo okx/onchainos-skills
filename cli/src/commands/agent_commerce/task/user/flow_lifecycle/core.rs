@@ -1495,6 +1495,14 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     let short_id = ctx.short_id;
     let title_display = ctx.title_display;
 
+    if crate::commands::agent_commerce::task::common::deliverables::has_review_card_sent_marker(
+        job_id,
+    ) {
+        return format!(
+            "[System] Review decision already delivered for job {job_id}. End this turn; do not enqueue another acceptance card.\n"
+        );
+    }
+
     // Prefetched task context + providerAgentId are required — without them we
     // cannot resolve deliverable / chat-history target / rating recipient.
     let p = match ctx.prefetched {
@@ -1606,6 +1614,16 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         .deliverable
         .as_ref()
         .expect("usable deliverable was required before composing a review card");
+    // Delivery can reach review before job_submitted. Establish the same gate
+    // here so the first card is immediately actionable.
+    if let Err(error) =
+        crate::commands::agent_commerce::task::common::review_gate::mark_pending(job_id)
+    {
+        return format!(
+            "[job_submitted_escrow] failed to establish the review gate for job {job_id}: {error}.\n\n\
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+        );
+    }
     let step2 = if d.deliverable_type == "text" {
             let content = d.text_content.as_deref().unwrap_or("<content unavailable>");
             format!(

@@ -328,14 +328,14 @@ pub async fn generate_next_action(
              )\"\n\
              ```\n\n\
              **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
-             🛑 **The next system event is `job_submitted`** — notify the ASP owner that the delivery is confirmed on-chain and awaiting User review. After that, `job_completed` or `job_rejected` is action-required.\n\n\
+             The backend now opens the Buyer review after successful submission. The ASP does **not** wait for `job_submitted`; end this turn and wait for `job_completed` or `job_rejected`.\n\n\
              [Follow-up events]\n\
              - `job_completed` (User Agent reviewed and accepted) — auto-rate the User Agent + notify the user\n\
              - `job_rejected`  (User Agent rejected the deliverable) — push dispute-vs-refund decision to the user\n"
             )
         }
 
-        // ─── §1.8: Deliverable confirmed on-chain; notify ASP owner ──────────────────
+        // Optional compatibility event: the Buyer is the required recipient.
         // `onchainos agent deliver` already sent the deliverable to the User Agent.
         // When job_submitted reaches this sub, never send it to the peer again.
         Event::JobSubmitted => {
@@ -1337,7 +1337,7 @@ mod tests {
         assert!(output.contains("onchainos agent user-notify"));
         assert!(output.contains("Waiting for the User Agent's review"));
         assert!(output.contains("must NOT trigger a second A2A send"));
-        assert!(!output.contains("ASP does NOT receive a `job_submitted`"));
+        assert!(output.contains("Wait for `job_completed` / `job_rejected`"));
     }
 
     #[tokio::test]

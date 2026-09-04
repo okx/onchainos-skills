@@ -50,11 +50,13 @@ starts the registered Service workflow. Missing/non-Active state fails closed.
 - Use only the new `--file` / `--deliverable-text` inputs. The old ignored `--message` and
   `--autotrade` delivery flags are not part of the new CLI contract.
 
-## §1.8 On-chain submission notification
+## Optional ASP-side `job_submitted` notification
 
-On `job_submitted`, do not resend the deliverable or send any A2A peer message. Notify only the ASP
-owner that the submit transaction is confirmed and the task is waiting for the User Agent's acceptance
-or rejection, then end the turn. `job_completed` and `job_rejected` remain action-required follow-ups.
+The Buyer is the required recipient of `job_submitted`; the ASP does not wait for
+that event after `onchainos agent deliver` succeeds. Wait for `job_completed` or
+`job_rejected`, which remain action-required follow-ups. If a backend version also
+delivers `job_submitted` to the ASP, treat it as an optional display-only event:
+notify the ASP owner, never resend the deliverable or any A2A peer message, then end.
 
 ## Peer Message: `[user_rejected]`
 
