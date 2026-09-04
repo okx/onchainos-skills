@@ -148,17 +148,6 @@ pub fn job_submitted_user_notify(job_id: &str) -> String {
     )
 }
 
-/// `Event::JobCompleted` Step 2 — task-completed notice pushed to the user.
-pub fn job_completed_user_notify(job_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[💰 Job Completed] Job {job_id} (<title>) — approved by the User Agent; funds received.\n\
-         \x20\x20\x20\x20  - Income: <tokenAmount> <tokenSymbol>\n\
-         \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
-         \x20\x20\x20\x20\n\
-         \x20\x20\x20\x20This job is complete."
-    )
-}
-
 /// Per-evaluator verdict rationales block shared by all three `DisputeResolved` outcomes.
 /// Source field: `message.voteReportSummaries[*].voterReportSummary` from the system envelope.
 /// Indentation matches the ASP's 6-space bullet style (header at 6 spaces, entries at 10).
@@ -401,7 +390,7 @@ pub fn sub_asp_selected_asp_notify(
 /// `sub_asp_selected` with `trialType=1` — the subscriber is on a free trial, so nothing
 /// has been charged yet; the ASP must NOT be told a payment was received (the real payment
 /// is announced on conversion via `sub_trial_into_active`). Mirrors the buyer-side
-/// `sub_created_trial_user_notify` trial variant.
+/// Buyer-side `sub_asp_selected_trial_user_notify` trial variant.
 pub fn sub_asp_selected_trial_asp_notify(
     service_name: Option<&str>,
     buyer_agent_id: Option<&str>,

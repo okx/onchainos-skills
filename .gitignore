@@ -51,6 +51,10 @@ CLAUDE.local.md
 
 # AI Assistant directories (auto-generated)
 .agents/
+.codex/bin/
+.codex/build/
+.codex/runtime/
+.codex/skills/
 .cursor
 .ai-mat
 .cursorrules
@@ -92,3 +96,8 @@ skills/okx-agent-task-workspace/
 .agents/skills/onchainos-skills
 
 output/
+
+scripts/dev
+
+.aiide/
+.aiide-preview/

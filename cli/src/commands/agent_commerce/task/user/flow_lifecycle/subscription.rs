@@ -25,7 +25,12 @@ fn service_name<'a>(message: Option<&'a serde_json::Value>, ctx: &'a FlowContext
         .unwrap_or("subscription")
 }
 
-pub(crate) fn sub_open(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
+pub(crate) fn sub_open(_ctx: &FlowContext<'_>, _message: Option<&serde_json::Value>) -> String {
+    "[Legacy subscription event] sub_open is obsolete; ignore it and wait for sub_created.\n"
+        .to_string()
+}
+
+pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
     let token_amount = extract_str(message, "tokenAmount")
         .or_else(|| ctx.prefetched.map(|value| value.token_amount.as_str()))
         .filter(|value| !value.is_empty());
@@ -33,14 +38,14 @@ pub(crate) fn sub_open(ctx: &FlowContext<'_>, message: Option<&serde_json::Value
         .or_else(|| ctx.prefetched.map(|value| value.token_symbol.as_str()))
         .filter(|value| !value.is_empty() && *value != "?");
     let content = if extract_i64(message, "trialType") == Some(1) {
-        super::super::content::sub_open_trial_user_notify(
+        super::super::content::sub_created_trial_user_notify(
             ctx.job_id,
             service_name(message, ctx),
             token_amount,
             token_symbol,
         )
     } else {
-        super::super::content::sub_open_user_notify(
+        super::super::content::sub_created_user_notify(
             ctx.job_id,
             service_name(message, ctx),
             token_amount,
@@ -53,7 +58,7 @@ pub(crate) fn sub_open(ctx: &FlowContext<'_>, message: Option<&serde_json::Value
     let session_block = match provider_id {
         Some(pid) => create_sub_session(ctx.job_id, ctx.agent_id, pid),
         None => format!(
-            "[sub_open] providerAgentId missing from event and task detail; session was not created.\n"
+            "[sub_created] providerAgentId missing from event and task detail; session was not created.\n"
         ),
     };
 
@@ -69,7 +74,10 @@ pub(crate) fn sub_open(ctx: &FlowContext<'_>, message: Option<&serde_json::Value
     )
 }
 
-pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
+pub(crate) fn sub_asp_selected(
+    ctx: &FlowContext<'_>,
+    message: Option<&serde_json::Value>,
+) -> String {
     // Subscribe-success has two copy variants keyed on trialType: 1 → trial start
     // (charge-free; the real first charge is announced by sub_trial_into_active),
     // anything else / absent → paid subscription with immediate first charge.
@@ -82,7 +90,7 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
         .or_else(|| ctx.prefetched.map(|value| value.token_symbol.as_str()))
         .filter(|value| !value.is_empty() && *value != "?");
     let content = if extract_i64(message, "trialType") == Some(1) {
-        super::super::content::sub_created_trial_user_notify(
+        super::super::content::sub_asp_selected_trial_user_notify(
             token_amount,
             token_symbol,
             // Wire has not finished the trail*→trial* field rename; keep the
@@ -97,7 +105,7 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
             .and_then(|v| v.as_i64())
             .unwrap_or(0)
             == 1;
-        super::super::content::sub_created_user_notify(
+        super::super::content::sub_asp_selected_user_notify(
             ctx.job_id,
             service_name(message, ctx),
             token_amount,
@@ -117,7 +125,7 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
          Content: {content}\n\n"
     );
 
-    // FR-7 / AC-8: no post-`sub_created` DApp text re-scan or install. Tool readiness
+    // FR-7 / AC-8: no post-`sub_asp_selected` DApp text re-scan or install. Tool readiness
     // was already surfaced at `asp-match` time via `autoTradePreflight`; the runtime
     // re-checks tool status when the first real signal arrives.
     out.push_str("**End this turn** after the notification is sent.\n");
@@ -137,12 +145,12 @@ fn create_sub_session(job_id: &str, agent_id: &str, provider_id: &str) -> String
         }
         Ok(false) => {}
         Err(e) => {
-            return format!("[sub_open] session query failed: {e}\n");
+            return format!("[sub_created] session query failed: {e}\n");
         }
     }
 
     if let Err(e) = okx_a2a::session_create(job_id, agent_id, provider_id) {
-        return format!("[sub_open] session create failed: {e}\n");
+        return format!("[sub_created] session create failed: {e}\n");
     }
 
     let prefetch = "[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context. \
@@ -150,7 +158,7 @@ fn create_sub_session(job_id: &str, agent_id: &str, provider_id: &str) -> String
         (same turn or later turn), you MUST process it normally via task-user-sub-playbook.md \
         §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
     if let Err(e) = okx_a2a::session_send(job_id, Some(provider_id), prefetch) {
-        return format!("[sub_open] session send (SKILL_PREFETCH) failed: {e}\n");
+        return format!("[sub_created] session send (SKILL_PREFETCH) failed: {e}\n");
     }
 
     super::upload_and_forward_all_attachments(job_id, agent_id, provider_id);
@@ -446,29 +454,6 @@ pub(crate) async fn sub_expire_warn(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-pub(crate) fn sub_complete_notify(
-    ctx: &FlowContext<'_>,
-    message: Option<&serde_json::Value>,
-) -> String {
-    let svc = service_name(message, ctx);
-    let content = super::super::content::sub_complete_notify_user_notify(
-        svc,
-        ctx.job_id,
-        extract_i64(message, "subEndTime"),
-    );
-    let rating_block = build_auto_rating_block(ctx);
-    format!(
-        "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-         ```bash\n\
-         onchainos agent user-notify --content \"<localized content shown below>\"\n\
-         ```\n\
-         Content: {content}\n\n\
-         {rating_block}\
-         {}\n",
-        ctx.terminal_session_hint,
-    )
-}
-
 pub(crate) fn sub_close_notify(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,
@@ -675,22 +660,22 @@ mod tests {
     }
 
     #[test]
-    fn sub_created_has_no_dapp_rescan() {
-        // FR-7 / AC-8: the post-`sub_created` DApp text re-scan is removed.
+    fn sub_asp_selected_has_no_dapp_rescan() {
+        // FR-7 / AC-8: the post-acceptance DApp text re-scan is removed.
         let ctx = ctx_with_hint();
-        let out = sub_created(&ctx, None);
+        let out = sub_asp_selected(&ctx, None);
         assert!(
             !out.contains("DApp plugin pre-install"),
-            "sub_created must not re-scan for DApps: {out}"
+            "sub_asp_selected must not re-scan for DApps: {out}"
         );
         assert!(
             !out.contains("okx-dapp-discovery"),
-            "sub_created must not route to dapp-discovery: {out}"
+            "sub_asp_selected must not route to dapp-discovery: {out}"
         );
     }
 
     #[test]
-    fn sub_created_falls_back_to_authoritative_title_and_payment() {
+    fn sub_asp_selected_falls_back_to_authoritative_title_and_payment() {
         let prefetched =
             crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
                 &serde_json::json!({
@@ -713,24 +698,27 @@ mod tests {
             prefetched: Some(&prefetched),
             data: None,
         };
-        let out = sub_created(&ctx, Some(&serde_json::json!({"event": "sub_created"})));
+        let out = sub_asp_selected(
+            &ctx,
+            Some(&serde_json::json!({"event": "sub_asp_selected"})),
+        );
         assert!(out.contains("subscribing to Authoritative Title"));
         assert!(out.contains("First charge of 9.5 USDT completed"));
         assert!(!out.contains("subscribing to This is not the service title"));
     }
 
     #[test]
-    fn sub_open_owns_session_and_attachment_setup() {
+    fn sub_created_owns_session_and_attachment_setup() {
         let source = include_str!("subscription.rs");
-        let sub_open = source
-            .split_once("pub(crate) fn sub_open")
-            .unwrap()
-            .1
-            .split_once("pub(crate) fn sub_created")
-            .unwrap()
-            .0;
         let sub_created = source
             .split_once("pub(crate) fn sub_created")
+            .unwrap()
+            .1
+            .split_once("pub(crate) fn sub_asp_selected")
+            .unwrap()
+            .0;
+        let sub_asp_selected = source
+            .split_once("pub(crate) fn sub_asp_selected")
             .unwrap()
             .1
             .split_once("fn create_sub_session")
@@ -744,8 +732,8 @@ mod tests {
             .unwrap()
             .0;
 
-        assert!(sub_open.contains("create_sub_session"));
-        assert!(!sub_created.contains("create_sub_session"));
+        assert!(sub_created.contains("create_sub_session"));
+        assert!(!sub_asp_selected.contains("create_sub_session"));
         let restored = session
             .split_once("Ok(true)")
             .unwrap()

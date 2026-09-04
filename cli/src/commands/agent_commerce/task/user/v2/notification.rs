@@ -1,7 +1,4 @@
-//! Display-only job notifications shared by ordinary and subscription tasks.
-
 use super::super::content;
-use super::super::flow::{notify_and_end, FlowContext};
 
 fn display_field(message: Option<&serde_json::Value>, key: &str) -> Option<String> {
     message
@@ -48,19 +45,45 @@ fn reason(message: Option<&serde_json::Value>) -> String {
         .unwrap_or_else(|| "No reason provided".to_string())
 }
 
+fn notification_result(job_id: &str, event: &str, notification: String) -> serde_json::Value {
+    serde_json::json!({
+        "phase": "notification",
+        "decision": "ready",
+        "reason": "notification_required",
+        "nextAction": [{
+            "id": "notify_user",
+            "recommend": true,
+            "params": {
+                "jobId": job_id,
+                "event": event,
+            },
+        }],
+        "payload": {
+            "role": "user",
+            "event": event,
+            "jobId": job_id,
+            "notification": {
+                "content": notification,
+                "localize": true,
+            },
+            "rating": { "required": false },
+        },
+    })
+}
+
 pub(crate) fn job_asp_accept_expire(
-    ctx: &FlowContext<'_>,
+    job_id: &str,
     message: Option<&serde_json::Value>,
-) -> String {
+) -> serde_json::Value {
     let job_name = job_name(message);
     let amount = token_amount(message);
     let token_symbol = display_field(message, "tokenSymbol").unwrap_or_default();
     let provider_name = provider_name(message);
     let provider_agent_id = provider_agent_id(message);
-    let rendered = if is_subscription(message) {
+    let notification = if is_subscription(message) {
         content::subscription_job_asp_accept_expire_user_notify(
             &job_name,
-            ctx.job_id,
+            job_id,
             &amount,
             &token_symbol,
             &provider_name,
@@ -69,7 +92,7 @@ pub(crate) fn job_asp_accept_expire(
     } else {
         content::regular_job_asp_accept_expire_user_notify(
             &job_name,
-            ctx.job_id,
+            job_id,
             &amount,
             &token_symbol,
             &provider_name,
@@ -77,23 +100,23 @@ pub(crate) fn job_asp_accept_expire(
             is_paid(&amount),
         )
     };
-    notify_and_end(&rendered)
+    notification_result(job_id, "job_asp_accept_expire", notification)
 }
 
 pub(crate) fn job_asp_reject_closed(
-    ctx: &FlowContext<'_>,
+    job_id: &str,
     message: Option<&serde_json::Value>,
-) -> String {
+) -> serde_json::Value {
     let job_name = job_name(message);
     let amount = token_amount(message);
     let token_symbol = display_field(message, "tokenSymbol").unwrap_or_default();
     let provider_name = provider_name(message);
     let provider_agent_id = provider_agent_id(message);
     let reason = reason(message);
-    let rendered = if is_subscription(message) {
+    let notification = if is_subscription(message) {
         content::subscription_job_asp_reject_closed_user_notify(
             &job_name,
-            ctx.job_id,
+            job_id,
             &amount,
             &token_symbol,
             &provider_name,
@@ -103,7 +126,7 @@ pub(crate) fn job_asp_reject_closed(
     } else {
         content::regular_job_asp_reject_closed_user_notify(
             &job_name,
-            ctx.job_id,
+            job_id,
             &amount,
             &token_symbol,
             &provider_name,
@@ -112,31 +135,87 @@ pub(crate) fn job_asp_reject_closed(
             is_paid(&amount),
         )
     };
-    notify_and_end(&rendered)
+    notification_result(job_id, "job_asp_reject_closed", notification)
 }
 
 pub(crate) fn job_asp_reject_expire(
-    ctx: &FlowContext<'_>,
+    job_id: &str,
     message: Option<&serde_json::Value>,
-) -> String {
+) -> serde_json::Value {
     let job_name = job_name(message);
     let amount = token_amount(message);
     let token_symbol = display_field(message, "tokenSymbol").unwrap_or_default();
-    let rendered = if is_subscription(message) {
+    let notification = if is_subscription(message) {
         content::subscription_job_asp_reject_expire_user_notify(
             &job_name,
-            ctx.job_id,
+            job_id,
             &amount,
             &token_symbol,
         )
     } else {
         content::regular_job_asp_reject_expire_user_notify(
             &job_name,
-            ctx.job_id,
+            job_id,
             &amount,
             &token_symbol,
             is_paid(&amount),
         )
     };
-    notify_and_end(&rendered)
+    notification_result(job_id, "job_asp_reject_expire", notification)
+}
+
+pub(crate) fn sub_asp_claim_notify(job_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "phase": "notification",
+        "decision": "ready",
+        "reason": "notification_not_required",
+        "nextAction": [{ "id": "stop" }],
+        "payload": {
+            "role": "user",
+            "event": "sub_asp_claim_notify",
+            "jobId": job_id,
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn regular_free_rejection_returns_notify_action_without_refund_copy() {
+        let output = job_asp_reject_closed(
+            "job-1",
+            Some(&json!({
+                "jobTitle": "Audit",
+                "jobType": 0,
+                "tokenAmount": "0",
+                "tokenSymbol": "USDT",
+                "providerName": "Auditor",
+                "providerAgentId": "42",
+                "aspRejectReason": "policy",
+            })),
+        );
+
+        assert_eq!(output["phase"], "notification");
+        assert_eq!(output["decision"], "ready");
+        assert_eq!(output["nextAction"][0]["id"], "notify_user");
+        assert_eq!(output["payload"]["role"], "user");
+        assert_eq!(output["payload"]["notification"]["localize"], true);
+        let content = output["payload"]["notification"]["content"]
+            .as_str()
+            .unwrap();
+        assert!(content.contains("Reason: policy"));
+        assert!(!content.contains("escrowed amount"));
+    }
+
+    #[test]
+    fn asp_claim_is_silent_for_user() {
+        let output = sub_asp_claim_notify("job-2");
+
+        assert_eq!(output["reason"], "notification_not_required");
+        assert_eq!(output["nextAction"][0]["id"], "stop");
+        assert!(output["payload"].get("notification").is_none());
+    }
 }

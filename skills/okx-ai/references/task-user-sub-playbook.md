@@ -1,6 +1,6 @@
 # User Sub-Session Playbook
 
-> Self-contained reference for the user's sub-sessions (task sub and backup sub). The user's user-session flows (publishing, intent routing, decision resolve) are in `task-user-playbook.md` and are NOT covered here.
+> Self-contained reference for the user's sub-sessions (task sub and backup sub). The user-session's free-text routing is in `task-user-intent-routing.md`; its selected operation rules are in `task-user-playbook.md`. They are not covered here.
 
 > 🌐 **[Localization]** — all `onchainos agent user-notify` / `pending-decisions-v2 request` content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure. **Exception — pre-rendered content**: auto-trade decision cards' `userContent` and any payload the CLI marks pushed/pre-rendered (`renderNow`, `decisionPushed`, `notificationPushed`, "already in the user's language") are already in the user's language — pass them VERBATIM, never re-translate or reword (option letters and numbers must survive byte-for-byte).
 
@@ -36,17 +36,17 @@ System events (`message.source == "system"`) → follow `task-core.md` `## Activ
 
 - `wakeup_notify` → use `message.jobStatus` as the event, not `wakeup_notify` itself.
 
-### Subscription events (`sub_*`) — display only
+### Subscription events (`sub_*`)
 
-When a `sub_*` system event arrives for the User Agent, call `next-action` and render the returned
-notification. **Never** enqueue a `pending-decisions-v2 request`, never write a state transition, never
-wait for a reply — these are notifications, not decisions.
+When a `sub_*` system event arrives for the User Agent, call `next-action` and execute only its
+result. **Never** invent a `pending-decisions-v2 request`, state transition, or wait for input.
 
 | Event | Action |
 |---|---|
-| `sub_open` / `sub_created` / `sub_trial_into_active` / `sub_renew` / `sub_user_reject` / `sub_asp_dispute` | `next-action --role user --agentId <yours> --message '<envelope>'` → render the returned `Content:` per the **`sub_*` language rule** below → `onchainos agent user-notify --content "<rendered>"` → **end turn**. `sub_open` owns session establishment/restoration and pending-attachment forwarding; `sub_created` fetches authoritative subscription detail and requires `subStatus/status=ACTIVE(1)` before telling the User that the ASP accepted and service started. A fetch failure, missing status, or any non-Active status blocks the acceptance notice. Event fields take precedence for event-specific dates; missing title/payment display fields fall back to the authoritative detail. |
+| `sub_created` / `sub_asp_selected` / `sub_trial_into_active` / `sub_renew` / `sub_user_reject` / `sub_asp_dispute` | `next-action --role user --agentId <yours> --message '<envelope>'` → render the returned `Content:` per the **`sub_*` language rule** below → `onchainos agent user-notify --content "<rendered>"` → **end turn**. `sub_created` is sent to both Buyer and ASP after create-subscribe is confirmed; it requires `subStatus/status=CREATED(0)`, owns session establishment/restoration and pending-attachment forwarding, and tells the Buyer that ASP acceptance is pending. `sub_asp_selected` requires `ACTIVE(1)` before telling the Buyer that the ASP accepted and service started. A fetch failure, missing status, or mismatched status blocks the event flow. Event fields take precedence for event-specific dates; missing title/payment display fields fall back to the authoritative detail. `sub_open` is obsolete and ignored. |
 | `sub_cancel` | Branches on `trialType`. `trialType == 1` (trial cancel) → TERMINAL: render the trial-unaffected copy "[Cancelled] Auto-conversion for the \"<jobTitle>\" free trial has been cancelled. This trial continues unaffected until <trialEndTime>; no charge will occur after it ends." then follow the terminal hint (`onchainos agent session-cleanup --job-id <jobId>`) to close the session. `trialType == 0` / absent (formal-period cancel) → NON-terminal: render "[Auto-Renew Cancelled] Auto-renew for \"<jobTitle>\" has been cancelled. Current service continues until <subEndTime>; job <jobId> will then move to Completed." and DO NOT append the session-cleanup hint (the subscription is still live for the current period). `next-action` already selects the correct copy and terminal-ness; just render per the language rule and send. **end turn**. |
-| `sub_asp_agree` / `sub_complete_notify` / `sub_close_notify` / `sub_failed_notify` | Same, then follow the returned **terminal hint** (`onchainos agent session-cleanup --job-id <jobId>`) to close the session. **end turn**. The CLI selects the `[Trial Ended]` or `[Subscription Ended]` variant for `sub_failed_notify`. |
+| `sub_complete_notify` | Route the structured result through [`task-action-routing.md`](task-action-routing.md). |
+| `sub_asp_agree` / `sub_close_notify` / `sub_failed_notify` | Same, then follow the returned **terminal hint** (`onchainos agent session-cleanup --job-id <jobId>`) to close the session. **end turn**. The CLI selects the `[Trial Ended]` or `[Subscription Ended]` variant for `sub_failed_notify`. |
 
 Do NOT summarize the envelope or ask "what should I do"—render the notification and stop. Show
 `failReason` (`sub_cancel` / failed `sub_renew`) verbatim; never translate it.
@@ -111,11 +111,9 @@ This ensures the deliverable data is not lost when the system event interrupts t
 > automatic execution never hides the original file; a later explicit user request may route it through
 > any compatible skill/tool.
 
-For both ordinary `deliverableType: text` and legacy text carrying an `autotrade:` metadata line, the CLI
-first confirms exact Active subscription status and returns `active_subscription_signal`. It deliberately
-does not parse fields or select an execution command. Read and follow
-the execution-path-specific signal reference in the same turn. Only the legacy path uses a local route cache; it is
-a hint only, never trading consent.
+For every deliverable type, the CLI first confirms exact Active subscription status and returns
+`active_subscription_signal`. It saves the raw signal without forcing it to JSON, then the Guide-direct
+reference resolves only the Guide-declared Signal fields and selects the supported tool operation.
 
 **Pause auto copy-trade is owned by the user session.** Route requests such as "pause auto copy-trading"
 to `task-user-playbook.md` §Pause auto copy-trade. Do not duplicate or execute

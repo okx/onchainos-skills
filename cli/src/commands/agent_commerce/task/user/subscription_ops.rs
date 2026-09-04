@@ -181,12 +181,12 @@ pub async fn handle_start_autorenew(client: &mut TaskApiClient, sub_id: &str) ->
         .await
         .map_err(|e| anyhow::anyhow!("providerConfirmStatus failed: {e}"))?;
 
-    if confirm_resp.is_null() || confirm_resp.as_object().map_or(true, |o| o.is_empty()) {
+    if confirm_resp.is_null() || confirm_resp.as_object().is_none_or(|o| o.is_empty()) {
         bail!("providerConfirmStatus returned empty terms");
     }
 
     let typed_data = &confirm_resp["typedData"];
-    if typed_data.is_null() || typed_data.as_object().map_or(true, |o| o.is_empty()) {
+    if typed_data.is_null() || typed_data.as_object().is_none_or(|o| o.is_empty()) {
         bail!("providerConfirmStatus response missing typedData");
     }
 
@@ -241,32 +241,13 @@ pub async fn handle_start_autorenew(client: &mut TaskApiClient, sub_id: &str) ->
 
 // ── subscribe-reject ────────────────────────────────────────────────────
 
-/// Direct CLI entry — validates reason, resolves agent, then delegates to inner.
-pub async fn handle_subscribe_reject(
-    client: &mut TaskApiClient,
-    sub_id: &str,
-    reason: &str,
-) -> Result<()> {
-    if reason.is_empty() {
-        bail!("--reason is required for subscribe-reject");
-    }
-    if reason.chars().count() > 2000 {
-        bail!("--reason exceeds 2000 characters");
-    }
-
-    ensure_tokens_refreshed().await?;
-    let (user_agent_id, _) = resolve_user_agent().await?;
-
-    handle_subscribe_reject_inner(client, sub_id, reason, &user_agent_id).await
-}
-
 /// Inner implementation — caller has already validated reason and resolved agent_id.
 pub(crate) async fn handle_subscribe_reject_inner(
     client: &mut TaskApiClient,
     sub_id: &str,
     reason: &str,
     user_agent_id: &str,
-) -> Result<()> {
+) -> Result<String> {
     let user_agent_id = select_subscription_agent_id(user_agent_id, "")?;
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
 
@@ -302,16 +283,7 @@ pub(crate) async fn handle_subscribe_reject_inner(
         None,
     );
 
-    println!("✓ Subscription rejection in progress (transaction broadcast)");
-    println!("  subId:  {sub_id}");
-    println!("  txHash: {tx_hash}");
-
-    if super::content::is_cli_mode() {
-        println!();
-        println!("{}", super::content::scoped_watch_handoff(sub_id));
-    }
-
-    Ok(())
+    Ok(tx_hash)
 }
 
 // ── subscribe-detail ────────────────────────────────────────────────────

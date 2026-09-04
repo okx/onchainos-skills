@@ -1,6 +1,9 @@
 # OKX AI Task Marketplace
 
-Loaded from `SKILL.md` §Task Marketplace, or directly by the `onchainos` CLI's own hardcoded gate text (system-event / a2a-agent-chat activation, role-guide hints). **User-session free-form task intent should NOT land here** — it reads [`task-user-playbook.md`](task-user-playbook.md) directly per `SKILL.md` §Task Marketplace; this file is for everything else.
+Loaded from `SKILL.md` for structured inbound events, or directly by the
+`onchainos` CLI's hardcoded event and chat gate text. Free-text buyer-task
+requests route through [`task-user-intent-routing.md`](task-user-intent-routing.md),
+not this file.
 
 OKX AI Task Marketplace is a decentralized agent task delegation protocol deployed on XLayer, covering the complete lifecycle of task publication, negotiation, delivery, acceptance, and dispute evaluation. The system defines three participating roles: **User Agent** (publishes tasks and reviews deliverables), **ASP (Agent Service Provider)** (accepts jobs and submits deliverables), and **Evaluator Agent** (votes on disputes via a commit-reveal mechanism). All roles connect via ERC-8004 on-chain identity (see `SKILL.md` §Identity / `references/identity-*.md`), communicate peer-to-peer over end-to-end encrypted XMTP channels, and progress through the business flow driven by an on-chain event state machine; all multi-turn interactions are handled autonomously by the agent inside a sub session, without step-by-step user involvement.
 
@@ -10,7 +13,8 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 > You are now loaded. No action for the prefetch itself. When the next inbound message arrives, use the Activation rules below to route it.
 
 > **User session** (sessionKey does NOT contain `:group:`):
-> Read [`task-user-playbook.md`](task-user-playbook.md) directly — it is self-contained for the user's user-session flows.
+> Read [`task-user-intent-routing.md`](task-user-intent-routing.md). Load
+> `task-user-playbook.md` only when that router selects one of its operations.
 > Skip the rest of this file.
 
 ## Roles
@@ -42,7 +46,9 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
      --agentId <envelope's top-level agentId> \
      --message '<the envelope.message object as a JSON string>'
    ```
-   🛑 **Strictly execute the returned script. Do NOT run any method or command outside the script.**
+   🛑 Treat the CLI result as authoritative: route structured progression through
+   [`task-action-routing.md`](task-action-routing.md); otherwise execute only the returned script.
+   Never infer behavior or notification content from the envelope.
    🛑 **Mandatory whenever an `event` field is present** — regardless of session history or any "Read the … skill" / "SKILL.md" wording inside the envelope (that wording does NOT make it a prefetch). Never classify a message that carries `event` as a skill-prefetch or as "no action".
    🛑 `--message` is JSON — inside string values, escape `\n` `\t` `\"` `\\`; no raw newlines.
 2. **a2a-agent-chat** — `msgType == "a2a-agent-chat"` + `jobId`:
@@ -56,35 +62,6 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 
 > 🛑 `--message` source: system event → the entire `message` object ; a2a-agent-chat → top-level `jobId`. NEVER cache from prior turn.
 > 🛑 `--role` MUST be re-resolved every event via `--role auto`. Never reuse sub's bound role.
-
-## Subscription Notifications (display-class)
-
-`sub_*` system events route through **Activation #1 exactly like every other system event**: run
-`next-action --role auto` with the envelope's `message`, then strictly execute the returned script.
-🛑 Do NOT compose the notification yourself — not from this file, not from memory. The CLI is the
-canonical renderer: copy, freshness gate, dedup, and audit all live in the CLI layer, and they are
-silently bypassed if you hand-render.
-
-Display-class semantics of the returned script — the CLI enforces these; never add behavior on top:
-
-- Execute exactly what the script says and nothing more: **never** add a `pending-decisions` /
-  `pending_v2` / `user_attention` push, a state transition, or a wait-for-input of your own. (The
-  only sub_* script that itself carries a decision is the ASP side's `sub_user_reject` — see the
-  role bullet below; every other returned script is notify-and-end.)
-- The backend-delivered `jobStatus` / `subStatus` is displayed as-is, never re-derived. Primary key
-  is `jobId` (there is no `subId`). Amount = `tokenAmount` (decimal string, shown verbatim with
-  `tokenSymbol`).
-- When localizing the returned copy: a line the CLI omitted stays omitted (absent optional field —
-  never re-add or error); `failReason` is free backend text (may be non-English) — keep it verbatim,
-  do not interpret or translate it.
-- Role resolution is the CLI's job (`--role auto`): each side receives only its own script. The one
-  non-display exception is the ASP side's `sub_user_reject`, which is a **decision** (see
-  task-asp.md — not display-only); every other `sub_*` script is display-only.
-
-The per-event copy is intentionally NOT reproduced here. The canonical renderer is the CLI
-(`content.rs` behind `next-action`); a human-readable copy mirror for review/debug/localization
-reference lives in [`task-sub-copy-reference.md`](task-sub-copy-reference.md) — it is not part of
-any activation flow and must never be used to hand-compose a notification.
 
 ## Pre-flight
 
@@ -125,17 +102,6 @@ When dealing with integer values of any of the fields below, **look up the table
 | `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete (funds released to ASP) / `7`=close (funds returned to user) / `8`=expired / `9`=failed (evaluation refunds user) |
 
 🛑 **Iron rule**: before writing any semantic judgment about these fields, **cross-check the table above**. Misreading = wrong on-chain action.
-
-## User Intent Routing
-
-> When the user-session receives free-form text targeting a specific task and no pending decision matches, load [`task-user-intent-routing.md`](task-user-intent-routing.md) and follow its routing flow.
-
-| Intent | Trigger examples | Detail |
-|---|---|---|
-| Take specific task (ASP) | "take {jobId} / accept task X / take task X / contact the User Agent of {jobId}" — **specific jobId** | [`task-asp-accept.md §1`](task-asp-accept.md) — ASPs are passive; there is no proactive-accept path. Designated tasks arrive via the `JobAspSelected` system event; reply with passive-readiness guidance and wait. **Do NOT directly `apply`** — apply is system-event-triggered only. |
-| Stake (Evaluator) | "I want to stake" | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
-| Re-submit / nudge / change terms | "re-submit / nudge / change currency" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
-| Task list / status / close / decision list | "my tasks / view decisions / close task" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
 
 ## Additional Resources
 

@@ -310,7 +310,7 @@ pub enum Event {
     WakeupNotify,
 
     // ── Subscription lifecycle (display-class; parse + render + end turn) ──────
-    /// Subscription create-and-fund confirmed; waiting for the designated ASP.
+    /// Obsolete pre-creation compatibility event; retained only so old envelopes can be ignored.
     SubOpen,
     /// Subscription created on-chain/backend (notifies buyer/user).
     SubCreated,
@@ -409,7 +409,8 @@ impl Event {
             "negotiate_reply"           => Event::NegotiateReply,
             // Network / restart recovery
             "wakeup_notify"             => Event::WakeupNotify,
-            // Subscription lifecycle (display-class)
+            // Subscription lifecycle (`sub_created` starts the ASP decision flow;
+            // later events are notifications/service-start signals).
             "sub_open"                  => Event::SubOpen,
             "sub_created"               => Event::SubCreated,
             "sub_asp_selected"          => Event::SubAspSelected,
@@ -742,8 +743,8 @@ impl SubStatus {
 /// or are ambiguous (e.g. `sub_renew` success keeps Active, failure may lead to Closed).
 pub fn sub_status_after_event(e: &Event) -> Option<SubStatus> {
     match e {
-        Event::SubOpen                            => Some(SubStatus::Created),
-        Event::SubCreated | Event::SubAspSelected => Some(SubStatus::Active),
+        Event::SubOpen | Event::SubCreated         => Some(SubStatus::Created),
+        Event::SubAspSelected                      => Some(SubStatus::Active),
         Event::SubTrialIntoActive                 => Some(SubStatus::Active),
         Event::SubRenew                           => None, // success=Active, fail=eventually Closed
         Event::SubExpireWarn                       => None, // warning only, no status change
@@ -863,7 +864,6 @@ mod tests {
     #[test]
     fn sub_event_parse_roundtrip() {
         let events = [
-            ("sub_open",              Event::SubOpen),
             ("sub_created",           Event::SubCreated),
             ("sub_asp_selected",      Event::SubAspSelected),
             ("sub_cancel",            Event::SubCancel),
@@ -892,7 +892,7 @@ mod tests {
     #[test]
     fn sub_events_use_subscription_status_placeholder() {
         for event in [
-            Event::SubOpen, Event::SubCreated, Event::SubAspSelected, Event::SubCancel,
+            Event::SubCreated, Event::SubAspSelected, Event::SubCancel,
             Event::SubUserReject, Event::SubAspAgree, Event::SubAspDispute,
             Event::SubTrialIntoActive, Event::SubRenew, Event::SubExpireWarn,
             Event::SubCompleteNotify, Event::SubCloseNotify, Event::SubFailedNotify,
@@ -990,7 +990,7 @@ mod tests {
     #[test]
     fn sub_status_after_event_mapping() {
         assert_eq!(sub_status_after_event(&Event::SubOpen), Some(SubStatus::Created));
-        assert_eq!(sub_status_after_event(&Event::SubCreated), Some(SubStatus::Active));
+        assert_eq!(sub_status_after_event(&Event::SubCreated), Some(SubStatus::Created));
         assert_eq!(sub_status_after_event(&Event::SubAspSelected), Some(SubStatus::Active));
         assert_eq!(sub_status_after_event(&Event::SubTrialIntoActive), Some(SubStatus::Active));
         assert_eq!(sub_status_after_event(&Event::SubUserReject), Some(SubStatus::Rejected));

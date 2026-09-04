@@ -34,6 +34,8 @@ fn sanitize_title(title: &str, job_id: &str) -> String {
 /// Resolve the deliverables directory for a job. Supports both old-style
 /// (`<jobId>/`) and new-style (`<jobId>_<title>/`) layouts via prefix scan.
 pub(crate) fn deliverables_dir(role: &str, job_id: &str) -> Result<PathBuf> {
+    // Layer-2 guard: fail closed before joining job_id into a path.
+    super::util::validate_job_id_path_component(job_id)?;
     let role_dir = deliverables_root()?.join(role);
     let exact = role_dir.join(job_id);
     if exact.exists() {
@@ -255,6 +257,23 @@ pub fn delete_review_marker(job_id: &str) {
         let _ = std::fs::remove_file(p);
     }
 }
+
+// Durable per-job idempotency marker shared by the delivery-first and
+// job_submitted-first review paths. It is written only after card delivery.
+fn review_card_sent_marker_path(job_id: &str) -> Result<PathBuf> {
+    Ok(deliverables_dir("user", job_id)?.join("review_card_sent"))
+}
+
+pub fn has_review_card_sent_marker(job_id: &str) -> bool {
+    review_card_sent_marker_path(job_id).map(|p| p.is_file()).unwrap_or(false)
+}
+
+pub fn mark_review_card_sent(job_id: &str) -> Result<()> {
+    let path = review_card_sent_marker_path(job_id)?;
+    std::fs::create_dir_all(path.parent().expect("review marker has a parent"))?;
+    std::fs::write(path, "")?;
+    Ok(())
+}
 // ── List (single job) ────────────────────────────────────────────────
 
 pub fn handle_list(job_id: &str, role: &str) -> Result<()> {
@@ -389,5 +408,24 @@ mod tests {
     #[test]
     fn sanitize_strips_spaces() {
         assert_eq!(sanitize_title("  hello world  ", "0xabc"), "helloworld");
+    }
+
+    #[test]
+    fn review_card_sent_marker_is_durable_per_job() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = std::env::current_dir().unwrap()
+            .join("target").join("deliverables-review-marker-test");
+        std::fs::create_dir_all(&root).unwrap();
+        let home = tempfile::tempdir_in(root).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+
+        assert!(!has_review_card_sent_marker("job-review-marker"));
+        mark_review_card_sent("job-review-marker").unwrap();
+        assert!(has_review_card_sent_marker("job-review-marker"));
+        assert!(!has_review_card_sent_marker("another-job"));
+
+        std::env::remove_var("ONCHAINOS_HOME");
     }
 }
