@@ -1532,16 +1532,7 @@ fn add_service_cells_to_node(node: &mut Value) {
     let Some(map) = node.as_object_mut() else {
         return;
     };
-    if let (Some(page), Some(page_size), Some(total)) = (
-        pagination_value(map.get("page")),
-        pagination_value(map.get("pageSize")),
-        pagination_value(map.get("total")),
-    ) {
-        map.insert(
-            "hasMore".to_string(),
-            Value::Bool(page.saturating_mul(page_size) < total),
-        );
-    }
+    derive_has_more(map);
     let key = ["list", "services"]
         .into_iter()
         .find(|k| map.get(*k).map(Value::is_array).unwrap_or(false));
@@ -1583,6 +1574,19 @@ fn pagination_value(value: Option<&Value>) -> Option<u64> {
         Value::Number(number) => number.as_u64(),
         Value::String(value) => value.trim().parse().ok(),
         _ => None,
+    }
+}
+
+fn derive_has_more(map: &mut serde_json::Map<String, Value>) {
+    if let (Some(page), Some(page_size), Some(total)) = (
+        pagination_value(map.get("page")),
+        pagination_value(map.get("pageSize")),
+        pagination_value(map.get("total")),
+    ) {
+        map.insert(
+            "hasMore".to_string(),
+            Value::Bool(page.saturating_mul(page_size) < total),
+        );
     }
 }
 
@@ -1665,6 +1669,7 @@ pub(super) fn add_feedback_list_cells(v: &mut Value) {
     let Value::Object(map) = v else {
         return;
     };
+    derive_has_more(map);
     for key in ["items", "list"] {
         if let Some(items) = map.get_mut(key).and_then(Value::as_array_mut) {
             for item in items.iter_mut() {
