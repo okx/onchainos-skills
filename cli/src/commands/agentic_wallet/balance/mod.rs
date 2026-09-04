@@ -48,6 +48,30 @@ pub(super) fn get_sol_address<'a>(wallets: &'a WalletsJson, account_id: &str) ->
         .unwrap_or("")
 }
 
+/// Extract the Bitcoin address for a given account from accounts_map.
+pub(super) fn get_btc_address<'a>(wallets: &'a WalletsJson, account_id: &str) -> &'a str {
+    wallets
+        .accounts_map
+        .get(account_id)
+        .and_then(|e| {
+            e.address_list
+                .iter()
+                .find(|a| matches!(a.chain_index.as_str(), "0" | "5"))
+        })
+        .map(|a| a.address.as_str())
+        .unwrap_or("")
+}
+
+/// Extract the Sui address for a given account from accounts_map.
+pub(super) fn get_sui_address<'a>(wallets: &'a WalletsJson, account_id: &str) -> &'a str {
+    wallets
+        .accounts_map
+        .get(account_id)
+        .and_then(|e| e.address_list.iter().find(|a| a.chain_index == "784"))
+        .map(|a| a.address.as_str())
+        .unwrap_or("")
+}
+
 /// Ensure wallet accounts and address data is complete.
 ///
 /// Triggers a refresh if:
@@ -423,6 +447,8 @@ fn login_identity_summary(wallets: &WalletsJson, account_id: &str) -> Value {
         "accountName": account_name,
         "evmAddress": get_evm_address(wallets, account_id),
         "solAddress": get_sol_address(wallets, account_id),
+        "btcAddress": get_btc_address(wallets, account_id),
+        "suiAddress": get_sui_address(wallets, account_id),
         "accountCount": wallets.accounts.len().max(wallets.accounts_map.len()),
     })
 }
@@ -444,7 +470,10 @@ pub(super) async fn login_account_summary(
     let total_value_usd = if account_ids.is_empty() {
         String::new()
     } else {
-        match client.balance_batch(access_token, &account_ids.join(",")).await {
+        match client
+            .balance_batch(access_token, &account_ids.join(","))
+            .await
+        {
             Ok(mut data) => {
                 enrich_with_usd_value(&mut data);
                 retain_requested_accounts(&mut data, &account_ids);
@@ -752,6 +781,8 @@ pub(super) async fn cmd_balance(
         .unwrap_or("");
     let evm_address = get_evm_address(&wallets, &account_id);
     let sol_address = get_sol_address(&wallets, &account_id);
+    let btc_address = get_btc_address(&wallets, &account_id);
+    let sui_address = get_sui_address(&wallets, &account_id);
     let account_count = wallets.accounts.len().max(wallets.accounts_map.len());
     output::success(json!({
         "totalValueUsd": total_usd,
@@ -759,6 +790,8 @@ pub(super) async fn cmd_balance(
         "accountName": account_name,
         "evmAddress": evm_address,
         "solAddress": sol_address,
+        "btcAddress": btc_address,
+        "suiAddress": sui_address,
         "accountCount": account_count,
         "details": data,
     }));
@@ -1048,6 +1081,22 @@ mod tests {
                         address_type: "eoa".to_string(),
                         chain_path: "/sol/501".to_string(),
                     },
+                    AddressInfo {
+                        account_id: "acc-1".to_string(),
+                        address: "BitcoinAddr".to_string(),
+                        chain_index: "0".to_string(),
+                        chain_name: "bitcoin".to_string(),
+                        address_type: "eoa".to_string(),
+                        chain_path: "/btc/0".to_string(),
+                    },
+                    AddressInfo {
+                        account_id: "acc-1".to_string(),
+                        address: "SuiAddr".to_string(),
+                        chain_index: "784".to_string(),
+                        chain_name: "sui".to_string(),
+                        address_type: "eoa".to_string(),
+                        chain_path: "/sui/784".to_string(),
+                    },
                 ],
             },
         );
@@ -1083,6 +1132,18 @@ mod tests {
     }
 
     #[test]
+    fn get_btc_address_returns_bitcoin() {
+        let w = make_wallets_multi_chain();
+        assert_eq!(get_btc_address(&w, "acc-1"), "BitcoinAddr");
+    }
+
+    #[test]
+    fn get_sui_address_returns_sui() {
+        let w = make_wallets_multi_chain();
+        assert_eq!(get_sui_address(&w, "acc-1"), "SuiAddr");
+    }
+
+    #[test]
     fn get_sol_address_empty_when_no_sol() {
         let w = make_wallets_multi_chain();
         assert_eq!(get_sol_address(&w, "acc-evm-only"), "");
@@ -1113,6 +1174,8 @@ mod tests {
         assert_eq!(s["accountName"], "Account 1");
         assert_eq!(s["evmAddress"], "0xEVM");
         assert_eq!(s["solAddress"], "SolanaAddr");
+        assert_eq!(s["btcAddress"], "BitcoinAddr");
+        assert_eq!(s["suiAddress"], "SuiAddr");
         // accounts.len()=1, accounts_map.len()=2 → max = 2
         assert_eq!(s["accountCount"], 2);
     }
@@ -1124,6 +1187,8 @@ mod tests {
         assert_eq!(s["accountName"], "");
         assert_eq!(s["evmAddress"], "");
         assert_eq!(s["solAddress"], "");
+        assert_eq!(s["btcAddress"], "");
+        assert_eq!(s["suiAddress"], "");
         // accounts.len()=0, accounts_map.len()=2 → max = 2
         assert_eq!(s["accountCount"], 2);
     }

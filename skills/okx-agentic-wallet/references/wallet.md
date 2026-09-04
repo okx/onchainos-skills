@@ -39,11 +39,13 @@ Render verbatim from the `wallet login --phase poll` response `data`:
 > **Addresses**
 > - EVM: {evmAddress}
 > - Solana: {solAddress}
+> - Bitcoin: {btcAddress}
+> - Sui: {suiAddress}
 
 Field rules:
 - `{method}` ← `loginType`: `email`→"Email", `google`→"Google", `apple`→"Apple", `ak`→"API Key".
 - Append ` ({email})` only if `email` is non-empty; otherwise omit the parentheses.
-- Omit the "Total assets" line if `totalValueUsd` is empty; omit an address line if its value (`evmAddress` / `solAddress`) is empty.
+- Omit the "Total assets" line if `totalValueUsd` is empty; omit an address line if its corresponding value (`evmAddress`, `solAddress`, `btcAddress`, or `suiAddress`) is empty.
 - **NEVER**: issue a separate `wallet balance` / portfolio call to populate "Total assets" — render it only from the `poll` response's `totalValueUsd` and omit the line when that field is absent; a second call would add a model round on the normal login path.
 
 ## Parameter Rules
