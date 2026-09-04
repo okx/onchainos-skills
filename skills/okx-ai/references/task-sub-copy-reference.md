@@ -39,12 +39,22 @@ ignores 1,3,4,5 (buyer-only) plus 7,8 (the ASP's own actions — no ASP-side pus
 live in the subscribe-agree-refund / subscribe-dispute action flows).
 
 Refund V2 applies the same provenance-plus-fresh-state rule to
-`job_refunded`, `job_auto_refunded`, and `dispute_resolved`. The legacy event
-may describe a branch, but only durable local `request-refund` provenance bound
-to job, Buyer, formal job type, exact positive original amount, and token
-address plus fresh Buyer/status facts can close a subscription refund. Optional
-Provider/Service, period, token-symbol, and `paymentMode` fields only veto on a
-two-sided mismatch. For `dispute_resolved`, fresh status 9 identifies the User-winning
+`job_refunded`, `job_auto_refunded`, `job_asp_reject_expire`, and
+`dispute_resolved`. The legacy event may describe a branch, but cannot create
+proof. A User-requested or provider refund-decision-timeout Failed(9) path
+requires durable local `request-refund` provenance. It must bind job, Buyer,
+formal job type, exact positive original amount, and token address and be paired
+with fresh Buyer-owned Failed(9) facts before closing that subscription refund.
+An acceptance/delivery-timeout path instead reaches finality directly from
+fresh Buyer-owned paid non-trial Expired(8), task kind, and exact original
+payment; no Failed(9), Tx Hash, request provenance, or local observation journal
+is required. A scoped lifecycle/watch event emits the terminal marker and
+cleans up without a Buyer claim/finalize write; a direct read follows `stop`.
+Trial and zero-amount Expired(8) instead use terminal
+`expired_without_refundable_payment` with `settlement.state=not_required` and
+no fund-movement claim. Optional Provider/Service, period, token-symbol, and
+`paymentMode` fields only veto on a two-sided mismatch. For `dispute_resolved`,
+fresh status 9 identifies the User-winning
 branch and fresh status 6 the ASP-winning/no-refund branch only after durable
 local `request-refund` provenance, job type, Buyer ownership, and the composed
 facts are verified. Without that proof, render no verdict and perform no

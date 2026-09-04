@@ -55,12 +55,21 @@ Do NOT summarize the envelope or ask "what should I do"—render the notificatio
 `failReason` (`sub_cancel` / failed `sub_renew`) verbatim; never translate it.
 
 The same unchanged-backend finality rule applies when the legacy event is
-`job_refunded`, `job_auto_refunded`, or `dispute_resolved`: it may describe the
-branch, but it cannot create proof. Subscription finality requires matching
-durable local `request-refund` provenance bound to job, Buyer, formal job type,
-exact positive original amount, and token address plus fresh Buyer-owned
-Failed(9). Optional Provider/Service, period, token-symbol, and `paymentMode`
-fields veto only on a two-sided mismatch. For `dispute_resolved`, fresh ownership and those composed
+`job_refunded`, `job_auto_refunded`, `job_asp_reject_expire`, or
+`dispute_resolved`: it may describe the branch, but it cannot create proof.
+Subscription finality at Failed(9) requires fresh Buyer ownership plus the
+provenance for the established User-requested or provider
+refund-decision-timeout branch: durable local `request-refund` provenance
+binding job, Buyer, formal job type, exact positive original amount, and token
+address. Fresh Buyer-owned paid non-trial acceptance/delivery Expired(8) is an
+independent terminal contract: it proves the automatic refund has arrived
+without Failed(9), Tx Hash, request provenance, or a local observation journal.
+A scoped lifecycle/watch event emits the terminal marker and cleans up without
+a Buyer claim/finalize write; a direct read follows `stop`. Trial and zero-amount
+Expired(8) instead return terminal `expired_without_refundable_payment` with
+`settlement.state=not_required`; do not claim fund movement. Optional
+Provider/Service, period, token-symbol, and `paymentMode` fields veto only on a
+two-sided mismatch. For `dispute_resolved`, fresh ownership and those composed
 facts plus matching durable local `request-refund` provenance are mandatory for
 both terminal branches: status 9 is User-winning/refund and status 6 is
 ASP-winning/no-refund. Without that proof, render no verdict and perform no

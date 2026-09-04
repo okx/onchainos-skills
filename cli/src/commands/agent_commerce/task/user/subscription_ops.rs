@@ -1088,6 +1088,9 @@ mod tests {
         assert!(!should_ensure_subscription_session(
             SubStatus::Failed.code()
         ));
+        assert!(!should_ensure_subscription_session(
+            SubStatus::Expired.code()
+        ));
     }
 
     #[test]
@@ -1098,7 +1101,7 @@ mod tests {
                 "status {status} must block duplicate creation"
             );
         }
-        for status in [6, 7, 9] {
+        for status in [6, 7, 8, 9] {
             assert!(
                 !blocks_duplicate_creation(status),
                 "terminal status {status} must allow a new subscription"

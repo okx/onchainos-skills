@@ -16,7 +16,7 @@ legacy prose field `action`.
 | `finalize_user_task` | [`task-actions-completion.md` §Job Completed User](task-actions-completion.md#job-completed-user) | No | End turn |
 | `finalize_asp_task` | [`task-actions-completion.md` §Job Completed ASP](task-actions-completion.md#job-completed-asp) | No | End turn |
 | `finalize_user_subscription` | [`task-actions-completion.md` §Subscription Complete User](task-actions-completion.md#subscription-complete-user) | No | End turn |
-| `notify_and_cleanup_subscription` | [`task-actions-completion.md` §Subscription Complete ASP](task-actions-completion.md#subscription-complete-asp) | No | End turn |
+| `notify_and_cleanup_subscription` | [`task-actions-completion.md` §Terminal ASP Notification and Cleanup](task-actions-completion.md#terminal-asp-notification-and-cleanup); legacy-compatible action ID, job-scoped for terminal subscription or ordinary ASP notifications | No | End turn |
 | `notify_user` | [`task-actions-completion.md` §Notification Only](task-actions-completion.md#notification-only) | No | End turn |
 | `resolve_refund_target` | `task-user-refund.md`, §Entry and target resolution | No | Ask for or list one buyer-owned `jobId`; then run `refund-prepare` |
 | `prepare_refund` | `task-user-refund.md`; rerun `refund-prepare` for `params.jobId` | No | Route the fresh progression result |
@@ -50,18 +50,30 @@ legacy prose field `action`.
   writes `close`, `reject`, `subscribe-reject`, or `claim-auto-refund` for a
   missing Refund V2 action. `subscribe-cancel` is cancellation-only and never a
   refund substitute.
-- `finalize_expired_refund` is not currently a routable action. The type-207
-  transport is wired, but subscription status 8 also represents a backend-owned
-  refund-response timeout. Until fresh detail supplies an authoritative cause
-  discriminator, `refund-prepare` returns
-  `expired_subscription_refund_cause_ambiguous` with read-only actions. Never
-  invoke `finalize-expired-refund` from an event or status alone. A one-time
-  status-8 task remains separately read-only with
-  `reason=accept_expired_refund_contract_ambiguous`.
-- `job_asp_accept_expire`, `job_asp_reject_closed`, and
-  `job_asp_reject_expire` are events, not action IDs or settlement proof. Route
-  only actions from a fresh `refund-prepare`; never execute, report refund
-  completion, or perform terminal cleanup from event prose alone.
+- No expired-refund claim/finalize action exists. Paid non-trial one-time and
+  formal-subscription acceptance/delivery Expired(8) return terminal
+  `refund_confirmed`: fresh authoritative Expired means the automatic refund
+  has arrived. Never invoke `claim-auto-refund` or another Buyer write. Trial
+  and zero-amount expiry return terminal
+  `expired_without_refundable_payment` with `settlement.state=not_required` and
+  must not claim fund movement. A direct `refund-prepare` read renders that
+  terminal result and follows its returned `stop` action; `stop` does not imply
+  a separate session-cleanup command. When the same result is produced while
+  dispatching a scoped lifecycle/watch event, emit the terminal marker, clean
+  up that scoped session, and do not re-enter the watch.
+- `job_expired`, legacy `submit_expired`, `job_asp_accept_expire`,
+  `job_asp_reject_closed`, and `job_asp_reject_expire` are events, not action IDs
+  or settlement proof. Route only actions from a fresh `refund-prepare`; never
+  execute or report refund completion from event prose alone. For paid
+  acceptance/delivery Expired(8), fresh ownership, task kind, and exact positive
+  original amount establish terminal `refund_confirmed` without Failed(9), Tx
+  Hash, or request provenance. In a scoped event/watch dispatch, emit the
+  terminal marker, clean up, and never ask the Buyer to claim or finalize it.
+  Trial or zero-amount Expired(8) is also terminal but uses
+  `expired_without_refundable_payment` with no fund-movement claim.
+  `job_asp_reject_expire` instead requires fresh Failed(9) plus matching durable
+  `request-refund` provenance with the same core owner/type/payment binding
+  before it can return terminal `refund_confirmed`; the event alone cannot.
   In particular, `job_asp_reject_closed` does not exempt a subscription at
   status 7 from the normal subscription rule: only matching durable local
   `request-refund` provenance plus a later fresh refund terminal can resolve
@@ -71,15 +83,19 @@ legacy prose field `action`.
   notifications, not write actions and not `uopData.executeResult` preflight;
   the standard event-envelope success gate still applies before branch routing.
   For subscriptions, `sub_asp_agree`, `sub_reject_refund_notify`,
-  `job_refunded`, `job_auto_refunded`, and `dispute_resolved` are legacy
-  semantic result events. Route every event through a fresh Refund V2 read. A
+  `job_asp_reject_expire`, `job_refunded`, `job_auto_refunded`, and
+  `dispute_resolved` are semantic result events. Route every event through a
+  fresh Refund V2 read. A
   matching one-time positive-amount paid-escrow Closed(7) or Failed(9) may
-  return `refund_confirmed`. A subscription may return `refund_confirmed` only
+  return `refund_confirmed`. A subscription at Failed(9) may return
+  `refund_confirmed` only
   when durable local `request-refund` provenance binds the same job, Buyer,
   formal `jobType=1` subscription, exact positive original amount, and token
-  address, and fresh composed detail proves Buyer ownership and Failed(9). A legacy
-  event may describe the ASP-agree, timeout, or dispute branch, but event-only
-  Failed(9) and bare Failed(9) remain ambiguous.
+  address, and fresh composed detail proves Buyer ownership and Failed(9).
+  Separately, fresh paid non-trial Expired(8) confirms an acceptance/delivery
+  timeout refund for either task kind without local provenance. A legacy event
+  may describe the ASP-agree, timeout, or dispute branch, but event-only and
+  bare Failed(9) remain ambiguous.
   For `dispute_resolved`, neither Completed(6) nor Failed(9) is a verdict gate
   by itself: both ASP-won/no-refund and User-won/refund rendering require the
   durable local `request-refund` provenance plus fresh composed job type,

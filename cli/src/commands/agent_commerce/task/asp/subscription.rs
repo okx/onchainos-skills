@@ -38,8 +38,8 @@ const SUBSCRIBE_MY_PATH: &str = "/priapi/v1/aieco/task/subscribe/my";
 /// aligned with the contract `SubStatus`).
 /// Only `Active` (1) keeps a subscription in the continuous-delivery phase; every other
 /// status ends it (a signal-bearing delivery is then rejected as `subscriptionExpired`, and
-/// any remaining refund reconciliation belongs to the buyer/backend — a subscription never
-/// runs an ASP submit).
+/// a subscription never runs an ASP submit). `Expired` (8) is authoritative terminal proof
+/// that any applicable backend-owned automatic refund reached the Buyer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubStatus {
     /// -1 INIT — DB record created, not yet on-chain (transient; treated as not-live).
@@ -56,8 +56,8 @@ pub enum SubStatus {
     Completed,
     /// 7 Closed — terminal (trial cancel / expiry close / on-chain-fail void).
     Closed,
-    /// 8 Expired — ASP/deadline timeout; buyer refund settlement is still pending.
-    /// It is not live for ASP delivery and is not a buyer-side terminal state.
+    /// 8 Expired — terminal ASP/deadline timeout. Any applicable backend-owned automatic
+    /// refund has reached the Buyer; trial/zero-amount tasks had no refundable funds.
     Expired,
     /// 9 Failed — refunded (terminal: ASP agreed refund / user won arbitration / auto-refund).
     Failed,

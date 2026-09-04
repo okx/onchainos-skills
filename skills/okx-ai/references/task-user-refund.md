@@ -15,11 +15,13 @@ offers a write outside that matrix, stop and report a client/contract mismatch.
 
 Refund V2 is client-side orchestration over the unchanged refund backend
 contract. It reuses the existing lifecycle endpoints, result events, and fresh
-task/subscription status projection. To disambiguate overloaded subscription
-Failed(9) without adding a backend field, the client durably records its own
-Refund V2 `request-refund` provenance and reuses it across polling and process
-restart. It does not require a new refund cause query, typed settlement source,
-or fields named `refundTxHash` or `settlementTxHash`.
+task/subscription status projection. To disambiguate Failed(9) without adding a
+backend field, the client durably records Refund V2 `request-refund` provenance
+for User-requested paths. Fresh authoritative Expired(8) is a separate terminal
+contract: for a paid non-trial task it proves that the automatic refund has
+arrived without a later Failed(9), Tx Hash, request provenance, or local
+observation journal. Caller events alone create no settlement proof; re-read
+the authoritative task state. No new refund-specific Tx Hash field is required.
 
 ## Commands
 
@@ -28,23 +30,26 @@ Refund V2 is implemented by these commands:
 ```text
 onchainos agent refund-prepare <jobId> [--reason <user-authored-text>]
 onchainos agent refund-execute <jobId> \
-  --operation <close-zero|direct-refund|request-refund|cancel-trial-conversion|finalize-expired-refund> \
+  --operation <close-zero|direct-refund|request-refund|cancel-trial-conversion> \
   --refund-context-id <id> [--reason <user-authored-text>] --confirm
 ```
 
-`finalize-expired-refund` is accepted by the low-level enum because its exact
-type-207 transport is implemented, but no current `refund-prepare` result emits
-it. Do not call it until a future authoritative detail contract distinguishes
-the status-8 timeout cause and returns the action.
+There is no Buyer claim/finalize operation for Expired(8). The backend owns
+automatic refunds for ASP acceptance and delivery timeout. For a paid
+non-trial task, `refund-prepare` returns terminal `refund_confirmed` directly
+from fresh Expired(8). For a trial or zero-amount task, it returns terminal
+`expired_without_refundable_payment`; no funds moved. Never call
+`claim-auto-refund` or another manual refund-finalization write.
 
 Do not emulate this contract with the disabled legacy writes `close`, `reject`,
 `subscribe-reject`, or `claim-auto-refund`. They do not consume the Refund V2
 context binding or return its structured progression result. `subscribe-cancel`
 remains available only to cancel trial conversion or formal auto-renew; it is
 not a refund substitute. A caller-provided `submit_expired` notification is
-read-only as well; no current path may bypass Refund V2 to run a legacy write.
-Never invent an endpoint, event, notification result, transaction hash, or
-successful outcome.
+read-only as well: it identifies a backend-owned automatic-refund path, not
+permission to claim it. No current path may bypass Refund V2 to run a legacy
+write. Never invent an endpoint, event, notification result, transaction hash,
+or successful outcome.
 
 ## Entry and target resolution
 
@@ -85,23 +90,26 @@ The CLI returns `payload.job.jobType`, `rawStatus`, `statusName`, and exact
 | One-time, Created (`rawStatus=0`), paid, verified escrow (`paymentMode=1`) | `direct_refund_confirmation_required` | `execute_direct_refund` → `direct-refund` |
 | One-time, Submitted (`rawStatus=2`), paid, verified escrow (`paymentMode=1`) | collect reason, then `refund_request_confirmation_required` | `submit_refund_request` → `request-refund` |
 | Formal paid subscription, Active (`trialType=0`, `rawStatus=1`) with a complete current-period boundary | collect reason, then `refund_request_confirmation_required` | `submit_refund_request` → `request-refund` |
-| Formal paid subscription, Expired (`trialType=0`, `rawStatus=8`) | `expired_subscription_refund_cause_ambiguous` | none; status 8 does not distinguish accept-timeout/type-207 finalization from refund-response-timeout/backend settlement |
+| Formal paid subscription, Expired (`trialType=0`, `rawStatus=8`) | `refund_confirmed`; fresh authoritative Expired means the full original-token refund has arrived | none; a direct read returns `stop`, while a scoped lifecycle/watch event emits the terminal marker and cleans up. Tx Hash is optional |
 | One-time, Accepted (`rawStatus=1`) | `accepted_task_refund_contract_required` | none |
-| One-time, Expired (`rawStatus=8`) | `accept_expired_refund_contract_ambiguous` | none; the subscription-only type-207 contract does not prove the timeout cause or a one-time write |
+| Paid one-time, Expired (`rawStatus=8`) | `refund_confirmed`; fresh authoritative Expired means the full original-token refund has arrived | none; a direct read returns `stop`, while a scoped lifecycle/watch event emits the terminal marker and cleans up. Tx Hash is optional |
+| Trial subscription or zero-amount task, Expired (`rawStatus=8`) | `expired_without_refundable_payment`; terminal lifecycle with `settlement.state=not_required` | none; no refundable payment existed, so do not claim fund movement. A direct read returns `stop`; a scoped lifecycle/watch event emits the terminal marker and cleans up |
 | Formal subscription, Created (`rawStatus=0`) | `direct_subscription_refund_contract_required` | none |
 | Paid one-time, Closed (`rawStatus=7`) with verified escrow (`paymentMode=1`) | `refund_confirmed` from the fresh backend chain projection; a Tx Hash may be unavailable and is not required for the refund conclusion | none |
-| Paid one-time, Failed (`rawStatus=9`) | `refund_confirmed`; for one-time tasks this chain-projected state is reserved for successful refund transitions. A Tx Hash may be unavailable | none |
+| `job_asp_reject_expire` plus fresh Buyer-owned Failed (`rawStatus=9`) and matching durable `request-refund` provenance bound to job, task type, exact positive original amount, and token address | `refund_confirmed`; the provider refund-decision timeout is a backend automatic-refund terminal | none; Tx Hash is optional and the caller event alone is insufficient |
+| Paid one-time, Failed (`rawStatus=9`) outside a caller-event shortcut | `refund_confirmed`; for one-time tasks this chain-projected state is reserved for successful refund transitions. A Tx Hash may be unavailable | none |
 | Paid subscription, Closed (`rawStatus=7`), including `job_asp_reject_closed` | `task_closed_no_new_refund_action`; Closed alone is not a subscription-refund terminal | retain read-only refund reconciliation only when matching durable local `request-refund` intent exists |
-| Subscription, bare Failed (`rawStatus=9`), with no matching durable local `request-refund` provenance | `refund_settlement_details_incomplete`; subscription Failed also represents terminal charge failure | no refund-complete claim; event-free polling cannot infer the cause |
-| Subscription legacy result event (`sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`, `job_auto_refunded`, or `dispute_resolved`) plus Failed (`rawStatus=9`), but no matching durable local `request-refund` provenance | `refund_settlement_details_incomplete`; the event may describe a branch but cannot create proof | read-only only; event-only Failed(9) remains ambiguous |
+| Subscription, bare Failed (`rawStatus=9`), with no matching durable request provenance | `refund_settlement_details_incomplete`; subscription Failed also represents terminal charge failure | no refund-complete claim; event-free polling cannot infer the cause |
+| Subscription result event (`sub_asp_agree`, `sub_reject_refund_notify`, `job_asp_reject_expire`, `job_refunded`, `job_auto_refunded`, or `dispute_resolved`) plus Failed (`rawStatus=9`), but no matching durable branch provenance | `refund_settlement_details_incomplete`; the event may describe a branch but cannot create proof | read-only only; event-only Failed(9) remains ambiguous |
 | Matching durable local `request-refund` provenance bound to the same job, Buyer, formal `jobType=1` subscription, exact positive original amount, and token address plus fresh Buyer-owned Failed (`rawStatus=9`) | `refund_confirmed`; polling and restart recovery use this client provenance plus fresh lifecycle contract | none; Tx Hash is optional, and a legacy event may refine branch wording |
 | Subscription `sub_failed_notify` plus Failed (`rawStatus=9`), without trustworthy event provenance/cause, whether or not matching durable refund intent exists | `refund_settlement_details_incomplete`; neither refund nor charge/conversion failure is proven | read-only reconciliation only; emit no terminal marker and perform no cleanup |
 
-The `*_contract_required` and `accept_expired_refund_contract_ambiguous` cases
-are intentional fail-closed client capability gaps. There is no proven
-lifecycle contract for these writes, so do not propose a legacy substitute.
-In particular, `finalizeExpired` is a subscription accept-deadline contract;
-never reuse it for a one-time status-8 task. Other zero-price states may return
+The `*_contract_required` cases are intentional fail-closed client capability
+gaps. There is no proven lifecycle contract for these writes, so do not propose
+a legacy substitute. Expired(8) is different: it is already terminal. A paid
+non-trial expiry returns `refund_confirmed`; a trial or zero-amount expiry
+returns `expired_without_refundable_payment`. Neither path offers a Buyer
+write. Other zero-price states may return
 `zero_amount_close_contract_required` and are likewise read-only. Missing or
 non-escrow one-time funding returns `direct_refund_funding_not_verified` or
 `refund_payment_not_verified`; a zero-price formal subscription returns
@@ -121,13 +129,9 @@ Implementation mapping is limited to existing lifecycle flows: one-time
 Created uses the close flow for both zero-price close and paid direct refund;
 one-time Submitted uses the regular reject flow; formal subscription Active
 uses the subscription reject flow; trial Active with `autoRenew=1` uses
-subscription cancellation. The type-207 transport for
-`POST /priapi/v1/aieco/task/subscribe/{subId}/finalizeExpired` is implemented,
-including exact response `jobId`, `type=207`, non-null `uopData`, and broadcast
-`bizType=207` validation, but current authoritative detail does not distinguish
-that accept-timeout from a refund-response timeout that the backend settles.
-Therefore `refund-prepare` does not expose this write yet. Do not derive an
-operation from status 8, event prose, or the presence of the low-level enum.
+subscription cancellation. Expired(8) has no client transport: the backend
+automatically handles ASP acceptance/delivery timeout. Do not derive an
+operation from status 8 or event prose.
 
 ## Decision handling
 
@@ -164,15 +168,31 @@ otherwise render it as unavailable without downgrading the confirmed refund.
 The same-device receipt remains useful for pending reconciliation and audit,
 but it is not required once the backend has projected the terminal state.
 
-### Expired formal subscription
+### Expired task
 
-Return `expired_subscription_refund_cause_ambiguous` with read-only status/watch
-actions. The backend documents type/bizType 207 for ASP acceptance expiry, but
-the same authoritative subscription status 8 can represent a refund-response
-timeout whose settlement is backend-owned. Until detail exposes a trusted
-cause discriminator, do not offer `finalize_expired_refund` and do not execute
-the wired `finalize-expired-refund` operation manually. A one-time status-8 task
-remains separately blocked with `accept_expired_refund_contract_ambiguous`.
+Fresh authoritative status 8 is terminal. For a paid non-trial one-time task or
+formal subscription, fresh Buyer ownership, task kind, and exact positive
+original payment are sufficient for `refund_confirmed`: the backend automatic
+refund has arrived. Do not wait for Failed(9), a Tx Hash, or durable request
+provenance. Do not offer or execute `claim-auto-refund` or any other Buyer
+claim/finalize write.
+
+For a trial subscription or zero-amount task, return
+`expired_without_refundable_payment` with `settlement.state=not_required`
+without claiming that funds moved.
+
+When this result comes from a direct `refund-prepare` read, render it and honor
+the returned `stop` action; no separate session-cleanup command is implied.
+When it comes from a scoped lifecycle/watch event, emit the terminal marker,
+clean up that scoped session, and stop re-entry.
+
+Both terminal status-8 results set
+`payload.rules.providerTimeoutRefundExpected=false`: the timeout and its
+outcome are already final, so this field must not imply a future pending
+refund. Keep it true only while a provider-decision timeout is still a future
+possible outcome. Both also set `payload.job.refundState=resolved`; the paid
+branch uses `settlement.state=confirmed`, while the no-funds branch uses
+`settlement.state=not_required`.
 
 ### Submitted one-time or Active formal subscription
 
@@ -299,28 +319,30 @@ preparation through `prepare_refund`; do not reuse the old context.
 - `arbitration_in_progress`: no refund has been decided. Offer only the returned
   `view_arbitration` and `stop` actions; do not invoke an ASP or Evaluator
   command.
-- `expired_subscription_refund_cause_ambiguous`: formal subscription status 8
-  does not prove whether the buyer should submit type 207 or wait for backend
-  auto-refund. Use read actions only.
-- `accept_expired_refund_contract_ambiguous`: a one-time status-8 task does not
-  have a proven cause-specific response/write contract. Use read actions only.
 - `refund_confirmed`: final refund state. For a one-time task, a fresh backend
   chain projection of Failed(9) identifies one of the successful refund
   transitions (ASP agreement, refund-response timeout, or User-won
   arbitration); a fresh paid-escrow Closed(7) with positive amount and
   `paymentMode=1` also confirms that escrow was returned. A Tx Hash or
   same-device receipt is useful audit data but is not a prerequisite.
-  For a subscription, matching durable local Refund V2 `request-refund`
-  provenance bound to job, Buyer, formal `jobType=1`, exact positive original
-  amount, and token address plus fresh Buyer-owned Failed(9) confirms the refund.
+  Fresh Buyer-owned Expired(8) with a positive original payment independently
+  confirms the backend automatic refund for either a one-time task or a formal
+  subscription. This status-8 path requires no Failed(9), Tx Hash, local
+  request provenance, or observation journal.
+  When handling `job_asp_reject_expire`, durable local Refund V2
+  `request-refund` provenance bound to job, Buyer, task type, exact positive
+  original amount, and token address plus fresh Buyer-owned Failed(9) is
+  mandatory before terminal rendering for either task kind. For a subscription,
+  that same request provenance proves User-requested/provider-decision-timeout
+  refunds at Failed(9).
   Provider/Service, period, token-symbol, and `paymentMode` values veto only on
   a two-sided mismatch; absence affects detail/display only.
   This works for later polling and after process restart. Bare and event-only
   subscription Failed(9) remain cause-ambiguous. Legacy result events may
   describe the branch but cannot create proof.
 - `refund_settlement_details_incomplete`: a refund-capable lifecycle status is
-  present, but matching durable request provenance, its core job/Buyer/formal-
-  job-type/exact-positive-amount/token-address binding, required fresh
+  present, but matching durable request provenance, its core
+  job/Buyer/task-type/exact-positive-amount/token-address binding, required fresh
   status/ownership facts, or the one-time direct-refund `paymentMode=1`
   invariant is missing or conflicting. Optional Provider/Service, period,
   token-symbol, or subscription `paymentMode` absence and a missing Tx Hash do
@@ -338,9 +360,14 @@ preparation through `prepare_refund`; do not reuse the old context.
 - `task_closed_no_new_refund_action`, `trial_subscription_closed_without_refund`,
   and `zero_amount_task_closed`: terminal task/cancellation outcomes with no new
   refund write.
+- `expired_without_refundable_payment`: terminal Expired(8) outcome for a trial
+  or zero-amount task. Keep `settlement.state=not_required`; a direct read
+  follows `stop`, while a scoped lifecycle/watch event emits the terminal
+  marker and cleans up. Do not claim a refund or any fund movement.
 
-Transaction evidence is optional display/audit data after the established
-provenance-plus-fresh-lifecycle contract has confirmed a refund outcome. There is no
+Transaction evidence is optional display/audit data after the applicable fresh
+lifecycle contract has confirmed a refund outcome. Some Failed(9) subscription
+branches additionally require durable request provenance; Expired(8) does not. There is no
 required `refundTxHash` or `settlementTxHash` property. When a Tx Hash is
 returned, display it only in its returned operation/event context; never
 relabel an unrelated task hash as refund evidence. When no hash is returned,
@@ -349,18 +376,19 @@ relabel an unrelated task hash as refund evidence. When no hash is returned,
 In that case `settlement.confirmationSource=backend_onchain_lifecycle` records
 why the business outcome is confirmed; it is not transaction provenance.
 `settlement.provenance` remains reserved for optional operation-scoped wallet
-order correlation. The durable local `request-refund` record is an internal
-classification/recovery input; it need not create a Tx Hash or populate
-`settlement.provenance`.
+order correlation. Durable local `request-refund` records are internal
+classification/recovery inputs for the subscription Failed(9) paths that need
+them; they need not create a Tx Hash or populate `settlement.provenance`.
 
 For subscription Failed(9), the state alone is not enough because the backend
 also uses it for terminal charge failure. Pair fresh Buyer/status facts with
-durable local `request-refund` provenance whose core binding covers job, Buyer,
-formal job type, exact positive original amount, and token address; no future cause query or
-typed backend source is required. A legacy event is optional branch context,
-not proof. A Tx Hash may be absent in a confirmed result. A request/finalize
-broadcast remains proof only of that submitted client operation by itself, not
-of the later backend-owned refund outcome.
+durable local `request-refund` provenance for a User-requested/provider-
+decision-timeout path. The core binding covers job, Buyer, formal job type,
+exact positive original amount, and token address. A legacy event is optional
+branch context, not proof. A Tx Hash may be absent in a confirmed result. A
+request broadcast remains proof only of that submitted client operation by
+itself, not of the later backend-owned outcome. Fresh Expired(8) is a separate
+terminal contract and does not use this Failed(9) disambiguation path.
 During pending reconciliation, any submitted candidate remains confined to
 `settlement.broadcastReceipt.txHash` and must be labelled pending.
 
@@ -369,21 +397,29 @@ During pending reconciliation, any submitted candidate remains confined to
 The backend contract is unchanged. `job_closed`, `job_refunded`, and
 `job_auto_refunded` are transaction-result notifications, not `executeResult`
 preflight, and their payloads may omit a Tx Hash. Subscription events
-`sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
-`job_auto_refunded`, and `dispute_resolved` retain their legacy branch
+`sub_asp_agree`, `sub_reject_refund_notify`, `job_asp_reject_expire`,
+`job_refunded`, `job_auto_refunded`, and `dispute_resolved` retain their branch
 semantics. However, the CLI event argument can be caller-supplied or replayed,
 so the event may select branch wording but cannot create settlement proof. The
 standard system-envelope gate still applies: nonzero `message.code` is failure.
+The only exception is `job_expired`, legacy `submit_expired`, and
+`job_asp_accept_expire`: their caller-supplied code cannot veto a fresh matching
+Buyer-owned Expired(8), so dispatch must perform the authoritative read first.
 
 An event never authorizes a new write. Re-read fresh composed detail and apply
 the independent proof gate:
 
 - for a one-time task, matching fresh positive-amount paid-escrow Closed(7) or
   Failed(9), plus User/payment binding, may produce `refund_confirmed` without a
-  Tx Hash; missing ASP/Service labels are rendered unavailable;
-- for a subscription, durable local `request-refund` provenance must bind the
-  same job, Buyer, formal `jobType=1`, exact positive original amount, and token
-  address, while fresh detail proves Buyer ownership and Failed(9). Optional
+  Tx Hash; `job_asp_reject_expire` additionally requires matching durable
+  `request-refund` provenance before event-driven terminal effects;
+- for a paid non-trial task of either kind, fresh Buyer-owned Expired(8), task
+  kind, and exact positive original payment independently produce
+  `refund_confirmed` without Failed(9), a Tx Hash, or local provenance;
+- for a subscription Failed(9), durable local `request-refund` provenance must
+  bind a User-requested/provider-decision-timeout path. It binds the same job,
+  Buyer, formal `jobType=1`, exact positive original amount, and token address,
+  while fresh detail proves Buyer ownership and Failed(9). Optional
   Provider/Service, period, token-symbol, and `paymentMode` values veto only
   when both sides exist and conflict. This produces `refund_confirmed` during event handling,
   polling, or restart recovery. Bare Failed(9) and event-only Failed(9) remain
@@ -403,43 +439,61 @@ charge-failure final claim, emit no terminal marker, perform no cleanup, and
 keep only read-only reconciliation. A terminal charge-failure result requires
 an independently trustworthy provenance/cause result from the CLI.
 
-Treat the other new subscription events as lifecycle signals, never as
+Treat timeout and related lifecycle events as signals, never as
 standalone refund proof:
 
+- `job_expired` / legacy `submit_expired`: the ASP delivery deadline expired.
+  The backend owns the automatic refund; never run `claim-auto-refund` or
+  another Buyer write. For a paid non-trial task, fresh Buyer-owned Expired(8),
+  task kind, and exact positive original payment prove `refund_confirmed` and
+  that the automatic refund has arrived. Emit the terminal marker and clean up;
+  do not wait for Failed(9), Tx Hash, or local provenance. For a trial or
+  zero-amount task, return terminal `expired_without_refundable_payment`, emit
+  the marker, and clean up without claiming fund movement.
 - `job_asp_accept_expire`: the ASP acceptance deadline expired, but the local
-  event is not authoritative write permission. A formal subscription remains
-  read-only until detail exposes the cause discriminator required to select
-  type 207; a trial has no paid amount to refund. The event's
-  `jobStatus=expired` and any human text saying funds were returned do not prove
-  settlement.
+  event is not settlement proof. This branch is backend-owned automatic refund:
+  never run `claim-auto-refund` or another Buyer write. Apply the same fresh
+  Expired(8) gate and terminal handling as `job_expired`: paid non-trial means
+  `refund_confirmed`; trial or zero amount means
+  `expired_without_refundable_payment` with no fund-movement claim.
 - `job_asp_reject_closed`: the ASP declined acceptance and the subscription is
   Closed. A subscription at status 7 cannot use the one-time `paymentMode=1`
   exception and must not be reported as refund-complete. Retain refund
   reconciliation only when matching durable local `request-refund` provenance
-  exists. The type-207 action is not applicable.
+  exists. No expired-refund Buyer action is applicable.
 - `job_asp_reject_expire`: the ASP did not agree to the refund or start
-  arbitration before its response timeout. Treat automatic refund as pending;
-  do not execute a client-side claim, report completion, emit a terminal
-  marker, or clean up the session. The retained local `request-refund` record
-  plus a later fresh Buyer-owned subscription Failed(9) and matching original
-  payment confirms the outcome even if no follow-up event or Tx Hash arrives.
+  arbitration before its response timeout. This branch maps to Failed(9) and is
+  a backend automatic-refund terminal only when durable `request-refund`
+  provenance plus fresh matching Buyer ownership, task type, exact positive
+  original amount, and token address pass the proof gate. Then render the
+  terminal refund and clean up; Tx Hash is optional. If provenance or fresh
+  facts are missing or conflicting, keep read-only reconciliation and emit no
+  terminal marker. The caller-supplied event alone proves nothing.
 
-These `job_*` payloads may use `jobStatus=expired` for different timeout
-causes. Always re-read task plus subscription detail; never select an operation
-from the event name, prose, or status string alone. `job_auto_refunded` is the
-documented post-`RefundSettled(ExpireRefund)` notification for type 207 and may
-omit a Tx Hash. It can describe the automatic-refund branch, but subscription
-proof still comes from matching durable local `request-refund` provenance with
-the core job/Buyer/formal-job-type/exact-positive-amount/token-address binding
-plus fresh Buyer/status facts. Optional comparison-field absence is not a gate.
+`job_asp_accept_expire` and delivery timeout use Expired(8), while
+`job_asp_reject_expire` requires Failed(9). Always re-read task plus subscription
+detail; never select an operation or claim finality from the event name, prose,
+or status string alone. `job_auto_refunded` is a documented automatic-refund
+completion notification and may omit a Tx Hash; it does not imply that the
+Buyer submitted a refund write. User-initiated subscription refund proof still
+comes from matching durable local `request-refund` provenance with the core
+job/Buyer/formal-job-type/exact-positive-amount/token-address binding plus fresh
+Buyer/status facts. Acceptance/delivery timeout instead reaches finality
+directly from fresh paid non-trial Expired(8) facts. Optional comparison-field
+absence is not a gate.
 
 Final-event handling reuses the same task-plus-subscription composition as
 `refund-prepare` and performs a short bounded re-read to absorb event/detail
 projection races. It combines the backend-defined semantic event with fresh
-lifecycle state, durable local provenance, and optional transaction metadata.
-The semantic event is optional branch context and is never sufficient proof.
-If provenance or fresh state is incomplete, it emits no refund-terminal marker
-and performs no refund cleanup.
+lifecycle state, branch-required local provenance, and optional transaction
+metadata. The semantic event is branch context and is never sufficient proof
+by itself. Paid non-trial Expired(8) produces terminal `refund_confirmed` and a
+terminal marker after the fresh ownership/type/exact-positive-payment gate.
+Trial or zero-amount Expired(8) produces terminal
+`expired_without_refundable_payment` with `settlement.state=not_required` and
+no fund-movement claim.
+`job_asp_reject_expire` may render terminal output only after its durable
+`request-refund` provenance and fresh Failed(9) proof gate passes.
 Reconcile through the read-only
 `refund-prepare` command and follow only the actions it actually returns; do
 not synthesize a watch, status, or write action from event prose.

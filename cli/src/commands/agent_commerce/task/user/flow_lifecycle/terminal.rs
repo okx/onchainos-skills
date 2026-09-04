@@ -125,25 +125,164 @@ pub(crate) fn job_auto_refunded(
     notify_refund_result(ctx, &content, complete)
 }
 
+fn expired_terminal_result(ctx: &FlowContext<'_>, cause: &str) -> String {
+    let Some(detail) = ctx.prefetched else {
+        let content = format!(
+            "[Expired Task Detail Incomplete] {} (`{}`): fresh authoritative Expired(8) task detail is unavailable. Do not infer refund receipt or clean up from caller-supplied event data.",
+            authoritative_title(ctx), ctx.job_id
+        );
+        return notify_and_end(&content);
+    };
+    if detail.status != Some(8) || detail.user_agent_id.as_deref() != Some(ctx.agent_id) {
+        let content = format!(
+            "[Expired Task Detail Incomplete] {} (`{}`): fresh task detail does not prove buyer-owned Expired(8). Do not infer refund receipt or clean up from caller-supplied event data.",
+            authoritative_title(ctx), ctx.job_id
+        );
+        return notify_and_end(&content);
+    }
+
+    let trial = match detail.job_type {
+        Some(0) => false,
+        Some(1) => match detail.trial_type {
+            Some(0) => false,
+            Some(1) => true,
+            _ => {
+                let content = format!(
+                    "[Expired Task Detail Incomplete] {} (`{}`): fresh subscription detail is missing a supported trialType. Do not infer that funds moved.",
+                    authoritative_title(ctx), ctx.job_id
+                );
+                return notify_and_end(&content);
+            }
+        },
+        _ => {
+            let content = format!(
+                "[Expired Task Detail Incomplete] {} (`{}`): fresh task detail is missing a supported jobType. Do not infer that funds moved.",
+                authoritative_title(ctx), ctx.job_id
+            );
+            return notify_and_end(&content);
+        }
+    };
+    let zero_amount = super::super::refund_v2::is_zero_decimal(detail.token_amount.trim());
+    if trial || zero_amount {
+        let no_funds = if trial {
+            "This was a trial subscription, so no refundable escrow payment was collected."
+        } else {
+            "The task had a zero payment amount, so no funds needed to be returned."
+        };
+        let content = format!(
+            "[Job Expired] {} (`{}`): {cause}. {no_funds} The task is complete and no buyer-side refund action is required.",
+            authoritative_title(ctx), ctx.job_id
+        );
+        return notify_and_end_terminal(&content, &ctx.terminal_session_hint);
+    }
+
+    let (content, complete) = final_refund_notice(ctx, None, true, 8);
+    notify_refund_result(ctx, &format!("{content}\n- Timeout result: {cause}"), complete)
+}
+
 pub(crate) fn job_expired(ctx: &FlowContext<'_>) -> String {
-    let content = super::super::content::job_expired_user_notify(ctx.job_id);
-    notify_and_end(&content)
+    expired_terminal_result(ctx, "A task deadline elapsed")
 }
 
 pub(crate) fn job_asp_accept_expire(ctx: &FlowContext<'_>) -> String {
+    let Some(detail) = ctx.prefetched else {
+        let content = format!(
+            "[ASP Acceptance Timeout Detail Incomplete] {} (`{}`): fresh authoritative task detail does not prove buyer-owned Expired(8). Do not report refund settlement and do not initiate any buyer-side refund claim or finalization.",
+            authoritative_title(ctx), ctx.job_id
+        );
+        return notify_and_end(&content);
+    };
+    if detail.status != Some(8) || detail.user_agent_id.as_deref() != Some(ctx.agent_id) {
+        let content = format!(
+            "[ASP Acceptance Timeout Detail Incomplete] {} (`{}`): fresh authoritative task detail does not prove buyer-owned Expired(8). Do not report refund settlement and do not initiate any buyer-side refund claim or finalization.",
+            authoritative_title(ctx), ctx.job_id
+        );
+        return notify_and_end(&content);
+    }
+
+    let (task_type, is_trial) = match detail.job_type {
+        Some(0) => ("One-time task (0)", false),
+        Some(1) => match detail.trial_type {
+            Some(0) => ("Subscription (1)", false),
+            Some(1) => ("Subscription (1)", true),
+            _ => {
+                let content = format!(
+                    "[ASP Acceptance Timeout Detail Incomplete] {} (`{}`): fresh authoritative subscription detail is missing a supported trialType. Do not claim that refundable escrow was collected or returned.",
+                    authoritative_title(ctx), ctx.job_id
+                );
+                return notify_and_end(&content);
+            }
+        },
+        _ => {
+            let content = format!(
+                "[ASP Acceptance Timeout Detail Incomplete] {} (`{}`): fresh authoritative task detail is missing a supported jobType. Do not render caller-provided display fields or report refund settlement.",
+                authoritative_title(ctx), ctx.job_id
+            );
+            return notify_and_end(&content);
+        }
+    };
+    let title = detail.title.trim();
+    let provider_name = detail
+        .provider_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("name unavailable");
+    let provider_agent_id = detail
+        .provider_agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unavailable");
+    let amount = detail.token_amount.trim();
+    let token_symbol = detail.token_symbol.trim();
+    let paid_refund_confirmed =
+        super::super::refund_v2::authoritative_refund_settlement_confirmed(detail, 8);
+    let zero_amount = super::super::refund_v2::is_zero_decimal(amount);
+    if !is_trial && !zero_amount && !paid_refund_confirmed {
+        let content = format!(
+            "[ASP Acceptance Timeout Detail Incomplete] Job `{}` has fresh buyer-owned Expired(8), but its original payment amount is invalid. Do not substitute caller-provided fields or report a refund amount.",
+            ctx.job_id
+        );
+        return notify_and_end(&content);
+    }
+
     let content = super::super::content::job_asp_accept_expire_user_notify(
         ctx.job_id,
-        authoritative_title(ctx),
+        if title.is_empty() { "Task title unavailable" } else { title },
+        task_type,
+        provider_name,
+        provider_agent_id,
+        if amount.is_empty() { "unavailable" } else { amount },
+        if token_symbol.is_empty() || token_symbol == "?" {
+            "token symbol unavailable"
+        } else {
+            token_symbol
+        },
+        paid_refund_confirmed,
+        is_trial,
     );
-    notify_and_end(&content)
+    notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
 
 pub(crate) fn job_asp_reject_expire(ctx: &FlowContext<'_>) -> String {
+    let authoritative_refund_complete = ctx.prefetched.is_some_and(|detail| {
+        detail.status == Some(9)
+            && detail.user_agent_id.as_deref() == Some(ctx.agent_id)
+            && detail.refund_request_provenance
+    });
+    if !authoritative_refund_complete {
+        let content = format!(
+            "[Automatic Refund Detail Incomplete] {} (`{}`): fresh authoritative detail does not combine buyer-owned Failed(9) with the durable local request-refund provenance for this task. Do not report refund completion or clean up the session. Run `onchainos agent refund-prepare {}` to reconcile.",
+            authoritative_title(ctx), ctx.job_id, ctx.job_id
+        );
+        return notify_and_end(&content);
+    }
     let content = super::super::content::job_asp_reject_expire_user_notify(
         ctx.job_id,
         authoritative_title(ctx),
     );
-    notify_and_end(&content)
+    notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
 
 pub(crate) fn job_asp_reject_closed(
@@ -192,11 +331,7 @@ fn closed_notice(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> 
 // --- Timeouts / auto-completion ---------------------------------------
 
 pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
-    // `next-action --message` is caller-provided input, not cryptographic proof
-    // of a timeout cause. Never let this notification bypass Refund V2's fresh
-    // classification, explicit confirmation, and replay guard.
-    let content = super::super::content::submit_expired_user_notify(ctx.job_id);
-    notify_and_end(&content)
+    expired_terminal_result(ctx, "The ASP did not submit the deliverable before the deadline")
 }
 
 pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {

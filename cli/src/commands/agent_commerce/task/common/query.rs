@@ -235,11 +235,10 @@ fn role_name(code: i64) -> &'static str {
     }
 }
 
-/// Role-aware actionable/non-terminal statuses. Status 8 remains visible only
-/// to the buyer (role 1), because buyer-side escrow reconciliation may still be
-/// pending after the ASP assignment and evaluator lifecycle have ended.
-fn is_non_terminal_for_role(code: i64, role: i64) -> bool {
-    matches!(code, 0..=4) || (code == 8 && role == 1)
+/// Actionable/non-terminal statuses. Expired(8) is terminal because the
+/// backend projects it only after any applicable automatic refund completes.
+fn is_non_terminal_for_role(code: i64, _role: i64) -> bool {
+    matches!(code, 0..=4)
 }
 
 fn short_job_id(jid: &str) -> String {
@@ -525,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn active_task_filter_is_role_aware_for_expired_refund_reconciliation() {
+    fn active_task_filter_excludes_expired_for_every_role() {
         for role in [1, 2, 3] {
             for status in [0, 1, 2, 3, 4] {
                 assert!(
@@ -534,11 +533,8 @@ mod tests {
                 );
             }
         }
-        assert!(is_non_terminal_for_role(8, 1));
-        assert!(!is_non_terminal_for_role(8, 2));
-        assert!(!is_non_terminal_for_role(8, 3));
         for role in [1, 2, 3] {
-            for status in [5, 6, 7, 9] {
+            for status in [5, 6, 7, 8, 9] {
                 assert!(
                     !is_non_terminal_for_role(status, role),
                     "status {status} must be terminal for role {role}"

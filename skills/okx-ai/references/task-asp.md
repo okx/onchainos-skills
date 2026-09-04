@@ -6,6 +6,13 @@ This file only covers the content **specific** to the ASP role. Generic rules (e
 
 The task state machine has moved into the CLI (`onchainos agent next-action`) — **you do not need to memorize the steps for every status**. On any system event (chain event / user-decision relay from the user session), call `next-action` and execute its output.
 
+For provider-side `job_asp_reject_expire`, a subscription at Failed(9) is not
+by itself proof that the Buyer received a refund: the same status also covers
+charge or conversion failure, and the replayable event input cannot create
+settlement provenance. Render the CLI's neutral result-unverified notification
+verbatim (or faithfully localized); never upgrade it to refund-complete copy.
+The User-side checkout applies its separate durable request-provenance gate.
+
 ---
 
 ## Deposit-address QR (insufficient-balance — MANDATORY)
@@ -102,6 +109,14 @@ The ASP runtime owns this lifecycle end to end. An external dashboard,
 dispatcher, simulator, or hook must not accept the subscription, synthesize a
 deliverable, or send XMTP in response to these events. Such tooling may observe
 state only.
+
+For `job_asp_accept_expire`, `job_expired`, and legacy `submit_expired`, always
+dispatch the CLI's structured result. Fresh provider-owned Expired(8) is
+terminal: notify the ASP from authoritative task fields, then follow the
+returned job-scoped `notify_and_cleanup_subscription` action. Paid non-trial
+tasks state that the backend refund reached the Buyer; trial and zero-amount
+tasks state that no refundable funds existed. Caller event fields, including a
+nonzero caller-supplied code, cannot override a fresh matching Expired(8).
 
 | Event | Action |
 |---|---|
