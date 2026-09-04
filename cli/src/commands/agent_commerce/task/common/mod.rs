@@ -10,7 +10,6 @@ use clap::Subcommand;
 use serde::Deserialize;
 
 pub mod a2a_binding;
-pub mod arbitration_query;
 pub mod autotrade;
 pub mod claim;
 pub mod config;

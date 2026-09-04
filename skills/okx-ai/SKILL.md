@@ -49,8 +49,12 @@ flow.
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
 | Request a refund, reject a paid deliverable, check refund progress, or handle a refund-related arbitration result | `references/task-user-refund.md` + `references/task-cli-reference.md`; Refund V2 is distinct from cancellation |
 | Auto-renew, trial cancel, or deliver | §Task Marketplace |
-| View arbitration tasks or inspect arbitration status as User/ASP | `references/task-arbitration.md` + `references/task-cli-reference.md` |
-| Existing task actions, task list, or subscription list/detail | `references/task-user-playbook.md` only; use its unified task/subscription routing |
+| View an existing User task list or ASP task list | `references/task-user-playbook.md` → `references/task-user-intent-routing.md`, §Task list |
+| View rejected ASP tasks, refund-decision candidates, or tasks that can be arbitrated (`哪些可以仲裁` / `可以仲裁的任务`) | `references/task-user-playbook.md` → `references/task-user-intent-routing.md`, §Task list; use the rejected filter |
+| View tasks with an arbitration already filed | `references/task-arbitration.md`, §Query arbitration cases; use `arbitration-list` |
+| View the current or a specified arbitration case's detail/progress | `references/task-arbitration.md`, §Query an arbitration detail; use `arbitration-detail` |
+| Start arbitration for a specified rejected task, or handle its refund/arbitration decision | `references/task-arbitration.md`, §Open the rejection decision; this takes precedence over generic task actions/status |
+| Other existing task actions or subscription list/detail | `references/task-user-playbook.md` |
 | Pause/stop subscription copy-trading | `references/task-user-playbook.md`, §Pause auto copy-trade only |
 | Devices or subscription-message receipt/replay settings | `references/task-user-playbook.md`, §Device List / device-receipt; buyer side only |
 | Receive/resume/restore an existing subscription or its signals; update its copy-trade policy; `listen to <subscription title>` | `references/task-user-playbook.md`, §Signal-receipt watch entry; resolve the active subscription, pass authorization, then use scoped watch. Never read backlog first, guess `jobId`, or use global watch |
@@ -67,10 +71,10 @@ A2MCP reference. Otherwise, use the A2A task/subscription preparation flow.
 
 ## Task progression
 
-Treat the CLI result as the progression contract:
-When presenting it to the user, read `references/task-output-templates.md` for
-the platform-neutral result and next-action templates. When routing an action,
-read `references/task-action-routing.md`.
+Treat the CLI result as the progression contract. For `arbitration_*` phases,
+use the Action routing and Output templates sections in
+`references/task-arbitration.md`. For other phases, use
+`references/task-output-templates.md` and `references/task-action-routing.md`.
 
 ```json
 {
@@ -110,4 +114,4 @@ single safe action directly when its routing reference requires no confirmation.
 Never invent actions not returned by the CLI.
 
 Do not infer progression from human-readable output. Keep backend field names
-inside `payload` unchanged. 
+inside `payload` unchanged.

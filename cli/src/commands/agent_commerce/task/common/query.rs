@@ -6,7 +6,7 @@
 //!                 current active account (with `myRole` / `counterpartyAgentId`
 //!                 annotations; used by user-session to route ad-hoc user
 //!                 instructions to a specific sub session via
-//!                 `okx-a2a session query` → `okx-a2a session send --json`)
+//!                 `okx-a2a session query` → `okx-a2a session send --no-wait`)
 
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
@@ -151,28 +151,77 @@ pub async fn handle_status(
     role: i64,
 ) -> Result<()> {
     let agent_id = resolve_agent_id_or_error(agent_id, role).await?;
-    let resp = client
+    let resp = match client
         .get_with_identity(&client.task_path(job_id), &agent_id)
-        .await?;
-
-    let t = &resp;
-    let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
-    println!(
-        "Task status: {}",
-        t["status"].as_i64().map(status_name).unwrap_or("?")
-    );
-    println!("  jobId:    {job_id}");
-    println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
-    println!(
-        "  budget:   {} {}",
-        t["tokenAmount"].as_str().unwrap_or("?"),
-        token_sym
-    );
-    println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
-    if let Some(pid) = t["providerAgentId"].as_str() {
-        println!("  asp: {pid}");
+        .await
+    {
+        Ok(resp) => resp,
+        Err(task_error) => {
+            // Subscription disputes may not exist on the ordinary one-time
+            // task-detail endpoint. The shared dispute endpoint remains the
+            // authoritative existence/permission check for both task types.
+            let dispute = crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
+                client, job_id, &agent_id,
+            )
+            .await
+            .map_err(|_| task_error)?;
+            let supplement = if dispute.job_type == Some(1) {
+                client
+                    .fetch_subscription(job_id, &agent_id)
+                    .await
+                    .unwrap_or_else(|_| json!({}))
+            } else {
+                json!({})
+            };
+            emit_arbitration_status(job_id, &supplement, &dispute);
+            return Ok(());
+        }
+    };
+    let status_code = resp["status"].as_i64();
+    let dispute = match status_code {
+        Some(4) => Some(
+            crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
+                client, job_id, &agent_id,
+            )
+            .await?,
+        ),
+        Some(6 | 9) => {
+            crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
+                client, job_id, &agent_id,
+            )
+            .await
+            .ok()
+        }
+        _ => None,
+    };
+    if let Some(dispute) = dispute.as_ref() {
+        emit_arbitration_status(job_id, &resp, dispute);
+    } else {
+        let t = &resp;
+        let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
+        println!("Task status: {}", t["status"].as_i64().map(status_name).unwrap_or("?"));
+        println!("  jobId:    {job_id}");
+        println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
+        println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
+        println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
+        if let Some(pid) = t["providerAgentId"].as_str() {
+            println!("  asp: {pid}");
+        }
     }
     Ok(())
+}
+
+fn emit_arbitration_status(
+    job_id: &str,
+    supplement: &Value,
+    dispute: &crate::commands::agent_commerce::task::evaluator::dispute_status::DisputeStatusResponse,
+) {
+    let result = crate::commands::agent_commerce::task::arbitration::build_detail_result(
+        job_id,
+        supplement,
+        Some(dispute),
+    );
+    crate::output::success(result);
 }
 
 /// Query the "my tasks" list.
@@ -185,11 +234,21 @@ pub async fn handle_list(
     role: i64,
 ) -> Result<()> {
     let agent_id = resolve_agent_id_or_error(agent_id, role).await?;
+    let is_dispute = status == Some("disputed");
+    if is_dispute {
+        // Compatibility route for the original `tasks --status disputed`
+        // entrypoint. The canonical implementation and output contract live in
+        // the task-level arbitration domain.
+        return crate::commands::agent_commerce::task::arbitration::handle_arbitration_list(
+            client, &agent_id, page, limit,
+        )
+        .await;
+    }
+
     let mut path = format!("/priapi/v1/aieco/task/my?page={page}&page_size={limit}");
     if let Some(s) = status {
         path.push_str(&format!("&status={s}"));
     }
-
     let resp = client.get_with_identity(&path, &agent_id).await?;
     let tasks = resp["list"].as_array().cloned().unwrap_or_default();
     let total = resp["total"].as_u64().unwrap_or(0);
@@ -265,7 +324,7 @@ fn parse_role_arg(raw: &str) -> Option<i64> {
 ///   2. user-session renders the returned JSON to the user, lets the user pick a jobId
 ///   3. take `myAgentId` + `counterpartyAgentId` from the chosen row
 ///   4. (optional) `okx-a2a session query --job-id <jobId> --my-agent-id <myAgentId> --to-agent-id <counterpartyAgentId>` to confirm an active session exists
-///   5. `okx-a2a session send --job-id <jobId> --to-agent-id <counterpartyAgentId> --content <user's verbatim instruction> --json`
+///   5. `okx-a2a session send --no-wait --job-id <jobId> --to-agent-id <counterpartyAgentId> --content <user's verbatim instruction>`
 ///
 /// Output schema (via `output::success`):
 ///

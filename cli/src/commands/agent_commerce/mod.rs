@@ -1736,23 +1736,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             page_size,
         } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
-            task::common::arbitration_query::handle_arbitration_list(
-                &mut client,
-                &agent_id,
-                page,
-                page_size,
-            )
-            .await
+            task::arbitration::handle_arbitration_list(&mut client, &agent_id, page, page_size)
+                .await
         }
 
         AgentCommand::ArbitrationDetail { job_id, agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
-            task::common::arbitration_query::handle_arbitration_detail(
-                &mut client,
-                &job_id,
-                &agent_id,
-            )
-            .await
+            task::arbitration::handle_arbitration_detail(&mut client, &job_id, &agent_id).await
         }
 
         AgentCommand::SetPaymentMode {
@@ -3058,7 +3048,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             ) {
                 (None, None)
             } else {
-                check_status_freshness(&job_id, &event, &agent_id, &resolved_role).await
+                check_status_freshness(
+                    &job_id,
+                    &event,
+                    &agent_id,
+                    &resolved_role,
+                    parsed_message.as_ref(),
+                )
+                .await
             };
             if let Some(w) = freshness_warning {
                 println!("{w}");
@@ -4039,7 +4036,7 @@ fn detail_path_for_event(
     job_id: &str,
     event: &str,
 ) -> String {
-    if event.starts_with("sub_") {
+    if event.starts_with("sub_") || event == "user_decision_sub_user_reject" {
         client.subscribe_path(job_id)
     } else {
         client.task_path(job_id)
@@ -4303,6 +4300,50 @@ fn subscription_failed_context_block_reason(
     })
 }
 
+fn arbitration_decision_source(event: &str) -> Option<&'static str> {
+    match event {
+        "job_rejected" | "user_decision_job_rejected" => Some(task::arbitration::JOB_REJECTED),
+        "sub_user_reject" | "user_decision_sub_user_reject" => {
+            Some(task::arbitration::SUB_USER_REJECT)
+        }
+        _ => None,
+    }
+}
+
+fn arbitration_decision_is_stale(
+    source_event: &str,
+    message: Option<&serde_json::Value>,
+    detail: &serde_json::Value,
+) -> bool {
+    let scalar = |value: Option<&serde_json::Value>| task::arbitration::scalar_string(value);
+    match source_event {
+        task::arbitration::JOB_REJECTED => scalar(detail.get("status")).as_deref() != Some("3"),
+        task::arbitration::SUB_USER_REJECT => {
+            let status = scalar(detail.get("subStatus")).or_else(|| scalar(detail.get("status")));
+            let relay_binding = message
+                .and_then(|value| value.get("params"))
+                .and_then(|params| {
+                    Some((
+                        params.get("decisionBindingKey")?.as_str()?,
+                        params.get("decisionBindingValue")?.as_str()?,
+                    ))
+                });
+            let period_matches = if let Some((key, expected)) = relay_binding {
+                scalar(detail.get(key)).as_deref() == Some(expected)
+            } else {
+                ["periodIndex", "subStartTime", "subEndTime"]
+                    .into_iter()
+                    .all(|key| match scalar(message.and_then(|value| value.get(key))) {
+                        Some(expected) => scalar(detail.get(key)) == Some(expected),
+                        None => true,
+                    })
+            };
+            status.as_deref() != Some("3") || !period_matches
+        }
+        _ => true,
+    }
+}
+
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).
 ///
 /// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
@@ -4314,6 +4355,7 @@ async fn check_status_freshness(
     job_status_or_event: &str,
     agent_id: &str,
     role: &str,
+    message: Option<&serde_json::Value>,
 ) -> (Option<String>, Option<task::common::PreFetchedTaskContext>) {
     use task::common::network::task_api_client::TaskApiClient;
     use task::common::state_machine::{parse_status_or_event, status_when_event, Event, Status};
@@ -4352,8 +4394,12 @@ async fn check_status_freshness(
         "reject_review",
         "user_attachment_received",
         "job_user_reject",
+        "raise_arbitration",
         "dispute_raise",
         "agree_refund",
+        "raise_subscription_arbitration",
+        "sub_dispute",
+        "sub_agree_refund",
         "staked",
         "unstake_requested",
         "unstake_claimed",
@@ -4374,6 +4420,9 @@ async fn check_status_freshness(
         "sub_asp_claim_notify",
     ];
 
+    let arbitration_source = arbitration_decision_source(job_status_or_event);
+    let is_arbitration_relay = job_status_or_event.starts_with("user_decision_")
+        && arbitration_source.is_some();
     let is_prefetch_only = PREFETCH_ONLY_EVENTS.contains(&job_status_or_event);
     let refund_status_policy = buyer_refund_event_status_policy(role, job_status_or_event);
 
@@ -4388,7 +4437,10 @@ async fn check_status_freshness(
     // task-status gate. Strict event-specific checks below require CREATED(0) for
     // sub_open and ACTIVE(1) for sub_created/sub_asp_selected.
     let is_subscription_event = matches!(expected, Status::Other(ref s) if s == "subscription");
-    if !is_prefetch_only && matches!(expected, Status::Other(ref s) if s == "unknown") {
+    if !is_prefetch_only
+        && !is_arbitration_relay
+        && matches!(expected, Status::Other(ref s) if s == "unknown")
+    {
         if DEBUG_LOG {
             eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
         }
@@ -4606,6 +4658,19 @@ async fn check_status_freshness(
     let detail_path = detail_path_for_event(&c, job_id, job_status_or_event);
     let resp = match c.get_with_identity(&detail_path, agent_id).await {
         Ok(detail) => detail,
+        Err(error) if arbitration_source.is_some() => {
+            return (
+                Some(task::arbitration::blocked_result(
+                    "status_unavailable",
+                    job_id,
+                    serde_json::json!({
+                        "sourceEvent": job_status_or_event,
+                        "error": error.to_string(),
+                    }),
+                )),
+                None,
+            )
+        }
         Err(error)
             if matches!(
                 job_status_or_event,
@@ -4656,6 +4721,20 @@ async fn check_status_freshness(
         if let Some(reason) = asp_refund_context_block_reason(&ctx, job_status_or_event, agent_id) {
             return (Some(reason), Some(ctx));
         }
+    }
+
+    if let Some(source_event) = arbitration_source {
+        if arbitration_decision_is_stale(source_event, message, &resp) {
+            return (
+                Some(task::arbitration::blocked_result(
+                    "stale_event",
+                    job_id,
+                    serde_json::json!({"sourceEvent": job_status_or_event}),
+                )),
+                Some(ctx),
+            );
+        }
+        return (None, Some(ctx));
     }
 
     // For job_submitted: prefer an unprocessed spool delivery over an existing
@@ -5296,5 +5375,45 @@ mod authoritative_detail_path_tests {
         )
         .unwrap()
         .contains("does not bind"));
+    }
+}
+
+#[cfg(test)]
+mod arbitration_freshness_tests {
+    use super::{arbitration_decision_is_stale, arbitration_decision_source};
+
+    #[test]
+    fn decision_relay_rechecks_task_and_subscription_state() {
+        assert_eq!(
+            arbitration_decision_source("user_decision_job_rejected"),
+            Some("job_rejected")
+        );
+        assert!(!arbitration_decision_is_stale(
+            "job_rejected",
+            None,
+            &serde_json::json!({"status": 3})
+        ));
+        assert!(arbitration_decision_is_stale(
+            "job_rejected",
+            None,
+            &serde_json::json!({"status": 4})
+        ));
+
+        let relay = serde_json::json!({
+            "params": {
+                "decisionBindingKey": "periodIndex",
+                "decisionBindingValue": "2"
+            }
+        });
+        assert!(!arbitration_decision_is_stale(
+            "sub_user_reject",
+            Some(&relay),
+            &serde_json::json!({"subStatus": 3, "periodIndex": 2})
+        ));
+        assert!(arbitration_decision_is_stale(
+            "sub_user_reject",
+            Some(&relay),
+            &serde_json::json!({"subStatus": 3, "periodIndex": 3})
+        ));
     }
 }

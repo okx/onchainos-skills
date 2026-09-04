@@ -10,7 +10,8 @@
 //! without downloading.
 //!
 //! API: `GET /priapi/v1/aieco/task/{jobId}/dispute/status` returns
-//! `{ jobId, currentRound, selectedVoter, taskStatus, disputeStatus }`. The
+//! `{ jobId, jobType, currentRound, selectedVoter, taskStatus,
+//! disputeRoundStatus, prepareEndTime, roundEndTime, tokenAmount, tokenSymbol }`. The
 //! backend personalizes by caller `agenticId` (when not selected as juror,
 //! `selectedVoter=null`).
 //!
@@ -42,7 +43,7 @@ fn evaluator_task_is_terminal(status: &Status) -> bool {
 ///
 /// The `Response` suffix intentionally distinguishes this from
 /// [`crate::commands::agent_commerce::task::common::state_machine::DisputeRoundStatus`]
-/// — one is an HTTP DTO, the other is the arbitration sub-state-machine phase enum
+/// — one is an HTTP DTO, the other is the dispute-round state enum
 /// (the `dispute_round_status: i32` field in the response maps to that enum).
 ///
 /// **Nullable fields**: in terminal task state / when there is no active dispute,
@@ -56,12 +57,12 @@ fn evaluator_task_is_terminal(status: &Status) -> bool {
 pub struct DisputeStatusResponse {
     pub job_id: String,
     #[serde(default)]
+    pub job_type: Option<i32>,
+    #[serde(default)]
     pub current_round: Option<i64>,
     /// Backend personalizes by caller agentId: non-null = selected, null = not selected
-    /// (including stale notification / no active dispute). The inner fields
-    /// (voterAddress / voterAgentId) are guaranteed to be the caller itself when
-    /// selected — zero incremental info — so we `IgnoredAny`-consume them instead
-    /// of deserializing; the hard gate only needs `is_none()`.
+    /// (including stale notification / no active dispute). The evaluator hard
+    /// gate needs only presence, so discard the inner object.
     #[serde(default)]
     pub selected_voter: Option<IgnoredAny>,
     /// Current state of the task main state machine. The sample always carries an
@@ -69,13 +70,21 @@ pub struct DisputeStatusResponse {
     /// so a bare `i32` + `default` is fine.
     #[serde(default)]
     pub task_status: i32,
-    /// Current phase of the arbitration sub-state-machine
-    /// (`state_machine::DisputeStatus`). Null when the task is in a terminal state
-    /// or when there is no dispute.
+    /// Current phase of the persisted dispute round (`DisputeRoundStatus`, 0..=5),
+    /// not the contract-level `DisputeStatus` enum (0..=8). Null when the task is
+    /// in a terminal state or when there is no dispute.
     /// `rename` + `alias` accept both backend JSON keys: `disputeStatus` /
     /// `disputeRoundStatus`, so a mismatch on either side does not break parsing.
-    #[serde(default)]
+    #[serde(default, alias = "disputeStatus")]
     pub dispute_round_status: Option<i32>,
+    #[serde(default)]
+    pub prepare_end_time: Option<i64>,
+    #[serde(default)]
+    pub round_end_time: Option<i64>,
+    #[serde(default)]
+    pub token_amount: Option<String>,
+    #[serde(default)]
+    pub token_symbol: Option<String>,
 }
 
 pub async fn get_dispute_status(
