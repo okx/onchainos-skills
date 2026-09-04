@@ -328,15 +328,16 @@ conditions.
 | `hasMore` | bool | Whether more services are available |
 | `unmatchReason` | string/null | Backend no-match reason when present |
 | `subscriptionCheck` | object | Present when a matched result contains a subscription service: `{status:"checked", blockingServiceCount}` |
-| `duplicateSubscription` | object | Present when the selected service has a blocking non-terminal subscription. Contains the exact minimal `userFacingPrompt` and optional `nextAfterUserChoice`; only ACTIVE offers `restore-listening`. |
-| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, sid, serviceId, serviceName, serviceDescription, serviceGuide, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, existingSubscription, autoTradePreflight}`. `existingSubscription` is added only to subscription services and is `null` when no non-terminal duplicate exists. |
+| `duplicateSubscription` | object | Present when the selected service has a subscription that blocks duplicate creation. Contains the exact minimal `userFacingPrompt` and optional `nextAfterUserChoice`; only ACTIVE offers `restore-listening`. |
+| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, sid, serviceId, serviceName, serviceDescription, serviceGuide, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, existingSubscription, autoTradePreflight}`. `existingSubscription` is added only to subscription services and is `null` when no blocking duplicate exists. |
 
 For a matched subscription service, `--agentic-id <buyerAgentId>` is mandatory because the command performs
 the duplicate-subscription check before returning a selectable result. A blocking
 `existingSubscription` contains `jobId`, `serviceId`, `providerAgentId`, `statusName`, and
-`restoreListeningAvailable`. Only `ACTIVE` sets `restoreListeningAvailable:true`; known terminal states
-(`COMPLETED`, `CLOSED`, `FAILED`) are excluded and therefore do not prevent a new subscription. An unknown
-future status fails closed as non-terminal. If the check cannot complete, the command fails and the caller
+`restoreListeningAvailable`. Only `ACTIVE` sets `restoreListeningAvailable:true`; known non-blocking states
+(`COMPLETED`, `CLOSED`, `EXPIRED`, `FAILED`) are excluded and therefore do not prevent a new subscription.
+Settlement for an Expired subscription remains isolated to its original job. An unknown future status
+fails closed. If the check cannot complete, the command fails and the caller
 must not show the subscription confirmation card or call `create-subscribe`.
 
 When `duplicateSubscription` is present, the selected duplicate service is reduced to the fields needed
@@ -1069,7 +1070,7 @@ ASP supplies the exact Guide text only. The Guide-driven happy path always passe
 
 > **Insufficient-balance output:** when under-funded, `create-subscribe` does not submit. It returns the common `phase=funding_required`, `decision=blocked`, `reason=insufficient_balance` result with an empty `nextAction`; enter [`funding.md`](../../okx-agentic-wallet/references/funding.md) immediately and render its balance, address, and QR template.
 
-> **Duplicate-subscription output:** immediately before any provider-confirmation, signing, create, or broadcast request, the CLI fresh-reads the buyer's subscriptions for the exact `serviceId`. A non-terminal match exits with `{ok:false,data:{blockedReason:"duplicate-subscription",existingSubscription,userFacingPrompt,nextAfterUserChoice?}}`. Render only the localized `userFacingPrompt`; it always includes `jobId` and the explicit duplicate-creation block, and deliberately omits fee, trial, status, description, and readiness. `nextAfterUserChoice` is present only when the existing status is `ACTIVE` and then contains only `restore-listening`; otherwise there is no follow-up action. Do not query or suggest the ASP's other services. A failed precheck is fail-closed and sends no create request. This write-boundary check is intentionally repeated even when `task-create-prepare` already checked, closing the confirmation-to-create race.
+> **Duplicate-subscription output:** immediately before any provider-confirmation, signing, create, or broadcast request, the CLI fresh-reads the buyer's subscriptions for the exact `serviceId`. A blocking match exits with `{ok:false,data:{blockedReason:"duplicate-subscription",existingSubscription,userFacingPrompt,nextAfterUserChoice?}}`. `EXPIRED` does not block a new subscription; settlement for the old job remains separate. Render only the localized `userFacingPrompt`; it always includes `jobId` and the explicit duplicate-creation block, and deliberately omits fee, trial, status, description, and readiness. `nextAfterUserChoice` is present only when the existing status is `ACTIVE` and then contains only `restore-listening`; otherwise there is no follow-up action. Do not query or suggest the ASP's other services. A failed precheck is fail-closed and sends no create request. This write-boundary check is intentionally repeated even when `task-create-prepare` already checked, closing the confirmation-to-create race.
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
