@@ -1,4 +1,5 @@
 const SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
+const V2_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
 const REGISTER: &str = include_str!("../../skills/okx-ai/references/identity-register.md");
 const UPDATE: &str = include_str!("../../skills/okx-ai/references/identity-update.md");
 const DISCOVER: &str = include_str!("../../skills/okx-ai/references/identity-discover.md");
@@ -8,6 +9,10 @@ const OUTPUT_TEMPLATES: &str =
     include_str!("../../skills/okx-ai/references/identity-output-templates.md");
 const LISTING: &str = include_str!("../../skills/okx-ai/references/identity-listing.md");
 const REVIEWS: &str = include_str!("../../skills/okx-ai/references/identity-reviews.md");
+const V2_REPUTATION: &str =
+    include_str!("../../skills/okx-ai-v2/references/identity/reputation.md");
+const V2_LISTING: &str =
+    include_str!("../../skills/okx-ai-v2/references/identity/listing.md");
 const SERVICE_CONTRACT: &str =
     include_str!("../../skills/okx-ai/references/identity-service-contract.md");
 const VALIDATE_LISTING: &str =
@@ -43,6 +48,47 @@ fn identity_cli_contracts_are_owned_by_their_active_flows() {
     ));
     assert!(SERVICE_SEARCH.contains(r"onchainos agent service-match \"));
     assert!(SERVICE_SEARCH.contains("onchainos agent service-match --search-after <cursor>"));
+}
+
+#[test]
+fn reputation_and_listing_migrate_to_v2_leaf_references() {
+    let v2_skill = flatten(V2_SKILL);
+    let reputation = flatten(V2_REPUTATION);
+    let listing = flatten(V2_LISTING);
+
+    assert!(v2_skill.contains(
+        "| View an agent's reputation | `references/identity/reputation.md` |"
+    ));
+    assert!(v2_skill.contains(
+        "| Manage an agent's marketplace listing | `references/identity/listing.md` |"
+    ));
+
+    assert!(reputation.contains("onchainos agent feedback-list --agent-id <agentId>"));
+    assert!(!reputation.contains("--format"));
+    assert!(reputation.contains("## Constraints"));
+    assert!(reputation.contains("## Result"));
+    assert!(reputation.contains("use the CLI-provided `cells`"));
+    assert!(reputation.contains("Do not offer a numbered choice or `nextAction`"));
+    assert!(!reputation.contains("reply **1**"));
+
+    assert!(listing.contains(
+        "onchainos agent activate --agent-id <agentId> --preferred-language <BCP-47>"
+    ));
+    assert!(listing.contains("onchainos agent deactivate --agent-id <agentId>"));
+    assert!(listing.contains("## Constraints"));
+    assert!(listing.contains("1. **Agent ID.**"));
+    assert!(listing.contains("2. **Review language (publish only).**"));
+    assert!(listing.contains("It controls backend listing-review messages."));
+    for result in [
+        "`blockType: 1`",
+        "`submitApproval.success: true`",
+        "`activate.approvalStatus: 2`",
+        "`activate.success: true`",
+        "Deactivation with `success: true`",
+    ] {
+        assert!(listing.contains(result), "missing listing result contract: {result}");
+    }
+    assert!(!listing.contains("nextAction"));
 }
 
 #[test]

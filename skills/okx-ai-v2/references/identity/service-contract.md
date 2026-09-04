@@ -156,5 +156,10 @@ User-facing prompt:
 
 ## Validate
 
+<<<<<<< HEAD
 At the register/update QA gate, follow [`validate-listing.md`](validate-listing.md) for timing, input
 scope, update-key stripping, semantic merging, and finding resolution.
+=======
+At the register/update QA gate, follow `validate.md` for timing, input scope, update-key
+stripping, semantic merging, and finding resolution.
+>>>>>>> 02858965ea9f0fc7d93cc7f1704a09f51adb444c

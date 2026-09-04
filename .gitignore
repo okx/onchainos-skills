@@ -99,3 +99,8 @@ scripts/dev
 .aiide/
 .aiide-preview/
 
+# Local Codex build artifacts
+.codex/cargo/
+.codex/onchainos/
+.codex/target-global/
+artifacts/

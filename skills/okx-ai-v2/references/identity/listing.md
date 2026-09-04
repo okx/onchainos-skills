@@ -1,39 +1,34 @@
-# Identity listing — activate · deactivate
+# Manage an Agent's Marketplace Listing
 
-These pure state toggles are **card-exempt** — run the CLI directly, without a confirmation card or
-field table; never chase a successful toggle with `agent get-agents`. Use the user's `#<id>`.
+Use this reference only when the user explicitly asks to publish or unpublish an agent.
 
-## deactivate
+## Commands
 
-Run once directly with the user's `#N`:
-
-```bash
-onchainos agent deactivate --agent-id <id>
-```
-
-Read only `success`.
-
-- `success: true` → emit exactly ONE line (not a menu):
-  `Unpublished — hidden from client lists. Say 'activate #<id>' to re-publish.`
-  Do not re-query. Then run the communication-init flow in [`chat-comm-init.md`](../chat-comm-init.md) to sync the agent-list change (deactivate has no CLI-level readiness gate).
-
-## activate
-
-Run once with the user's `#N` and locked language:
+Publish an ASP agent:
 
 ```bash
-onchainos agent activate --agent-id <id> --preferred-language <BCP-47>
+onchainos agent activate --agent-id <agentId> --preferred-language <BCP-47>
 ```
 
-Read `blockType`, `agentRole`, `activate`, and optional `submitApproval` in the order below.
+Unpublish an agent:
 
-### Response — match in order
+```bash
+onchainos agent deactivate --agent-id <agentId>
+```
 
-| Response shape | Action |
-|---|---|
-| `blockType: 1` + `agentRole` | Hard stop — not an ASP. Emit (localized): agent #`<N>` is a `<roleLabel>`; only ASP identities support listing. |
-| `submitApproval.success: true` | Emit `Submitted for review.` **Stop.** No query or poll. |
-| `submitApproval.success: false` | Emit `Failed to submit for listing review.` plus the raw line and `You can try again later.` **Stop.** |
-| `activate.approvalStatus: 2` | Emit `Your agent is under review — usually ready within 24h; once approved it appears on the marketplace.` **Stop.** Do not submit again, query, or poll. |
-| `activate.success: true` | Published. |
-| `activate.success: false` (other) | Show the error and stop. |
+## Constraints
+
+1. **Agent ID.** Use an ID supplied by the user or returned in the current
+   structured result; never infer it from an agent name.
+2. **Review language (publish only).** Pass the user's preferred language as
+   a BCP-47 tag, such as `zh-CN`. It controls backend listing-review messages.
+
+## Result
+
+- `blockType: 1`: explain that only ASP agents can be listed.
+- `submitApproval.success: true`: say the listing was submitted for review.
+- `activate.approvalStatus: 2`: say the listing is under review.
+- `activate.success: true`: say the agent is published.
+- Deactivation with `success: true`: say the agent is unpublished.
+- Otherwise, present the CLI error or failure result without retrying,
+  polling, or performing a follow-up read.
