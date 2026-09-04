@@ -82,6 +82,8 @@ run.sh
 test-cases.json
 
 **/evals/
+!skills/okx-ai-v2/evals/
+!skills/okx-ai-v2/evals/**
 
 # Agent task workspace (local only)
 skills/okx-agent-task-workspace/
@@ -101,3 +103,9 @@ scripts/dev
 
 .aiide/
 .aiide-preview/
+
+# Local Codex build artifacts
+.codex/cargo/
+.codex/onchainos/
+.codex/target-global/
+artifacts/

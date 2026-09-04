@@ -42,8 +42,7 @@ flow.
 
 | User intent | Reference |
 |---|---|
-| Register, update, view, or manage an Agent profile, listing, or reputation | `references/identity/router.md` |
-| Find, compare, choose, or manage a service | `references/services/README.md` |
+| Register or manage Agents; list, search, or recommend Agents/services; view reputation | `references/identity/router.md` |
 | Call a service endpoint, inspect its response, or operate a public endpoint | `references/a2mcp/router.md` |
 | Create, view, or manage a task or subscription; manage message delivery or execution settings | `references/a2a/user/router.md` |
 | Respond to an assignment, deliver work, or manage subscriptions as a service provider | `references/a2a/provider/router.md` |
