@@ -118,7 +118,7 @@ agent pending-decisions-v2 list --format markdown
 
 ### next-action
 
-Output the script the agent should execute based on `(event, role)`
+Output the action result based on `(event, role)`
 
 ```
 agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message '<JSON>' [--a2a-file <path>]
@@ -553,6 +553,9 @@ User Agent accepts the deliverable and releases funds (params provided by `next-
 agent complete <jobId>
 ```
 
+Returns structured `deliverable_review` data with `jobId` and `txHash`. Final
+completion is confirmed by `job_completed`.
+
 ### reject
 
 User Agent rejects the deliverable (unified for regular and subscription tasks — auto-detects `jobType`)
@@ -560,6 +563,8 @@ User Agent rejects the deliverable (unified for regular and subscription tasks �
 ```
 agent reject <jobId> --reason "<reason>"
 ```
+
+Returns structured `deliverable_review` data with `jobId` and `txHash`.
 
 > For subscription tasks, this internally calls `/subscribe/{jobId}/reject`. For regular tasks, it uses the `pre-reject` → `reject` dual-sign flow. `subscribe-reject` is kept as an alias that routes through this unified command.
 

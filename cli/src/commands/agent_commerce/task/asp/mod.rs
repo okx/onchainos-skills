@@ -25,6 +25,7 @@ mod dispute_raise;
 pub mod flow;
 mod asp_claim;
 pub mod subscription;
+mod v2;
 
 use anyhow::Result;
 use clap::Subcommand;

@@ -454,29 +454,6 @@ pub(crate) async fn sub_expire_warn(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-pub(crate) fn sub_complete_notify(
-    ctx: &FlowContext<'_>,
-    message: Option<&serde_json::Value>,
-) -> String {
-    let svc = service_name(message, ctx);
-    let content = super::super::content::sub_complete_notify_user_notify(
-        svc,
-        ctx.job_id,
-        extract_i64(message, "subEndTime"),
-    );
-    let rating_block = build_auto_rating_block(ctx);
-    format!(
-        "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-         ```bash\n\
-         onchainos agent user-notify --content \"<localized content shown below>\"\n\
-         ```\n\
-         Content: {content}\n\n\
-         {rating_block}\
-         {}\n",
-        ctx.terminal_session_hint,
-    )
-}
-
 pub(crate) fn sub_close_notify(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,

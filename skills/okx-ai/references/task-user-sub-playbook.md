@@ -36,17 +36,17 @@ System events (`message.source == "system"`) → follow `task-core.md` `## Activ
 
 - `wakeup_notify` → use `message.jobStatus` as the event, not `wakeup_notify` itself.
 
-### Subscription events (`sub_*`) — display only
+### Subscription events (`sub_*`)
 
-When a `sub_*` system event arrives for the User Agent, call `next-action` and render the returned
-notification. **Never** enqueue a `pending-decisions-v2 request`, never write a state transition, never
-wait for a reply — these are notifications, not decisions.
+When a `sub_*` system event arrives for the User Agent, call `next-action` and execute only its
+result. **Never** invent a `pending-decisions-v2 request`, state transition, or wait for input.
 
 | Event | Action |
 |---|---|
 | `sub_created` / `sub_asp_selected` / `sub_trial_into_active` / `sub_renew` / `sub_user_reject` / `sub_asp_dispute` | `next-action --role user --agentId <yours> --message '<envelope>'` → render the returned `Content:` per the **`sub_*` language rule** below → `onchainos agent user-notify --content "<rendered>"` → **end turn**. `sub_created` is sent to both Buyer and ASP after create-subscribe is confirmed; it requires `subStatus/status=CREATED(0)`, owns session establishment/restoration and pending-attachment forwarding, and tells the Buyer that ASP acceptance is pending. `sub_asp_selected` requires `ACTIVE(1)` before telling the Buyer that the ASP accepted and service started. A fetch failure, missing status, or mismatched status blocks the event flow. Event fields take precedence for event-specific dates; missing title/payment display fields fall back to the authoritative detail. `sub_open` is obsolete and ignored. |
 | `sub_cancel` | Branches on `trialType`. `trialType == 1` (trial cancel) → TERMINAL: render the trial-unaffected copy "[Cancelled] Auto-conversion for the \"<jobTitle>\" free trial has been cancelled. This trial continues unaffected until <trialEndTime>; no charge will occur after it ends." then follow the terminal hint (`onchainos agent session-cleanup --job-id <jobId>`) to close the session. `trialType == 0` / absent (formal-period cancel) → NON-terminal: render "[Auto-Renew Cancelled] Auto-renew for \"<jobTitle>\" has been cancelled. Current service continues until <subEndTime>; job <jobId> will then move to Completed." and DO NOT append the session-cleanup hint (the subscription is still live for the current period). `next-action` already selects the correct copy and terminal-ness; just render per the language rule and send. **end turn**. |
-| `sub_asp_agree` / `sub_complete_notify` / `sub_close_notify` / `sub_failed_notify` | Same, then follow the returned **terminal hint** (`onchainos agent session-cleanup --job-id <jobId>`) to close the session. **end turn**. The CLI selects the `[Trial Ended]` or `[Subscription Ended]` variant for `sub_failed_notify`. |
+| `sub_complete_notify` | Route the structured result through [`task-action-routing.md`](task-action-routing.md). |
+| `sub_asp_agree` / `sub_close_notify` / `sub_failed_notify` | Same, then follow the returned **terminal hint** (`onchainos agent session-cleanup --job-id <jobId>`) to close the session. **end turn**. The CLI selects the `[Trial Ended]` or `[Subscription Ended]` variant for `sub_failed_notify`. |
 
 Do NOT summarize the envelope or ask "what should I do"—render the notification and stop. Show
 `failReason` (`sub_cancel` / failed `sub_renew`) verbatim; never translate it.

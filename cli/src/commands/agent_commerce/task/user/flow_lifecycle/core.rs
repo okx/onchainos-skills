@@ -1729,26 +1729,24 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     )
 }
 
-/// Directly runs `onchainos agent complete` in-process. The single-arg bash
-/// command provides no LLM decision-making value — Rust just broadcasts and
-/// returns. Iron rules from the previous LLM-driven version ("don't notify
-/// user via onchainos agent user-notify / don't auto-rate / don't say funds released
-/// before job_completed") all become moot — Rust cannot misbehave.
-///
-/// Failure path: the playbook emitted on error directs the LLM into the
-/// standard cli_failed 5-substep protocol (push a decision to the user).
+/// Runs `complete` in-process and returns its structured result.
 pub(crate) async fn approve_review(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
     let mut client = TaskApiClient::new();
-    match super::super::complete::handle_complete(&mut client, job_id).await {
-        Ok(()) => {
-            "**End this turn** and wait for the `job_completed` system notification.".to_string()
-        }
-        Err(e) => format!(
-            "[approve_review] `onchainos agent complete {job_id}` failed in-process: {e}\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
-        ),
+    match super::super::v2::complete::handle(&mut client, job_id).await {
+        Ok(result) => result.to_string(),
+        Err(error) => serde_json::json!({
+            "phase": "deliverable_review",
+            "decision": "blocked",
+            "reason": "completion_failed",
+            "nextAction": [{ "id": "stop" }],
+            "payload": {
+                "jobId": job_id,
+                "error": error.to_string(),
+            },
+        })
+        .to_string(),
     }
 }
 
@@ -1756,145 +1754,38 @@ fn user_authored_rejection_reason(data: Option<&str>) -> Option<&str> {
     data.map(str::trim).filter(|reason| !reason.is_empty())
 }
 
-/// Directly runs `onchainos agent reject` in-process with the rejection reason
-/// forwarded from the user's reply. Missing reasons are blocked before I/O.
-///
-/// Failure path: standard cli_failed instruction (push decision to user).
+/// Runs `reject` in-process with the user's reason and returns its structured result.
 pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
 
     let Some(reason) = user_authored_rejection_reason(ctx.data) else {
-        return format!(
-            "[reject_review] blocked: missing user-authored rejection reason; no task mutation occurred.\n\n\
-             Re-ask with `onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {} --source-event reject_reason_required --user-content \"Please provide the rejection reason.\" --list-label \"[Reject {}] rejection reason\"`; preserve the current `--to-agent-id` when present, then end the turn.\n",
-            ctx.agent_id, ctx.short_id
-        );
+        return super::super::v2::reject::reason_required_result(
+            job_id,
+            ctx.agent_id,
+            ctx.short_id,
+        )
+        .to_string();
     };
 
     let mut client = TaskApiClient::new();
-    match super::super::reject::handle_reject(&mut client, job_id, reason).await {
-        Ok(()) => format!(
-            "[reject_review] [OK]`onchainos agent reject {job_id} --reason \"{reason}\"` broadcast in-process. End the turn now.\n\n\
-             broadcast ≠ on-chain confirmed. The `job_rejected` system event will fire after on-chain confirmation; the ASP then decides whether to dispute (evaluation) or agree to a refund. The user cannot initiate evaluation.\n\
-             Do NOT send any message to the ASP about the rejection — they learn via on-chain events.\n"
-        ),
-        Err(e) => format!(
-            "[reject_review] `onchainos agent reject {job_id} --reason \"{reason}\"` failed in-process: {e}\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
-        ),
+    match super::super::v2::reject::handle(&mut client, job_id, reason).await {
+        Ok(result) => result.to_string(),
+        Err(error) => serde_json::json!({
+            "phase": "deliverable_review",
+            "decision": "blocked",
+            "reason": "rejection_failed",
+            "nextAction": [{ "id": "stop" }],
+            "payload": {
+                "jobId": job_id,
+                "error": error.to_string(),
+            },
+        })
+        .to_string(),
     }
 }
 
 // --- Terminal states ---------------------------------------------------
-
-/// Primary `job_completed` playbook — on-chain confirmation notification.
-///
-/// This event fires when the blockchain confirms the `complete` transaction.
-/// It is the ONLY place where "funds released" is factually true.
-/// `approve_review` only broadcasts; this event confirms.
-pub(crate) fn job_completed(ctx: &FlowContext<'_>, _message: Option<&serde_json::Value>) -> String {
-    let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-    let title_display = ctx.title_display;
-    let terminal_session_hint = &ctx.terminal_session_hint;
-
-    let provider_id = ctx
-        .prefetched
-        .and_then(|p| p.provider_agent_id.as_deref())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("<providerAgentId>");
-
-    let (token_amount, token_symbol) = ctx
-        .prefetched
-        .map(|p| (p.token_amount.as_str(), p.token_symbol.as_str()))
-        .unwrap_or(("<tokenAmount>", "<tokenSymbol>"));
-
-    let pm = ctx.payment_mode;
-
-    // Fast path (escrow only): rating + both notify templates pre-cached at
-    // deliverable_received time. Run feedback-submit and user-notify entirely
-    // in-process; zero LLM decisions.
-    //
-    // The `job_completed_escrow` template is cached at deliverable_received
-    // with `<tokenAmount>` / `<tokenSymbol>` placeholders — filled here with
-    // the on-chain locked values from `ctx.prefetched`.
-    let provider_id_opt = ctx
-        .prefetched
-        .and_then(|p| p.provider_agent_id.as_deref())
-        .filter(|s| !s.is_empty());
-    if pm != Some(3) {
-        if let Some(real_provider_id) = provider_id_opt {
-            use crate::commands::agent_commerce::task::common::{
-                okx_a2a, onchainos_self, prefilled_notify, prefilled_rating, session_cleanup,
-            };
-            let cached_completed = prefilled_notify::get(job_id, "job_completed_escrow")
-                .ok()
-                .flatten();
-            let cached_rating_notify = prefilled_notify::get(job_id, "rating_submitted")
-                .ok()
-                .flatten();
-            let cached_rating = prefilled_rating::get(job_id).ok().flatten();
-            let amount_ok = !token_amount.is_empty() && !token_amount.starts_with('<');
-            let symbol_ok = !token_symbol.is_empty() && !token_symbol.starts_with('<');
-            if let (Some(completed_tpl), Some(rating_text), Some(rating)) =
-                (cached_completed, cached_rating_notify, cached_rating)
-            {
-                let placeholders_present = completed_tpl.contains("<tokenAmount>")
-                    && completed_tpl.contains("<tokenSymbol>");
-                if amount_ok && symbol_ok && placeholders_present {
-                    let completed = completed_tpl
-                        .replace("<tokenAmount>", token_amount)
-                        .replace("<tokenSymbol>", token_symbol);
-                    let feedback_ok = onchainos_self::feedback_submit(
-                        real_provider_id,
-                        agent_id,
-                        &rating.score,
-                        job_id,
-                        &rating.comment,
-                    )
-                    .is_ok();
-                    let combined = if feedback_ok {
-                        format!("{completed}\n\n{rating_text}")
-                    } else {
-                        completed
-                    };
-                    let _ = okx_a2a::user_notify(&combined, None, false);
-                    let _ = session_cleanup::handle_session_cleanup(job_id, false);
-
-                    return "Task is at a terminal state. User has been notified by the CLI. Do NOT run any further command.".to_string();
-                }
-                // Placeholder missing or amount/symbol unknown → fall through to LLM playbook.
-            }
-        }
-    }
-
-    let completed_notify = super::super::content::job_completed_escrow_user_notify(
-        job_id,
-        title_display,
-        token_amount,
-        token_symbol,
-    );
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
-
-    format!(
-        "✓ job_completed — on-chain confirmed. Rate ASP, then notify user in one message.\n\n\
-         **Step 1 — Rate ASP** (0.00–5.00, comment ≤100 chars):\n\
-         ```bash\n\
-         onchainos agent feedback-submit --agent-id {provider_id} --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment>\"\n\
-         ```\n\n\
-         **Step 2 — Notify user** (completion + rating):\n\
-         **Localize first** — translate the template below into the user's language before sending.\n\
-         ```bash\n\
-         onchainos agent user-notify --content \"<localized content>\"\n\
-         ```\n\
-         Template:\n\
-         \x20\x20{completed_notify}\n\n\
-         \x20\x20{rating_notify}  ← omit if Step 1 failed\n\n\
-         **Step 3 — Wrap-up:**\n\
-         {terminal_session_hint}\n"
-    )
-}
 
 #[cfg(test)]
 mod tests {
@@ -2024,10 +1915,14 @@ mod tests {
         };
 
         let out = reject_review(&ctx).await;
-        assert!(out.contains("missing user-authored rejection reason"));
-        assert!(out.contains("--source-event reject_reason_required"));
-        assert!(out.contains("--user-content \"Please provide the rejection reason.\""));
-        assert!(!out.contains("<localized reason"));
+        let output: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(output["decision"], "requires_user_input");
+        assert_eq!(output["reason"], "rejection_reason_required");
+        assert_eq!(
+            output["nextAction"][0]["id"],
+            "request_rejection_reason"
+        );
+        assert_eq!(output["payload"]["requiredParams"], serde_json::json!(["reason"]));
         assert!(!out.contains("did not meet acceptance criteria"));
         assert!(!out.contains("cli_failed"));
     }

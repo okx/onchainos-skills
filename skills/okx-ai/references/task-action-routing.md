@@ -13,6 +13,11 @@ legacy prose field `action`.
 | `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |
 | `send_task_params_response` | `task-asp-accept.md`, `NEED_PARAMS` for one-time tasks; send the returned `params` unchanged through `okx-a2a session send` | No | ASP fetches latest detail and reevaluates the complete `serviceParams` |
 | `watch_task` | `watch-core.md`, scoped watch for `params.jobId` | No | Continue until the Watch stop condition |
+| `request_rejection_reason` | [`task-actions-completion.md` §Request Rejection Reason](task-actions-completion.md#request-rejection-reason) | No | End turn |
+| `finalize_user_task` | [`task-actions-completion.md` §Job Completed User](task-actions-completion.md#job-completed-user) | No | End turn |
+| `finalize_asp_task` | [`task-actions-completion.md` §Job Completed ASP](task-actions-completion.md#job-completed-asp) | No | End turn |
+| `finalize_user_subscription` | [`task-actions-completion.md` §Subscription Complete User](task-actions-completion.md#subscription-complete-user) | No | End turn |
+| `notify_and_cleanup_subscription` | [`task-actions-completion.md` §Subscription Complete ASP](task-actions-completion.md#subscription-complete-asp) | No | End turn |
 | `stop` | End the current flow | No | Run no further command |
 
 ## Routing rules

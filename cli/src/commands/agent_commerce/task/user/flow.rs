@@ -421,7 +421,11 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::Other(ref s) if s == "reject_review" => {
             super::flow_lifecycle::reject_review(&ctx).await
         }
-        Event::JobCompleted => super::flow_lifecycle::job_completed(&ctx, message),
+        Event::JobCompleted => {
+            super::v2::job_completed::handle(job_id, agent_id)
+                .await
+                .to_string()
+        }
         Event::DisputeResolved => super::flow_lifecycle::dispute_resolved(&ctx),
         Event::JobRefunded => super::flow_lifecycle::job_refunded(&ctx),
         Event::JobAutoRefunded => super::flow_lifecycle::job_auto_refunded(&ctx),
@@ -477,9 +481,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         }
         Event::SubRenew => super::flow_lifecycle::subscription::sub_renew(&ctx, message).await,
         Event::SubExpireWarn => super::flow_lifecycle::subscription::sub_expire_warn(&ctx).await,
-        Event::SubCompleteNotify => {
-            super::flow_lifecycle::subscription::sub_complete_notify(&ctx, message)
-        }
+        Event::SubCompleteNotify => super::v2::sub_complete_notify::handle(agent_id, message)
+            .await
+            .to_string(),
         Event::SubCloseNotify => {
             super::flow_lifecycle::subscription::sub_close_notify(&ctx, message)
         }
@@ -871,7 +875,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         event_str,
         "job_created" |
             "negotiate_reply" |
-            "provider_applied" | "job_accepted" | "deliverable_received" | "approve_review" | "job_completed" |
+            "provider_applied" | "job_accepted" | "deliverable_received" | "approve_review" | "reject_review" | "job_completed" |
             "job_expired" | "job_auto_refunded" |
             "submit_expired" | "reject_expired" |
             "close" |
@@ -924,6 +928,22 @@ mod tests {
             Some(&msg),
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn reject_review_without_reason_returns_only_structured_progression() {
+        let output = run(
+            "reject_review",
+            json!({ "event": "reject_review", "jobId": JOB_ID }),
+        )
+        .await;
+        let progression: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(progression["decision"], "requires_user_input");
+        assert_eq!(
+            progression["nextAction"][0]["id"],
+            "request_rejection_reason"
+        );
     }
 
     #[tokio::test]
@@ -1228,7 +1248,10 @@ mod tests {
             // from the scaffold assertion here. Restoring the user-notify
             // behavior for that branch belongs in its own dedicated MR. Every
             // event — dispute included — must still never push a decision.
-            if *evt != "sub_asp_dispute" {
+            // V2 sub_complete_notify fetches task detail in-process. Its
+            // notification rendering is covered in the V2 module without a
+            // live backend dependency.
+            if *evt != "sub_asp_dispute" && *evt != "sub_complete_notify" {
                 assert!(
                     out.contains("onchainos agent user-notify"),
                     "{evt}: must use the user-notify scaffold"
@@ -1248,9 +1271,10 @@ mod tests {
     #[tokio::test]
     async fn terminal_subscription_events_carry_cleanup_hint() {
         // Unconditionally terminal events always append the cleanup hint.
-        const ALWAYS_TERMINAL: [&str; 4] = [
+        // V2 sub_complete_notify fetches task detail and verifies its terminal
+        // output in the V2 module without a live backend dependency.
+        const ALWAYS_TERMINAL: [&str; 3] = [
             "sub_asp_agree",
-            "sub_complete_notify",
             "sub_close_notify",
             "sub_failed_notify",
         ];
