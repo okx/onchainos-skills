@@ -5,12 +5,15 @@
 //! Future formatting helpers, string normalization, time conversion, and similar generic helpers
 //! should also go here.
 
+use std::path::{Component, Path};
+
 use anyhow::{bail, Result};
 use chrono::{TimeZone, Utc};
 
 use super::deposit_qr::{InsufficientBalanceError, DEPOSIT_QR_MARKER, SCAN_TO_DEPOSIT_OPTION};
 use super::network::task_api_client::TaskApiClient;
 use super::{PaymentMode, DEBUG_LOG, XLAYER_CHAIN_INDEX};
+use crate::commands::sink::CodedError;
 
 /// unix seconds -> display string. 0 / negative are treated as unset; positive values are converted to RFC 3339.
 pub fn fmt_unix_secs(secs: Option<i64>) -> String {
@@ -604,6 +607,93 @@ pub async fn ensure_sufficient_balance_at(
     Err(InsufficientBalanceError::new(message, currency, required, 0.0).into())
 }
 
+// ─── jobId path-safety validator ─────────────────────────────────────────
+//
+// A deliverable / attachment directory name is used verbatim as a single
+// filesystem path component under `ONCHAINOS_HOME`. `PathBuf::join` does NOT
+// keep the result inside its base, so an unsafe value like `../../x` or a name
+// containing `/` escapes the task root. This validator fails closed on any
+// value that is not provably a single safe path component, while still
+// accepting legitimate `<jobId>_<title>` directory names (including Unicode /
+// CJK / emoji titles) used by the deliverables list-all scan.
+//
+// NOTE: this path-component validator is deliberately SEPARATE from the
+// autotrade `job_id_is_safe` charset check (`[A-Za-z0-9_-]`) in
+// `autotrade::grants` — jobId validation and ordinary path-component
+// validation must not share one predicate.
+
+/// Fail-closed upper bound on a path component's **byte** length. A real jobId
+/// is 66 bytes (`0x` + 64 hex); a `<jobId>_<title>` deliverable directory stays
+/// well under this ceiling. Bounds pure-CPU validation work.
+pub const MAX_JOB_ID_LEN: usize = 256;
+
+/// Stable coded error: a value is not a single safe path component. Fixed
+/// message — never interpolates the raw value, so a malicious path is never
+/// echoed into audit / error output.
+fn unsafe_job_path_err() -> anyhow::Error {
+    CodedError::new(
+        "UNSAFE_JOB_PATH_COMPONENT",
+        None,
+        "jobId is not a safe path component",
+    )
+    .into()
+}
+
+/// Predicate — is `s` a single, safe, ordinary path component?
+///
+/// Rejects (fail-closed) if ANY row matches; otherwise accepts:
+/// - R1 empty; R2 byte length > `MAX_JOB_ID_LEN`; R3 contains `/` or `\`;
+///   R4 equals `.` or `..`; R5 any control char; R6 not exactly one
+///   `Component::Normal` (catches absolute `/x`, drive `C:\x`, UNC `\\?\x`).
+///
+/// Ordinary Unicode / CJK / emoji characters are accepted (only the rows above
+/// reject), so existing `<jobId>_<title>` deliverable directories stay valid.
+/// MUST NOT call `canonicalize()` — the target directory may not exist yet.
+fn is_single_safe_component(s: &str) -> bool {
+    // R1 — empty component cannot name a directory.
+    if s.is_empty() {
+        return false;
+    }
+    // R2 — fail-closed byte ceiling.
+    if s.len() > MAX_JOB_ID_LEN {
+        return false;
+    }
+    // R3 — explicit separator rejection for both OS families (also catches the
+    // backslash in Windows drive / UNC forms on a Unix build, where `\` is not a
+    // path separator and would otherwise slip through the Component check).
+    if s.contains('/') || s.contains('\\') {
+        return false;
+    }
+    // R4 — current / parent-dir traversal.
+    if s == "." || s == ".." {
+        return false;
+    }
+    // R5 — any control char (NUL, newline, CR, or other ASCII/Unicode control):
+    // truncation / log-injection / filesystem edge cases.
+    if s.chars().any(char::is_control) {
+        return false;
+    }
+    // R6 — exactly one ordinary (`Component::Normal`) component equal to the input.
+    let mut comps = Path::new(s).components();
+    matches!(
+        (comps.next(), comps.next()),
+        (Some(Component::Normal(seg)), None) if seg == std::ffi::OsStr::new(s)
+    )
+}
+
+/// Validate that a value is a single, safe path component before it is turned
+/// into a filesystem path — the path-builder guard for the deliverable /
+/// attachment directories. Returns `Ok(())` iff
+/// [`is_single_safe_component`] passes, else fails closed with the stable
+/// `UNSAFE_JOB_PATH_COMPONENT` coded error. MUST NOT call `canonicalize()`.
+pub fn validate_job_id_path_component(job_id: &str) -> Result<()> {
+    if is_single_safe_component(job_id) {
+        Ok(())
+    } else {
+        Err(unsafe_job_path_err())
+    }
+}
+
 // ─── jobId formatting ───────────────────────────────────────────────────
 
 /// Validate that `job_id` is one of the legal forms before it's used in
@@ -776,6 +866,94 @@ mod tests {
                       Note: gas is paid by the platform paymaster, no OKB / native required.";
         let e = InsufficientBalanceError::new(legacy.to_string(), "USDT", 100.0, 5.0);
         assert_eq!(format!("{e}"), legacy);
+    }
+
+    // ── jobId / manifest path-safety validators ───────────────────────────
+
+    /// Assert an `anyhow::Error` carries the expected stable `errorCode`.
+    fn assert_code(err: anyhow::Error, code: &str) {
+        let c = err
+            .downcast_ref::<CodedError>()
+            .unwrap_or_else(|| panic!("expected CodedError, got: {err:#}"));
+        assert_eq!(c.code, code, "wrong errorCode");
+    }
+
+    #[test]
+    fn validate_job_id_path_component_accepts_normal() {
+        // architecture §4.1 accept table.
+        for ok in ["report-42", "system_voter_staking", "a", &"0".repeat(256)] {
+            assert!(
+                validate_job_id_path_component(ok).is_ok(),
+                "should accept {ok:?}"
+            );
+        }
+        // A real 66-byte 0x… id is also a single safe component.
+        let hex = format!("0x{}", "a".repeat(64));
+        assert!(validate_job_id_path_component(&hex).is_ok());
+    }
+
+    #[test]
+    fn validate_job_id_path_component_rejects_unsafe() {
+        // architecture §4.1 reject table — every case → UNSAFE_JOB_PATH_COMPONENT.
+        let cases = [
+            "",               // R1 empty
+            "../secret",      // R3/R6 traversal
+            "a/b",            // R3 unix separator
+            "a\\b",           // R3 windows separator
+            ".",              // R4
+            "..",             // R4
+            "/etc/passwd",    // R3/R6 absolute
+            "C:\\x",          // R3 windows drive
+            "\\\\?\\x",       // R3 UNC/verbatim
+            "a\0b",           // R5 embedded NUL
+            "a\nb",           // R5 newline
+            &"x".repeat(257), // R2 over the byte ceiling
+        ];
+        for bad in cases {
+            let err = validate_job_id_path_component(bad).expect_err(bad);
+            assert_code(err, "UNSAFE_JOB_PATH_COMPONENT");
+        }
+    }
+
+    #[test]
+    fn validate_job_id_path_component_never_canonicalizes() {
+        // Source-level guarantee: this compiles and validates a non-existent path
+        // without touching the filesystem (no canonicalize / metadata call).
+        assert!(validate_job_id_path_component("does-not-exist-anywhere").is_ok());
+    }
+
+    #[test]
+    fn validate_job_id_path_component_accepts_composite_title() {
+        // Existing `<jobId>_<Unicode/CJK/emoji title>` deliverable directory
+        // names (scanned by list-all) must remain valid single components. Built
+        // from \u{...} escapes so the source stays ASCII (no raw CJK in .rs).
+        let hex = format!("0x{}", "a".repeat(64));
+        // "<hex>_<CJK title>" composite name (CJK built from \u{...} escapes).
+        let cjk = format!("{hex}_\u{6211}\u{7684}\u{62a5}\u{544a}");
+        assert!(validate_job_id_path_component(&cjk).is_ok(), "CJK title dir");
+        // "<hex>_<emoji title>" e.g. jobId_📄report
+        let emoji = format!("{hex}_\u{1F4C4}report");
+        assert!(
+            validate_job_id_path_component(&emoji).is_ok(),
+            "emoji title dir"
+        );
+        // Legacy bare-jobId directory name.
+        assert!(validate_job_id_path_component(&hex).is_ok(), "bare jobId dir");
+    }
+
+    /// The restored autotrade-era `validate_job_id` contract (Result<(), String>):
+    /// `_` placeholder, any `system_…`, and a `0x`+64-char id pass; everything else
+    /// returns the free-text `must be 0x + 64 chars` error. This predicate is
+    /// deliberately SEPARATE from the path-component validator above.
+    #[test]
+    fn validate_job_id_original_contract() {
+        assert!(validate_job_id("_").is_ok());
+        assert!(validate_job_id("system_voter_staking").is_ok());
+        assert!(validate_job_id(&format!("0x{}", "a".repeat(64))).is_ok());
+        // Wrong length / missing prefix → Err (free-text message, not a coded error).
+        assert!(validate_job_id("0xdeadbeef").is_err());
+        assert!(validate_job_id("task-1").is_err());
+        assert!(validate_job_id("").is_err());
     }
 
     #[test]
