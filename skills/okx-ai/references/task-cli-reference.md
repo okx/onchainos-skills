@@ -164,6 +164,12 @@ Execute the confirmed fixed-price create-and-fund operation for one designated
 ASP. Discovery, field collection, price/balance validation, and explicit User
 confirmation happen before this command and are not repeated here.
 
+Immediately before the write boundary, the command repeats the balance check.
+When under-funded, it does not create or broadcast the task and returns the
+common `phase=funding_required`, `decision=blocked`,
+`reason=insufficient_balance` result with an empty `nextAction`. Enter
+[`funding.md`](../../okx-agentic-wallet/references/funding.md) immediately.
+
 ```
 agent create-task --title <txt> --description <txt> \
   --provider-agent-id <agentId> \
@@ -252,10 +258,15 @@ there is no `action` field. `payload` is empty for `login_validation` and `ident
 For `reason=duplicate_subscription`, it is exactly
 `{jobId:<existing subscription id>,title:<task title>,status:<numeric status>,active:<bool>}`.
 For `service_routing`, it contains `schemaVersion` and the complete A2MCP `serviceSnapshot`. For other
-phases it contains the normalized selected Service; `payment_validation` also includes `balanceWarning`
-when the balance is insufficient. A normalized Service with a non-blank `serviceGuide` always includes
-the CLI-derived `serviceGuideHash` for that exact Guide. Stable phase values are `login_validation`, `identity_validation`,
-`service_validation`, `service_routing`, `subscription_validation`, `payment_validation`, and `creation`.
+non-Funding phases it contains the normalized selected Service. When balance validation reports
+insufficient funds, the command returns the common `phase=funding_required` payload containing only
+optional `operation=task_creation`, `fundingTarget`, `qr`, and `fundingNeed`, with an empty
+`nextAction` array. The result enters
+[`funding.md`](../../okx-agentic-wallet/references/funding.md) immediately and does not copy Service
+fields into Funding. A normalized Service with a non-blank `serviceGuide` always includes the
+CLI-derived `serviceGuideHash` for that exact Guide. Stable non-Funding phase values are
+`login_validation`, `identity_validation`, `service_validation`, `service_routing`,
+`subscription_validation`, `payment_validation`, and `creation`.
 Use [`task-action-routing.md`](task-action-routing.md) for each `nextAction[].id`.
 
 Invalid Service data and failed dependency requests are command errors, not additional business cases.
@@ -642,7 +653,7 @@ ASP supplies the exact Guide text only. The Guide-driven happy path always passe
 
 > **Device routing:** every successful create carries `deviceList: null`, the established default that routes messages to **all logged-in devices**. Creation does not query the device list and does not accept per-device selection; adjust receiving devices after creation with `subscribe-device-update`. The compatibility field `deviceRoutingDegraded` remains present in JSON success data but is always `false`.
 
-> **Insufficient-balance output:** when under-funded, `create-subscribe` does not submit. If `fundingNoticeCommand` exists, run it: `terminal-unicode` shows `terminalQr`; `image-notify` runs `notifyCommandArgs` and puts `markdownImage` under option 1. If missing, show `balanceWarning`.
+> **Insufficient-balance output:** when under-funded, `create-subscribe` does not submit. It returns the common `phase=funding_required`, `decision=blocked`, `reason=insufficient_balance` result with an empty `nextAction`; enter [`funding.md`](../../okx-agentic-wallet/references/funding.md) immediately and render its balance, address, and QR template.
 
 > **Duplicate-subscription output:** immediately before any provider-confirmation, signing, create, or broadcast request, the CLI fresh-reads the buyer's subscriptions for the exact `serviceId`. A non-terminal match exits with `{ok:false,data:{blockedReason:"duplicate-subscription",existingSubscription,userFacingPrompt,nextAfterUserChoice?}}`. Render only the localized `userFacingPrompt`; it always includes `jobId` and the explicit duplicate-creation block, and deliberately omits fee, trial, status, description, and readiness. `nextAfterUserChoice` is present only when the existing status is `ACTIVE` and then contains only `restore-listening`; otherwise there is no follow-up action. Do not query or suggest the ASP's other services. A failed precheck is fail-closed and sends no create request. This write-boundary check is intentionally repeated even when `task-create-prepare` already checked, closing the confirmation-to-create race.
 

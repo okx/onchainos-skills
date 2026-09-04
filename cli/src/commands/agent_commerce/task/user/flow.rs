@@ -159,19 +159,24 @@ pub(super) fn notify_and_end(canonical_content: &str) -> String {
     )
 }
 
-/// Same as `notify_and_end` but appends a deposit-address hint for QR rendering.
+/// Same as `notify_and_end` but appends the deposit address and Common QR output.
+/// This preserves the legacy subscription funding UX after the standalone
+/// `wallet qrcode` command was removed.
 pub(super) fn notify_and_end_with_deposit(
     canonical_content: &str,
     deposit_address: &str,
 ) -> String {
+    let qr = crate::qr::build_qr_output(deposit_address, None);
+    let qr_json = serde_json::to_string(&qr).unwrap_or_else(|_| "{}".to_string());
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content \"<localized content shown below>\" --image-path <tmp.png>\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {canonical_content}\n\n\
          Deposit address: {deposit_address} (XLayer)\n\
-         Run `onchainos wallet qrcode --address {deposit_address} --format png --output <tmp.png>` before `user-notify`. Keep all 4 options and the address; do not rely on tool output. TTY: show Unicode QR. Non-TTY: run `user-notify --image-path`; plain reply is not enough. If image sending fails, show the address text and do not claim QR is scannable. Keep `--content` text-only: no `![...](file://...)` or local image paths.\n\n\
+         Common QR output: {qr_json}\n\
+         Keep all 4 options and the address. Preserve the existing QR behavior using the returned fields: TTY renders `terminalQr`; non-TTY runs `notifyCommandArgs` and renders `markdownImage`. Put the QR immediately after the deposit address. If the QR fields are absent, show the address and do not claim a QR is scannable. Keep `--content` text-only: no local image path in the content itself.\n\n\
          End turn after the call.\n"
     )
 }
@@ -1021,23 +1026,27 @@ mod tests {
     ];
 
     #[test]
-    fn deposit_notification_requires_visible_assistant_message() {
+    fn deposit_notification_uses_common_qr_without_wallet_qrcode() {
         let out = notify_and_end_with_deposit(
             "Insufficient balance. 1. Scan or deposit. 2. Swap. 3. Bridge. 4. Withdraw.",
             "0x1234567890abcdef1234567890abcdef12345678",
         );
+        // The `wallet qrcode` subcommand was removed (spec §1.2 / §10.3) — the deposit
+        // notification playbook must NOT instruct the agent to shell out to it.
+        assert!(!out.contains("wallet qrcode"));
+        // Still a visible user-notify carrying the deposit address and Common QR
+        // contract so the existing funding UX remains available.
         assert!(out.contains("onchainos agent user-notify"));
-        assert!(out.contains("--image-path <tmp.png>"));
-        assert!(out.contains("onchainos wallet qrcode --address 0x1234567890abcdef1234567890abcdef12345678 --format png --output <tmp.png>"));
+        assert!(out.contains("0x1234567890abcdef1234567890abcdef12345678"));
+        assert!(out.contains("Common QR output"));
+        assert!(out.contains("terminalQr"));
+        assert!(out.contains("notifyCommandArgs"));
+        assert!(out.contains("markdownImage"));
+        assert!(out.contains("immediately after the deposit address"));
         assert!(out.contains("<localized content shown below>"));
         assert!(out.contains("Keep all 4 options and the address"));
-        assert!(out.contains("do not rely on tool output"));
-        assert!(out.contains("TTY: show Unicode QR"));
-        assert!(out.contains("Non-TTY"));
-        assert!(out.contains("run `user-notify --image-path`"));
-        assert!(out.contains("plain reply is not enough"));
-        assert!(out.contains("do not claim QR is scannable"));
-        assert!(out.contains("no `![...](file://...)`"));
+        assert!(out.contains("do not claim a QR is scannable"));
+        assert!(out.contains("no local image path in the content itself"));
     }
 
     #[tokio::test]
