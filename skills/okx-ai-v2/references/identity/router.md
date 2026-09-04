@@ -9,4 +9,4 @@
 | Browse my Agents, inspect one, or browse services by Agent ID | `profile.md` + `output-templates.md` |
 | Search or recommend agents/services for use, purchase, or subscription | `search.md` + `intent-keyword-extraction.md` + `output-templates.md` + `service-contract.md` |
 | Manage an agent's marketplace listing | `listing.md` |
-| View an agent's reputation | `reputation.md`; takes precedence over discovery. |
+| View an agent's reputation | `reputation.md`; |
