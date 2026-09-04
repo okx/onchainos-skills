@@ -116,11 +116,13 @@ the following business data; the template defines the presentation format.
 
 ### Regular task
 
-- `title`
-- confirmed `Description`
-- Provider Agent (`providerAgentId`, optional name)
-- confirmed `serviceParams`
-- one-time price: `feeAmount` + `feeTokenSymbol`; zero is Free
+| Field | Value |
+|---|---|
+| Task Name | `title` |
+| Task Description | Confirmed `Description` |
+| Provider | `Agent <providerAgentId>(<providerAgentName>)`; omit the name when absent |
+| Service Parameters | Confirmed `serviceParams` |
+| Service Price | `feeAmount feeTokenSymbol`; zero → localized `Free`; omit when `feeAmount` is absent |
 
 Set internal `budget=max-budget=payload.feeAmount`. Do not ask for or display
 those internal values.
@@ -130,17 +132,15 @@ those internal values.
 If Auto-Renew is unknown, use `autoRenew=1`. Set `autoRenew=0` only after an
 explicit user request to disable it. Re-render confirmation after edits.
 
-Include:
-
-- `title`
-- confirmed `Description`
-- Provider Agent (`providerAgentId`, optional name)
-- confirmed `serviceParams`
-- recurring price: `subscriptionInfo.feeAmount` + `feeTokenSymbol` +
-  `subscriptionInfo.interval`; never use one-time `feeAmount`
-- trial: show the duration only when `supportTrial=true` and `freeTrial` is
-  positive; otherwise show No
-- Auto-Renew: On or Off
+| Field | Value |
+|---|---|
+| Task Name | `title` |
+| Task Description | Confirmed `Description` |
+| Provider | `Agent <providerAgentId>(<providerAgentName>)`; omit the name when absent |
+| Service Parameters | Confirmed `serviceParams` |
+| Service Price | `subscriptionInfo.feeAmount feeTokenSymbol / subscriptionInfo.interval`; never use one-time `feeAmount` |
+| Trial | `supportTrial=true` and positive `freeTrial` → localized duration; otherwise localized `No` |
+| Auto-Renew | `autoRenew=1` → localized `On`; `autoRenew=0` → localized `Off` |
 
 Do not include Guide Consent values in the standard confirmation fields. They
 must already have been confirmed separately in Step 1. Editing a Guide Consent
