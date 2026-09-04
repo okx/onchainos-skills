@@ -46,7 +46,7 @@ Shared Agent/Service templates and display rules.
 
 ### Rules
 
-- Render localized fields according to [`service-contract.md` §Display Rules].
+- Render localized fields according to [`identity-service-contract.md` §Display Rules].
 - Number services sequentially across Agent tables.
 - Merge `Fee` and `Subscription` as `Fee`.
 - Omit a column only when all of its values are `—`; otherwise display it.

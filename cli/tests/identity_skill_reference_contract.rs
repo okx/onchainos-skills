@@ -1,17 +1,17 @@
 const SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
-const REGISTER: &str = include_str!("../../skills/okx-ai/references/identity/register.md");
-const UPDATE: &str = include_str!("../../skills/okx-ai/references/identity/update.md");
-const DISCOVER: &str = include_str!("../../skills/okx-ai/references/identity/discover.md");
+const REGISTER: &str = include_str!("../../skills/okx-ai/references/identity-register.md");
+const UPDATE: &str = include_str!("../../skills/okx-ai/references/identity-update.md");
+const DISCOVER: &str = include_str!("../../skills/okx-ai/references/identity-discover.md");
 const SERVICE_SEARCH: &str =
-    include_str!("../../skills/okx-ai/references/identity/service-search.md");
+    include_str!("../../skills/okx-ai/references/identity-service-search.md");
 const OUTPUT_TEMPLATES: &str =
-    include_str!("../../skills/okx-ai/references/identity/output-templates.md");
-const LISTING: &str = include_str!("../../skills/okx-ai/references/identity/listing.md");
-const REVIEWS: &str = include_str!("../../skills/okx-ai/references/identity/reviews.md");
+    include_str!("../../skills/okx-ai/references/identity-output-templates.md");
+const LISTING: &str = include_str!("../../skills/okx-ai/references/identity-listing.md");
+const REVIEWS: &str = include_str!("../../skills/okx-ai/references/identity-reviews.md");
 const SERVICE_CONTRACT: &str =
-    include_str!("../../skills/okx-ai/references/identity/service-contract.md");
+    include_str!("../../skills/okx-ai/references/identity-service-contract.md");
 const VALIDATE_LISTING: &str =
-    include_str!("../../skills/okx-ai/references/identity/validate-listing.md");
+    include_str!("../../skills/okx-ai/references/identity-validate-listing.md");
 const TASK_CLI: &str = include_str!("../../skills/okx-ai/references/task-cli-reference.md");
 const REGISTERED_HOME: &str = include_str!("../../skills/okx-guide/references/registered-home.md");
 const UNREGISTERED_ROLE_SELECTION: &str =
@@ -95,7 +95,7 @@ fn task_flows_own_task_feedback_commands() {
     assert!(!REVIEWS.contains("agent task-feedback"));
 
     assert!(REGISTERED_HOME.contains("./unregistered-role-selection.md"));
-    assert!(UNREGISTERED_ROLE_SELECTION.contains("../../okx-ai/references/identity/register.md"));
+    assert!(UNREGISTERED_ROLE_SELECTION.contains("../../okx-ai/references/identity-register.md"));
     assert!(!REGISTERED_HOME.contains("onchainos agent search --query"));
 }
 

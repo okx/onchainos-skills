@@ -24,7 +24,7 @@ rules:
 Actions:
 
 1. Collect only identity fields or services explicitly changed by the user.
-2. For new services, follow [`service-contract.md` §Collection flow](service-contract.md#collection-flow).
+2. For new services, follow [`identity-service-contract.md` §Collection flow](identity-service-contract.md#collection-flow).
    For existing service updates or deletions, continue to [§3. Service delta](#3-service-delta).
 
 rules:
@@ -45,7 +45,7 @@ rules:
 1. Omitted services are unchanged and never imply deletion.
 2. Delete only on explicit user request.
 3. Never use the numeric raw `id`; use `serviceId` as the payload `id` value.
-4. Apply the shared payload rules in [`service-contract.md` §Shared payload](service-contract.md#shared-payload),
+4. Apply the shared payload rules in [`identity-service-contract.md` §Shared payload](identity-service-contract.md#shared-payload),
    then apply the matching A2A or A2MCP service update rules below.
 
 ### A2A service update
@@ -74,7 +74,7 @@ Rules:
 
 Actions:
 
-1. For ASP changes, run Update mode from (`validate-listing.md`) after collecting the final changes.
+1. For ASP changes, run Update mode from (`identity-validate-listing.md`) after collecting the final changes.
 2. Resolve findings before review and confirmation.
 
 rules:
@@ -87,7 +87,7 @@ rules:
 Actions:
 
 1. Show one final diff with each changed field's current and new value.
-2. Display service values according to (`service-contract.md`) §Display Rules.
+2. Display service values according to (`identity-service-contract.md`) §Display Rules.
 3. Obtain fresh explicit confirmation.
 
 rules:
@@ -115,4 +115,4 @@ Prefix every command with `onchainos`. Do not add `--chain`, `--address`, or und
 | `agent get-agents` | `onchainos agent get-agents --agent-ids <id[,id...]>` | Read the returned agent array and render its display-ready `card[]`; use it to confirm the target identity. |
 | `agent service-list` | `onchainos agent service-list --agent-id <id> --page <n> --page-size 3 [--service-id <uuid>]` | Read `serviceId` and copy it into the update/delete payload's `id`; never use numeric raw `id`. Render display-ready `cells[]` and use `serviceGuide` when present. |
 | `agent validate-listing` (hidden, local) | `onchainos agent validate-listing --role <role> [--name <name>] [--description <text>] --service '<json-array>'` | Use only for ASP Update mode. Read `pass` and `findings[]`; never expose diagnostic `code`. |
-| `agent update` | `onchainos agent update --agent-id <id> [--name <name>] [--description <text>] [--picture <cdn-url>] [--service '<delta-json-array>']` | Omit unchanged identity fields. Send only service deltas from (`service-contract.md`). `--description ""` does not clear a description. Success returns `txHash`; `agent` is optional. |
+| `agent update` | `onchainos agent update --agent-id <id> [--name <name>] [--description <text>] [--picture <cdn-url>] [--service '<delta-json-array>']` | Omit unchanged identity fields. Send only service deltas from (`identity-service-contract.md`). `--description ""` does not clear a description. Success returns `txHash`; `agent` is optional. |
