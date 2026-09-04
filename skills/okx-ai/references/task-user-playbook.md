@@ -325,10 +325,27 @@ chain-projected Failed(9) represents a successful refund transition. For a
 subscription it may instead represent terminal charge failure, so never label
 the list row itself as a completed refund. When the User asks about the refund,
 run `refund-prepare` and say "refund completed" only for
-`reason=refund_confirmed`; a missing Tx Hash may be shown as unavailable and
-does not by itself invalidate that result. Render `status_<n>` as `Unknown
-status (<n>)` or its faithful translation. If `statusName` is absent or
-malformed, render `—`; never infer from numeric `status`.
+`reason=refund_confirmed`. Under the unchanged backend contract, a semantic
+result event (`sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
+`job_auto_refunded`, or `dispute_resolved`) may describe the branch but cannot
+create proof. Polling and restart recovery require durable local Refund V2
+`request-refund` provenance bound to job, Buyer, formal `jobType=1`, exact
+positive original amount, and token address plus fresh Buyer-owned Failed(9).
+Provider/Service, period, token-symbol, and `paymentMode` fields veto only on a
+two-sided mismatch; absence reduces detail/display only. Event-only Failed(9),
+`sub_failed_notify`, and bare subscription Failed(9) may not prove a refund.
+For `dispute_resolved`, durable local refund-request provenance plus fresh
+composed job type, Buyer ownership, and exact terminal status are required for
+both status 9 (User wins/refund) and status 6 (ASP wins/no refund); without
+them, announce no verdict and perform no rating, notification, or cleanup.
+Because current `sub_failed_notify` input lacks trustworthy event
+provenance/cause, treat it as non-terminal and incomplete regardless of whether
+durable refund intent is found: make no fund-direction claim, emit no terminal
+marker, perform no cleanup, and keep only read-only reconciliation. A missing Tx Hash
+may be shown as unavailable and does not invalidate confirmation; no
+`refundTxHash` or `settlementTxHash` field is required. Render `status_<n>` as
+`Unknown status (<n>)` or its faithful translation. If `statusName` is absent
+or malformed, render `—`; never infer from numeric `status`.
 
 ### Independent pagination
 

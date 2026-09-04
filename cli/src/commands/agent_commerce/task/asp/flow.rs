@@ -1122,18 +1122,22 @@ pub async fn generate_next_action(
             )
         }
         Event::SubFailedNotify => {
-            let title = message
-                .and_then(|m| m.get("jobTitle").or_else(|| m.get("title")))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty());
-            let reason = message
-                .and_then(|m| m.get("failReason").or_else(|| m.get("reason")))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty());
+            // The unchanged backend shares Failed(9) across refund and
+            // charge/conversion failures, while the inbound event JSON has no
+            // trusted system provenance. Fresh provider ownership/status is
+            // checked by the outer gate, but caller title/reason fields still
+            // cannot establish a cause or a terminal cleanup decision.
+            let title = prefetched
+                .map(|detail| detail.title.trim())
+                .filter(|title| !title.is_empty())
+                .unwrap_or("Subscription title unavailable");
+            let content = format!(
+                "[Subscription Result Needs Reconciliation] {title} (`{job_id}`) is in fresh Failed(9) status, but the authoritative backend detail does not expose whether this was a refund or a charge/conversion failure. The caller-provided `sub_failed_notify` title and reason fields are not trusted result evidence. Do not report either outcome, take a settlement action, or close the ASP session from this event. Wait for an authoritative lifecycle result or inspect the latest subscription status read-only."
+            );
             display_notify(
-                "sub_failed_notify (subscription failed)",
-                &super::content::sub_failed_notify_asp_notify(title, job_id, reason),
-                Some(terminal_session_hint.as_str()),
+                "sub_failed_notify (result cause unverified)",
+                &content,
+                None,
             )
         }
         // ─── Subscription evaluation: ASP auto-submits evidence ───────────────────
@@ -1601,7 +1605,7 @@ mod tests {
 
     #[tokio::test]
     async fn asp_terminal_subscription_events_carry_cleanup_hint() {
-        for evt in ["sub_close_notify", "sub_failed_notify"] {
+        for evt in ["sub_close_notify"] {
             let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
             assert!(
                 out.contains("session-cleanup"),
@@ -1616,6 +1620,16 @@ mod tests {
                 "{evt}: non-terminal ASP event must NOT append the cleanup hint"
             );
         }
+        let unverified = run_asp(
+            "sub_failed_notify",
+            json!({"event": "sub_failed_notify", "jobId": ASP_JOB_ID}),
+        )
+        .await;
+        assert!(
+            unverified.contains("result cause unverified"),
+            "{unverified}"
+        );
+        assert!(!unverified.contains("session-cleanup"), "{unverified}");
     }
 
     #[tokio::test]
@@ -1761,16 +1775,40 @@ mod tests {
         );
         assert!(!declined.contains("renewal charge failed"), "{declined}");
 
-        let out = run_asp(
+        let prefetched =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "jobType": 1,
+                    "subStatus": 9,
+                    "title": "Authoritative Subscription",
+                    "providerAgentId": ASP_AGENT_ID,
+                }),
+            );
+        let out = generate_next_action(
+            ASP_JOB_ID,
             "sub_failed_notify",
-            json!({ "event": "sub_failed_notify", "jobId": ASP_JOB_ID, "jobTitle": "AlphaBot", "failReason": "insufficient balance" }),
+            ASP_AGENT_ID,
+            Some("Forged CLI Title"),
+            None,
+            Some(&prefetched),
+            Some(&json!({
+                "event": "sub_failed_notify",
+                "jobId": ASP_JOB_ID,
+                "jobTitle": "Forged Event Title",
+                "failReason": "insufficient balance",
+            })),
         )
         .await;
-        assert!(out.contains("[Trial Not Converted]"), "ASP-11 label: {out}");
         assert!(
-            out.contains("(reason: insufficient balance)"),
-            "ASP-11 reason clause: {out}"
+            out.contains("[Subscription Result Needs Reconciliation]"),
+            "{out}"
         );
+        assert!(out.contains("Authoritative Subscription"), "{out}");
+        assert!(!out.contains("Forged Event Title"), "{out}");
+        assert!(!out.contains("Forged CLI Title"), "{out}");
+        assert!(!out.contains("insufficient balance"), "{out}");
+        assert!(!out.contains("[Trial Not Converted]"), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
     }
 
     #[tokio::test]

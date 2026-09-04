@@ -545,6 +545,18 @@ legacy writes `close`, `reject`, `subscribe-reject`, or `claim-auto-refund`.
 `subscribe-cancel` remains valid only for cancellation of trial conversion or
 formal auto-renew and is never a refund substitute.
 
+Refund V2 does not introduce a new backend refund contract. It reuses the
+existing endpoints, lifecycle statuses, and semantic result events. In
+particular, finality does not depend on a new cause query, typed settlement
+source, or properties named `refundTxHash` / `settlementTxHash`. The client
+instead retains durable local `request-refund` provenance, whose required core
+binding is the job, Buyer, formal `jobType=1` subscription, exact positive
+original amount, and token address, so polling and a restarted process can
+safely disambiguate overloaded subscription Failed(9). Provider/Service,
+period, token-symbol, and `paymentMode` fields are optional consistency checks:
+when both recorded and fresh values exist a mismatch vetoes, while absence does
+not invalidate provenance/finality and only reduces available detail/display.
+
 `refund-prepare` is read-only. It resolves authoritative buyer ownership, task
 versus subscription, trial/formal type, exact payment, refund lifecycle state,
 and the currently allowed action set. It performs no signing, notification, or
@@ -757,13 +769,18 @@ it is not transaction provenance. `settlement.provenance` is reserved for the
 optional same-device, operation-scoped wallet-order correlation and may identify
 its source, operation, `orderId`, `bizType`, and `chainIndex`. During broadcast
 or reconciliation, candidate handles and any unconfirmed hash appear only under
-`settlement.broadcastReceipt`. A fresh backend chain-projected one-time refund
-terminal may set `settlement.state=confirmed` and
+`settlement.broadcastReceipt`. There is no required backend property named
+`refundTxHash` or `settlementTxHash`. A fresh backend chain-projected one-time
+refund terminal, or durable local subscription `request-refund` provenance
+paired with matching fresh lifecycle/payment state, may set `settlement.state=confirmed` and
 `confirmationSource=backend_onchain_lifecycle` while `settlement.txHash` and
 `settlement.provenance` remain null because no transaction metadata was exposed.
 `job.refundState=resolved` follows that confirmed business outcome;
 `settlement_unverified` is used for a terminal-looking state whose refund cause
-is still unresolved, notably bare subscription Failed(9).
+is still unresolved, notably bare or event-only subscription Failed(9). The
+durable local `request-refund` journal is an internal classification/recovery
+input; it does not require a Tx Hash and need not populate the optional
+`settlement.provenance` object.
 
 For a subscription, `subscription` is:
 
@@ -818,25 +835,38 @@ Refund policy invariants:
   `reason=refund_confirmed` even when no Tx Hash is available. Subscription
   Closed(7) never gets this one-time escrow interpretation. Missing ASP or
   Service display labels are rendered unavailable and do not alter finality;
-- subscription Failed(9) is overloaded with terminal charge failure, so it
-  remains `refund_settlement_details_incomplete` until an authoritative
-  backend cause/query, authenticated server event record, or typed source
-  disambiguates the cause. The current caller-supplied event name cannot. A
-  `request-refund` or finalize receipt proves only the submitted client
-  operation, not that later backend-owned outcome;
-- transaction evidence, when returned, is selected by operation-scoped, typed
-  provenance rather than a required property name. It must bind to this job,
-  User, original payment/refund scope, and operation. Its absence alone does
+- bare and event-only subscription Failed(9) are overloaded with terminal
+  charge failure and remain `refund_settlement_details_incomplete`.
+  Subscription refund confirmation requires durable local `request-refund`
+  provenance bound to the same job, Buyer, formal `jobType=1` subscription,
+  exact positive original amount, and token address plus fresh Buyer-owned
+  Failed(9). Provider/Service, period, token-symbol, and `paymentMode` values
+  veto only on a two-sided mismatch; missing values are not required. Legacy events `sub_asp_agree`,
+  `sub_reject_refund_notify`, `job_refunded`, `job_auto_refunded`, and
+  `dispute_resolved` may describe the branch but cannot create proof. A
+  `request-refund` record alone proves only the submitted client operation, not
+  the later backend-owned outcome;
+- `sub_failed_notify` labels a possible charge/conversion failure but does not
+  prove that cause. The current event input lacks trustworthy provenance/cause,
+  so fail closed both with and without durable refund intent: make no final
+  fund-direction claim, emit no terminal marker, perform no cleanup, and keep
+  only read-only reconciliation;
+- transaction evidence, when returned, is optional operation/event-scoped
+  metadata rather than a required property name. It must not be relabelled
+  across another job or operation. Its absence alone does
   not invalidate a refund already established by an authoritative backend
   chain projection;
-- a valid refund transaction hash is lowercase-prefix `0x` followed by exactly
-  64 hexadecimal characters; a generic task or event hash with no qualifying
-  provenance is never displayed as the refund Tx Hash;
+- a displayed EVM transaction hash is lowercase-prefix `0x` followed by exactly
+  64 hexadecimal characters; an unrelated task or event hash is never
+  relabelled as refund evidence;
 - either refund-capable terminal status with any required settlement invariant
   missing returns
-  `refund_settlement_details_incomplete`. Required invariants are lifecycle
-  state/cause and User/payment binding, not ASP/Service display labels or Tx
-  Hash availability; never promote an unconfirmed or untyped candidate
+  `refund_settlement_details_incomplete`. Required subscription invariants are
+  Failed(9), Buyer ownership, formal `jobType=1`, exact positive original
+  amount, token address, and matching durable `request-refund` provenance; the
+  one-time paid-close path additionally requires `paymentMode=1`;
+  they are not ASP/Service display labels or Tx Hash availability. Never
+  promote an unconfirmed candidate
   transaction into the normalized final settlement field;
 - `refund_not_approved_or_task_completed` has
   `settlement.state=not_refunded`; the client cannot distinguish a User-lost
@@ -844,9 +874,14 @@ Refund policy invariants:
 - only ASP notification fields are currently exposed, under
   `request.providerNotification`, and only as `not_requested` or `unknown`;
 - a local reconciliation marker is written before mutation and suppresses the
-  pending operation across revision, formatting, and billing-period drift
-  until the authoritative lifecycle proves advancement; this is a same-device
-  guard and does not replace backend idempotency;
+  pending operation across revision, formatting, and billing-period drift.
+  Valid `request-refund` provenance is retained through Rejected(3),
+  Disputed(4), process restart, polling, and terminal-result recovery so a fresh
+  subscription Failed(9) can be safely classified again. A definitive
+  rejection or core-binding mismatch invalidates it. After confirmed terminal
+  handling, retain the provenance or persist an equivalent durable terminal fact
+  rather than making restart recovery forget why Failed(9) was classified. This
+  local guard does not replace backend idempotency across devices;
 - an unknown marker with no stable transaction/order/UserOp identifier cannot
   be safely cleared while authoritative state is unchanged. Never use TTL,
   `not found`, or a user override as proof that the mutation was not received;
@@ -854,15 +889,30 @@ Refund policy invariants:
 - after stale context, pending/unknown outcome, or any broadcast result, use only the
   returned read-only reconciliation action. Never retry automatically.
 
-Backend `job_closed` and `job_auto_refunded` notifications represent successful,
-confirmed transaction-result handling; they are distinct from `uopData.executeResult`,
-which is only the backend pre-broadcast preflight result. Either success event
-may omit a Tx Hash. The current `next-action --event` value is caller-supplied,
-so treat it as a trigger for fresh detail rather than authenticated evidence or
-a new write. For a one-time task, matching fresh positive-amount paid-escrow
-Closed(7) or Failed(9) can confirm the refund independently. For a subscription,
-even caller-supplied `job_auto_refunded` plus Failed(9) remains ambiguous until
-an authoritative cause/query or server-verifiable event source exists.
+Backend `job_closed`, `job_refunded`, and `job_auto_refunded` notifications
+retain their transaction-result semantics; they are distinct from
+`uopData.executeResult`, which is only the backend pre-broadcast preflight
+result. These events may omit a Tx Hash. A nonzero system-envelope
+`message.code` still fails the standard transaction-result gate. Treat every
+successful event as branch context that triggers a fresh detail read, never as
+a new-write instruction or settlement proof.
+For a one-time task, matching fresh positive-amount paid-escrow Closed(7) or
+Failed(9) can confirm the refund independently. For a subscription,
+`sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
+`job_auto_refunded`, or `dispute_resolved` may describe the branch but cannot
+create proof. Confirmation requires matching durable local `request-refund`
+provenance bound to job, Buyer, formal `jobType=1`, exact positive original
+amount, and token address plus fresh Buyer-owned Failed(9). Optional
+Provider/Service, period, token-symbol, and `paymentMode` values veto only when
+both sides exist and conflict. Bare and event-only subscription
+Failed(9) remain ambiguous. `dispute_resolved` requires fresh ownership and
+composed task/subscription facts **and** matching durable local
+`request-refund` provenance for both terminal branches: status 9 identifies
+the User-winning/refund branch and status 6 identifies the ASP-winning/no-refund
+branch. Without that proof, a caller-supplied event cannot announce a verdict,
+rate, notify, or clean up. Current `sub_failed_notify` lacks trustworthy cause
+provenance and remains fail-closed/read-only regardless of whether a durable
+refund intent exists: no fund-direction claim, terminal marker, or cleanup.
 
 The subscription backend may also emit `job_asp_accept_expire`,
 `job_asp_reject_closed`, and `job_asp_reject_expire`. These are lifecycle
@@ -871,13 +921,16 @@ acceptance-expiry event documents a type-207 backend path but cannot authorize
 it without a cause discriminator; the ASP-decline event proves only Closed;
 and the ASP refund-response-timeout event means automatic refund is pending.
 Event payload `jobStatus=expired` alone must not select type 207 for either task
-kind. Wait for a matching successful backend result/projection, not a mandatory
-Tx Hash.
+kind. A retained local `request-refund` record plus later matching fresh
+subscription Failed(9) confirms settlement even when no follow-up event or Tx
+Hash is available.
 
 For every Refund V2 lifecycle response, `uopData.executeResult` is backend
-preflight. Only boolean `true` passes. `false`, null, missing, or a wrong type
-must fail closed before signing/broadcast; even `true` does not prove that a
-transaction was broadcast, succeeded, projected to task state, or refunded.
+preflight. Preserve the established lifecycle signer behavior: only explicit
+boolean `false` blocks before signing/broadcast. Boolean `true`, null, a missing
+field, and non-boolean values continue through normal signing/broadcast
+validation. No `executeResult` value proves that a transaction was broadcast,
+succeeded, projected to task state, or refunded.
 
 ### set-payment-mode
 

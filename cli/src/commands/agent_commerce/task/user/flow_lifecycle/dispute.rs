@@ -3,6 +3,16 @@
 use super::super::flow::{notify_and_end, FlowContext, TERMINAL_NOTIFICATION_MARKER};
 use crate::commands::agent_commerce::task::common::okx_a2a;
 
+fn event_job_type(message: Option<&serde_json::Value>) -> Option<i64> {
+    message
+        .and_then(|value| value.get("jobType"))
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
+        })
+}
+
 pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
     let content = super::super::content::job_rejected_user_notify(ctx.job_id, ctx.title_display);
     notify_and_end(&content)
@@ -77,7 +87,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
 
 pub(crate) fn dispute_resolved(
     ctx: &FlowContext<'_>,
-    _message: Option<&serde_json::Value>,
+    message: Option<&serde_json::Value>,
 ) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
@@ -95,6 +105,25 @@ pub(crate) fn dispute_resolved(
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
+    if !matches!(p.job_type, Some(0 | 1)) {
+        return format!(
+            "[dispute_resolved] fresh detail has unsupported or missing jobType {:?} for job {job_id}; do not announce a verdict, rate, notify, or clean up.\n\n\
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n",
+            p.job_type
+        );
+    }
+    if event_job_type(message).is_some_and(|job_type| Some(job_type) != p.job_type) {
+        return format!(
+            "[dispute_resolved] event jobType conflicts with fresh composed detail for job {job_id}; do not announce a verdict, rate, notify, or clean up.\n\n\
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+        );
+    }
+    if p.user_agent_id.as_deref() != Some(agent_id) {
+        return format!(
+            "[dispute_resolved] fresh detail does not bind job {job_id} to User Agent {agent_id}; do not announce a verdict, rate, notify, or clean up.\n\n\
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+        );
+    }
     let user_won = match p.status {
         Some(9) => true,
         Some(6) => false,
@@ -107,14 +136,22 @@ pub(crate) fn dispute_resolved(
              See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
         ),
     };
-    if user_won
-        && super::super::refund_v2::verify_final_refund_event(None, Some(p), 9, ctx.agent_id)
-            .is_ok()
-    {
+    if !p.refund_request_provenance {
         return format!(
-            "[dispute_resolved] Refund V2 context already confirms refund settlement from the fresh backend on-chain lifecycle for job {job_id}. Do not render another unresolved-settlement notice from this delayed/replayed verdict. Run `onchainos agent refund-prepare {job_id}` and route its final Refund V2 result."
+            "[dispute_resolved] fresh terminal status has no durable local refund-request provenance for job {job_id}; do not treat an ordinary completion/failure as an arbitration verdict, rate, notify, or clean up. Run `onchainos agent refund-prepare {job_id}` to reconcile.\n"
         );
     }
+    let refund_evidence = user_won
+        .then(|| {
+            super::super::refund_v2::verify_final_refund_event(message, Some(p), 9, ctx.agent_id)
+        })
+        .and_then(Result::ok);
+    if user_won && refund_evidence.is_none() {
+        return format!(
+            "[dispute_resolved] fresh Failed(9) detail does not prove a buyer-owned refund outcome for job {job_id}; do not announce a verdict, rate, notify, or clean up. Run `onchainos agent refund-prepare {job_id}` to reconcile.\n"
+        );
+    }
+    let refund_settled = refund_evidence.is_some();
     let provider_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
@@ -150,6 +187,10 @@ pub(crate) fn dispute_resolved(
         service_name,
         amount,
         symbol,
+        refund_settled,
+        refund_evidence
+            .as_ref()
+            .and_then(|evidence| evidence.tx_hash.as_deref()),
     );
     let dispute_lost = super::super::content::dispute_lost_user_notify(
         job_id,
@@ -168,7 +209,9 @@ pub(crate) fn dispute_resolved(
     };
     // Deliberate reuse: subscription evaluation results render the existing online
     // task-level notice rather than subscription-specific copy.
-    let dispatch_content = if user_won {
+    let dispatch_content = if user_won && refund_settled {
+        format!("{TERMINAL_NOTIFICATION_MARKER} {dispute_won}")
+    } else if user_won {
         dispute_won
     } else {
         format!("{TERMINAL_NOTIFICATION_MARKER} {dispute_lost}")
@@ -178,7 +221,7 @@ pub(crate) fn dispute_resolved(
     } else {
         "provider delivered adequately → 3.00–5.00"
     };
-    let wrap_up = if user_won {
+    let wrap_up = if user_won && !refund_settled {
         format!(
             "Do not run terminal cleanup yet. Run `onchainos agent refund-prepare {job_id}` to follow refund settlement, and follow only its returned actions."
         )

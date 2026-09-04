@@ -25,7 +25,12 @@ use crate::wallet_api::WalletApiClient;
 use super::create_subscribe::SUBSCRIBE_API_PREFIX;
 
 const SCHEMA_VERSION: i64 = 2;
+const JOURNAL_REVISION: i64 = 3;
 const MAX_REASON_CHARS: usize = 2_000;
+
+fn legacy_journal_revision() -> i64 {
+    2
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
@@ -86,6 +91,9 @@ struct RefundSnapshot {
     dispute_phase: Option<String>,
     dispute_prepare_end_time: Option<i64>,
     dispute_round_end_time: Option<i64>,
+    /// Set only after a durable local request-refund receipt is reconciled
+    /// against the exact fresh task/payment lifecycle facts.
+    refund_request_provenance: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,11 +120,26 @@ struct Plan {
 #[serde(rename_all = "camelCase")]
 struct PendingRefundMutation {
     schema_version: i64,
+    /// Local reconciliation format. This is intentionally separate from the
+    /// public Refund V2 payload schema version. Journals written before the
+    /// request-provenance upgrade omit this field and deserialize as v2.
+    #[serde(default = "legacy_journal_revision")]
+    journal_revision: i64,
     job_id: String,
     user_agent_id: String,
     snapshot_id: String,
     operation: String,
     state: String,
+    #[serde(default)]
+    job_type: Option<i64>,
+    #[serde(default)]
+    trial_type: Option<i64>,
+    #[serde(default)]
+    period_index: Option<i64>,
+    #[serde(default)]
+    period_start_time: Option<i64>,
+    #[serde(default)]
+    period_end_time: Option<i64>,
     #[serde(default)]
     pkg_id: Option<String>,
     #[serde(default)]
@@ -179,6 +202,7 @@ fn read_pending_mutation(
                     format!("parse Refund V2 reconciliation state {}", path.display())
                 })?;
             if state.schema_version != SCHEMA_VERSION
+                || !matches!(state.journal_revision, 2 | JOURNAL_REVISION)
                 || state.job_id != job_id
                 || state.user_agent_id != user_agent_id
             {
@@ -394,6 +418,204 @@ fn direct_refund_provenance_matches(
     true
 }
 
+/// Bind a locally submitted refund request to the exact fresh lifecycle row.
+/// Status 9 alone is ambiguous for subscriptions (it is also used for
+/// charge/conversion failure), so only a durable request receipt with the
+/// original buyer/job/payment facts may disambiguate it. Provider, service,
+/// period, symbol, and payment-mode fields are useful cross-checks when both
+/// the journal and fresh detail expose them, but their omission or harmless
+/// display normalization must not erase a real refund request. The same
+/// provenance also binds dispute outcomes for one-time tasks.
+fn request_refund_provenance_core_matches(
+    snapshot: &RefundSnapshot,
+    state: &PendingRefundMutation,
+) -> bool {
+    let service_matches = match (state.service_id.as_deref(), snapshot.service_id.as_deref()) {
+        (Some(recorded), Some(fresh)) => recorded == fresh,
+        _ => match (
+            state.service_name.as_deref(),
+            snapshot.service_name.as_deref(),
+        ) {
+            (Some(recorded), Some(fresh)) => recorded == fresh,
+            _ => true,
+        },
+    };
+    let optional_i64_matches = |recorded: Option<i64>, fresh: Option<i64>| {
+        recorded
+            .zip(fresh)
+            .is_none_or(|(recorded, fresh)| recorded == fresh)
+    };
+    let optional_exact_matches = |recorded: Option<&str>, fresh: Option<&str>| {
+        recorded
+            .zip(fresh)
+            .is_none_or(|(recorded, fresh)| recorded == fresh)
+    };
+    let optional_ascii_matches = |recorded: Option<&str>, fresh: Option<&str>| {
+        recorded
+            .zip(fresh)
+            .is_none_or(|(recorded, fresh)| recorded.eq_ignore_ascii_case(fresh))
+    };
+    let submitted_state = matches!(
+        state.state.as_str(),
+        "broadcast_submitted" | "refund_request_applied" | "request_provenance_incomplete"
+    );
+    let legacy_journal = state.journal_revision == legacy_journal_revision();
+    let recorded_job_type_matches = state
+        .job_type
+        .is_some_and(|recorded| recorded == snapshot.job_type)
+        || (legacy_journal && state.job_type.is_none());
+    let recorded_provider = state
+        .provider_agent_id
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let recorded_service = state
+        .service_id
+        .as_deref()
+        .or(state.service_name.as_deref())
+        .is_some_and(|value| !value.trim().is_empty());
+    let recorded_token_symbol = state
+        .token_symbol
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let job_type_matches = match snapshot.job_type {
+        0 => {
+            recorded_job_type_matches
+                && snapshot.payment_mode == Some(1)
+                && state.payment_mode == Some(1)
+        }
+        1 => {
+            recorded_job_type_matches
+                && snapshot.trial_type == Some(0)
+                && (state.trial_type == Some(0) || (legacy_journal && state.trial_type.is_none()))
+                && (legacy_journal
+                    || (state.period_start_time.is_some_and(|value| value > 0)
+                        && state.period_end_time.is_some_and(|value| value > 0)
+                        && state
+                            .period_start_time
+                            .zip(state.period_end_time)
+                            .is_some_and(|(start, end)| start < end)))
+        }
+        _ => false,
+    };
+
+    matches!(state.journal_revision, 2 | JOURNAL_REVISION)
+        && state.operation == "request-refund"
+        && submitted_state
+        && state.job_id == snapshot.job_id
+        && state.user_agent_id == snapshot.buyer_agent_id
+        && job_type_matches
+        && recorded_provider
+        && recorded_service
+        && recorded_token_symbol
+        && matches!(snapshot.status, 3 | 4 | 6 | 8 | 9)
+        && has_durable_broadcast_receipt(state)
+        && state.biz_type.is_some_and(|value| value > 0)
+        && state
+            .account_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        && state
+            .address
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        && state.chain_index.as_deref() == Some(common::XLAYER_CHAIN_INDEX)
+        && state
+            .original_amount
+            .as_deref()
+            .is_some_and(|value| decimal_equal(value, &snapshot.original_amount))
+        && validate_decimal(&snapshot.original_amount)
+        && !is_zero_decimal(&snapshot.original_amount)
+        && state
+            .token_address
+            .as_deref()
+            .zip(snapshot.token_address.as_deref())
+            .is_some_and(|(expected, actual)| expected.eq_ignore_ascii_case(actual))
+        && optional_ascii_matches(
+            state.token_symbol.as_deref(),
+            snapshot.token_symbol.as_deref(),
+        )
+        && optional_exact_matches(
+            state.provider_agent_id.as_deref(),
+            snapshot.provider_agent_id.as_deref(),
+        )
+        && service_matches
+        && optional_i64_matches(state.period_index, snapshot.period_index)
+        && optional_i64_matches(state.period_start_time, snapshot.period_start_time)
+        && optional_i64_matches(state.period_end_time, snapshot.period_end_time)
+        && optional_i64_matches(state.payment_mode, snapshot.payment_mode)
+}
+
+fn request_refund_provenance_matches(
+    snapshot: &RefundSnapshot,
+    state: &PendingRefundMutation,
+) -> bool {
+    request_refund_provenance_core_matches(snapshot, state)
+        && (state.journal_revision != legacy_journal_revision() || matches!(snapshot.status, 3 | 4))
+}
+
+fn can_upgrade_request_refund_journal(snapshot: &RefundSnapshot) -> bool {
+    match snapshot.job_type {
+        0 => true,
+        1 => {
+            snapshot.trial_type == Some(0)
+                && snapshot.period_start_time.is_some_and(|value| value > 0)
+                && snapshot.period_end_time.is_some_and(|value| value > 0)
+                && snapshot
+                    .period_start_time
+                    .zip(snapshot.period_end_time)
+                    .is_some_and(|(start, end)| start < end)
+        }
+        _ => false,
+    }
+}
+
+fn upgrade_request_refund_journal(
+    state: &mut PendingRefundMutation,
+    snapshot: &RefundSnapshot,
+) -> bool {
+    if !can_upgrade_request_refund_journal(snapshot) {
+        return false;
+    }
+    state.journal_revision = JOURNAL_REVISION;
+    state.job_type = Some(snapshot.job_type);
+    state.trial_type = snapshot.trial_type;
+    state.period_index = snapshot.period_index;
+    state.period_start_time = snapshot.period_start_time;
+    state.period_end_time = snapshot.period_end_time;
+    true
+}
+
+fn apply_request_refund_provenance(
+    snapshot: &mut RefundSnapshot,
+    state: &PendingRefundMutation,
+) -> bool {
+    if !request_refund_provenance_matches(snapshot, state) {
+        return false;
+    }
+    snapshot.refund_request_provenance = true;
+    if snapshot.status == 9 {
+        snapshot.settlement_confirmed = true;
+    }
+    true
+}
+
+fn apply_legacy_request_refund_provenance_after_order_success(
+    snapshot: &mut RefundSnapshot,
+    state: &PendingRefundMutation,
+) -> bool {
+    if state.journal_revision != legacy_journal_revision()
+        || !matches!(snapshot.status, 6 | 8 | 9)
+        || !request_refund_provenance_core_matches(snapshot, state)
+    {
+        return false;
+    }
+    snapshot.refund_request_provenance = true;
+    if snapshot.status == 9 {
+        snapshot.settlement_confirmed = true;
+    }
+    true
+}
+
 fn apply_confirmed_direct_refund(
     snapshot: &mut RefundSnapshot,
     state: &PendingRefundMutation,
@@ -435,6 +657,41 @@ async fn reconcile_pending_mutation_locked(
     };
 
     if apply_confirmed_direct_refund(snapshot, &state) {
+        return Ok(None);
+    }
+
+    if state.operation == "request-refund" && matches!(snapshot.status, 3 | 4 | 6 | 8 | 9) {
+        // Once the task lifecycle has advanced, the original reject
+        // write is unavailable and this is no longer an active replay lock.
+        // Retain the receipt as durable intent provenance so later dispute
+        // handling stays bound to this refund flow, and subscription polling
+        // can distinguish a refund-derived Failed(9) from the same backend
+        // status used by ordinary charge failures.
+        let legacy_terminal_needs_order_confirmation = state.journal_revision
+            == legacy_journal_revision()
+            && matches!(snapshot.status, 6 | 8 | 9);
+        let matched = if legacy_terminal_needs_order_confirmation {
+            matches!(
+                query_refund_order_status(&state).await,
+                Ok(RefundOrderStatus::Succeeded(_))
+            ) && apply_legacy_request_refund_provenance_after_order_success(snapshot, &state)
+        } else {
+            apply_request_refund_provenance(snapshot, &state)
+        };
+        let previous_revision = state.journal_revision;
+        if matched && previous_revision < JOURNAL_REVISION {
+            upgrade_request_refund_journal(&mut state, snapshot);
+        }
+        let next_state = if matched {
+            "refund_request_applied"
+        } else {
+            "request_provenance_incomplete"
+        };
+        if state.state != next_state || state.journal_revision != previous_revision {
+            state.state = next_state.to_string();
+            state.updated_at = chrono::Utc::now().timestamp();
+            write_pending_mutation(&state)?;
+        }
         return Ok(None);
     }
 
@@ -493,10 +750,10 @@ async fn reconcile_pending_mutation_locked(
     }
 
     if pending_mutation_resolved(&state, snapshot) {
-        // Non-settlement operations no longer need their local replay guard
-        // once authoritative lifecycle state makes the original write
-        // unavailable. Direct-refund Closed(7) is handled above and retains
-        // its receipt as durable settlement provenance.
+        // Other operations no longer need their local replay guard once
+        // authoritative lifecycle state makes the original write unavailable.
+        // Direct-refund Closed(7) and applied subscription request-refund
+        // provenance are handled above and retained deliberately.
         let _ = remove_pending_mutation(&snapshot.job_id, &snapshot.buyer_agent_id);
         return Ok(None);
     }
@@ -746,8 +1003,9 @@ pub(crate) struct RefundSettlementEvidence {
 /// The backend lifecycle contract defines paid one-time escrow Closed(7) and
 /// one-time Failed(9) as states projected after the corresponding on-chain
 /// refund event. A wallet-order Tx Hash may enrich that conclusion, but never
-/// creates it by itself. Subscription Failed(9) stays ambiguous because that
-/// lifecycle also represents charge failure in the current subscription API.
+/// creates it by itself. Subscription Failed(9) needs the existing semantic
+/// refund event because legacy subscription notifications also use status 9
+/// for non-refund failure copy.
 pub(crate) fn authoritative_refund_settlement_confirmed(
     detail: &common::PreFetchedTaskContext,
     expected_status: i64,
@@ -759,6 +1017,47 @@ pub(crate) fn authoritative_refund_settlement_confirmed(
         && !detail.token_amount.trim().is_empty()
         && !is_zero_decimal(detail.token_amount.trim())
         && (expected_status == 9 || (expected_status == 7 && detail.payment_mode == Some(1)))
+}
+
+/// Whether the legacy backend event contract disambiguates a subscription
+/// Failed(9) row as a completed refund.
+///
+/// These are existing chain-result notifications, not Refund V2 additions:
+/// ASP agreement, backend timeout refund, buyer claim result, and a
+/// user-winning dispute all settle the current subscription period before the
+/// backend projects status 9. Generic `sub_failed_notify` is deliberately not
+/// accepted because it also represents charge/conversion failure.
+fn subscription_refund_completion_event(event: &str) -> bool {
+    matches!(
+        event,
+        "sub_asp_agree"
+            | "sub_reject_refund_notify"
+            | "job_auto_refunded"
+            | "job_refunded"
+            | "dispute_resolved"
+    )
+}
+
+/// Combine fresh lifecycle state, an established semantic event, and the
+/// durable Refund V2 request binding. A caller-supplied event is routing input
+/// only and cannot turn an unrelated subscription charge failure into refund
+/// settlement proof.
+pub(crate) fn refund_event_settlement_confirmed(
+    detail: &common::PreFetchedTaskContext,
+    expected_status: i64,
+    event: &str,
+) -> bool {
+    if authoritative_refund_settlement_confirmed(detail, expected_status) {
+        return true;
+    }
+
+    expected_status == 9
+        && detail.status == Some(9)
+        && detail.job_type == Some(1)
+        && detail.refund_request_provenance
+        && validate_decimal(detail.token_amount.trim())
+        && !is_zero_decimal(detail.token_amount.trim())
+        && subscription_refund_completion_event(event)
 }
 
 /// Verify a refund lifecycle event against fresh authoritative task facts.
@@ -795,7 +1094,8 @@ pub(crate) fn verify_final_refund_event(
     if detail.user_agent_id.as_deref() != Some(expected_buyer_agent_id) {
         bail!("fresh task detail is not owned by the current User Agent");
     }
-    if !authoritative_refund_settlement_confirmed(detail, expected_status) {
+    let event = first_string(&[(message, &["event"])]).unwrap_or_default();
+    if !refund_event_settlement_confirmed(detail, expected_status, &event) {
         bail!("fresh task detail does not confirm refund settlement");
     }
     if first_string(&[(message, &["code", "txStatus"])]).is_some_and(|value| {
@@ -869,19 +1169,21 @@ pub(crate) fn verify_final_refund_event(
     }
 
     let fresh_token_symbol = detail.token_symbol.trim();
-    if fresh_token_symbol.is_empty() || fresh_token_symbol == "?" {
-        bail!("fresh authoritative detail is missing the original payment token symbol");
-    }
+    let has_fresh_token_symbol = !fresh_token_symbol.is_empty() && fresh_token_symbol != "?";
     let event_token_symbol = first_string(&[(
         message,
         &["refundTokenSymbol", "paymentTokenSymbol", "tokenSymbol"],
     )]);
-    if let Some(event) = event_token_symbol.as_deref() {
+    if let (Some(event), true) = (event_token_symbol.as_deref(), has_fresh_token_symbol) {
         if !event.eq_ignore_ascii_case(fresh_token_symbol) {
             bail!("refund event token does not match the original payment token");
         }
     }
-    let token_symbol = fresh_token_symbol.to_string();
+    let token_symbol = if has_fresh_token_symbol {
+        fresh_token_symbol.to_string()
+    } else {
+        "token symbol unavailable".to_string()
+    };
     let original_token_address = detail
         .token_address
         .as_deref()
@@ -1022,8 +1324,7 @@ impl RefundSnapshot {
         let token_symbol = lookup(
             &["tokenSymbol", "paymentTokenSymbol"],
             &["tokenSymbol", "paymentTokenSymbol"],
-        )
-        .ok_or_else(|| anyhow::anyhow!("task detail is missing the original token symbol"))?;
+        );
         let token_address = lookup(
             &["paymentTokenAddress", "tokenAddress"],
             &["paymentTokenAddress", "tokenAddress"],
@@ -1086,7 +1387,7 @@ impl RefundSnapshot {
             period_end_time,
             auto_renew: lookup_i64(&["autoRenew"], &["autoRenew"]),
             token_address,
-            token_symbol: Some(token_symbol),
+            token_symbol,
             chain_id: lookup_i64(&["chainId", "chainIndex"], &["chainId", "chainIndex"]),
             payment_mode,
             original_amount,
@@ -1110,6 +1411,7 @@ impl RefundSnapshot {
             dispute_phase: lookup(&["disputePhase"], &["disputePhase"]),
             dispute_prepare_end_time: lookup_i64(&["prepareEndTime"], &["prepareEndTime"]),
             dispute_round_end_time: lookup_i64(&["roundEndTime"], &["roundEndTime"]),
+            refund_request_provenance: false,
         };
 
         // The backend lifecycle contract defines paid one-time Closed(7) as a
@@ -1147,6 +1449,10 @@ impl RefundSnapshot {
     fn has_required_refund_display_details(&self) -> bool {
         self.provider_agent_id.is_some()
             && (self.service_name.is_some() || self.service_id.is_some())
+            && self
+                .token_symbol
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
     }
 
     fn has_confirmed_settlement(&self) -> bool {
@@ -1154,8 +1460,13 @@ impl RefundSnapshot {
     }
 
     fn settlement_confirmation_source(&self) -> Option<&'static str> {
-        self.has_confirmed_settlement()
-            .then_some("backend_onchain_lifecycle")
+        if !self.has_confirmed_settlement() {
+            None
+        } else if self.is_subscription() && self.refund_request_provenance {
+            Some("backend_onchain_lifecycle_with_local_refund_request")
+        } else {
+            Some("backend_onchain_lifecycle")
+        }
     }
 
     fn context_id(&self, reason: Option<&str>) -> String {
@@ -1753,6 +2064,7 @@ impl From<RefundSnapshot> for common::PreFetchedTaskContext {
             user_agent_address: None,
             token_address: snapshot.token_address,
             verified_transaction_hash: snapshot.settlement_tx_hash,
+            refund_request_provenance: snapshot.refund_request_provenance,
             expire_time: None,
             test_flag: false,
         }
@@ -1866,14 +2178,17 @@ fn lifecycle_biz_type(response: &Value, expected_biz_type: Option<i64>) -> Resul
 }
 
 fn validate_lifecycle_preflight(uop_data: &Value) -> Result<()> {
-    match uop_data.get("executeResult").and_then(Value::as_bool) {
-        Some(true) => Ok(()),
-        Some(false) => {
+    match uop_data.get("executeResult") {
+        Some(Value::Bool(false)) => {
             let detail = scalar_string(uop_data.get("executeErrorMsg"))
                 .unwrap_or_else(|| "no error detail returned".to_string());
             bail!("backend transaction preflight failed: {detail}")
         }
-        None => bail!("lifecycle uopData is missing a boolean executeResult preflight result"),
+        // Legacy task lifecycle responses never required an explicit `true`.
+        // The shared signer has always treated only an explicit boolean false
+        // as a backend preflight rejection; preserve that wire contract for
+        // Refund V2 because the backend response shape did not change.
+        _ => Ok(()),
     }
 }
 
@@ -2192,6 +2507,7 @@ pub async fn handle_execute(
 
     let mut pending = PendingRefundMutation {
         schema_version: SCHEMA_VERSION,
+        journal_revision: JOURNAL_REVISION,
         job_id: job_id.to_string(),
         user_agent_id: user_agent_id.clone(),
         snapshot_id: snapshot.context_id(None),
@@ -2200,6 +2516,11 @@ pub async fn handle_execute(
         // any point after this write, the next invocation must reconcile
         // authoritative state rather than repeat the operation.
         state: "unknown".to_string(),
+        job_type: Some(snapshot.job_type),
+        trial_type: snapshot.trial_type,
+        period_index: snapshot.period_index,
+        period_start_time: snapshot.period_start_time,
+        period_end_time: snapshot.period_end_time,
         pkg_id: None,
         order_id: None,
         order_type: None,
@@ -2455,11 +2776,17 @@ mod tests {
     fn confirmed_direct_refund(snapshot: &RefundSnapshot, tx_hash: &str) -> PendingRefundMutation {
         PendingRefundMutation {
             schema_version: SCHEMA_VERSION,
+            journal_revision: JOURNAL_REVISION,
             job_id: snapshot.job_id.clone(),
             user_agent_id: snapshot.buyer_agent_id.clone(),
             snapshot_id: snapshot.context_id(None),
             operation: "direct-refund".to_string(),
             state: "confirmed".to_string(),
+            job_type: Some(snapshot.job_type),
+            trial_type: snapshot.trial_type,
+            period_index: snapshot.period_index,
+            period_start_time: snapshot.period_start_time,
+            period_end_time: snapshot.period_end_time,
             pkg_id: Some("pkg-1".to_string()),
             order_id: Some("order-1".to_string()),
             order_type: Some("AA".to_string()),
@@ -2478,6 +2805,14 @@ mod tests {
             payment_mode: snapshot.payment_mode,
             updated_at: 1,
         }
+    }
+
+    fn submitted_request_refund(snapshot: &RefundSnapshot) -> PendingRefundMutation {
+        let mut state = confirmed_direct_refund(snapshot, &format!("0x{}", "ab".repeat(32)));
+        state.operation = "request-refund".to_string();
+        state.state = "broadcast_submitted".to_string();
+        state.biz_uniq_key = Some(format!("request-{}", snapshot.job_id));
+        state
     }
 
     #[test]
@@ -2825,6 +3160,17 @@ mod tests {
         assert_eq!(snapshot.plan(None).reason, "refund_task_details_incomplete");
         assert_eq!(snapshot.plan(None).operation, None);
 
+        let mut missing_write_token_symbol = task(json!(0), json!(0), "10");
+        missing_write_token_symbol
+            .as_object_mut()
+            .unwrap()
+            .remove("tokenSymbol");
+        let snapshot =
+            RefundSnapshot::from_details("job-1", &missing_write_token_symbol, None, "buyer-1")
+                .unwrap();
+        assert_eq!(snapshot.plan(None).reason, "refund_task_details_incomplete");
+        assert_eq!(snapshot.plan(None).operation, None);
+
         let mut final_without_service = task(json!(0), json!(9), "10");
         final_without_service
             .as_object_mut()
@@ -2834,9 +3180,14 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("serviceId");
+        final_without_service
+            .as_object_mut()
+            .unwrap()
+            .remove("tokenSymbol");
         let snapshot =
             RefundSnapshot::from_details("job-1", &final_without_service, None, "buyer-1").unwrap();
         assert_eq!(snapshot.plan(None).reason, "refund_confirmed");
+        assert!(snapshot.token_symbol.is_none());
         assert_eq!(snapshot.settlement_state(), "confirmed");
         let confirmed_plan = snapshot.plan(None);
         assert_eq!(
@@ -3054,6 +3405,276 @@ mod tests {
     }
 
     #[test]
+    fn request_refund_provenance_requires_core_binding_and_vetoes_known_conflicts() {
+        let active = snapshot(json!(1), json!(1), "10");
+        let mut terminal = active.clone();
+        terminal.status = 9;
+        let proof = submitted_request_refund(&active);
+        assert!(request_refund_provenance_matches(&terminal, &proof));
+
+        let mut unknown = proof.clone();
+        unknown.state = "unknown".to_string();
+        assert!(!request_refund_provenance_matches(&terminal, &unknown));
+
+        let mut no_receipt = proof.clone();
+        no_receipt.order_id = None;
+        assert!(!request_refund_provenance_matches(&terminal, &no_receipt));
+
+        let mut wrong_job_type = proof.clone();
+        wrong_job_type.job_type = Some(0);
+        assert!(!request_refund_provenance_matches(
+            &terminal,
+            &wrong_job_type
+        ));
+
+        let mut wrong_amount = proof.clone();
+        wrong_amount.original_amount = Some("11".to_string());
+        assert!(!request_refund_provenance_matches(&terminal, &wrong_amount));
+
+        let mut wrong_period = proof.clone();
+        wrong_period.period_end_time = wrong_period.period_end_time.map(|value| value + 1);
+        assert!(!request_refund_provenance_matches(&terminal, &wrong_period));
+
+        let mut optional_terminal_fields_missing = terminal.clone();
+        optional_terminal_fields_missing.provider_agent_id = None;
+        optional_terminal_fields_missing.service_id = None;
+        optional_terminal_fields_missing.service_name = None;
+        optional_terminal_fields_missing.token_symbol = None;
+        optional_terminal_fields_missing.period_index = None;
+        optional_terminal_fields_missing.period_start_time = None;
+        optional_terminal_fields_missing.period_end_time = None;
+        optional_terminal_fields_missing.payment_mode = None;
+        assert!(request_refund_provenance_matches(
+            &optional_terminal_fields_missing,
+            &proof
+        ));
+
+        let mut incomplete_v3_journal = proof.clone();
+        incomplete_v3_journal.provider_agent_id = None;
+        incomplete_v3_journal.service_id = None;
+        incomplete_v3_journal.service_name = None;
+        incomplete_v3_journal.token_symbol = None;
+        incomplete_v3_journal.period_index = None;
+        incomplete_v3_journal.period_start_time = None;
+        incomplete_v3_journal.period_end_time = None;
+        incomplete_v3_journal.payment_mode = None;
+        assert!(!request_refund_provenance_matches(
+            &terminal,
+            &incomplete_v3_journal
+        ));
+
+        let mut wrong_provider = proof.clone();
+        wrong_provider.provider_agent_id = Some("other-asp".to_string());
+        assert!(!request_refund_provenance_matches(
+            &terminal,
+            &wrong_provider
+        ));
+
+        let mut wrong_symbol = proof.clone();
+        wrong_symbol.token_symbol = Some("DAI".to_string());
+        assert!(!request_refund_provenance_matches(&terminal, &wrong_symbol));
+
+        let mut wrong_payment_mode = proof.clone();
+        wrong_payment_mode.payment_mode = Some(3);
+        assert!(!request_refund_provenance_matches(
+            &terminal,
+            &wrong_payment_mode
+        ));
+
+        let one_time_active = snapshot(json!(0), json!(2), "10");
+        let mut one_time_lost = one_time_active.clone();
+        one_time_lost.status = 6;
+        assert!(request_refund_provenance_matches(
+            &one_time_lost,
+            &submitted_request_refund(&one_time_active)
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn applied_request_is_durable_provenance_not_an_active_lock() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let previous_home = std::env::var_os("ONCHAINOS_HOME");
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("refund_v2_request_provenance");
+        if home.exists() {
+            fs::remove_dir_all(&home).unwrap();
+        }
+        fs::create_dir_all(&home).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &home);
+
+        let active = snapshot(json!(1), json!(1), "10");
+        let submitted = submitted_request_refund(&active);
+        write_pending_mutation(&submitted).unwrap();
+
+        let mut provider_pending = active.clone();
+        provider_pending.status = 3;
+        assert!(reconcile_pending_mutation_locked(&mut provider_pending)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(provider_pending.refund_request_provenance);
+        let restored = read_pending_mutation(&active.job_id, &active.buyer_agent_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.state, "refund_request_applied");
+
+        let mut dispute_lost = active.clone();
+        dispute_lost.status = 6;
+        assert!(reconcile_pending_mutation_locked(&mut dispute_lost)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(dispute_lost.refund_request_provenance);
+        assert!(!dispute_lost.has_confirmed_settlement());
+
+        let mut terminal = active.clone();
+        terminal.status = 9;
+        assert!(reconcile_pending_mutation_locked(&mut terminal)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(terminal.refund_request_provenance);
+        assert!(terminal.has_confirmed_settlement());
+        assert_eq!(terminal.plan(None).reason, "refund_confirmed");
+        assert!(
+            read_pending_mutation(&active.job_id, &active.buyer_agent_id)
+                .unwrap()
+                .is_some()
+        );
+
+        let context: common::PreFetchedTaskContext = terminal.into();
+        assert!(context.refund_request_provenance);
+        assert!(refund_event_settlement_confirmed(
+            &context,
+            9,
+            "sub_asp_agree"
+        ));
+        assert!(!refund_event_settlement_confirmed(
+            &context,
+            9,
+            "sub_failed_notify"
+        ));
+
+        if let Some(previous_home) = previous_home {
+            std::env::set_var("ONCHAINOS_HOME", previous_home);
+        } else {
+            std::env::remove_var("ONCHAINOS_HOME");
+        }
+        fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn legacy_v2_request_receipt_migrates_and_survives_restart() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let previous_home = std::env::var_os("ONCHAINOS_HOME");
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("refund_v2_legacy_request_migration");
+        if home.exists() {
+            fs::remove_dir_all(&home).unwrap();
+        }
+        fs::create_dir_all(&home).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &home);
+
+        // Literal journal shape written by the already-shipped Refund V2:
+        // no journalRevision, jobType, trialType, or billing-period fields.
+        let legacy: PendingRefundMutation = serde_json::from_value(json!({
+            "schemaVersion": 2,
+            "jobId": "job-1",
+            "userAgentId": "buyer-1",
+            "snapshotId": "refundctx_legacy",
+            "operation": "request-refund",
+            "state": "broadcast_submitted",
+            "pkgId": "pkg-1",
+            "orderId": "order-1",
+            "orderType": "AA",
+            "bizUniqKey": "request-job-1",
+            "txHash": null,
+            "accountId": "account-1",
+            "address": "0xbuyer",
+            "chainIndex": "196",
+            "bizType": 200,
+            "originalAmount": "10.00",
+            "tokenAddress": "0xtoken",
+            "tokenSymbol": "USDT",
+            "providerAgentId": "asp-1",
+            "serviceId": "svc-1",
+            "serviceName": "Audit",
+            "paymentMode": 1,
+            "updatedAt": 1
+        }))
+        .unwrap();
+        assert_eq!(legacy.journal_revision, legacy_journal_revision());
+        assert!(legacy.job_type.is_none());
+        let terminal_before_migration = snapshot(json!(1), json!(9), "10.00");
+        assert!(
+            !request_refund_provenance_matches(&terminal_before_migration, &legacy),
+            "an old receipt must not be upgraded for the first time from an ambiguous terminal status"
+        );
+        let mut terminal_without_period = terminal_before_migration.clone();
+        terminal_without_period.period_start_time = None;
+        terminal_without_period.period_end_time = None;
+        let mut legacy_without_safe_v3_fields = legacy.clone();
+        assert!(apply_legacy_request_refund_provenance_after_order_success(
+            &mut terminal_without_period,
+            &legacy_without_safe_v3_fields
+        ));
+        assert!(!upgrade_request_refund_journal(
+            &mut legacy_without_safe_v3_fields,
+            &terminal_without_period
+        ));
+        assert_eq!(
+            legacy_without_safe_v3_fields.journal_revision,
+            legacy_journal_revision(),
+            "missing terminal period fields must keep the safely re-checkable legacy journal instead of writing an invalid v3 record"
+        );
+        write_pending_mutation(&legacy).unwrap();
+
+        // Rejected(3) is the authoritative transition proving that the
+        // request was applied. Reconciliation upgrades the old local receipt
+        // instead of stranding it as permanently incomplete.
+        let mut rejected = snapshot(json!(1), json!(3), "10");
+        assert!(reconcile_pending_mutation_locked(&mut rejected)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(rejected.refund_request_provenance);
+        let migrated = read_pending_mutation("job-1", "buyer-1").unwrap().unwrap();
+        assert_eq!(migrated.journal_revision, JOURNAL_REVISION);
+        assert_eq!(migrated.state, "refund_request_applied");
+        assert_eq!(migrated.job_type, Some(1));
+        assert_eq!(migrated.trial_type, Some(0));
+        assert_eq!(migrated.period_start_time, Some(1_700_000_000));
+        assert_eq!(migrated.period_end_time, Some(1_700_100_000));
+
+        // A new process later sees Failed(9). Optional display fields may be
+        // absent from the terminal projection without erasing the durable
+        // refund intent or the backend-confirmed settlement.
+        let mut terminal = snapshot(json!(1), json!(9), "10.00");
+        terminal.provider_agent_id = None;
+        terminal.service_id = None;
+        terminal.service_name = None;
+        terminal.token_symbol = None;
+        assert!(reconcile_pending_mutation_locked(&mut terminal)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(terminal.refund_request_provenance);
+        assert!(terminal.has_confirmed_settlement());
+        assert_eq!(terminal.plan(None).reason, "refund_confirmed");
+
+        if let Some(previous_home) = previous_home {
+            std::env::set_var("ONCHAINOS_HOME", previous_home);
+        } else {
+            std::env::remove_var("ONCHAINOS_HOME");
+        }
+        fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
     fn wallet_order_detail_cannot_cross_order_or_chain_binding() {
         let snapshot = snapshot(json!(0), json!(7), "10");
         let proof = confirmed_direct_refund(&snapshot, &format!("0x{}", "ab".repeat(32)));
@@ -3105,11 +3726,17 @@ mod tests {
         let snapshot = snapshot(json!(0), json!(0), "10");
         let pending = PendingRefundMutation {
             schema_version: SCHEMA_VERSION,
+            journal_revision: JOURNAL_REVISION,
             job_id: snapshot.job_id.clone(),
             user_agent_id: snapshot.buyer_agent_id.clone(),
             snapshot_id: snapshot.context_id(None),
             operation: "direct-refund".to_string(),
             state: "unknown".to_string(),
+            job_type: Some(snapshot.job_type),
+            trial_type: snapshot.trial_type,
+            period_index: snapshot.period_index,
+            period_start_time: snapshot.period_start_time,
+            period_end_time: snapshot.period_end_time,
             pkg_id: None,
             order_id: None,
             order_type: None,
@@ -3169,7 +3796,7 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_uop_requires_explicit_successful_backend_preflight() {
+    fn lifecycle_uop_preserves_legacy_explicit_false_preflight_contract() {
         assert!(validate_lifecycle_preflight(&json!({"executeResult": true})).is_ok());
         let rejected = validate_lifecycle_preflight(&json!({
             "executeResult": false,
@@ -3179,9 +3806,72 @@ mod tests {
         .to_string();
         assert!(rejected.contains("backend transaction preflight failed"));
         assert!(rejected.contains("execution reverted"));
-        assert!(validate_lifecycle_preflight(&json!({})).is_err());
-        assert!(validate_lifecycle_preflight(&json!({"executeResult": null})).is_err());
-        assert!(validate_lifecycle_preflight(&json!({"executeResult": "true"})).is_err());
+        assert!(validate_lifecycle_preflight(&json!({})).is_ok());
+        assert!(validate_lifecycle_preflight(&json!({"executeResult": null})).is_ok());
+        assert!(validate_lifecycle_preflight(&json!({"executeResult": "true"})).is_ok());
+    }
+
+    #[test]
+    fn legacy_subscription_refund_events_disambiguate_failed_status() {
+        let mut detail = common::PreFetchedTaskContext::from_api_response(&json!({
+            "jobType": 1,
+            "status": 9,
+            "buyerAgentId": "buyer-1",
+            "providerAgentId": "asp-1",
+            "serviceId": "svc-1",
+            "paymentTokenAmount": "10.00",
+            "paymentTokenSymbol": "USDT",
+            "paymentTokenAddress": "0xtoken",
+        }));
+
+        let forged_event = json!({"event": "sub_asp_agree", "code": 0});
+        assert!(
+            verify_final_refund_event(Some(&forged_event), Some(&detail), 9, "buyer-1").is_err(),
+            "caller-supplied event names cannot replace durable Refund V2 request provenance"
+        );
+        detail.refund_request_provenance = true;
+
+        for event in [
+            "sub_asp_agree",
+            "sub_reject_refund_notify",
+            "job_auto_refunded",
+            "job_refunded",
+            "dispute_resolved",
+        ] {
+            let message = json!({"event": event, "code": 0});
+            assert!(
+                verify_final_refund_event(Some(&message), Some(&detail), 9, "buyer-1").is_ok(),
+                "legacy refund result event {event} must settle a fresh subscription Failed(9)"
+            );
+        }
+
+        let generic_failure = json!({"event": "sub_failed_notify", "code": 0});
+        assert!(
+            verify_final_refund_event(Some(&generic_failure), Some(&detail), 9, "buyer-1").is_err()
+        );
+        assert_eq!(
+            RefundSnapshot::from_details(
+                "job-1",
+                &json!({
+                    "jobType": 1,
+                    "trialType": 0,
+                    "status": 9,
+                    "buyerAgentId": "buyer-1",
+                    "providerAgentId": "asp-1",
+                    "serviceId": "svc-1",
+                    "paymentTokenAmount": "10.00",
+                    "paymentTokenSymbol": "USDT",
+                    "paymentTokenAddress": "0xtoken",
+                }),
+                None,
+                "buyer-1"
+            )
+            .unwrap()
+            .plan(None)
+            .reason,
+            "refund_settlement_details_incomplete",
+            "bare status polling has no semantic event and remains fail-closed"
+        );
     }
 
     #[test]
@@ -3308,8 +3998,11 @@ mod tests {
             .unwrap()
             .remove("paymentTokenSymbol");
         let missing_symbol = common::PreFetchedTaskContext::from_api_response(&missing_symbol);
-        assert!(
-            verify_final_refund_event(Some(&event), Some(&missing_symbol), 9, "buyer-1").is_err()
+        let missing_symbol_evidence =
+            verify_final_refund_event(Some(&event), Some(&missing_symbol), 9, "buyer-1").unwrap();
+        assert_eq!(
+            missing_symbol_evidence.token_symbol, "token symbol unavailable",
+            "caller event labels must not fill an absent authoritative display field"
         );
 
         let detail = common::PreFetchedTaskContext::from_api_response(&base);
@@ -3352,11 +4045,17 @@ mod tests {
         let active_snapshot = snapshot(json!(1), json!(1), "10");
         let pending = PendingRefundMutation {
             schema_version: SCHEMA_VERSION,
+            journal_revision: JOURNAL_REVISION,
             job_id: active_snapshot.job_id.clone(),
             user_agent_id: active_snapshot.buyer_agent_id.clone(),
             snapshot_id: active_snapshot.context_id(None),
             operation: "request-refund".to_string(),
             state: "unknown".to_string(),
+            job_type: Some(active_snapshot.job_type),
+            trial_type: active_snapshot.trial_type,
+            period_index: active_snapshot.period_index,
+            period_start_time: active_snapshot.period_start_time,
+            period_end_time: active_snapshot.period_end_time,
             pkg_id: None,
             order_id: None,
             order_type: None,

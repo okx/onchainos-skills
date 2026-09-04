@@ -166,6 +166,10 @@ pub struct PreFetchedTaskContext {
     /// Optional transaction metadata verified by Refund V2's local order
     /// reconciliation. Raw task-detail hash aliases never populate it.
     pub verified_transaction_hash: Option<String>,
+    /// Durable local proof that this checkout submitted a Refund V2 request
+    /// for the exact task/payment snapshot now being displayed.
+    /// Raw task/subscription API responses never populate this flag.
+    pub refund_request_provenance: bool,
     /// Acceptance/review deadline (unix seconds). `Some` when the API returned a
     /// positive `expireTime`, else `now()+expireConfig.reviewDeadline` when that
     /// is positive, else `None` (no reminder — backward compatible).
@@ -235,6 +239,7 @@ impl PreFetchedTaskContext {
             user_agent_address: v["buyerAgentAddress"].as_str().map(String::from),
             token_address: string(&["paymentTokenAddress", "tokenAddress"]),
             verified_transaction_hash: None,
+            refund_request_provenance: false,
             expire_time,
             // FR-2: additive, backward compatible — absent/non-bool testFlag ⇒ false.
             test_flag: v["testFlag"].as_bool().unwrap_or(false),

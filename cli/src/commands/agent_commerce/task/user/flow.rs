@@ -1009,10 +1009,11 @@ mod tests {
                     "tokenAddress": "0xtoken",
                 }),
             );
-        // Even a transaction hash that was verified for some operation cannot
-        // disambiguate subscription Failed(9), which also represents charge
-        // failure. A server-readable refund cause/result is still required.
+        // Optional transaction metadata is display-only. Subscription refund
+        // completion is disambiguated by fresh buyer-owned Failed(9) plus the
+        // durable local Refund V2 request receipt, never by this hash alone.
         context.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
+        context.refund_request_provenance = true;
         context
     }
 
@@ -1104,13 +1105,8 @@ mod tests {
         "sub_user_reject",
         "sub_asp_dispute",
     ];
-    const USER_ADDITIONAL_DISPLAY_EVENTS: [&str; 5] = [
-        "sub_cancel",
-        "sub_asp_agree",
-        "sub_complete_notify",
-        "sub_close_notify",
-        "sub_failed_notify",
-    ];
+    const USER_ADDITIONAL_DISPLAY_EVENTS: [&str; 3] =
+        ["sub_cancel", "sub_complete_notify", "sub_close_notify"];
 
     #[test]
     fn deposit_notification_uses_common_qr_without_wallet_qrcode() {
@@ -1383,8 +1379,9 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_subscription_events_carry_cleanup_hint() {
-        // Only a normal completion is unconditionally terminal for the Buyer.
-        // `sub_failed_notify` lacks an authoritative failure cause/refund proof.
+        // Normal completion is unconditionally terminal for the Buyer.
+        // `sub_failed_notify` remains read-only because Failed(9) does not
+        // expose a trusted refund-vs-charge-failure cause.
         const ALWAYS_TERMINAL: [&str; 1] = ["sub_complete_notify"];
         for evt in ALWAYS_TERMINAL {
             let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
@@ -1397,11 +1394,15 @@ mod tests {
                 "{evt}: terminal notification must carry the stable watch marker"
             );
         }
-        let failed = run(
+        let mut ambiguous_failed = subscription_refund_prefetched(9, "12.34");
+        ambiguous_failed.refund_request_provenance = false;
+        let failed = run_with_prefetched(
             "sub_failed_notify",
-            json!({ "event": "sub_failed_notify", "jobId": JOB_ID }),
+            json!({ "event": "sub_failed_notify", "jobId": JOB_ID, "jobType": 1 }),
+            &ambiguous_failed,
         )
         .await;
+        assert!(failed.contains("Result Needs Reconciliation"), "{failed}");
         assert!(failed.contains("refund-prepare"), "{failed}");
         assert!(!failed.contains("session-cleanup"), "{failed}");
         assert!(!failed.contains(TERMINAL_NOTIFICATION_MARKER), "{failed}");
@@ -1442,10 +1443,11 @@ mod tests {
             json!({"event": "sub_asp_agree", "jobId": JOB_ID}),
         )
         .await;
-        assert!(agree_without_hash.contains("Settlement Detail Incomplete"));
+        assert!(agree_without_hash.contains("fresh composed subscription detail is missing"));
+        assert!(!agree_without_hash.contains("user-notify"));
         assert!(!agree_without_hash.contains("session-cleanup"));
         let refund_detail = subscription_refund_prefetched(9, "12.34");
-        let agree_with_hash = run_with_prefetched(
+        let agree_with_fresh_status = run_with_prefetched(
             "sub_asp_agree",
             json!({
                 "event": "sub_asp_agree",
@@ -1457,9 +1459,8 @@ mod tests {
             &refund_detail,
         )
         .await;
-        assert!(agree_with_hash.contains("Settlement Detail Incomplete"));
-        assert!(!agree_with_hash.contains("session-cleanup"));
-        assert!(!agree_with_hash.contains(TERMINAL_NOTIFICATION_MARKER));
+        assert!(agree_with_fresh_status.contains("[Refund Settled]"));
+        assert!(agree_with_fresh_status.contains("session-cleanup"));
 
         let one_time_detail = refund_prefetched(9, "12.34");
         for event in ["sub_asp_agree", "sub_reject_refund_notify"] {
@@ -1469,10 +1470,8 @@ mod tests {
                 &one_time_detail,
             )
             .await;
-            assert!(
-                out.contains("Settlement Detail Incomplete"),
-                "{event}: {out}"
-            );
+            assert!(out.contains("is not subscription(1)"), "{event}: {out}");
+            assert!(!out.contains("user-notify"), "{event}: {out}");
             assert!(!out.contains("session-cleanup"), "{event}: {out}");
             assert!(
                 !out.contains(TERMINAL_NOTIFICATION_MARKER),
@@ -1616,7 +1615,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn caller_supplied_sub_reject_refund_notify_does_not_prove_settlement() {
+    async fn legacy_sub_reject_refund_result_plus_fresh_failed_status_is_terminal() {
         let refund_detail = subscription_refund_prefetched(9, "0.0005");
         let out = run_with_prefetched(
             "sub_reject_refund_notify",
@@ -1630,14 +1629,7 @@ mod tests {
             &refund_detail,
         )
         .await;
-        // The backend's real transaction-result notification is authoritative,
-        // but this local `next-action --message` payload is caller-supplied.
-        // Fresh subscription Failed(9) is also used for charge failure, so the
-        // local event name/hash cannot terminalize the refund flow.
-        assert!(
-            out.contains("[Refund Settlement Detail Incomplete]"),
-            "{out}"
-        );
+        assert!(out.contains("[Auto-Refund Settled]"), "{out}");
         assert!(
             !out.contains("pending-decisions"),
             "no decision card — refund is automatic: {out}"
@@ -1647,8 +1639,7 @@ mod tests {
             "client must not claim (backend auto-refunds): {out}"
         );
         assert!(out.contains("user-notify"), "display notification: {out}");
-        assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
-        assert!(!out.contains("session-cleanup"), "{out}");
+        assert!(out.contains("session-cleanup"), "{out}");
     }
 
     #[tokio::test]
@@ -2124,10 +2115,7 @@ mod tests {
         // Product decision 2026-07-24: arbitration copy uses the existing online version — a
         // subscription dispute (jobType=1) must render the SAME online [Dispute Won]/[Dispute Lost]
         // copy as a task dispute, with no subscription-specific arbitration variant.
-        let p = PreFetchedTaskContext::from_api_response(&json!({
-            "title": "My Sub", "tokenAmount": "0.0005", "tokenSymbol": "USDT",
-            "providerAgentId": "5263", "status": 9
-        }));
+        let p = subscription_refund_prefetched(9, "0.0005");
         let out = generate_next_action(
             JOB_ID,
             "dispute_resolved",
@@ -2150,13 +2138,13 @@ mod tests {
             !out.contains("ruled in your favor"),
             "no subscription-specific evaluation copy: {out}"
         );
-        assert!(out.contains("settlement pending"), "{out}");
-        assert!(!out.contains("session-cleanup"), "{out}");
+        assert!(out.contains("Refund status: Settled"), "{out}");
+        assert!(out.contains("session-cleanup"), "{out}");
 
         let mut ambiguous_subscription = PreFetchedTaskContext::from_api_response(&json!({
             "jobType": 1,
             "title": "My Sub", "tokenAmount": "0.0005", "tokenSymbol": "USDT",
-            "providerAgentId": "5263", "status": 9,
+            "buyerAgentId": AGENT_ID, "providerAgentId": "5263", "status": 9,
         }));
         ambiguous_subscription.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
         let delayed = generate_next_action(
@@ -2170,13 +2158,15 @@ mod tests {
             Some(&json!({ "event": "dispute_resolved", "jobId": JOB_ID, "jobType": 1 })),
         )
         .await;
-        assert!(delayed.contains("settlement pending"), "{delayed}");
         assert!(
-            !delayed.contains("already confirms refund settlement"),
-            "{delayed}"
+            delayed.contains("no durable local refund-request provenance"),
+            "an incomplete fresh subscription snapshot must not be upgraded by a hash: {delayed}"
         );
+        assert!(!delayed.contains("feedback-submit"), "{delayed}");
+        assert!(!delayed.contains("user-notify"), "{delayed}");
+        assert!(!delayed.contains("session-cleanup"), "{delayed}");
 
-        let confirmed_one_time = PreFetchedTaskContext::from_api_response(&json!({
+        let mut confirmed_one_time = PreFetchedTaskContext::from_api_response(&json!({
             "jobType": 0,
             "title": "My Task",
             "buyerAgentId": AGENT_ID,
@@ -2187,6 +2177,7 @@ mod tests {
             "tokenAddress": "0xtoken",
             "status": 9,
         }));
+        confirmed_one_time.refund_request_provenance = true;
         let confirmed_out = generate_next_action(
             JOB_ID,
             "dispute_resolved",
@@ -2199,9 +2190,10 @@ mod tests {
         )
         .await;
         assert!(
-            confirmed_out.contains("already confirms refund settlement"),
+            confirmed_out.contains("Refund status: Settled"),
             "{confirmed_out}"
         );
+        assert!(confirmed_out.contains("session-cleanup"), "{confirmed_out}");
 
         let mut wrong_owner = confirmed_one_time;
         wrong_owner.user_agent_id = Some("someone-else".to_string());
@@ -2217,15 +2209,29 @@ mod tests {
         )
         .await;
         assert!(
-            !wrong_owner_out.contains("already confirms refund settlement"),
+            wrong_owner_out.contains("does not bind job"),
+            "{wrong_owner_out}"
+        );
+        assert!(
+            !wrong_owner_out.contains("feedback-submit"),
+            "{wrong_owner_out}"
+        );
+        assert!(
+            !wrong_owner_out.contains("user-notify"),
+            "{wrong_owner_out}"
+        );
+        assert!(
+            !wrong_owner_out.contains("session-cleanup"),
             "{wrong_owner_out}"
         );
 
-        let lost = PreFetchedTaskContext::from_api_response(&json!({
+        let mut lost = PreFetchedTaskContext::from_api_response(&json!({
+            "jobType": 1, "buyerAgentId": AGENT_ID,
             "title": "My Sub", "tokenAmount": "0.0005", "tokenSymbol": "USDT",
             "providerAgentId": "5263", "providerAgentName": "Fresh ASP",
             "serviceName": "Fresh Service", "status": 6
         }));
+        lost.refund_request_provenance = true;
         let lost_out = generate_next_action(
             JOB_ID,
             "dispute_resolved",
@@ -2254,5 +2260,48 @@ mod tests {
         assert!(lost_out.contains("Fresh Service"), "{lost_out}");
         assert!(!lost_out.contains("Forged Event"), "{lost_out}");
         assert!(lost_out.contains("session-cleanup"), "{lost_out}");
+
+        let mut ordinary_completion = lost.clone();
+        ordinary_completion.refund_request_provenance = false;
+        let ordinary_out = generate_next_action(
+            JOB_ID,
+            "dispute_resolved",
+            AGENT_ID,
+            Some("My Sub"),
+            None,
+            None,
+            Some(&ordinary_completion),
+            Some(&json!({"event": "dispute_resolved", "jobId": JOB_ID, "jobType": 1})),
+        )
+        .await;
+        assert!(ordinary_out.contains("no durable local refund-request provenance"));
+        assert!(!ordinary_out.contains("feedback-submit"), "{ordinary_out}");
+        assert!(!ordinary_out.contains("user-notify"), "{ordinary_out}");
+        assert!(!ordinary_out.contains("session-cleanup"), "{ordinary_out}");
+
+        let type_mismatch = generate_next_action(
+            JOB_ID,
+            "dispute_resolved",
+            AGENT_ID,
+            Some("My Sub"),
+            None,
+            None,
+            Some(&lost),
+            Some(&json!({"event": "dispute_resolved", "jobId": JOB_ID, "jobType": 0})),
+        )
+        .await;
+        assert!(
+            type_mismatch.contains("jobType conflicts"),
+            "{type_mismatch}"
+        );
+        assert!(
+            !type_mismatch.contains("feedback-submit"),
+            "{type_mismatch}"
+        );
+        assert!(!type_mismatch.contains("user-notify"), "{type_mismatch}");
+        assert!(
+            !type_mismatch.contains("session-cleanup"),
+            "{type_mismatch}"
+        );
     }
 }

@@ -189,18 +189,34 @@ pub fn dispute_won_user_notify(
     service_name: Option<&str>,
     amount: Option<&str>,
     symbol: Option<&str>,
+    refund_confirmed: bool,
+    tx_hash: Option<&str>,
 ) -> String {
+    let settlement = if refund_confirmed {
+        format!(
+            "- Refund amount: {}\n\
+             - Tx Hash: {}\n\
+             - Refund status: Settled; funds returned to the User Agent wallet.",
+            amount_and_token(amount, symbol),
+            tx_hash.unwrap_or("unavailable")
+        )
+    } else {
+        format!(
+            "- Refund amount: {} (approved; settlement verification pending)\n\
+             - Tx Hash: unavailable\n\
+             The ruling favors the User Agent, but the available lifecycle facts do not yet verify the settlement result. Reconcile through Refund V2 before reporting completion.",
+            amount_and_token(amount, symbol)
+        )
+    };
     format!(
         "[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
          - Refund ASP: {}\n\
          - Service: {}\n\
-         - Refund amount: {} (approved; settlement pending)\n\
+         {settlement}\n\
          - Outcome: ClientWins\n\
-         {EVALUATION_REASONS_BLOCK}\n\
-         The ruling authorizes a refund, but the caller-supplied verdict message does not by itself establish a subscription refund result. Reconcile through Refund V2 before reporting completion.",
+         {EVALUATION_REASONS_BLOCK}",
         refund_party(provider_name, provider_id),
         service_name.unwrap_or("not provided by the final event"),
-        amount_and_token(amount, symbol),
     )
 }
 

@@ -63,15 +63,40 @@ legacy prose field `action`.
   only actions from a fresh `refund-prepare`; never execute, report refund
   completion, or perform terminal cleanup from event prose alone.
   In particular, `job_asp_reject_closed` does not exempt a subscription at
-  status 7 from the missing authoritative refund-cause contract.
-- `job_closed` and `job_auto_refunded` are backend successful, confirmed
-  transaction-result notifications, not write actions and not
-  `uopData.executeResult` preflight. They may omit Tx Hash, but the current
-  event argument is caller-supplied and its name is not authoritative. Route it
-  through a fresh Refund V2 read: matching one-time positive-amount paid-escrow
-  Closed(7) or Failed(9) may independently return `refund_confirmed`;
-  subscription Failed(9) remains ambiguous until an authoritative cause/query
-  or server-verifiable event source exists. Follow only the fresh result's
+  status 7 from the normal subscription rule: only matching durable local
+  `request-refund` provenance plus a later fresh refund terminal can resolve
+  the refund, never a new client write inferred from the close event.
+- Refund V2 reuses the unchanged backend lifecycle contract. `job_closed`,
+  `job_refunded`, and `job_auto_refunded` are backend transaction-result
+  notifications, not write actions and not `uopData.executeResult` preflight;
+  the standard event-envelope success gate still applies before branch routing.
+  For subscriptions, `sub_asp_agree`, `sub_reject_refund_notify`,
+  `job_refunded`, `job_auto_refunded`, and `dispute_resolved` are legacy
+  semantic result events. Route every event through a fresh Refund V2 read. A
+  matching one-time positive-amount paid-escrow Closed(7) or Failed(9) may
+  return `refund_confirmed`. A subscription may return `refund_confirmed` only
+  when durable local `request-refund` provenance binds the same job, Buyer,
+  formal `jobType=1` subscription, exact positive original amount, and token
+  address, and fresh composed detail proves Buyer ownership and Failed(9). A legacy
+  event may describe the ASP-agree, timeout, or dispute branch, but event-only
+  Failed(9) and bare Failed(9) remain ambiguous.
+  For `dispute_resolved`, neither Completed(6) nor Failed(9) is a verdict gate
+  by itself: both ASP-won/no-refund and User-won/refund rendering require the
+  durable local `request-refund` provenance plus fresh composed job type,
+  Buyer ownership, and matching terminal status. Without that proof, do not
+  announce a verdict, rate, notify, or clean up from the caller-supplied event.
+  `sub_failed_notify` names a charge/conversion-failure branch but is not trusted
+  cause proof by itself. With the current caller-supplied/replayable event and
+  overloaded Failed(9), fail closed even when no durable refund intent is found:
+  emit no terminal marker, perform no cleanup, and retain read-only
+  reconciliation. Only independently trustworthy event provenance/cause
+  returned by the CLI may make that charge-failure branch terminal.
+  Provider/Service, period, token-symbol, and `paymentMode` fields are optional
+  provenance comparisons: when both recorded and fresh values exist, a mismatch
+  vetoes; absence does not invalidate the core binding or finality and only
+  reduces available detail/display.
+  Tx Hash is optional in every confirmed branch; no `refundTxHash` or
+  `settlementTxHash` field is required. Follow only the fresh result's
   actions/terminal marker.
 - `refund-execute` always requires explicit selection of the displayed write
   action. Supplying a reason never substitutes for that confirmation.

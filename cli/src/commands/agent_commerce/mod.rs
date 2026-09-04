@@ -4146,7 +4146,78 @@ fn refund_final_context_ready(
         return true;
     }
 
-    task::user::refund_v2::authoritative_refund_settlement_confirmed(context, expected_status)
+    task::user::refund_v2::refund_event_settlement_confirmed(context, expected_status, event)
+}
+
+/// A user-side arbitration result is allowed to emit verdict, rating,
+/// notification, and cleanup side effects only after a fresh composed
+/// task/subscription read binds the job to the current buyer. Subscription
+/// Failed(9) is ambiguous in the legacy backend, so it additionally needs the
+/// durable Refund V2 request provenance consumed by
+/// `refund_event_settlement_confirmed`.
+fn dispute_result_context_block_reason(
+    context: &task::common::PreFetchedTaskContext,
+    expected_user_agent_id: &str,
+) -> Option<String> {
+    if !matches!(context.job_type, Some(0 | 1)) {
+        return Some(
+            "[next-action blocked] Fresh arbitration detail is missing a supported jobType. Do not announce a verdict, rate, notify, or clean up from caller-supplied event data."
+                .to_string(),
+        );
+    }
+    if context.user_agent_id.as_deref() != Some(expected_user_agent_id) {
+        return Some(format!(
+            "[next-action blocked] Fresh arbitration detail does not bind dispute_resolved to User Agent {expected_user_agent_id}. Do not announce a verdict, rate, notify, or clean up from caller-supplied event data."
+        ));
+    }
+    if !context.refund_request_provenance {
+        return Some(
+            "[next-action blocked] Fresh terminal status has no durable local refund-request provenance. Do not treat an ordinary completion/failure as an arbitration verdict or run rating/cleanup side effects."
+                .to_string(),
+        );
+    }
+    match context.status {
+        Some(6) => None,
+        Some(9)
+            if task::user::refund_v2::refund_event_settlement_confirmed(
+                context,
+                9,
+                "dispute_resolved",
+            ) =>
+        {
+            None
+        }
+        Some(9) => Some(
+            "[next-action blocked] Fresh subscription Failed(9) is ambiguous and has no durable local refund-request provenance. Do not announce an arbitration refund or clean up; reconcile with refund-prepare."
+                .to_string(),
+        ),
+        status => Some(format!(
+            "[next-action blocked] Fresh arbitration status {status:?} is not Completed(6) or a confirmed user-refund Failed(9). Do not announce a verdict, rate, notify, or clean up."
+        )),
+    }
+}
+
+fn subscription_failed_context_block_reason(
+    context: &task::common::PreFetchedTaskContext,
+    expected_user_agent_id: &str,
+) -> Option<String> {
+    if context.job_type != Some(1) {
+        return Some(
+            "[next-action blocked] Fresh detail does not identify a subscription for sub_failed_notify. Do not notify or clean up from a task-type-mismatched event."
+                .to_string(),
+        );
+    }
+    if context.user_agent_id.as_deref() != Some(expected_user_agent_id) {
+        return Some(format!(
+            "[next-action blocked] Fresh subscription detail does not bind sub_failed_notify to User Agent {expected_user_agent_id}. Do not notify or clean up from caller-supplied event data."
+        ));
+    }
+    (context.status != Some(9)).then(|| {
+        format!(
+            "[next-action blocked] Fresh subscription status {:?} is not Failed(9). Do not notify or clean up from a stale sub_failed_notify event.",
+            context.status
+        )
+    })
 }
 
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).
@@ -4247,6 +4318,99 @@ async fn check_status_freshness(
     // explicitly not final and do not require a confirmed refund outcome.
     let mut c = TaskApiClient::new();
     const REFUND_RETRY_DELAYS_MS: [u64; 3] = [250, 750, 1_500];
+
+    // `dispute_resolved` has two legitimate terminal statuses and may target a
+    // subscription. The ordinary task-only freshness path cannot safely
+    // distinguish subscription Failed(9), while the caller-provided event JSON
+    // is not authoritative. Always compose task + subscription facts and bind
+    // them to the current buyer before emitting any verdict side effects.
+    if role == "user" && job_status_or_event == "dispute_resolved" {
+        let mut latest_context = None;
+        let mut latest_error = None;
+        for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
+            match task::user::refund_v2::fetch_authoritative_refund_context(
+                &mut c, job_id, agent_id,
+            )
+            .await
+            {
+                Ok(context) => {
+                    let ready = dispute_result_context_block_reason(&context, agent_id).is_none();
+                    latest_context = Some(context);
+                    latest_error = None;
+                    if ready {
+                        break;
+                    }
+                }
+                Err(error) => latest_error = Some(error),
+            }
+            if let Some(delay_ms) = REFUND_RETRY_DELAYS_MS.get(attempt) {
+                tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+            }
+        }
+
+        let Some(context) = latest_context else {
+            let diagnostic = latest_error
+                .map(|error| format!("{error:#}"))
+                .unwrap_or_else(|| "authoritative arbitration detail unavailable".to_string());
+            return (
+                Some(format!(
+                    "[next-action blocked] Cannot fetch composed buyer-owned arbitration detail for dispute_resolved: {diagnostic}. Do not announce a verdict, rate, notify, or clean up."
+                )),
+                None,
+            );
+        };
+        if let Some(reason) = dispute_result_context_block_reason(&context, agent_id) {
+            return (Some(reason), Some(context));
+        }
+        return (None, Some(context));
+    }
+
+    // Failed(9) does not identify the failure cause in the unchanged backend.
+    // Fetch the same composed facts as Refund V2 so the handler can render a
+    // read-only reconciliation notice without trusting the event's claimed
+    // task type, owner, or failure/refund semantics.
+    if role == "user" && job_status_or_event == "sub_failed_notify" {
+        let mut latest_context = None;
+        let mut latest_error = None;
+        for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
+            match task::user::refund_v2::fetch_authoritative_refund_context(
+                &mut c, job_id, agent_id,
+            )
+            .await
+            {
+                Ok(context) => {
+                    let ready =
+                        subscription_failed_context_block_reason(&context, agent_id).is_none();
+                    latest_context = Some(context);
+                    latest_error = None;
+                    if ready {
+                        break;
+                    }
+                }
+                Err(error) => latest_error = Some(error),
+            }
+            if let Some(delay_ms) = REFUND_RETRY_DELAYS_MS.get(attempt) {
+                tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+            }
+        }
+
+        let Some(context) = latest_context else {
+            let diagnostic = latest_error
+                .map(|error| format!("{error:#}"))
+                .unwrap_or_else(|| "authoritative subscription detail unavailable".to_string());
+            return (
+                Some(format!(
+                    "[next-action blocked] Cannot fetch composed buyer-owned subscription detail for sub_failed_notify: {diagnostic}. Do not notify or clean up."
+                )),
+                None,
+            );
+        };
+        if let Some(reason) = subscription_failed_context_block_reason(&context, agent_id) {
+            return (Some(reason), Some(context));
+        }
+        return (None, Some(context));
+    }
+
     if let Some((expected_status, requires_confirmed_outcome)) = refund_status_policy {
         let mut latest_context = None;
         let mut latest_error = None;
@@ -4509,8 +4673,9 @@ async fn check_status_freshness(
 mod authoritative_detail_path_tests {
     use super::{
         asp_refund_context_block_reason, buyer_refund_event_status_policy, detail_path_for_event,
-        refund_event_status_policy, refund_final_context_ready,
-        subscription_acceptance_status, subscription_event_block_reason,
+        dispute_result_context_block_reason, refund_event_status_policy,
+        refund_final_context_ready, subscription_acceptance_status,
+        subscription_event_block_reason, subscription_failed_context_block_reason,
         subscription_refund_final_block_reason, subscription_side_effect_context_block_reason,
         subscription_side_effect_event_status_policy,
     };
@@ -4609,7 +4774,7 @@ mod authoritative_detail_path_tests {
     }
 
     #[test]
-    fn refund_final_readiness_uses_one_time_lifecycle_and_rejects_ambiguous_subscription() {
+    fn refund_final_readiness_uses_lifecycle_plus_legacy_subscription_event() {
         let detail =
             crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
                 &serde_json::json!({
@@ -4637,11 +4802,80 @@ mod authoritative_detail_path_tests {
         let mut subscription = detail.clone();
         subscription.job_type = Some(1);
         subscription.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
-        assert!(!refund_final_context_ready(
+        subscription.refund_request_provenance = true;
+        assert!(refund_final_context_ready(
             &subscription,
             "sub_reject_refund_notify",
             "buyer-1"
         ));
+        assert!(!refund_final_context_ready(
+            &subscription,
+            "sub_failed_notify",
+            "buyer-1"
+        ));
+    }
+
+    #[test]
+    fn dispute_result_requires_composed_buyer_and_durable_request_provenance() {
+        let mut context =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "subStatus": 6,
+                    "userAgentId": "buyer-1",
+                    "providerAgentId": "asp-1",
+                }),
+            );
+        let no_provenance = dispute_result_context_block_reason(&context, "buyer-1").unwrap();
+        assert!(no_provenance.contains("no durable local refund-request provenance"));
+
+        context.refund_request_provenance = true;
+        assert!(dispute_result_context_block_reason(&context, "buyer-1").is_none());
+        assert!(dispute_result_context_block_reason(&context, "buyer-2")
+            .unwrap()
+            .contains("does not bind"));
+
+        context.status = Some(9);
+        context.token_amount = "5".to_string();
+        context.token_symbol = "USDT".to_string();
+        assert!(dispute_result_context_block_reason(&context, "buyer-1").is_none());
+
+        context.job_type = None;
+        assert!(dispute_result_context_block_reason(&context, "buyer-1")
+            .unwrap()
+            .contains("jobType"));
+    }
+
+    #[test]
+    fn subscription_failed_notice_requires_subscription_status_and_buyer() {
+        let context =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "subStatus": 9,
+                    "userAgentId": "buyer-1",
+                }),
+            );
+        assert!(subscription_failed_context_block_reason(&context, "buyer-1").is_none());
+        assert!(
+            subscription_failed_context_block_reason(&context, "buyer-2")
+                .unwrap()
+                .contains("does not bind")
+        );
+
+        let mut wrong_type = context.clone();
+        wrong_type.job_type = Some(0);
+        assert!(
+            subscription_failed_context_block_reason(&wrong_type, "buyer-1")
+                .unwrap()
+                .contains("subscription")
+        );
+
+        let mut stale = context;
+        stale.status = Some(1);
+        assert!(subscription_failed_context_block_reason(&stale, "buyer-1")
+            .unwrap()
+            .contains("Failed(9)"));
     }
 
     #[test]

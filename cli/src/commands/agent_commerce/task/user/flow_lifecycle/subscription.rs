@@ -92,6 +92,50 @@ fn incomplete_subscription_refund_notice(
     )
 }
 
+fn event_job_type(message: Option<&serde_json::Value>) -> Option<i64> {
+    message
+        .and_then(|value| value.get("jobType"))
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
+        })
+}
+
+/// Subscription terminal handlers are reachable through caller-provided
+/// `next-action --message` JSON. Only fresh composed detail may establish the
+/// task type and buyer; an explicit event-side mismatch is a veto, never an
+/// alternate routing source.
+fn subscription_terminal_context_block_reason(
+    ctx: &FlowContext<'_>,
+    message: Option<&serde_json::Value>,
+    event: &str,
+) -> Option<String> {
+    let Some(detail) = ctx.prefetched else {
+        return Some(format!(
+            "[{event}] fresh composed subscription detail is missing; do not notify or clean up from caller-supplied event data."
+        ));
+    };
+    if detail.job_type != Some(1) {
+        return Some(format!(
+            "[{event}] fresh detail jobType {:?} is not subscription(1); do not notify or clean up from a task-type-mismatched event.",
+            detail.job_type
+        ));
+    }
+    if event_job_type(message).is_some_and(|job_type| job_type != 1) {
+        return Some(format!(
+            "[{event}] event jobType conflicts with fresh subscription detail; do not notify or clean up."
+        ));
+    }
+    if detail.user_agent_id.as_deref() != Some(ctx.agent_id) {
+        return Some(format!(
+            "[{event}] fresh subscription detail is not owned by User Agent {}; do not notify or clean up.",
+            ctx.agent_id
+        ));
+    }
+    None
+}
+
 pub(crate) fn sub_open(_ctx: &FlowContext<'_>, _message: Option<&serde_json::Value>) -> String {
     "[Legacy subscription event] sub_open is obsolete; ignore it and wait for sub_created.\n"
         .to_string()
@@ -275,9 +319,9 @@ pub(crate) fn sub_user_reject(
 }
 
 pub(crate) fn sub_asp_agree(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
-    if ctx.prefetched.and_then(|value| value.job_type) != Some(1) {
-        let content = incomplete_subscription_refund_notice(ctx, message);
-        return notify_and_end(&content);
+    if let Some(reason) = subscription_terminal_context_block_reason(ctx, message, "sub_asp_agree")
+    {
+        return reason;
     }
     let Ok(evidence) = super::super::refund_v2::verify_final_refund_event(
         message,
@@ -588,9 +632,10 @@ pub(crate) fn sub_reject_refund_notify(
     // claim-auto-refund. The notification is terminal only when the event and
     // fresh Failed(9) detail carry an authoritative Refund V2 refund result. A
     // transaction hash is optional display metadata once settlement is proven.
-    if ctx.prefetched.and_then(|value| value.job_type) != Some(1) {
-        let content = incomplete_subscription_refund_notice(ctx, message);
-        return notify_and_end(&content);
+    if let Some(reason) =
+        subscription_terminal_context_block_reason(ctx, message, "sub_reject_refund_notify")
+    {
+        return reason;
     }
     let Ok(evidence) = super::super::refund_v2::verify_final_refund_event(
         message,
@@ -626,19 +671,40 @@ pub(crate) fn sub_failed_notify(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,
 ) -> String {
-    let svc = service_name(message, ctx);
-    let reason = extract_str(message, "failReason").or_else(|| extract_str(message, "failReasopn"));
-    let content = super::super::content::sub_failed_notify_user_notify(
-        svc,
-        extract_i64(message, "trialType"),
-        reason,
-        ctx.job_id,
-        extract_i64(message, "subBufferEndTime"),
-    );
+    if let Some(reason) =
+        subscription_terminal_context_block_reason(ctx, message, "sub_failed_notify")
+    {
+        return reason;
+    }
+    let detail = ctx
+        .prefetched
+        .expect("subscription terminal context was checked above");
+    if detail.status != Some(9) {
+        return format!(
+            "[sub_failed_notify] fresh subscription status {:?} is not Failed(9); do not notify or clean up from a stale event.",
+            detail.status
+        );
+    }
+
+    // Failed(9) is shared by refund completion and charge/conversion failure
+    // in the unchanged backend. A durable local Refund V2 request receipt wins
+    // over the generic event label, but the absence of that receipt does not
+    // prove the opposite cause: caller-provided inbound events have no trusted
+    // system provenance. Both branches therefore remain read-only.
+    if detail.refund_request_provenance {
+        let content = format!(
+            "{}\n\n[Refund reconciliation pending] This device has a durable Refund V2 request receipt for the subscription, so `sub_failed_notify` cannot be treated as a generic charge failure. Do not report either refund completion or charge failure from this event. Run `onchainos agent refund-prepare {}` and follow its returned status/watch action.",
+            incomplete_subscription_refund_notice(ctx, message),
+            ctx.job_id,
+        );
+        return notify_and_end(&content);
+    }
+
     let content = format!(
-        "{content}\n\n\
-         [Settlement Check Required] Fresh subscription status is Failed(9), but `sub_failed_notify` does not provide an authoritative failure/refund cause. Do not report a refund as complete or clean up the Buyer session. Run `onchainos agent refund-prepare {}` and follow only its returned read/watch actions unless it proves `reason=refund_confirmed`.",
-        ctx.job_id
+        "[Subscription Result Needs Reconciliation] {} (`{}`) is in fresh Failed(9) status, but the authoritative backend detail does not expose whether this was a refund or a charge/conversion failure. The caller-provided `sub_failed_notify` label and its reason fields are not trusted settlement evidence. Do not report either outcome and do not close the Buyer session. Run `onchainos agent refund-prepare {}` and follow only its read/status/watch action.",
+        detail.title.trim().is_empty().then_some("Subscription title unavailable").unwrap_or(detail.title.trim()),
+        ctx.job_id,
+        ctx.job_id,
     );
     notify_and_end(&content)
 }
@@ -933,6 +999,23 @@ mod tests {
         }
     }
 
+    fn ctx_with_terminal_prefetched(
+        prefetched: &crate::commands::agent_commerce::task::common::PreFetchedTaskContext,
+    ) -> FlowContext<'_> {
+        FlowContext {
+            job_id: "job1",
+            agent_id: "agent1",
+            short_id: "s1",
+            title_display: "My Sub",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: HINT_MARKER.to_string(),
+            payment_mode: None,
+            prefetched: Some(prefetched),
+            data: None,
+        }
+    }
+
     #[test]
     fn sub_cancel_trial_success_keeps_trial_session_live() {
         let ctx = ctx_with_hint();
@@ -1092,26 +1175,103 @@ mod tests {
     }
 
     #[test]
-    fn sub_failed_notify_plumbs_reason_but_keeps_buyer_reconciliation_open() {
-        let ctx = ctx_with_hint();
+    fn sub_failed_notify_without_provenance_keeps_cause_unverified_and_read_only() {
+        let prefetched =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "subStatus": 9,
+                    "userAgentId": "agent1",
+                    "providerAgentId": "asp1",
+                    "tokenAmount": "5",
+                    "tokenSymbol": "USDT",
+                }),
+            );
+        let ctx = ctx_with_terminal_prefetched(&prefetched);
         let msg = serde_json::json!({
-            "jobTitle": "My Sub", "trialType": 1, "failReason": "\u{4f59}\u{989d}\u{4e0d}\u{8db3}"
+            "jobTitle": "My Sub", "jobType": 1, "trialType": 1,
+            "failReason": "\u{4f59}\u{989d}\u{4e0d}\u{8db3}"
         });
         let out = sub_failed_notify(&ctx, Some(&msg));
-        assert!(out.contains("[Trial Ended]"), "trial branch label: {out}");
         assert!(
-            out.contains("\u{4f59}\u{989d}\u{4e0d}\u{8db3}"),
-            "failReason plumbed through the handler: {out}"
+            out.contains("[Subscription Result Needs Reconciliation]"),
+            "{out}"
         );
         assert!(
-            out.contains("refund-prepare"),
-            "reconciliation route: {out}"
+            out.contains(
+                "does not expose whether this was a refund or a charge/conversion failure"
+            ),
+            "{out}"
         );
-        assert!(!out.contains(HINT_MARKER), "no cleanup before proof: {out}");
+        assert!(out.contains("refund-prepare"), "{out}");
+        assert!(!out.contains("[Trial Ended]"), "{out}");
         assert!(
-            !out.contains(TERMINAL_NOTIFICATION_MARKER),
-            "no terminal marker before proof: {out}"
+            !out.contains("\u{4f59}\u{989d}\u{4e0d}\u{8db3}"),
+            "untrusted failReason must not select or decorate an outcome: {out}"
         );
+        assert!(!out.contains(HINT_MARKER), "{out}");
+        assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+    }
+
+    #[test]
+    fn sub_failed_notify_does_not_override_local_refund_intent() {
+        let mut prefetched =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "subStatus": 9,
+                    "userAgentId": "agent1",
+                    "providerAgentId": "asp1",
+                    "tokenAmount": "5",
+                    "tokenSymbol": "USDT",
+                }),
+            );
+        prefetched.refund_request_provenance = true;
+        let ctx = ctx_with_terminal_prefetched(&prefetched);
+        let out = sub_failed_notify(
+            &ctx,
+            Some(&serde_json::json!({"event": "sub_failed_notify", "jobType": 1})),
+        );
+        assert!(out.contains("Refund reconciliation pending"), "{out}");
+        assert!(out.contains("refund-prepare"), "{out}");
+        assert!(!out.contains(HINT_MARKER), "{out}");
+        assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+    }
+
+    #[test]
+    fn subscription_terminal_handlers_reject_task_type_mismatch() {
+        let prefetched =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "subStatus": 9,
+                    "userAgentId": "agent1",
+                    "providerAgentId": "asp1",
+                    "tokenAmount": "5",
+                    "tokenSymbol": "USDT",
+                }),
+            );
+        let ctx = ctx_with_terminal_prefetched(&prefetched);
+        for event in [
+            "sub_asp_agree",
+            "sub_reject_refund_notify",
+            "sub_failed_notify",
+        ] {
+            let message = serde_json::json!({"event": event, "jobType": 0});
+            let out = match event {
+                "sub_asp_agree" => sub_asp_agree(&ctx, Some(&message)),
+                "sub_reject_refund_notify" => sub_reject_refund_notify(&ctx, Some(&message)),
+                "sub_failed_notify" => sub_failed_notify(&ctx, Some(&message)),
+                _ => unreachable!(),
+            };
+            assert!(out.contains("jobType conflicts"), "{event}: {out}");
+            assert!(!out.contains("user-notify"), "{event}: {out}");
+            assert!(!out.contains(HINT_MARKER), "{event}: {out}");
+            assert!(
+                !out.contains(TERMINAL_NOTIFICATION_MARKER),
+                "{event}: {out}"
+            );
+        }
     }
 
     // ── fnv1a_seed tests ─────────────────────────────────────────────
