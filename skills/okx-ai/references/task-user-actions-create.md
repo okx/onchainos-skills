@@ -1,14 +1,10 @@
 # User — Create Task or Subscription
 
-Use this reference only after the routed action is
-`nextAction.id=open_create_playbook`.
-
 ## Entry condition
 
-Bind the CLI result's `payload` as `payload` and use it with the original user
+Bind the CLI result's `data.payload` as `payload` and use it with the original user
 utterance and confirmed context. `decision=ready` means the creation data is
-ready for this flow; it does not authorize creation. Keep backend field names
-inside `payload` unchanged.
+ready for this flow; it does not authorize creation. 
 
 The generic result contract, action numbering, and action routing are defined in
 `SKILL.md`, `task-output-templates.md`, and `task-action-routing.md`.

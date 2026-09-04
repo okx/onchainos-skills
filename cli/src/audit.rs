@@ -499,6 +499,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::DesignatedRoute { .. } => "designated-route".into(),
         AgentCommand::Complete { .. } => "complete".into(),
         AgentCommand::Reject { .. } => "reject".into(),
+        AgentCommand::RefundPrepare { .. } => "refund-prepare".into(),
+        AgentCommand::RefundExecute { .. } => "refund-execute".into(),
         AgentCommand::Close { .. } => "close".into(),
         AgentCommand::Payment { .. } => "payment".into(),
         AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),

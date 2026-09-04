@@ -8,9 +8,8 @@ const TASK_USER_PLAYBOOK: &str =
 fn watch_docs_do_not_end_after_a_nonterminal_result() {
     assert!(WATCH_CORE.contains("it never authorizes ending the turn after one watch call returns"));
     assert!(WATCH_CORE.contains("After processing all returned items, **always** call"));
-    assert!(TASK_USER_PLAYBOOK.contains(
-        "A returned notification, deliverable, or empty poll does **not** end the turn"
-    ));
+    assert!(TASK_USER_PLAYBOOK
+        .contains("A returned notification, deliverable, or empty poll does **not** end the turn"));
     assert!(!TASK_USER_PLAYBOOK.contains("execute watch, then **end this turn**"));
 }
 
@@ -20,7 +19,26 @@ fn retired_autotrade_mode_cards_are_claimed_without_rendering() {
         assert!(document.contains("--source-event \"autotrade_consent\""));
         assert!(document.contains("--source-event \"autotrade_config_required\""));
         assert!(document.contains("okx-a2a user check --todo-ids <item.id> --json"));
-        assert!(document.contains("do not render") || document.contains("remove it from the display set"));
+        assert!(
+            document.contains("do not render")
+                || document.contains("remove it from the display set")
+        );
         assert!(document.contains("do not execute") || document.contains("never execute"));
     }
+}
+
+#[test]
+fn scoped_terminal_detection_requires_a_canonical_leading_marker() {
+    assert!(WATCH_CORE.contains("first non-whitespace characters"));
+    assert!(WATCH_CORE.contains("marker appearing later inside a title"));
+    assert!(WATCH_CORE.contains("never a substring inside business data"));
+    assert!(WATCH_CORE
+        .contains("`[Job Expired]` / `[ASP Acceptance Expired]` / `[Auto-Refund Processing]`"));
+    assert!(WATCH_CORE.contains("status 8 is an ambiguous timeout state"));
+    assert!(WATCH_CORE.contains("Do not choose a claim/type-207 write from status or event prose"));
+    let legacy_terminal_sentence = WATCH_CORE
+        .lines()
+        .find(|line| line.contains("Legacy notifications may instead begin with"))
+        .expect("watch-core must document legacy terminal headings");
+    assert!(!legacy_terminal_sentence.contains("[Job Expired]"));
 }
