@@ -3309,15 +3309,9 @@ fn is_path_under_canonical_dir(path: &std::path::Path, dir: &std::path::Path) ->
     c_path.starts_with(c_dir)
 }
 
-fn is_safe_a2a_file_path_with_spool_dir(
-    path: &std::path::Path,
-    configured_spool_dir: Option<&std::path::Path>,
-) -> bool {
+fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
     if path.as_os_str().is_empty() {
         return false;
-    }
-    if configured_spool_dir.is_some_and(|dir| is_path_under_canonical_dir(path, dir)) {
-        return true;
     }
     let tmp_dir = std::env::temp_dir();
     if is_path_under_canonical_dir(path, &tmp_dir) {
@@ -3339,13 +3333,6 @@ fn is_safe_a2a_file_path_with_spool_dir(
         }
     }
     false
-}
-
-fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
-    let configured_spool_dir = std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR")
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from);
-    is_safe_a2a_file_path_with_spool_dir(path, configured_spool_dir.as_deref())
 }
 
 fn parse_a2a_json_arg(raw: &str) -> anyhow::Result<serde_json::Value> {
@@ -3394,11 +3381,6 @@ fn write_secure_temp_file(path: &std::path::Path, contents: &[u8]) -> std::io::R
 }
 
 fn a2a_intake_spool_dir() -> std::path::PathBuf {
-    if let Some(path) =
-        std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR").filter(|value| !value.is_empty())
-    {
-        return std::path::PathBuf::from(path);
-    }
     #[cfg(test)]
     {
         return std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -3453,9 +3435,7 @@ fn validate_a2a_file_arg(
 ) -> anyhow::Result<String> {
     let fp = std::path::Path::new(path);
     if !is_safe_a2a_file_path(fp) {
-        anyhow::bail!(
-            "--a2a-file must point to a file under the OS temp directory or the configured A2A spool directory"
-        );
+        anyhow::bail!("--a2a-file must point to a file under the OS temp directory");
     }
     let metadata = std::fs::symlink_metadata(fp)
         .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?;
@@ -3677,41 +3657,8 @@ mod auto_consent_permit_tests {
 mod escape_control_chars_tests {
     use super::{
         escape_control_chars_in_strings, handler_fetches_own_task_detail,
-        is_safe_a2a_file_path_with_spool_dir, should_block_legacy_a2mcp_flow,
-        validate_a2a_file_arg,
+        should_block_legacy_a2mcp_flow, validate_a2a_file_arg,
     };
-
-    #[test]
-    fn accepts_a2a_file_under_configured_spool_dir() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("configured-a2a-spool-tests");
-        let spool = root.join("spool");
-        std::fs::create_dir_all(&spool).unwrap();
-        let path = spool.join("envelope.json");
-        std::fs::write(&path, "{}").unwrap();
-
-        assert!(is_safe_a2a_file_path_with_spool_dir(&path, Some(&spool)));
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn rejects_a2a_file_outside_configured_spool_dir() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("configured-a2a-spool-boundary-tests");
-        let spool = root.join("spool");
-        let sibling = root.join("spool-other");
-        std::fs::create_dir_all(&spool).unwrap();
-        std::fs::create_dir_all(&sibling).unwrap();
-        let path = sibling.join("envelope.json");
-        std::fs::write(&path, "{}").unwrap();
-
-        assert!(!is_safe_a2a_file_path_with_spool_dir(&path, Some(&spool)));
-
-        std::fs::remove_dir_all(root).ok();
-    }
 
     #[test]
     fn escapes_raw_lf_inside_string() {

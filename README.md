@@ -58,57 +58,6 @@ Tell Codex:
 Fetch and follow instructions from https://raw.githubusercontent.com/okx/onchainos-skills/refs/heads/main/.codex/INSTALL.md
 ```
 
-### Project-local development setup
-
-Run one command after cloning the checkout, or on the first development session
-after starting your machine:
-
-```bash
-npm run dev:init
-```
-
-It builds the checkout's debug CLI, links project-local skills, initializes
-project-local runtime directories, and restarts the A2A daemon through the
-already installed global `okx-a2a` command. No adjacent A2A repository is
-required. The generated `onchainos` wrapper handles `preflight` locally, so
-local builds do not trigger CLI self-update or integrity preflight actions and
-the production CLI path remains unchanged.
-
-For later work, choose the command that matches the development surface:
-
-```bash
-# Skills, workflows, or skill references only
-npm run dev:skills
-
-# CLI code: rebuild only
-npm run dev:cli
-
-# CLI code: rebuild, then execute the checkout-local CLI
-npm run dev:cli -- wallet status
-```
-
-Run `npm run dev:init:test` to verify the first-time initialization flow using
-only a globally installed `okx-a2a` substitute and no local A2A repository.
-
-All runtime, wrapper, build, and skill-link files generated under `.codex/`
-are ignored by Git. Do not commit its runtime state, logs, or credential files.
-The wrappers set `TMPDIR` to `.codex/runtime/tmp` and `ONCHAINOS_A2A_SPOOL_DIR`
-to `.codex/runtime/a2a-spool`, keeping temporary A2A payloads and validated
-delivery-recovery files inside the checkout-local development runtime. Outside
-local development, the spool variable is optional and falls back to the OS
-temporary directory.
-The setup script is endpoint-neutral: when `OKX_BASE_URL` is set, it is used at
-both build and runtime; when it is unset, the CLI is built without a base-URL
-override and uses its built-in production endpoint. In Codex development
-sessions, the agent asks once whether to use `https://beta.okex.org` or the
-production endpoint, then keeps that choice for subsequent CLI builds in the
-same session unless explicitly told to switch.
-They default `ONCHAINOS_SKIP_CLIENT_VERSION_GATE=true` for local development;
-set it to `false` when verifying the production version gate.
-The project-local A2A wrapper also recreates an ignored `.codex` mirror inside
-its disposable AI workspace after every local daemon start or restart, so
-daemon-spawned Codex sessions use the same relative wrappers and skills.
-
 ### OpenClaw
 
 Tell OpenClaw:

@@ -8,8 +8,8 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_A2A_BIN = path.resolve(THIS_DIR, "../../.codex/bin/okx-a2a");
-const DEFAULT_ONCHAINOS_BIN = path.resolve(THIS_DIR, "../../.codex/bin/onchainos");
+const DEFAULT_A2A_BIN = "okx-a2a";
+const DEFAULT_ONCHAINOS_BIN = "onchainos";
 const DEFAULT_AGENT_ID = "11926";
 const DEFAULT_BUYER_AGENT_ID = "11040";
 const MAX_BODY_BYTES = 256 * 1024;

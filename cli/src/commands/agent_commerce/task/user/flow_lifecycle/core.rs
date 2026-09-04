@@ -154,13 +154,6 @@ fn is_path_under_canonical_dir(path: &std::path::Path, dir: &std::path::Path) ->
 }
 
 fn is_safe_a2a_file_path(fp: &std::path::Path) -> bool {
-    if std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR")
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from)
-        .is_some_and(|dir| is_path_under_canonical_dir(fp, &dir))
-    {
-        return true;
-    }
     let tmp_dir = std::env::temp_dir();
     if is_path_under_canonical_dir(fp, &tmp_dir) {
         return true;
@@ -679,13 +672,9 @@ pub(crate) async fn resume_queued_subscription_delivery(
 }
 
 /// The directory scanned for A2A deliver spool files. Defaults to the OS temp dir
-/// (`/tmp` on Linux when `TMPDIR` is unset), and can be overridden with
-/// `ONCHAINOS_A2A_SPOOL_DIR`.
+/// (`/tmp` on Linux when `TMPDIR` is unset).
 fn a2a_spool_dir() -> std::path::PathBuf {
-    std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR")
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
+    std::env::temp_dir()
 }
 
 /// Collect the A2A spool candidates for `job_id` and return the OLDEST by mtime.
@@ -2319,36 +2308,6 @@ autotrade: {\"schemaVersion\":1,\"deliveryId\":\"legacy-1\"}";
             DeliverPayload::Text(text) => assert_eq!(text, "code sample: \\n stays literal"),
             DeliverPayload::File { .. } => panic!("expected text deliverable"),
         }
-    }
-
-    #[test]
-    fn parse_a2a_file_accepts_configured_spool_and_rejects_sibling() {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
-        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("configured-a2a-parse-tests");
-        let spool = test_root.join("spool");
-        let sibling = test_root.join("spool-other");
-        std::fs::create_dir_all(&spool).unwrap();
-        std::fs::create_dir_all(&sibling).unwrap();
-        let _spool_dir = EnvVarGuard::set("ONCHAINOS_A2A_SPOOL_DIR", &spool);
-
-        let envelope = r#"{"msgType":"a2a-agent-chat","jobId":"0xnormal","receiverAgentId":"8315","content":"jobId: 0xnormal\ndeliverableType: text\n- - -\nHello\n- - -\n[intent:deliver]"}"#;
-        let accepted = spool.join("envelope.json");
-        let rejected = sibling.join("envelope.json");
-        std::fs::write(&accepted, envelope).unwrap();
-        std::fs::write(&rejected, envelope).unwrap();
-
-        assert!(
-            parse_a2a_file(accepted.to_str().unwrap(), "0xnormal", "8315").is_some(),
-            "configured spool files must remain readable after validation"
-        );
-        assert!(
-            parse_a2a_file(rejected.to_str().unwrap(), "0xnormal", "8315").is_none(),
-            "a sibling path must not pass the configured spool boundary"
-        );
-
-        std::fs::remove_dir_all(test_root).ok();
     }
 
     #[test]
