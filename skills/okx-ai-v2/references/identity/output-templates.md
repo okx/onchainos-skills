@@ -36,6 +36,19 @@ Shared Agent/Service templates and display rules.
 - Localize labels and mapped display values.
 - User/Evaluator: omit `Status`, `Approval status`, and `Rating`.
 
+## Service value display
+
+Apply these mappings to service create confirmations and update diffs:
+
+- `serviceDescription`: render verbatim with all line breaks; never summarize, rewrite, or omit.
+- `serviceType`: display raw `A2MCP` or `A2A` unchanged.
+- `fee`: `"0"` → localized Free without suffix; positive `"N"` → `N USDT`; empty/inapplicable →
+  `—`.
+- `subscription` fee: `"0"` → localized Free without suffix; positive `"N"` → `N USDT / month`;
+  absent/inapplicable → `—`.
+- `freeTrial`: `"72"` → `3 days`; absent/inapplicable → `—`.
+- `serviceGuide`: show non-blank text verbatim; omit when absent/blank.
+
 ## Service table
 
 ```markdown
@@ -46,7 +59,7 @@ Shared Agent/Service templates and display rules.
 
 ### Rules
 
-- Render localized fields according to [`service-contract.md` §Display Rules].
+- Apply [Service value display](#service-value-display).
 - Number services sequentially across Agent tables.
 - Merge `Fee` and `Subscription` as `Fee`.
 - Omit a column only when all of its values are `—`; otherwise display it.

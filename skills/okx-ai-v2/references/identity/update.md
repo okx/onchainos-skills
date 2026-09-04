@@ -45,30 +45,27 @@ rules:
 1. Omitted services are unchanged and never imply deletion.
 2. Delete only on explicit user request.
 3. Never use the numeric raw `id`; use `serviceId` as the payload `id` value.
-4. Apply the shared payload rules in [`service-contract.md` §Shared payload](service-contract.md#shared-payload),
+4. Apply [`service-contract.md` §Fields and payload](service-contract.md#fields-and-payload),
    then apply the matching A2A or A2MCP service update rules below.
 
 ### A2A service update
 
-Rules:
+Build the full A2A service entry from current data plus explicit changes, following
+[`service-contract.md` §Fields and payload](service-contract.md#fields-and-payload). If the user requests a
+billing-model change, add a new service and optionally remove the old one.
 
-1. Keep the existing A2A billing model fixed; the backend rejects billing-model changes.
-2. For per-call billing, send current/new numeric `fee` and `subscription:[]`.
-3. For subscription billing, send `fee:""` and the current/new monthly tier; include `serviceGuide`
-   only when non-blank.
-4. Change the trial only on explicit request; enable with `freeTrial:"72"`, disable by omission;
-   never send `""` or `"0"`.
-5. Preserve a fetched non-blank `serviceGuide` unless explicitly changed. A missing/blank guide does not need
-   to be filled during update.
-6. To change billing models, add a new service and optionally remove the old one.
+- Change the trial only on explicit request: `freeTrial:"72"` enables; omission disables; never send
+  `""` or `"0"`.
+- Preserve a fetched non-blank `serviceGuide` unless explicitly changed. A missing/blank guide need
+  not be filled.
 
 ### A2MCP service update
 
-Rules:
+Build the full A2MCP service entry from current data plus explicit changes, following
+[`service-contract.md` §Fields and payload](service-contract.md#fields-and-payload).
 
-1. Send the current/new `fee`, endpoint, and description.
-2. Preserve a fetched non-blank `serviceGuide` so unrelated edits do not erase legacy data.
-3. Never send subscription fields.
+- Preserve a fetched non-blank `serviceGuide` so unrelated edits do not erase legacy data.
+- Never send subscription fields.
 
 ### 4. Validation
 
@@ -87,7 +84,8 @@ rules:
 Actions:
 
 1. Show one final diff with each changed field's current and new value.
-2. Display service values according to (`service-contract.md`) §Display Rules.
+2. Display service values according to
+   [`output-templates.md` §Service value display](output-templates.md#service-value-display).
 3. Obtain fresh explicit confirmation.
 
 rules:
@@ -115,4 +113,4 @@ Prefix every command with `onchainos`. Do not add `--chain`, `--address`, or und
 | `agent get-agents` | `onchainos agent get-agents --agent-ids <id[,id...]>` | Read the returned agent array and render its display-ready `card[]`; use it to confirm the target identity. |
 | `agent service-list` | `onchainos agent service-list --agent-id <id> --page <n> --page-size 3 [--service-id <uuid>]` | Read `serviceId` and copy it into the update/delete payload's `id`; never use numeric raw `id`. Render display-ready `cells[]` and use `serviceGuide` when present. |
 | `agent validate-listing` (hidden, local) | `onchainos agent validate-listing --role <role> [--name <name>] [--description <text>] --service '<json-array>'` | Use only for ASP Update mode. Read `pass` and `findings[]`; never expose diagnostic `code`. |
-| `agent update` | `onchainos agent update --agent-id <id> [--name <name>] [--description <text>] [--picture <cdn-url>] [--service '<delta-json-array>']` | Omit unchanged identity fields. Send only service deltas from (`service-contract.md`). `--description ""` does not clear a description. Success returns `txHash`; `agent` is optional. |
+| `agent update` | `onchainos agent update --agent-id <id> [--name <name>] [--description <text>] [--picture <cdn-url>] [--service '<delta-json-array>']` | Omit unchanged identity fields. Send only service deltas from `service-contract.md`. `--description ""` does not clear a description. Success returns `txHash`; `agent` is optional. |

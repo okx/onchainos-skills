@@ -34,7 +34,8 @@ Actions:
 
 1. User / Evaluator: collect the user-provided Name. Avatar and Description are optional; do not prompt for Description. If Description was not provided, omit `--description`.
 2. ASP Step 1: ask for Name, Description, and the required Avatar in one message. Name must be a brand name with no test markers or celebrity names; Description is a required one-sentence summary of the Agent. Once all three are ready, immediately render the Identity card (Role / Name / Description / Profile photo) with the uploaded CDN URL. Reply `1` advances to Step 2; it never runs create.
-3. ASP Step 2: follow `service-contract.md` end to end. Continue only after explicit Done, using only its A2MCP endpoint-validation rules.
+3. ASP Step 2: follow `service-contract.md` end to end. Continue only after explicit Done, using
+   only its A2MCP endpoint rules.
 4. Reject avatar URLs. Upload a user-provided image with `agent upload` and pass the returned URL as `--picture`. ASP requires an uploaded avatar; for User / Evaluator without one, omit `--picture`.
 
 Rules:
@@ -51,13 +52,15 @@ ASP only: after explicit Done, execute Create mode from `validate-listing.md`. C
 Actions:
 
 1. For User / Evaluator, render one `| Field | Value |` identity card.
-2. For ASP, do not repeat the confirmed Identity card. Render a final card for each service, labeled `Service [N]`, with Name / Description / Type / Fee / Subscription / Free trial / Endpoint rows.
+2. For ASP, do not repeat the confirmed Identity card. Render a final card for each service, labeled
+   `Service [N]`, with Name / Description / Type / Fee / Subscription / Free trial / Endpoint rows;
+   add Guide when non-blank.
 3. End with localized `Reply 1 to confirm and run. Nothing will run before that.`
 
 Rules:
 
-1. Render each service Description verbatim without summarizing, rewriting, or omitting content; all
-   service display fields follow (`service-contract.md#display-rules`).
+1. Render service values according to
+   [`output-templates.md` §Service value display](output-templates.md#service-value-display).
 2. Display ASP Type exactly as `A2MCP` or `A2A`.
 3. Only `1` on the final card may trigger the single `agent create`. Do not skip confirmation, reuse an earlier confirmation, or show bash.
 
