@@ -1,8 +1,6 @@
 # Identity service contract
 
-Use this contract for ASP service fields, payloads, and collection. Follow [`update.md`](update.md)
-for updates, [`validate.md`](validate.md) for validation, and
-[`output-templates.md`](output-templates.md) for display.
+Use this contract for ASP service fields, payloads, and collection.
 
 ## Fields and payload
 

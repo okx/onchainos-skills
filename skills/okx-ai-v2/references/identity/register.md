@@ -80,8 +80,8 @@ Rules:
 Actions:
 
 1. Report registration success. If an Agent ID is available, display it; otherwise state that it was not returned and tell the user to say `list my agents` to find it.
-2. For every role, run (`../chat-comm-init.md`) and complete its communication setup/readiness check.
-3. For Evaluator only, after communication setup, ask whether the user wants to stake now. If yes, hand off to (`../task-core.md`) §Pre-flight and then (`../task-evaluator-staking.md`); if no, finish registration.
+2. For every role, follow [Runtime Transport](../runtime/transport.md) and complete its communication setup/readiness check.
+3. For Evaluator only, after communication setup, ask whether the user wants to stake now. If yes, follow [`SKILL.md` §Preflight](../../SKILL.md#preflight), then hand off to [A2A Evaluator Staking](../a2a/evaluator/staking.md); if no, finish registration.
 
 Rules:
 
