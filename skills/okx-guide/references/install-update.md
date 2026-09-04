@@ -6,26 +6,18 @@
 npx -y oc-onchainos install
 ```
 
-Capture the command's complete stdout and stderr. Do not treat a zero exit status,
-unrelated progress text, or a separately invoked `onchainos --version` command as
-the version to render. Normalize the successful installer result into an internal
-`afterVersion` value before producing any user-facing response.
-
 ## Step 2 — Extract `afterVersion`
 
-Read the top-level `afterVersion` from the final JSON response. Report the relevant output and ask the user to retry or investigate.
+Read the top-level `cliUpdate.afterVersion` from the final JSON response. Report the relevant output and ask the user to retry or investigate.
 
 ## Step 3 — Render the response
 
-After extracting `afterVersion`, render the complete template in the user's
-language.
+Render the complete template in the user's language.
 
 ### Success template
 
-Render prose in the user's language; keep the afterVersion value literal.
-
 ```
-✅ Onchain OS is ready — you're on v{afterVersion}.
+✅ Onchain OS is ready — you're on v{cliUpdate.afterVersion}.
 
 Your on-chain AI sidekick: wallet, trading, market data, and payments in one place —
 no juggling a dozen DApps or re-connecting wallets every time.
