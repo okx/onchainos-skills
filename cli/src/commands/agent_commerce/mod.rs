@@ -924,6 +924,24 @@ pub enum AgentCommand {
         reason: String,
     },
 
+    /// Accept a designated subscription created and funded by the buyer.
+    #[command(name = "accept-subscription")]
+    AcceptSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
+    /// Decline a designated subscription and trigger its refund flow.
+    #[command(name = "decline-subscription")]
+    DeclineSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+
     /// ASP: list my still-active subscription jobs (continuous-delivery phase) as a JSON array
     /// — the resident dispatch script's fan-out set. Source: GET /subscribe/my.
     #[command(name = "subscribe-active")]
@@ -2703,6 +2721,30 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         } => {
             task::asp::run_provider(
                 task::asp::ProviderCommand::DeclineJobByProvider {
+                    job_id,
+                    agent_id,
+                    reason,
+                },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::AcceptSubscription { job_id, agent_id } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::AcceptSubscription { job_id, agent_id },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::DeclineSubscription {
+            job_id,
+            agent_id,
+            reason,
+        } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::DeclineSubscription {
                     job_id,
                     agent_id,
                     reason,
