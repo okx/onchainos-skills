@@ -4,6 +4,7 @@ mod core;
 mod dispute;
 mod terminal;
 mod manage;
+pub(super) mod notification;
 pub(super) mod subscription;
 
 pub(super) use self::core::{provider_applied, job_accepted, deliverable_received_cli, job_submitted, approve_review, reject_review, job_completed};

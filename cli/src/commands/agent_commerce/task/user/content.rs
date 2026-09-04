@@ -809,9 +809,219 @@ pub fn sub_reject_refund_notify_user(
     out
 }
 
+// ── Job notification events ────────────────────────────────────────
+
+/// `job_asp_accept_expire` — subscription-task copy.
+#[allow(clippy::too_many_arguments)]
+pub fn subscription_job_asp_accept_expire_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    provider_name: &str,
+    provider_agent_id: &str,
+) -> String {
+    format!(
+        "[Job Timed Out] The ASP did not accept {job_name} within 3 hours. The job has timed out, and the subscription did not begin. The escrowed amount of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance.\n\
+         Job ID: {job_id}\n\
+         ASP: {provider_name} ({provider_agent_id})\n\n\
+         If the service offers a free trial, your trial eligibility remains unaffected."
+    )
+}
+
+/// `job_asp_accept_expire` — ordinary-task copy, split by whether payment was made.
+#[allow(clippy::too_many_arguments)]
+pub fn regular_job_asp_accept_expire_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    provider_name: &str,
+    provider_agent_id: &str,
+    is_paid: bool,
+) -> String {
+    let payment = if is_paid {
+        format!(
+            " The escrowed amount of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance."
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "[Job Expired] The ASP did not accept {job_name} within 3 hours, and the job has expired.{payment}\n\n\
+         Job ID: {job_id}\n\
+         ASP: {provider_name} ({provider_agent_id})\n\
+         Job status: Expired"
+    )
+}
+
+/// `job_asp_reject_closed` — subscription-task copy.
+#[allow(clippy::too_many_arguments)]
+pub fn subscription_job_asp_reject_closed_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    provider_name: &str,
+    provider_agent_id: &str,
+    reason: &str,
+) -> String {
+    format!(
+        "[ASP Declined] The ASP declined {job_name}. The escrowed amount of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance.\n\n\
+         Job ID: {job_id}\n\
+         ASP: {provider_name} ({provider_agent_id})\n\
+         Reason: {reason}\n\n\
+         The job is closed, and the subscription did not begin. If the service offers a free trial, your trial eligibility remains unaffected."
+    )
+}
+
+/// `job_asp_reject_closed` — ordinary-task copy, split by whether payment was made.
+#[allow(clippy::too_many_arguments)]
+pub fn regular_job_asp_reject_closed_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    provider_name: &str,
+    provider_agent_id: &str,
+    reason: &str,
+    is_paid: bool,
+) -> String {
+    let payment = if is_paid {
+        format!(
+            " The escrowed amount of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance."
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "[ASP Declined] The ASP declined {job_name}.{payment}\n\n\
+         Job ID: {job_id}\n\
+         ASP: {provider_name} ({provider_agent_id})\n\
+         Reason: {reason}\n\
+         Job status: Closed"
+    )
+}
+
+/// `job_asp_reject_expire` — subscription-task copy.
+pub fn subscription_job_asp_reject_expire_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+) -> String {
+    format!(
+        "[Automatic Refund] The ASP did not process the refund request for {job_name} by the deadline. The refund of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance.\n\n\
+         Job ID: {job_id}\n\
+         Job status: Closed"
+    )
+}
+
+/// `job_asp_reject_expire` — ordinary-task copy, split by whether payment was made.
+pub fn regular_job_asp_reject_expire_user_notify(
+    job_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+    is_paid: bool,
+) -> String {
+    if is_paid {
+        format!(
+            "[Automatic Refund] The ASP did not process the refund request for {job_name} by the deadline. The refund of {amount} {token_symbol} will be returned automatically to your wallet address. Please monitor your wallet balance.\n\n\
+             Job ID: {job_id}\n\
+             Job status: Failed"
+        )
+    } else {
+        format!(
+            "[Refund Process Completed] The ASP did not process the refund request for {job_name} by the deadline. No payment was made for this job, so no refund is required.\n\n\
+             Job ID: {job_id}\n\
+             Job status: Failed"
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn job_notification_copy_matches_spec() {
+        assert_eq!(
+            subscription_job_asp_accept_expire_user_notify(
+                "BTC Signals",
+                "job-1",
+                "12.34",
+                "USDT",
+                "Signal ASP",
+                "5263",
+            ),
+            "[Job Timed Out] The ASP did not accept BTC Signals within 3 hours. The job has timed out, and the subscription did not begin. The escrowed amount of 12.34 USDT will be returned automatically to your wallet address. Please monitor your wallet balance.\nJob ID: job-1\nASP: Signal ASP (5263)\n\nIf the service offers a free trial, your trial eligibility remains unaffected."
+        );
+        assert_eq!(
+            subscription_job_asp_reject_closed_user_notify(
+                "BTC Signals",
+                "job-1",
+                "12.34",
+                "USDT",
+                "Signal ASP",
+                "5263",
+                "capacity unavailable",
+            ),
+            "[ASP Declined] The ASP declined BTC Signals. The escrowed amount of 12.34 USDT will be returned automatically to your wallet address. Please monitor your wallet balance.\n\nJob ID: job-1\nASP: Signal ASP (5263)\nReason: capacity unavailable\n\nThe job is closed, and the subscription did not begin. If the service offers a free trial, your trial eligibility remains unaffected."
+        );
+        assert_eq!(
+            subscription_job_asp_reject_expire_user_notify(
+                "BTC Signals",
+                "job-1",
+                "12.34",
+                "USDT",
+            ),
+            "[Automatic Refund] The ASP did not process the refund request for BTC Signals by the deadline. The refund of 12.34 USDT will be returned automatically to your wallet address. Please monitor your wallet balance.\n\nJob ID: job-1\nJob status: Closed"
+        );
+        assert_eq!(
+            regular_job_asp_accept_expire_user_notify(
+                "One-off analysis",
+                "job-2",
+                "0",
+                "USDT",
+                "Analyst",
+                "42",
+                false,
+            ),
+            "[Job Expired] The ASP did not accept One-off analysis within 3 hours, and the job has expired.\n\nJob ID: job-2\nASP: Analyst (42)\nJob status: Expired"
+        );
+        assert_eq!(
+            regular_job_asp_accept_expire_user_notify(
+                "One-off analysis",
+                "job-2",
+                "5",
+                "USDT",
+                "Analyst",
+                "42",
+                true,
+            ),
+            "[Job Expired] The ASP did not accept One-off analysis within 3 hours, and the job has expired. The escrowed amount of 5 USDT will be returned automatically to your wallet address. Please monitor your wallet balance.\n\nJob ID: job-2\nASP: Analyst (42)\nJob status: Expired"
+        );
+        assert_eq!(
+            regular_job_asp_reject_closed_user_notify(
+                "One-off analysis",
+                "job-2",
+                "0",
+                "USDT",
+                "Analyst",
+                "42",
+                "policy",
+                false,
+            ),
+            "[ASP Declined] The ASP declined One-off analysis.\n\nJob ID: job-2\nASP: Analyst (42)\nReason: policy\nJob status: Closed"
+        );
+        assert_eq!(
+            regular_job_asp_reject_expire_user_notify(
+                "One-off analysis", "job-2", "0", "USDT", false,
+            ),
+            "[Refund Process Completed] The ASP did not process the refund request for One-off analysis by the deadline. No payment was made for this job, so no refund is required.\n\nJob ID: job-2\nJob status: Failed"
+        );
+    }
 
     #[test]
     fn scoped_watch_handoff_requires_nonterminal_reentry() {

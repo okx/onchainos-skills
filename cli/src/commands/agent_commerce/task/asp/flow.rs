@@ -173,6 +173,42 @@ fn reject_expire_time(message: Option<&serde_json::Value>) -> Option<i64> {
         .filter(|&t| t > 0)
 }
 
+fn notification_display_field(message: Option<&serde_json::Value>, key: &str) -> Option<String> {
+    message
+        .and_then(|value| value.get(key))
+        .and_then(|value| match value {
+            serde_json::Value::String(value) if !value.is_empty() => Some(value.clone()),
+            serde_json::Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        })
+}
+
+fn notification_job_name(message: Option<&serde_json::Value>) -> String {
+    ["jobTitle", "jobName"]
+        .into_iter()
+        .find_map(|key| notification_display_field(message, key))
+        .unwrap_or_else(|| "job".to_string())
+}
+
+fn notification_amount(message: Option<&serde_json::Value>) -> String {
+    notification_display_field(message, "tokenAmount").unwrap_or_else(|| "0".to_string())
+}
+
+fn notification_token_symbol(message: Option<&serde_json::Value>) -> String {
+    notification_display_field(message, "tokenSymbol").unwrap_or_default()
+}
+
+fn notification_is_subscription(message: Option<&serde_json::Value>) -> bool {
+    notification_display_field(message, "jobType").as_deref() == Some("1")
+}
+
+fn notification_is_paid(amount: &str) -> bool {
+    amount
+        .trim()
+        .parse::<f64>()
+        .is_ok_and(|value| value.is_finite() && value > 0.0)
+}
+
 /// Generate the structured next-action prompt for the ASP based on event.
 ///
 /// `event_str` accepts either an event name (provider_applied / job_accepted / ...)
@@ -733,6 +769,102 @@ pub async fn generate_next_action(
         )
         .await,
 
+        // ─── Job notifications (display-only) ──────────────────────────────
+        Event::JobAspAcceptExpire => {
+            let job_name = notification_job_name(message);
+            let amount = notification_amount(message);
+            let token_symbol = notification_token_symbol(message);
+            let content = if notification_is_subscription(message) {
+                super::content::subscription_job_asp_accept_expire_asp_notify(
+                    &job_name,
+                    job_id,
+                    &amount,
+                    &token_symbol,
+                )
+            } else {
+                super::content::regular_job_asp_accept_expire_asp_notify(
+                    &job_name,
+                    job_id,
+                    &amount,
+                    &token_symbol,
+                    notification_is_paid(&amount),
+                )
+            };
+            display_notify(
+                "job_asp_accept_expire (ASP acceptance timed out)",
+                &content,
+                None,
+            )
+        }
+        Event::JobAspRejectClosed => {
+            let job_name = notification_job_name(message);
+            let reason = notification_display_field(message, "aspRejectReason")
+                .or_else(|| notification_display_field(message, "reason"))
+                .unwrap_or_else(|| "No reason provided".to_string());
+            let content = if notification_is_subscription(message) {
+                super::content::subscription_job_asp_reject_closed_asp_notify(
+                    &job_name,
+                    job_id,
+                    &reason,
+                )
+            } else {
+                super::content::regular_job_asp_reject_closed_asp_notify(
+                    &job_name,
+                    job_id,
+                    &reason,
+                )
+            };
+            display_notify(
+                "job_asp_reject_closed (job declined)",
+                &content,
+                None,
+            )
+        }
+        Event::JobAspRejectExpire => {
+            let job_name = notification_job_name(message);
+            let amount = notification_amount(message);
+            let token_symbol = notification_token_symbol(message);
+            let content = if notification_is_subscription(message) {
+                super::content::subscription_job_asp_reject_expire_asp_notify(
+                    &job_name,
+                    job_id,
+                    &amount,
+                    &token_symbol,
+                )
+            } else {
+                super::content::regular_job_asp_reject_expire_asp_notify(
+                    &job_name,
+                    job_id,
+                    &amount,
+                    &token_symbol,
+                    notification_is_paid(&amount),
+                )
+            };
+            display_notify(
+                "job_asp_reject_expire (refund response timed out)",
+                &content,
+                None,
+            )
+        }
+        Event::SubAspClaimNotify => {
+            let job_name = notification_job_name(message);
+            let amount = notification_amount(message);
+            let token_symbol = notification_token_symbol(message);
+            let tx_hash = notification_display_field(message, "txHash")
+                .unwrap_or_else(|| "Not provided".to_string());
+            display_notify(
+                "sub_asp_claim_notify (subscription income collected)",
+                &super::content::sub_asp_claim_notify_asp_notify(
+                    &job_name,
+                    job_id,
+                    &amount,
+                    &token_symbol,
+                    &tx_hash,
+                ),
+                None,
+            )
+        }
+
         // ─── User Agent-driven tx receipt notifications; no ASP action needed ─────
         Event::JobClosed
         | Event::JobPaymentModeChanged => format!(
@@ -1027,7 +1159,7 @@ pub async fn generate_next_action(
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty());
             let period_end = message.and_then(|m| m.get("subEndTime")).and_then(|v| v.as_i64());
-            sub_asp_notify(
+            display_notify(
                 "sub_complete_notify (subscription completed)",
                 &super::content::sub_complete_notify_asp_notify(title, job_id, period_end),
                 Some(terminal_session_hint.as_str()),
@@ -1038,7 +1170,7 @@ pub async fn generate_next_action(
                 .and_then(|m| m.get("jobTitle").or_else(|| m.get("title")))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty());
-            sub_asp_notify(
+            display_notify(
                 "sub_close_notify (subscription closed)",
                 &super::content::sub_close_notify_asp_notify(title, job_id),
                 Some(terminal_session_hint.as_str()),
@@ -1053,7 +1185,7 @@ pub async fn generate_next_action(
                 .and_then(|m| m.get("failReason").or_else(|| m.get("reason")))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty());
-            sub_asp_notify(
+            display_notify(
                 "sub_failed_notify (subscription failed)",
                 &super::content::sub_failed_notify_asp_notify(title, job_id, reason),
                 Some(terminal_session_hint.as_str()),
@@ -1149,8 +1281,8 @@ pub async fn generate_next_action(
 
 /// Render an ASP-side display notification: the localize-then-user-notify scaffold wrapping the
 /// canonical English `content`, optionally followed by the terminal session-cleanup hint. Used by
-/// the subscription arms, which are notify-only (no state transition, no on-chain action).
-fn sub_asp_notify(header: &str, content: &str, terminal_hint: Option<&str>) -> String {
+/// display-only arms, which have no state transition or on-chain action.
+fn display_notify(header: &str, content: &str, terminal_hint: Option<&str>) -> String {
     let tail = match terminal_hint {
         Some(h) => format!("\n{h}\n"),
         None => String::new(),
@@ -1345,6 +1477,88 @@ mod tests {
         assert!(output.contains("Waiting for the User Agent's review"));
         assert!(output.contains("must NOT trigger a second A2A send"));
         assert!(!output.contains("ASP does NOT receive a `job_submitted`"));
+    }
+
+    #[tokio::test]
+    async fn subscription_job_notifications_render_asp_copy() {
+        let common = json!({
+            "jobId": ASP_JOB_ID,
+            "jobTitle": "BTC Signals",
+            "tokenAmount": "12.34",
+            "tokenSymbol": "USDT",
+            "jobType": 1
+        });
+
+        let mut accept_expire = common.clone();
+        accept_expire["event"] = json!("job_asp_accept_expire");
+        let out = run_asp("job_asp_accept_expire", accept_expire).await;
+        assert!(out.contains("[Job Timed Out] You did not respond to BTC Signals within 3 hours"));
+        assert!(out.contains("12.34 USDT"));
+        assert!(out.contains("onchainos agent user-notify"));
+        assert!(!out.contains("pending-decisions"));
+
+        let mut reject_closed = common.clone();
+        reject_closed["event"] = json!("job_asp_reject_closed");
+        reject_closed["aspRejectReason"] = json!("capacity unavailable");
+        let out = run_asp("job_asp_reject_closed", reject_closed).await;
+        assert!(out.contains("[Task Declined] You have declined BTC Signals."));
+        assert!(out.contains("Reason: capacity unavailable"));
+
+        let mut reject_expire = common.clone();
+        reject_expire["event"] = json!("job_asp_reject_expire");
+        let out = run_asp("job_asp_reject_expire", reject_expire).await;
+        assert!(out.contains("[Automatic Refund]"));
+        assert!(!out.contains("Response deadline:"));
+        assert!(out.contains("No further service delivery is required."));
+
+        let mut claim_notify = common;
+        claim_notify["event"] = json!("sub_asp_claim_notify");
+        claim_notify["txHash"] = json!("0xreceive");
+        let out = run_asp("sub_asp_claim_notify", claim_notify).await;
+        assert!(out.contains("[Income Collected]"));
+        assert!(!out.contains("Subscription income collected\n"));
+        assert!(out.contains("12.34 USDT for BTC Signals"));
+        assert!(out.contains("Transaction: 0xreceive"));
+        assert!(out.contains("onchainos agent user-notify"));
+    }
+
+    #[tokio::test]
+    async fn ordinary_job_notifications_split_free_and_paid_copy() {
+        let base = json!({
+            "jobId": ASP_JOB_ID,
+            "jobTitle": "One-off analysis",
+            "tokenSymbol": "USDT",
+            "jobType": 0
+        });
+
+        let mut free = base.clone();
+        free["event"] = json!("job_asp_accept_expire");
+        free["tokenAmount"] = json!("0");
+        let out = run_asp("job_asp_accept_expire", free).await;
+        assert!(out.contains("[Job Expired]"));
+        assert!(!out.contains("escrowed amount"));
+
+        let mut paid = base.clone();
+        paid["event"] = json!("job_asp_accept_expire");
+        paid["tokenAmount"] = json!("5");
+        let out = run_asp("job_asp_accept_expire", paid).await;
+        assert!(out.contains("escrowed amount of 5 USDT"));
+        assert!(out.contains("User Agent's wallet"));
+
+        let mut declined = base.clone();
+        declined["event"] = json!("job_asp_reject_closed");
+        declined["tokenAmount"] = json!("0");
+        declined["aspRejectReason"] = json!("policy");
+        let out = run_asp("job_asp_reject_closed", declined).await;
+        assert!(out.contains("[Job Declined]"));
+        assert!(out.contains("Job status: Closed"));
+
+        let mut free_refund = base;
+        free_refund["event"] = json!("job_asp_reject_expire");
+        free_refund["tokenAmount"] = json!("0.000");
+        let out = run_asp("job_asp_reject_expire", free_refund).await;
+        assert!(out.contains("[Refund Response Timed Out]"));
+        assert!(out.contains("Job status: Failed"));
     }
 
     #[tokio::test]

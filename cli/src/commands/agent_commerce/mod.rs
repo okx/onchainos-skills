@@ -4168,6 +4168,12 @@ async fn check_status_freshness(
         "round_failed",
         "reward_claimed",
         "wakeup_notify",
+        // Self-contained display events. Their message carries every copy field, and
+        // no task-status freshness check or detail request is required.
+        "job_asp_accept_expire",
+        "job_asp_reject_closed",
+        "job_asp_reject_expire",
+        "sub_asp_claim_notify",
     ];
 
     let is_prefetch_only = PREFETCH_ONLY_EVENTS.contains(&job_status_or_event);

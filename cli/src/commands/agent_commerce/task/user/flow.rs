@@ -487,6 +487,21 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::SubRejectRefundNotify => {
             super::flow_lifecycle::subscription::sub_reject_refund_notify(&ctx, message)
         }
+        Event::JobAspAcceptExpire => {
+            super::flow_lifecycle::notification::job_asp_accept_expire(&ctx, message)
+        }
+        Event::JobAspRejectClosed => {
+            super::flow_lifecycle::notification::job_asp_reject_closed(&ctx, message)
+        }
+        Event::JobAspRejectExpire => {
+            super::flow_lifecycle::notification::job_asp_reject_expire(&ctx, message)
+        }
+        Event::SubAspClaimNotify => {
+            "[System notification] sub_asp_claim_notify (ASP-only notification)\n\
+             [Role] User Agent\n\n\
+             Silently ignore; end this turn.\n"
+                .to_string()
+        }
         // ─── Events the user never receives + unknown fallback ──────────────────────────
         Event::Staked
         | Event::UnstakeRequested
@@ -879,7 +894,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             "sub_open" | "sub_created" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
             "sub_trial_into_active" | "sub_renew" | "sub_expire_warn" |
             "sub_complete_notify" | "sub_close_notify" | "sub_failed_notify" |
-            "sub_reject_refund_notify"
+            "sub_reject_refund_notify" |
+            "job_asp_accept_expire" | "job_asp_reject_closed" | "job_asp_reject_expire" |
+            "sub_asp_claim_notify"
     );
     let core = if use_cli_minimal || event_str == "create_task" {
         body
@@ -1391,6 +1408,97 @@ mod tests {
         );
         // Terminal notice (RefundSettled → Failed): carries the user-notify display scaffold.
         assert!(out.contains("user-notify"), "display notification: {out}");
+    }
+
+    #[tokio::test]
+    async fn subscription_job_notifications_render_user_copy() {
+        let common = json!({
+            "jobId": JOB_ID,
+            "jobTitle": "BTC Signals",
+            "tokenAmount": "12.34",
+            "tokenSymbol": "USDT",
+            "providerName": "Signal ASP",
+            "providerAgentId": "5263",
+            "jobType": 1
+        });
+
+        let mut accept_expire = common.clone();
+        accept_expire["event"] = json!("job_asp_accept_expire");
+        let out = run("job_asp_accept_expire", accept_expire).await;
+        assert!(out.contains("[Job Timed Out] The ASP did not accept BTC Signals within 3 hours."));
+        assert!(out.contains("12.34 USDT"));
+        assert!(out.contains("ASP: Signal ASP (5263)"));
+        assert!(out.contains("trial eligibility remains unaffected"));
+        assert!(out.contains("onchainos agent user-notify"));
+        assert!(!out.contains("pending-decisions"));
+
+        let mut reject_closed = common.clone();
+        reject_closed["event"] = json!("job_asp_reject_closed");
+        reject_closed["aspRejectReason"] = json!("capacity unavailable");
+        let out = run("job_asp_reject_closed", reject_closed).await;
+        assert!(out.contains("[ASP Declined] The ASP declined BTC Signals."));
+        assert!(out.contains("Reason: capacity unavailable"));
+        assert!(out.contains("subscription did not begin"));
+
+        let mut reject_expire = common;
+        reject_expire["event"] = json!("job_asp_reject_expire");
+        let out = run("job_asp_reject_expire", reject_expire).await;
+        assert!(out.contains("[Automatic Refund]"));
+        assert!(!out.contains("response deadline:"));
+        assert!(out.contains("Job status: Closed"));
+    }
+
+    #[tokio::test]
+    async fn ordinary_job_notifications_split_free_and_paid_copy() {
+        let base = json!({
+            "jobId": JOB_ID,
+            "jobTitle": "One-off analysis",
+            "tokenSymbol": "USDT",
+            "providerName": "Analyst",
+            "providerAgentId": "42",
+            "jobType": 0
+        });
+
+        let mut free = base.clone();
+        free["event"] = json!("job_asp_accept_expire");
+        free["tokenAmount"] = json!("0");
+        let out = run("job_asp_accept_expire", free).await;
+        assert!(out.contains("[Job Expired]"));
+        assert!(!out.contains("escrowed amount"));
+
+        let mut paid = base.clone();
+        paid["event"] = json!("job_asp_reject_closed");
+        paid["tokenAmount"] = json!("5");
+        paid["aspRejectReason"] = json!("policy");
+        let out = run("job_asp_reject_closed", paid).await;
+        assert!(out.contains("escrowed amount of 5 USDT"));
+        assert!(out.contains("Job status: Closed"));
+
+        let mut free_refund = base;
+        free_refund["event"] = json!("job_asp_reject_expire");
+        free_refund["tokenAmount"] = json!("0.000");
+        let out = run("job_asp_reject_expire", free_refund).await;
+        assert!(out.contains("[Refund Process Completed]"));
+        assert!(out.contains("Job status: Failed"));
+    }
+
+    #[tokio::test]
+    async fn sub_asp_claim_notify_is_silent_for_user_role() {
+        let out = run(
+            "sub_asp_claim_notify",
+            json!({
+                "event": "sub_asp_claim_notify",
+                "jobId": JOB_ID,
+                "jobTitle": "BTC Signals",
+                "tokenAmount": "12.34",
+                "tokenSymbol": "USDT",
+                "txHash": "0xreceive"
+            }),
+        )
+        .await;
+        assert!(out.contains("Silently ignore"));
+        assert!(!out.contains("onchainos agent user-notify"));
+        assert!(!out.contains("[Income Collected]"));
     }
 
     #[tokio::test]

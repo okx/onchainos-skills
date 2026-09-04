@@ -339,6 +339,16 @@ pub enum Event {
     /// ASP missed the rejection response window; user can claim refund via claimAutoRefund.
     SubRejectRefundNotify,
 
+    // ── Job notifications (display-only; no task action) ────────────────────
+    /// The designated ASP did not accept the job within three hours.
+    JobAspAcceptExpire,
+    /// The designated ASP declined the job, so it was closed.
+    JobAspRejectClosed,
+    /// The ASP did not process the refund request before its deadline.
+    JobAspRejectExpire,
+    /// Subscription income was collected and should be announced to the ASP.
+    SubAspClaimNotify,
+
     /// An event name returned by the backend that this enum does not recognize (also used to carry
     /// user-instruction pseudo events: dispute_raise / agree_refund / close).
     Other(String),
@@ -414,6 +424,11 @@ impl Event {
             "sub_close_notify"          => Event::SubCloseNotify,
             "sub_failed_notify"         => Event::SubFailedNotify,
             "sub_reject_refund_notify"  => Event::SubRejectRefundNotify,
+            // Job notifications (display-only)
+            "job_asp_accept_expire" => Event::JobAspAcceptExpire,
+            "job_asp_reject_closed" => Event::JobAspRejectClosed,
+            "job_asp_reject_expire" => Event::JobAspRejectExpire,
+            "sub_asp_claim_notify" => Event::SubAspClaimNotify,
             other                       => Event::Other(other.to_string()),
         }
     }
@@ -475,6 +490,10 @@ impl Event {
             Event::SubCloseNotify         => "sub_close_notify",
             Event::SubFailedNotify        => "sub_failed_notify",
             Event::SubRejectRefundNotify  => "sub_reject_refund_notify",
+            Event::JobAspAcceptExpire => "job_asp_accept_expire",
+            Event::JobAspRejectClosed => "job_asp_reject_closed",
+            Event::JobAspRejectExpire => "job_asp_reject_expire",
+            Event::SubAspClaimNotify => "sub_asp_claim_notify",
             Event::Other(s)               => s.as_str(),
         }
     }
@@ -564,6 +583,11 @@ pub fn status_when_event(e: &Event) -> Status {
         | Event::SubTrialIntoActive | Event::SubRenew | Event::SubExpireWarn
         | Event::SubCompleteNotify | Event::SubCloseNotify
         | Event::SubFailedNotify | Event::SubRejectRefundNotify            => Status::Other("subscription".to_string()),
+        // These backend events are notification-only and do not drive or imply a task status.
+        Event::JobAspAcceptExpire
+        | Event::JobAspRejectClosed
+        | Event::JobAspRejectExpire
+        | Event::SubAspClaimNotify => Status::Other("notification".to_string()),
         Event::Other(_)                                                     => Status::Other("unknown".to_string()),
     }
 }
@@ -814,6 +838,24 @@ mod tests {
         assert_eq!(parse_status_or_event("job_provider_reject"), Event::JobProviderReject);
         assert_eq!(parse_status_or_event("job_user_reject"), Event::JobUserReject);
         assert_eq!(parse_status_or_event("job_asp_selected"), Event::JobAspSelected);
+    }
+
+    #[test]
+    fn notification_events_roundtrip_without_task_status() {
+        let events = [
+            ("job_asp_accept_expire", Event::JobAspAcceptExpire),
+            ("job_asp_reject_closed", Event::JobAspRejectClosed),
+            ("job_asp_reject_expire", Event::JobAspRejectExpire),
+            ("sub_asp_claim_notify", Event::SubAspClaimNotify),
+        ];
+        for (name, event) in events {
+            assert_eq!(Event::parse(name), event);
+            assert_eq!(event.as_str(), name);
+            assert_eq!(
+                status_when_event(&event),
+                Status::Other("notification".to_string())
+            );
+        }
     }
 
     // ── Subscription event tests ──────────────────────────────────────

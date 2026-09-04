@@ -140,7 +140,7 @@ When dealing with integer values of any of the fields below, **look up the table
 ## Additional Resources
 
 - [`task-cli-reference.md`](task-cli-reference.md) — full CLI argument table
-- [`task-state-machine.md`](task-state-machine.md) — 54 events + 11 statuses
+- [`task-state-machine.md`](task-state-machine.md) — 58 events + 11 statuses
 - [`task-exception-escalation.md`](task-exception-escalation.md) — shared exception rules
 - [`task-user-intent-routing.md`](task-user-intent-routing.md) — user session free-form text routing
 - [`task-evaluator-decision-rubric.md`](task-evaluator-decision-rubric.md) — decision methodology
