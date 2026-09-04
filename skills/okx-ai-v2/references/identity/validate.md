@@ -1,48 +1,60 @@
 # ASP Listing Validation
 
-Validate ASP listings.
+Validate ASP identity and service information before create or update.
 
-## Validate listing
+## When to run
 
-- **Create:** after explicit Done for every service, validate the full identity and service set.
-- **Update:** after collection, run only when the agent name/description or a service create/update
-  changed. Use new-or-current identity values and only changed create/update services.
-- **Both:** call `validate-listing` once after collection, never in a service loop or after corrections.
+- **Registration:** validate the full identity and service set after the user confirms all services.
+- **Update:** validate after the user confirms all changes, using final identity values and changed
+  create/update services. Skip delete-only updates.
 
-## Add semantic checks
+Validate once per flow, never inside a service loop or before final confirmation.
 
-Keep all CLI findings and add only what requires semantic judgment:
+## Workflow
 
+### 1. Run CLI validation
+
+Call `validate-listing` once with the applicable identity and service information, then read `pass`
+and `findings[]` from the result.
+
+#### CLI reference
+
+```bash
+onchainos agent validate-listing \
+  --role <role> \
+  [--name <name>] \
+  [--description <text>] \
+  [--service '<json-array>']
+```
+
+- Each finding contains `field`, `severity`, `message`, and a diagnostic `code`.
+- Preserve CLI severities and never expose `code`.
+
+### 2. Apply semantic validation
+
+Keep every CLI finding and add only checks that require semantic judgment:
+
+- **Agent name:** require a brand, not a personal/public-figure name or substring.
+- **Agent description:** require one sentence based on the user's supplied information; do not
+  invent capabilities or metrics.
 - **Service name:** enforce the noun-phrase rule in the
   [`serviceName` contract](service-contract.md#servicename).
-- **Agent name:** require a brand, not a personal/public-figure name or substring.
-- **A2A description:** treat missing core capability as advisory.
-- **A2MCP description:** block any semantic violation of the contract's
-  [four-item structure](service-contract.md#servicedescription). On failure, localize and show only:
+- **Service description:** follow the
+  [`serviceDescription` contract](service-contract.md#servicedescription). Treat a missing A2A core
+  capability as advisory; block any A2MCP violation and help the user revise it to satisfy the
+  contract.
 
-  - **Reason:**
+Use only these rules for semantic severity and exceptions; never restate or reinterpret CLI rules.
 
-    `The request description is incomplete — it is missing one or more of: what the service does, the parameter specification, the request method, or the CURL request example. Buyers and the sandbox cannot determine how to call this service.`
+### 3. Merge findings and resolve
 
-  - **Suggestion:**
-
-    `In the request description, include all four: (1) what the service does, (2) each key parameter — all on one line, separated by ;, in the format name(type, required/optional): meaning (append the default value for an optional parameter), (3) the request method (POST/GET or tool name), (4) a working CURL example using the real endpoint.`
-
-## Present results
-
-- Preserve CLI severities. Use only the rules above for semantic severity and exceptions; never
-  restate or reinterpret them.
-- **If there are no findings,** say QA passed.
-- **Otherwise,** map dotted `field` values to identity/service card rows; translate and de-duplicate
-  `message` by `(field,message)`; never show `code`; retain originals; bold affected name rows.
-
-## Resolve findings
-
-- Ask one localized choice set, then redraw.
-- Label every semantic rewrite `drafted from your words — please review` and obtain normal
-  confirmation. If rejected, recollect and redraw.
-- **No safe draft:** if a required field is blank or cannot be safely derived from the user's input,
-  ask the user for it before offering correction choices.
-- **Any blocker:** `1 Use the drafted corrections / 2 I'll revise`. Apply only drafts derived from
-  the user's words; advisory drafts remain optional.
-- **Advisory only:** `1 Skip and keep original / 2 Use suggestion / 3 I'll revise`.
+- Merge CLI and semantic findings, preserve severity, de-duplicate by `(field,message)`, and
+  localize messages. Map dotted `field` values to card rows, bold affected name rows, and never show
+  diagnostic `code`.
+- If there are no findings, say QA passed.
+- If a required value is missing or no correction can be derived safely, ask the user to provide it.
+- Otherwise, propose only corrections derived from the user's words. Label semantic drafts
+  `drafted from your words — please review`, then offer one localized choice set:
+  - **Any blocker:** `1 Use the drafted corrections / 2 I'll revise`.
+  - **Advisory only:** `1 Skip and keep original / 2 Use suggestion / 3 I'll revise`.
+- Apply only the user's selection, then redraw. If the user chooses to revise, recollect first.
