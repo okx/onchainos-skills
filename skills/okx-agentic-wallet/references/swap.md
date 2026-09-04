@@ -70,25 +70,21 @@ Use `nextSteps.checkSwapStatus` verbatim. After Reply 1, if `txStatus` is not `S
 
 ## Insufficient-Balance Top-up Recovery (Swap)
 
-When `swap quote` returns `phase=swap_funding`, `decision=blocked`,
-`reason=insufficient_balance`, and `scene=swap_insufficient_balance`, use only
-the current `nextAction`. Full field list:
-[swap-cli-reference.md](swap-cli-reference.md) → Insufficient-balance scene.
+When `swap quote` returns `phase=funding_required`, `decision=blocked`,
+and `reason=insufficient_balance`, enter the shared Funding Reference
+immediately. Full field list:
+[swap-cli-reference.md](swap-cli-reference.md) → Common insufficient-balance result.
 
 **Recovery flow**:
 
-1. Render the business-owned insufficient-balance result from
-   [swap-output-templates.md](swap-output-templates.md). It asks whether to fund
-   and must not display the address or QR yet.
-2. Route `fund_account` only through
-   [funding-action-routing.md](../../_shared/funding-action-routing.md), then
-   follow [funding.md](../../_shared/funding.md). The shared address + QR
-   template starts only after the user selects the funding action.
-3. After shared Funding verifies a sufficient balance, it asks whether to
+1. Follow [funding.md](funding.md) immediately. Its shared Funding-required
+   template displays the balance, shortfall, address, and QR in the same
+   response.
+2. After shared Funding verifies a sufficient balance, it asks whether to
    continue using the current conversation context. If the user continues the
    swap, treat it as a new Swap intent and obtain a new quote from current
    inputs. If the original inputs are no longer clear, ask for them.
-4. Branch only on that new CLI result: another structured insufficient-balance
+3. Branch only on that new CLI result: another structured insufficient-balance
    result re-enters this recovery; a normal quote replaces the old quote and
    requires the ordinary fresh Swap confirmation before execution. Any quote
    display belongs to the normal Swap template, not the shared Funding template.

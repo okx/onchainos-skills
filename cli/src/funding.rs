@@ -13,11 +13,12 @@
 //!
 //! Scope (Appendix A): this module contains **NO** business recovery state
 //! machine, **NO** resume logic, and **NO** scene-specific formatting. The
-//! standard blocked-result helper maps every scene into the same
-//! `fundingTarget` / `qr` / `fundingNeed` payload. Loading/refreshing `wallets.json`
-//! (`ensure_wallet_accounts_fresh`, spec §6.2) is the caller's responsibility —
-//! these functions take an already-loaded [`WalletsJson`] and perform a pure,
-//! hermetic composition (mirroring T4's pure-lookup resolver).
+//! standard blocked-result helper maps every caller into the same
+//! `fundingTarget` / `qr` / `fundingNeed` payload. That result enters the shared
+//! Funding Reference immediately; no intermediate user-selected action is
+//! required. The public wallet-backed
+//! builder refreshes account/address facts before composing the result; the
+//! pure resolver remains internal for deterministic tests.
 
 use anyhow::Result;
 use num_bigint::BigUint;
@@ -30,10 +31,12 @@ use crate::commands::agentic_wallet::account::{
     resolve_account_address_for_chain, resolve_active_account_id,
 };
 use crate::qr::{build_qr_output, QrOutput};
+use crate::wallet_api::WalletApiClient;
+use crate::wallet_store;
 use crate::wallet_store::WalletsJson;
 
 /// Composition of Funding Target Resolver output + Common QR output. Internal
-/// only — not a new CLI output type; scenes project it into their own JSON.
+/// only — the public Funding builder projects it into the common JSON contract.
 #[derive(Debug, Clone, Serialize)]
 pub struct FundingBundle {
     pub target: FundingTarget,
@@ -63,63 +66,74 @@ pub struct FundingTarget {
     pub same_network_required: bool,
 }
 
-/// Common facts every business supplies when an operation is blocked by a
-/// funding shortfall. Business handlers own only their phase/reason and input
-/// facts; this module owns the shared Funding payload and action contract.
+pub const FUNDING_REQUIRED_PHASE: &str = "funding_required";
+pub const FUNDING_OPERATION_TRANSFER: &str = "transfer";
+pub const FUNDING_OPERATION_SWAP: &str = "swap";
+pub const FUNDING_OPERATION_A2A_PAYMENT: &str = "a2a_payment";
+pub const FUNDING_OPERATION_TASK_CREATION: &str = "task_creation";
+
+/// Fixed public input for any operation blocked by a funding shortfall.
+///
+/// `operation` is an optional presentation key consumed by the shared Funding
+/// template. It is not business state and does not authorize resuming work.
 pub struct FundingBlockedInput<'a> {
-    pub phase: &'a str,
-    pub reason: &'a str,
-    pub asset: Option<&'a str>,
+    pub asset: &'a str,
     pub token_address: &'a str,
-    pub required: Option<&'a str>,
+    pub required: &'a str,
     pub balance: Option<&'a str>,
-    pub business_payload: Value,
+    pub operation: Option<&'a str>,
+    /// Optional diagnostic facts supplied by the business. They are rendered
+    /// only when present and never participate in routing or recovery.
+    pub error_code: Option<&'a str>,
+    pub error_message: Option<&'a str>,
 }
 
-/// Build the standard structured result consumed by the shared Funding
-/// Reference. The owning business may wrap this value in its existing success
-/// or error envelope, but must not reconstruct `fundingTarget`, `qr`,
-/// `fundingNeed`, or the `fund_account` action itself.
-pub fn build_funding_blocked_result(
+/// Pure composition helper used by the public one-call builders and unit tests.
+/// Business modules must use [`build_funding_bundle`] or
+/// [`build_funding_bundle_for_address`] instead of reconstructing this contract.
+pub(crate) fn build_funding_blocked_result(
     bundle: &FundingBundle,
     input: FundingBlockedInput<'_>,
 ) -> Value {
     let shortfall = input
-        .required
-        .zip(input.balance)
-        .and_then(|(required, balance)| readable_shortfall(required, balance));
-    let mut payload = match input.business_payload {
-        Value::Object(payload) => payload,
-        _ => Map::new(),
-    };
-    payload.insert(
-        "fundingTarget".to_string(),
-        serde_json::to_value(&bundle.target).unwrap_or(Value::Null),
-    );
-    payload.insert(
-        "qr".to_string(),
-        serde_json::to_value(&bundle.qr).unwrap_or(Value::Null),
-    );
-    payload.insert(
-        "fundingNeed".to_string(),
-        json!({
-            "asset": input.asset,
-            "tokenAddress": input.token_address,
-            "required": input.required,
-            "balance": input.balance,
-            "shortfall": shortfall,
-        }),
-    );
+        .balance
+        .and_then(|balance| readable_shortfall(input.required, balance));
+    let mut funding_need = json!({
+        "asset": input.asset,
+        "tokenAddress": input.token_address,
+        "required": input.required,
+        "balance": input.balance,
+    });
+    if let Some(shortfall) = shortfall {
+        funding_need["shortfall"] = Value::String(shortfall);
+    }
+    let mut payload = json!({
+        "fundingTarget": serde_json::to_value(&bundle.target).unwrap_or(Value::Null),
+        "qr": serde_json::to_value(&bundle.qr).unwrap_or(Value::Null),
+        "fundingNeed": funding_need,
+    });
+    if let Some(operation) = input.operation {
+        payload["operation"] = Value::String(operation.to_string());
+    }
+    let mut error = Map::new();
+    if let Some(code) = input.error_code.filter(|value| !value.trim().is_empty()) {
+        error.insert("code".to_string(), Value::String(code.to_string()));
+    }
+    if let Some(message) = input
+        .error_message
+        .filter(|value| !value.trim().is_empty())
+    {
+        error.insert("message".to_string(), Value::String(message.to_string()));
+    }
+    if !error.is_empty() {
+        payload["error"] = Value::Object(error);
+    }
 
     json!({
-        "phase": input.phase,
+        "phase": FUNDING_REQUIRED_PHASE,
         "decision": "blocked",
-        "reason": input.reason,
-        "nextAction": [{
-            "id": "fund_account",
-            "recommend": true,
-            "params": {},
-        }],
+        "reason": "insufficient_balance",
+        "nextAction": [],
         "payload": payload,
     })
 }
@@ -146,7 +160,7 @@ pub fn resolve_funding_target(wallets: &WalletsJson, chain_index: &str) -> Resul
 /// Resolve the target then compose it with the Common QR output into a
 /// [`FundingBundle`] (spec §2.5). On a resolution failure the whole call errors —
 /// no partial bundle and no QR is built.
-pub fn build_funding_bundle(
+fn build_funding_bundle_from_wallets(
     wallets: &WalletsJson,
     chain_index: &str,
     image_dir: Option<&Path>,
@@ -156,11 +170,42 @@ pub fn build_funding_bundle(
     Ok(FundingBundle { target, qr })
 }
 
-/// Compose a Funding bundle for a caller that already resolved the receiving
-/// address through another authoritative identity path (for example an Agent
-/// Commerce agent ID). This keeps target normalization and QR construction in
-/// the same common module instead of rebuilding them in each business.
-pub fn build_funding_bundle_for_address(
+/// Resolve a Funding bundle for the selected wallet account using freshly
+/// queried account/address facts. Kept crate-visible for the post-funding check,
+/// which needs target + QR without creating another blocked Funding result.
+pub(crate) async fn resolve_current_funding_bundle(
+    chain_index: &str,
+    image_dir: Option<&Path>,
+) -> Result<FundingBundle> {
+    let access_token =
+        crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
+    let mut wallets = wallet_store::load_wallets()?.ok_or_else(|| {
+        anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN)
+    })?;
+    let mut client = WalletApiClient::new()?;
+    crate::commands::agentic_wallet::balance::refresh_wallet_accounts_strict(
+        &mut client,
+        &access_token,
+        &mut wallets,
+    )
+    .await?;
+    build_funding_bundle_from_wallets(&wallets, chain_index, image_dir)
+}
+
+/// One-call business integration for a wallet-backed insufficient-balance
+/// branch. The business supplies only its fixed facts; this function owns fresh
+/// address resolution, QR generation, shortfall calculation, and the stable
+/// result that enters the shared Funding Reference immediately.
+pub async fn build_funding_bundle(
+    chain_index: &str,
+    input: FundingBlockedInput<'_>,
+) -> Result<Value> {
+    validate_funding_blocked_input(&input)?;
+    let bundle = resolve_current_funding_bundle(chain_index, None).await?;
+    Ok(build_funding_blocked_result(&bundle, input))
+}
+
+fn compose_funding_bundle_for_address(
     account_name: &str,
     chain_index: &str,
     receive_address: &str,
@@ -182,6 +227,46 @@ pub fn build_funding_bundle_for_address(
     };
     let qr = build_qr_output(receive_address, image_dir);
     Ok(FundingBundle { target, qr })
+}
+
+/// One-call integration for a business whose authoritative identity path has
+/// already resolved the receiving address (for example Agent Commerce).
+pub fn build_funding_bundle_for_address(
+    account_name: &str,
+    chain_index: &str,
+    receive_address: &str,
+    input: FundingBlockedInput<'_>,
+) -> Result<Value> {
+    validate_funding_blocked_input(&input)?;
+    let bundle = compose_funding_bundle_for_address(
+        account_name,
+        chain_index,
+        receive_address,
+        None,
+    )?;
+    Ok(build_funding_blocked_result(&bundle, input))
+}
+
+fn validate_funding_blocked_input(input: &FundingBlockedInput<'_>) -> Result<()> {
+    if input.asset.trim().is_empty() {
+        anyhow::bail!("funding asset must not be blank");
+    }
+    if input.operation.is_some_and(|operation| operation.trim().is_empty()) {
+        anyhow::bail!("funding operation must not be blank when provided");
+    }
+    let required = readable_shortfall(input.required, "0")
+        .ok_or_else(|| anyhow::anyhow!("funding required amount must be a plain non-negative decimal"))?;
+    if required == "0" {
+        anyhow::bail!("funding required amount must be greater than zero");
+    }
+    if let Some(balance) = input.balance {
+        let shortfall = readable_shortfall(input.required, balance)
+            .ok_or_else(|| anyhow::anyhow!("funding balance must be a plain non-negative decimal"))?;
+        if shortfall == "0" {
+            anyhow::bail!("funding bundle requires an actual balance shortfall");
+        }
+    }
+    Ok(())
 }
 
 /// Return `required - available` for non-negative readable decimal amounts.
@@ -337,7 +422,7 @@ mod tests {
         let wallets = wallets_fixture(vec![addr("1", "0xEvmShared")]);
         let dir = funding_test_dir("funding_bundle_image");
 
-        let bundle = build_funding_bundle(&wallets, "1", Some(&dir)).unwrap();
+        let bundle = build_funding_bundle_from_wallets(&wallets, "1", Some(&dir)).unwrap();
 
         // Target is composed verbatim from resolve_funding_target.
         assert_eq!(bundle.target.chain_name, "Ethereum");
@@ -372,25 +457,28 @@ mod tests {
     #[test]
     fn blocked_result_builds_the_common_funding_contract() {
         let wallets = wallets_fixture(vec![addr("196", "0xReceive")]);
-        let bundle = build_funding_bundle(&wallets, "196", None).unwrap();
+        let bundle = build_funding_bundle_from_wallets(&wallets, "196", None).unwrap();
         let value = build_funding_blocked_result(
             &bundle,
             FundingBlockedInput {
-                phase: "example_funding",
-                reason: "asset_shortfall",
-                asset: Some("USDC"),
+                asset: "USDC",
                 token_address: "0xToken",
-                required: Some("10"),
+                required: "10",
                 balance: Some("1"),
-                business_payload: json!({"scene": "example_balance_shortfall"}),
+                operation: Some("example_operation"),
+                error_code: Some("E_BALANCE"),
+                error_message: Some("Insufficient funds"),
             },
         );
 
-        assert_eq!(value["phase"], "example_funding");
-        assert_eq!(value["reason"], "asset_shortfall");
+        assert_eq!(value["phase"], FUNDING_REQUIRED_PHASE);
+        assert_eq!(value["reason"], "insufficient_balance");
+        assert_eq!(value["nextAction"], json!([]));
+        assert_eq!(value["payload"]["operation"], "example_operation");
+        assert_eq!(value["payload"]["error"]["code"], "E_BALANCE");
         assert_eq!(
-            value["nextAction"],
-            json!([{"id": "fund_account", "recommend": true, "params": {}}])
+            value["payload"]["error"]["message"],
+            "Insufficient funds"
         );
         assert_eq!(value["payload"]["fundingNeed"]["shortfall"], "9");
         assert_eq!(
@@ -403,13 +491,28 @@ mod tests {
     #[test]
     fn resolved_address_bundle_uses_the_same_target_and_qr_rules() {
         let address = "0x1234567890abcdef1234567890abcdef12345678";
-        let bundle = build_funding_bundle_for_address("Agent", "196", address, None)
-            .expect("resolved address bundle");
-        assert_eq!(bundle.target.account_name, "Agent");
-        assert_eq!(bundle.target.chain_name, "X Layer");
-        assert!(bundle.target.gas_free);
-        assert_eq!(bundle.target.receive_address, address);
-        assert_eq!(bundle.qr.requested_format, "auto");
+        let value = build_funding_bundle_for_address(
+            "Agent",
+            "196",
+            address,
+            FundingBlockedInput {
+                asset: "USDT",
+                token_address: "0xToken",
+                required: "10",
+                balance: Some("1"),
+                operation: None,
+                error_code: None,
+                error_message: None,
+            },
+        )
+        .expect("resolved address funding result");
+        assert_eq!(value["payload"]["fundingTarget"]["accountName"], "Agent");
+        assert_eq!(value["payload"]["fundingTarget"]["chainName"], "X Layer");
+        assert_eq!(value["payload"]["fundingTarget"]["gasFree"], true);
+        assert_eq!(value["payload"]["fundingTarget"]["receiveAddress"], address);
+        assert_eq!(value["payload"]["qr"]["requestedFormat"], "auto");
+        assert!(value["payload"].get("operation").is_none());
+        assert!(value["payload"].get("error").is_none());
     }
 
     #[test]
@@ -419,6 +522,6 @@ mod tests {
         let wallets = wallets_fixture(vec![addr("1", "0xEvmShared")]);
 
         assert!(resolve_funding_target(&wallets, "0").is_err());
-        assert!(build_funding_bundle(&wallets, "0", None).is_err());
+        assert!(build_funding_bundle_from_wallets(&wallets, "0", None).is_err());
     }
 }

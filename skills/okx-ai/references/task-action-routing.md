@@ -8,7 +8,6 @@ legacy prose field `action`.
 | `login` | `okx-agentic-wallet` login flow | Owning Skill | Rerun prepare with the same `sid` |
 | `register_user_agent` | `identity-register.md` with User Agent role | Required | Rerun prepare with the same `sid` |
 | `invoke_a2mcp` | `a2mcp-direct-invoke.md` | Parameters are collected and validated automatically; only payment is confirmed in that playbook | Run the A2MCP direct-invocation flow |
-| `fund_account` | [`funding.md`](../../_shared/funding.md) using the latest common Funding payload | Required | Verify balance, then let a user request to continue re-enter task creation from current context |
 | `restore_subscription` | `task-user-duplicate-subscription-guide.md` | Required | Enter scoped watch |
 | `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |
 | `stop` | End the current flow | No | Run no further command |
@@ -16,6 +15,10 @@ legacy prose field `action`.
 ## Routing rules
 
 - Read this file when a CLI result contains `nextAction`.
+- A structured `phase=funding_required`, `decision=blocked`,
+  `reason=insufficient_balance` result enters
+  [`funding.md`](../../okx-agentic-wallet/references/funding.md) directly and has no Action Routing
+  entry.
 - `invoke_a2mcp` is valid only with `phase=service_routing`,
   `decision=ready`, `reason=a2mcp_service_confirmed`,
   `payload.schemaVersion=1`, and `payload.serviceSnapshot`. A mismatch blocks;

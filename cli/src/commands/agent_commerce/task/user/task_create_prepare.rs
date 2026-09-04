@@ -329,7 +329,7 @@ pub(crate) async fn handle_task_create_prepare(
 
     let currency = required_service_string(&service, "feeTokenSymbol")?;
     match common::ensure_sufficient_balance(required, &currency).await {
-        Ok(_) => {
+        Ok(()) => {
             emit(
                 PHASE_CREATION,
                 "ready",
@@ -349,25 +349,21 @@ pub(crate) async fn handle_task_create_prepare(
             let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
                 .await
                 .ok_or_else(|| anyhow!("failed to resolve the funding address"))?;
-            let bundle = crate::funding::build_funding_bundle_for_address(
+            let fee_token = required_service_string(&service, "feeToken")?;
+            let result = crate::funding::build_funding_bundle_for_address(
                 "",
                 &deposit.chain_index,
                 &deposit.address,
-                None,
-            )?;
-            let fee_token = required_service_string(&service, "feeToken")?;
-            let result = crate::funding::build_funding_blocked_result(
-                &bundle,
                 crate::funding::FundingBlockedInput {
-                    phase: PHASE_PAYMENT_VALIDATION,
-                    reason: "insufficient_balance",
-                    asset: Some(&insufficient.currency),
+                    asset: &insufficient.currency,
                     token_address: &fee_token,
-                    required: Some(&insufficient.required),
+                    required: &insufficient.required,
                     balance: Some(&insufficient.available),
-                    business_payload: service,
+                    operation: Some(crate::funding::FUNDING_OPERATION_TASK_CREATION),
+                    error_code: None,
+                    error_message: None,
                 },
-            );
+            )?;
             crate::output::success(result);
             Ok(())
         }

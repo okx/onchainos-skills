@@ -5,32 +5,6 @@ progression fields `phase`, `decision`, `reason`, `nextAction`, and `payload`.
 Render the result in the user's language. Treat `action` as legacy guidance,
 not as a routing signal.
 
-## Task creation insufficient balance
-
-Match this business-owned template before the generic blocked shell:
-
-```text
-phase=payment_validation
-decision=blocked
-reason=insufficient_balance
-payload.fundingNeed is present
-```
-
-```text
-The task cannot be created because the {payload.fundingNeed.asset} balance is insufficient.
-
-Current balance: {payload.fundingNeed.balance} {payload.fundingNeed.asset}
-Required: {payload.fundingNeed.required} {payload.fundingNeed.asset}
-Shortfall: {payload.fundingNeed.shortfall} {payload.fundingNeed.asset}
-
-Fund the account before continuing task creation?
-{render only the returned fund_account action label}
-```
-
-All balance fields come directly from `fundingNeed`. Do not display
-`fundingTarget` or `qr` before the user selects `fund_account`; after selection,
-route to the shared Funding Reference and its common address + QR template.
-
 ## Common shell
 
 Use three sections:

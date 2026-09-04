@@ -76,34 +76,8 @@ A2MCP reference. Otherwise, use the A2A task/subscription preparation flow.
 
 ## Task progression
 
-Treat the CLI result as the progression contract:
-When presenting it to the user, read `references/task-output-templates.md` for
-the platform-neutral result and next-action templates. When routing an action,
-read `references/task-action-routing.md`.
-
-```json
-{
-  "phase": "balance_validation",
-  "decision": "blocked",
-  "reason": "insufficient_balance",
-  "nextAction": [{"id": "fund_account", "recommend": true}],
-  "payload": {}
-}
-```
-
-- `phase`: current lifecycle phase.
-- `decision`: `ready`, `blocked`, or `requires_user_input`.
-- `reason`: machine-readable result or blocking reason.
-- `nextAction`: ordered list of stable action objects; `recommend=true` marks the preferred option.
-- `payload`: structured data for the current phase.
-
-Route by `decision`, then use `reason`, `nextAction`, and `payload`:
-
-- `ready`: execute or present `nextAction`.
-- `blocked`: stop the current path and handle `reason`.
-- `requires_user_input`: collect only the missing input indicated by `payload`, then retry the selected `nextAction`.
-
-Render `nextAction` as a numbered list. Never invent actions not returned by the CLI.
-
-Do not infer progression from human-readable output. Keep backend field names
-inside `payload` unchanged. 
+Route task creation and task lifecycle intents through
+`references/task-user-intent-routing.md`. That Reference selects the owning
+business Reference, including the shared Funding Reference for a structured
+insufficient-balance result. Do not infer progression from human-readable
+output or invent an action not returned by the CLI.

@@ -133,7 +133,7 @@ fn attachments_and_stop() -> String {
     let watch_section = if is_cli_mode() {
         "\
 **After create-task/create-subscribe + task-attach (if any), check CLI output for a `[Watch]` block:**
-0. If balanceWarning exists, stop here; do not Watch.
+0. If `phase=funding_required`, follow `skills/okx-agentic-wallet/references/funding.md`, render its shared balance/address/QR template immediately, then stop; do not Watch.
 1. `[Watch]` block present → follow its instructions: read `skills/okx-ai/references/watch-core.md` and enter its Watch generation. A returned notification, deliverable, or empty poll does **not** end the turn; dispatch and re-enter until `watch-core.md` says to stop or a decision requires the user's reply.
 2. No `[Watch]` block → **end this turn immediately**."
     } else {
@@ -149,10 +149,10 @@ If the user included file(s)/image(s) as task material → for each: `onchainos 
 
 ================================================
 
-After success:
+After the create command:
 
-- `blockedReason=insufficient-balance`: save the selected Service sid + `balanceWarning`; if `fundingNoticeCommand` exists, run it. `terminal-unicode`: show `terminalQr` + full notice. `image-notify`: localize `contentCanonical`, run `notifyCommandArgs`, put `markdownImage` under option 1 in final. If missing, show `balanceWarning`. END TURN; do not create again or Watch. After the user says funded, rerun `task-create-prepare` with that sid and require a fresh creation confirmation; never rerun this saved write command directly.
-- No `balanceWarning`: tell the user directly: \"{create_designated}\"
+- `phase=funding_required`, `decision=blocked`, `reason=insufficient_balance`: enter `skills/okx-agentic-wallet/references/funding.md` immediately and render its shared Funding-required template from the same payload, including balance, address, and QR. Do not save or replay the create command. END TURN; do not create again or Watch.
+- Otherwise, after successful submission: tell the user directly: \"{create_designated}\"
 - Legacy submitted `balanceWarning`: save `jobId` + warning, render `funding-notice`; on Codex/Claude Code repeat the full notice in final. END TURN; do not Watch.
 
 {watch_section}
@@ -798,17 +798,14 @@ mod tests {
     #[test]
     fn regular_create_task_requires_full_balance_notice_before_watch() {
         let out = create_task_regular();
-        assert!(out.contains("balanceWarning"));
-        assert!(out.contains("blockedReason=insufficient-balance"));
-        assert!(out.contains("save the selected Service sid + `balanceWarning`"));
-        assert!(out.contains("rerun `task-create-prepare` with that sid"));
-        assert!(out.contains("never rerun this saved write command directly"));
-        assert!(out.contains("if `fundingNoticeCommand` exists, run it"));
-        assert!(out.contains("`terminal-unicode`"));
-        assert!(out.contains("show `terminalQr` + full notice"));
-        assert!(out.contains("`image-notify`"));
-        assert!(out.contains("run `notifyCommandArgs`"));
-        assert!(out.contains("If missing, show `balanceWarning`"));
+        assert!(out.contains("`phase=funding_required`"));
+        assert!(out.contains("`decision=blocked`"));
+        assert!(out.contains("`reason=insufficient_balance`"));
+        assert!(out.contains(
+            "enter `skills/okx-agentic-wallet/references/funding.md` immediately"
+        ));
+        assert!(out.contains("including balance, address, and QR"));
+        assert!(out.contains("Do not save or replay the create command"));
         assert!(out.contains("END TURN"));
         assert!(out.contains("do not create again or Watch"));
         assert!(out.contains("Legacy submitted `balanceWarning`"));

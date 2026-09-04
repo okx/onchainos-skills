@@ -615,8 +615,8 @@ fn swap_quote_readable_amount_reports_wallet_balance() {
 }
 
 /// IT-010 — swap insufficient-balance scene: a quote for more than the wallet
-/// holds surfaces the flat top-level `swap_insufficient_balance` object with the
-/// common Funding target, QR, need, and `fund_account` action (spec §2.2,
+/// holds surfaces the structured `swap_insufficient_balance` result with the
+/// common Funding target, QR, and need (spec §2.2,
 /// exit 1). This requires a logged-in wallet whose balance
 /// is below the requested amount; without one the CLI cannot detect a shortfall
 /// and returns a normal quote (exit 0) whose routes carry `walletBalance`. The
@@ -639,7 +639,9 @@ fn swap_quote_insufficient_balance_scene_or_normal_quote() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or(serde_json::Value::Null);
 
-    if json.get("scene").and_then(|s| s.as_str()) == Some("swap_insufficient_balance") {
+    if json.pointer("/data/phase").and_then(|s| s.as_str()) == Some("funding_required")
+        && json.pointer("/data/payload/operation").and_then(|s| s.as_str()) == Some("swap")
+    {
         // CSV IT-010 is an `error` row with exit_code=1; the scene path exits 1
         // (spec §3.1 / §3.2). Assert it here so the scene contract also pins the
         // process outcome, not just the JSON body.
@@ -650,21 +652,20 @@ fn swap_quote_insufficient_balance_scene_or_normal_quote() {
         );
         assert_eq!(json["ok"], serde_json::Value::Bool(false), "scene must be ok:false: {json}");
         assert!(
-            json.get("fundingAddress").is_some(),
-            "swap_insufficient_balance must carry fundingAddress: {json}"
+            json.pointer("/data/payload/fundingTarget/receiveAddress").is_some(),
+            "swap_insufficient_balance must carry fundingTarget.receiveAddress: {json}"
         );
         assert_eq!(
-            json["nextAction"],
-            serde_json::json!([{"id": "fund_account", "recommend": true, "params": {}}]),
-            "scene must expose only the common funding action: {json}"
+            json["data"]["nextAction"],
+            serde_json::json!([]),
+            "funding is entered immediately and must not require an intermediate action: {json}"
         );
         assert!(
-            json["payload"]["fundingTarget"].is_object()
-                && json["payload"]["qr"].is_object()
-                && json["payload"]["fundingNeed"].is_object(),
+            json["data"]["payload"]["fundingTarget"].is_object()
+                && json["data"]["payload"]["qr"].is_object()
+                && json["data"]["payload"]["fundingNeed"].is_object(),
             "scene must carry the common funding payload: {json}"
         );
-        assert_eq!(json["nextAction"][0]["params"], serde_json::json!({}));
     } else if output.status.success() {
         let data = assert_ok_and_extract_data(&output);
         assert!(

@@ -234,8 +234,8 @@ fn quote_malformed_param_is_invalid_input() {
 //
 // IT-011 (live, error). When an `a2a-pay pay` credential comes back
 // `success=false` with `errorReason=insufficient_balance`, the CLI enriches the
-// failure with `data.scene=a2a_insufficient_balance`, `needsNewPaymentId=true`
-// and a populated `paymentChain.chainName` (spec §2.4, exit 1). Building that
+// failure with the common `phase=funding_required` contract and
+// `payload.operation=a2a_payment` (spec §2.4, exit 1). Building that
 // scene requires a logged-in wallet (`wallet_store::load_wallets()` must resolve
 // an account) plus a payment that actually returns `insufficient_balance`.
 //
@@ -271,17 +271,16 @@ fn a2a_pay_insufficient_balance_scene_or_structured_failure() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let json: Value = serde_json::from_str(&stdout).unwrap_or(Value::Null);
 
-    if json.pointer("/data/scene").and_then(|s| s.as_str()) == Some("a2a_insufficient_balance") {
+    if json.pointer("/data/phase").and_then(|s| s.as_str()) == Some("funding_required")
+        && json.pointer("/data/payload/operation").and_then(|s| s.as_str())
+            == Some("a2a_payment")
+    {
         assert_eq!(json["ok"], Value::Bool(false), "scene must be ok:false: {json}");
-        assert_eq!(
-            json["data"]["needsNewPaymentId"],
-            Value::Bool(true),
-            "scene must set needsNewPaymentId=true: {json}"
-        );
         assert!(
-            json["data"]["paymentChain"]["chainName"].is_string(),
-            "scene must populate paymentChain.chainName: {json}"
+            json["data"]["payload"]["fundingTarget"]["chainName"].is_string(),
+            "funding result must populate fundingTarget.chainName: {json}"
         );
+        assert!(json["data"]["payload"].get("paymentId").is_none());
         return;
     }
 

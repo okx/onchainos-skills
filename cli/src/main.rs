@@ -313,14 +313,6 @@ async fn run() {
                                         std::process::exit(1);
                                     }
                                     Err(e) => {
-                                        // Shared flat exit-1 path for the
-                                        // insufficient-balance scenes: the handler
-                                        // pre-built its own top-level object; print
-                                        // it verbatim, no envelope wrapping.
-                                        if let Some(se) = e.downcast_ref::<output::SceneError>() {
-                                            output::error_flat(&se.value);
-                                            std::process::exit(1);
-                                        }
                                         output::error(&format!("{e:#}"));
                                         std::process::exit(1);
                                     }

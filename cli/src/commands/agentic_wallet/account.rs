@@ -164,6 +164,13 @@ mod tests {
     }
 
     #[test]
+    fn resolve_account_address_for_unknown_chain_never_falls_back_to_evm() {
+        let wallets = wallets_with_addresses(vec![addr("1", "0xEvmShared")]);
+
+        assert!(resolve_account_address_for_chain(&wallets, "999999").is_err());
+    }
+
+    #[test]
     fn resolve_account_address_for_chain_uses_selected_account_only() {
         let mut wallets = wallets_with_addresses(vec![addr("1", "0xSelected")]);
         wallets.accounts_map.insert(
@@ -410,16 +417,10 @@ pub fn resolve_active_account_id(wallets: &WalletsJson) -> Result<String> {
 
 // ── resolve_account_address_for_chain ─────────────────────────────────
 
-/// Chains that keep their own dedicated address in `accounts_map` and must
-/// resolve to that address only — never the shared EVM address: Solana (501),
-/// Bitcoin (0 / 5), SUI (784), Tron (195), TON (607). Every other chain is
-/// EVM-family and shares the common EVM address (spec §7.1). Tron/TON are
-/// excluded because they are non-EVM account-model chains with their own
-/// native address format (`chains::native_token_address`; TRANSFER_10004_COVERED_CHAINS
-/// in transfer/mod.rs treats them the same way) — falling back to the shared
-/// EVM address for them would surface a wrong deposit address/QR.
+/// Only chains explicitly classified as EVM may share the common EVM address.
+/// Unknown chains fail closed instead of risking a wrong deposit address/QR.
 fn shares_evm_address(chain_index: &str) -> bool {
-    !matches!(chain_index, "501" | "0" | "5" | "195" | "607" | "784")
+    crate::chains::is_evm_chain(chain_index)
 }
 
 /// Resolve the **selected** account's own receive address for `chain_index`

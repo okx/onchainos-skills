@@ -57,18 +57,18 @@ onchainos wallet receive --chain <chain>
 onchainos wallet receive --token <query> [--cursor <opaque-cursor>]
 ```
 
-- No flags: `scene=receive_addresses`; returns `accountName`, the EVM address
+- No flags: `reason=receive_addresses_ready`; returns `accountName`, the EVM address
   and one `evmQr`, plus text addresses for X Layer when different, Solana,
   Bitcoin, and Sui.
-- `--chain`: `scene=receive_address`; returns the Funding Target and Common QR.
+- `--chain`: `reason=funding_target_ready`; returns the Funding Target and Common QR.
 - `--token`: searches all wallet-supported chains with `limit=10`. Multiple
-  results return `scene=receive_token_selection`, ordered `list[]`, stable
+  results return `reason=token_selection_required`, ordered `list[]`, stable
   `nextAction`, and an opaque next cursor. A single result returns its chain
   address and QR directly.
 
 Every continuing result carries `phase`, `decision`, `reason`, `nextAction`, and
 `payload`. Candidate identity is the full `chainIndex + tokenContractAddress`;
-the CA abbreviation is display-only.
+the contract address is never abbreviated in the structured result.
 
 > The standalone `wallet qrcode` subcommand has been removed. `wallet receive`
 > and insufficient-balance results emit Common QR in-process.
@@ -115,6 +115,9 @@ whether to continue. An insufficient result includes `fundingTarget` and Common
 QR in `payload` and also returns no continuation action.
 A failed balance query returns the same phase with `reason=balance_unavailable`,
 `currentBalance=null`, and no action; the Skill must stop rather than guess.
+If the balance is still insufficient but the current receive target cannot be
+refreshed, the command returns `reason=funding_target_unavailable`, retains the
+confirmed balance and shortfall, omits address/QR, and returns no action.
 
 ### User-facing Reply Templates
 
@@ -166,32 +169,21 @@ onchainos wallet send --readable-amount <amount> --recipient <address> --chain <
 | `--force` | No | Re-run after a confirmed Confirming response. |
 | `--gas-token-address`, `--relayer-id`, `--enable-gas-station` | No | Gas Station (Solana). Second-phase values from a Confirming response — never on the first call. See [gas-station.md](gas-station.md). |
 
-Returns `txHash` (normal). Gas Station responses (`gasStationUsed`, `orderId`, Confirming scenes) → [gas-station.md](gas-station.md). On simulation failure, the CLI never broadcasts. If a fresh balance query independently confirms that the requested transfer asset is insufficient, it returns the structured funding scene below; otherwise it surfaces `executeErrorMsg`.
+Returns `txHash` (normal). Gas Station responses (`gasStationUsed`, `orderId`, Confirming scenes) → [gas-station.md](gas-station.md). On simulation failure, the CLI never broadcasts. If a fresh balance query independently confirms that the requested transfer asset is insufficient, it returns the common structured Funding result below; otherwise it surfaces `executeErrorMsg`.
 
-#### Insufficient-balance scene (`transfer_insufficient_balance`)
+#### Common insufficient-balance result
 
-Emitted on a real backend `code=10004`, or after `executeResult=false` when a fresh chain-and-token balance query proves `requested > balance`. The CLI never infers this state from simulation text alone. It is a flat top-level object (`ok:false` at the root — NOT the `JsonOutput` envelope); the original `error` string is preserved for backward compatibility. Business recovery: [wallet.md](wallet.md) → Insufficient-Balance Top-up Recovery. Presentation: [wallet-output-templates.md](wallet-output-templates.md).
+Emitted on a real backend `code=10004`, or after `executeResult=false` when a fresh chain-and-token balance query proves `requested > balance`. The CLI never infers this state from simulation text alone. It uses the standard `{ok:false,data:{phase,decision,reason,nextAction,payload}}` envelope. Business recovery: [wallet.md](wallet.md) → Insufficient-Balance Top-up Recovery. Presentation: [funding.md](funding.md) → Output templates.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `scene` | string | Always `"transfer_insufficient_balance"`. |
-| `phase` / `decision` / `reason` | string | `transfer_funding` / `blocked` / `insufficient_balance`. |
-| `nextAction` | array | Registered `fund_account` action with empty params. |
-| `payload` | object | Business scene fields plus common `fundingTarget`, `qr`, and `fundingNeed`. |
-| `error` / `errorMessage` | string | Original backend message (equal). |
-| `errorCode` | string \| null | Backend `"10004"` when present; `null` when the shortfall was independently confirmed after a simulation failure. |
-| `retryable` | bool | `true` — means "re-preview after top-up", NOT auto-retry or skipping re-confirmation. |
-| `chainIndex` | string | Chain index. |
-| `chainName` | string | Canonical chain display name (single source; see [Common `qr` object](#common-qr-object)). |
-| `sameNetworkRequired` | bool | `true` — the top-up must arrive on this same `chainName` network. |
-| `gasFree` | bool | `true` for X Layer (196) — render the gas-free note. |
-| `asset` | object | `{ symbol, tokenAddress }`; `tokenAddress` is `""` for native. `symbol` is a non-empty string, or `null` when it can't be read from the matched balance record — never `""`. |
-| `requested` | string | Requested send amount (readable units). |
-| `balance` | string \| null | Current balance (readable units). `null` when the balance query failed or the asset is absent; a real zero is the string `"0"`. |
-| `shortfall` | string \| null | Exact readable `requested - balance`; `null` when either input is unavailable or not a plain decimal. |
-| `depositChain` | string | Backward-compat alias, **same value as `chainName`**. |
-| `depositAddress` | string | The current account's own receive address on the chain. |
-| `qr` | object | Deposit-address QR — [Common `qr` object](#common-qr-object). |
+| `data.phase` / `decision` / `reason` | string | `funding_required` / `blocked` / `insufficient_balance`. |
+| `data.nextAction` | array | Empty; the result enters shared Funding immediately. |
+| `data.payload.operation` | string | Optional origin operation identifier; Wallet Send returns `transfer`. |
+| `data.payload.error` | object | Optional origin error metadata supplied by Wallet Send. |
+| `data.payload.fundingTarget` | object | Current account, canonical chain, receive address, same-network and gas facts. |
+| `data.payload.fundingNeed` | object | `{asset,tokenAddress,required,balance,shortfall}` in readable units. A successful exact query with no holding returns balance `"0"`; a query failure returns `null`. |
+| `data.payload.qr` | object | QR for `fundingTarget.receiveAddress`; see [Common `qr` object](#common-qr-object). |
 
 #### Common `qr` object
 
@@ -202,7 +194,7 @@ task creation) embeds the same `qr` object, populated per `displayMode`
 | Field | Present when | Meaning |
 |---|---|---|
 | `requestedFormat` | always | Always `"auto"`. |
-| `resolvedFormat` | always | `"unicode"` or `"png"`. |
+| `resolvedFormat` | QR generation succeeds | `"unicode"` or `"png"`; absent after address-only degradation. |
 | `displayMode` | always | `"terminal-unicode"` or `"image-notify"`. |
 | `terminalQr` | `displayMode=terminal-unicode` | Unicode QR block to render verbatim in a monospace block. |
 | `imagePath` | `displayMode=image-notify` | On-disk PNG path. |
@@ -210,7 +202,11 @@ task creation) embeds the same `qr` object, populated per `displayMode`
 | `markdownImage` | `displayMode=image-notify` | Markdown image reference. |
 | `notifyCommandArgs` | `displayMode=image-notify` | argv for the image-notify command. |
 
-The QR encodes only the bare receive address (no URI scheme, amount, or params). On any QR encode/write failure the scene still returns with the `qr` fields absent — degrade to showing `depositAddress` text.
+The QR encodes only the bare receive address (no URI scheme, amount, or params). On any QR encode/write failure the result still returns `fundingTarget.receiveAddress`; render that address and omit the unavailable QR representation.
+
+The Funding payload contains current business diagnostics, but no executable
+command or prior confirmation. Continuing later re-enters Wallet Send and
+creates a new preview; `retryable` never authorizes automatic retry.
 
 ---
 

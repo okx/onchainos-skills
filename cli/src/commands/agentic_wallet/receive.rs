@@ -2,8 +2,8 @@
 //!
 //! This module owns the CLI facts for active funding: current account,
 //! wallet-supported chains, token candidates, receive address, and Common QR.
-//! User-facing flow and copy stay in `skills/_shared/funding.md` and the shared
-//! output templates.
+//! User-facing flow and copy stay in
+//! `skills/okx-agentic-wallet/references/funding.md` and its output templates.
 
 use std::collections::{HashMap, HashSet};
 
@@ -11,14 +11,14 @@ use anyhow::{bail, Result};
 use serde_json::{json, Value};
 
 use crate::client::ApiClient;
-use crate::funding::{build_funding_bundle, FundingBundle};
+use crate::funding::{resolve_funding_target, FundingBundle};
 use crate::output;
 use crate::wallet_api::WalletApiClient;
 use crate::wallet_store::{self, WalletsJson};
 
 use super::account::resolve_active_account_id;
 use super::auth::ensure_tokens_refreshed;
-use super::balance::ensure_wallet_accounts_fresh;
+use super::balance::refresh_wallet_accounts_strict;
 
 const RECEIVE_TOKEN_PAGE_LIMIT: &str = "10";
 
@@ -31,7 +31,7 @@ pub(super) async fn cmd_receive(
         (Some(chain), None) => {
             let profile = super::chain_profile::resolve(chain).await?;
             let wallets = load_current_wallets().await?;
-            let bundle = build_funding_bundle(&wallets, &profile.chain_index, None)?;
+            let bundle = funding_bundle_from_loaded_wallets(&wallets, &profile.chain_index)?;
             output::success(receive_address_value(&bundle, None));
         }
         (None, Some(query)) => {
@@ -59,21 +59,18 @@ pub(super) async fn cmd_receive(
             let candidates = normalize_candidates(&raw, &chain_names);
             if candidates.is_empty() {
                 output::success(json!({
-                    "scene": "receive_token_empty",
                     "phase": "funding",
                     "decision": "blocked",
                     "reason": "token_not_found",
                     "nextAction": [],
                     "payload": { "query": query },
-                    "query": query,
-                    "list": [],
                 }));
             } else if candidates.len() == 1 {
                 let candidate = &candidates[0];
                 let chain_index = candidate["chainIndex"]
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("token search result missing chainIndex"))?;
-                let bundle = build_funding_bundle(&wallets, chain_index, None)?;
+                let bundle = funding_bundle_from_loaded_wallets(&wallets, chain_index)?;
                 output::success(receive_address_value(&bundle, Some(candidate)));
             } else {
                 output::success(selection_value(query, candidates));
@@ -88,6 +85,15 @@ pub(super) async fn cmd_receive(
     Ok(())
 }
 
+fn funding_bundle_from_loaded_wallets(
+    wallets: &WalletsJson,
+    chain_index: &str,
+) -> Result<FundingBundle> {
+    let target = resolve_funding_target(wallets, chain_index)?;
+    let qr = crate::qr::build_qr_output(&target.receive_address, None);
+    Ok(FundingBundle { target, qr })
+}
+
 /// Always refresh account/address facts for receive. A deposit address is a
 /// funds-loss boundary, so the command must not repeat a conversationally or
 /// locally stale address when the backend can provide the current one.
@@ -96,13 +102,12 @@ async fn load_current_wallets() -> Result<WalletsJson> {
     let mut wallets = wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
     let mut client = WalletApiClient::new()?;
-    ensure_wallet_accounts_fresh(&mut client, &access_token, &mut wallets, true).await?;
+    refresh_wallet_accounts_strict(&mut client, &access_token, &mut wallets).await?;
     Ok(wallets)
 }
 
 fn receive_address_value(bundle: &FundingBundle, token: Option<&Value>) -> Value {
     let mut value = json!({
-        "scene": "receive_address",
         "phase": "funding",
         "decision": "ready",
         "reason": "funding_target_ready",
@@ -116,13 +121,6 @@ fn receive_address_value(bundle: &FundingBundle, token: Option<&Value>) -> Value
             "gasFree": bundle.target.gas_free,
             "qr": bundle.qr,
         },
-        "accountName": bundle.target.account_name,
-        "chainIndex": bundle.target.chain_index,
-        "chainName": bundle.target.chain_name,
-        "receiveAddress": bundle.target.receive_address,
-        "sameNetworkRequired": bundle.target.same_network_required,
-        "gasFree": bundle.target.gas_free,
-        "qr": bundle.qr,
     });
     if let Some(token) = token {
         for key in [
@@ -130,10 +128,8 @@ fn receive_address_value(bundle: &FundingBundle, token: Option<&Value>) -> Value
             "tokenSymbol",
             "networkName",
             "tokenContractAddress",
-            "contractAddressDisplay",
         ] {
-            value[key] = token.get(key).cloned().unwrap_or(Value::Null);
-            value["payload"][key] = value[key].clone();
+            value["payload"][key] = token.get(key).cloned().unwrap_or(Value::Null);
         }
     }
     value
@@ -195,27 +191,19 @@ fn generic_receive_value(wallets: &WalletsJson) -> Result<Value> {
         "suiAddress": sui_address,
     });
     Ok(json!({
-        "scene": "receive_addresses",
         "phase": "funding",
         "decision": "ready",
         "reason": "receive_addresses_ready",
         "nextAction": [
-            { "id": "specify_funding_chain", "recommend": true },
-            { "id": "search_receive_token", "recommend": false }
+            { "id": "specify_funding_chain", "recommend": true, "params": {} },
+            { "id": "search_receive_token", "recommend": false, "params": {} }
         ],
         "payload": payload,
-        "accountName": account_name,
-        "evmAddress": evm_address,
-        "evmQr": evm_qr,
-        "xLayerAddress": x_layer_address,
-        "solanaAddress": solana_address,
-        "bitcoinAddress": bitcoin_address,
-        "suiAddress": sui_address,
     }))
 }
 
 fn is_evm_receive_address(chain_index: &str) -> bool {
-    !matches!(chain_index, "0" | "5" | "195" | "501" | "607" | "784")
+    crate::chains::is_evm_chain(chain_index)
 }
 
 fn supported_chain_indices(chains: &[Value]) -> String {
@@ -273,7 +261,6 @@ fn normalize_candidates(raw: &Value, chain_names: &HashMap<String, String>) -> V
                 "chainIndex": chain_index,
                 "networkName": network_name,
                 "tokenContractAddress": contract,
-                "contractAddressDisplay": contract_address_display(&contract),
                 "cursor": candidate.get("cursor").cloned().unwrap_or(Value::Null),
             }))
         })
@@ -305,31 +292,21 @@ fn selection_value(query: &str, candidates: Vec<Value>) -> Value {
         })
         .collect();
     let pagination = if let Some(cursor) = next_cursor {
-        let command = format!(
-            "onchainos wallet receive --token {} --cursor {}",
-            shell_arg(query),
-            shell_arg(&cursor)
-        );
         actions.push(json!({
             "id": "more_receive_tokens",
             "recommend": false,
-            "params": { "query": query, "cursor": cursor, "command": command }
+            "params": { "query": query, "cursor": cursor }
         }));
-        json!({ "limit": 10, "nextCursor": cursor, "next": { "command": command } })
+        json!({ "limit": 10, "nextCursor": cursor })
     } else {
         json!({ "limit": 10, "nextCursor": Value::Null })
     };
     json!({
-        "scene": "receive_token_selection",
         "phase": "funding",
         "decision": "requires_user_input",
         "reason": "token_selection_required",
         "nextAction": actions,
         "payload": { "query": query, "list": candidates, "pagination": pagination },
-        "query": query,
-        "list": candidates,
-        "pagination": pagination,
-        "selectionRequired": true,
     })
 }
 
@@ -339,25 +316,6 @@ fn value_as_string(value: &Value) -> Option<String> {
         .map(str::to_string)
         .or_else(|| value.as_i64().map(|number| number.to_string()))
         .or_else(|| value.as_u64().map(|number| number.to_string()))
-}
-
-fn contract_address_display(address: &str) -> String {
-    if address.is_empty() {
-        return "主币，无 CA".to_string();
-    }
-    let chars: Vec<char> = address.chars().collect();
-    if chars.len() <= 10 {
-        return address.to_string();
-    }
-    format!(
-        "{}...{}",
-        chars[..6].iter().collect::<String>(),
-        chars[chars.len() - 4..].iter().collect::<String>()
-    )
-}
-
-fn shell_arg(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 #[cfg(test)]
@@ -405,14 +363,14 @@ mod tests {
             address("784", "SuiAddress"),
         ]))
         .unwrap();
-        assert_eq!(value["scene"], "receive_addresses");
-        assert_eq!(value["evmAddress"], "0xEvm");
-        assert!(value["evmQr"].is_object());
-        assert_eq!(value["xLayerAddress"], "0xXLayerDifferent");
-        assert_eq!(value["solanaAddress"], "SolanaAddress");
-        assert!(value.get("solanaQr").is_none());
-        assert!(value.get("bitcoinQr").is_none());
-        assert!(value.get("suiQr").is_none());
+        assert_eq!(value["reason"], "receive_addresses_ready");
+        assert_eq!(value["payload"]["evmAddress"], "0xEvm");
+        assert!(value["payload"]["evmQr"].is_object());
+        assert_eq!(value["payload"]["xLayerAddress"], "0xXLayerDifferent");
+        assert_eq!(value["payload"]["solanaAddress"], "SolanaAddress");
+        assert!(value["payload"].get("solanaQr").is_none());
+        assert!(value["payload"].get("bitcoinQr").is_none());
+        assert!(value["payload"].get("suiQr").is_none());
     }
 
     #[test]
@@ -428,13 +386,12 @@ mod tests {
         let candidates = normalize_candidates(&raw, &names);
         assert_eq!(candidates[0]["sequence"], 1);
         assert_eq!(candidates[0]["tokenContractAddress"], "0x1234567890abcdef");
-        assert_eq!(candidates[0]["contractAddressDisplay"], "0x1234...cdef");
         assert_eq!(candidates[1]["networkName"], "X Layer");
-        assert_eq!(candidates[1]["contractAddressDisplay"], "主币，无 CA");
+        assert_eq!(candidates[1]["tokenContractAddress"], "");
 
         let selection = selection_value("USDT", candidates);
         assert_eq!(selection["decision"], "requires_user_input");
-        assert!(selection["pagination"]["nextCursor"].is_null());
+        assert!(selection["payload"]["pagination"]["nextCursor"].is_null());
         assert_eq!(selection["nextAction"][0]["params"]["chainIndex"], "1");
     }
 
@@ -451,16 +408,15 @@ mod tests {
             })
             .collect();
         let selection = selection_value("USDT", candidates);
-        assert_eq!(selection["pagination"]["nextCursor"], "cursor-10");
+        assert_eq!(selection["payload"]["pagination"]["nextCursor"], "cursor-10");
         assert_eq!(
             selection["nextAction"].as_array().unwrap().last().unwrap()["id"],
             "more_receive_tokens"
         );
-    }
-
-    #[test]
-    fn shell_arg_prevents_query_command_substitution() {
-        assert_eq!(shell_arg("a'b$(touch x)"), "'a'\"'\"'b$(touch x)'");
+        let more = selection["nextAction"].as_array().unwrap().last().unwrap();
+        assert_eq!(more["params"]["query"], "USDT");
+        assert_eq!(more["params"]["cursor"], "cursor-10");
+        assert!(more["params"].get("command").is_none());
     }
 
     #[test]

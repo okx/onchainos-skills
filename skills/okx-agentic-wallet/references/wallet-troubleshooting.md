@@ -3,7 +3,7 @@
 Load on a wallet operation failure or edge case.
 
 ## Send
-- **Insufficient balance**: when the current operation has an insufficient-balance intent, ask whether the user wants to fund. If the user chooses funding, read [funding.md](../../_shared/funding.md).
+- **Insufficient balance**: route the insufficient-balance intent to [funding.md](funding.md).
 - **Wrong chain for token**: `--contract-token` must exist on the specified chain.
 
 ## History

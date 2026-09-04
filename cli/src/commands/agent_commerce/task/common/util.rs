@@ -123,7 +123,7 @@ fn normalize_token_symbol(s: &str) -> String {
 /// to the business-token principal and **never** implies the user needs OKB / native to pay gas.
 /// The bail message must make this explicit to avoid downstream agents misattributing the error
 /// to a "top up gas" issue.
-pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<f64> {
+pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<()> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("unable to determine executable path: {e}"))?;
 
@@ -183,7 +183,7 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
                             )
                             .into());
                         }
-                        return Ok(balance);
+                        return Ok(());
                     }
                 }
             }

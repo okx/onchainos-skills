@@ -1,9 +1,6 @@
 use anyhow::{bail, Result};
 use clap::{Args, ValueEnum};
 use serde::Serialize;
-use std::fs;
-use std::io::BufRead;
-use std::io::IsTerminal;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -93,23 +90,8 @@ struct FundingNoticeOutput {
     notify_command_args: Option<Vec<String>>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FundingDisplayMode {
-    TerminalUnicode,
-    ImageNotify,
-}
-
-impl FundingDisplayMode {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::TerminalUnicode => "terminal-unicode",
-            Self::ImageNotify => "image-notify",
-        }
-    }
-}
-
 pub fn funding_display_mode() -> &'static str {
-    detect_funding_display_mode().as_str()
+    crate::qr::display_mode()
 }
 
 pub fn funding_notice_command(warning: &serde_json::Value, reason: &str) -> Option<String> {
@@ -185,141 +167,6 @@ pub fn funding_blocked_envelope(
             format!("{action} was blocked by insufficient balance. Save the current business context. Show balanceWarning and missing deposit address. End turn.")
         },
     })
-}
-
-fn detect_funding_display_mode() -> FundingDisplayMode {
-    if let Some(mode) = display_mode_from_codex_session() {
-        return mode;
-    }
-    display_mode_from_tty()
-}
-
-fn display_mode_from_tty() -> FundingDisplayMode {
-    if std::io::stdout().is_terminal() || std::io::stderr().is_terminal() {
-        FundingDisplayMode::TerminalUnicode
-    } else {
-        FundingDisplayMode::ImageNotify
-    }
-}
-
-fn display_mode_from_codex_session() -> Option<FundingDisplayMode> {
-    let thread_id = std::env::var("CODEX_THREAD_ID")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())?;
-    let mut paths = Vec::new();
-    for root in codex_session_roots() {
-        paths.extend(find_codex_session_files(&root, &thread_id));
-    }
-    display_mode_from_codex_session_files(paths)
-}
-
-fn display_mode_from_codex_session_files(paths: Vec<PathBuf>) -> Option<FundingDisplayMode> {
-    for path in paths {
-        let Some(line) = read_first_line(&path) else {
-            continue;
-        };
-        if let Some(mode) = display_mode_from_codex_session_line(&line) {
-            return Some(mode);
-        }
-    }
-    None
-}
-
-fn codex_session_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(home) = std::env::var_os("CODEX_HOME").filter(|value| !value.is_empty()) {
-        roots.push(PathBuf::from(home).join("sessions"));
-    }
-    if let Some(home) = dirs::home_dir() {
-        roots.push(home.join(".codex").join("sessions"));
-    }
-    roots
-}
-
-fn find_codex_session_files(root: &std::path::Path, thread_id: &str) -> Vec<PathBuf> {
-    let mut matches = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    let mut visited = 0usize;
-    while let Some(dir) = stack.pop() {
-        visited += 1;
-        if visited > 5000 {
-            break;
-        }
-        let Ok(entries) = fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            let name = path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("");
-            let is_session_file = name.ends_with(".jsonl") || name.ends_with(".json");
-            if is_session_file && name.contains(thread_id) {
-                matches.push(path);
-            }
-        }
-    }
-    matches
-}
-
-fn read_first_line(path: &std::path::Path) -> Option<String> {
-    let file = fs::File::open(path).ok()?;
-    let mut reader = std::io::BufReader::new(file);
-    let mut line = String::new();
-    reader.read_line(&mut line).ok()?;
-    Some(line)
-}
-
-fn display_mode_from_codex_session_line(line: &str) -> Option<FundingDisplayMode> {
-    let value: serde_json::Value = serde_json::from_str(line).ok()?;
-    let meta = value
-        .get("session_meta")
-        .or_else(|| value.get("payload"))
-        .unwrap_or(&value);
-    display_mode_from_codex_meta(
-        find_json_string(meta, "originator"),
-        find_json_string(meta, "source"),
-    )
-}
-
-fn display_mode_from_codex_meta(
-    originator: Option<&str>,
-    source: Option<&str>,
-) -> Option<FundingDisplayMode> {
-    let originator = originator.map(normalize_codex_meta_value);
-    let source = source.map(normalize_codex_meta_value);
-    match originator.as_deref() {
-        Some("codex-tui") | Some("codex_exec") => Some(FundingDisplayMode::TerminalUnicode),
-        Some("codex desktop") => Some(FundingDisplayMode::ImageNotify),
-        _ => match source.as_deref() {
-            Some("cli") | Some("exec") => Some(FundingDisplayMode::TerminalUnicode),
-            Some("vscode") | Some("appserver") => Some(FundingDisplayMode::ImageNotify),
-            _ => None,
-        },
-    }
-}
-
-fn normalize_codex_meta_value(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
-}
-
-fn find_json_string<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
-    match value {
-        serde_json::Value::Object(map) => map
-            .get(key)
-            .and_then(|value| value.as_str())
-            .or_else(|| map.values().find_map(|value| find_json_string(value, key))),
-        serde_json::Value::Array(values) => {
-            values.iter().find_map(|value| find_json_string(value, key))
-        }
-        _ => None,
-    }
 }
 
 pub fn execute(args: FundingNoticeArgs) -> Result<()> {
@@ -589,7 +436,7 @@ mod tests {
     fn terminal_qr_output(address: &str) -> crate::qr::QrOutput {
         crate::qr::QrOutput {
             requested_format: "auto".to_string(),
-            resolved_format: "unicode".to_string(),
+            resolved_format: Some("unicode".to_string()),
             display_mode: "terminal-unicode".to_string(),
             terminal_qr: Some(
                 crate::qr::render_address_qr_unicode(address).expect("unicode render"),
@@ -606,7 +453,7 @@ mod tests {
     fn image_qr_output(png_path: &str) -> crate::qr::QrOutput {
         crate::qr::QrOutput {
             requested_format: "auto".to_string(),
-            resolved_format: "png".to_string(),
+            resolved_format: Some("png".to_string()),
             display_mode: "image-notify".to_string(),
             terminal_qr: None,
             image_path: Some(png_path.to_string()),
@@ -756,83 +603,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn codex_tui_session_meta_uses_terminal_unicode() {
-        let line = r#"{"type":"session_meta","payload":{"originator":"codex-tui","source":"cli"}}"#;
-
-        assert_eq!(
-            display_mode_from_codex_session_line(line),
-            Some(FundingDisplayMode::TerminalUnicode)
-        );
-    }
-
-    #[test]
-    fn codex_desktop_session_meta_uses_image_notify() {
-        for source in ["vscode", "appServer"] {
-            let line = format!(
-                r#"{{"type":"session_meta","payload":{{"originator":"Codex Desktop","source":"{source}"}}}}"#
-            );
-
-            assert_eq!(
-                display_mode_from_codex_session_line(&line),
-                Some(FundingDisplayMode::ImageNotify)
-            );
-        }
-    }
-
-    #[test]
-    fn codex_session_meta_matching_is_case_insensitive() {
-        assert_eq!(
-            display_mode_from_codex_meta(Some(" Codex Desktop "), Some("AppServer")),
-            Some(FundingDisplayMode::ImageNotify)
-        );
-        assert_eq!(
-            display_mode_from_codex_meta(Some("CODEX-TUI"), Some("CLI")),
-            Some(FundingDisplayMode::TerminalUnicode)
-        );
-    }
-
-    #[test]
-    fn codex_exec_session_meta_uses_terminal_unicode() {
-        let line =
-            r#"{"type":"session_meta","payload":{"originator":"codex_exec","source":"exec"}}"#;
-
-        assert_eq!(
-            display_mode_from_codex_session_line(line),
-            Some(FundingDisplayMode::TerminalUnicode)
-        );
-    }
-
-    #[test]
-    fn malformed_codex_session_meta_falls_back() {
-        assert_eq!(display_mode_from_codex_session_line("not json"), None);
-        assert_eq!(
-            display_mode_from_codex_meta(Some("unknown"), Some("unknown")),
-            None
-        );
-    }
-
-    #[test]
-    fn invalid_codex_session_candidate_does_not_stop_search() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("test_tmp")
-            .join("funding_notice_sessions");
-        std::fs::create_dir_all(&dir).expect("create session test dir");
-        let bad = dir.join("bad.jsonl");
-        let good = dir.join("good.jsonl");
-        std::fs::write(&bad, "not json\n").expect("write bad session");
-        std::fs::write(
-            &good,
-            r#"{"type":"session_meta","payload":{"originator":"codex-tui","source":"cli"}}"#,
-        )
-        .expect("write good session");
-
-        assert_eq!(
-            display_mode_from_codex_session_files(vec![bad.clone(), good.clone()]),
-            Some(FundingDisplayMode::TerminalUnicode)
-        );
-        let _ = std::fs::remove_file(bad);
-        let _ = std::fs::remove_file(good);
-    }
 }

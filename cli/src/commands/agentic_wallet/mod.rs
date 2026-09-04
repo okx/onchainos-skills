@@ -758,7 +758,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 &chain,
             )
             .await?;
-            transfer::cmd_send(
+            transfer::cmd_send_with_readable(
                 &raw_amt,
                 readable_amount.as_deref(),
                 &recipient,

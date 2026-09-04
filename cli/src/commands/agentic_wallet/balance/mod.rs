@@ -106,6 +106,67 @@ pub(crate) async fn ensure_wallet_accounts_fresh(
     Ok(())
 }
 
+/// Refresh account/address facts atomically and propagate any backend failure.
+/// Deposit and QR flows use this stricter boundary because a stale address is a
+/// funds-loss risk; ordinary cache users retain the best-effort helper above.
+pub(crate) async fn refresh_wallet_accounts_strict(
+    client: &mut WalletApiClient,
+    access_token: &str,
+    wallets: &mut WalletsJson,
+) -> Result<()> {
+    let account_list = client
+        .account_list(access_token, &wallets.project_id)
+        .await
+        .map_err(format_api_error)?;
+    let account_ids: Vec<String> = account_list.iter().map(|a| a.account_id.clone()).collect();
+    let address_data = client
+        .account_address_list(access_token, &account_ids)
+        .await
+        .map_err(format_api_error)?;
+
+    let accounts: Vec<wallet_store::AccountInfo> = account_list
+        .iter()
+        .map(|a| wallet_store::AccountInfo {
+            project_id: a.project_id.clone(),
+            account_id: a.account_id.clone(),
+            account_name: a.account_name.clone(),
+            is_default: a.is_default,
+        })
+        .collect();
+    let mut accounts_map = std::collections::HashMap::new();
+    for item in &address_data {
+        accounts_map.insert(
+            item.account_id.clone(),
+            AccountMapEntry {
+                address_list: item
+                    .addresses
+                    .iter()
+                    .map(|a| AddressInfo {
+                        account_id: item.account_id.clone(),
+                        address: a.address.clone(),
+                        chain_index: a.chain_index.clone(),
+                        chain_name: a.chain_name.clone(),
+                        address_type: a.address_type.clone(),
+                        chain_path: a.chain_path.clone(),
+                    })
+                    .collect(),
+            },
+        );
+    }
+    if !account_ids.contains(&wallets.selected_account_id) {
+        wallets.selected_account_id = accounts
+            .iter()
+            .find(|account| account.is_default)
+            .or_else(|| accounts.first())
+            .map(|account| account.account_id.clone())
+            .unwrap_or_default();
+    }
+    wallets.accounts = accounts;
+    wallets.accounts_map = accounts_map;
+    wallet_store::save_wallets(wallets)?;
+    Ok(())
+}
+
 // ── usdValue enrichment ───────────────────────────────────────────────
 
 /// XLayer chainIndex — used to pin it to the top of the results.
@@ -838,16 +899,21 @@ pub(super) async fn cmd_funding_check(
     });
 
     if !sufficient {
-        let wallets = wallet_store::load_wallets()?
-            .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-        match crate::funding::build_funding_bundle(&wallets, &profile.chain_index, None) {
+        match crate::funding::resolve_current_funding_bundle(&profile.chain_index, None).await {
             Ok(bundle) => {
-                let qr = serde_json::to_value(&bundle.qr)?;
                 payload["fundingTarget"] = serde_json::to_value(&bundle.target)?;
-                payload["depositAddress"] = Value::String(bundle.target.receive_address.clone());
-                payload["qr"] = qr.clone();
+                payload["qr"] = serde_json::to_value(&bundle.qr)?;
             }
-            Err(_) => {}
+            Err(_) => {
+                output::success(json!({
+                    "phase": "funding_verification",
+                    "decision": "blocked",
+                    "reason": "funding_target_unavailable",
+                    "nextAction": [],
+                    "payload": payload,
+                }));
+                return Ok(());
+            }
         }
     }
 
@@ -888,6 +954,50 @@ pub struct MatchedToken {
     pub balance: String,
     pub symbol: Option<String>,
     pub decimals: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenMetadata {
+    pub symbol: Option<String>,
+    pub decimals: u32,
+}
+
+/// Query authoritative token metadata for an exact `(chainIndex,
+/// tokenAddress)` pair. Funding adapters use this only when a zero holding is
+/// absent from the balance list or a raw minimal-unit amount must be rendered.
+pub async fn query_token_metadata(
+    chain_index: &str,
+    token_address: &str,
+) -> Result<TokenMetadata> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let chain_index_number = chain_index
+        .parse::<u64>()
+        .map_err(|_| anyhow::anyhow!("invalid numeric chain index: {chain_index}"))?;
+    let mut client = WalletApiClient::new()?;
+    let info = client
+        .get_token_info(&access_token, chain_index_number, token_address)
+        .await
+        .map_err(format_api_error)?;
+    let item = info.as_array().and_then(|items| items.first()).unwrap_or(&info);
+    let decimals = item
+        .get("decimals")
+        .and_then(value_as_u32)
+        .or_else(|| item.get("decimal").and_then(value_as_u32))
+        .ok_or_else(|| anyhow::anyhow!("token metadata missing decimals"))?;
+    let symbol = item
+        .get("tokenSymbol")
+        .or_else(|| item.get("symbol"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    Ok(TokenMetadata { symbol, decimals })
+}
+
+fn value_as_u32(value: &Value) -> Option<u32> {
+    value
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
 }
 
 /// Find the token whose `(tokenAddress, chainIndex)` equals `(token_address,
@@ -979,9 +1089,9 @@ pub async fn query_token_readable_balance(
 /// [`query_token_readable_balance`] (which delegates here), so the Swap balance
 /// contract is unchanged. Returns `Ok(Some(_))` when the token is held (a real
 /// zero balance included) and `Ok(None)` when it is absent; an `Err` means the
-/// query itself failed. Consumed by the Wallet Send `10004` scene, which reports
-/// the balance as null on `Err`/`None` (never a faked "0") and reads the
-/// contract-token symbol from `MatchedToken.symbol`.
+/// query itself failed. Funding callers distinguish absence (`Ok(None)`, a real
+/// zero holding) from query failure (`Err`, balance unavailable) and read the
+/// contract-token symbol from `MatchedToken.symbol` when present.
 #[allow(dead_code)]
 pub async fn query_token_readable(
     chain_index: &str,

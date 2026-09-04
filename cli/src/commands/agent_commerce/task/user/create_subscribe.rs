@@ -442,15 +442,21 @@ pub async fn handle_create_subscribe(
         }.into());
     }
 
-    if let Some(warning) = subscribe_balance_warning(
+    if let Some(insufficient) = subscribe_balance_shortfall(
         &params.service_token_amount,
         &params.service_token_address,
-        &user_agent_id,
     )
     .await?
     {
+        let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("failed to resolve the funding address"))?;
         return Err(crate::output::CliFundingBlocked {
-            data: build_subscription_funding_block(&warning),
+            data: build_subscription_funding_block(
+                &insufficient,
+                &deposit,
+                &params.service_token_address,
+            )?,
         }
         .into());
     }
@@ -671,11 +677,10 @@ pub async fn handle_create_subscribe(
     Ok(())
 }
 
-async fn subscribe_balance_warning(
+async fn subscribe_balance_shortfall(
     service_token_amount: &str,
     service_token_address: &str,
-    user_agent_id: &str,
-) -> Result<Option<serde_json::Value>> {
+) -> Result<Option<common::deposit_qr::InsufficientBalanceError>> {
     let required: f64 = service_token_amount.parse().unwrap_or(0.0);
     if required <= 0.0 {
         return Ok(None);
@@ -700,21 +705,33 @@ async fn subscribe_balance_warning(
     };
 
     match common::ensure_sufficient_balance(required, &symbol).await {
-        Ok(_) => Ok(None),
+        Ok(()) => Ok(None),
         Err(e) => match e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
-            Some(ib) => {
-                let ib_owned = ib.clone();
-                let (warning, _) =
-                    common::deposit_qr::balance_warning_json(&ib_owned, user_agent_id).await;
-                Ok(Some(warning))
-            }
+            Some(ib) => Ok(Some(ib.clone())),
             None => Err(e),
         },
     }
 }
 
-fn build_subscription_funding_block(warning: &serde_json::Value) -> serde_json::Value {
-    common::funding_notice::funding_blocked_envelope(warning, "subscription", "Subscription")
+fn build_subscription_funding_block(
+    insufficient: &common::deposit_qr::InsufficientBalanceError,
+    deposit: &common::deposit_qr::DepositInfo,
+    token_address: &str,
+) -> Result<serde_json::Value> {
+    crate::funding::build_funding_bundle_for_address(
+        "",
+        &deposit.chain_index,
+        &deposit.address,
+        crate::funding::FundingBlockedInput {
+            asset: &insufficient.currency,
+            token_address,
+            required: &insufficient.required,
+            balance: Some(&insufficient.available),
+            operation: Some(crate::funding::FUNDING_OPERATION_TASK_CREATION),
+            error_code: None,
+            error_message: None,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -1120,26 +1137,35 @@ mod tests {
     }
 
     #[test]
-    fn subscription_funding_block_uses_funding_notice_protocol() {
-        let warning = serde_json::json!({
-            "sufficient": false,
-            "chain": "XLayer",
-            "currency": "USDT",
-            "available": "0",
-            "required": "0.0001",
-            "shortfall": "0.0001",
-            "depositAddress": "0x1234567890abcdef1234567890abcdef12345678",
-            "depositChain": "XLayer"
-        });
-
-        let output = build_subscription_funding_block(&warning);
-        assert_eq!(output["blocked"], serde_json::json!(true));
-        assert_eq!(output["submitted"], serde_json::json!(false));
-        assert_eq!(output["mustRunFundingNotice"], serde_json::json!(true));
-        assert_eq!(
-            output["fundingNoticeCommand"],
-            "onchainos agent funding-notice --chain XLayer --currency USDT --shortfall 0.0001 --deposit-address 0x1234567890abcdef1234567890abcdef12345678 --available 0 --required 0.0001 --deposit-chain XLayer --reason subscription --format json"
+    fn subscription_funding_block_uses_common_funding_contract() {
+        let insufficient = common::deposit_qr::InsufficientBalanceError::new(
+            "insufficient".to_string(),
+            "USDT",
+            0.0001,
+            0.0,
         );
+        let deposit = common::deposit_qr::deposit_info_for_address(
+            "0x1234567890abcdef1234567890abcdef12345678",
+        );
+        let output = build_subscription_funding_block(
+            &insufficient,
+            &deposit,
+            "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+        )
+        .expect("common Funding result");
+        assert_eq!(output["phase"], "funding_required");
+        assert_eq!(output["decision"], "blocked");
+        assert_eq!(output["reason"], "insufficient_balance");
+        assert_eq!(output["nextAction"], serde_json::json!([]));
+        assert_eq!(output["payload"]["operation"], "task_creation");
+        assert_eq!(output["payload"]["fundingNeed"]["balance"], "0");
+        assert_eq!(output["payload"]["fundingNeed"]["required"], "0.0001");
+        assert_eq!(output["payload"]["fundingNeed"]["shortfall"], "0.0001");
+        assert_eq!(
+            output["payload"]["fundingTarget"]["receiveAddress"],
+            "0x1234567890abcdef1234567890abcdef12345678"
+        );
+        assert!(output["payload"]["qr"].is_object());
     }
 
     #[test]

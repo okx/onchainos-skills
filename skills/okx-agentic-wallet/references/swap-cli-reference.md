@@ -22,26 +22,18 @@ onchainos swap quote --from <addr> --to <addr> --readable-amount <amt> --chain <
 
 The normal-quote response also carries **`walletBalance`** — the wallet's from-token balance. Always present: a string on success, JSON `null` when the balance query failed (never `0`, never omitted, never a string sentinel).
 
-### Insufficient-balance scene (`swap_insufficient_balance`)
+### Common insufficient-balance result
 
-When the quote detects the from-token balance is below the requested amount, it emits a flat top-level object (`ok:false` at the root, NOT the `JsonOutput` envelope) instead of a normal quote. Business recovery: [swap.md](swap.md) → Insufficient-Balance Top-up Recovery. Presentation before the user chooses funding: [swap-output-templates.md](swap-output-templates.md).
+When the quote detects the from-token balance is below the required from-token amount, it emits the standard `{ok:false,data:{phase,decision,reason,nextAction,payload}}` envelope instead of a normal quote. For `exactOut`, the required amount comes from the quote's `fromTokenAmount`, not the requested destination-token amount. Business recovery: [swap.md](swap.md) → Insufficient-Balance Top-up Recovery. The same result immediately uses [funding.md](funding.md) → Output templates to display the balance, address, and QR.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `scene` | string | Always `"swap_insufficient_balance"`. |
-| `phase` / `decision` / `reason` | string | `swap_funding` / `blocked` / `insufficient_balance`. |
-| `nextAction` | array | Registered `fund_account` action with empty params. |
-| `payload` | object | Business scene fields plus common `fundingTarget`, `qr`, and `fundingNeed`. |
-| `chainIndex` | string | Source chain index. |
-| `chainName` | string | Canonical chain display name. |
-| `sameNetworkRequired` | bool | `true` — the top-up must arrive on this same `chainName` network. |
-| `gasFree` | bool | `true` for X Layer (196) — render the gas-free note. |
-| `fromAsset` | object | `{ symbol, tokenAddress }` (full from-token CA). |
-| `requestedAmount` | string | Requested swap amount (readable units). |
-| `walletBalance` | string | Current from-token balance (readable units). |
-| `shortfall` | string \| null | Exact readable `requestedAmount - walletBalance`; `null` when either value is not a plain decimal. |
-| `fundingAddress` | string | Current account's own receive address on the source chain. |
-| `qr` | object | Deposit-address QR — same shape as [wallet-cli-reference.md](wallet-cli-reference.md#common-qr-object). |
+| `data.phase` / `decision` / `reason` | string | `funding_required` / `blocked` / `insufficient_balance`. |
+| `data.nextAction` | array | Empty; the result enters shared Funding immediately. |
+| `data.payload.operation` | string | Optional origin operation identifier; Swap returns `swap`. |
+| `data.payload.fundingTarget` | object | Current account, canonical chain, receive address, same-network and gas facts. |
+| `data.payload.fundingNeed` | object | `{asset,tokenAddress,required,balance,shortfall}` in readable units. |
+| `data.payload.qr` | object | QR for `fundingTarget.receiveAddress`; same shape as [wallet-cli-reference.md](wallet-cli-reference.md#common-qr-object). |
 
 The common `payload.fundingTarget`, `payload.qr`, and `payload.fundingNeed`
 fields are owned by the CLI Funding helper. The result carries no saved quote,

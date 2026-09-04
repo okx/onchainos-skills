@@ -92,8 +92,15 @@ pub async fn cmd_send(
             )
             .await
         } else {
-            api.prepare_transaction(&context, recipient, &amount, None, None, fee_rate.as_ref())
-                .await
+            api.prepare_transaction(
+                &context,
+                recipient,
+                &amount,
+                None,
+                None,
+                fee_rate.as_ref(),
+            )
+            .await
         }
         .map_err(error::map_api_error)?;
 

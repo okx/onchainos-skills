@@ -34,7 +34,8 @@ pub(super) async fn gas_station_send(
     relayer_id: Option<&str>,
     enable_gas_station: bool,
 ) -> Result<()> {
-    let access_token = crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
+    let access_token =
+        crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
     let wallets = crate::wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::super::common::ERR_NOT_LOGGED_IN))?;
     let chain_entry = super::super::chain::get_chain_by_real_chain_index(chain)
@@ -60,13 +61,7 @@ pub(super) async fn gas_station_send(
             amt,
             contract_token,
             &session.session_cert,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None, None, None, None, None, None, None,
             if enable_gas_station { Some(true) } else { None },
             gas_token_address,
             relayer_id,
@@ -286,11 +281,9 @@ pub(super) fn gs_apply_extra_data_fields(
         ed["contractNonce"] = json!(unsigned.contract_nonce);
     }
     // relayerId + context: match against the selected token in tokenList.
-    if let Some(selected) = unsigned
-        .gas_station_token_list
-        .iter()
-        .find(|t| t.fee_token_address == unsigned.service_charge_fee_token_address)
-    {
+    if let Some(selected) = unsigned.gas_station_token_list.iter().find(|t| {
+        t.fee_token_address == unsigned.service_charge_fee_token_address
+    }) {
         ed["relayerId"] = json!(selected.relayer_id);
         ed["context"] = json!(selected.context);
     }
@@ -393,31 +386,14 @@ pub(super) async fn gs_broadcast_with_7702_upgrade(
     coin_amount: &str,
     token_address: Option<&str>,
 ) -> Result<crate::wallet_api::BroadcastResponse> {
-    let signing_seed = crate::crypto::hpke_decrypt_session_sk(
-        &session.encrypted_session_sk,
-        &crate::keyring_store::get("session_key")
-            .map_err(|_| anyhow::anyhow!(super::super::common::ERR_NOT_LOGGED_IN))?,
-    )?;
+    let signing_seed =
+        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &crate::keyring_store::get("session_key")
+            .map_err(|_| anyhow::anyhow!(super::super::common::ERR_NOT_LOGGED_IN))?)?;
 
     let msg_for_sign = gs_build_msg_for_sign(unsigned, session, &signing_seed)?;
-    let extra_data_obj = gs_build_extra_data(
-        unsigned,
-        &msg_for_sign,
-        to_addr,
-        coin_amount,
-        token_address,
-        force,
-    );
+    let extra_data_obj = gs_build_extra_data(unsigned, &msg_for_sign, to_addr, coin_amount, token_address, force);
 
-    gs_do_broadcast(
-        client,
-        access_token,
-        account_id,
-        addr_info,
-        &extra_data_obj,
-        force,
-    )
-    .await
+    gs_do_broadcast(client, access_token, account_id, addr_info, &extra_data_obj, force).await
 }
 
 /// Flow 2: subsequent Gas Station transactions (`needUpdate7702=false`,
@@ -435,31 +411,14 @@ pub(super) async fn gs_broadcast_transaction(
     coin_amount: &str,
     token_address: Option<&str>,
 ) -> Result<crate::wallet_api::BroadcastResponse> {
-    let signing_seed = crate::crypto::hpke_decrypt_session_sk(
-        &session.encrypted_session_sk,
-        &crate::keyring_store::get("session_key")
-            .map_err(|_| anyhow::anyhow!(super::super::common::ERR_NOT_LOGGED_IN))?,
-    )?;
+    let signing_seed =
+        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &crate::keyring_store::get("session_key")
+            .map_err(|_| anyhow::anyhow!(super::super::common::ERR_NOT_LOGGED_IN))?)?;
 
     let msg_for_sign = gs_build_msg_for_sign(unsigned, session, &signing_seed)?;
-    let extra_data_obj = gs_build_extra_data(
-        unsigned,
-        &msg_for_sign,
-        to_addr,
-        coin_amount,
-        token_address,
-        force,
-    );
+    let extra_data_obj = gs_build_extra_data(unsigned, &msg_for_sign, to_addr, coin_amount, token_address, force);
 
-    gs_do_broadcast(
-        client,
-        access_token,
-        account_id,
-        addr_info,
-        &extra_data_obj,
-        force,
-    )
-    .await
+    gs_do_broadcast(client, access_token, account_id, addr_info, &extra_data_obj, force).await
 }
 
 /// Gas Station broadcast: shared send logic + debug dump.
@@ -505,32 +464,14 @@ pub(super) async fn gas_station_sign_and_broadcast(
 ) -> Result<crate::wallet_api::BroadcastResponse> {
     if unsigned.need_update7702 {
         gs_broadcast_with_7702_upgrade(
-            client,
-            access_token,
-            account_id,
-            addr_info,
-            session,
-            unsigned,
-            force,
-            to_addr,
-            coin_amount,
-            token_address,
-        )
-        .await
+            client, access_token, account_id, addr_info, session, unsigned,
+            force, to_addr, coin_amount, token_address,
+        ).await
     } else {
         gs_broadcast_transaction(
-            client,
-            access_token,
-            account_id,
-            addr_info,
-            session,
-            unsigned,
-            force,
-            to_addr,
-            coin_amount,
-            token_address,
-        )
-        .await
+            client, access_token, account_id, addr_info, session, unsigned,
+            force, to_addr, coin_amount, token_address,
+        ).await
     }
 }
 
@@ -584,23 +525,13 @@ pub(super) fn token_list_json(unsigned: &crate::wallet_api::UnsignedInfoResponse
 }
 
 /// Build sufficient-token list string for CliConfirming messages
-pub(super) fn format_sufficient_tokens(
-    unsigned: &crate::wallet_api::UnsignedInfoResponse,
-) -> String {
+pub(super) fn format_sufficient_tokens(unsigned: &crate::wallet_api::UnsignedInfoResponse) -> String {
     unsigned
         .gas_station_token_list
         .iter()
         .filter(|t| t.sufficient)
         .enumerate()
-        .map(|(i, t)| {
-            format!(
-                "{}. {} (balance: {}, fee: {})",
-                i + 1,
-                t.symbol,
-                t.balance,
-                t.service_charge
-            )
-        })
+        .map(|(i, t)| format!("{}. {} (balance: {}, fee: {})", i + 1, t.symbol, t.balance, t.service_charge))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -713,13 +644,7 @@ pub(super) fn force_setup_required_for_send(
         "contractToken": contract_token,
         "force": true,
     });
-    build_gs_setup_required(
-        addr_info,
-        unsigned,
-        is_reenable,
-        "wallet send",
-        original_args,
-    )
+    build_gs_setup_required(addr_info, unsigned, is_reenable, "wallet send", original_args)
 }
 
 /// `--force` + GS first-time / re-enable required: build a `CliSetupRequired` error
@@ -882,16 +807,8 @@ pub(super) async fn handle_gs_auto_sign_broadcast(
     contract_token: Option<&str>,
 ) -> Result<()> {
     let resp = gas_station_sign_and_broadcast(
-        client,
-        access_token,
-        account_id,
-        addr_info,
-        session,
-        unsigned,
-        force,
-        recipient,
-        amt,
-        contract_token,
+        client, access_token, account_id, addr_info, session, unsigned,
+        force, recipient, amt, contract_token,
     )
     .await?;
     output::success(json!({
@@ -915,7 +832,8 @@ mod tests {
     // ── Gas Station user-facing Confirming helpers ──
 
     use crate::test_helpers::gas_station::{
-        make_token_full as mk_token, make_unsigned_with_tokens as mk_unsigned,
+        make_token_full as mk_token,
+        make_unsigned_with_tokens as mk_unsigned,
     };
 
     #[test]
@@ -936,7 +854,10 @@ mod tests {
 
     #[test]
     fn format_sufficient_tokens_empty_when_all_insufficient() {
-        let unsigned = mk_unsigned("", vec![mk_token("USDT", "0xaaa", "0", "0.13", false)]);
+        let unsigned = mk_unsigned(
+            "",
+            vec![mk_token("USDT", "0xaaa", "0", "0.13", false)],
+        );
         assert_eq!(format_sufficient_tokens(&unsigned), "");
     }
 
@@ -965,11 +886,7 @@ mod tests {
         );
         let original_args = serde_json::json!({"chain": "42161", "force": true});
         let err = build_gs_setup_required(
-            &addr,
-            &unsigned,
-            /*is_reenable*/ false,
-            "wallet contract-call",
-            original_args,
+            &addr, &unsigned, /*is_reenable*/ false, "wallet contract-call", original_args,
         );
         let setup = err
             .downcast_ref::<crate::output::CliSetupRequired>()
@@ -978,16 +895,11 @@ mod tests {
         assert_eq!(setup.data["scene"], "A");
         assert_eq!(setup.data["chainId"], "42161");
         assert_eq!(setup.data["fromAddress"], "0xaef7");
-        assert_eq!(
-            setup.data["originalRequest"]["command"],
-            "wallet contract-call"
-        );
+        assert_eq!(setup.data["originalRequest"]["command"], "wallet contract-call");
         assert_eq!(setup.data["originalRequest"]["args"]["chain"], "42161");
         assert_eq!(setup.data["tokenList"].as_array().unwrap().len(), 2);
         assert_eq!(setup.data["retryGuidance"].as_array().unwrap().len(), 3);
-        assert!(setup
-            .message
-            .contains("wallet gas-station setup --chain 42161"));
+        assert!(setup.message.contains("wallet gas-station setup --chain 42161"));
         assert!(setup.message.contains("Scene A"));
     }
 
@@ -996,10 +908,7 @@ mod tests {
         let addr = mk_addr_info("1", "0xabc");
         let unsigned = mk_unsigned("0xaaa", vec![mk_token("USDC", "0xaaa", "1", "0.04", true)]);
         let err = build_gs_setup_required(
-            &addr,
-            &unsigned,
-            /*is_reenable*/ true,
-            "wallet send",
+            &addr, &unsigned, /*is_reenable*/ true, "wallet send",
             serde_json::json!({"force": true}),
         );
         let setup = err
@@ -1029,26 +938,15 @@ mod tests {
             enable_gas_station: false,
         };
         let err = force_setup_required_for_tx_params(
-            /*is_reenable*/ false,
-            /*is_contract_call*/ true,
-            "42161",
-            Some("0xaef7"),
-            &tx,
-            &addr,
-            &unsigned,
+            /*is_reenable*/ false, /*is_contract_call*/ true,
+            "42161", Some("0xaef7"), &tx, &addr, &unsigned,
         );
         let setup = err
             .downcast_ref::<crate::output::CliSetupRequired>()
             .expect("CliSetupRequired");
-        assert_eq!(
-            setup.data["originalRequest"]["command"],
-            "wallet contract-call"
-        );
+        assert_eq!(setup.data["originalRequest"]["command"], "wallet contract-call");
         assert_eq!(setup.data["originalRequest"]["args"]["toAddr"], "0xpool");
-        assert_eq!(
-            setup.data["originalRequest"]["args"]["inputData"],
-            "0xdeadbeef"
-        );
+        assert_eq!(setup.data["originalRequest"]["args"]["inputData"], "0xdeadbeef");
         assert_eq!(setup.data["originalRequest"]["args"]["force"], true);
     }
 
@@ -1071,7 +969,8 @@ mod tests {
             enable_gas_station: false,
         };
         let err = force_setup_required_for_tx_params(
-            false, /*is_contract_call*/ false, "42161", None, &tx, &addr, &unsigned,
+            false, /*is_contract_call*/ false,
+            "42161", None, &tx, &addr, &unsigned,
         );
         let setup = err
             .downcast_ref::<crate::output::CliSetupRequired>()
@@ -1085,13 +984,8 @@ mod tests {
         let unsigned = mk_unsigned("", vec![mk_token("USDC", "0xaaa", "1", "0.026", true)]);
         let err = force_setup_required_for_send(
             /*is_reenable*/ false,
-            "10",
-            Some("0xaef7"),
-            "0xrecipient",
-            "1000000",
-            Some("0xtoken"),
-            &addr,
-            &unsigned,
+            "10", Some("0xaef7"), "0xrecipient", "1000000", Some("0xtoken"),
+            &addr, &unsigned,
         );
         let setup = err
             .downcast_ref::<crate::output::CliSetupRequired>()

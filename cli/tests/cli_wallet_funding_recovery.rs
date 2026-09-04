@@ -106,11 +106,13 @@ fn wallet_send_insufficient_balance_carries_deposit_address_or_login_required() 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let json: Value = serde_json::from_str(&stdout).unwrap_or(Value::Null);
 
-    if json.get("scene").and_then(|s| s.as_str()) == Some("transfer_insufficient_balance") {
+    if json.pointer("/data/phase").and_then(|s| s.as_str()) == Some("funding_required")
+        && json.pointer("/data/payload/operation").and_then(|s| s.as_str()) == Some("transfer")
+    {
         assert_eq!(json["ok"], Value::Bool(false), "scene must be ok:false: {json}");
         assert!(
-            json.get("depositAddress").is_some(),
-            "transfer_insufficient_balance must carry depositAddress even when QR degrades: {json}"
+            json.pointer("/data/payload/fundingTarget/receiveAddress").is_some(),
+            "transfer_insufficient_balance must carry fundingTarget.receiveAddress even when QR degrades: {json}"
         );
     } else {
         assert!(
@@ -147,11 +149,13 @@ fn wallet_send_simulation_shortfall_is_balance_verified_or_preserved() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let json: Value = serde_json::from_str(&stdout).unwrap_or(Value::Null);
 
-    if json.get("scene").and_then(|s| s.as_str()) == Some("transfer_insufficient_balance") {
-        assert!(json["errorCode"].is_null(), "must not fabricate code=10004: {json}");
-        assert!(!json["balance"].is_null(), "verified scene requires balance: {json}");
-        assert!(!json["shortfall"].is_null(), "verified scene requires shortfall: {json}");
-        assert_eq!(json["nextAction"][0]["id"], "fund_account");
+    if json.pointer("/data/phase").and_then(|s| s.as_str()) == Some("funding_required")
+        && json.pointer("/data/payload/operation").and_then(|s| s.as_str()) == Some("transfer")
+    {
+        assert!(json["data"]["payload"]["error"].get("code").is_none(), "must not fabricate code=10004: {json}");
+        assert!(!json["data"]["payload"]["fundingNeed"]["balance"].is_null(), "verified scene requires balance: {json}");
+        assert!(!json["data"]["payload"]["fundingNeed"]["shortfall"].is_null(), "verified scene requires shortfall: {json}");
+        assert_eq!(json["data"]["nextAction"], serde_json::json!([]));
     } else {
         assert!(
             login_required(&stdout, &stderr) || stdout.contains("executeErrorMsg"),
@@ -185,16 +189,14 @@ fn wallet_send_insufficient_balance_scene_or_login_required() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let json: Value = serde_json::from_str(&stdout).unwrap_or(Value::Null);
 
-    if json.get("scene").and_then(|s| s.as_str()) == Some("transfer_insufficient_balance") {
+    if json.pointer("/data/phase").and_then(|s| s.as_str()) == Some("funding_required")
+        && json.pointer("/data/payload/operation").and_then(|s| s.as_str()) == Some("transfer")
+    {
         assert_eq!(json["ok"], Value::Bool(false), "scene must be ok:false: {json}");
         assert!(
-            json["errorCode"] == "10004" || json["errorCode"].is_null(),
+            json["data"]["payload"]["error"]["code"] == "10004"
+                || json["data"]["payload"]["error"].get("code").is_none(),
             "scene must preserve code=10004 or leave absent backend code null: {json}"
-        );
-        assert_eq!(
-            json["retryable"],
-            Value::Bool(true),
-            "transfer_insufficient_balance must be retryable=true: {json}"
         );
     } else {
         assert!(
@@ -208,11 +210,10 @@ fn wallet_send_insufficient_balance_scene_or_login_required() {
 
 /// IT-009b (live, error): an under-funded contract-token `wallet send` surfaces
 /// the `transfer_insufficient_balance` scene with a
-/// contract-token asset — `asset.tokenAddress` is the CA verbatim, `asset.symbol`
-/// is read from the matched balance record and is **never an empty string** (it is
-/// either a non-empty symbol or JSON null when the record is unavailable; spec
-/// §2.1). The scene also projects the consumable `sameNetworkRequired` / `gasFree`
-/// flags (spec §2.5). Validated when the scene fires; otherwise the auth gate is
+/// contract-token asset — `fundingNeed.tokenAddress` is the CA verbatim and
+/// `fundingNeed.asset` is a non-empty symbol or the full CA fallback. The scene
+/// also carries `sameNetworkRequired` / `gasFree` in `fundingTarget` (spec §2.5).
+/// Validated when the scene fires; otherwise the auth gate is
 /// confirmed. Example uses USDC on Ethereum (chain 1, a TBC-1 covered chain).
 #[test]
 fn wallet_send_contract_token_insufficient_balance_scene_or_login_required() {
@@ -238,31 +239,36 @@ fn wallet_send_contract_token_insufficient_balance_scene_or_login_required() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let json: Value = serde_json::from_str(&stdout).unwrap_or(Value::Null);
 
-    if json.get("scene").and_then(|s| s.as_str()) == Some("transfer_insufficient_balance") {
+    if json.pointer("/data/phase").and_then(|s| s.as_str()) == Some("funding_required")
+        && json.pointer("/data/payload/operation").and_then(|s| s.as_str()) == Some("transfer")
+    {
         assert_eq!(json["ok"], Value::Bool(false), "scene must be ok:false: {json}");
         assert!(
-            json["errorCode"] == "10004" || json["errorCode"].is_null(),
+            json["data"]["payload"]["error"]["code"] == "10004"
+                || json["data"]["payload"]["error"].get("code").is_none(),
             "contract-token scene must preserve code=10004 or leave absent backend code null: {json}"
         );
         // The token stays identified by its CA regardless of balance availability.
         assert_eq!(
-            json["asset"]["tokenAddress"].as_str().map(str::to_lowercase),
+            json["data"]["payload"]["fundingNeed"]["tokenAddress"]
+                .as_str()
+                .map(str::to_lowercase),
             Some(USDC_ETH_CA.to_string()),
             "contract-token asset.tokenAddress must echo the CA: {json}"
         );
-        // asset.symbol is never an empty string — non-empty symbol or JSON null.
-        let symbol = &json["asset"]["symbol"];
+        // Asset identifier is never empty — symbol when known, otherwise full CA.
+        let symbol = &json["data"]["payload"]["fundingNeed"]["asset"];
         assert!(
-            symbol.is_null() || symbol.as_str().is_some_and(|s| !s.is_empty()),
-            "contract-token asset.symbol must be a non-empty string or null, never \"\": {json}"
+            symbol.as_str().is_some_and(|s| !s.is_empty()),
+            "contract-token fundingNeed.asset must be non-empty: {json}"
         );
         // Consumable scene flags are present as booleans (§2.5).
         assert!(
-            json["sameNetworkRequired"].is_boolean(),
+            json["data"]["payload"]["fundingTarget"]["sameNetworkRequired"].is_boolean(),
             "scene must project sameNetworkRequired: {json}"
         );
         assert!(
-            json["gasFree"].is_boolean(),
+            json["data"]["payload"]["fundingTarget"]["gasFree"].is_boolean(),
             "scene must project gasFree: {json}"
         );
     } else {
@@ -310,8 +316,8 @@ fn wallet_send_solana_address_resolution_failure_is_ok_false() {
         "expected a structured ok:false failure (no partial funding contract)\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert_ne!(
-        json.get("scene").and_then(|s| s.as_str()),
-        Some("transfer_insufficient_balance"),
+        json.pointer("/data/phase").and_then(|s| s.as_str()),
+        Some("funding_required"),
         "an address-resolution failure must not be turned into a top-up scene: {json}"
     );
 }

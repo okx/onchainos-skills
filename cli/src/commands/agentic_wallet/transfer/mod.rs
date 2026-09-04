@@ -1029,102 +1029,68 @@ pub async fn batch_sign_and_broadcast(
 
 // ── transfer_insufficient_balance scene ───────────────────────────────
 //
-// `wallet send` emits the flat `transfer_insufficient_balance` scene after
+// `wallet send` emits the structured `transfer_insufficient_balance` result after
 // either (a) a real backend `code=10004`, or (b) `executeResult=false` followed
 // by a successful balance query that independently proves requested > balance.
 // The second branch is needed because the backend can express an ERC-20
 // shortfall only through simulation (for example `transfer amount exceeds
 // balance`). The CLI never classifies from that free-text message alone.
 
-/// Funding recovery coverage: EVM chains in the registry (including X Layer
-/// 196 and testnet 1952) plus Solana (501). Non-EVM account-model chains, Sui,
-/// Bitcoin/BRC-20, and unknown chains retain their existing error paths.
-const TRANSFER_FUNDING_COVERED_CHAINS: &[&str] = &[
-    // EVM (incl. X Layer 196 + testnet 1952)
-    "1", "10", "56", "137", "196", "250", "324", "534352", "1952", "8453", "42161", "43114",
-    "59144", // Solana
-    "501",
-];
-
 /// Whether the `transfer_insufficient_balance` scene applies to `chain_index`.
+/// Dynamic EVM classification keeps future backend-supported EVM chains
+/// compatible; Solana is the only additional covered family. Bitcoin/BRC-20,
+/// Sui, other non-EVM chains, and unknown chains retain their existing paths.
 fn is_transfer_funding_covered_chain(chain_index: &str) -> bool {
-    TRANSFER_FUNDING_COVERED_CHAINS.contains(&chain_index)
+    crate::chains::is_evm_chain(chain_index) || chain_index == "501"
 }
 
-/// Build the flat top-level `transfer_insufficient_balance` scene JSON (spec §2.1).
-///
-/// Pure + hermetic: given the original `wallet send` asset params (`asset_symbol`
-/// / `token_address`, native marker = empty `token_address`), the backend
-/// `code`/`msg`, the readable `balance` (T5), and the resolved `FundingBundle`
-/// (T8), it assembles the exact flat field set. `chainName` and its same-value
-/// backward-compat alias `depositChain` both come from `FundingTarget.chain_name`
-/// (the single canonical source); `depositAddress` from
-/// `FundingTarget.receive_address`; `chainIndex` from `FundingTarget.chain_index`.
-/// The top-level `error` is retained equal to `errorMessage` (backward-compat).
-/// This fn never prints or exits — the caller wraps the value in
-/// `output::SceneError` and `main.rs` emits it via `error_flat` (exit 1).
+fn transfer_funding_input<'a>(
+    asset_symbol: Option<&'a str>,
+    token_address: &'a str,
+    requested: &'a str,
+    balance: Option<&'a str>,
+    error_code: Option<&'a str>,
+    error_message: Option<&'a str>,
+) -> crate::funding::FundingBlockedInput<'a> {
+    crate::funding::FundingBlockedInput {
+        asset: asset_symbol.unwrap_or(token_address),
+        token_address,
+        required: requested,
+        balance,
+        operation: Some(crate::funding::FUNDING_OPERATION_TRANSFER),
+        error_code,
+        error_message,
+    }
+}
+
+/// Pure fixture helper for the shared Funding contract. Production calls the
+/// one-call `build_funding_bundle` facade after the business proves a shortfall.
+#[cfg(test)]
 fn build_transfer_insufficient_balance_value(
     asset_symbol: Option<&str>,
     token_address: &str,
     requested: &str,
-    code: Option<&str>,
-    msg: &str,
     balance: Option<&str>,
+    error_code: Option<&str>,
+    error_message: Option<&str>,
     bundle: &crate::funding::FundingBundle,
 ) -> Value {
-    // `symbol`/`balance` are JSON null when unresolvable (query failure or asset
-    // not found) — never a faked "0" balance or an empty symbol.
-    let symbol_value = asset_symbol.map(Value::from).unwrap_or(Value::Null);
-    let balance_value = balance.map(Value::from).unwrap_or(Value::Null);
-    let shortfall_value = balance
-        .and_then(|available| crate::funding::readable_shortfall(requested, available))
-        .map(Value::from)
-        .unwrap_or(Value::Null);
-    let asset = json!({
-        "symbol": symbol_value,
-        "tokenAddress": token_address,
-    });
-    let error_code = code.map(Value::from).unwrap_or(Value::Null);
-    let mut value = crate::funding::build_funding_blocked_result(
+    crate::funding::build_funding_blocked_result(
         bundle,
-        crate::funding::FundingBlockedInput {
-            phase: "transfer_funding",
-            reason: "insufficient_balance",
-            asset: asset_symbol,
+        transfer_funding_input(
+            asset_symbol,
             token_address,
-            required: Some(requested),
+            requested,
             balance,
-            business_payload: json!({
-                "scene": "transfer_insufficient_balance",
-            }),
-        },
-    );
-
-    // Keep the existing flat scene aliases for CLI consumers while the shared
-    // Funding contract remains authoritative under payload.
-    value["ok"] = Value::Bool(false);
-    value["scene"] = Value::String("transfer_insufficient_balance".to_string());
-    value["error"] = Value::String(msg.to_string());
-    value["errorCode"] = error_code;
-    value["errorMessage"] = Value::String(msg.to_string());
-    value["retryable"] = Value::Bool(true);
-    value["chainIndex"] = Value::String(bundle.target.chain_index.clone());
-    value["chainName"] = Value::String(bundle.target.chain_name.clone());
-    value["sameNetworkRequired"] = Value::Bool(bundle.target.same_network_required);
-    value["gasFree"] = Value::Bool(bundle.target.gas_free);
-    value["asset"] = asset;
-    value["requested"] = Value::String(requested.to_string());
-    value["balance"] = balance_value;
-    value["shortfall"] = shortfall_value;
-    value["depositChain"] = Value::String(bundle.target.chain_name.clone());
-    value["depositAddress"] = Value::String(bundle.target.receive_address.clone());
-    value["qr"] = serde_json::to_value(&bundle.qr).unwrap_or(Value::Null);
-    value
+            error_code,
+            error_message,
+        ),
+    )
 }
 
 /// If `err` is a real backend `code=10004` on a covered chain, build the
 /// `transfer_insufficient_balance` scene (spec §2.1) and return it as a
-/// `SceneError`; otherwise return `None` so the caller propagates the original
+/// `CliFundingBlocked`; otherwise return `None` so the caller propagates the original
 /// error unchanged. Detected on the *raw* `ApiCodeError` before
 /// `format_api_error` flattens it into a string.
 ///
@@ -1136,13 +1102,12 @@ fn build_transfer_insufficient_balance_value(
 struct TransferFundingContext<'a> {
     chain_index: &'a str,
     contract_token: Option<&'a str>,
-    requested: &'a str,
-    requested_is_readable: bool,
+    amount_minimal: &'a str,
+    requested_readable: Option<&'a str>,
 }
 
 async fn try_transfer_insufficient_balance_scene(
     err: &anyhow::Error,
-    wallets: &WalletsJson,
     context: TransferFundingContext<'_>,
 ) -> Option<anyhow::Error> {
     let api_err = err.downcast_ref::<crate::wallet_api::ApiCodeError>()?;
@@ -1154,42 +1119,56 @@ async fn try_transfer_insufficient_balance_scene(
         return None;
     }
     let token_address = context.contract_token.unwrap_or("");
-    // Balance + symbol from the token record matched by (tokenAddress, chainIndex),
-    // queried only after the real 10004. A query failure or an absent record both
-    // collapse to `None`: the balance is then reported as null — never a faked "0".
-    let matched = super::balance::query_token_readable(context.chain_index, token_address)
-        .await
-        .ok()
-        .flatten();
-    let (asset_symbol, balance): (Option<String>, Option<String>) = if token_address.is_empty() {
-        // Native marker (no `--contract-token`): symbol from the chain registry
-        // (always present); balance from the matched record — a real "0" is kept,
-        // failure/absence → null.
-        (
-            Some(crate::chains::native_token_symbol(context.chain_index).to_string()),
-            matched.map(|m| m.balance),
-        )
-    } else {
-        // Contract token: the display symbol and the balance both come from the
-        // matched balance record (never an empty symbol). Unresolved record → both
-        // null, so the scene renders "当前余额暂不可用" instead of a fabricated value.
-        match matched {
-            Some(m) => (m.symbol, Some(m.balance)),
-            None => (None, None),
-        }
+    let matched = super::balance::query_token_readable(context.chain_index, token_address).await;
+    let (balance, mut asset_symbol, mut decimals) = match matched {
+        Ok(Some(token)) => (Some(token.balance), token.symbol, token.decimals),
+        Ok(None) => (Some("0".to_string()), None, None),
+        Err(_) => (None, None, None),
     };
-    // Funding target + QR (T8). Resolution failure → no partial scene (§3.2).
-    let bundle = crate::funding::build_funding_bundle(wallets, context.chain_index, None).ok()?;
-    let value = build_transfer_insufficient_balance_value(
-        asset_symbol.as_deref(),
-        token_address,
-        context.requested,
-        Some(&api_err.code),
-        &api_err.msg,
-        balance.as_deref(),
-        &bundle,
-    );
-    Some(crate::output::SceneError { value }.into())
+    if token_address.is_empty() {
+        asset_symbol = Some(crate::chains::native_token_symbol(context.chain_index).to_string());
+        if decimals.is_none() {
+            decimals = super::chain_profile::resolve(context.chain_index)
+                .await
+                .ok()
+                .map(|profile| profile.native_decimals);
+        }
+    } else {
+        if decimals.is_none() || asset_symbol.is_none() {
+            if let Ok(metadata) =
+                super::balance::query_token_metadata(context.chain_index, token_address).await
+            {
+                decimals.get_or_insert(metadata.decimals);
+                if let Some(symbol) = metadata.symbol {
+                    asset_symbol.get_or_insert(symbol);
+                }
+            }
+        }
+    }
+    let requested = match context.requested_readable {
+        Some(requested) => requested.to_string(),
+        None => crate::commands::agentic_wallet::shared::common::amount::minimal_to_readable(
+            context.amount_minimal,
+            decimals?,
+        )
+        .ok()?,
+    };
+    // The common facade resolves the fresh target + QR and emits the shared
+    // contract. Resolution failure preserves the original business error.
+    let value = crate::funding::build_funding_bundle(
+        context.chain_index,
+        transfer_funding_input(
+            asset_symbol.as_deref(),
+            token_address,
+            &requested,
+            balance.as_deref(),
+            Some(&api_err.code),
+            Some(&api_err.msg),
+        ),
+    )
+    .await
+    .ok()?;
+    Some(crate::output::CliFundingBlocked { data: value }.into())
 }
 
 /// Convert a simulation failure into the funding scene only when a fresh,
@@ -1198,10 +1177,9 @@ async fn try_transfer_insufficient_balance_scene(
 /// diagnostics but is never used to decide the branch.
 async fn try_transfer_simulation_insufficient_balance_scene(
     unsigned: &UnsignedInfoResponse,
-    wallets: &WalletsJson,
     context: TransferFundingContext<'_>,
 ) -> Option<anyhow::Error> {
-    if unsigned.execute_result.as_bool() != Some(false) || !context.requested_is_readable {
+    if unsigned.execute_result.as_bool() != Some(false) {
         return None;
     }
     if !is_transfer_funding_covered_chain(context.chain_index) {
@@ -1213,7 +1191,20 @@ async fn try_transfer_simulation_insufficient_balance_scene(
         .await
         .ok()
         .flatten()?;
-    if !has_confirmed_readable_shortfall(context.requested, &matched.balance) {
+    let requested_from_minimal;
+    let requested = match context.requested_readable {
+        Some(requested) => requested,
+        None => {
+            requested_from_minimal =
+                crate::commands::agentic_wallet::shared::common::amount::minimal_to_readable(
+                    context.amount_minimal,
+                    matched.decimals?,
+                )
+                .ok()?;
+            &requested_from_minimal
+        }
+    };
+    if !has_confirmed_readable_shortfall(requested, &matched.balance) {
         return None;
     }
 
@@ -1222,22 +1213,22 @@ async fn try_transfer_simulation_insufficient_balance_scene(
     } else {
         matched.symbol
     };
-    let bundle = crate::funding::build_funding_bundle(wallets, context.chain_index, None).ok()?;
-    let message = if unsigned.execute_error_msg.is_empty() {
-        "transaction simulation failed"
-    } else {
-        &unsigned.execute_error_msg
-    };
-    let value = build_transfer_insufficient_balance_value(
-        asset_symbol.as_deref(),
-        token_address,
-        context.requested,
-        None,
-        message,
-        Some(&matched.balance),
-        &bundle,
-    );
-    Some(crate::output::SceneError { value }.into())
+    let error_message = (!unsigned.execute_error_msg.is_empty())
+        .then_some(unsigned.execute_error_msg.as_str());
+    let value = crate::funding::build_funding_bundle(
+        context.chain_index,
+        transfer_funding_input(
+            asset_symbol.as_deref(),
+            token_address,
+            requested,
+            Some(&matched.balance),
+            None,
+            error_message,
+        ),
+    )
+    .await
+    .ok()?;
+    Some(crate::output::CliFundingBlocked { data: value }.into())
 }
 
 fn has_confirmed_readable_shortfall(requested: &str, balance: &str) -> bool {
@@ -1246,9 +1237,40 @@ fn has_confirmed_readable_shortfall(requested: &str, balance: &str) -> bool {
 
 // ── send ─────────────────────────────────────────────────────────────
 
-/// onchainos wallet send
+/// Internal callers that already hold a minimal amount keep the original send
+/// entry. The user-facing dispatcher uses `cmd_send_with_readable` so Funding
+/// can report the exact readable request without changing Gas Station callers.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn cmd_send(
+    amt: &str,
+    recipient: &str,
+    chain: &str,
+    from: Option<&str>,
+    contract_token: Option<&str>,
+    force: bool,
+    gas_token_address: Option<&str>,
+    relayer_id: Option<&str>,
+    enable_gas_station: bool,
+) -> Result<()> {
+    cmd_send_with_readable(
+        amt,
+        None,
+        recipient,
+        chain,
+        from,
+        contract_token,
+        force,
+        gas_token_address,
+        relayer_id,
+        enable_gas_station,
+    )
+    .await
+}
+
+/// User-facing wallet send entry retaining the optional readable amount used to
+/// build an accurate insufficient-balance result.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn cmd_send_with_readable(
     amt: &str,
     requested_readable: Option<&str>,
     recipient: &str,
@@ -1324,17 +1346,16 @@ pub(super) async fn cmd_send(
     {
         Ok(u) => u,
         Err(e) => {
-            // A real backend `code=10004` on a covered chain becomes the flat
+            // A real backend `code=10004` on a covered chain becomes the structured
             // `transfer_insufficient_balance` scene (spec §2.1). Checked on the raw
             // `ApiCodeError` before `format_api_error` collapses it to a string.
             if let Some(scene) = try_transfer_insufficient_balance_scene(
                 &e,
-                &wallets,
                 TransferFundingContext {
                     chain_index: chain,
                     contract_token,
-                    requested: requested_readable.unwrap_or(amt),
-                    requested_is_readable: requested_readable.is_some(),
+                    amount_minimal: amt,
+                    requested_readable,
                 },
             )
             .await
@@ -1347,16 +1368,15 @@ pub(super) async fn cmd_send(
 
     // Some EVM backends report token shortfalls as a successful API envelope
     // with `executeResult=false`, not `code=10004`. Confirm the shortfall using
-    // the real balance before exposing the funding action. Other simulation
+    // the real balance before returning the shared Funding result. Other simulation
     // failures keep their original error path.
     if let Some(scene) = try_transfer_simulation_insufficient_balance_scene(
         &unsigned,
-        &wallets,
         TransferFundingContext {
             chain_index: chain,
             contract_token,
-            requested: requested_readable.unwrap_or(amt),
-            requested_is_readable: requested_readable.is_some(),
+            amount_minimal: amt,
+            requested_readable,
         },
     )
     .await
@@ -1887,7 +1907,6 @@ mod tests {
     async fn cmd_send_rejects_empty_amt() {
         let result = cmd_send(
             "",
-            None,
             "0xRecipient",
             "1",
             None,
@@ -1906,7 +1925,6 @@ mod tests {
     async fn cmd_send_rejects_decimal_amt() {
         let result = cmd_send(
             "1.5",
-            None,
             "0xRecipient",
             "1",
             None,
@@ -1923,7 +1941,7 @@ mod tests {
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_recipient() {
-        let result = cmd_send("100", None, "", "1", None, None, false, None, None, false).await;
+        let result = cmd_send("100", "", "1", None, None, false, None, None, false).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1935,7 +1953,6 @@ mod tests {
     async fn cmd_send_rejects_empty_chain() {
         let result = cmd_send(
             "100",
-            None,
             "0xRecipient",
             "",
             None,
@@ -2321,7 +2338,7 @@ mod tests {
             },
             qr: QrOutput {
                 requested_format: "auto".to_string(),
-                resolved_format: "unicode".to_string(),
+                resolved_format: Some("unicode".to_string()),
                 display_mode: "terminal-unicode".to_string(),
                 terminal_qr: Some("QR_BLOCK".to_string()),
                 image_path: None,
@@ -2335,65 +2352,51 @@ mod tests {
     #[test]
     fn transfer_insufficient_balance_value_matches_spec_2_1() {
         // Native OKB on chain 196, balance "0.08504764", requested "10" → the
-        // exact §2.1 flat field set. Asset from original params (native ⇒ empty
+        // exact §2.1 structured field set. Asset from original params (native ⇒ empty
         // tokenAddress); chainName == depositChain from FundingTarget.chain_name.
         let bundle = x_layer_terminal_bundle();
         let v = build_transfer_insufficient_balance_value(
             Some("OKB"),
             "",
             "10",
-            Some("10004"),
-            "Insufficient balance",
             Some("0.08504764"),
+            Some("10004"),
+            Some("Insufficient balance"),
             &bundle,
         );
 
-        // Flat top-level shape (NOT the JsonOutput envelope).
-        assert_eq!(v["ok"], json!(false));
-        assert_eq!(v["scene"], "transfer_insufficient_balance");
-        assert_eq!(v["phase"], "transfer_funding");
+        assert_eq!(v["phase"], crate::funding::FUNDING_REQUIRED_PHASE);
         assert_eq!(v["decision"], "blocked");
         assert_eq!(v["reason"], "insufficient_balance");
-        assert_eq!(
-            v["nextAction"],
-            json!([{"id": "fund_account", "recommend": true, "params": {}}])
-        );
-        assert_eq!(v["payload"]["scene"], "transfer_insufficient_balance");
-        // `error` retained and equal to `errorMessage` (backward-compat).
-        assert_eq!(v["error"], "Insufficient balance");
-        assert_eq!(v["errorCode"], "10004");
-        assert_eq!(v["errorMessage"], "Insufficient balance");
-        assert_eq!(v["retryable"], json!(true));
-        assert_eq!(v["chainIndex"], "196");
-        assert_eq!(v["chainName"], "X Layer");
-        // Consumable scene flags projected from the FundingTarget (§2.5).
-        assert_eq!(v["sameNetworkRequired"], json!(true));
-        assert_eq!(v["gasFree"], json!(true));
-        assert_eq!(v["asset"]["symbol"], "OKB");
-        assert_eq!(v["asset"]["tokenAddress"], "");
-        assert_eq!(v["requested"], "10");
-        assert_eq!(v["balance"], "0.08504764");
-        assert_eq!(v["shortfall"], "9.91495236");
+        assert_eq!(v["nextAction"], json!([]));
+        assert_eq!(v["payload"]["operation"], "transfer");
+        assert_eq!(v["payload"]["error"]["code"], "10004");
+        assert_eq!(v["payload"]["error"]["message"], "Insufficient balance");
+        assert_eq!(v["payload"]["fundingTarget"]["chainIndex"], "196");
+        assert_eq!(v["payload"]["fundingTarget"]["chainName"], "X Layer");
+        assert_eq!(v["payload"]["fundingTarget"]["sameNetworkRequired"], json!(true));
+        assert_eq!(v["payload"]["fundingTarget"]["gasFree"], json!(true));
+        assert_eq!(v["payload"]["fundingNeed"]["asset"], "OKB");
+        assert_eq!(v["payload"]["fundingNeed"]["tokenAddress"], "");
+        assert_eq!(v["payload"]["fundingNeed"]["required"], "10");
+        assert_eq!(v["payload"]["fundingNeed"]["balance"], "0.08504764");
+        assert_eq!(v["payload"]["fundingNeed"]["shortfall"], "9.91495236");
         assert_eq!(v["payload"]["fundingNeed"]["shortfall"], "9.91495236");
         assert_eq!(v["payload"]["fundingNeed"]["required"], "10");
         assert_eq!(
             v["payload"]["fundingTarget"]["receiveAddress"],
             "0xReceiveAddr"
         );
-        assert_eq!(v["depositAddress"], "0xReceiveAddr");
-        // depositChain is the same-value backward-compat alias of chainName.
-        assert_eq!(v["depositChain"], "X Layer");
-        assert_eq!(v["depositChain"], v["chainName"]);
         // qr carries the full Common QR field set (camelCase), terminal mode.
-        assert_eq!(v["qr"]["requestedFormat"], "auto");
-        assert_eq!(v["qr"]["resolvedFormat"], "unicode");
-        assert_eq!(v["qr"]["displayMode"], "terminal-unicode");
-        assert_eq!(v["qr"]["terminalQr"], "QR_BLOCK");
+        assert_eq!(v["payload"]["qr"]["requestedFormat"], "auto");
+        assert_eq!(v["payload"]["qr"]["resolvedFormat"], "unicode");
+        assert_eq!(v["payload"]["qr"]["displayMode"], "terminal-unicode");
+        assert_eq!(v["payload"]["qr"]["terminalQr"], "QR_BLOCK");
         // image-notify fields absent in terminal mode (serde skip_serializing_if).
-        assert!(v["qr"].get("imagePath").is_none());
-        assert!(v["qr"].get("mimeType").is_none());
-        assert!(v["qr"].get("markdownImage").is_none());
-        assert!(v["qr"].get("notifyCommandArgs").is_none());
+        assert!(v["payload"]["qr"].get("imagePath").is_none());
+        assert!(v["payload"]["qr"].get("mimeType").is_none());
+        assert!(v["payload"]["qr"].get("markdownImage").is_none());
+        assert!(v["payload"]["qr"].get("notifyCommandArgs").is_none());
     }
 
     #[test]
@@ -2406,23 +2409,23 @@ mod tests {
             Some("USDC"),
             "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             "100",
-            Some("10004"),
-            "insufficient",
             Some("20"),
+            Some("10004"),
+            Some("insufficient"),
             &bundle,
         );
         assert_eq!(
-            v["asset"]["tokenAddress"],
+            v["payload"]["fundingNeed"]["tokenAddress"],
             "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         );
-        assert_eq!(v["asset"]["symbol"], "USDC");
+        assert_eq!(v["payload"]["fundingNeed"]["asset"], "USDC");
         assert!(
-            v["asset"]["symbol"].as_str().is_some_and(|s| !s.is_empty()),
+            v["payload"]["fundingNeed"]["asset"].as_str().is_some_and(|s| !s.is_empty()),
             "contract-token asset.symbol must never be an empty string"
         );
-        assert_eq!(v["requested"], "100");
-        assert_eq!(v["balance"], "20");
-        assert_eq!(v["errorCode"], "10004");
+        assert_eq!(v["payload"]["fundingNeed"]["required"], "100");
+        assert_eq!(v["payload"]["fundingNeed"]["balance"], "20");
+        assert_eq!(v["payload"]["error"]["code"], "10004");
     }
 
     #[test]
@@ -2434,13 +2437,13 @@ mod tests {
             Some("OKB"),
             "",
             "10",
-            Some("10004"),
-            "insufficient",
             Some("0"),
+            Some("10004"),
+            Some("insufficient"),
             &bundle,
         );
-        assert_eq!(v["balance"], "0", "a real zero balance is the string \"0\"");
-        assert!(!v["balance"].is_null());
+        assert_eq!(v["payload"]["fundingNeed"]["balance"], "0", "a real zero balance is the string \"0\"");
+        assert!(!v["payload"]["fundingNeed"]["balance"].is_null());
     }
 
     #[test]
@@ -2453,37 +2456,37 @@ mod tests {
             Some("OKB"),
             "",
             "10",
-            Some("10004"),
-            "insufficient",
             None,
+            Some("10004"),
+            Some("insufficient"),
             &bundle,
         );
         assert!(
-            v["balance"].is_null(),
+            v["payload"]["fundingNeed"]["balance"].is_null(),
             "query failure must not fake a \"0\""
         );
-        assert_eq!(v["asset"]["symbol"], "OKB");
+        assert_eq!(v["payload"]["fundingNeed"]["asset"], "OKB");
     }
 
     #[test]
     fn transfer_insufficient_balance_value_asset_not_found_balance_and_symbol_null() {
-        // Contract token not present in the balance response → both balance and
-        // symbol are `None` → JSON null (never an empty symbol, never a faked "0").
+        // Contract token not present in the balance response → balance is null
+        // and the full contract address is the stable asset identifier.
         let bundle = x_layer_terminal_bundle();
         let v = build_transfer_insufficient_balance_value(
             None,
             "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             "100",
-            Some("10004"),
-            "insufficient",
             None,
+            Some("10004"),
+            Some("insufficient"),
             &bundle,
         );
-        assert!(v["balance"].is_null());
-        assert!(v["asset"]["symbol"].is_null());
+        assert!(v["payload"]["fundingNeed"]["balance"].is_null());
+        assert_eq!(v["payload"]["fundingNeed"]["asset"], "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
         // tokenAddress is still the full CA — the token remains identified.
         assert_eq!(
-            v["asset"]["tokenAddress"],
+            v["payload"]["fundingNeed"]["tokenAddress"],
             "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         );
     }
@@ -2504,18 +2507,22 @@ mod tests {
             Some("USDC"),
             "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             "10",
-            None,
-            "execution reverted: ERC20: transfer amount exceeds balance",
             Some("1"),
+            None,
+            Some("execution reverted: ERC20: transfer amount exceeds balance"),
             &bundle,
         );
 
-        assert_eq!(v["phase"], "transfer_funding");
+        assert_eq!(v["phase"], crate::funding::FUNDING_REQUIRED_PHASE);
         assert_eq!(v["reason"], "insufficient_balance");
-        assert_eq!(v["nextAction"][0]["id"], "fund_account");
-        assert_eq!(v["balance"], "1");
-        assert_eq!(v["shortfall"], "9");
-        assert!(v["errorCode"].is_null());
+        assert_eq!(v["nextAction"], json!([]));
+        assert_eq!(v["payload"]["fundingNeed"]["balance"], "1");
+        assert_eq!(v["payload"]["fundingNeed"]["shortfall"], "9");
+        assert!(v["payload"]["error"].get("code").is_none());
+        assert_eq!(
+            v["payload"]["error"]["message"],
+            "execution reverted: ERC20: transfer amount exceeds balance"
+        );
     }
 
     #[test]

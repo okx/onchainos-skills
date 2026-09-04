@@ -224,14 +224,19 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
             let _ = writeln!(err, "[task-create] ⚠ balance check: {e}");
         }
         if let Some(ib) = e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
-            let ib_owned = ib.clone();
-            let (warning, _) =
-                common::deposit_qr::balance_warning_json(&ib_owned, &user_agent_id).await;
-            crate::output::success(common::funding_notice::funding_blocked_envelope(
-                &warning,
-                "task-payment",
-                "Task creation",
-            ));
+            let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("failed to resolve the funding address"))?;
+            let token_address = params
+                .service_token_address
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| anyhow::anyhow!("failed to resolve the funding token address"))?;
+            crate::output::success(build_task_creation_funding_result(
+                ib,
+                &deposit,
+                token_address,
+            )?);
             return Ok(());
         }
     }
@@ -340,6 +345,27 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
     }
     crate::output::success(data);
     Ok(())
+}
+
+fn build_task_creation_funding_result(
+    insufficient: &common::deposit_qr::InsufficientBalanceError,
+    deposit: &common::deposit_qr::DepositInfo,
+    token_address: &str,
+) -> Result<serde_json::Value> {
+    crate::funding::build_funding_bundle_for_address(
+        "",
+        &deposit.chain_index,
+        &deposit.address,
+        crate::funding::FundingBlockedInput {
+            asset: &insufficient.currency,
+            token_address,
+            required: &insufficient.required,
+            balance: Some(&insufficient.available),
+            operation: Some(crate::funding::FUNDING_OPERATION_TASK_CREATION),
+            error_code: None,
+            error_message: None,
+        },
+    )
 }
 
 // ─── Field validation helpers (shared with prepare-create) ───────────────
@@ -532,36 +558,35 @@ mod tests {
     }
 
     #[test]
-    fn task_create_funding_block_uses_shared_envelope() {
-        let warning = serde_json::json!({
-            "chain": "XLayer",
-            "currency": "USDT",
-            "shortfall": "0.01",
-            "available": "0",
-            "required": "0.01",
-            "depositAddress": "0x1234567890abcdef1234567890abcdef12345678",
-            "depositChain": "XLayer"
-        });
-        let envelope = common::funding_notice::funding_blocked_envelope(
-            &warning,
-            "task-payment",
-            "Task creation",
+    fn task_create_funding_block_uses_common_funding_contract() {
+        let insufficient = common::deposit_qr::InsufficientBalanceError::new(
+            "insufficient".to_string(),
+            "USDT",
+            0.01,
+            0.0,
         );
-        assert_eq!(envelope["blocked"], serde_json::json!(true));
-        assert_eq!(envelope["submitted"], serde_json::json!(false));
+        let deposit = common::deposit_qr::deposit_info_for_address(
+            "0x1234567890abcdef1234567890abcdef12345678",
+        );
+        let result = build_task_creation_funding_result(
+            &insufficient,
+            &deposit,
+            "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+        )
+        .expect("common Funding result");
+        assert_eq!(result["phase"], "funding_required");
+        assert_eq!(result["decision"], "blocked");
+        assert_eq!(result["reason"], "insufficient_balance");
+        assert_eq!(result["nextAction"], serde_json::json!([]));
+        assert_eq!(result["payload"]["operation"], "task_creation");
+        assert_eq!(result["payload"]["fundingNeed"]["balance"], "0");
+        assert_eq!(result["payload"]["fundingNeed"]["required"], "0.01");
+        assert_eq!(result["payload"]["fundingNeed"]["shortfall"], "0.01");
         assert_eq!(
-            envelope["mustRepeatInFinalResponse"],
-            serde_json::json!(true)
+            result["payload"]["fundingTarget"]["receiveAddress"],
+            "0x1234567890abcdef1234567890abcdef12345678"
         );
-        assert_eq!(envelope["forbidFundingSummary"], serde_json::json!(true));
-        assert_eq!(
-            envelope["fundingNoticeCommand"],
-            "onchainos agent funding-notice --chain XLayer --currency USDT --shortfall 0.01 --deposit-address 0x1234567890abcdef1234567890abcdef12345678 --available 0 --required 0.01 --deposit-chain XLayer --reason task-payment --format json"
-        );
-        assert!(envelope["finalResponsePolicy"]
-            .as_str()
-            .expect("finalResponsePolicy")
-            .contains("never summarize"));
+        assert!(result["payload"]["qr"].is_object());
     }
 
     #[test]

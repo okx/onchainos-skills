@@ -153,8 +153,10 @@ const QR_PNG_FILENAME_PREFIX: &str = "onchainos-funding-qr";
 pub struct QrOutput {
     /// Requested format — always `"auto"` (the CLI resolves the concrete format).
     pub requested_format: String,
-    /// Resolved format: `"unicode"` (terminal) or `"png"` (image).
-    pub resolved_format: String,
+    /// Resolved format after successful QR generation. Absent when generation
+    /// degrades to address-only output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_format: Option<String>,
     /// Display mode: `"terminal-unicode"` or `"image-notify"`.
     pub display_mode: String,
     /// Unicode QR block — present only for `terminal-unicode`.
@@ -184,6 +186,13 @@ pub fn build_qr_output(address: &str, image_dir: Option<&Path>) -> QrOutput {
     build_qr_output_with_mode(address, image_dir, detect_display_mode())
 }
 
+/// Resolve the runtime QR display mode without building an image. Legacy
+/// funding-notice envelopes use this to keep their existing fields while the
+/// mode decision remains owned by Common QR.
+pub fn display_mode() -> &'static str {
+    detect_display_mode().as_str()
+}
+
 /// Testable seam for [`build_qr_output`] with an explicit display mode.
 fn build_qr_output_with_mode(
     address: &str,
@@ -192,7 +201,7 @@ fn build_qr_output_with_mode(
 ) -> QrOutput {
     let mut out = QrOutput {
         requested_format: "auto".to_string(),
-        resolved_format: "unicode".to_string(),
+        resolved_format: None,
         display_mode: display_mode.as_str().to_string(),
         terminal_qr: None,
         image_path: None,
@@ -205,7 +214,7 @@ fn build_qr_output_with_mode(
         // image-notify: write a PNG and expose image / markdown / notify fields.
         // FR-6: any encode or write failure degrades silently to address-only.
         if let Ok(path) = write_qr_png(address, image_dir) {
-            out.resolved_format = "png".to_string();
+            out.resolved_format = Some("png".to_string());
             out.markdown_image = Some(markdown_image_for_path(&path));
             out.notify_command_args = Some(notify_command_args_for_path(&path));
             out.image_path = Some(path.display().to_string());
@@ -213,6 +222,7 @@ fn build_qr_output_with_mode(
         }
     } else if let Ok(rendered) = render_address_qr_unicode(address) {
         // terminal-unicode: render the Dense1x2 block. FR-6 degrade on encode error.
+        out.resolved_format = Some("unicode".to_string());
         out.terminal_qr = Some(rendered);
     }
 
@@ -221,8 +231,9 @@ fn build_qr_output_with_mode(
 
 /// Write a PNG QR for `address` and return its path.
 ///
-/// Directory priority (spec §4.4): explicit `image_dir` >
-/// `<ONCHAINOS_HOME>/tmp/funding-qr/` > `std::env::temp_dir()`. Each candidate is
+/// Directory priority: explicit `image_dir` > legacy
+/// `ONCHAINOS_FUNDING_IMAGE_DIR` > `<ONCHAINOS_HOME>/tmp/funding-qr/` > the
+/// legacy cwd funding directory > `std::env::temp_dir()`. Each candidate is
 /// created with `ensure_dir_0700` semantics on Unix (`home::ensure_dir_0700`). The
 /// first writable candidate wins; if all fail, the last error is returned so the
 /// caller can degrade.
@@ -236,8 +247,14 @@ fn write_qr_png(address: &str, image_dir: Option<&Path>) -> anyhow::Result<PathB
     if let Some(dir) = image_dir {
         candidates.push(dir.to_path_buf());
     }
+    if let Some(dir) = std::env::var_os("ONCHAINOS_FUNDING_IMAGE_DIR") {
+        candidates.push(PathBuf::from(dir));
+    }
     if let Ok(home) = crate::home::onchainos_home() {
         candidates.push(home.join("tmp").join("funding-qr"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join(".onchainos").join("tmp").join("funding-qr"));
     }
     candidates.push(std::env::temp_dir());
 
@@ -540,6 +557,73 @@ mod tests {
         assert!(saw_iend);
     }
 
+    #[test]
+    fn codex_session_metadata_selects_the_expected_display_mode() {
+        let tui = r#"{"type":"session_meta","payload":{"originator":"codex-tui","source":"cli"}}"#;
+        assert_eq!(
+            display_mode_from_codex_session_line(tui),
+            Some(QrDisplayMode::TerminalUnicode)
+        );
+
+        for source in ["vscode", "appServer"] {
+            let desktop = format!(
+                r#"{{"type":"session_meta","payload":{{"originator":"Codex Desktop","source":"{source}"}}}}"#
+            );
+            assert_eq!(
+                display_mode_from_codex_session_line(&desktop),
+                Some(QrDisplayMode::ImageNotify)
+            );
+        }
+    }
+
+    #[test]
+    fn codex_session_metadata_matching_is_case_insensitive_and_fail_closed() {
+        assert_eq!(
+            display_mode_from_codex_meta(Some(" Codex Desktop "), Some("AppServer")),
+            Some(QrDisplayMode::ImageNotify)
+        );
+        assert_eq!(
+            display_mode_from_codex_meta(Some("CODEX-TUI"), Some("CLI")),
+            Some(QrDisplayMode::TerminalUnicode)
+        );
+        assert_eq!(display_mode_from_codex_session_line("not json"), None);
+        assert_eq!(
+            display_mode_from_codex_meta(Some("unknown"), Some("unknown")),
+            None
+        );
+    }
+
+    #[test]
+    fn codex_exec_session_metadata_uses_terminal_unicode() {
+        let line =
+            r#"{"type":"session_meta","payload":{"originator":"codex_exec","source":"exec"}}"#;
+        assert_eq!(
+            display_mode_from_codex_session_line(line),
+            Some(QrDisplayMode::TerminalUnicode)
+        );
+    }
+
+    #[test]
+    fn invalid_codex_session_candidate_does_not_stop_search() {
+        let dir = build_qr_test_dir("qr_display_mode_sessions");
+        std::fs::create_dir_all(&dir).expect("create session test dir");
+        let bad = dir.join("bad.jsonl");
+        let good = dir.join("good.jsonl");
+        std::fs::write(&bad, "not json\n").expect("write bad session");
+        std::fs::write(
+            &good,
+            r#"{"type":"session_meta","payload":{"originator":"codex-tui","source":"cli"}}"#,
+        )
+        .expect("write good session");
+
+        assert_eq!(
+            display_mode_from_codex_session_files(vec![bad.clone(), good.clone()]),
+            Some(QrDisplayMode::TerminalUnicode)
+        );
+        let _ = std::fs::remove_file(bad);
+        let _ = std::fs::remove_file(good);
+    }
+
     // --- Common QR output (`build_qr_output` / `QrOutput`) ---
 
     /// Sandbox PNG dir under `cli/target/test_tmp/<name>` (never `tempfile::tempdir()`,
@@ -556,7 +640,7 @@ mod tests {
         let out = build_qr_output_with_mode(SAMPLE_ADDR, None, QrDisplayMode::TerminalUnicode);
 
         assert_eq!(out.requested_format, "auto");
-        assert_eq!(out.resolved_format, "unicode");
+        assert_eq!(out.resolved_format.as_deref(), Some("unicode"));
         assert_eq!(out.display_mode, "terminal-unicode");
         assert!(out.terminal_qr.as_deref().is_some_and(|s| !s.is_empty()));
         // Image-notify fields are absent in terminal mode.
@@ -572,7 +656,7 @@ mod tests {
         let out = build_qr_output_with_mode(SAMPLE_ADDR, Some(&dir), QrDisplayMode::ImageNotify);
 
         assert_eq!(out.requested_format, "auto");
-        assert_eq!(out.resolved_format, "png");
+        assert_eq!(out.resolved_format.as_deref(), Some("png"));
         assert_eq!(out.display_mode, "image-notify");
         assert!(out.terminal_qr.is_none());
 
@@ -611,6 +695,9 @@ mod tests {
         assert!(out.mime_type.is_none());
         assert!(out.markdown_image.is_none());
         assert!(out.notify_command_args.is_none());
+        assert!(out.resolved_format.is_none());
+        let json = serde_json::to_value(&out).expect("degraded QrOutput serializes");
+        assert!(json.get("resolvedFormat").is_none());
         // display_mode is still reported even when the QR itself degrades.
         assert_eq!(out.display_mode, "image-notify");
     }

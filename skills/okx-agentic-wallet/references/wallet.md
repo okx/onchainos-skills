@@ -58,12 +58,12 @@ For a SUI contract call, provide the unsigned PTB from the maintained integratio
 
 ## Insufficient-Balance Top-up Recovery (Wallet Send)
 
-When `wallet send` returns `phase=transfer_funding`, `decision=blocked`,
-`reason=insufficient_balance`, and `scene=transfer_insufficient_balance`, use
-the returned `nextAction` only. Full field list:
-[wallet-cli-reference.md](wallet-cli-reference.md) → Insufficient-balance scene.
+When `wallet send` returns `phase=funding_required`, `decision=blocked`,
+and `reason=insufficient_balance`, enter the shared Funding Reference
+immediately. Full field list:
+[wallet-cli-reference.md](wallet-cli-reference.md) → Common insufficient-balance result.
 
-The CLI produces this scene for a real backend `code=10004`, or when
+The CLI produces this common Funding result for a real backend `code=10004`, or when
 `executeResult=false` is followed by a fresh chain-and-token balance query that
 proves `requested > balance`. It must not classify from `executeErrorMsg` text
 alone. If that balance query cannot confirm a shortfall, keep the ordinary
@@ -72,19 +72,14 @@ balance is unavailable — show "当前余额暂不可用".
 
 **Recovery flow**:
 
-1. Render the business-owned insufficient-balance result from
-   [wallet-output-templates.md](wallet-output-templates.md). It asks whether to
-   fund and must not display the address or QR yet.
-2. Route a selected `fund_account` only through
-   [funding-action-routing.md](../../_shared/funding-action-routing.md), then
-   follow [funding.md](../../_shared/funding.md). Only after the user selects
-   that action does the shared template display address + QR. Do not duplicate
-   its address, QR, network, or fallback rules here.
-3. After shared Funding verifies a sufficient balance, it asks whether to
+1. Follow [funding.md](funding.md) immediately. Its shared Funding-required
+   template displays the balance, shortfall, address, and QR in the same
+   response. Do not duplicate its address, QR, network, or fallback rules here.
+2. After shared Funding verifies a sufficient balance, it asks whether to
    continue the interrupted operation using the current conversation context.
    If the user continues this transfer, treat that reply as a new Wallet Send
    intent and rebuild the request from current user/context input.
-4. Run `wallet send` without `--force`. The new preview replaces every prior
+3. Run `wallet send` without `--force`. The new preview replaces every prior
    result and requires the ordinary explicit confirmation. If the original
    transfer details are no longer clear, ask for them instead of reconstructing
    or guessing them.
