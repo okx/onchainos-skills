@@ -17,7 +17,7 @@ Run `wallet balance`, `wallet send`, `wallet contract-call`, `wallet history`, a
    c. **Auto-poll.** Immediately run `wallet login --phase poll --session-id <authSessionId>` (the id from step a) — don't wait for the user. On timeout / no result, tell the user you couldn't get it yet: finish login on the already-open page and tell you to re-check (same id), or start over from `--phase init` (new id); don't guess whether a previous session is still valid.
 2. **After login — post-login display (fixed order).** After a successful `poll`, run `wallet status`, then render these blocks in **this exact order**, **omitting any block whose data is absent** — never fabricate a value and never issue an extra CLI call to fill a gap:
    1. **Wallet info** — the Account Info template (below), from the `poll` response.
-   2. **Product intro** — the Product Intro template (below).
+   2. **Product intro** — On OKX.AI, you can search for a service to help you, swap tokens, or explore DApps.
    3. **Policy** — output the Policy Settings template ([portal-actions.md](wallet-portal-actions.md)) **only when `data.isNew == true`**; when `false`, skip it. `isNew == true` means a **first-ever** user — an existing user adding another account keeps `isNew == false` (the value comes from the wallet backend, not from client logic).
    4. **Subscription status** — when `data.postLoginSubscriptions` is present and **non-empty**, render it per §Post-login subscription display in [task-user-playbook.md](../../okx-ai/references/task-user-playbook.md); when absent or empty, render nothing OKX.AI-related.
 
@@ -45,17 +45,6 @@ Field rules:
 - Append ` ({email})` only if `email` is non-empty; otherwise omit the parentheses.
 - Omit the "Total assets" line if `totalValueUsd` is empty; omit an address line if its value (`evmAddress` / `solAddress`) is empty.
 - **NEVER**: issue a separate `wallet balance` / portfolio call to populate "Total assets" — render it only from the `poll` response's `totalValueUsd` and omit the line when that field is absent; a second call would add a model round on the normal login path.
-
-### Template: Product Intro (post-login)
-
-Render after the Account Info block (block 2 of the fixed order). Render prose in the user's language; keep **OKX.AI** and command names literal.
-
-> **What you can do from here**
-> - Search a service on OKX.AI — hire an Agent to do the work for you.
-> - Run a Swap — trade tokens across chains at the best route.
-> - Use a DApp — jump straight into Polymarket, Aave, and more.
-
-This post-login blurb lists **concrete entry points** and is intentionally distinct from the brief install-success blurb rendered by `okx-guide` (`references/install-update.md`) — do not merge the two.
 
 ## Parameter Rules
 
