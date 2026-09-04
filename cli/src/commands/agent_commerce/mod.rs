@@ -4222,9 +4222,8 @@ async fn check_status_freshness(
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
 
     // For job_submitted: prefer an unprocessed spool delivery over an existing
-    // manifest. Subscription manifests are append-only, so checking the
-    // manifest first could keep selecting an old delivery forever while a new
-    // inbound signal remained stranded in the spool.
+    // manifest. This event belongs to a one-time task; subscription deliveries
+    // use their own event flow and must never be routed from this recovery path.
     //   ① temp file present → recover + save the oldest unprocessed delivery
     //   ② manifest present  → populate the newest saved delivery
     //   ③ neither           → leave ctx.deliverable=None; prompt outputs "wait"
@@ -4252,18 +4251,6 @@ async fn check_status_freshness(
                 original_name: String::new(),
                 text_content: recovered.text_content.clone(),
             });
-            if let Some(prompt) = task::user::route_subscription_delivery_to_skill(
-                job_id,
-                agent_id,
-                &recovered.saved_path,
-                &recovered.deliverable_type,
-                "recover",
-                recovered.transport_identity.as_ref(),
-            )
-            .await
-            {
-                return (Some(prompt), Some(ctx));
-            }
         } else if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("user", job_id)
         {
             if let Some(entry) = manifest.entries.last() {

@@ -699,7 +699,6 @@ pub(crate) struct RecoveredDeliverable {
     pub saved_path: String,
     pub deliverable_type: String,
     pub text_content: Option<String>,
-    pub(crate) transport_identity: Option<A2aTransportIdentity>,
 }
 
 /// Parse one A2A spool file, download (file) or write (text) its deliverable, save
@@ -719,7 +718,6 @@ fn process_recovered_file(
 ) -> Option<RecoveredDeliverable> {
     use crate::commands::agent_commerce::task::common::{deliverables, okx_a2a};
 
-    let transport_identity = a2a_transport_identity(temp_path);
     // Recovery intentionally remains strict. Enabling the legacy compatibility
     // decoder here could revive pre-upgrade poison spools and replay historical
     // subscription signals after rollout.
@@ -787,7 +785,6 @@ fn process_recovered_file(
         saved_path,
         deliverable_type,
         text_content,
-        transport_identity,
     })
 }
 
@@ -843,6 +840,31 @@ pub(crate) fn try_recover_from_temp_file(
 /// inspection / recovery. Returns `true` when the file was moved aside.
 fn quarantine_failed_spool_file(path: &str) -> bool {
     std::fs::rename(path, format!("{path}.failed")).is_ok()
+}
+
+/// Retire a validated recovery spool after its deliverable has been persisted.
+///
+/// The direct `--a2a-file` path and the later `job_submitted` recovery path share
+/// the same spool namespace. Leaving a successfully processed direct-delivery
+/// file with its `.json` suffix makes `job_submitted` download and save the same
+/// deliverable again. Delete it first; if deletion is unavailable, rename it out
+/// of the recovery scan set while retaining it for inspection.
+fn retire_processed_spool_file(path: &str) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(remove_error) => {
+            std::fs::rename(path, format!("{path}.consumed")).map_err(|rename_error| {
+                std::io::Error::new(
+                    rename_error.kind(),
+                    format!(
+                        "failed to delete processed spool ({remove_error}); \
+                         failed to rename it out of the recovery set ({rename_error})"
+                    ),
+                )
+            })
+        }
+    }
 }
 
 pub(crate) async fn provider_applied(ctx: &FlowContext<'_>, over_most_budget: bool) -> String {
@@ -1253,6 +1275,31 @@ pub(crate) async fn deliverable_received_cli(
             }
         }
     };
+
+    // `a2a_file` is the CLI-created canonical spool path returned by
+    // `validate_a2a_file_arg`, not the caller-owned raw input path. Once the
+    // deliverable is durable, it must leave the `*.json` recovery scan set or a
+    // later `job_submitted` event will replay it before consulting the manifest.
+    if let Err(error) = retire_processed_spool_file(a2a_file) {
+        audit::log(
+            "cli",
+            "user/deliverable_spool_retire_failed",
+            false,
+            Duration::default(),
+            Some([base_tags.clone(), vec![format!("path={a2a_file}")]].concat()),
+            Some(&error.to_string()),
+        );
+        eprintln!("[deliverable_received_cli] processed spool cleanup failed: {error}");
+    } else {
+        audit::log(
+            "cli",
+            "user/deliverable_spool_retired",
+            true,
+            Duration::default(),
+            Some([base_tags.clone(), vec![format!("path={a2a_file}")]].concat()),
+            None,
+        );
+    }
 
     // A successful `/task/{jobId}` prefetch identifies a one-time task. Only when
     // that registry has no detail do we enter the subscription admission and
@@ -1888,6 +1935,28 @@ mod tests {
         assert!(!single_review_ready(Some(1), false));
         assert!(single_review_ready(Some(2), false));
         assert!(single_review_ready(Some(1), true));
+    }
+
+    #[test]
+    fn successful_direct_delivery_retires_recovery_spool() {
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let temp = tempfile::Builder::new()
+            .prefix("retire-processed-spool-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let spool = temp.path().join("a2a_deliver_job-1_1_1_0.json");
+        std::fs::write(&spool, "{}").unwrap();
+
+        retire_processed_spool_file(spool.to_str().unwrap()).unwrap();
+
+        assert!(!spool.exists(), "processed spool must leave the recovery set");
+        assert!(
+            retire_processed_spool_file(spool.to_str().unwrap()).is_ok(),
+            "cleanup must be idempotent when the spool is already absent"
+        );
     }
 
     #[test]

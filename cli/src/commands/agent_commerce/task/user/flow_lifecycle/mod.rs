@@ -8,8 +8,7 @@ pub(super) mod subscription;
 
 pub(super) use self::core::{provider_applied, job_accepted, deliverable_received_cli, job_submitted, approve_review, reject_review, job_completed};
 pub(crate) use self::core::{
-    resume_queued_subscription_delivery, route_subscription_delivery_to_skill,
-    try_recover_from_temp_file,
+    resume_queued_subscription_delivery, try_recover_from_temp_file,
 };
 pub(super) use dispute::{job_rejected, job_disputed, dispute_resolved};
 pub(super) use terminal::{job_refunded, job_auto_refunded, job_expired, job_closed, submit_expired, reject_expired, review_deadline_warn, close_task, reward_claimed, wakeup_notify, staked_and_unknown};
