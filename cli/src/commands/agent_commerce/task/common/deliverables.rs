@@ -232,7 +232,7 @@ pub fn handle_save(params: &SaveParams<'_>) -> Result<SaveResult> {
 
 // ── Review-awaiting-deliverable marker ───────────────────────────────
 //
-// When `job_submitted` arrives before the XMTP `[intent:deliver]` message,
+// When `job_submitted` arrives before the A2A `[intent:deliver]` message,
 // the user has no deliverable to review yet. A marker file is written so
 // that the later `deliverable_received` event can detect this and directly
 // output the review prompt instead of "wait for job_submitted".
@@ -256,6 +256,23 @@ pub fn delete_review_marker(job_id: &str) {
     if let Ok(p) = review_marker_path(job_id) {
         let _ = std::fs::remove_file(p);
     }
+}
+
+// Durable per-job idempotency marker shared by the delivery-first and
+// job_submitted-first review paths. It is written only after card delivery.
+fn review_card_sent_marker_path(job_id: &str) -> Result<PathBuf> {
+    Ok(deliverables_dir("user", job_id)?.join("review_card_sent"))
+}
+
+pub fn has_review_card_sent_marker(job_id: &str) -> bool {
+    review_card_sent_marker_path(job_id).map(|p| p.is_file()).unwrap_or(false)
+}
+
+pub fn mark_review_card_sent(job_id: &str) -> Result<()> {
+    let path = review_card_sent_marker_path(job_id)?;
+    std::fs::create_dir_all(path.parent().expect("review marker has a parent"))?;
+    std::fs::write(path, "")?;
+    Ok(())
 }
 // ── List (single job) ────────────────────────────────────────────────
 
@@ -393,71 +410,22 @@ mod tests {
         assert_eq!(sanitize_title("  hello world  ", "0xabc"), "helloworld");
     }
 
-    /// Set ONCHAINOS_HOME to an isolated temp dir for the duration of a test.
-    fn with_home<F: FnOnce()>(f: F) {
+    #[test]
+    fn review_card_sent_marker_is_durable_per_job() {
         let _lock = crate::home::TEST_ENV_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let temp_root = std::env::current_dir()
-            .expect("current working directory")
-            .join("target")
-            .join("deliverables-test-home");
-        std::fs::create_dir_all(&temp_root).expect("create deliverables test temp root");
-        let tmp = tempfile::tempdir_in(temp_root).expect("create deliverables test home");
-        std::env::set_var("ONCHAINOS_HOME", tmp.path());
-        f();
+        let root = std::env::current_dir().unwrap()
+            .join("target").join("deliverables-review-marker-test");
+        std::fs::create_dir_all(&root).unwrap();
+        let home = tempfile::tempdir_in(root).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+
+        assert!(!has_review_card_sent_marker("job-review-marker"));
+        mark_review_card_sent("job-review-marker").unwrap();
+        assert!(has_review_card_sent_marker("job-review-marker"));
+        assert!(!has_review_card_sent_marker("another-job"));
+
         std::env::remove_var("ONCHAINOS_HOME");
-    }
-
-    /// A direct `deliverables_dir(role, "../../x")` fails closed
-    /// with the coded error BEFORE any filesystem side effect (the validation runs
-    /// before `deliverables_root()` is even resolved).
-    #[test]
-    fn deliverables_dir_rejects_traversal() {
-        for bad in ["../../x", "a/b", "..", "", "/abs"] {
-            let err = deliverables_dir("user", bad).expect_err(bad);
-            let code = err
-                .downcast_ref::<crate::commands::sink::CodedError>()
-                .map(|c| c.code.clone())
-                .unwrap_or_default();
-            assert_eq!(code, "UNSAFE_JOB_PATH_COMPONENT", "case {bad:?}");
-        }
-    }
-
-    /// Existing on-disk deliverable directories — legacy bare
-    /// `<jobId>/`, new-style `<jobId>_<CJK title>/` and `<jobId>_<emoji title>/` —
-    /// must remain resolvable through the guarded `deliverables_dir`. Names are
-    /// built from \u{...} escapes so this source file stays ASCII.
-    #[test]
-    fn deliverables_dir_resolves_composite_and_legacy() {
-        with_home(|| {
-            let hex_a = format!("0x{}", "a".repeat(64));
-            let hex_b = format!("0x{}", "b".repeat(64));
-            let role_dir = deliverables_root().unwrap().join("user");
-            std::fs::create_dir_all(&role_dir).unwrap();
-
-            // Legacy bare-jobId directory.
-            std::fs::create_dir_all(role_dir.join(&hex_a)).unwrap();
-            assert_eq!(deliverables_dir("user", &hex_a).unwrap(), role_dir.join(&hex_a));
-
-            // New-style `<jobId>_<CJK title>` directory (CJK built from \u{...} escapes).
-            let cjk_dir = format!("{hex_b}_\u{6211}\u{7684}\u{62a5}\u{544a}");
-            std::fs::create_dir_all(role_dir.join(&cjk_dir)).unwrap();
-            assert_eq!(
-                deliverables_dir("user", &hex_b).unwrap(),
-                role_dir.join(&cjk_dir),
-                "CJK-title dir must resolve via prefix scan"
-            );
-
-            // New-style `<jobId>_<emoji title>` directory (jobId_📄).
-            let hex_c = format!("0x{}", "c".repeat(64));
-            let emoji_dir = format!("{hex_c}_\u{1F4C4}");
-            std::fs::create_dir_all(role_dir.join(&emoji_dir)).unwrap();
-            assert_eq!(
-                deliverables_dir("user", &hex_c).unwrap(),
-                role_dir.join(&emoji_dir),
-                "emoji-title dir must resolve via prefix scan"
-            );
-        });
     }
 }

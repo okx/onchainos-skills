@@ -15,7 +15,25 @@ use crate::file_keyring;
 
 const SERVICE: &str = "onchainos";
 const UNIFIED_KEY: &str = "agentic-wallet";
+const CREDENTIAL_STORE_ENV: &str = "ONCHAINOS_CREDENTIAL_STORE";
 const FORCE_FILE_KEYRING_ENV: &str = "ONCHAINOS_FORCE_FILE_KEYRING";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CredentialStore {
+    Auto,
+    File,
+}
+
+fn credential_store_from(value: Option<&str>) -> CredentialStore {
+    match value.map(str::trim) {
+        Some(value) if value.eq_ignore_ascii_case("file") => CredentialStore::File,
+        _ => CredentialStore::Auto,
+    }
+}
+
+fn credential_store() -> CredentialStore {
+    credential_store_from(std::env::var(CREDENTIAL_STORE_ENV).ok().as_deref())
+}
 
 // --------------- internal helpers ---------------
 
@@ -29,13 +47,14 @@ fn parse_bool(value: &str) -> bool {
 /// packages at compile time. This lets a test package default to the encrypted
 /// file store while still allowing an explicit runtime `0`/`false` override.
 fn force_file_keyring() -> bool {
-    std::env::var(FORCE_FILE_KEYRING_ENV)
-        .map(|value| parse_bool(value.trim()))
-        .unwrap_or_else(|_| {
-            option_env!("ONCHAINOS_FORCE_FILE_KEYRING")
-                .map(parse_bool)
-                .unwrap_or(false)
-        })
+    credential_store() == CredentialStore::File
+        || std::env::var(FORCE_FILE_KEYRING_ENV)
+            .map(|value| parse_bool(value.trim()))
+            .unwrap_or_else(|_| {
+                option_env!("ONCHAINOS_FORCE_FILE_KEYRING")
+                    .map(parse_bool)
+                    .unwrap_or(false)
+            })
 }
 
 fn read_file_blob() -> Result<HashMap<String, String>> {
@@ -220,6 +239,37 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[test]
+    fn credential_store_override_accepts_only_file() {
+        assert_eq!(credential_store_from(Some("file")), CredentialStore::File);
+        assert_eq!(credential_store_from(Some(" FILE ")), CredentialStore::File);
+        assert_eq!(credential_store_from(None), CredentialStore::Auto);
+        assert_eq!(credential_store_from(Some("auto")), CredentialStore::Auto);
+        assert_eq!(credential_store_from(Some("unknown")), CredentialStore::Auto);
+    }
+
+    #[test]
+    fn credential_store_file_also_forces_file_keyring() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let previous_store = std::env::var_os(CREDENTIAL_STORE_ENV);
+        let previous_force = std::env::var_os(FORCE_FILE_KEYRING_ENV);
+        std::env::set_var(CREDENTIAL_STORE_ENV, "file");
+        std::env::set_var(FORCE_FILE_KEYRING_ENV, "false");
+        assert!(force_file_keyring());
+        if let Some(previous_store) = previous_store {
+            std::env::set_var(CREDENTIAL_STORE_ENV, previous_store);
+        } else {
+            std::env::remove_var(CREDENTIAL_STORE_ENV);
+        }
+        if let Some(previous_force) = previous_force {
+            std::env::set_var(FORCE_FILE_KEYRING_ENV, previous_force);
+        } else {
+            std::env::remove_var(FORCE_FILE_KEYRING_ENV);
+        }
+    }
+
     /// Run `f` inside a sandboxed `ONCHAINOS_HOME` so credential files live in a
     /// throwaway dir. Mirrors `file_keyring::tests::with_temp_home` and shares the
     /// same `TEST_ENV_MUTEX` so env-var mutation is serialized across modules.
@@ -236,7 +286,9 @@ mod tests {
         }
         fs::create_dir_all(&dir).unwrap();
         let previous_force = std::env::var_os(FORCE_FILE_KEYRING_ENV);
+        let previous_store = std::env::var_os(CREDENTIAL_STORE_ENV);
         std::env::set_var("ONCHAINOS_HOME", &dir);
+        std::env::set_var(CREDENTIAL_STORE_ENV, "file");
         std::env::set_var(FORCE_FILE_KEYRING_ENV, "1");
         f();
         if let Some(previous_force) = previous_force {
@@ -245,6 +297,11 @@ mod tests {
             std::env::remove_var(FORCE_FILE_KEYRING_ENV);
         }
         std::env::remove_var("ONCHAINOS_HOME");
+        if let Some(previous_store) = previous_store {
+            std::env::set_var(CREDENTIAL_STORE_ENV, previous_store);
+        } else {
+            std::env::remove_var(CREDENTIAL_STORE_ENV);
+        }
         fs::remove_dir_all(&dir).ok();
     }
 

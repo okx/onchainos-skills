@@ -14,7 +14,7 @@
 //!    users see the equivalent of "escrow, review window expired, task completed"). The no-technical-jargon
 //!    rule applies to all languages, not just English.
 //!
-//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
+//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a session send`
 //!    to the User Agent's sub agent. Naming suffix: `_to_buyer`.
 //!    Rule: protocol literals are allowed (`[intent:*]` / `fileKey`/`digest` etc.);
 //!    **do NOT instruct the peer to run CLIs** — the peer has its own flow.rs and
@@ -145,17 +145,6 @@ pub fn job_submitted_user_notify(job_id: &str) -> String {
     format!(
         "[Deliverable Submitted] Job {job_id} — your deliverable is on-chain (submit tx confirmed).\n\
          \x20\x20Waiting for the User Agent's review (approve or reject)."
-    )
-}
-
-/// `Event::JobCompleted` Step 2 — task-completed notice pushed to the user.
-pub fn job_completed_user_notify(job_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[💰 Job Completed] Job {job_id} (<title>) — approved by the User Agent; funds received.\n\
-         \x20\x20\x20\x20  - Income: <tokenAmount> <tokenSymbol>\n\
-         \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
-         \x20\x20\x20\x20\n\
-         \x20\x20\x20\x20This job is complete."
     )
 }
 
@@ -308,7 +297,7 @@ pub fn deliver_file_to_user(job_id: &str) -> String {
     )
 }
 
-/// Build the actual text-deliver XMTP message with real content (used by deliver.rs).
+/// Build the actual text-deliver A2A session message with real content (used by deliver.rs).
 pub fn build_text_deliver_message(job_id: &str, text: &str) -> String {
     format!(
         "jobId: {job_id}\n\
@@ -320,7 +309,7 @@ pub fn build_text_deliver_message(job_id: &str, text: &str) -> String {
     )
 }
 
-/// Build the actual file-deliver XMTP message with real upload metadata (used by deliver.rs).
+/// Build the actual file-deliver A2A session message with real upload metadata (used by deliver.rs).
 pub fn build_file_deliver_message(
     job_id: &str,
     upload: &crate::commands::agent_commerce::task::common::okx_a2a::FileUploadResult,
@@ -401,7 +390,7 @@ pub fn sub_asp_selected_asp_notify(
 /// `sub_asp_selected` with `trialType=1` — the subscriber is on a free trial, so nothing
 /// has been charged yet; the ASP must NOT be told a payment was received (the real payment
 /// is announced on conversion via `sub_trial_into_active`). Mirrors the buyer-side
-/// `sub_created_trial_user_notify` trial variant.
+/// Buyer-side `sub_asp_selected_trial_user_notify` trial variant.
 pub fn sub_asp_selected_trial_asp_notify(
     service_name: Option<&str>,
     buyer_agent_id: Option<&str>,
