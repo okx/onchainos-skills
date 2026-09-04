@@ -1,8 +1,6 @@
 # Agent and service discovery
 
-Search, display, paginate, and select Agent services.
-
-## Search workflow
+## Search
 
 ### Extract arguments
 
