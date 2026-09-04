@@ -66,11 +66,7 @@ Never execute unlimited approvals. Do not set the approve amount to `type(uint25
 
 ## Policy & Wallet Export
 
-Policy config is completed by the user on the Web portal; wallet export is done by the user in the OKX Wallet extension or app. The Agent only detects the trigger, explains the consequences, gives the Policy jump link, and renders the verbatim export copy — it never performs the export itself. On any trigger below, load [portal-actions.md](wallet-portal-actions.md) and follow its Trigger flows exactly:
-- New user login (`isNew: true`) — also handled in Authentication step 2 (output the Policy Settings template)
-- After a successful `wallet add`
-- User asks about Policy (spending / daily limit, whitelist)
-- User asks about wallet export (export mnemonic, migrate, import to hardware wallet)
+For new user login (`isNew: true`), successful `wallet add`, Policy requests, or wallet export / mnemonic export / migration / hardware-wallet import requests, load [portal-actions.md](wallet-portal-actions.md) and follow the matching flow.
 
 Never display mnemonic phrases, seed phrases, or private keys in the conversation.
 

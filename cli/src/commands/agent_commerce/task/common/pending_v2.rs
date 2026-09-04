@@ -466,6 +466,12 @@ pub enum PendingDecisionsV2Command {
         llm_content: Option<String>,
         #[arg(long = "source-event")]
         source_event: Option<String>,
+        /// Base64(JSON object) of whitelisted template variables (e.g. the untrusted task
+        /// title under key `__OKX_TASK_TITLE__`). Optional; when present, {{KEY}} placeholders
+        /// in --user-content / --list-label are decoded, validated and literally replaced
+        /// in-process after parsing. Never contains executable shell; logged redacted.
+        #[arg(long = "template-vars-b64")]
+        template_vars_b64: Option<String>,
     },
 
     /// (user-session) Resolve the current active decision with user's reply.
@@ -597,6 +603,7 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             list_label,
             llm_content,
             source_event,
+            template_vars_b64,
         } => {
             let resolved_content = match (user_content, user_content_file) {
                 (Some(c), _) => c,
@@ -614,6 +621,7 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
                 list_label,
                 llm_content,
                 source_event,
+                template_vars_b64,
             )
         }
         PendingDecisionsV2Command::Resolve { user_reply } => handle_resolve(user_reply),
@@ -679,6 +687,7 @@ fn handle_request_prompt(
     list_label: String,
     llm_content: Option<String>,
     source_event: Option<String>,
+    template_vars_b64: Option<String>,
 ) -> Result<()> {
     request_prompt_inner(
         job_id,
@@ -689,6 +698,7 @@ fn handle_request_prompt(
         list_label,
         llm_content,
         source_event,
+        template_vars_b64,
         true,
     )
 }
@@ -718,6 +728,7 @@ pub(crate) fn push_decision_direct(
         list_label.to_string(),
         None,
         Some(source_event.to_string()),
+        None,
         false,
     )
 }
@@ -818,6 +829,7 @@ fn request_prompt_inner(
     list_label: String,
     llm_content: Option<String>,
     source_event: Option<String>,
+    template_vars_b64: Option<String>,
     print_ok: bool,
 ) -> Result<()> {
     if crate::commands::agent_commerce::task::common::autotrade::is_retired_mode_configuration_decision(
@@ -832,6 +844,39 @@ fn request_prompt_inner(
     }
     let to_agent_id = sanitize_to_agent(to_agent_id, &agent_id);
     let user_content = user_content.replace("\\n", "\n");
+
+    // Template-variable substitution (fail-closed / default-deny).
+    // Runs AFTER clap parse and BEFORE `is_cli_mode`, any queue/file write, card
+    // construction, or `okx_a2a::user_decision_request`: decode + validate the
+    // Base64(JSON) payload (empty map when the flag is absent), then run
+    // `template_vars::render_all` UNCONDITIONALLY over `--user-content` /
+    // `--list-label`. Running the bijection check on every path is what makes the
+    // missing-flag case fail closed: if a reserved `{{__OKX_TASK_TITLE__}}` /
+    // `{{__OKX_TASK_LABEL_TITLE__}}` placeholder survives with no matching var
+    // (flag omitted, or flag present but the var is missing), `render_all` returns
+    // `TEMPLATE_VALUE_MISSING` and we abort BEFORE any side effect — a literal
+    // placeholder can never be pushed. A supplied var with no placeholder is
+    // `TEMPLATE_PLACEHOLDER_MISSING`; a malformed payload is `TEMPLATE_VARS_INVALID`.
+    // With no placeholder AND no flag the render is a no-op, so ordinary decision
+    // flows keep their exact legacy output. Every failure maps to a
+    // stable, value-free `CodedError` (→ `output::error_coded` + exit 1 in main.rs);
+    // the message never embeds the decoded title.
+    let (user_content, list_label) = {
+        use crate::commands::agent_commerce::task::common::template_vars;
+        use crate::commands::sink::CodedError;
+        let vars = match template_vars_b64.as_deref() {
+            Some(b64) => template_vars::decode_and_validate(b64).map_err(|e| {
+                CodedError::new(e.code(), Some("template-vars-b64"), e.to_string())
+            })?,
+            None => std::collections::BTreeMap::new(),
+        };
+        let rendered = template_vars::render_all(&[&user_content, &list_label], &vars)
+            .map_err(|e| CodedError::new(e.code(), Some("template-vars-b64"), e.to_string()))?;
+        let mut it = rendered.into_iter();
+        let rendered_content = it.next().expect("render_all yields user_content");
+        let rendered_label = it.next().expect("render_all yields list_label");
+        (rendered_content, rendered_label)
+    };
     let cli_mode = is_cli_mode();
     trace_log(&format!(
         "handle_request_prompt {}: job_id={} role={} agent_id={} to_agent_id={:?}",
@@ -923,6 +968,10 @@ fn handle_request(
     llm_content: Option<String>,
     source_event: Option<String>,
 ) -> Result<()> {
+    // Ordinary `request` never carries the untrusted-title template payload — the
+    // `sub_user_reject` path emits its own `request-prompt` block. Pass `None` so
+    // the shared implementation runs the legacy
+    // (no-substitution) path for every other decision flow.
     handle_request_prompt(
         job_id,
         role,
@@ -932,6 +981,7 @@ fn handle_request(
         list_label,
         llm_content,
         source_event,
+        None,
     )
 }
 
@@ -1823,6 +1873,24 @@ pub fn request_command_block(
     )
 }
 
+/// Encode the raw (untrusted) decision-copy title and list-label title as the
+/// Base64(JSON) value for `--template-vars-b64`. This is the ONLY place
+/// the raw titles touch an emitted command, and they emerge as standard-charset
+/// Base64 (shell-safe) only. The two keys stay independent so the base
+/// title-source precedence (copy = `jobTitle`→`title`→`title_display`; label =
+/// `title_display`) is preserved rather than collapsed into one value. `serde_json`
+/// guarantees the strings are JSON-escaped; the payload round-trips through
+/// [`template_vars::decode_and_validate`](super::template_vars::decode_and_validate).
+pub fn encode_title_vars(copy_title: &str, label_title: &str) -> String {
+    use base64::Engine;
+    let obj = serde_json::json!({
+        "__OKX_TASK_TITLE__": copy_title,
+        "__OKX_TASK_LABEL_TITLE__": label_title,
+    });
+    base64::engine::general_purpose::STANDARD
+        .encode(serde_json::to_vec(&obj).expect("json object serializes"))
+}
+
 /// Map internal role enum to the short user-facing label used in notifications.
 fn role_short_label(role: &str) -> &str {
     match role {
@@ -2151,6 +2219,236 @@ fn indent(s: &str, prefix: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+#[cfg(test)]
+mod template_var_emitter_tests {
+    use super::encode_title_vars;
+    use crate::commands::agent_commerce::task::common::template_vars;
+
+    // encode_title_vars is the shared emitter primitive used by the retained
+    // `sub_user_reject` renderer; both keys must round-trip through the decode
+    // path so the pushed card body equals the original titles. (The ordinary
+    // `request_command_block` no longer takes a template payload — the raw-title
+    // → request-prompt output is exercised by the asp/flow.rs `sub_user_reject`
+    // renderer tests and the cli/tests shell-injection integration test.)
+    #[test]
+    fn encode_title_vars_round_trips_through_decode() {
+        for title in [
+            "Weekly Report",
+            // CJK title (U+4E2D U+6587 U+6807 U+9898) + rocket emoji as \u escapes:
+            // no raw CJK bytes in source, identical String at runtime.
+            "\u{4e2d}\u{6587}\u{6807}\u{9898}\u{1f680}",
+            "Oli's task",
+            "`id`",
+            "$(touch /tmp/x)",
+            "\"; id; #",
+        ] {
+            // copy != label to prove the two keys stay independent.
+            let label = format!("<label>{title}");
+            let b64 = encode_title_vars(title, &label);
+            let vars = template_vars::decode_and_validate(&b64).expect("valid payload");
+            assert_eq!(
+                vars.get("__OKX_TASK_TITLE__").map(String::as_str),
+                Some(title)
+            );
+            assert_eq!(
+                vars.get("__OKX_TASK_LABEL_TITLE__").map(String::as_str),
+                Some(label.as_str())
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod request_prompt_fail_closed_tests {
+    use super::{encode_title_vars, request_prompt_inner};
+    use crate::commands::agent_commerce::task::common::template_vars;
+    use crate::commands::sink::CodedError;
+
+    // Reserved placeholders exercised across the four field positions. The
+    // untrusted title never appears in any of these constants — only the fixed
+    // placeholders and value-free copy.
+    const COPY_PH: &str = "Body: {{__OKX_TASK_TITLE__}} — review.";
+    const LABEL_PH: &str = "[Decision 0xjob] {{__OKX_TASK_LABEL_TITLE__}} decision";
+    const PLAIN: &str = "no reserved placeholder here";
+
+    // Drive `request_prompt_inner` exactly as the real `sub_user_reject` emitter
+    // does (`print_ok=false`, `source_event=Some`), with an explicit flag choice.
+    // Returns the downcast `CodedError` — obtaining one is itself proof that the
+    // call aborted BEFORE any side effect: the substitution stage runs before
+    // `is_cli_mode`, before every queue/file write, and before
+    // `okx_a2a::user_decision_request` (the only card-push site), and the push path
+    // can never surface a `TEMPLATE_*` code. So a `TEMPLATE_*` CodedError ⇒ the
+    // fake `okx-a2a` was invoked zero times and no queue/card/file was written.
+    fn fail_closed(user_content: &str, list_label: &str, flag: Option<&str>) -> CodedError {
+        let err = request_prompt_inner(
+            "0xjob".to_string(),
+            "asp".to_string(),
+            "42".to_string(),
+            None,
+            user_content.to_string(),
+            list_label.to_string(),
+            None,
+            Some("sub_user_reject".to_string()),
+            flag.map(str::to_string),
+            false,
+        )
+        .expect_err("fail-closed: request_prompt_inner must return Err before any push");
+        let coded = err
+            .downcast_ref::<CodedError>()
+            .expect("fail-closed error must downcast to CodedError")
+            .clone();
+        assert_eq!(coded.field.as_deref(), Some("template-vars-b64"));
+        // The surfaced message is value-free — it never embeds a
+        // variable name or a decoded title fragment.
+        assert!(
+            !coded.message.contains("__OKX")
+                && !coded.message.contains("TITLE")
+                && !coded.message.contains("review"),
+            "fail-closed message must not leak variable internals or title data: {}",
+            coded.message
+        );
+        coded
+    }
+
+    // ── Missing flag must fail closed BEFORE every side effect ────────────────
+
+    // Copy placeholder + no flag → TEMPLATE_VALUE_MISSING, no push.
+    #[test]
+    fn copy_placeholder_no_flag_value_missing() {
+        assert_eq!(
+            fail_closed(COPY_PH, "plain label", None).code,
+            template_vars::CODE_VALUE_MISSING
+        );
+    }
+
+    // List-label placeholder + no flag → TEMPLATE_VALUE_MISSING, no push.
+    #[test]
+    fn label_placeholder_no_flag_value_missing() {
+        assert_eq!(
+            fail_closed("plain content", LABEL_PH, None).code,
+            template_vars::CODE_VALUE_MISSING
+        );
+    }
+
+    // Both placeholders + no flag → TEMPLATE_VALUE_MISSING, no push.
+    #[test]
+    fn both_placeholders_no_flag_value_missing() {
+        assert_eq!(
+            fail_closed(COPY_PH, LABEL_PH, None).code,
+            template_vars::CODE_VALUE_MISSING
+        );
+    }
+
+    // Flag present but its var has no matching placeholder → TEMPLATE_PLACEHOLDER_MISSING.
+    #[test]
+    fn flag_with_missing_placeholder_placeholder_missing() {
+        let b64 = encode_title_vars("X", "Y"); // supplies both whitelisted vars
+        assert_eq!(
+            fail_closed(PLAIN, "still none", Some(&b64)).code,
+            template_vars::CODE_PLACEHOLDER_MISSING
+        );
+    }
+
+    // Malformed Base64 payload → TEMPLATE_VARS_INVALID, no push.
+    #[test]
+    fn bad_base64_fails_closed_without_pushing_a_card() {
+        assert_eq!(
+            fail_closed(COPY_PH, LABEL_PH, Some("not*valid*base64!!!")).code,
+            template_vars::CODE_VARS_INVALID
+        );
+    }
+
+    // Valid-but-empty payload (`{}`, Base64 `e30=`) against a declared placeholder
+    // → TEMPLATE_VALUE_MISSING, no push.
+    #[test]
+    fn empty_payload_with_placeholder_fails_closed() {
+        assert_eq!(
+            fail_closed(COPY_PH, "plain label", Some("e30=")).code, // base64("{}")
+            template_vars::CODE_VALUE_MISSING
+        );
+    }
+}
+
+// Shell-safety proof for the shared encoding, scoped to the retained
+// `sub_user_reject` site. A real zsh/Bash process-spawn harness is
+// deliberately NOT used here: the security invariant is that the dangerous bytes
+// are provably absent from the emitted command line, so a shell that later runs
+// the block is a no-op w.r.t. injection — and the title reaches the `okx-a2a`
+// binary only as an argv element of `Command::new(...).args(...)` (never `sh -c`),
+// which this decode+render round-trip reproduces exactly. (Sites 1/3/4/5 were
+// not covered by this unit-test module.)
+#[cfg(test)]
+mod shared_encoding_shell_safety_tests {
+    use super::encode_title_vars;
+    use crate::commands::agent_commerce::task::common::template_vars::{
+        self, decode_and_validate, render_all,
+    };
+
+    // Malicious corpus: backtick + $(...) command substitution, quote/`;`/`#`
+    // break-out, embedded newline, CJK/emoji, an apostrophe title, and a title that
+    // is literally a placeholder (single-pass / non-recursive edge case).
+    const CORPUS: &[&str] = &[
+        // A hostile payload using zsh arithmetic/`(e)`
+        // expansion that reconstructs `id>&2` from `${(#):-96}` = '`'). If any byte
+        // of this reached a zsh command line it would execute `id`; the placeholder
+        // + Base64 mechanism must keep it entirely off the emitted line.
+        "x${(e):-${(#):-96}id>&2${(#):-96}}",
+        "`id`",
+        "$(touch /tmp/oli_sentinel)",
+        "\"; id; #",
+        "line1\nline2",
+        // CJK title (U+4E2D U+6587 U+6807 U+9898) + rocket emoji as \u escapes:
+        // no raw CJK bytes in source, identical String at runtime.
+        "\u{4e2d}\u{6587}\u{6807}\u{9898}\u{1f680}",
+        "Oli's task",
+        "{{__OKX_TASK_TITLE__}}",
+        "plain title",
+    ];
+
+    #[test]
+    fn shared_encoding_keeps_titles_off_the_command_line_and_round_trips() {
+        // sub_user_reject carries two independent titles: decision-copy + list-label.
+        let content = "Body copy: {{__OKX_TASK_TITLE__}} — please review.";
+        let label = "[Decision 0xabc] {{__OKX_TASK_LABEL_TITLE__}} — refund or dispute";
+        for &copy_title in CORPUS {
+            for &label_title in CORPUS {
+                let b64 = encode_title_vars(copy_title, label_title);
+
+                // (1) command-line safety: the shell-safe Base64 payload never
+                // contains a raw title byte. The literal-placeholder corpus members
+                // are skipped (they legitimately appear as the substitution target).
+                for raw in [copy_title, label_title] {
+                    if raw != template_vars::TITLE_PLACEHOLDER
+                        && raw != template_vars::LABEL_TITLE_PLACEHOLDER
+                    {
+                        assert!(
+                            !b64.contains(raw),
+                            "raw title {raw:?} must be off the emitted line (Base64 only)"
+                        );
+                    }
+                }
+
+                // (2)+(3) the CLI's own decode + single-pass render (what
+                // request_prompt_inner runs after clap parse, before any push)
+                // reconstructs the EXACT original titles, non-recursively, each key
+                // independent of the other.
+                let vars = decode_and_validate(&b64).expect("emitted payload decodes");
+                let rendered = render_all(&[content, label], &vars).expect("renders");
+                assert_eq!(
+                    rendered[0],
+                    content.replace(template_vars::TITLE_PLACEHOLDER, copy_title),
+                    "copy renders to the exact title (single-pass) for {copy_title:?}"
+                );
+                assert_eq!(
+                    rendered[1],
+                    label.replace(template_vars::LABEL_TITLE_PLACEHOLDER, label_title),
+                    "label renders to the exact title (single-pass) for {label_title:?}"
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod sanitize_tests {
     use super::{
