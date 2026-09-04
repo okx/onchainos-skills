@@ -23,11 +23,42 @@ fn gate_path(job_id: &str) -> Result<PathBuf> {
 
 pub fn mark_pending(job_id: &str) -> Result<()> {
     let path = gate_path(job_id)?;
+    // A delayed/replayed job_submitted event must not undo an approval.
+    if matches!(
+        std::fs::read_to_string(&path).as_deref().map(str::trim),
+        Ok("pending" | "approved")
+    ) {
+        return Ok(());
+    }
     std::fs::write(&path, "pending")?;
     if DEBUG_LOG {
         eprintln!("[review-gate] mark_pending: {}", path.display());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delayed_pending_marker_does_not_undo_approval() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = std::env::current_dir().unwrap()
+            .join("target").join("review-gate-idempotency-test");
+        std::fs::create_dir_all(&root).unwrap();
+        let home = tempfile::tempdir_in(root).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+
+        mark_pending("job-review-gate").unwrap();
+        mark_approved("job-review-gate").unwrap();
+        mark_pending("job-review-gate").unwrap();
+        check_and_consume("job-review-gate").unwrap();
+
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
 }
 
 pub fn mark_approved(job_id: &str) -> Result<()> {

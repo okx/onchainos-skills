@@ -11,19 +11,32 @@ use crate::commands::agent_commerce::task::common::util::short_job_id;
 #[derive(Clone, Copy)]
 enum ProviderAssignmentType {
     Single,
+    Subscription,
 }
 
 async fn provider_assignment_playbook(
     job_id: &str,
     agent_id: &str,
-    _assignment_type: ProviderAssignmentType,
+    assignment_type: ProviderAssignmentType,
     prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
     message: Option<&serde_json::Value>,
 ) -> String {
-    let task_type = "single";
-    let event_name = "job_asp_selected";
-    let accept_command = "accept-job-by-provider";
-    let decline_command = "decline-job-by-provider";
+    let task_type = match assignment_type {
+        ProviderAssignmentType::Single => "single",
+        ProviderAssignmentType::Subscription => "subscription",
+    };
+    let event_name = match assignment_type {
+        ProviderAssignmentType::Single => "job_asp_selected",
+        ProviderAssignmentType::Subscription => "sub_created",
+    };
+    let accept_command = match assignment_type {
+        ProviderAssignmentType::Single => "accept-job-by-provider",
+        ProviderAssignmentType::Subscription => "accept-subscription",
+    };
+    let decline_command = match assignment_type {
+        ProviderAssignmentType::Single => "decline-job-by-provider",
+        ProviderAssignmentType::Subscription => "decline-subscription",
+    };
     let p = match prefetched {
         Some(value) => value,
         None => {
@@ -328,14 +341,14 @@ pub async fn generate_next_action(
              )\"\n\
              ```\n\n\
              **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
-             🛑 **The next system event is `job_submitted`** — notify the ASP owner that the delivery is confirmed on-chain and awaiting User review. After that, `job_completed` or `job_rejected` is action-required.\n\n\
+             The backend now opens the Buyer review after successful submission. The ASP does **not** wait for `job_submitted`; end this turn and wait for `job_completed` or `job_rejected`.\n\n\
              [Follow-up events]\n\
              - `job_completed` (User Agent reviewed and accepted) — auto-rate the User Agent + notify the user\n\
              - `job_rejected`  (User Agent rejected the deliverable) — push dispute-vs-refund decision to the user\n"
             )
         }
 
-        // ─── §1.8: Deliverable confirmed on-chain; notify ASP owner ──────────────────
+        // Optional compatibility event: the Buyer is the required recipient.
         // `onchainos agent deliver` already sent the deliverable to the User Agent.
         // When job_submitted reaches this sub, never send it to the peer again.
         Event::JobSubmitted => {
@@ -1119,13 +1132,22 @@ pub async fn generate_next_action(
 
         // sub_asp_agree is the ASP's OWN action (agree refund); the existing action-command
         // flow (subscribe-agree-refund) owns that lifecycle, not this notification path.
-        Event::SubCreated
+        Event::SubCreated => provider_assignment_playbook(
+            job_id,
+            agent_id,
+            ProviderAssignmentType::Subscription,
+            prefetched,
+            message,
+        )
+        .await,
+
+        Event::SubOpen
         | Event::SubCancel
         | Event::SubTrialIntoActive
         | Event::SubExpireWarn
         | Event::SubRejectRefundNotify
         | Event::SubAspAgree => format!(
-            "[System notification] {event} (not handled on the ASP side in this slice)\n\
+            "[System notification] {event} (obsolete or not handled on the ASP side in this slice)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n",
             event = event.as_str()
@@ -1337,7 +1359,7 @@ mod tests {
         assert!(output.contains("onchainos agent user-notify"));
         assert!(output.contains("Waiting for the User Agent's review"));
         assert!(output.contains("must NOT trigger a second A2A send"));
-        assert!(!output.contains("ASP does NOT receive a `job_submitted`"));
+        assert!(output.contains("Wait for `job_completed` / `job_rejected`"));
     }
 
     #[tokio::test]
@@ -1360,6 +1382,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sub_open_is_ignored_instead_of_starting_provider_decision() {
+        let output = run_asp(
+            "sub_open",
+            json!({ "event": "sub_open", "jobId": ASP_JOB_ID }),
+        )
+        .await;
+        assert!(output.contains("obsolete"));
+        assert!(output.contains("Silently ignore"));
+        assert!(!output.contains("accept-subscription"));
+    }
+
+    #[tokio::test]
     async fn provider_assignment_requires_fresh_detail() {
         let output = provider_assignment_playbook(
             ASP_JOB_ID,
@@ -1371,6 +1405,17 @@ mod tests {
         .await;
         assert!(output.contains("could not be fetched"));
         assert!(output.contains("do NOT accept, decline"));
+
+        let subscription = provider_assignment_playbook(
+            ASP_JOB_ID,
+            ASP_AGENT_ID,
+            ProviderAssignmentType::Subscription,
+            None,
+            None,
+        )
+        .await;
+        assert!(subscription.contains("[Current state] sub_created"));
+        assert!(!subscription.contains("[Current state] sub_open"));
     }
 
     #[tokio::test]
@@ -1530,7 +1575,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn asp_buyer_only_subscription_events_are_ignored() {
+    async fn asp_non_actionable_subscription_events_are_ignored() {
         // NOTE: `sub_user_reject` is intentionally NOT in this list — per the design doc it is an
         // ASP-handled decision scene (refund/dispute), covered by
         // `asp_sub_user_reject_renders_refund_dispute_decision` below.
@@ -1541,7 +1586,6 @@ mod tests {
         // `sub_asp_agree` IS ignored here: it is the ASP's own action, so per product
         // copy SSOT it gets no ASP-side push (owned by the action-command flow).
         for evt in [
-            "sub_created",
             "sub_cancel",
             "sub_trial_into_active",
             "sub_asp_agree",
@@ -1549,7 +1593,7 @@ mod tests {
             let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
             assert!(
                 out.contains("Silently ignore"),
-                "{evt}: buyer-only event must hit the silent-ignore group"
+                "{evt}: non-actionable event must hit the silent-ignore group"
             );
             assert!(
                 !out.contains("onchainos agent user-notify"),

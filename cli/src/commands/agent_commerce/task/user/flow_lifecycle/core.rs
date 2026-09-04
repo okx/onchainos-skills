@@ -143,19 +143,33 @@ fn write_text_deliverable_temp_in(
     Ok(temp)
 }
 
-fn is_safe_temp_path(fp: &std::path::Path) -> bool {
+fn is_path_under_canonical_dir(path: &std::path::Path, dir: &std::path::Path) -> bool {
+    let Ok(c_path) = path.canonicalize() else {
+        return false;
+    };
+    let Ok(c_dir) = dir.canonicalize() else {
+        return false;
+    };
+    c_path.starts_with(c_dir)
+}
+
+fn is_safe_a2a_file_path(fp: &std::path::Path) -> bool {
+    if std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .is_some_and(|dir| is_path_under_canonical_dir(fp, &dir))
+    {
+        return true;
+    }
     let tmp_dir = std::env::temp_dir();
-    if fp.starts_with(&tmp_dir) {
+    if is_path_under_canonical_dir(fp, &tmp_dir) {
         return true;
     }
     #[cfg(unix)]
     {
-        if fp.starts_with("/tmp/") {
+        if is_path_under_canonical_dir(fp, std::path::Path::new("/tmp")) {
             return true;
         }
-    }
-    if let (Ok(c_fp), Ok(c_tmp)) = (fp.canonicalize(), tmp_dir.canonicalize()) {
-        return c_fp.starts_with(&c_tmp);
     }
     false
 }
@@ -195,7 +209,7 @@ fn parse_a2a_file(
     expected_agent_id: &str,
 ) -> Option<ParsedA2aDeliver> {
     let fp = std::path::Path::new(path);
-    if !is_safe_temp_path(fp) {
+    if !is_safe_a2a_file_path(fp) {
         return None;
     }
     let raw = std::fs::read_to_string(fp).ok()?;
@@ -219,7 +233,7 @@ pub(crate) struct A2aTransportIdentity {
 /// safe to audit indirectly because no raw peer-controlled content is retained.
 fn a2a_transport_identity(path: &str) -> Option<A2aTransportIdentity> {
     let fp = std::path::Path::new(path);
-    if !is_safe_temp_path(fp) {
+    if !is_safe_a2a_file_path(fp) {
         return None;
     }
     let raw = std::fs::read_to_string(fp).ok()?;
@@ -361,7 +375,8 @@ pub(crate) async fn route_subscription_delivery_to_skill(
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     use std::time::Duration;
     let mut client = TaskApiClient::new();
-    let active = match subscription::determine_active_delivery(&mut client, job_id, agent_id).await {
+    let active = match subscription::determine_active_delivery(&mut client, job_id, agent_id).await
+    {
         Ok(active) => active,
         Err(error) => {
             let reason = error.to_string();
@@ -574,7 +589,8 @@ pub(crate) async fn resume_queued_subscription_delivery(
     }
 
     let mut client = TaskApiClient::new();
-    let active = match subscription::determine_active_delivery(&mut client, job_id, agent_id).await {
+    let active = match subscription::determine_active_delivery(&mut client, job_id, agent_id).await
+    {
         Ok(active) => active,
         Err(AutoTradeError::Degrade(DegradeReason::LookupOff)) => {
             let _ = delivery_queue::schedule_retry(job_id, delivery_id);
@@ -932,28 +948,28 @@ pub(crate) fn job_accepted(ctx: &FlowContext<'_>) -> String {
         );
     }
 
-        let (title, desc, provider_id, amount, symbol) = match ctx.prefetched {
-            Some(p) => (
-                p.title.as_str(),
-                if p.description.is_empty() {
-                    "<description>"
-                } else {
-                    p.description.as_str()
-                },
-                p.provider_agent_id
-                    .as_deref()
-                    .unwrap_or("<providerAgentId>"),
-                p.token_amount.as_str(),
-                p.token_symbol.as_str(),
-            ),
-            None => (
-                "<title>",
-                "<description>",
-                "<providerAgentId>",
-                "<tokenAmount>",
-                "<tokenSymbol>",
-            ),
-        };
+    let (title, desc, provider_id, amount, symbol) = match ctx.prefetched {
+        Some(p) => (
+            p.title.as_str(),
+            if p.description.is_empty() {
+                "<description>"
+            } else {
+                p.description.as_str()
+            },
+            p.provider_agent_id
+                .as_deref()
+                .unwrap_or("<providerAgentId>"),
+            p.token_amount.as_str(),
+            p.token_symbol.as_str(),
+        ),
+        None => (
+            "<title>",
+            "<description>",
+            "<providerAgentId>",
+            "<tokenAmount>",
+            "<tokenSymbol>",
+        ),
+    };
 
     format!(
             "✓ job_accepted (escrow). Notify the user:\n\
@@ -1027,32 +1043,26 @@ pub(crate) async fn deliverable_received_cli(
     let transport_identity = a2a_transport_identity(a2a_file);
     let payload = match parse_a2a_file(a2a_file, job_id, agent_id) {
         Some(parsed) => {
-                audit::log(
-                    "cli",
-                    "user/deliverable_from_a2a_file",
-                    true,
-                    Duration::default(),
-                    Some(
-                        [
-                            base_tags.clone(),
-                            vec![format!("path={a2a_file}")],
-                        ]
-                        .concat(),
-                    ),
-                    None,
-                );
-                parsed.payload
+            audit::log(
+                "cli",
+                "user/deliverable_from_a2a_file",
+                true,
+                Duration::default(),
+                Some([base_tags.clone(), vec![format!("path={a2a_file}")]].concat()),
+                None,
+            );
+            parsed.payload
         }
         None => {
-                audit::log(
-                    "cli",
-                    "user/deliverable_a2a_file_parse_failed",
-                    false,
-                    Duration::default(),
-                    Some([base_tags.clone(), vec![format!("path={a2a_file}")]].concat()),
-                    Some("failed to parse A2A file or extract deliver content"),
-                );
-                return deliverable_intake_failed(ctx, "the A2A envelope or deliver frame is invalid");
+            audit::log(
+                "cli",
+                "user/deliverable_a2a_file_parse_failed",
+                false,
+                Duration::default(),
+                Some([base_tags.clone(), vec![format!("path={a2a_file}")]].concat()),
+                Some("failed to parse A2A file or extract deliver content"),
+            );
+            return deliverable_intake_failed(ctx, "the A2A envelope or deliver frame is invalid");
         }
     };
 
@@ -1128,7 +1138,10 @@ pub(crate) async fn deliverable_received_cli(
                         Some(&e.to_string()),
                     );
                     eprintln!("[deliverable_received_cli] file download failed: {e}");
-                    return deliverable_intake_failed(ctx, "the encrypted file could not be downloaded");
+                    return deliverable_intake_failed(
+                        ctx,
+                        "the encrypted file could not be downloaded",
+                    );
                 }
             };
 
@@ -1178,7 +1191,10 @@ pub(crate) async fn deliverable_received_cli(
                         Some(&e.to_string()),
                     );
                     eprintln!("[deliverable_received_cli] save failed: {e}");
-                    return deliverable_intake_failed(ctx, "the downloaded file could not be persisted");
+                    return deliverable_intake_failed(
+                        ctx,
+                        "the downloaded file could not be persisted",
+                    );
                 }
             }
         }
@@ -1210,7 +1226,10 @@ pub(crate) async fn deliverable_received_cli(
                         Some(&e.to_string()),
                     );
                     eprintln!("[deliverable_received_cli] write temp file failed: {e}");
-                    return deliverable_intake_failed(ctx, "the text deliverable could not be staged securely");
+                    return deliverable_intake_failed(
+                        ctx,
+                        "the text deliverable could not be staged securely",
+                    );
                 }
             };
 
@@ -1260,7 +1279,10 @@ pub(crate) async fn deliverable_received_cli(
                         Some(&e.to_string()),
                     );
                     eprintln!("[deliverable_received_cli] save failed: {e}");
-                    return deliverable_intake_failed(ctx, "the text deliverable could not be persisted");
+                    return deliverable_intake_failed(
+                        ctx,
+                        "the text deliverable could not be persisted",
+                    );
                 }
             }
         }
@@ -1498,6 +1520,14 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     let short_id = ctx.short_id;
     let title_display = ctx.title_display;
 
+    if crate::commands::agent_commerce::task::common::deliverables::has_review_card_sent_marker(
+        job_id,
+    ) {
+        return format!(
+            "[System] Review decision already delivered for job {job_id}. End this turn; do not enqueue another acceptance card.\n"
+        );
+    }
+
     // Prefetched task context + providerAgentId are required — without them we
     // cannot resolve deliverable / chat-history target / rating recipient.
     let p = match ctx.prefetched {
@@ -1609,10 +1639,21 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         .deliverable
         .as_ref()
         .expect("usable deliverable was required before composing a review card");
+    // The deliverable-driven path can reach review before the queued
+    // `job_submitted` event. Establish the same approval gate here so the
+    // user's first card is immediately actionable.
+    if let Err(error) =
+        crate::commands::agent_commerce::task::common::review_gate::mark_pending(job_id)
+    {
+        return format!(
+            "[job_submitted_escrow] failed to establish the review gate for job {job_id}: {error}.\n\n\
+             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+        );
+    }
     let step2 = if d.deliverable_type == "text" {
-            let content = d.text_content.as_deref().unwrap_or("<content unavailable>");
-            format!(
-                "\
+        let content = d.text_content.as_deref().unwrap_or("<content unavailable>");
+        format!(
+            "\
      **Step 2 — Deliverable already saved**:\n\
      \x20\x20- localPath: {path}\n\
      \x20\x20- deliverableType: text\n\
@@ -1620,16 +1661,16 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ```\n\
      {content}\n\
      ```\n\n",
-                path = d.path,
-            )
-        } else {
-            format!(
-                "\
+            path = d.path,
+        )
+    } else {
+        format!(
+            "\
      **Step 2 — Deliverable already saved**:\n\
      \x20\x20- localPath: {path}\n\
      \x20\x20- deliverableType: file\n\n",
-                path = d.path,
-            )
+            path = d.path,
+        )
     };
 
     // Step 3 — compose review card user_content + push via pending-decisions-v2.
@@ -1938,7 +1979,10 @@ mod tests {
 
         retire_processed_spool_file(spool.to_str().unwrap()).unwrap();
 
-        assert!(!spool.exists(), "processed spool must leave the recovery set");
+        assert!(
+            !spool.exists(),
+            "processed spool must leave the recovery set"
+        );
         assert!(
             retire_processed_spool_file(spool.to_str().unwrap()).is_ok(),
             "cleanup must be idempotent when the spool is already absent"
@@ -2133,14 +2177,17 @@ mod tests {
         assert!(prompt.contains("Never automatically retry"));
         assert!(!prompt.contains("onchainos agent autotrade-execute"));
         assert!(!prompt.contains("--command-json"));
-        assert!(direct_reference.contains("Guide-driven direct execution"));
-        assert!(direct_reference.contains("cannot authorize a shell command"));
-        assert!(direct_reference.contains("amount determined from the Guide, Consent, and saved Signal"));
-        assert!(direct_reference.contains("There are no platform-defined business fields"));
-        assert!(direct_reference.contains("cannot authorize a shell command"));
-        assert!(direct_reference.contains("Plugin installation must remain visible and user-approved"));
-        assert!(direct_reference.contains("Never retry, replay, or"));
-        assert!(direct_reference.contains("switch execution paths after claim"));
+        assert!(direct_reference
+            .contains("`consentSnapshot.authMode` is the only authorized credential source"));
+        assert!(direct_reference.contains(
+            "OKX_API_KEY='' OKX_SECRET_KEY='' OKX_PASSPHRASE='' okx <original arguments>"
+        ));
+        assert!(direct_reference.contains(
+            "When `consentSnapshot.tradeAmountBasis` is present, it is the subscription-level authorization"
+        ));
+        assert!(direct_reference
+            .contains("never use spot-only `tgtCcy` to encode a perpetual/futures amount basis"));
+        assert!(direct_reference.contains("per-delivery choice card"));
     }
 
     #[test]
@@ -2295,6 +2342,36 @@ autotrade: {\"schemaVersion\":1,\"deliveryId\":\"legacy-1\"}";
             DeliverPayload::Text(text) => assert_eq!(text, "code sample: \\n stays literal"),
             DeliverPayload::File { .. } => panic!("expected text deliverable"),
         }
+    }
+
+    #[test]
+    fn parse_a2a_file_accepts_configured_spool_and_rejects_sibling() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("configured-a2a-parse-tests");
+        let spool = test_root.join("spool");
+        let sibling = test_root.join("spool-other");
+        std::fs::create_dir_all(&spool).unwrap();
+        std::fs::create_dir_all(&sibling).unwrap();
+        let _spool_dir = EnvVarGuard::set("ONCHAINOS_A2A_SPOOL_DIR", &spool);
+
+        let envelope = r#"{"msgType":"a2a-agent-chat","jobId":"0xnormal","receiverAgentId":"8315","content":"jobId: 0xnormal\ndeliverableType: text\n- - -\nHello\n- - -\n[intent:deliver]"}"#;
+        let accepted = spool.join("envelope.json");
+        let rejected = sibling.join("envelope.json");
+        std::fs::write(&accepted, envelope).unwrap();
+        std::fs::write(&rejected, envelope).unwrap();
+
+        assert!(
+            parse_a2a_file(accepted.to_str().unwrap(), "0xnormal", "8315").is_some(),
+            "configured spool files must remain readable after validation"
+        );
+        assert!(
+            parse_a2a_file(rejected.to_str().unwrap(), "0xnormal", "8315").is_none(),
+            "a sibling path must not pass the configured spool boundary"
+        );
+
+        std::fs::remove_dir_all(test_root).ok();
     }
 
     #[test]
@@ -2537,11 +2614,8 @@ Part B continues
         let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
 
         let mut p = escrow_ctx_with_expire(None);
-        p.deliverable.as_mut().unwrap().path = home
-            .path()
-            .join("does-not-exist.txt")
-            .display()
-            .to_string();
+        p.deliverable.as_mut().unwrap().path =
+            home.path().join("does-not-exist.txt").display().to_string();
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
             job_id: "0xstale",
             agent_id: "426",

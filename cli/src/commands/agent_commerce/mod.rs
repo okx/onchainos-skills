@@ -3193,26 +3193,34 @@ pub(crate) fn escape_control_chars_in_strings(s: &str) -> String {
     out
 }
 
-fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
+fn is_path_under_canonical_dir(path: &std::path::Path, dir: &std::path::Path) -> bool {
+    let Ok(c_path) = path.canonicalize() else {
+        return false;
+    };
+    let Ok(c_dir) = dir.canonicalize() else {
+        return false;
+    };
+    c_path.starts_with(c_dir)
+}
+
+fn is_safe_a2a_file_path_with_spool_dir(
+    path: &std::path::Path,
+    configured_spool_dir: Option<&std::path::Path>,
+) -> bool {
     if path.as_os_str().is_empty() {
         return false;
     }
-    let c_path = match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
+    if configured_spool_dir.is_some_and(|dir| is_path_under_canonical_dir(path, dir)) {
+        return true;
+    }
     let tmp_dir = std::env::temp_dir();
-    if let Ok(c_tmp) = tmp_dir.canonicalize() {
-        if c_path.starts_with(c_tmp) {
-            return true;
-        }
+    if is_path_under_canonical_dir(path, &tmp_dir) {
+        return true;
     }
     #[cfg(unix)]
     {
-        if let Ok(c_tmp) = std::path::Path::new("/tmp").canonicalize() {
-            if c_path.starts_with(c_tmp) {
-                return true;
-            }
+        if is_path_under_canonical_dir(path, std::path::Path::new("/tmp")) {
+            return true;
         }
     }
     #[cfg(test)]
@@ -3220,13 +3228,18 @@ fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
         let test_tmp = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp");
-        if let Ok(c_tmp) = test_tmp.canonicalize() {
-            if c_path.starts_with(c_tmp) {
-                return true;
-            }
+        if is_path_under_canonical_dir(path, &test_tmp) {
+            return true;
         }
     }
     false
+}
+
+fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
+    let configured_spool_dir = std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from);
+    is_safe_a2a_file_path_with_spool_dir(path, configured_spool_dir.as_deref())
 }
 
 fn parse_a2a_json_arg(raw: &str) -> anyhow::Result<serde_json::Value> {
@@ -3275,7 +3288,9 @@ fn write_secure_temp_file(path: &std::path::Path, contents: &[u8]) -> std::io::R
 }
 
 fn a2a_intake_spool_dir() -> std::path::PathBuf {
-    if let Some(path) = std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR").filter(|value| !value.is_empty()) {
+    if let Some(path) =
+        std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR").filter(|value| !value.is_empty())
+    {
         return std::path::PathBuf::from(path);
     }
     #[cfg(test)]
@@ -3332,7 +3347,9 @@ fn validate_a2a_file_arg(
 ) -> anyhow::Result<String> {
     let fp = std::path::Path::new(path);
     if !is_safe_a2a_file_path(fp) {
-        anyhow::bail!("--a2a-file must point to a file under the OS temp directory");
+        anyhow::bail!(
+            "--a2a-file must point to a file under the OS temp directory or the configured A2A spool directory"
+        );
     }
     let metadata = std::fs::symlink_metadata(fp)
         .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?;
@@ -3552,7 +3569,42 @@ mod auto_consent_permit_tests {
 
 #[cfg(test)]
 mod escape_control_chars_tests {
-    use super::{escape_control_chars_in_strings, validate_a2a_file_arg};
+    use super::{
+        escape_control_chars_in_strings, is_safe_a2a_file_path_with_spool_dir,
+        validate_a2a_file_arg,
+    };
+
+    #[test]
+    fn accepts_a2a_file_under_configured_spool_dir() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("configured-a2a-spool-tests");
+        let spool = root.join("spool");
+        std::fs::create_dir_all(&spool).unwrap();
+        let path = spool.join("envelope.json");
+        std::fs::write(&path, "{}").unwrap();
+
+        assert!(is_safe_a2a_file_path_with_spool_dir(&path, Some(&spool)));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_a2a_file_outside_configured_spool_dir() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("configured-a2a-spool-boundary-tests");
+        let spool = root.join("spool");
+        let sibling = root.join("spool-other");
+        std::fs::create_dir_all(&spool).unwrap();
+        std::fs::create_dir_all(&sibling).unwrap();
+        let path = sibling.join("envelope.json");
+        std::fs::write(&path, "{}").unwrap();
+
+        assert!(!is_safe_a2a_file_path_with_spool_dir(&path, Some(&spool)));
+
+        std::fs::remove_dir_all(root).ok();
+    }
 
     #[test]
     fn escapes_raw_lf_inside_string() {
@@ -3843,7 +3895,7 @@ fn detail_path_for_event(
     }
 }
 
-fn subscription_active_status(detail: &serde_json::Value) -> Option<i64> {
+fn subscription_acceptance_status(detail: &serde_json::Value) -> Option<i64> {
     detail["subStatus"]
         .as_i64()
         .or_else(|| {
@@ -3859,15 +3911,20 @@ fn subscription_active_status(detail: &serde_json::Value) -> Option<i64> {
         })
 }
 
-fn subscription_active_block_reason(detail: &serde_json::Value, event: &str) -> Option<String> {
-    match subscription_active_status(detail) {
-        Some(1) => None,
+fn subscription_event_block_reason(
+    detail: &serde_json::Value,
+    event: &str,
+    expected_status: i64,
+    expected_name: &str,
+) -> Option<String> {
+    match subscription_acceptance_status(detail) {
+        Some(status) if status == expected_status => None,
         Some(status) => Some(format!(
-            "[next-action blocked] Latest subscription status is {status}, not ACTIVE(1). Do not execute the {event} active-subscription flow."
+            "[next-action blocked] Latest subscription status is {status}, not {expected_name}({expected_status}). Do not execute the {event} flow."
         )),
         None => Some(
             format!(
-                "[next-action blocked] Latest subscription detail has no valid subStatus/status. Do not execute the {event} active-subscription flow."
+                "[next-action blocked] Latest subscription detail has no valid subStatus/status. Do not execute the {event} flow."
             ),
         ),
     }
@@ -3895,9 +3952,9 @@ async fn check_status_freshness(
         "job_provider_reject",
         "attachment_added",
         "provider_conversation",
-        // Subscription lifecycle: display-class notifications with no corresponding
-        // standard task status — freshness check is meaningless (task stays `accepted`
-        // while sub events flow on top), but prefetch is kept for service_name fallback.
+        // Subscription lifecycle events use subscription status rather than the
+        // standard task status. Keep prefetching here; the strict CREATED/ACTIVE
+        // checks for sub_created/sub_asp_selected run below.
         "sub_created",
         "sub_cancel",
         "sub_user_reject",
@@ -3949,13 +4006,10 @@ async fn check_status_freshness(
     // For non-skip events, parse and check if the event is recognized.
     let event = parse_status_or_event(job_status_or_event);
     let expected = status_when_event(&event);
-    // Display-class subscription events (sub_*) are notification-only: they emit no on-chain
-    // action script and hold no task status of their own (status_when_event maps them all to the
-    // synthetic "subscription" status that no real task ever reports). The freshness gate exists
-    // to stop a sub from running a STALE on-chain action; it must NOT gate these, or every sub_*
-    // notification is dropped on a live subscription (whose real status is accepted/closed/...).
-    // Skip the gate but keep the pre-fetched context so the notification still renders title/service name.
-    let is_display_only_sub = matches!(expected, Status::Other(ref s) if s == "subscription");
+    // Subscription events use a separate subStatus lifecycle, so skip the generic
+    // task-status gate. Strict event-specific checks below require CREATED(0) for
+    // sub_created and ACTIVE(1) for sub_asp_selected.
+    let is_subscription_event = matches!(expected, Status::Other(ref s) if s == "subscription");
     if !is_prefetch_only && matches!(expected, Status::Other(ref s) if s == "unknown") {
         if DEBUG_LOG {
             eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
@@ -3984,8 +4038,18 @@ async fn check_status_freshness(
         Err(_) => return (None, None),
     };
 
-    if matches!(job_status_or_event, "sub_created" | "sub_asp_selected") {
-        if let Some(reason) = subscription_active_block_reason(&resp, job_status_or_event) {
+    let subscription_status_expectation = match job_status_or_event {
+        "sub_created" => Some((0, "CREATED")),
+        "sub_asp_selected" => Some((1, "ACTIVE")),
+        _ => None,
+    };
+    if let Some((expected_status, expected_name)) = subscription_status_expectation {
+        if let Some(reason) = subscription_event_block_reason(
+            &resp,
+            job_status_or_event,
+            expected_status,
+            expected_name,
+        ) {
             return (Some(reason), None);
         }
     }
@@ -4047,7 +4111,7 @@ async fn check_status_freshness(
     let prefetched = Some(ctx);
 
     // Pre-fetch-only events + display-class sub_* events: return data without freshness validation.
-    if is_prefetch_only || is_display_only_sub {
+    if is_prefetch_only || is_subscription_event {
         return (None, prefetched);
     }
 
@@ -4091,7 +4155,7 @@ async fn check_status_freshness(
 #[cfg(test)]
 mod authoritative_detail_path_tests {
     use super::{
-        detail_path_for_event, subscription_active_block_reason, subscription_active_status,
+        detail_path_for_event, subscription_acceptance_status, subscription_event_block_reason,
     };
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
@@ -4113,42 +4177,55 @@ mod authoritative_detail_path_tests {
     }
 
     #[test]
-    fn subscription_startup_requires_active_authoritative_status() {
+    fn subscription_events_require_their_authoritative_status() {
         assert_eq!(
-            subscription_active_status(&serde_json::json!({"subStatus": 1})),
+            subscription_acceptance_status(&serde_json::json!({"subStatus": 1})),
             Some(1)
         );
         assert_eq!(
-            subscription_active_status(&serde_json::json!({"status": "1"})),
+            subscription_acceptance_status(&serde_json::json!({"status": "1"})),
             Some(1)
         );
         assert_eq!(
-            subscription_active_status(&serde_json::json!({"subStatus": 0})),
+            subscription_acceptance_status(&serde_json::json!({"subStatus": 0})),
             Some(0)
         );
-        assert_eq!(subscription_active_status(&serde_json::json!({})), None);
-        assert!(subscription_active_block_reason(
-            &serde_json::json!({"subStatus": 1}),
-            "sub_created"
+        assert_eq!(subscription_acceptance_status(&serde_json::json!({})), None);
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 0}),
+            "sub_created",
+            0,
+            "CREATED"
         )
         .is_none());
-        assert!(subscription_active_block_reason(
-            &serde_json::json!({"subStatus": 0}),
-            "sub_created"
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 1}),
+            "sub_created",
+            0,
+            "CREATED"
         )
         .is_some());
         assert!(
-            subscription_active_block_reason(&serde_json::json!({}), "sub_asp_selected")
-                .is_some()
+            subscription_event_block_reason(
+                &serde_json::json!({}),
+                "sub_asp_selected",
+                1,
+                "ACTIVE"
+            )
+            .is_some()
         );
-        assert!(subscription_active_block_reason(
+        assert!(subscription_event_block_reason(
             &serde_json::json!({"subStatus": 1}),
-            "sub_asp_selected"
+            "sub_asp_selected",
+            1,
+            "ACTIVE"
         )
         .is_none());
-        let blocked = subscription_active_block_reason(
+        let blocked = subscription_event_block_reason(
             &serde_json::json!({"subStatus": 0}),
             "sub_asp_selected",
+            1,
+            "ACTIVE",
         )
         .unwrap();
         assert!(blocked.contains("sub_asp_selected"));
