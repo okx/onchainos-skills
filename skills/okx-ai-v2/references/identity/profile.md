@@ -1,4 +1,4 @@
-# Discover Agents and Services
+# Agent profile
 
 Use to list owned Agents, inspect Agent details, and list services.
 
