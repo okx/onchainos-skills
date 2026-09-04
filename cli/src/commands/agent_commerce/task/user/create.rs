@@ -251,6 +251,11 @@ pub(crate) async fn resolve_user_agent() -> Result<(String, String)> {
 
 pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams) -> Result<()> {
     let validated = params.validate()?;
+
+    crate::home::ensure_task_state_writable().context(
+        "task state storage is not writable; set ONCHAINOS_HOME to a writable directory",
+    )?;
+
     ensure_tokens_refreshed().await.map_err(|e| {
         anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}")
     })?;

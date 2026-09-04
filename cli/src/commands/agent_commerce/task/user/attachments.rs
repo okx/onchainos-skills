@@ -34,11 +34,9 @@ pub(crate) fn validate_attachment_sources(sources: &[String]) -> Result<()> {
 }
 
 pub(crate) fn attachments_dir(job_id: &str) -> Result<PathBuf> {
-    // Layer-2 guard: fail closed before joining job_id into a path.
+    // Validate before joining the backend-controlled identifier into local state.
     crate::commands::agent_commerce::task::common::util::validate_job_id_path_component(job_id)?;
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
-    Ok(home.join(".onchainos").join("task").join(job_id).join("attachments"))
+    Ok(crate::home::task_state_dir(job_id)?.join("attachments"))
 }
 
 pub(crate) fn dedup_dest(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {

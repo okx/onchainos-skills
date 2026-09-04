@@ -146,16 +146,7 @@ struct DisplaySnapshot {
 // ─── Paths ──────────────────────────────────────────────────────────────
 
 fn task_dir() -> Result<PathBuf> {
-    // Respect ONCHAINOS_HOME (project-local override per CLAUDE.md); fall back to ~/.onchainos.
-    let base = match std::env::var("ONCHAINOS_HOME") {
-        Ok(p) if !p.is_empty() => PathBuf::from(p),
-        _ => {
-            let home = dirs::home_dir()
-                .ok_or_else(|| anyhow::anyhow!("unable to determine HOME directory"))?;
-            home.join(".onchainos")
-        }
-    };
-    let dir = base.join("task");
+    let dir = crate::home::task_state_root()?;
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }

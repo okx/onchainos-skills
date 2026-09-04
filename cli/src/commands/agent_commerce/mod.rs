@@ -3275,6 +3275,9 @@ fn write_secure_temp_file(path: &std::path::Path, contents: &[u8]) -> std::io::R
 }
 
 fn a2a_intake_spool_dir() -> std::path::PathBuf {
+    if let Some(path) = std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR").filter(|value| !value.is_empty()) {
+        return std::path::PathBuf::from(path);
+    }
     #[cfg(test)]
     {
         return std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

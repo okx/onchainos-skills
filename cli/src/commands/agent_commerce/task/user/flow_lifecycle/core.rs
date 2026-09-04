@@ -639,10 +639,13 @@ pub(crate) async fn resume_queued_subscription_delivery(
 }
 
 /// The directory scanned for A2A deliver spool files. Defaults to the OS temp dir
-/// (`/tmp` on Linux when `TMPDIR` is unset), and is redirectable via `TMPDIR` so
-/// tests / CI / sandbox never need to touch a hardcoded `/tmp`.
+/// (`/tmp` on Linux when `TMPDIR` is unset), and can be overridden with
+/// `ONCHAINOS_A2A_SPOOL_DIR`.
 fn a2a_spool_dir() -> std::path::PathBuf {
-    std::env::temp_dir()
+    std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
 }
 
 /// Collect the A2A spool candidates for `job_id` and return the OLDEST by mtime.
