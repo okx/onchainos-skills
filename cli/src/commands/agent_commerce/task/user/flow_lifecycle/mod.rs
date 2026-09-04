@@ -6,7 +6,7 @@ mod terminal;
 mod manage;
 pub(super) mod subscription;
 
-pub(super) use self::core::{provider_applied, job_accepted, deliverable_received_cli, job_submitted, approve_review, reject_review, job_completed};
+pub(super) use self::core::{provider_applied, job_accepted, deliverable_received_cli, job_submitted, approve_review, reject_review};
 pub(crate) use self::core::{
     resume_queued_subscription_delivery, try_recover_from_temp_file,
 };

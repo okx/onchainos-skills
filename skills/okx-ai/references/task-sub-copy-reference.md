@@ -1,10 +1,12 @@
 # Subscription Notification Copy — Human-Readable Mirror (NOT runtime)
 
 > **Canonical source = the CLI** (`cli/src/commands/agent_commerce/task/user/content.rs` and the
-> ASP-side content module): the text a user sees is whatever `next-action` embeds in its returned
-> `user-notify` script. This file is a **review/debug/localization reference only** — it is not
+> ASP-side content module): the text a user sees is whatever `next-action` returns in its action
+> result. This file is a **review/debug/localization reference only** — it is not
 > loaded by any activation flow, and it must never be used to hand-compose a notification
-> (see `task-core.md` §Subscription Notifications: sub_* events always run `next-action`).
+> (see [`task-core.md` §Activation](task-core.md#activation): `sub_*` events always run
+> `next-action`; User-side supplements live in
+> [`task-user-sub-playbook.md`](task-user-sub-playbook.md)).
 > If this table and the CLI disagree, the CLI is right and this file is stale.
 
 | # | Event (`event`) | Target | Rendered notification (English canonical, from the authoritative copy doc) |

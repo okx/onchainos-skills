@@ -2956,8 +2956,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
-            let (freshness_warning, prefetched) =
-                check_status_freshness(&job_id, &event, &agent_id).await;
+            let (freshness_warning, prefetched) = if handler_fetches_own_task_detail(
+                &resolved_role,
+                &event,
+            ) {
+                (None, None)
+            } else {
+                check_status_freshness(&job_id, &event, &agent_id).await
+            };
             if let Some(w) = freshness_warning {
                 println!("{w}");
                 return Ok(());
@@ -2980,7 +2986,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    if payment_mode == Some(3) {
+                    if should_block_legacy_a2mcp_flow(payment_mode, &event) {
                         format!(
                             "legacy_a2mcp_flow_removed: task-based A2MCP processing is disabled for job {job_id}. Stop; do not deliver, complete, sign, or pay."
                         )
@@ -3549,7 +3555,10 @@ mod auto_consent_permit_tests {
 
 #[cfg(test)]
 mod escape_control_chars_tests {
-    use super::{escape_control_chars_in_strings, validate_a2a_file_arg};
+    use super::{
+        escape_control_chars_in_strings, handler_fetches_own_task_detail,
+        should_block_legacy_a2mcp_flow, validate_a2a_file_arg,
+    };
 
     #[test]
     fn escapes_raw_lf_inside_string() {
@@ -3826,6 +3835,47 @@ mod escape_control_chars_tests {
             .to_string();
         assert!(err.contains("content jobId 0xother does not match payload jobId 0xabc123"));
     }
+
+    #[test]
+    fn completion_handlers_own_their_task_detail_requests() {
+        assert!(handler_fetches_own_task_detail("user", "job_completed"));
+        assert!(handler_fetches_own_task_detail("asp", "job_completed"));
+        assert!(!handler_fetches_own_task_detail("evaluator", "job_completed"));
+        assert!(handler_fetches_own_task_detail("user", "sub_complete_notify"));
+        assert!(!handler_fetches_own_task_detail("asp", "sub_complete_notify"));
+        assert!(!handler_fetches_own_task_detail("user", "sub_close_notify"));
+    }
+
+    #[test]
+    fn asp_subscription_completion_never_blocks_as_legacy_a2mcp() {
+        assert!(!should_block_legacy_a2mcp_flow(
+            Some(3),
+            "sub_complete_notify"
+        ));
+    }
+
+    #[test]
+    fn job_completed_never_uses_a2mcp_flow() {
+        assert!(!should_block_legacy_a2mcp_flow(
+            Some(3),
+            "job_completed"
+        ));
+    }
+
+    #[test]
+    fn other_payment_mode_three_events_block_as_legacy_a2mcp() {
+        assert!(should_block_legacy_a2mcp_flow(Some(3), "job_submitted"));
+    }
+}
+
+fn handler_fetches_own_task_detail(role: &str, event: &str) -> bool {
+    (matches!(role, "user" | "asp") && event == "job_completed")
+        || (role == "user" && event == "sub_complete_notify")
+}
+
+fn should_block_legacy_a2mcp_flow(payment_mode: Option<i64>, event: &str) -> bool {
+    matches!(payment_mode, Some(3))
+        && !matches!(event, "sub_complete_notify" | "job_completed")
 }
 
 fn detail_path_for_event(
