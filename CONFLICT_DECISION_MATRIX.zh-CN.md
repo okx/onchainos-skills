@@ -3,13 +3,16 @@
 合并方向：将 `origin/codex/a2a-skill-cli-contract` 合入 `origin/codex/a2a-skill-cli-contract-elvis`
 
 - **Elvis / ours / HEAD：** `e69c6fd05c83ac1090d8f4c9d4e883666ef3eda8`
-- **Contract / theirs：** `c7e071bb58b906a51498be105163f739e387d6df`
+- **Contract / theirs：** `6bb02d665c7d`（最新刷新；原始审计基于 `c7e071bb58b906a51498be105163f739e387d6df`）
 - **共同祖先：** `6ff8fc6b093f04cfe80c66248f7cf8f3bb7c39e9`
 - **文本冲突：** 13 个文件，58 个冲突块
 
 ## 最终解决状态（2026-09-04）
 
-58 个文本冲突块已经全部解决，当前没有 unmerged 文件；尚未创建 merge commit，也没有 push。下方 C01–C58 保留为原始冲突逻辑审计，行号是解决前的 review 行号。
+原始 58 个文本冲突块，以及 Contract 最新刷新新增的 2 个冲突块均已解决，当前没有 unmerged 文件。首个合并提交为 `966e03a21`；最新刷新尚待提交和 push。下方 C01–C58 保留为原始冲突逻辑审计，行号是解决前的 review 行号。
+
+- 新增冲突 N01：`job_asp_selected` 保留 Elvis v2 `provider_assignment_playbook`，不恢复旧的内联 apply/二次接受流程；同时保留 Contract 的标题模板注入防护。
+- 新增冲突 N02：附件保存同时保留 Elvis 的源文件预检/manifest 返回，以及 Contract 的 jobId 路径组件校验。
 
 - 创建 API：保留 Elvis 的 fixed-price v2 `create-task` / `create-subscribe`，附加 Contract 的 `serviceGuide`、可选 hash 和 `guideConsentJson`。
 - Subscription provider：继续必填，确保 Guide 与本地执行合约绑定到明确 ASP。

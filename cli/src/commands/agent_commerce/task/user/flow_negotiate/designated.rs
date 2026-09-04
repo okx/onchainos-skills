@@ -8,6 +8,7 @@
 ///   - B-Step 0   (duplicate guard)        → okx_a2a::session_query_exists
 ///   - B-Step 1   (create sub session)     → okx_a2a::session_create
 ///   - B-Step 1.5 (SKILL_PREFETCH dispatch) → okx_a2a::session_send
+///
 /// Everything from B-Step 2 onward (first inquiry, negotiation,
 /// timeouts) requires the LLM to author natural-language content and remains
 /// in the returned playbook.

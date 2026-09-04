@@ -4,15 +4,15 @@ Regenerated after remote refresh: 2026-09-04 (Asia/Hong_Kong)
 
 ## Executive result
 
-> Resolution update (2026-09-04): all 58 textual conflict hunks have now been resolved according to the reviewed target contract. The merge remains uncommitted and has not been pushed. Creation keeps the Elvis v2 transaction path, adds Contract Guide/Consent persistence around the real `jobId`, removes `copyTrade` and fixed-field creation authorization, and retains structured output. `sub_open` and ASP second acceptance are removed; `sub_created` owns User session/attachment setup and `sub_asp_selected` starts ASP service directly.
+> Resolution update (2026-09-04): the original 58 textual conflict hunks and the 2 additional hunks from the latest Contract refresh are resolved. The first merge is commit `966e03a21`; the refreshed merge is ready to commit but has not yet been pushed. Creation keeps the Elvis v2 transaction path, adds Contract Guide/Consent persistence around the real `jobId`, removes `copyTrade` and fixed-field creation authorization, and retains structured output. `sub_open` and ASP second acceptance are removed; `sub_created` owns User session/attachment setup and `sub_asp_selected` starts ASP service directly.
 
 - Merge direction tested: merge `origin/codex/a2a-skill-cli-contract` into `origin/codex/a2a-skill-cli-contract-elvis`.
 - Elvis tip (`HEAD` / ours): `e69c6fd05c83ac1090d8f4c9d4e883666ef3eda8`.
-- Contract tip (theirs): `c7e071bb58b906a51498be105163f739e387d6df`.
+- Contract tip (theirs): `6bb02d665c7d` (latest refresh; the original review used `c7e071bb58b906a51498be105163f739e387d6df`).
 - Merge base: `6ff8fc6b093f04cfe80c66248f7cf8f3bb7c39e9`.
 - Divergence: contract has 30 unique commits (22 non-merge); Elvis has 23 unique commits (21 non-merge).
 - Git result: automatic merge stopped with 13 conflicted files and 58 conflict hunks: 48 Rust hunks and 10 skill-document hunks.
-- No merge commit was created and nothing was pushed. This detached review worktree intentionally remains in the conflicted merge state.
+- The refreshed delta added 2 conflicts: keep the v2 `provider_assignment_playbook` for `job_asp_selected` while retaining Contract's title-template injection hardening; combine attachment source validation/manifest output with Contract's jobId path-component guard.
 
 This is not a safe ours/theirs merge. The branches independently replaced the same task-creation and subscription contracts. Git also auto-merged incompatible code outside the visible markers. Simulations confirmed:
 

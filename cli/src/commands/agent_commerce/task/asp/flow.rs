@@ -445,6 +445,7 @@ pub async fn generate_next_action(
         // job_rejected but routing to the SUBSCRIPTION endpoints. ~1-day window before the backend
         // auto-refunds this period. (Removed from the "not handled in this slice" notify group.)
         Event::SubUserReject => {
+            use crate::commands::agent_commerce::task::common::{pending_v2, template_vars};
             let to_flag = prefetched
                 .and_then(|p| p.user_agent_id.as_deref())
                 .filter(|s| !s.is_empty())
@@ -454,9 +455,22 @@ pub async fn generate_next_action(
                 message.and_then(|m| m.get(k)).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
             };
             let msg_i64 = |k: &str| message.and_then(|m| m.get(k)).and_then(|v| v.as_i64());
-            let svc = msg_str("jobTitle").or_else(|| msg_str("title")).unwrap_or(title_display);
+            // Keep the buyer-controlled subscription
+            // title out of the emitted shell. The title appears in TWO visible
+            // fields whose BASE sources differ and must NOT be collapsed:
+            //   * decision copy — `jobTitle` → `title` → `title_display`;
+            //   * list-label    — `title_display` (falls back to the literal `<title>`).
+            // Each field carries its own reserved placeholder; the raw titles travel
+            // only in the shell-safe Base64 `--template-vars-b64` payload and are
+            // substituted in-process by `request-prompt` after clap parse, before any
+            // push. The public `request-prompt` (direct-push) semantic
+            // is preserved — this is NOT changed to `request`.
+            let copy_ph = template_vars::TITLE_PLACEHOLDER;
+            let label_ph = template_vars::LABEL_TITLE_PLACEHOLDER;
+            let copy_title = msg_str("jobTitle").or_else(|| msg_str("title")).unwrap_or(title_display);
+            let title_b64 = pending_v2::encode_title_vars(copy_title, title_display);
             let decision_copy = super::content::sub_user_reject_asp_decision_copy(
-                svc,
+                copy_ph,
                 msg_i64("subStartTime"),
                 msg_i64("subEndTime"),
                 msg_i64("rejectWindowEndsAt"),
@@ -469,13 +483,14 @@ pub async fn generate_next_action(
              🛑 **Push the refund/dispute decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay); a plain reply doesn't reach the user-session, so either path lets the ~1-day window lapse into an auto-refund.\n\
              ⚠️ Limited reaction window (about 1 day). Let the USER choose — do NOT decide autonomously; do NOT `okx-a2a session send` the buyer (they just rejected — they know).\n\n\
              **Step 1 — push the decision to the user**:\n\n\
-             🌐 **Localize first** — translate the content between the markers to the user's language; keep the `A.` / `B.` letters and the `[Decision {short_id}]` label.\n\
+             🌐 **Localize first** — translate the content between the markers to the user's language; keep the `A.` / `B.` letters and the `[Decision {short_id}]` label. Do NOT translate, move, or re-inline the reserved `{copy_ph}` / `{label_ph}` tokens or the `--template-vars-b64` value — they are substituted in-process.\n\
              ```bash\n\
              onchainos agent pending-decisions-v2 request-prompt \\\n\
              \x20\x20--job-id {job_id} --role asp --agent-id {agent_id}{to_flag} \\\n\
              \x20\x20--user-content \"<localized content shown below>\" \\\n\
-             \x20\x20--list-label \"[Decision {short_id}] {title_display} — refund or dispute\" \\\n\
-             \x20\x20--source-event sub_user_reject\n\
+             \x20\x20--list-label \"[Decision {short_id}] {label_ph} — refund or dispute\" \\\n\
+             \x20\x20--source-event sub_user_reject \\\n\
+             \x20\x20--template-vars-b64 \"{title_b64}\"\n\
              ```\n\
              content (only the lines between the markers — translate before passing; do NOT include the markers).\n\
              Canonical copy — ASP-3 subscription rejection decision (localize to the user's language at push time):\n\
@@ -1271,6 +1286,9 @@ fn user_attachment_received_cli(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::agent_commerce::task::common::template_vars::{
+        extract_emitted_label_title, extract_emitted_title,
+    };
     use serde_json::json;
 
     // ── reject_expire_time extraction (FR-4) ─────────────────────────────
@@ -1570,18 +1588,46 @@ mod tests {
             }),
         )
         .await;
+        // The public direct-push semantic is `request-prompt`, NOT
+        // `request` — do not change it even though the handlers share internals.
         assert!(
             out.contains("pending-decisions-v2 request-prompt"),
-            "sub_user_reject must push a decision to the user: {out}"
+            "sub_user_reject must push a decision via request-prompt: {out}"
         );
         assert!(
             !out.contains("Silently ignore"),
             "sub_user_reject must NOT hit the silent-ignore group: {out}"
         );
-        // AC-F2: ASP-3 canonical copy with period / precise deadline / amount slots + A/B.
+        // The raw title is carried out-of-band in --template-vars-b64;
+        // the emitted copy carries {{__OKX_TASK_TITLE__}} and the list-label carries
+        // {{__OKX_TASK_LABEL_TITLE__}}; the raw title MUST NOT appear in the block.
         assert!(
-            out.contains("[Action Needed: User Rejection] The user has rejected \"My Sub\"'s current period ("),
-            "ASP-3 copy + period slot: {out}"
+            out.contains("--template-vars-b64"),
+            "emitted block must carry the Base64 title payload: {out}"
+        );
+        assert!(
+            out.contains("[Action Needed: User Rejection] The user has rejected ")
+                && out.contains("{{__OKX_TASK_TITLE__}}")
+                && out.contains("current period ("),
+            "ASP-3 copy + period slot with copy placeholder: {out}"
+        );
+        assert!(
+            out.contains("[Decision 0xsub01] {{__OKX_TASK_LABEL_TITLE__}} — refund or dispute"),
+            "list-label must carry the label placeholder: {out}"
+        );
+        assert_eq!(
+            extract_emitted_title(&out),
+            "My Sub",
+            "Site 2 copy Base64 must decode back to the exact title"
+        );
+        assert_eq!(
+            extract_emitted_label_title(&out),
+            "My Sub",
+            "Site 2 label Base64 (title_display) must decode back to the exact title"
+        );
+        assert!(
+            !out.contains("My Sub"),
+            "raw title must NOT appear in the emitted block: {out}"
         );
         assert!(
             out.contains("file a dispute by ") && out.contains("full refund of 0.0005 USDT"),

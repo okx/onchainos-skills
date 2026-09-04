@@ -34,13 +34,11 @@ pub(crate) fn validate_attachment_sources(sources: &[String]) -> Result<()> {
 }
 
 pub(crate) fn attachments_dir(job_id: &str) -> Result<PathBuf> {
-    let home =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
-    Ok(home
-        .join(".onchainos")
-        .join("task")
-        .join(job_id)
-        .join("attachments"))
+    // Layer-2 guard: fail closed before joining job_id into a path.
+    crate::commands::agent_commerce::task::common::util::validate_job_id_path_component(job_id)?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
+    Ok(home.join(".onchainos").join("task").join(job_id).join("attachments"))
 }
 
 pub(crate) fn dedup_dest(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
@@ -190,4 +188,33 @@ pub(crate) fn copy_attachments_to_job_with_manifest(
         }
     }
     Ok(manifest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A direct `attachments_dir("../../x")` fails closed with the
+    /// coded error BEFORE any filesystem side effect — the path-component guard runs
+    /// before `dirs::home_dir()` / any join, so no directory is created or read.
+    #[test]
+    fn attachments_dir_rejects_traversal() {
+        for bad in ["../../x", "a/b", "..", "", "/abs", "a\\b"] {
+            let err = attachments_dir(bad).expect_err(bad);
+            let code = err
+                .downcast_ref::<crate::commands::sink::CodedError>()
+                .map(|c| c.code.clone())
+                .unwrap_or_default();
+            assert_eq!(code, "UNSAFE_JOB_PATH_COMPONENT", "case {bad:?}");
+        }
+    }
+
+    /// A legal `0x`+64-hex jobId is a single safe component, so `attachments_dir`
+    /// still builds the expected `<HOME>/.onchainos/task/<jobId>/attachments` path.
+    #[test]
+    fn attachments_dir_accepts_real_jobid() {
+        let hex = format!("0x{}", "a".repeat(64));
+        let dir = attachments_dir(&hex).expect("legal jobId must build a path");
+        assert!(dir.ends_with(format!(".onchainos/task/{hex}/attachments")));
+    }
 }

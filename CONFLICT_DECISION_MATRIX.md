@@ -3,13 +3,16 @@
 Merge direction: `origin/codex/a2a-skill-cli-contract` into `origin/codex/a2a-skill-cli-contract-elvis`
 
 - **Elvis / ours / HEAD:** `e69c6fd05c83ac1090d8f4c9d4e883666ef3eda8`
-- **Contract / theirs:** `c7e071bb58b906a51498be105163f739e387d6df`
+- **Contract / theirs:** `6bb02d665c7d` (latest refresh; original audit used `c7e071bb58b906a51498be105163f739e387d6df`)
 - **Merge base:** `6ff8fc6b093f04cfe80c66248f7cf8f3bb7c39e9`
 - **Textual conflicts:** 13 files, 58 hunks
 
 ## Final resolution status (2026-09-04)
 
-All 58 textual conflict hunks are resolved and there are no unmerged files. No merge commit has been created and nothing has been pushed. The C01–C58 entries below remain as the pre-resolution logic audit.
+The original 58 textual conflict hunks and the 2 additional hunks from the latest Contract refresh are resolved, with no unmerged files. The first merge commit is `966e03a21`; the refreshed merge is awaiting commit and push. C01–C58 below remain as the original pre-resolution logic audit.
+
+- New conflict N01: keep the Elvis v2 `provider_assignment_playbook` for `job_asp_selected`, without restoring the legacy inline apply/second-acceptance flow; also retain Contract's title-template injection hardening.
+- New conflict N02: combine Elvis attachment source preflight/manifest output with Contract's jobId path-component validation.
 
 - Keep Elvis fixed-price v2 `create-task` / `create-subscribe`, extended with Contract `serviceGuide`, optional hash, and `guideConsentJson`.
 - Keep subscription provider required.

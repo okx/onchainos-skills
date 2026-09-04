@@ -286,6 +286,10 @@ const REDACT_FULL: &[&str] = &[
     // subscribe-device-update batch blob embeds jobIds; addr-prefix/suffix of the
     // JSON is meaningless, so redact wholesale.
     "--items",
+    // pending-decisions-v2 request / request-prompt template payload: the Base64
+    // JSON carries the untrusted task title. Redact wholesale so the title never
+    // lands in the audit log.
+    "--template-vars-b64",
 ];
 
 /// Flags whose next positional value is an address / email — keep prefix + suffix.
@@ -1130,6 +1134,36 @@ mod tests {
         let args = vec_s(&["onchainos", "payment", "pay", "--payload=eyJhIjoxfQ"]);
         let out = redact_args(&args);
         assert_eq!(out[3], "--payload=[REDACTED]");
+    }
+
+    #[test]
+    fn redact_template_vars_b64() {
+        // The Base64 payload carries the untrusted task title and must never
+        // appear cleartext in the audit log.
+        // Two-arg form: `agent pending-decisions-v2 request-prompt ... --template-vars-b64 <b64>`.
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "pending-decisions-v2",
+            "request-prompt",
+            "--role",
+            "asp",
+            "--template-vars-b64",
+            "eyJfX09LWF9UQVNLX1RJVExFX18iOiJXZWVrbHkgUmVwb3J0In0=",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[6], "--template-vars-b64");
+        assert_eq!(out[7], "[REDACTED]");
+        // Equals form: `--template-vars-b64=<b64>`.
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "pending-decisions-v2",
+            "request",
+            "--template-vars-b64=eyJfX09LWF9UQVNLX1RJVExFX18iOiJYIn0=",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[4], "--template-vars-b64=[REDACTED]");
     }
 
     #[test]
