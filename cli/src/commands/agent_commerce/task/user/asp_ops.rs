@@ -12,9 +12,9 @@ use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::identity::ServiceMatchArgs;
-use crate::commands::agent_commerce::task::common::autotrade::tooling;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::PaymentMode;
+use crate::commands::agent_commerce::task::common::autotrade::tooling;
 use crate::commands::agent_commerce::task::signing;
 
 // ── asp-match ────────────────────────────────────────────────────────────
@@ -130,7 +130,6 @@ fn compact_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
         "feeToken",
         "feeTokenSymbol",
         "endpoint",
-        "autoTradePreflight",
     ] {
         copy_field(&mut compact, &service, key);
     }
@@ -262,13 +261,6 @@ pub(super) fn compact_task_service_for_ai(service: &serde_json::Value) -> serde_
         serde_json::Value::Bool(support_subscription),
     );
     compact.insert("subscriptionInfo".to_string(), subscription_info);
-    compact.insert(
-        "autoTradePreflight".to_string(),
-        service
-            .get("autoTradePreflight")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({})),
-    );
     serde_json::Value::Object(compact)
 }
 
@@ -604,24 +596,11 @@ pub async fn handle_asp_match(
         .await?;
     let mut resp = resp;
 
-    // Attach a per-service `autoTradePreflight` (FR-1/2): deterministic, local,
-    // non-networked. One inventory snapshot is shared across every service so all
-    // rows see a consistent readiness view. Any per-service internal error degrades
-    // to the sentinel preflight rather than failing the match.
-    let inv = tooling::ToolInventory::detect();
     if let Some(recs_mut) = resp["recommendations"].as_array_mut() {
         for rec in recs_mut.iter_mut() {
             if let Some(services) = rec["services"].as_array_mut() {
                 for svc in services.iter_mut() {
                     normalize_subscription_fee(svc);
-                    let desc = svc["serviceDescription"].as_str().unwrap_or("");
-                    // Build the (infallible) preflight, then serialize once here —
-                    // the sole genuinely fallible boundary. Only a serialization
-                    // failure degrades to the sentinel; classification never errors.
-                    let pf = tooling::build_preflight(desc, &inv);
-                    svc["autoTradePreflight"] = serde_json::to_value(&pf).unwrap_or_else(|_| {
-                        serde_json::to_value(tooling::degraded_preflight()).unwrap_or_default()
-                    });
                 }
             }
         }
@@ -708,10 +687,6 @@ pub async fn handle_asp_match(
                     }
                 }
 
-                if let Some(line) = preflight_summary_line(&svc["autoTradePreflight"]) {
-                    print!("    {line}");
-                    println!();
-                }
             }
         }
         println!();
@@ -937,64 +912,6 @@ pub async fn handle_user_reject(
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-/// Render the compact per-service preflight summary line for text mode, e.g.
-/// `Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(verification_unknown) · 1 reminder`.
-/// Returns `None` when the preflight object is absent.
-///
-/// NOTE: this line MUST NOT use `Copy-trade: on/off` wording — that reads as an
-/// "auto-trading already authorized" switch, which is misleading. Service
-/// classification is advisory; the saved delivery is interpreted later by the
-/// subscription-signal Skill, and real execution still requires consent,
-/// per-trade cap, tool readiness and any required account confirmation.
-/// We therefore surface a neutral `Trading-signal service: yes/no` instead.
-fn preflight_summary_line(pf: &serde_json::Value) -> Option<String> {
-    if !pf.is_object() {
-        return None;
-    }
-    // Neutral, non-authorizing phrasing. Missing/wrong-type values fail closed.
-    let is_signal = pf["isTradingSignal"].as_bool().unwrap_or(false);
-    let service = if is_signal { "yes" } else { "no" };
-    let classes: Vec<String> = pf["assetClasses"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    let classes_str = if classes.is_empty() {
-        "—".to_string()
-    } else {
-        classes.join(", ")
-    };
-    let tools: Vec<String> = pf["tools"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .map(|t| {
-                    let name = t["displayName"].as_str().unwrap_or("?");
-                    let readiness = t["readiness"].as_str().unwrap_or("?");
-                    format!("{name}({readiness})")
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let tools_str = if tools.is_empty() {
-        "none".to_string()
-    } else {
-        tools.join(", ")
-    };
-    let n = pf["reminders"].as_array().map(|a| a.len()).unwrap_or(0);
-    let reminders_str = if n == 1 {
-        "1 reminder".to_string()
-    } else {
-        format!("{n} reminders")
-    };
-    Some(format!(
-        "Trading-signal service: {service} · classes: {classes_str} · tools: {tools_str} · {reminders_str}"
-    ))
-}
-
 async fn resolve_agent(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -1131,16 +1048,7 @@ mod tests {
         assert!(svc["serviceGuideHash"]
             .as_str()
             .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
-        assert_eq!(svc["autoTradePreflight"]["schemaVersion"], json!(3));
-        assert_eq!(svc["autoTradePreflight"]["assetClasses"], json!(["spot"]));
-        assert_eq!(
-            svc["autoTradePreflight"]["tools"][0]["readiness"],
-            json!("verification_unknown")
-        );
-        assert_eq!(
-            svc["autoTradePreflight"]["tools"][0]["reason"],
-            json!("local_compatibility_not_checked")
-        );
+        assert!(svc.get("autoTradePreflight").is_none());
         assert!(svc.get("feeAmount").is_none());
         assert_eq!(svc["supportSubscription"], json!(true));
         assert_eq!(svc["subscriptionInfo"]["interval"], json!("month"));
@@ -1178,7 +1086,7 @@ mod tests {
         assert!(svc["subscriptionInfo"].is_null());
         assert_eq!(svc["feeAmount"], json!("5"));
         assert_eq!(svc["serviceDescription"], json!("Audit one transaction."));
-        assert_eq!(svc["autoTradePreflight"]["isTradingSignal"], json!(false));
+        assert!(svc.get("autoTradePreflight").is_none());
         assert!(svc.get("subscription").is_none());
     }
 
@@ -1265,20 +1173,7 @@ mod tests {
         assert_eq!(svc["securityRate"], json!(5));
         assert_eq!(svc["feedbackRate"], json!(100));
         assert_eq!(svc["soldCount"], json!(11));
-        assert_eq!(svc["autoTradePreflight"]["schemaVersion"], json!(3));
-        assert_eq!(
-            svc["autoTradePreflight"]["tools"][0]["reason"],
-            json!("local_compatibility_not_checked")
-        );
-        assert!(svc["autoTradePreflight"]["tools"][0]["checkedAt"].is_null());
-        assert_eq!(
-            svc["autoTradePreflight"]["tradeKitProbe"]["mode"],
-            json!("probe_before_confirmation")
-        );
-        assert_eq!(
-            svc["autoTradePreflight"]["tradeKitProbe"]["assetClasses"],
-            json!(["spot"])
-        );
+        assert!(svc.get("autoTradePreflight").is_none());
         assert!(svc.get("subscription").is_none());
         assert!(svc.get("asp").is_none());
     }
@@ -1932,74 +1827,4 @@ mod tests {
         .is_ok());
     }
 
-    // ── preflight_summary_line — text-mode compact line (FR-1) ──────────
-    //
-    // Asserts the neutral, non-authorizing format (oli-feedback P0): the line
-    // renders `Trading-signal service: yes/no`, never `Copy-trade: on/off`.
-    //   `Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(verification_unknown) · 1 reminder`
-
-    #[test]
-    fn preflight_line_signal_singular_reminder() {
-        // isTradingSignal=true → "yes"; classes joined by ", "; tools "Name(readiness)"
-        // joined by ", "; a single reminder renders the singular "1 reminder".
-        let pf = serde_json::json!({
-            "isTradingSignal": true,
-            "assetClasses": ["prediction"],
-            "tools": [
-                {"displayName": "Polymarket", "readiness": "missing"},
-                {"displayName": "Trade Kit", "readiness": "verification_unknown"}
-            ],
-            "reminders": [{"kind": "install_plugin"}]
-        });
-        let line = super::preflight_summary_line(&pf).unwrap();
-        assert_eq!(
-            line,
-            "Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(verification_unknown) · 1 reminder"
-        );
-        // The misleading on/off authorization wording must never appear.
-        assert!(!line.contains("Copy-trade"));
-    }
-
-    #[test]
-    fn preflight_line_non_signal_empty_classes_and_tools() {
-        // isTradingSignal=false → "no"; empty assetClasses → em-dash placeholder;
-        // empty tools → "none"; zero reminders → plural "0 reminders".
-        let pf = serde_json::json!({
-            "isTradingSignal": false,
-            "assetClasses": [],
-            "tools": [],
-            "reminders": []
-        });
-        let line = super::preflight_summary_line(&pf).unwrap();
-        assert_eq!(
-            line,
-            "Trading-signal service: no · classes: — · tools: none · 0 reminders"
-        );
-        assert!(!line.contains("Copy-trade"));
-    }
-
-    #[test]
-    fn preflight_line_plural_reminders_multi_class() {
-        // Multiple classes join with ", "; N (≠1) reminders render the plural form.
-        let pf = serde_json::json!({
-            "isTradingSignal": true,
-            "assetClasses": ["spot", "perp"],
-            "tools": [{"displayName": "OnchainOS", "readiness": "ready"}],
-            "reminders": [{"kind": "choose_at_first_signal"}, {"kind": "configure_tool"}]
-        });
-        let line = super::preflight_summary_line(&pf).unwrap();
-        assert_eq!(
-            line,
-            "Trading-signal service: yes · classes: spot, perp · tools: OnchainOS(ready) · 2 reminders"
-        );
-        assert!(!line.contains("Copy-trade"));
-    }
-
-    #[test]
-    fn preflight_line_non_object_returns_none() {
-        // A non-object preflight (absent / wrong type) yields no summary line.
-        assert!(super::preflight_summary_line(&serde_json::Value::Null).is_none());
-        assert!(super::preflight_summary_line(&serde_json::json!("x")).is_none());
-        assert!(super::preflight_summary_line(&serde_json::json!([1, 2])).is_none());
-    }
 }

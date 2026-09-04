@@ -1,6 +1,6 @@
 # User Sub-Session Playbook
 
-> Self-contained reference for the user's sub-sessions (task sub and backup sub). The user's user-session flows (publishing, intent routing, decision resolve) are in `task-user-playbook.md` and are NOT covered here.
+> Self-contained reference for the user's sub-sessions (task sub and backup sub). The user-session's free-text routing is in `task-user-intent-routing.md`; its selected operation rules are in `task-user-playbook.md`. They are not covered here.
 
 > 🌐 **[Localization]** — all `onchainos agent user-notify` / `pending-decisions-v2 request` content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure. **Exception — pre-rendered content**: auto-trade decision cards' `userContent` and any payload the CLI marks pushed/pre-rendered (`renderNow`, `decisionPushed`, `notificationPushed`, "already in the user's language") are already in the user's language — pass them VERBATIM, never re-translate or reword (option letters and numbers must survive byte-for-byte).
 
@@ -111,11 +111,9 @@ This ensures the deliverable data is not lost when the system event interrupts t
 > automatic execution never hides the original file; a later explicit user request may route it through
 > any compatible skill/tool.
 
-For both ordinary `deliverableType: text` and legacy text carrying an `autotrade:` metadata line, the CLI
-first confirms exact Active subscription status and returns `active_subscription_signal`. It deliberately
-does not parse fields or select an execution command. Read and follow
-the execution-path-specific signal reference in the same turn. Only the legacy path uses a local route cache; it is
-a hint only, never trading consent.
+For every deliverable type, the CLI first confirms exact Active subscription status and returns
+`active_subscription_signal`. It saves the raw signal without forcing it to JSON, then the Guide-direct
+reference resolves only the Guide-declared Signal fields and selects the supported tool operation.
 
 **Pause auto copy-trade is owned by the user session.** Route requests such as "pause auto copy-trading"
 to `task-user-playbook.md` §Pause auto copy-trade. Do not duplicate or execute
