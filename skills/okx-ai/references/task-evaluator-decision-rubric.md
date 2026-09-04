@@ -69,7 +69,7 @@ Only binary votes are accepted. **Vote semantics**: `0 = Dispute upheld (Client 
 | Total score | `vote` | Semantics |
 |---|---|---|
 | ≥ 80 | 1 | Dispute not upheld; Provider wins; funds released in full to the Provider |
-| < 80 | 0 | Dispute upheld; Client wins; funds refunded to the Client |
+| < 80 | 0 | Dispute upheld; Client wins; refund verdict (settlement completion still requires authoritative on-chain proof) |
 
 The reduction rule is a hard constraint; do not reverse-reduce for "balance" or "to avoid controversy".
 

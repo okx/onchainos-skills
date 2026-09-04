@@ -55,6 +55,27 @@ User-session needs to forward free-form user instructions targeting a specific t
 
 ---
 
+## Refund or refund progress
+
+Triggers: `refund`, `get my money back`, `apply for a refund`, `refund status`,
+`where is my refund`, or a refund-related `dispute` / `arbitration` request.
+
+Read and follow [`task-user-refund.md`](task-user-refund.md). This route takes
+precedence over generic task-scoped forwarding and over the disabled legacy
+`close`/`reject`/`subscribe-reject`/`claim-auto-refund` flows. A User asking for
+arbitration does not gain authority to invoke an ASP or Evaluator command;
+Refund V2 first reads the authoritative state and returns only currently valid
+actions.
+
+An explicit request only to cancel trial conversion or turn off formal
+auto-renew, without asking to return paid funds, remains Subscription management
+in `task-user-playbook.md`. If the wording could mean either cancellation or
+returning funds, ask which outcome the User wants before any write.
+`subscribe-cancel` remains valid only for that cancellation-only flow and is not
+a refund fallback.
+
+---
+
 ## Rate an active subscription
 
 Trigger when the buyer wants to rate or review an ongoing subscription.
@@ -157,17 +178,31 @@ Render and paginate per [`task-user-playbook.md` §Unified My Tasks](task-user-p
 
 ## Close a task (irreversible)
 
-Triggers (only when there's no active card the user might be answering): `close this task` / `cancel the task` / `drop this job` / `withdraw the task`.
+Triggers (only when there's no active card the user might be answering and the
+User is not asking for paid funds back): `close this task` / `cancel the task` /
+`drop this job` / `withdraw the task`.
 
-**Preconditions**: clear jobId in context; status must be `created` (no provider accepted yet).
+**Precondition**: a clear jobId in context. Do not infer status from conversation
+history; Refund V2 reads authoritative state.
 
-**Action**: `onchainos agent close <jobId> --agent-id <agentId>` after explicit user confirmation.
+**Action**: run the read-only `onchainos agent refund-prepare <jobId>`. Render the
+returned task/refund details and exact action, ask for explicit confirmation,
+then use `refund-execute --confirm` with the unchanged `operation` and
+`refundContextId`. If preparation returns a block or read-only action, do not
+substitute a legacy command.
+
+If the request mentions a refund, payment return, refund progress, or
+refund-related arbitration, do not use this section; enter Refund V2 instead.
 
 🛑 **CRITICAL ambiguity — `close` vs `resolve C`**:
 - `close` is overloaded:
-  1. **In "Waiting for user reply" state** on a `recommend_pick` card → run the block's pre-filled `resolve-prompt` command with the user's verbatim reply (CLI maps it to `close`).
-  2. **Outside Waiting state** → `onchainos agent close <jobId>` directly.
+  1. **In "Waiting for user reply" state** on a `recommend_pick` card → run the
+     block's pre-filled `resolve-prompt` command with the user's verbatim reply;
+     the resulting close intent must hand off to Refund V2 preparation.
+  2. **Outside Waiting state** → start with `refund-prepare` directly.
 - 🔴 I-9: case (1) mistakenly mis-routed. **Default when in doubt**: prefer `resolve-prompt`.
+
+The legacy `agent close` entry is disabled and never performs the write.
 
 ## Funding completed
 

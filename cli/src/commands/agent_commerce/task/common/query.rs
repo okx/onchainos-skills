@@ -144,16 +144,30 @@ async fn resolve_agent_id_or_error(explicit_agent_id: &str, role: i64) -> Result
 }
 
 /// Query task status.
-pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &str, role: i64) -> Result<()> {
+pub async fn handle_status(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    agent_id: &str,
+    role: i64,
+) -> Result<()> {
     let agent_id = resolve_agent_id_or_error(agent_id, role).await?;
-    let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
+    let resp = client
+        .get_with_identity(&client.task_path(job_id), &agent_id)
+        .await?;
 
     let t = &resp;
     let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
-    println!("Task status: {}", t["status"].as_i64().map(status_name).unwrap_or("?"));
+    println!(
+        "Task status: {}",
+        t["status"].as_i64().map(status_name).unwrap_or("?")
+    );
     println!("  jobId:    {job_id}");
     println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
-    println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
+    println!(
+        "  budget:   {} {}",
+        t["tokenAmount"].as_str().unwrap_or("?"),
+        token_sym
+    );
     println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
     if let Some(pid) = t["providerAgentId"].as_str() {
         println!("  asp: {pid}");
@@ -172,7 +186,9 @@ pub async fn handle_list(
 ) -> Result<()> {
     let agent_id = resolve_agent_id_or_error(agent_id, role).await?;
     let mut path = format!("/priapi/v1/aieco/task/my?page={page}&page_size={limit}");
-    if let Some(s) = status { path.push_str(&format!("&status={s}")); }
+    if let Some(s) = status {
+        path.push_str(&format!("&status={s}"));
+    }
 
     let resp = client.get_with_identity(&path, &agent_id).await?;
     let tasks = resp["list"].as_array().cloned().unwrap_or_default();
@@ -180,7 +196,8 @@ pub async fn handle_list(
     println!("Task list ({total} total, page {page}):");
     for t in &tasks {
         let sym = t["tokenSymbol"].as_str().unwrap_or("?");
-        println!("  [{}] {} — {} {}",
+        println!(
+            "  [{}] {} — {} {}",
             t["status"].as_i64().map(status_name).unwrap_or("?"),
             t["jobId"].as_str().unwrap_or("?"),
             t["tokenAmount"].as_str().unwrap_or("?"),
@@ -218,11 +235,11 @@ fn role_name(code: i64) -> &'static str {
     }
 }
 
-/// Non-terminal statuses (per SKILL.md Critical Field Mapping Table):
-/// 0 created / 1 accepted / 2 submitted / 3 rejected / 4 disputed.
-/// Terminal (excluded by default): 5 admin_stopped / 6 complete / 7 close / 8 expired / 9 failed.
-fn is_non_terminal(code: i64) -> bool {
-    matches!(code, 0..=4)
+/// Role-aware actionable/non-terminal statuses. Status 8 remains visible only
+/// to the buyer (role 1), because buyer-side escrow reconciliation may still be
+/// pending after the ASP assignment and evaluator lifecycle have ended.
+fn is_non_terminal_for_role(code: i64, role: i64) -> bool {
+    matches!(code, 0..=4) || (code == 8 && role == 1)
 }
 
 fn short_job_id(jid: &str) -> String {
@@ -234,8 +251,8 @@ fn short_job_id(jid: &str) -> String {
 
 fn parse_role_arg(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "user"      => Some(1),
-        "asp"       => Some(2),
+        "user" => Some(1),
+        "asp" => Some(2),
         "evaluator" => Some(3),
         _ => None,
     }
@@ -287,9 +304,7 @@ pub async fn handle_active_tasks(
     // Optional --role filter.
     if let Some(raw) = role_filter {
         let want = parse_role_arg(raw).ok_or_else(|| {
-            anyhow::anyhow!(
-                "unrecognized --role value: {raw:?} (expected user / asp / evaluator)"
-            )
+            anyhow::anyhow!("unrecognized --role value: {raw:?} (expected user / asp / evaluator)")
         })?;
         agents.retain(|a| a.get("role").and_then(|v| v.as_i64()) == Some(want));
     }
@@ -307,7 +322,9 @@ pub async fn handle_active_tasks(
         let resp = match client.get_with_identity(path, agent_id).await {
             Ok(r) => r,
             Err(e) => {
-                if DEBUG_LOG { eprintln!("[active-tasks] agent {agent_id} query failed: {e}"); }
+                if DEBUG_LOG {
+                    eprintln!("[active-tasks] agent {agent_id} query failed: {e}");
+                }
                 continue;
             }
         };
@@ -315,12 +332,15 @@ pub async fn handle_active_tasks(
         let tasks = resp["list"].as_array().cloned().unwrap_or_default();
         for t in tasks {
             let status_code = t.get("status").and_then(|v| v.as_i64()).unwrap_or(-1);
-            if !include_terminal && !is_non_terminal(status_code) {
+            if !include_terminal && !is_non_terminal_for_role(status_code, role) {
                 continue;
             }
 
             let user_id = t.get("buyerAgentId").and_then(|v| v.as_str()).unwrap_or("");
-            let provider_id = t.get("providerAgentId").and_then(|v| v.as_str()).unwrap_or("");
+            let provider_id = t
+                .get("providerAgentId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
             // Counterparty inferred from my role:
             // - I'm user (1) → counterparty is asp
@@ -501,6 +521,29 @@ mod tests {
                 classification,
                 Classification::None | Classification::MalformedSingle
             ));
+        }
+    }
+
+    #[test]
+    fn active_task_filter_is_role_aware_for_expired_refund_reconciliation() {
+        for role in [1, 2, 3] {
+            for status in [0, 1, 2, 3, 4] {
+                assert!(
+                    is_non_terminal_for_role(status, role),
+                    "status {status} must stay visible for role {role}"
+                );
+            }
+        }
+        assert!(is_non_terminal_for_role(8, 1));
+        assert!(!is_non_terminal_for_role(8, 2));
+        assert!(!is_non_terminal_for_role(8, 3));
+        for role in [1, 2, 3] {
+            for status in [5, 6, 7, 9] {
+                assert!(
+                    !is_non_terminal_for_role(status, role),
+                    "status {status} must be terminal for role {role}"
+                );
+            }
         }
     }
 }

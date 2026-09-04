@@ -1,15 +1,128 @@
 //! Terminal states, timeouts, auto-completion, and fallback prompt generators.
 
-use super::super::flow::{FlowContext, notify_and_end, notify_and_end_terminal};
+use super::super::flow::{notify_and_end, notify_and_end_terminal, FlowContext};
 
-pub(crate) fn job_refunded(ctx: &FlowContext<'_>) -> String {
-    let content = super::super::content::job_refunded_user_notify(ctx.job_id);
-    notify_and_end_terminal(&content, &ctx.terminal_session_hint)
+fn display_or_unavailable(value: Option<&str>) -> &str {
+    value.unwrap_or("unavailable")
 }
 
-pub(crate) fn job_auto_refunded(ctx: &FlowContext<'_>) -> String {
-    let content = super::super::content::job_auto_refunded_user_notify(ctx.job_id, ctx.title_display);
-    notify_and_end_terminal(&content, &ctx.terminal_session_hint)
+fn authoritative_title<'a>(ctx: &'a FlowContext<'_>) -> &'a str {
+    ctx.prefetched
+        .map(|value| value.title.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Task title unavailable")
+}
+
+fn final_refund_notice(
+    ctx: &FlowContext<'_>,
+    message: Option<&serde_json::Value>,
+    automatic: bool,
+    expected_status: i64,
+) -> (String, bool) {
+    let verified = super::super::refund_v2::verify_final_refund_event(
+        message,
+        ctx.prefetched,
+        expected_status,
+        ctx.agent_id,
+    );
+    let provider_id = ctx
+        .prefetched
+        .and_then(|value| value.provider_agent_id.as_deref());
+    let provider_name = ctx
+        .prefetched
+        .and_then(|value| value.provider_name.as_deref());
+    let mut provider = match (provider_name, provider_id) {
+        (Some(name), Some(id)) => format!("{name} ({id})"),
+        (Some(name), None) => name.to_string(),
+        (None, Some(id)) => format!("name unavailable ({id})"),
+        (None, None) => "not provided by the final event".to_string(),
+    };
+    let mut service = ctx
+        .prefetched
+        .and_then(|value| value.service_name.as_deref())
+        .or_else(|| ctx.prefetched.and_then(|value| value.service_id.as_deref()))
+        .unwrap_or("unverified")
+        .to_string();
+    let amount = ctx
+        .prefetched
+        .map(|value| value.token_amount.as_str())
+        .filter(|value| !value.is_empty());
+    let symbol = ctx
+        .prefetched
+        .map(|value| value.token_symbol.as_str())
+        .filter(|value| !value.is_empty() && *value != "?");
+    let mut amount_display = match (amount, symbol) {
+        (Some(amount), Some(symbol)) => format!("{amount} {symbol}"),
+        (Some(amount), None) => format!("{amount} (token symbol unavailable)"),
+        _ => "not provided by the final event".to_string(),
+    };
+    let mut tx_hash = None;
+    if let Ok(evidence) = &verified {
+        provider = format!(
+            "{} ({})",
+            evidence.provider_name, evidence.provider_agent_id
+        );
+        service = evidence.service_name.clone();
+        amount_display = format!("{} {}", evidence.amount, evidence.token_symbol);
+        tx_hash = evidence.tx_hash.clone();
+    }
+    let complete = verified.is_ok();
+    let heading = if complete {
+        if automatic {
+            "[Auto-Refund Settled]"
+        } else {
+            "[Refund Settled]"
+        }
+    } else {
+        "[Refund Settlement Detail Incomplete]"
+    };
+    let status = if complete {
+        if tx_hash.is_some() {
+            "Refund confirmed by the backend's on-chain lifecycle result and fresh task detail; funds returned to your wallet. The verified Tx Hash is shown above. This job is complete.".to_string()
+        } else {
+            "Refund confirmed by the backend's on-chain lifecycle result and fresh task detail; funds returned to your wallet. The backend did not expose the Tx Hash in the current response. This job is complete.".to_string()
+        }
+    } else {
+        format!(
+            "Refund completion cannot be verified: {}. Do not claim completion from this message; refresh Refund V2 status.",
+            verified.unwrap_err()
+        )
+    };
+    (
+        format!(
+            "{heading} {} (`{}`)\n\
+             - Refund ASP: {provider}\n\
+             - Service: {service}\n\
+             - Refund amount: {amount_display}\n\
+             - Tx Hash: {}\n\
+             {status}",
+            authoritative_title(ctx),
+            ctx.job_id,
+            display_or_unavailable(tx_hash.as_deref()),
+        ),
+        complete,
+    )
+}
+
+fn notify_refund_result(ctx: &FlowContext<'_>, content: &str, complete: bool) -> String {
+    if complete {
+        notify_and_end_terminal(content, &ctx.terminal_session_hint)
+    } else {
+        notify_and_end(content)
+    }
+}
+
+pub(crate) fn job_refunded(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
+    let (content, complete) = final_refund_notice(ctx, message, false, 9);
+    notify_refund_result(ctx, &content, complete)
+}
+
+pub(crate) fn job_auto_refunded(
+    ctx: &FlowContext<'_>,
+    message: Option<&serde_json::Value>,
+) -> String {
+    let (content, complete) = final_refund_notice(ctx, message, true, 9);
+    notify_refund_result(ctx, &content, complete)
 }
 
 pub(crate) fn job_expired(ctx: &FlowContext<'_>) -> String {
@@ -17,45 +130,80 @@ pub(crate) fn job_expired(ctx: &FlowContext<'_>) -> String {
     notify_and_end(&content)
 }
 
-pub(crate) fn job_closed(ctx: &FlowContext<'_>) -> String {
-    let content = super::super::content::job_closed_user_notify(ctx.job_id, ctx.title_display);
-    notify_and_end_terminal(&content, &ctx.terminal_session_hint)
+pub(crate) fn job_asp_accept_expire(ctx: &FlowContext<'_>) -> String {
+    let content = super::super::content::job_asp_accept_expire_user_notify(
+        ctx.job_id,
+        authoritative_title(ctx),
+    );
+    notify_and_end(&content)
+}
+
+pub(crate) fn job_asp_reject_expire(ctx: &FlowContext<'_>) -> String {
+    let content = super::super::content::job_asp_reject_expire_user_notify(
+        ctx.job_id,
+        authoritative_title(ctx),
+    );
+    notify_and_end(&content)
+}
+
+pub(crate) fn job_asp_reject_closed(
+    ctx: &FlowContext<'_>,
+    message: Option<&serde_json::Value>,
+) -> String {
+    closed_notice(ctx, message)
+}
+
+pub(crate) fn job_closed(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
+    closed_notice(ctx, message)
+}
+
+fn closed_notice(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
+    let authoritative_close_owned_by_user = ctx.prefetched.is_some_and(|value| {
+        value.status == Some(7) && value.user_agent_id.as_deref() == Some(ctx.agent_id)
+    });
+    if !authoritative_close_owned_by_user {
+        let content = format!(
+            "[Job Close Detail Incomplete] {} (`{}`): fresh authoritative detail does not prove Closed(7) ownership by the current User Agent. Do not report closure or refund completion; run `onchainos agent refund-prepare {}`.",
+            authoritative_title(ctx), ctx.job_id, ctx.job_id
+        );
+        return notify_and_end(&content);
+    }
+    let amount = ctx
+        .prefetched
+        .map(|value| value.token_amount.as_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default();
+    let zero_price = ctx
+        .prefetched
+        .is_some_and(|value| value.job_type == Some(0))
+        && super::super::refund_v2::is_zero_decimal(amount);
+    if zero_price {
+        let content = format!(
+            "[Job Closed] {} (`{}`) has been closed. The task price was 0, so no refund was required.",
+            authoritative_title(ctx), ctx.job_id
+        );
+        return notify_and_end_terminal(&content, &ctx.terminal_session_hint);
+    }
+
+    let (content, complete) = final_refund_notice(ctx, message, false, 7);
+    notify_refund_result(ctx, &content, complete)
 }
 
 // --- Timeouts / auto-completion ---------------------------------------
 
 pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
-    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-    let job_id = ctx.job_id;
-
-    let mut client = TaskApiClient::new();
-    match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
-        Ok(()) => {
-            let content = super::super::content::submit_expired_user_notify(job_id);
-            notify_and_end(&content)
-        }
-        Err(e) => format!(
-            "[submit_expired] `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
-        ),
-    }
+    // `next-action --message` is caller-provided input, not cryptographic proof
+    // of a timeout cause. Never let this notification bypass Refund V2's fresh
+    // classification, explicit confirmation, and replay guard.
+    let content = super::super::content::submit_expired_user_notify(ctx.job_id);
+    notify_and_end(&content)
 }
 
-pub(crate) async fn reject_expired(ctx: &FlowContext<'_>) -> String {
-    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-    let job_id = ctx.job_id;
-
-    let mut client = TaskApiClient::new();
-    match super::super::claim_auto_refund::handle_claim_auto_refund(&mut client, job_id).await {
-        Ok(()) => {
-            let content = super::super::content::reject_expired_user_notify(job_id);
-            notify_and_end(&content)
-        }
-        Err(e) => format!(
-            "[reject_expired] `onchainos agent claim-auto-refund {job_id}` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
-        ),
-    }
+pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {
+    // Refund V2 makes the ASP-response timeout settlement a backend
+    // responsibility. Wait for its backend transaction-result projection.
+    let content = super::super::content::reject_expired_user_notify(ctx.job_id);
+    notify_and_end(&content)
 }
 
 pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
@@ -63,16 +211,18 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
     let title_display = ctx.title_display;
-    let review_deadline_prompt = super::super::content::review_deadline_warn_user_prompt(job_id, short_id);
-    let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
-        job_id,
-        "user",
-        agent_id,
-        ctx.prefetched.and_then(|p| p.provider_agent_id.as_deref()),
-        &review_deadline_prompt,
-        &format!("[Decision {short_id}] {title_display} acceptance decision (deadline soon)"),
-        "review_deadline_warn",
-    );
+    let review_deadline_prompt =
+        super::super::content::review_deadline_warn_user_prompt(job_id, short_id);
+    let request_block =
+        crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+            job_id,
+            "user",
+            agent_id,
+            ctx.prefetched.and_then(|p| p.provider_agent_id.as_deref()),
+            &review_deadline_prompt,
+            &format!("[Decision {short_id}] {title_display} acceptance decision (deadline soon)"),
+            "review_deadline_warn",
+        );
     format!(
     "[System Notification] review_deadline_warn (review deadline approaching)\n\
      [Role] User Agent\n\n\
@@ -88,28 +238,11 @@ pub(crate) fn review_deadline_warn(ctx: &FlowContext<'_>) -> String {
 // --- User-action pseudo events ----------------------------------------
 
 pub(crate) async fn close_task(ctx: &FlowContext<'_>) -> String {
-    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
-
-    let close_notify = super::super::content::close_user_notify(job_id);
-
-    let mut client = TaskApiClient::new();
-    match super::super::close::handle_close(&mut client, job_id, Some(agent_id)).await {
-        Ok(()) => format!(
-            "**You MUST notify the user; do not produce a plain text reply inside the sub session** (see Rule 3).\n\n\
-             **Notify the user the task was closed via `onchainos agent user-notify`:**\n\
-             **Localize first** — translate the canonical English content below.\n\
-             ```bash\n\
-             onchainos agent user-notify --content \"<your translated content>\"\n\
-             ```\n\
-             Canonical English content: \"{close_notify}\"\n"
-        ),
-        Err(e) => format!(
-            "[close_task] `onchainos agent close {job_id}` failed in-process: {e}\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
-        ),
-    }
+    let content = format!(
+        "[Close Requires V2 Confirmation] Job `{job_id}` was not changed. A local `close` event is not authoritative permission for an irreversible lifecycle/funds write. Run `onchainos agent refund-prepare {job_id}` and execute only the action returned from fresh state after explicit confirmation."
+    );
+    notify_and_end(&content)
 }
 
 // --- Other events ------------------------------------------------------
@@ -153,7 +286,7 @@ pub(crate) fn wakeup_notify(ctx: &FlowContext<'_>) -> String {
 
 pub(crate) fn staked_and_unknown(event_str: &str, job_id: &str) -> String {
     format!(
-    "[Unknown Status] {event_str}\n\
+        "[Unknown Status] {event_str}\n\
      [Advice]\n\
      1. Call `onchainos agent common context {job_id} --role user` to view full context\n\
      2. If this status is not part of the expected flow, wait for user instructions\n\
