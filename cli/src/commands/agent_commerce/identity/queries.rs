@@ -339,16 +339,24 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
 
 // ─── `agent service-list` ─────────────────────────────────────────────────
 
-/// Query params for `/agent/services` — only fields the backend contract
-/// defines: `agentId` (required) plus the optional `serviceId` filter.
+/// Query params for `/agent/services`: `agentId` (required), pagination, and
+/// the optional `serviceId` filter.
 /// A provided-but-blank `serviceId` is an error rather than a silent drop:
 /// dropping it would return the full unfiltered listing, and a caller that
 /// reads one service's detail from the response would get the wrong service.
 fn build_service_list_query(
     agent_id: &str,
     service_id: Option<&str>,
+    page: Option<&str>,
+    page_size: Option<&str>,
 ) -> Result<Vec<(String, String)>> {
-    let mut query = vec![("agentId".to_string(), agent_id.to_string())];
+    let page = parse_u32_arg(page, "--page", 1, Some(1), None, false)?;
+    let page_size = parse_u32_arg(page_size, "--page-size", 3, Some(1), None, false)?;
+    let mut query = vec![
+        ("agentId".to_string(), agent_id.to_string()),
+        ("page".to_string(), page.to_string()),
+        ("pageSize".to_string(), page_size.to_string()),
+    ];
     match service_id.map(str::trim) {
         Some("") => bail!("invalid parameter: --service-id must not be blank"),
         Some(service_id) => query.push(("serviceId".to_string(), service_id.to_string())),
@@ -361,7 +369,12 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
-    let query = build_service_list_query(agent_id, args.service_id.as_deref())?;
+    let query = build_service_list_query(
+        agent_id,
+        args.service_id.as_deref(),
+        args.page.as_deref(),
+        args.page_size.as_deref(),
+    )?;
     let query_refs: Vec<(&str, &str)> = query
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -615,19 +628,34 @@ mod tests {
     }
 
     #[test]
-    fn service_list_query_sends_only_agent_id_by_default() {
-        let query = build_service_list_query("1921", None).unwrap();
-        assert_eq!(query, vec![("agentId".to_string(), "1921".to_string())]);
+    fn service_list_query_uses_documented_defaults() {
+        let query = build_service_list_query("1921", None, None, None).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "1921".to_string()),
+                ("page".to_string(), "1".to_string()),
+                ("pageSize".to_string(), "3".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn service_list_query_appends_service_id_filter_when_given() {
         let query =
-            build_service_list_query("1921", Some("4a7f30a7-46fb-4695-80a1-25d160da33b3")).unwrap();
+            build_service_list_query(
+                "1921",
+                Some("4a7f30a7-46fb-4695-80a1-25d160da33b3"),
+                None,
+                None,
+            )
+            .unwrap();
         assert_eq!(
             query,
             vec![
                 ("agentId".to_string(), "1921".to_string()),
+                ("page".to_string(), "1".to_string()),
+                ("pageSize".to_string(), "3".to_string()),
                 (
                     "serviceId".to_string(),
                     "4a7f30a7-46fb-4695-80a1-25d160da33b3".to_string()
@@ -638,7 +666,32 @@ mod tests {
 
     #[test]
     fn service_list_query_rejects_blank_service_id() {
-        let err = build_service_list_query("1921", Some("  ")).unwrap_err();
+        let err = build_service_list_query("1921", Some("  "), None, None).unwrap_err();
         assert!(err.to_string().contains("--service-id must not be blank"));
+    }
+
+    #[test]
+    fn service_list_query_forwards_explicit_pagination() {
+        let query = build_service_list_query("42", None, Some("3"), Some("20")).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "42".to_string()),
+                ("page".to_string(), "3".to_string()),
+                ("pageSize".to_string(), "20".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn service_list_query_rejects_invalid_pagination_values() {
+        for (page, page_size) in [
+            (Some("0"), Some("5")),
+            (Some("1"), Some("0")),
+            (Some("abc"), Some("5")),
+            (Some("1"), Some("abc")),
+        ] {
+            assert!(build_service_list_query("42", None, page, page_size).is_err());
+        }
     }
 }

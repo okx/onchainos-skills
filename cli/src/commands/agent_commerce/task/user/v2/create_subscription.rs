@@ -18,7 +18,6 @@ pub(in super::super) struct CreateSubscriptionInput<'a> {
     pub service_token_amount: &'a str,
     pub service_token_address: &'a str,
     pub auto_renew: i32,
-    pub copy_trade: i32,
     pub title: &'a str,
     pub description: &'a str,
     pub provider_agent_id: &'a str,
@@ -83,7 +82,6 @@ fn build_create_body(
         "serviceTokenAmount": input.service_token_amount,
         "serviceTokenAddress": input.service_token_address,
         "autoRenew": input.auto_renew,
-        "copyTrade": input.copy_trade,
         "title": input.title,
         "description": input.description,
         "terms": terms,
@@ -149,11 +147,18 @@ where
     )?;
     establish_local_readiness(&job_id)
         .context("subscription local execution configuration could not be persisted")?;
-    let prebind = common::a2a_binding::bind_job_provider_to_current_runtime_required(&job_id)
+    let prebind = match common::a2a_binding::bind_job_provider_to_current_runtime_required(&job_id)
         .await
         .context(
             "cannot bind subscription to the current AI runtime; creation was not broadcast",
-        )?;
+        )
+    {
+        Ok(prebind) => prebind,
+        Err(error) => {
+            common::autotrade::guide::abort_prepared_consent(&job_id);
+            return Err(error);
+        }
+    };
 
     let broadcast = match signing::sign_uop_and_broadcast_full(
         client,
@@ -170,10 +175,12 @@ where
         Ok(value) if !value.is_null() => value,
         Ok(_) => {
             prebind.rollback_if_created().await;
+            common::autotrade::guide::abort_prepared_consent(&job_id);
             bail!("broadcast returned no receipt for jobId={job_id}");
         }
         Err(error) => {
             prebind.rollback_if_created().await;
+            common::autotrade::guide::abort_prepared_consent(&job_id);
             return Err(error).with_context(|| {
                 format!("broadcast failed or returned an unknown result for jobId={job_id}")
             });
@@ -200,7 +207,6 @@ mod tests {
             service_token_amount: "10",
             service_token_address: "0xtoken",
             auto_renew: 1,
-            copy_trade: 1,
             title: "Signals",
             description: "Execute selected signals",
             provider_agent_id: "asp-1",
@@ -213,7 +219,7 @@ mod tests {
     fn create_body_matches_subscription_backend_contract() {
         let body = build_create_body(&input(), true, json!({"subId": 0}), "0xsig");
         assert_eq!(body["providerAgentId"], "asp-1");
-        assert_eq!(body["copyTrade"], 1);
+        assert!(body.get("copyTrade").is_none());
         assert_eq!(body["deviceList"], Value::Null);
         assert_eq!(body["termsSig"], "0xsig");
         assert!(body.get("descriptionSummary").is_none());
