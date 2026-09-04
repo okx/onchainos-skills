@@ -26,8 +26,8 @@
 //! - Any fail → print `reason: ...` + `selected: no`, return `false` (`handle_info` returns early).
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::de::IgnoredAny;
+use serde::Deserialize;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::state_machine::{DisputeRoundStatus, Status};
@@ -45,7 +45,7 @@ use crate::commands::agent_commerce::task::common::state_machine::{DisputeRoundS
 /// a bare `i64` / `i32` + `#[serde(default)]` is NOT enough — `#[serde(default)]`
 /// only covers `missing`, not `null`, and will trigger
 /// `invalid type: null, expected i64` deserialize failures.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DisputeStatusResponse {
     pub job_id: String,
@@ -54,11 +54,10 @@ pub struct DisputeStatusResponse {
     #[serde(default)]
     pub current_round: Option<i64>,
     /// Backend personalizes by caller agentId: non-null = selected, null = not selected
-    /// (including stale notification / no active dispute). Keep the complete object
-    /// so diagnostic contract logs can confirm the live response shape; the evaluator
-    /// hard gate itself only needs `is_none()`.
+    /// (including stale notification / no active dispute). The evaluator hard
+    /// gate needs only presence, so discard the inner object.
     #[serde(default)]
-    pub selected_voter: Option<Value>,
+    pub selected_voter: Option<IgnoredAny>,
     /// Current state of the task main state machine. The sample always carries an
     /// integer (terminal states also give a number like 9 Failed), never null,
     /// so a bare `i32` + `default` is fine.

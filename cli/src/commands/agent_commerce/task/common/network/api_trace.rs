@@ -1,4 +1,4 @@
-//! Always-on, redacted Task API request/response traces for dispute contract verification.
+//! Always-on, redacted Task API request/response traces for arbitration contract verification.
 
 use serde_json::{json, Map, Value};
 use std::fs::{self, OpenOptions};
@@ -30,12 +30,10 @@ pub fn record(
     persist(url, &envelope);
 }
 
-/// Record a complete local dispute contract that does not cross the Task
-/// HTTP client boundary (for example A/B resolution and query-selection contracts).
-/// It intentionally uses the same envelope, redaction, location, and file
-/// permissions as API traces so one diagnostic switch captures the full flow.
+/// Record a complete local arbitration contract that does not cross the Task
+/// HTTP client boundary, such as decision, choice, list, and detail results.
 pub fn record_contract(kind: &str, request: &Value, response: Option<&Value>, error: Option<&str>) {
-    let url = format!("onchainos://dispute/{kind}");
+    let url = format!("onchainos://arbitration/{kind}");
     if is_heartbeat(&url) {
         return;
     }
@@ -219,7 +217,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recursively_redacts_secrets_but_preserves_dispute_facts() {
+    fn recursively_redacts_secrets_but_preserves_arbitration_facts() {
         let value = json!({
             "sessionCert": "secret-cert",
             "nested": {"access_token": "token", "txHash": "0xabc"},

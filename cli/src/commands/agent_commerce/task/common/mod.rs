@@ -9,11 +9,9 @@ use anyhow::{bail, Result};
 use clap::Subcommand;
 use serde::Deserialize;
 
-pub mod claim;
 pub mod a2a_binding;
-pub mod dispute;
-pub mod arbitration_query;
 pub mod autotrade;
+pub mod claim;
 pub mod config;
 pub mod deadline;
 pub mod deliverables;
@@ -28,12 +26,12 @@ pub mod payment_mode;
 pub mod pending_v2;
 pub mod prefilled_notify;
 pub mod prefilled_rating;
-pub mod user_lang;
 pub mod query;
 pub mod review_gate;
 pub mod session_cleanup;
 pub mod state_machine;
 pub mod subscription_identity;
+pub mod user_lang;
 pub mod util;
 
 use util::{fmt_unix_secs, validate_job_id};
@@ -282,8 +280,7 @@ pub struct AgentProfile {
 /// list of matched agent JSON objects. Works for any agent (current
 /// account or peer).
 async fn raw_query_by_ids(agent_ids: &str) -> Result<Vec<serde_json::Value>> {
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
 
     let output = tokio::process::Command::new(&exe)
         .args(["agent", "get-agents", "--agent-ids", agent_ids])
@@ -291,14 +288,18 @@ async fn raw_query_by_ids(agent_ids: &str) -> Result<Vec<serde_json::Value>> {
         .await
         .map_err(|e| anyhow::anyhow!("spawn `get-agents` failed: {e}"))?;
 
-    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| anyhow::anyhow!(
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+        anyhow::anyhow!(
             "parse `get-agents` stdout failed: {e}; raw={}",
             String::from_utf8_lossy(&output.stdout)
-        ))?;
+        )
+    })?;
 
     if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
+        let err = body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no error message)");
         bail!("`get-agents` returned failure: {err}");
     }
 
@@ -313,8 +314,7 @@ async fn raw_query_my_agents(role: Option<&str>) -> Result<Vec<serde_json::Value
     let my_owner = current_account_xlayer_address()
         .ok_or_else(|| anyhow::anyhow!("no current XLayer address"))?;
 
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
 
     let mut args = vec!["agent", "get-my-agents", "--owner-address", &my_owner];
     let role_val: String;
@@ -338,14 +338,18 @@ async fn raw_query_my_agents(role: Option<&str>) -> Result<Vec<serde_json::Value
         .await
         .map_err(|e| anyhow::anyhow!("spawn `get-my-agents` failed: {e}"))?;
 
-    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| anyhow::anyhow!(
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+        anyhow::anyhow!(
             "parse `get-my-agents` stdout failed: {e}; raw={}",
             String::from_utf8_lossy(&output.stdout)
-        ))?;
+        )
+    })?;
 
     if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
+        let err = body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no error)");
         bail!("`get-my-agents` returned failure: {err}");
     }
 
@@ -370,7 +374,9 @@ pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     let all_agents = match raw_query_by_ids(agent_id).await {
         Ok(agents) => agents,
         Err(e) => {
-            if DEBUG_LOG { eprintln!("[fetch_agent_profile] {e}; fallback"); }
+            if DEBUG_LOG {
+                eprintln!("[fetch_agent_profile] {e}; fallback");
+            }
             return fallback();
         }
     };
@@ -379,7 +385,8 @@ pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
         eprintln!("[fetch_agent_profile] empty agent list (agentId={agent_id}); fallback");
     }
 
-    let matched = all_agents.iter()
+    let matched = all_agents
+        .iter()
         .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(agent_id))
         .map(|a| AgentProfile {
             agent_id: Some(agent_id.to_string()),
@@ -403,7 +410,6 @@ pub async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     matched.unwrap_or_else(fallback)
 }
 
-
 // ─── Current-account agent lookup ───────────────────────────────────────────
 //
 // New /agent/agent-list response shape returns multiple ownerAddress groups
@@ -421,7 +427,8 @@ pub fn current_account_xlayer_address() -> Option<String> {
         Ok(Some(w)) => w,
         _ => return None,
     };
-    let account_id = crate::commands::agentic_wallet::account::resolve_active_account_id(&wallets).ok()?;
+    let account_id =
+        crate::commands::agentic_wallet::account::resolve_active_account_id(&wallets).ok()?;
     let entry = wallets.accounts_map.get(&account_id)?;
     entry
         .address_list
@@ -435,11 +442,15 @@ pub fn current_account_xlayer_address() -> Option<String> {
 pub async fn fetch_my_agents() -> Vec<serde_json::Value> {
     match raw_query_my_agents(None).await {
         Ok(agents) => {
-            if DEBUG_LOG { eprintln!("[fetch_my_agents] matched {} agents", agents.len()); }
+            if DEBUG_LOG {
+                eprintln!("[fetch_my_agents] matched {} agents", agents.len());
+            }
             agents
         }
         Err(e) => {
-            if DEBUG_LOG { eprintln!("[fetch_my_agents] {e}; returning empty"); }
+            if DEBUG_LOG {
+                eprintln!("[fetch_my_agents] {e}; returning empty");
+            }
             Vec::new()
         }
     }
@@ -450,11 +461,18 @@ pub async fn fetch_my_agents() -> Vec<serde_json::Value> {
 pub async fn fetch_my_agents_by_role(role: &str) -> Vec<serde_json::Value> {
     match raw_query_my_agents(Some(role)).await {
         Ok(agents) => {
-            if DEBUG_LOG { eprintln!("[fetch_my_agents_by_role] matched {} agents (role={role})", agents.len()); }
+            if DEBUG_LOG {
+                eprintln!(
+                    "[fetch_my_agents_by_role] matched {} agents (role={role})",
+                    agents.len()
+                );
+            }
             agents
         }
         Err(e) => {
-            if DEBUG_LOG { eprintln!("[fetch_my_agents_by_role] {e}; returning empty"); }
+            if DEBUG_LOG {
+                eprintln!("[fetch_my_agents_by_role] {e}; returning empty");
+            }
             Vec::new()
         }
     }
@@ -464,9 +482,7 @@ pub async fn fetch_my_agents_by_role(role: &str) -> Vec<serde_json::Value> {
 /// while preserving transport/auth/parse failures for authorization gates.
 /// Callers that distinguish "no identity" from "identity lookup failed" must
 /// use this strict variant instead of treating every failure as an empty list.
-pub(crate) async fn fetch_my_agents_by_role_strict(
-    role: &str,
-) -> Result<Vec<serde_json::Value>> {
+pub(crate) async fn fetch_my_agents_by_role_strict(role: &str) -> Result<Vec<serde_json::Value>> {
     raw_query_my_agents(Some(role)).await
 }
 
@@ -475,19 +491,24 @@ pub(crate) async fn fetch_my_agents_by_role_strict(
 pub async fn fetch_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
     let id = agent_id.trim();
     if id.is_empty() {
-        if DEBUG_LOG { eprintln!("[fetch_agent_by_id] empty agent_id; returning None"); }
+        if DEBUG_LOG {
+            eprintln!("[fetch_agent_by_id] empty agent_id; returning None");
+        }
         return None;
     }
 
     let agents = match raw_query_by_ids(id).await {
         Ok(a) => a,
         Err(e) => {
-            if DEBUG_LOG { eprintln!("[fetch_agent_by_id] {e}; returning None"); }
+            if DEBUG_LOG {
+                eprintln!("[fetch_agent_by_id] {e}; returning None");
+            }
             return None;
         }
     };
 
-    let hit = agents.into_iter()
+    let hit = agents
+        .into_iter()
         .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(id));
     if DEBUG_LOG {
         eprintln!(
@@ -505,8 +526,8 @@ pub async fn fetch_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
 /// numeric codes) are rejected to keep the CLI surface single-source-of-truth.
 fn parse_role_filter(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "user"      => Some(AGENT_ROLE_USER),
-        "asp"       => Some(AGENT_ROLE_ASP),
+        "user" => Some(AGENT_ROLE_USER),
+        "asp" => Some(AGENT_ROLE_ASP),
         "evaluator" => Some(AGENT_ROLE_EVALUATOR),
         _ => None,
     }
@@ -551,8 +572,7 @@ async fn spawn_service_list_filtered(
     agent_id: &str,
     service_id: Option<&str>,
 ) -> Result<serde_json::Value> {
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
 
     let mut command = tokio::process::Command::new(&exe);
     command.args(["agent", "service-list", "--agent-id", agent_id]);
@@ -564,14 +584,18 @@ async fn spawn_service_list_filtered(
         .await
         .map_err(|e| anyhow::anyhow!("spawn `agent service-list` failed: {e}"))?;
 
-    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| anyhow::anyhow!(
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+        anyhow::anyhow!(
             "parse `agent service-list` stdout failed: {e}; raw={}",
             String::from_utf8_lossy(&output.stdout)
-        ))?;
+        )
+    })?;
 
     if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
+        let err = body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no error message)");
         bail!("`agent service-list` returned failure: {err}");
     }
 
@@ -604,7 +628,8 @@ pub(crate) async fn find_service(
     // while identity update/delete uses numeric ids. Match against BOTH fields
     // so either format resolves correctly.
     let to_str = |v: &serde_json::Value| -> Option<String> {
-        v.as_str().map(String::from)
+        v.as_str()
+            .map(String::from)
             .or_else(|| v.as_i64().map(|n| n.to_string()))
             .or_else(|| v.as_u64().map(|n| n.to_string()))
     };
@@ -768,22 +793,22 @@ pub async fn designated_route_inner(
             .and_then(serde_json::Value::as_str)
             .is_some_and(|value| value.eq_ignore_ascii_case("A2MCP"))
     }) {
-            return Ok(serde_json::json!({
-                "route": "error",
-            "errorType": "a2mcp_direct_invoke_required",
-                "providerName": provider_name,
-                "onlineStatus": online_status,
-            }));
-        }
+        return Ok(serde_json::json!({
+            "route": "error",
+        "errorType": "a2mcp_direct_invoke_required",
+            "providerName": provider_name,
+            "onlineStatus": online_status,
+        }));
+    }
 
-        if online_status == 2 {
+    if online_status == 2 {
         Ok(serde_json::json!({
                 "route": "error",
                 "errorType": "offline",
                 "providerName": provider_name,
                 "onlineStatus": online_status,
         }))
-        } else {
+    } else {
         Ok(serde_json::json!({
                 "route": "a2a",
                 "providerName": provider_name,
@@ -813,9 +838,7 @@ pub async fn handle_my_agents(role: Option<&str>) -> Result<()> {
     let role_filter = match role {
         Some(raw) => match parse_role_filter(raw) {
             Some(n) => Some(n),
-            None => bail!(
-                "unrecognized --role value: {raw:?} (expected user / asp / evaluator)"
-            ),
+            None => bail!("unrecognized --role value: {raw:?} (expected user / asp / evaluator)"),
         },
         None => None,
     };
@@ -834,9 +857,7 @@ pub async fn handle_my_agents(role: Option<&str>) -> Result<()> {
 pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value> {
     let role_num = match parse_role_filter(role_raw) {
         Some(n) => n,
-        None => bail!(
-            "unrecognized --role value: {role_raw:?} (expected user / asp / evaluator)"
-        ),
+        None => bail!("unrecognized --role value: {role_raw:?} (expected user / asp / evaluator)"),
     };
     let role_label = match role_num {
         AGENT_ROLE_USER => "user",
@@ -850,9 +871,12 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
     let wallet_detail;
     match crate::wallet_store::load_wallets() {
         Ok(Some(w)) => {
-            let account_id = crate::commands::agentic_wallet::account::resolve_active_account_id(&w).ok();
+            let account_id =
+                crate::commands::agentic_wallet::account::resolve_active_account_id(&w).ok();
             if let Some(ref id) = account_id {
-                let name = w.accounts.iter()
+                let name = w
+                    .accounts
+                    .iter()
                     .find(|a| a.account_id == *id)
                     .map(|a| a.account_name.clone())
                     .unwrap_or_default();
@@ -908,8 +932,14 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
         }
     }
 
-    let wallet_ok = wallet_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-    let identity_ok = identity_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let wallet_ok = wallet_detail
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let identity_ok = identity_detail
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     // ── 3. Communication ──────────────────────────────────────────
     // Read-only A2A readiness (okx-a2a present + `okx-a2a doctor --json`).
@@ -923,7 +953,10 @@ pub(crate) async fn preflight_inner(role_raw: &str) -> Result<serde_json::Value>
     } else {
         okx_a2a::communication_gate_json()
     };
-    let communication_ok = communication_detail.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let communication_ok = communication_detail
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let all_ok = wallet_ok && identity_ok && communication_ok;
 
@@ -961,10 +994,11 @@ pub async fn handle_prepare_create(
     use super::user::validate_draft_fields;
 
     // ── 1. Validate fields (local, instant) ──────────────────────
-    let validation = validate_draft_fields(
-        description, title, budget, max_budget, currency,
-    );
-    let v_ok = validation.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let validation = validate_draft_fields(description, title, budget, max_budget, currency);
+    let v_ok = validation
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if !v_ok {
         crate::output::success(serde_json::json!({
             "ok": false,
@@ -976,7 +1010,10 @@ pub async fn handle_prepare_create(
 
     // ── 2. Gate-check (wallet + identity) ─────────────────────────
     let preflight = preflight_inner("user").await?;
-    let pf_ok = preflight.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
+    let pf_ok = preflight
+        .get("ready")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if !pf_ok {
         crate::output::success(serde_json::json!({
             "ok": false,
@@ -1089,18 +1126,20 @@ pub fn flatten_agent_groups(data: &serde_json::Value) -> Vec<serde_json::Value> 
 // ─── Status descriptions ────────────────────────────────────────────────
 fn status_desc(s: &str) -> &str {
     match s {
-        "init"      => "Initializing (awaiting on-chain confirmation)",
-        "created"   => "Awaiting acceptance (Created)",
-        "accepted"  => "Accepted; ASP executing (Accepted)",
+        "init" => "Initializing (awaiting on-chain confirmation)",
+        "created" => "Awaiting acceptance (Created)",
+        "accepted" => "Accepted; ASP executing (Accepted)",
         "submitted" => "ASP submitted deliverable; awaiting User Agent review (Submitted)",
-        "rejected"  => "User Agent rejected deliverable; evaluation possible within freeze period (Rejected)",
-        "disputed"      => "Evaluation in progress (Disputed)",
+        "rejected" => {
+            "User Agent rejected deliverable; evaluation possible within freeze period (Rejected)"
+        }
+        "disputed" => "Evaluation in progress (Disputed)",
         "admin_stopped" => "Admin stopped the task (AdminStopped)",
         "completed" | "complete" => "Task completed; funds released (Complete)",
-        "failed"    => "Evaluation concluded; task closed (Failed)",
-        "close"     => "User Agent closed the task (Close)",
-        "expired"   => "Task expired (Expired)",
-        _           => "Unknown status",
+        "failed" => "Evaluation concluded; task closed (Failed)",
+        "close" => "User Agent closed the task (Close)",
+        "expired" => "Task expired (Expired)",
+        _ => "Unknown status",
     }
 }
 
@@ -1112,17 +1151,15 @@ fn payment_mode_desc(pm: i32) -> &'static str {
 
 pub async fn run(cmd: CommonCommand, _ctx: &Context) -> Result<()> {
     match cmd {
-        CommonCommand::Context { job_id, role, agent_id } => {
-            run_context(&job_id, &role, &agent_id).await
-        }
+        CommonCommand::Context {
+            job_id,
+            role,
+            agent_id,
+        } => run_context(&job_id, &role, &agent_id).await,
     }
 }
 
-async fn run_context(
-    job_id: &str,
-    role: &str,
-    agent_id: &str,
-) -> Result<()> {
+async fn run_context(job_id: &str, role: &str, agent_id: &str) -> Result<()> {
     if let Err(msg) = validate_job_id(job_id) {
         bail!("{msg}");
     }
@@ -1168,10 +1205,10 @@ async fn build_context(
 
     let role_enum = state_machine::Role::parse(role);
     let role_cn = match role_enum {
-        Some(state_machine::Role::User)     => "User Agent",
-        Some(state_machine::Role::Asp)  => "Agent Service Provider (ASP)",
+        Some(state_machine::Role::User) => "User Agent",
+        Some(state_machine::Role::Asp) => "Agent Service Provider (ASP)",
         Some(state_machine::Role::Evaluator) => "Evaluator Agent",
-        None                                 => role,
+        None => role,
     };
 
     // The spec returns status as an integer only; derive the enum locally via Status::from_int and use as_str() for the display string.
@@ -1216,7 +1253,7 @@ async fn build_context(
     out.push_str(&format!("- Description: {}\n", task.description));
 
     let amount = task.token_amount.as_deref().unwrap_or("not set");
-    let token  = task.token_address.as_deref().unwrap_or("");
+    let token = task.token_address.as_deref().unwrap_or("");
     let symbol = task.token_symbol.as_deref().unwrap_or("UNKNOWN");
     out.push_str(&format!("- Budget: {amount} {symbol} (token: {token})\n"));
     if let Some(max_amt) = &task.payment_most_token_amount {
@@ -1280,10 +1317,10 @@ async fn build_context(
 
     // ── Role guide that must be loaded ───────────────────────────────────
     let skill_file = match role {
-        "user"      => "task-user-sub-playbook.md",
-        "asp"       => "task-asp.md",
+        "user" => "task-user-sub-playbook.md",
+        "asp" => "task-asp.md",
         "evaluator" => "task-evaluator.md",
-        _           => "",
+        _ => "",
     };
     if !skill_file.is_empty() {
         out.push_str("[⚠️ Must Execute Immediately]\n");

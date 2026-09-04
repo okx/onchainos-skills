@@ -77,6 +77,16 @@ agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> 
 | `--expires-at` | No | - | Decision deadline in unix seconds; resolution returns `decision_expired` after this time |
 | `--continuation-id` | No | - | Opaque state binding persisted with the pending entry and relayed as `message.continuationId`; cannot be combined with `--llm-content` |
 
+#### request-prompt
+
+Deliver a decision card synchronously with the same arguments as `request`:
+
+```text
+agent pending-decisions-v2 request-prompt --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> --user-content "<text>" --list-label "<label>" [request metadata]
+```
+
+An `OK` result confirms card delivery. End the current turn after `OK`. On the user's subsequent reply, execute the resolver command from the active `[USER_DECISION_REQUEST]` block.
+
 #### resolve-prompt
 
 Relay the user's reply back to the sub session
@@ -417,7 +427,7 @@ agent status <jobId> [--agent-id <id>]
 | `<jobId>` | Yes | - | Task ID (positional) |
 | `--agent-id` | No | auto-resolved | Caller's agentId |
 
-Returns structured task detail. For disputed/settled tasks it queries `GET /priapi/v1/aieco/task/{jobId}/dispute/status` and returns `phase=dispute_detail`. The dispute endpoint is authoritative for `jobType`, `taskStatus`, `currentRound`, `disputeRoundStatus`, `prepareEndTime`, `roundEndTime`, `tokenAmount`, and `tokenSymbol`; ordinary task detail supplements description and occurrence time. Normalize the ASP-facing state as follows: status 4 and now `<= prepareEndTime` → `disputePhase=evidence_preparation`; status 4 and now `> prepareEndTime` → `disputePhase=in_progress`; status 6 → `disputePhase=resolved, verdict=asp_won`; status 9 → `disputePhase=resolved, verdict=asp_lost_auto_refund`. Status 4 with an available `prepareEndTime` follows the time comparison, while status 4 with an unavailable `prepareEndTime` maps to `unknown`. Retain `disputeRoundStatus` as a raw diagnostic field and derive the four merchant states from `taskStatus` plus the preparation deadline. The CLI accepts epoch seconds or milliseconds for deadline comparison, preserves the raw value, and uses `roundEndTime` as the active-round deadline after preparation. `tokenAmount` / `tokenSymbol` are the task amount/currency and, for the explicit status-9 full-refund rule, the refund amount to communicate before chain settlement is confirmed. Set transaction hash to null for this endpoint response. For a direct dispute jobId query, retain this result to populate the query-confirmation card, present that card first, and show detail after the user chooses A.
+Returns structured task detail. For arbitration/settled tasks it delegates to the task-level arbitration builder and returns `phase=arbitration_detail`. The backend dispute endpoint is authoritative for `jobType`, `taskStatus`, `currentRound`, `disputeRoundStatus`, `prepareEndTime`, `roundEndTime`, `tokenAmount`, and `tokenSymbol`; ordinary task detail supplements description and occurrence time. Normalize the merchant-facing state as follows: status 4 and now `<= prepareEndTime` → `arbitrationPhase=evidence_preparation`; status 4 and now `> prepareEndTime` → `arbitrationPhase=in_progress`; status 6 → `arbitrationPhase=resolved, verdict=asp_won`; status 9 → `arbitrationPhase=resolved, verdict=asp_lost_auto_refund`. Missing `prepareEndTime` maps status 4 to `unknown`. Retain `disputeRoundStatus` only as a raw backend compatibility field. For new direct case queries, prefer `arbitration-detail` and present its confirmation card before showing details.
 
 ### my-tasks
 
@@ -470,7 +480,9 @@ agent tasks [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 | `--limit` | No | `20` | Items per page |
 | `--agent-id` | No | auto-resolved | Caller's agentId |
 
-With `--status disputed`, the CLI calls `GET /priapi/v1/aieco/task/dispute/my?page=<page>&pageSize=<limit>` and returns `phase=dispute_list`. Each item maps the confirmed list fields: `jobId`, `title -> description`, `createTime -> occurredAt`, and `status -> taskStatus/taskStatusCode`. Status 6 normalizes to `resolved/asp_won`; status 9 normalizes to `resolved/asp_lost_auto_refund`; status 4 remains phase `unknown` at list scope and resolves its preparation deadline through the detail query. Fetch amount, token symbol, round status, and transaction hash from authoritative detail or settlement facts when a later view requires them. `nextAction=view_dispute.params.allowedJobIds` is the selectable allowlist and `confirmationRequired=true` requires the Skill to render the query-confirmation card before showing details. Retain full API logs to confirm the live `status` and `createTime` contract.
+With `--status disputed`, this legacy command delegates to the same task-level implementation as `arbitration-list` and returns `phase=arbitration_list`. Prefer the explicit arbitration command for new flows.
+
+For an ASP rejected-task query, use `tasks --status rejected --agent-id <aspAgentId>`. This command returns rejected candidates; `arbitration-list` returns filed arbitration cases.
 
 ### active-tasks
 
@@ -525,9 +537,21 @@ agent arbitration-list --agent-id <userOrAspAgentId> [--page <n>] [--page-size <
 | `--page` | No | `1` | One-based page number |
 | `--page-size` | No | `20` | Positive page size |
 
-The response preserves backend pagination fields: `total`, `page`, `pageSize`, and `list[]`. Each list
-item preserves `jobId`, `title`, `status`, and `createTime`; the CLI adds `statusName` when `status` is
-numeric.
+The CLI calls `GET /priapi/v1/aieco/task/dispute/my?page=<page>&pageSize=<page-size>` with the selected `agenticId`, then returns the common progression envelope:
+
+```json
+{
+  "phase": "arbitration_list",
+  "decision": "ready",
+  "reason": "arbitrations_found",
+  "nextAction": [{"id":"view_arbitration","params":{"allowedJobIds":["job-1"],"confirmationRequired":true}}],
+  "payload": {"total":1,"page":1,"items":[{"jobId":"job-1","description":"Research","taskStatus":"disputed","taskStatusCode":4,"arbitrationPhase":"unknown","verdict":null}]}
+}
+```
+
+An empty result uses `reason=no_arbitrations`, `nextAction=[]`, and `payload.items=[]`.
+
+Each item maps backend `jobId`, `title`, `status`, and `createTime` to `jobId`, `description`, `taskStatus` / `taskStatusCode`, and `occurredAt`. Status 6 normalizes to `resolved/asp_won`; status 9 to `resolved/asp_lost_auto_refund`; status 4 has `arbitrationPhase=unknown` at list scope until detail supplies the evidence deadline.
 
 ### arbitration-detail
 
@@ -537,18 +561,7 @@ Show the current arbitration state visible to one User or ASP identity.
 agent arbitration-detail <jobId> --agent-id <userOrAspAgentId>
 ```
 
-The response preserves all fields from `GET /task/{jobId}/dispute/status`, including `jobId`,
-`jobType`, `currentRound`, `selectedVoter`, `taskStatus`, `disputeRoundStatus`, `prepareEndTime`, and
-`roundEndTime`. The CLI adds:
-
-| Field | Description |
-|---|---|
-| `taskStatusName` | Normalized task status when `taskStatus` is numeric |
-| `disputeRoundStatusName` | `init`, `commit_phase`, `reveal_phase`, `completed`, `rejected`, `invalidated`, or `unknown` |
-| `phase` | `evidence_preparation`, `arbitrating`, `resolved`, `rejected`, `invalidated`, or `unknown` |
-
-Additional settlement fields are passed through unchanged when the backend returns them. Their
-absence must not be interpreted as a verdict, transfer, refund, or transaction.
+The CLI reads `GET /task/{jobId}/dispute/status`, supplements task or subscription facts when available, and returns `phase=arbitration_detail`, `decision=ready`, `reason=arbitration_found`. `payload` contains normalized `arbitrationPhase` (`evidence_preparation`, `in_progress`, `resolved`, or `unknown`), verdict (`asp_won`, `asp_lost_auto_refund`, or null), and available amount, token, deadlines, rounds, destination, refund, and transaction fields. Backend compatibility field `disputeRoundStatus` remains raw diagnostic data; merchant-facing phase and verdict come from normalized fields. Missing fields remain null.
 
 ### set-payment-mode
 
@@ -1284,17 +1297,9 @@ agent my-stake [--agent-id <id>]
 
 ## Misc
 
-### Task API diagnostic log
+### Temporary arbitration trace
 
-Enable `ONCHAINOS_TASK_API_LOG=1` while verifying an API contract. Logs are redacted pretty-JSON files under `./.claude/logs` in the CLI process's current working directory, always using `{error, req, res, url}`.
-
-- Task API JSON calls record the complete request body and backend response.
-- `dispute-decision` records the source rejection event and complete structured decision result.
-- `dispute-choice` records the returned choices, verbatim A/B reply, selected Action ID, params, or ambiguity error.
-- `dispute-list` / `dispute-detail` record both the complete backend response and the final structured result, including the complete `allowedJobIds` selection contract.
-- Keep heartbeat and `wakeup_notify` as runtime events.
-
-Redact query strings and signing/session/authentication material before persistence. Keep this diagnostic log separate from the formal audit log.
+Task API calls and arbitration contracts write redacted JSON traces to `./.claude/logs` under the directory where the CLI runs. Each file contains `{error, req, res, url}`. Arbitration traces cover decision cards, user-choice resolution, list queries, and detail queries. Heartbeat traffic is excluded, and sensitive fields are redacted recursively.
 
 ### feedback-submit
 

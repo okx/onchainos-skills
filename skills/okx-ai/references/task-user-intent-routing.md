@@ -95,26 +95,43 @@ When the user has multiple active tasks, every routing decision **must** anchor 
 
 - **Always confirm `jobId` before acting**. If ambiguous → ask which task or render an `active-tasks` numbered list. Never assume the most-recent task is the one they mean.
 - **Track each task's state independently**. Don't apply task A's context to task B.
-- **For task-scoped routing or action replies, echo the `jobId`** — `<title> (Job <shortId>)` is the standard prefix. This does not apply to task-list responses, which use the exact schemas in §Task list without added `jobId` fields.
+- **For task-scoped routing or action replies, echo the `jobId`** — `<title> (Job <shortId>)` is the standard prefix. Render task-list responses with the exact schemas in §Task lists.
 
 See [`entry-points.md`](./entry-points.md#multi-task-context-management) for the full deep-dive.
 
 ---
 
-## Task list / "what am I working on"
+## Task lists
 
-When the user asks for **their task list without a specific jobId**, the user session answers directly (do NOT 6-step forward). Triggers include `my tasks` / `what am I working on` / `list my tasks` / `active tasks` / `ongoing tasks` / `show all my tasks` / `task list` / `ended tasks` / `subscription tasks` / `one-time tasks` and semantically equivalent wording in any language.
+Task-list intents are read-only Task operations. Select the command from the requested identity and filter:
 
-Route ASP dispute/arbitration intents and buyer rejection/refund-decision intents to `task-dispute.md` with precedence over generic task or list wording.
+| Intent | Command |
+|---|---|
+| User task list, active tasks, ended tasks, subscription tasks, or one-time tasks | `onchainos agent my-tasks --task-type <type> --status-type <status> --page 1` |
+| Existing tasks for ASP `agentId` | `onchainos agent tasks --agent-id <aspAgentId> --page 1 --limit 20` |
+| Rejected one-time tasks / tasks that can be arbitrated / refund-decision candidates for ASP `agentId` | `onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20` |
+| Rejected subscription periods for the ASP provider view | `onchainos agent my-subscriptions --role provider --status rejected` |
 
-Run `onchainos agent my-tasks --task-type <type> --status-type <status> --page 1`, choosing each parameter independently:
+Triggers for the first row include `my tasks`, `what am I working on`, `active tasks`, `ended tasks`, `subscription tasks`, and `one-time tasks`. Triggers for the ASP rows include `my ASP tasks`, `tasks for ASP <agentId>`, `rejected tasks`, `tasks that can be arbitrated`, `which tasks can I arbitrate`, `哪些可以仲裁`, `可以仲裁的任务`, `refused deliveries`, `pending refund decisions`, and semantic equivalents in any language.
+
+For a User task list, choose the two `my-tasks` parameters independently:
 
 | Parameter | User intent → value |
 |---|---|
 | `<type>` | all → `all`; subscription → `subscription`; one-time → `one-time` |
 | `<status>` | all → `0`; active → `1`; ended → `2` |
 
-Render and paginate per [`task-user-playbook.md` §Unified My Tasks](task-user-playbook.md#unified-my-tasks). `active-tasks` is reserved for the task-scoped sub-session routing flow at the top of this file; do not use it for a list-only request or mix this flow with the decision list.
+Render and paginate the User result per [`task-user-playbook.md` §Unified My Tasks](task-user-playbook.md#unified-my-tasks). Render an ASP `tasks` result from its current page with the returned `jobId`, title, amount, and status. Present every rejected row as an arbitration candidate.
+
+For a rejected-task or arbitration-candidate list, append one localized line below the existing list template:
+
+```text
+Tip: An ASP merchant can start arbitration for a task in `rejected` status.
+```
+
+Resolve an explicit ASP Agent ID directly. With an ASP identity in the current task context, retain that `agentId`. Otherwise run `onchainos agent my-agents`, retain role ASP (`2`) candidates, display them, and wait for the user's selection.
+
+`active-tasks` remains the task-scoped sub-session routing command. `arbitration-list` remains the list of cases where arbitration has already been filed.
 
 ⚠️ **"all my tasks" / "show all tasks"** map to the caller's own tasks (→ this section). There is no public marketplace pool to browse.
 
@@ -160,11 +177,7 @@ Action:
 
 ## Status / progress query (specific task)
 
-ASP arbitration intents take precedence over generic task list/status routing:
-
-- `handle the refund request`, `handle the buyer rejection`, `handle this task decision`, `handle <jobId>`, `view pending refunds`, or semantically equivalent wording in any language → read `task-dispute.md` §Merchant asks to handle a decision and reopen the matching standard decision card.
-- `dispute list`, `query disputes`, `current disputes`, `my disputes`, or semantically equivalent wording in any language, with no jobId → read `task-dispute.md` §Query dispute and render the dispute-list template.
-- `dispute progress`, `query the dispute for <jobId>`, a semantic equivalent in any language, or selecting one dispute from the latest list → validate the target and render the query-confirmation card per `task-dispute.md`; show details after A.
+Route arbitration creation, filed-case lists, and case details through `task-arbitration.md`. Keep rejected-task and pending-refund-decision lists in §Task lists with the rejected Task filter.
 
 | Trigger | Action |
 |---|---|
@@ -177,10 +190,10 @@ ASP arbitration intents take precedence over generic task list/status routing:
 
 ## Replying to pending decisions (when `[USER_DECISION_REQUEST]` is in context)
 
-If your context contains an active `[USER_DECISION_REQUEST]` block (you're in "Waiting for user reply" state from a recent push), the user's reply routes via the matching block's pre-filled `resolve-prompt` command:
+If your context contains an active `[USER_DECISION_REQUEST]` block (you're in "Waiting for user reply" state from a recent push), route the user's reply through the exact resolver command pre-filled in that block. CLI-driver blocks use `resolve-with-sessionkey`; queue-backed blocks use `resolve-prompt`.
 
-- **Single active card** (latest block below the stale-notice line): run its `resolve-prompt` with `--user-reply "<user's verbatim text>"`.
-- **Multiple blocks visible, user disambiguates with a jobId/label** (e.g. `Job 0x4652 select 1500`): scan context for the block whose `[job: <jobId>]` matches, then run THAT block's `resolve-prompt` with the user's verbatim text as `--user-reply`.
+- **Single active card** (latest block below the stale-notice line): run its pre-filled resolver with `--user-reply "<user's verbatim text>"`.
+- **Multiple blocks visible, user disambiguates with a jobId/label** (e.g. `Job 0x4652 select 1500`): scan context for the block whose `[job: <jobId>]` matches, then run that block's pre-filled resolver with the user's verbatim text as `--user-reply`.
 - **Truly ambiguous** (no jobId, no label hint, multiple cards): ask the user "which task?" via plain text reply.
 
 ---
@@ -213,7 +226,7 @@ Triggers:
 
 | Trigger | Action |
 |---|---|
-| `my subscriptions` / `subscription list` / `what am I subscribed to` / `ongoing subscriptions` / `active subscriptions` / `ended subscriptions` | Use §Task list with scope `subscription`; map generic requests to `all`, ongoing/active to `active`, and ended to `ended`. |
+| `my subscriptions` / `subscription list` / `what am I subscribed to` / `ongoing subscriptions` / `active subscriptions` / `ended subscriptions` | Use §Task lists with scope `subscription`; map generic requests to `all`, ongoing/active to `active`, and ended to `ended`. |
 | `subscription detail` / `show this subscription` | `onchainos agent subscribe-detail <jobId>` (id = the row's `jobId`) → render per [`task-user-playbook.md` §Subscription Detail](task-user-playbook.md). |
 | `device list` / `list my logged-in devices` / `which devices are online` | `onchainos agent device-list` → render per [`task-user-playbook.md` §Device List](task-user-playbook.md). |
 | `start receiving X on this device` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — fresh-read; `deviceList:null` already means default-all, so report already receiving without a write; otherwise union → overwrite → re-read. |

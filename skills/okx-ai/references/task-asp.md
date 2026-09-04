@@ -103,7 +103,7 @@ events are action-required: `sub_open` owns the initial provider decision and
 | `sub_complete_notify` / `sub_close_notify` / `sub_failed_notify` | Render the CLI's canonical terminal `Content:` per the language rule below, then follow `session-cleanup`. End turn. |
 | `sub_asp_agree` | ASP's own refund action; finish the ASP turn immediately. |
 | `sub_asp_dispute` | Continue and complete the existing automated subscription evidence flow returned by `next-action`. |
-| `sub_user_reject` | Read `task-dispute.md` and use its unified A/B decision contract. |
+| `sub_user_reject` | Read `task-arbitration.md` and use its unified A/B decision contract. |
 | `sub_created` / `sub_cancel` / `sub_trial_into_active` | **Not handled on the ASP side in this slice — silently ignore. End turn.** Buyer-only. |
 | `sub_renew` | Renewal → the **previous period's income is now claimable**. Run `onchainos agent subscribe-asp-claim <jobId> --agent-id <yours>` (claims your own funds — no buyer action, do not send a peer message), then push a short localized note via `onchainos agent user-notify`; if the CLI reports nothing claimable, end the turn silently. |
 

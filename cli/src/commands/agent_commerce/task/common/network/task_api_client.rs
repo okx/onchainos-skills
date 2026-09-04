@@ -14,7 +14,6 @@ use serde_json::Value;
 
 use super::super::DEBUG_LOG;
 use super::api_trace;
-
 use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::wallet_api::WalletApiClient;
@@ -78,7 +77,10 @@ fn redact_session_cert(body: &Value) -> Value {
     let mut redacted = body.clone();
     if let Some(object) = redacted.as_object_mut() {
         if object.contains_key("sessionCert") {
-            object.insert("sessionCert".to_string(), Value::String("<redacted>".to_string()));
+            object.insert(
+                "sessionCert".to_string(),
+                Value::String("<redacted>".to_string()),
+            );
         }
     }
     redacted
@@ -178,7 +180,10 @@ impl TaskApiClient {
             eprintln!("[TaskAPI] GET(jwt+agenticId) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
         }
         let started = Instant::now();
-        let result = self.wallet.get_authed_with_headers(path, &token, &query, Some(&headers)).await;
+        let result = self
+            .wallet
+            .get_authed_with_headers(path, &token, &query, Some(&headers))
+            .await;
         let elapsed = started.elapsed();
         match &result {
             Ok(data) => {
@@ -201,23 +206,24 @@ impl TaskApiClient {
     }
 
     /// GET + JWT + identity header (agenticId) -> returns data (sessionCert is auto-injected as a query param).
-    pub async fn get_with_identity(
-        &mut self,
-        path: &str,
-        agent_id: &str,
-    ) -> Result<Value> {
+    pub async fn get_with_identity(&mut self, path: &str, agent_id: &str) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await?;
         let cert = get_session_cert();
-        let query: Vec<(&str, &str)> = cert.as_deref()
+        let query: Vec<(&str, &str)> = cert
+            .as_deref()
             .map(|c| vec![("sessionCert", c)])
             .unwrap_or_default();
         if DEBUG_LOG {
-            eprintln!("[TaskAPI] GET {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
+            eprintln!(
+                "[TaskAPI] GET {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}",
+                token.len()
+            );
         }
         let headers = [("agenticId", agent_id)];
         let started = Instant::now();
-        let result = self.wallet
+        let result = self
+            .wallet
             .get_authed_with_headers(path, &token, &query, Some(&headers))
             .await;
         let elapsed = started.elapsed();
@@ -358,7 +364,8 @@ impl TaskApiClient {
         }
         let headers = [("agenticId", agent_id)];
         let started = Instant::now();
-        let result = self.wallet
+        let result = self
+            .wallet
             .post_authed_with_headers(path, &token, &body, Some(&headers))
             .await;
         let elapsed = started.elapsed();
@@ -398,7 +405,8 @@ impl TaskApiClient {
         }
         let headers = [("agenticId", agent_id)];
         let started = Instant::now();
-        let result = self.wallet
+        let result = self
+            .wallet
             .post_authed_mutation_no_retry_with_headers(path, &token, &body, Some(&headers))
             .await;
         let elapsed = started.elapsed();
@@ -414,7 +422,15 @@ impl TaskApiClient {
                 if DEBUG_LOG {
                     eprintln!("[TaskAPI] POST(no-retry) {url} ← ERROR: {message}");
                 }
-                log_api("post_mutation", path, agent_id, false, elapsed, Some(&message), None);
+                log_api(
+                    "post_mutation",
+                    path,
+                    agent_id,
+                    false,
+                    elapsed,
+                    Some(&message),
+                    None,
+                );
             }
         }
         result
@@ -444,7 +460,8 @@ impl TaskApiClient {
         let extra = [("agenticId", agent_id)];
         let extra_meta = format!("contentType={content_type}; contentLength={content_len}");
         let started = Instant::now();
-        let result = self.wallet
+        let result = self
+            .wallet
             .post_authed_raw_with_headers(path, &token, body, content_type, Some(&extra))
             .await;
         let elapsed = started.elapsed();
@@ -453,14 +470,30 @@ impl TaskApiClient {
                 if DEBUG_LOG {
                     eprintln!("[TaskAPI] POST(raw) {url} ← {data}");
                 }
-                log_api("post_raw", path, agent_id, true, elapsed, None, Some(&extra_meta));
+                log_api(
+                    "post_raw",
+                    path,
+                    agent_id,
+                    true,
+                    elapsed,
+                    None,
+                    Some(&extra_meta),
+                );
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
                 if DEBUG_LOG {
                     eprintln!("[TaskAPI] POST(raw) {url} ← ERROR: {err_msg}");
                 }
-                log_api("post_raw", path, agent_id, false, elapsed, Some(&err_msg), Some(&extra_meta));
+                log_api(
+                    "post_raw",
+                    path,
+                    agent_id,
+                    false,
+                    elapsed,
+                    Some(&err_msg),
+                    Some(&extra_meta),
+                );
             }
         }
         result

@@ -53,7 +53,7 @@
 | Add attachment / image | "attach a file/image to a task" | [`task-user-actions.md`](task-user-actions.md) §2 |
 | Stop task | "stop task / close task" | [`task-user-actions.md`](task-user-actions.md) §3 |
 | View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
-| Subscription task list | "my subscriptions / subscription list / ongoing subscriptions / active subscriptions / ended subscriptions" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Task list → §Unified My Tasks. User-initiated lists use `my-tasks --task-type subscription`, never `my-subscriptions`. |
+| Subscription task list | "my subscriptions / subscription list / ongoing subscriptions / active subscriptions / ended subscriptions" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Task lists → §Unified My Tasks. User-initiated lists use `my-tasks --task-type subscription`. |
 | Rate | "rate this task / rate this subscription / review jobId X / give X five stars / leave feedback" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Rate an active subscription |
 | Subscription task ops | "auto-renew / trial cancel / reject delivery / apply for refund / claim refund / subscription charge / subscription cost" | §Subscription below |
 | Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
@@ -282,7 +282,7 @@ Key rules:
 
 ## Unified My Tasks
 
-Routing entry: [`task-user-intent-routing.md` §Task list](task-user-intent-routing.md#task-list--what-am-i-working-on).
+Routing entry: [`task-user-intent-routing.md` §Task lists](task-user-intent-routing.md#task-lists).
 
 ### Response contract (non-negotiable)
 

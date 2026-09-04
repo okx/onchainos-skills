@@ -8,14 +8,14 @@
 
 use crate::commands::agent_commerce::task::common::util::short_job_id;
 
-fn dispute_decision_json(
+fn arbitration_decision_json(
     source_event: &str,
     job_id: &str,
     job_title: Option<&str>,
     prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
     message: Option<&serde_json::Value>,
 ) -> String {
-    use crate::commands::agent_commerce::task::common::dispute::{
+    use crate::commands::agent_commerce::task::arbitration::{
         build_decision_result, scalar_string,
     };
 
@@ -24,8 +24,16 @@ fn dispute_decision_json(
             .find_map(|key| scalar_string(message.and_then(|value| value.get(*key))))
     };
     let name = message_field(&["jobTitle", "title", "serviceName"])
-        .or_else(|| job_title.map(str::to_string).filter(|value| !value.is_empty()))
-        .or_else(|| prefetched.map(|value| value.title.clone()).filter(|value| !value.is_empty()));
+        .or_else(|| {
+            job_title
+                .map(str::to_string)
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            prefetched
+                .map(|value| value.title.clone())
+                .filter(|value| !value.is_empty())
+        });
     let amount = message_field(&["tokenAmount", "serviceTokenAmount"]).or_else(|| {
         prefetched.and_then(|value| {
             value
@@ -55,7 +63,7 @@ fn dispute_decision_json(
         Some(&decision_context),
     );
     crate::commands::agent_commerce::task::common::network::api_trace::record_contract(
-        "dispute-decision",
+        "arbitration-decision",
         &serde_json::json!({
             "sourceEvent": source_event,
             "jobId": job_id,
@@ -65,116 +73,6 @@ fn dispute_decision_json(
         None,
     );
     serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
-}
-
-/// x402 / A2MCP next-action playbook for the ASP.
-///
-/// In the x402 flow the User Agent paid the ASP at request time via the A2MCP
-/// service endpoint, so every on-chain task event is a pure receipt with no
-/// ASP-side business action. `JobAccepted` and `JobCompleted` get a
-/// dedicated note that explains the payment model; every other event gets a
-/// shorter generic "ignore and end the turn" message.
-pub async fn generate_a2mcp_next_action(
-    job_id: &str,
-    event_str: &str,
-    agent_id: &str,
-    job_title: Option<&str>,
-    data: Option<&str>,
-    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
-    message: Option<&serde_json::Value>,
-) -> String {
-    let _ = (job_title, data, message);
-    use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
-    let event = parse_status_or_event(event_str);
-    // Used by JobCompleted's auto-rate step. Inline a minimal Task fields block
-    // from the prefetched context so the LLM can fill `<buyerAgentId>` / `<title>`
-    // into the feedback-submit command and the rating-notify content without
-    // calling `common context`.
-    let task_fields_inline: String = {
-        let mut out = String::new();
-        if let Some(p) = prefetched {
-            let mut any = false;
-            if !p.title.is_empty() { out.push_str(&format!("\x20\x20- title: {}\n", p.title)); any = true; }
-            if !p.token_amount.is_empty() { out.push_str(&format!("\x20\x20- tokenAmount: {}\n", p.token_amount)); any = true; }
-            if !p.token_symbol.is_empty() && p.token_symbol != "?" { out.push_str(&format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol)); any = true; }
-            if let Some(b) = p.user_agent_id.as_deref().filter(|s| !s.is_empty()) {
-                out.push_str(&format!("\x20\x20- buyerAgentId: {b}\n"));
-                any = true;
-            }
-            if any {
-                out.insert_str(0, "**Task fields** (pre-fetched; use directly):\n");
-            }
-        }
-        out
-    };
-    match event {
-        Event::JobAccepted => {
-            let user_notify = super::content::job_accepted_user_notify_a2mcp(job_id, agent_id);
-            format!(
-                "[Current state] job_accepted (x402 / A2MCP flow — User Agent's request received, payment confirmed at the A2MCP endpoint)\n\
-                 [Role] ASP (Agent Service ASP)\n\n\
-                 {task_fields_inline}\n\
-                 **Notify the user via `onchainos agent user-notify`** — no on-chain `deliver`, no `okx-a2a xmtp-send` (the deliverable was already returned by the A2MCP service endpoint at request time):\n\n\
-                 🌐 **Localize first** — rewrite the content below in the user's language before sending. Fill `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` from the **Task fields** block above. Do NOT pass the English template verbatim to a non-English user.\n\
-                 ```bash\n\
-                 onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                 ```\n\
-                 content:\n\
-                 {user_notify}\n\n\
-                 jobId={job_id}\n"
-            )
-        },
-        Event::JobCompleted => {
-            let user_notify = super::content::job_completed_user_notify(job_id);
-            let rating_notify = super::content::rating_submitted_user_notify(job_id);
-            format!(
-                "[Current state] job_completed (x402 / A2MCP flow — terminal receipt; funds were already received at request time)\n\
-                 [Role] ASP (Agent Service ASP)\n\n\
-                 ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
-                 {task_fields_inline}\n\
-                 **Step 1 — Notify the user of task completion via `onchainos agent user-notify`**:\n\n\
-                 🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                 ```bash\n\
-                 onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                 ```\n\
-                 content:\n\
-                 {user_notify}\n\n\
-                 🛑 Do NOT end this turn — Step 2 (auto-rate) and Step 2.5 (notify rating) below are MANDATORY.\n\n\
-                 **Step 2 — 🛑 Auto-rate the User Agent (MANDATORY):**\n\
-                 Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
-                 \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent User Agent (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
-                 \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
-                 Then execute:\n\
-                 ```bash\n\
-                 onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
-                 ```\n\
-                 ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block above); `--creator-id` is the ASP's own agent id ({agent_id}).\n\n\
-                 **Step 2.5 — Notify the user of the submitted rating**:\n\
-                 🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                 After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
-                 - ✅ **Success** (output contains `txHash`):\n\
-                 ```bash\n\
-                 onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                 ```\n\
-                 content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
-                 {rating_notify}\n\
-                 - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
-                 **Step 3 — Terminal wrap-up (keep the sub session):**\n\
-                 ℹ️ Task is in terminal state — run the cleanup command:\n\
-                 ```bash\n\
-                 onchainos agent session-cleanup --job-id {job_id}\n\
-                 ```\n\
-                 Task fully complete.\n"
-            )
-        },
-        other => format!(
-            "[System notification] {other} (x402 / A2MCP flow — no ASP-side action)\n\
-             [Role] ASP (Agent Service ASP)\n\n\
-             Ignore this event; take no action.\n\
-             jobId={job_id}\n",
-            other = other.as_str()
-        ),
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -357,7 +255,9 @@ pub async fn generate_next_action(
     message: Option<&serde_json::Value>,
 ) -> String {
     let _ = message; // currently used only by event handlers that opt in (see JobAspSelected below); silence the unused-arg warning when no scene reads it.
-    use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
+    use crate::commands::agent_commerce::task::common::state_machine::{
+        parse_status_or_event, Event,
+    };
 
     // Protocol compatibility is enforced by preflight before task execution,
     // not by tagging individual A2A messages with a legacy payload field.
@@ -387,22 +287,70 @@ pub async fn generate_next_action(
             let mut any = false;
             for f in fields {
                 let line = match *f {
-                    "title" if !p.title.is_empty() => Some(format!("\x20\x20- title: {}\n", p.title)),
-                    "description" if !p.description.is_empty() => Some(format!("\x20\x20- description: {}\n", p.description)),
-                    "tokenAmount" if !p.token_amount.is_empty() => Some(format!("\x20\x20- tokenAmount: {}\n", p.token_amount)),
-                    "tokenSymbol" if !p.token_symbol.is_empty() && p.token_symbol != "?" => Some(format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol)),
-                    "buyerAgentId" => p.user_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- buyerAgentId: {v}\n")),
-                    "providerAgentId" => p.provider_agent_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- providerAgentId: {v}\n")),
-                    "paymentMode" => p.payment_mode.map(|v| format!("\x20\x20- paymentMode: {v} ({})\n", match v { 1 => "escrow", 3 => "x402", _ => "unknown" })),
-                    "serviceId" => p.service_id.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceId: {v}\n")),
-                    "serviceTokenAddress" => p.service_token_address.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAddress: {v}\n")),
-                    "serviceTokenAmount" => p.service_token_amount.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceTokenAmount: {v}\n")),
-                    "serviceParams" => p.service_params.as_deref().filter(|s| !s.is_empty()).map(|v| format!("\x20\x20- serviceParams: {v}\n")),
+                    "title" if !p.title.is_empty() => {
+                        Some(format!("\x20\x20- title: {}\n", p.title))
+                    }
+                    "description" if !p.description.is_empty() => {
+                        Some(format!("\x20\x20- description: {}\n", p.description))
+                    }
+                    "tokenAmount" if !p.token_amount.is_empty() => {
+                        Some(format!("\x20\x20- tokenAmount: {}\n", p.token_amount))
+                    }
+                    "tokenSymbol" if !p.token_symbol.is_empty() && p.token_symbol != "?" => {
+                        Some(format!("\x20\x20- tokenSymbol: {}\n", p.token_symbol))
+                    }
+                    "buyerAgentId" => p
+                        .user_agent_id
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- buyerAgentId: {v}\n")),
+                    "providerAgentId" => p
+                        .provider_agent_id
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- providerAgentId: {v}\n")),
+                    "paymentMode" => p.payment_mode.map(|v| {
+                        format!(
+                            "\x20\x20- paymentMode: {v} ({})\n",
+                            match v {
+                                1 => "escrow",
+                                3 => "x402",
+                                _ => "unknown",
+                            }
+                        )
+                    }),
+                    "serviceId" => p
+                        .service_id
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceId: {v}\n")),
+                    "serviceTokenAddress" => p
+                        .service_token_address
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceTokenAddress: {v}\n")),
+                    "serviceTokenAmount" => p
+                        .service_token_amount
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceTokenAmount: {v}\n")),
+                    "serviceParams" => p
+                        .service_params
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|v| format!("\x20\x20- serviceParams: {v}\n")),
                     _ => None,
                 };
-                if let Some(l) = line { out.push_str(&l); any = true; }
+                if let Some(l) = line {
+                    out.push_str(&l);
+                    any = true;
+                }
             }
-            if any { Some(out) } else { None }
+            if any {
+                Some(out)
+            } else {
+                None
+            }
         };
         match prefetched.and_then(render) {
             Some(s) => s,
@@ -455,8 +403,8 @@ pub async fn generate_next_action(
     let event = parse_status_or_event(event_str);
     match &event {
         Event::JobRejected => {
-            return dispute_decision_json(
-                crate::commands::agent_commerce::task::common::dispute::JOB_REJECTED,
+            return arbitration_decision_json(
+                crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
                 job_id,
                 job_title,
                 prefetched,
@@ -464,8 +412,8 @@ pub async fn generate_next_action(
             );
         }
         Event::SubUserReject => {
-            return dispute_decision_json(
-                crate::commands::agent_commerce::task::common::dispute::SUB_USER_REJECT,
+            return arbitration_decision_json(
+                crate::commands::agent_commerce::task::arbitration::SUB_USER_REJECT,
                 job_id,
                 job_title,
                 prefetched,
@@ -474,31 +422,47 @@ pub async fn generate_next_action(
         }
         Event::Other(event_name) if event_name.starts_with("user_decision_") => {
             let source_event = &event_name["user_decision_".len()..];
-            if crate::commands::agent_commerce::task::common::dispute::is_decision_source(
-                source_event,
-            ) {
+            if crate::commands::agent_commerce::task::arbitration::is_decision_source(source_event)
+            {
+                let expected_prefix = format!("{job_id}:{source_event}:");
+                let decision_is_bound = message
+                    .and_then(|value| value.get("decisionId"))
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|value| {
+                        value.starts_with(&expected_prefix) && value.len() > expected_prefix.len()
+                    });
+                if !decision_is_bound {
+                    return crate::commands::agent_commerce::task::arbitration::blocked_result(
+                        "decision_metadata_missing",
+                        job_id,
+                        serde_json::json!({"sourceEvent": source_event}),
+                    );
+                }
                 let selected_action = message
                     .and_then(|value| value.get("selectedActionId"))
                     .and_then(serde_json::Value::as_str);
                 let params = message.and_then(|value| value.get("params"));
-                return match selected_action.and_then(|action_id| {
-                    crate::commands::agent_commerce::task::common::dispute::resolved_action(
-                        source_event,
-                        action_id,
+                let Some(action_id) = selected_action else {
+                    return crate::commands::agent_commerce::task::arbitration::blocked_result(
+                        "decision_metadata_missing",
                         job_id,
-                        params,
-                    )
-                    .ok()
-                }) {
-                    Some(resolved) => serde_json::to_string(
-                        &crate::commands::agent_commerce::task::common::dispute::build_selected_result(
-                            job_id,
-                            &resolved,
+                        serde_json::json!({"sourceEvent": source_event}),
+                    );
+                };
+                return match crate::commands::agent_commerce::task::arbitration::resolved_action(
+                    source_event,
+                    action_id,
+                    job_id,
+                    params,
+                ) {
+                    Ok(resolved) => serde_json::to_string(
+                        &crate::commands::agent_commerce::task::arbitration::build_selected_result(
+                            job_id, &resolved,
                         ),
                     )
                     .unwrap_or_else(|_| "{}".to_string()),
-                    None => crate::commands::agent_commerce::task::common::dispute::blocked_result(
-                        "ambiguous_choice",
+                    Err(_) => crate::commands::agent_commerce::task::arbitration::blocked_result(
+                        "unsupported_action",
                         job_id,
                         serde_json::json!({"sourceEvent": source_event}),
                     ),
@@ -632,7 +596,7 @@ pub async fn generate_next_action(
         }
 
         // ─── Scene 6.3: User chose to raise a dispute (user-instruction pseudo-event) ───
-        Event::Other(ref s) if s == "dispute_raise" => format!(
+        Event::Other(ref s) if matches!(s.as_str(), "raise_arbitration" | "dispute_raise") => format!(
             "[Current action] Raise dispute — phase 1 (approve)\n\
              [Role] ASP\n\n\
              ⚠️ **Evaluation is a two-phase on-chain flow**: phase 1 approve → wait for `dispute_approved` notification → phase 2 dispute → wait for `job_disputed` notification. This turn only runs phase 1.\n\n\
@@ -725,7 +689,11 @@ pub async fn generate_next_action(
         }
 
         // ─── Subscription: user chose to raise a dispute (pseudo-event) ──
-        Event::Other(ref s) if s == "sub_dispute" => format!(
+        Event::Other(ref s)
+            if matches!(
+                s.as_str(),
+                "raise_subscription_arbitration" | "sub_dispute"
+            ) => format!(
             "[Current action] Subscription dispute — raise evaluation (§2.10 single combined call)\n\
              [Role] ASP (subscription)\n\n\
              **Step 1 — Call the CLI (on-chain):**\n\
@@ -1117,10 +1085,10 @@ pub async fn generate_next_action(
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
                      \x20\x20• **`agree_refund`** — user accepts the refund and walks away (typical intents: A / 同意退款 / agree refund / 退款 / 算了 / 不争了 / OK refund / let it go).\n\
-                     \x20\x20• **`dispute_raise`** — user wants to challenge the rejection and go to evaluation (typical intents: B / 发起仲裁 / dispute / 不接受拒绝 / 我做得没问题 / 申诉 / 我要争 / file dispute / contest).\n\n\
+                     \x20\x20• **`raise_arbitration`** — user wants to challenge the rejection and go to evaluation (typical intents: B / 发起仲裁 / dispute / 不接受拒绝 / 我做得没问题 / 申诉 / 我要争 / file dispute / contest).\n\n\
                      If the user's reply clearly maps to one of these → call:\n\
                      ```bash\n\
-                     onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<dispute_raise|agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
+                     onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<raise_arbitration|agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
                      ```\n\
                      If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT it for `[to: backup]` / backup subs — NEVER your own agentId) and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=accept full refund  B=file dispute\".\n"
                 ),
@@ -1129,10 +1097,10 @@ pub async fn generate_next_action(
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
                      \x20\x20• **`sub_agree_refund`** — user accepts refunding this period (typical intents: A / 同意退款 / agree refund / 退款 / 算了 / let it go).\n\
-                     \x20\x20• **`sub_dispute`** — user wants to challenge the rejection and go to evaluation (typical intents: B / 发起仲裁 / dispute / 申诉 / 我要争 / contest).\n\n\
+                     \x20\x20• **`raise_subscription_arbitration`** — user wants to challenge the rejection and go to evaluation (typical intents: B / 发起仲裁 / dispute / 申诉 / 我要争 / contest).\n\n\
                      If the reply clearly maps to one → call:\n\
                      ```bash\n\
-                     onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<sub_dispute|sub_agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
+                     onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<raise_subscription_arbitration|sub_agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
                      ```\n\
                      If **truly ambiguous** (non-committal `OK` / `sure` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT it for `[to: backup]` / backup subs — NEVER your own agentId) and `--source-event sub_user_reject`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=accept full refund  B=raise dispute\".\n"
                 ),
@@ -1436,17 +1404,32 @@ fn user_attachment_received_cli(
     let salt = msg_str("salt");
     let nonce = msg_str("nonce");
     let secret = msg_str("secret");
-    let filename = message.and_then(|m| m.get("filename")).and_then(|v| v.as_str());
+    let filename = message
+        .and_then(|m| m.get("filename"))
+        .and_then(|v| v.as_str());
 
-    if file_key.is_empty() || digest.is_empty() || salt.is_empty()
-        || nonce.is_empty() || secret.is_empty()
+    if file_key.is_empty()
+        || digest.is_empty()
+        || salt.is_empty()
+        || nonce.is_empty()
+        || secret.is_empty()
     {
         let mut missing = Vec::new();
-        if file_key.is_empty() { missing.push("fileKey"); }
-        if digest.is_empty() { missing.push("digest"); }
-        if salt.is_empty() { missing.push("salt"); }
-        if nonce.is_empty() { missing.push("nonce"); }
-        if secret.is_empty() { missing.push("secret"); }
+        if file_key.is_empty() {
+            missing.push("fileKey");
+        }
+        if digest.is_empty() {
+            missing.push("digest");
+        }
+        if salt.is_empty() {
+            missing.push("salt");
+        }
+        if nonce.is_empty() {
+            missing.push("nonce");
+        }
+        if secret.is_empty() {
+            missing.push("secret");
+        }
         let fields = missing.join(", ");
         return format!(
             "[user_attachment_received_cli] ERROR: encryption metadata incomplete — missing: {fields}. \
@@ -1485,7 +1468,8 @@ fn user_attachment_received_cli(
         }
         let dir = attachments_dir(job_id).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir failed: {e}"))?;
-        let file_name = src.file_name()
+        let file_name = src
+            .file_name()
             .ok_or_else(|| format!("invalid file path: {local_path}"))?;
         let dest = dedup_dest(&dir, file_name);
         if std::fs::rename(src, &dest).is_err() {
@@ -1572,9 +1556,10 @@ mod tests {
 
     #[tokio::test]
     async fn provider_assignment_duplicate_accept_is_idempotent() {
-        let single = crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
-            &json!({"status": 1}),
-        );
+        let single =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({"status": 1}),
+            );
         let output = provider_assignment_playbook(
             ASP_JOB_ID,
             ASP_AGENT_ID,
@@ -1587,9 +1572,10 @@ mod tests {
         assert!(output.contains("Do NOT repeat the mutation or broadcast"));
         assert!(!output.contains("accept-job-by-provider 0xsub01"));
 
-        let subscription = crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
-            &json!({"subStatus": 1}),
-        );
+        let subscription =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({"subStatus": 1}),
+            );
         let output = provider_assignment_playbook(
             ASP_JOB_ID,
             ASP_AGENT_ID,
@@ -1806,19 +1792,26 @@ mod tests {
         // Renewal = the previous period's income became claimable (§2.9 aspClaim).
         // The ASP arm must route to the deterministic claim command, NOT silently
         // ignore it (which left accrued income unclaimed in the contract).
-        let out = run_asp("sub_renew", json!({ "event": "sub_renew", "jobId": ASP_JOB_ID })).await;
+        let out = run_asp(
+            "sub_renew",
+            json!({ "event": "sub_renew", "jobId": ASP_JOB_ID }),
+        )
+        .await;
         assert!(
             out.contains("subscribe-asp-claim"),
             "sub_renew must guide the ASP to claim: {out}"
         );
-        assert!(out.contains(ASP_JOB_ID) && out.contains(ASP_AGENT_ID), "got: {out}");
+        assert!(
+            out.contains(ASP_JOB_ID) && out.contains(ASP_AGENT_ID),
+            "got: {out}"
+        );
         assert!(!out.contains("Silently ignore"), "got: {out}");
         // No buyer involvement: never instruct an XMTP send toward the User Agent.
         assert!(out.contains("Do NOT `okx-a2a session send`"), "got: {out}");
     }
 
     #[tokio::test]
-    async fn asp_sub_user_reject_renders_refund_dispute_decision() {
+    async fn asp_sub_user_reject_renders_refund_arbitration_decision() {
         let out = run_asp(
             "sub_user_reject",
             json!({
@@ -1830,13 +1823,19 @@ mod tests {
         )
         .await;
         let result: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(result["phase"], "dispute_decision");
+        assert_eq!(result["phase"], "arbitration_decision");
         assert_eq!(result["decision"], "requires_user_input");
         assert_eq!(result["payload"]["name"], "My Sub");
         assert_eq!(result["payload"]["amount"], "0.0005");
         assert_eq!(result["nextAction"][0]["id"], "sub_agree_refund");
-        assert_eq!(result["nextAction"][1]["id"], "sub_dispute");
-        assert_eq!(result["payload"]["extraFields"]["periodIndex"], serde_json::Value::Null);
+        assert_eq!(
+            result["nextAction"][1]["id"],
+            "raise_subscription_arbitration"
+        );
+        assert_eq!(
+            result["payload"]["extraFields"]["periodIndex"],
+            serde_json::Value::Null
+        );
 
         // Missing mandatory card facts fails closed instead of generating partial copy.
         let degraded = run_asp(
@@ -1850,18 +1849,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn asp_sub_dispute_guidance_passes_reason() {
+    async fn asp_subscription_arbitration_guidance_passes_reason() {
         // The dispute outcome must thread a `--reason` so it reaches the on-chain
         // evaluation record (broadcast bizContext); a bare `subscribe-dispute` drops it.
         let out = run_asp(
-            "sub_dispute",
-            json!({ "event": "sub_dispute", "jobId": ASP_JOB_ID }),
+            "raise_subscription_arbitration",
+            json!({ "event": "raise_subscription_arbitration", "jobId": ASP_JOB_ID }),
         )
         .await;
-        assert!(out.contains("subscribe-dispute"), "must call subscribe-dispute: {out}");
+        assert!(
+            out.contains("subscribe-dispute"),
+            "must call subscribe-dispute: {out}"
+        );
         assert!(
             out.contains("--reason"),
-            "sub_dispute guidance must pass --reason (on-chain bizContext): {out}"
+            "subscription arbitration guidance must pass --reason (on-chain bizContext): {out}"
         );
     }
 
@@ -1884,9 +1886,10 @@ mod tests {
             json!({ "event": "sub_complete_notify", "subEndTime": 1_790_000_000_000i64 }),
         )
         .await;
-        assert!(out.contains("2026-"), "ms timestamp rendered as seconds date: {out}");
+        assert!(
+            out.contains("2026-"),
+            "ms timestamp rendered as seconds date: {out}"
+        );
         assert!(!out.contains("+58692"), "no five-digit year: {out}");
     }
-
-
 }

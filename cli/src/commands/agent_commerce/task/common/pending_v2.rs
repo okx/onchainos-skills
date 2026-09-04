@@ -25,7 +25,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 
-use super::dispute::{self, ChoiceError, DecisionChoice, ResolvedChoice};
+use crate::commands::agent_commerce::task::arbitration::{
+    self as arbitration, ChoiceError, DecisionChoice, ResolvedChoice,
+};
 
 const DEFAULT_TTL_DAYS: u64 = 7;
 const TTL_ENV_VAR: &str = "ONCHAINOS_PENDING_DECISIONS_TTL_DAYS";
@@ -134,9 +136,9 @@ fn decision_metadata(
     expires_at: Option<i64>,
 ) -> Result<DecisionMetadata> {
     let source_event = source_event.unwrap_or("");
-    let choices = dispute::parse_choices(choices_json, source_event, job_id)
+    let choices = arbitration::parse_choices(choices_json, source_event, job_id)
         .map_err(anyhow::Error::msg)?;
-    let decision_id = if dispute::is_decision_source(source_event) {
+    let decision_id = if arbitration::is_decision_source(source_event) {
         Some(
             decision_id
                 .filter(|value| !value.trim().is_empty())
@@ -574,6 +576,13 @@ pub enum PendingDecisionsV2Command {
         source_event: String,
         #[arg(long = "decision-id")]
         decision_id: Option<String>,
+        /// Exact A/B mapping embedded in the decision card. Required for
+        /// dispute decisions because CLI mode has no persisted queue entry.
+        #[arg(long = "choices-json")]
+        choices_json: Option<String>,
+        /// Decision deadline embedded in the decision card, as unix seconds.
+        #[arg(long = "expires-at")]
+        expires_at: Option<i64>,
         /// Strict candidate JSON extracted by the foreground model for the
         /// auto-trade consent/config decision. The CLI validates this object;
         /// it never parses the user's natural-language reply.
@@ -729,6 +738,8 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             to_agent_id,
             source_event,
             decision_id,
+            choices_json,
+            expires_at,
             autotrade_candidate_json,
         } => handle_resolve_with_sessionkey(
             user_reply,
@@ -738,6 +749,8 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             to_agent_id,
             source_event,
             decision_id,
+            choices_json,
+            expires_at,
             autotrade_candidate_json,
         ),
         PendingDecisionsV2Command::ResolvePrompt {
@@ -919,27 +932,29 @@ fn send_decision_relay(
     super::okx_a2a::session_send(job_id, to_agent_id, content)
 }
 
-fn resolve_dispute_choice(
+fn resolve_arbitration_choice(
     source_event: &str,
     job_id: &str,
     choices: &[DecisionChoice],
     user_reply: &str,
 ) -> Result<Option<ResolvedChoice>, ChoiceError> {
-    if !dispute::is_decision_source(source_event) {
+    if !arbitration::is_decision_source(source_event) {
         return Ok(None);
     }
     let defaults;
     let choices = if choices.is_empty() {
-        defaults = dispute::default_choices(source_event, job_id);
+        defaults = arbitration::default_choices(source_event, job_id);
         &defaults
     } else {
         choices
     };
-    let result = dispute::resolve_choice(source_event, choices, user_reply).map(Some);
+    let result = arbitration::validate_choices(choices, source_event, job_id)
+        .map_err(|_| ChoiceError::UnsupportedAction)
+        .and_then(|_| arbitration::resolve_choice(source_event, choices, user_reply).map(Some));
     let response = result.as_ref().ok().and_then(|selection| {
         selection.as_ref().map(|selection| {
             serde_json::json!({
-                "selectedActionId": selection.action_id,
+                "actionId": selection.action_id,
                 "params": selection.params,
             })
         })
@@ -950,7 +965,7 @@ fn resolve_dispute_choice(
         Ok(_) => None,
     };
     super::network::api_trace::record_contract(
-        "dispute-choice",
+        "arbitration-choice",
         &serde_json::json!({
             "sourceEvent": source_event,
             "jobId": job_id,
@@ -963,10 +978,10 @@ fn resolve_dispute_choice(
     result
 }
 
-fn print_dispute_blocked(reason: &str, job_id: &str, source_event: &str) {
+fn print_arbitration_blocked(reason: &str, job_id: &str, source_event: &str) {
     println!(
         "{}",
-        dispute::blocked_result(
+        arbitration::blocked_result(
             reason,
             job_id,
             serde_json::json!({"sourceEvent": source_event})
@@ -1141,6 +1156,8 @@ fn handle_resolve_with_sessionkey(
     to_agent_id: Option<String>,
     source_event: String,
     decision_id: Option<String>,
+    choices_json: Option<String>,
+    expires_at: Option<i64>,
     autotrade_candidate_json: Option<String>,
 ) -> Result<()> {
     trace_log(&format!(
@@ -1155,18 +1172,38 @@ fn handle_resolve_with_sessionkey(
     // CLI reliably sees the user's own words — CLI-rendered copy downstream
     // (direct-pushed decision cards, swap self-notify) renders in this language.
     super::user_lang::record_from_user_text(&job_id, &user_reply);
-    let dispute_selection = match resolve_dispute_choice(
-        &source_event,
-        &job_id,
-        &[],
-        &user_reply,
-    ) {
-        Ok(selection) => selection,
-        Err(_) => {
-            print_dispute_blocked("ambiguous_choice", &job_id, &source_event);
+    let arbitration_choices = if arbitration::is_decision_source(&source_event) {
+        let expected_prefix = format!("{job_id}:{source_event}:");
+        if !decision_id.as_deref().is_some_and(|value| {
+            value.starts_with(&expected_prefix) && value.len() > expected_prefix.len()
+        }) || choices_json.as_deref().is_none()
+        {
+            print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
             return Ok(());
         }
+        if expires_at.is_some_and(|value| value <= Utc::now().timestamp()) {
+            print_arbitration_blocked("decision_expired", &job_id, &source_event);
+            return Ok(());
+        }
+        match arbitration::parse_choices(choices_json.as_deref(), &source_event, &job_id) {
+            Ok(choices) => choices,
+            Err(_) => {
+                print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
+                return Ok(());
+            }
+        }
+    } else {
+        Vec::new()
     };
+    let arbitration_selection =
+        match resolve_arbitration_choice(&source_event, &job_id, &arbitration_choices, &user_reply)
+        {
+            Ok(selection) => selection,
+            Err(_) => {
+                print_arbitration_blocked("ambiguous_choice", &job_id, &source_event);
+                return Ok(());
+            }
+        };
     let (user_reply, autotrade_outcome) = match prepare_foreground_autotrade(
         &job_id,
         &agent_id,
@@ -1218,8 +1255,8 @@ fn handle_resolve_with_sessionkey(
             "source": "system",
             "jobId": job_id,
             "decisionId": decision_id,
-            "selectedActionId": dispute_selection.as_ref().map(|value| &value.action_id),
-            "params": dispute_selection.as_ref().map(|value| &value.params),
+            "selectedActionId": arbitration_selection.as_ref().map(|value| &value.action_id),
+            "params": arbitration_selection.as_ref().map(|value| &value.params),
             "deliveryId": relay_delivery_id,
             "role": role,
             "timestamp": Utc::now().timestamp(),
@@ -1275,6 +1312,15 @@ fn handle_resolve_prompt(
     let relay_delivery_id = trusted_autotrade_delivery_id(&job_id, &source_event);
     // Same deterministic language capture as `handle_resolve_with_sessionkey`.
     super::user_lang::record_from_user_text(&job_id, &user_reply);
+    if arbitration::is_decision_source(&source_event)
+        && !decision_id.as_deref().is_some_and(|value| {
+            let prefix = format!("{job_id}:{source_event}:");
+            value.starts_with(&prefix) && value.len() > prefix.len()
+        })
+    {
+        print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
+        return Ok(());
+    }
     let stored_entry = load_prompt_entry(
         &job_id,
         &role,
@@ -1282,6 +1328,10 @@ fn handle_resolve_prompt(
         to_agent_id.as_deref(),
         decision_id.as_deref(),
     );
+    if arbitration::is_decision_source(&source_event) && stored_entry.is_none() {
+        print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
+        return Ok(());
+    }
     if stored_entry
         .as_ref()
         .and_then(|entry| entry.expires_at)
@@ -1294,13 +1344,13 @@ fn handle_resolve_prompt(
             to_agent_id.as_deref(),
             decision_id.as_deref(),
         );
-        print_dispute_blocked("decision_expired", &job_id, &source_event);
+        print_arbitration_blocked("decision_expired", &job_id, &source_event);
         return Ok(());
     }
-    if dispute::is_decision_source(&source_event)
-        && stored_entry.as_ref().is_some_and(|entry| {
-            entry.decision_id.is_none() || entry.choices.is_empty()
-        })
+    if arbitration::is_decision_source(&source_event)
+        && stored_entry
+            .as_ref()
+            .is_some_and(|entry| entry.decision_id.is_none() || entry.choices.is_empty())
     {
         remove_prompt_entry(
             &job_id,
@@ -1309,10 +1359,10 @@ fn handle_resolve_prompt(
             to_agent_id.as_deref(),
             decision_id.as_deref(),
         );
-        print_dispute_blocked("decision_metadata_missing", &job_id, &source_event);
+        print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
         return Ok(());
     }
-    let dispute_selection = match resolve_dispute_choice(
+    let arbitration_selection = match resolve_arbitration_choice(
         &source_event,
         &job_id,
         stored_entry
@@ -1323,7 +1373,7 @@ fn handle_resolve_prompt(
     ) {
         Ok(selection) => selection,
         Err(_) => {
-            print_dispute_blocked("ambiguous_choice", &job_id, &source_event);
+            print_arbitration_blocked("ambiguous_choice", &job_id, &source_event);
             return Ok(());
         }
     };
@@ -1384,8 +1434,8 @@ fn handle_resolve_prompt(
             "source": "system",
             "jobId": job_id,
             "decisionId": decision_id,
-            "selectedActionId": dispute_selection.as_ref().map(|value| &value.action_id),
-            "params": dispute_selection.as_ref().map(|value| &value.params),
+            "selectedActionId": arbitration_selection.as_ref().map(|value| &value.action_id),
+            "params": arbitration_selection.as_ref().map(|value| &value.params),
             "deliveryId": relay_delivery_id,
             "role": role,
             "timestamp": Utc::now().timestamp(),
@@ -1491,9 +1541,9 @@ fn load_prompt_entry(
 ) -> Option<PendingEntry> {
     let _lock = acquire_lock().ok()?;
     let q = read_queue().ok()?;
-    q.entries
-        .into_iter()
-        .find(|entry| entry_matches_request(entry, job_id, role, agent_id, to_agent_id, decision_id))
+    q.entries.into_iter().find(|entry| {
+        entry_matches_request(entry, job_id, role, agent_id, to_agent_id, decision_id)
+    })
 }
 
 fn remove_prompt_entry(
@@ -1510,14 +1560,7 @@ fn remove_prompt_entry(
             Ok(mut q) => {
                 let before = q.entries.len();
                 q.entries.retain(|entry| {
-                    !entry_matches_request(
-                        entry,
-                        job_id,
-                        role,
-                        agent_id,
-                        to_agent_id,
-                        decision_id,
-                    )
+                    !entry_matches_request(entry, job_id, role, agent_id, to_agent_id, decision_id)
                 });
                 if q.entries.len() != before {
                     if let Err(e) = write_queue_atomic(&q) {
@@ -1566,23 +1609,26 @@ fn handle_resolve(user_reply: String) -> Result<()> {
 
     let active = q.entries[active_idx].clone();
     let source_event = active.source_event.as_deref().unwrap_or("");
-    if dispute::is_decision_source(source_event)
+    if arbitration::is_decision_source(source_event)
         && (active.decision_id.is_none() || active.choices.is_empty())
     {
         q.entries.remove(active_idx);
         ensure_invariant_and_evict(&mut q);
         write_queue_atomic(&q)?;
-        print_dispute_blocked("decision_metadata_missing", &active.job_id, source_event);
+        print_arbitration_blocked("decision_metadata_missing", &active.job_id, source_event);
         return Ok(());
     }
-    if active.expires_at.is_some_and(|expires_at| expires_at <= Utc::now().timestamp()) {
+    if active
+        .expires_at
+        .is_some_and(|expires_at| expires_at <= Utc::now().timestamp())
+    {
         q.entries.remove(active_idx);
         ensure_invariant_and_evict(&mut q);
         write_queue_atomic(&q)?;
-        print_dispute_blocked("decision_expired", &active.job_id, source_event);
+        print_arbitration_blocked("decision_expired", &active.job_id, source_event);
         return Ok(());
     }
-    let dispute_selection = match resolve_dispute_choice(
+    let arbitration_selection = match resolve_arbitration_choice(
         source_event,
         &active.job_id,
         &active.choices,
@@ -1591,13 +1637,12 @@ fn handle_resolve(user_reply: String) -> Result<()> {
         Ok(selection) => selection,
         Err(_) => {
             write_queue_atomic(&q)?;
-            print_dispute_blocked("ambiguous_choice", &active.job_id, source_event);
+            print_arbitration_blocked("ambiguous_choice", &active.job_id, source_event);
             return Ok(());
         }
     };
     q.entries.remove(active_idx);
-    let relay_delivery_id =
-        trusted_autotrade_delivery_id(&active.job_id, source_event);
+    let relay_delivery_id = trusted_autotrade_delivery_id(&active.job_id, source_event);
     let clear_pending_after_relay = source_event.starts_with("autotrade_");
     // Same deterministic language capture as the sessionkey/prompt resolve variants.
     super::user_lang::record_from_user_text(&active.job_id, &user_reply);
@@ -1646,8 +1691,8 @@ fn handle_resolve(user_reply: String) -> Result<()> {
             "source": "system",
             "jobId": active.job_id,
             "decisionId": active.decision_id,
-            "selectedActionId": dispute_selection.as_ref().map(|value| &value.action_id),
-            "params": dispute_selection.as_ref().map(|value| &value.params),
+            "selectedActionId": arbitration_selection.as_ref().map(|value| &value.action_id),
+            "params": arbitration_selection.as_ref().map(|value| &value.params),
             "deliveryId": relay_delivery_id,
             "role": active.role,
             "timestamp": Utc::now().timestamp(),
@@ -2217,12 +2262,26 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
         .as_deref()
         .map(|value| format!(" --decision-id \"{value}\""))
         .unwrap_or_default();
+    let arbitration_metadata_flags = if arbitration::is_decision_source(&source_event_str) {
+        let choices = serde_json::to_string(&entry.choices).unwrap_or_else(|_| "[]".to_string());
+        let expires = entry
+            .expires_at
+            .map(|value| format!(" --expires-at {value}"))
+            .unwrap_or_default();
+        format!(
+            " --choices-json '{}'{}",
+            choices.replace('\'', "'\"'\"'"),
+            expires
+        )
+    } else {
+        String::new()
+    };
     format!(
         "[USER_DECISION_REQUEST][job: {}][role: {}][agent: {}]{}\n\n\
          Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user to reply. Do NOT call any tool. Stale user messages in context are NOT replies to this card.\n\
          Step 2 — When the user actually replies (next turn):{}\n\
          \x20\x20\x20\x20- defer keyword ({}) or any defer value defined in watch-core.md → do NOT claim or resolve; if this card came from a currently active watch, re-enter that exact originating watch command, otherwise END TURN\n\
-         \x20\x20\x20\x20- else → follow `skills/okx-ai/references/watch-core.md` §kind == decision_request \"Handling the user reply\": **first claim the todo** per watch-core.md step 2: `okx-a2a user check --todo-ids <todo_id> --json` (read `<todo_id>` from this item's `id` field in the original watch / outdated-list JSON output). **Then** on `handled` run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\"{} --source-event \"{}\"{}{}` exactly once, then follow the relay playbook it returns. Only a card surfaced by a currently active watch resumes that exact originating watch; an independently opened card never starts watch. Never infer watch origin from A/B/C, an amount, a cap, or any other reply text. Skipping the `check` leaves a ghost todo in the outstanding-decisions queue.",
+         \x20\x20\x20\x20- else → follow `skills/okx-ai/references/watch-core.md` §kind == decision_request \"Handling the user reply\": **first claim the todo** per watch-core.md step 2: `okx-a2a user check --todo-ids <todo_id> --json` (read `<todo_id>` from this item's `id` field in the original watch / outdated-list JSON output). **Then** on `handled` run `onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording — no interpretation, no translation>\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\"{} --source-event \"{}\"{}{}{}` exactly once, then follow the relay playbook it returns. Only a card surfaced by a currently active watch resumes that exact originating watch; an independently opened card never starts watch. Never infer watch origin from A/B/C, an amount, a cap, or any other reply text. Skipping the `check` leaves a ghost todo in the outstanding-decisions queue.",
         entry.job_id,
         entry.role,
         entry.agent_id,
@@ -2235,6 +2294,7 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
         to_flag,
         source_event_str,
         decision_flag,
+        arbitration_metadata_flags,
         candidate_flag,
     )
 }
@@ -2497,8 +2557,8 @@ fn indent(s: &str, prefix: &str) -> String {
 #[cfg(test)]
 mod sanitize_tests {
     use super::{
-        decision_relay_post_action, read_queue, resolve_llm_content_cli,
-        resolve_dispute_choice, resolve_llm_content_prompt_user, request_prompt_inner, sanitize_to_agent,
+        decision_relay_post_action, read_queue, request_prompt_inner, resolve_arbitration_choice,
+        resolve_llm_content_cli, resolve_llm_content_prompt_user, sanitize_to_agent,
         trusted_autotrade_session_key, write_queue_atomic, PendingEntry, Queue, Status,
     };
     use chrono::Utc;
@@ -2596,23 +2656,25 @@ mod sanitize_tests {
     }
 
     #[test]
-    fn dispute_resolver_is_deterministic_and_carries_decision_id() {
+    fn arbitration_resolver_is_deterministic_and_carries_decision_id() {
         let mut entry = decision_entry();
-        entry.source_event = Some(super::dispute::JOB_REJECTED.to_string());
+        entry.source_event =
+            Some(crate::commands::agent_commerce::task::arbitration::JOB_REJECTED.to_string());
         entry.decision_id = Some("job-123:job_rejected:event-1".to_string());
-        entry.choices = super::dispute::default_choices(
-            super::dispute::JOB_REJECTED,
+        entry.choices = crate::commands::agent_commerce::task::arbitration::default_choices(
+            crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
             &entry.job_id,
         );
-        let selected = resolve_dispute_choice(
-            super::dispute::JOB_REJECTED,
+        entry.expires_at = Some(2_000_000_000);
+        let selected = resolve_arbitration_choice(
+            crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
             &entry.job_id,
             &entry.choices,
             "B 理由：done",
         )
         .unwrap()
         .unwrap();
-        assert_eq!(selected.action_id, "dispute_raise");
+        assert_eq!(selected.action_id, "raise_arbitration");
         assert_eq!(selected.params["reason"], "done");
         for content in [
             resolve_llm_content_cli(&entry),
@@ -2620,6 +2682,9 @@ mod sanitize_tests {
         ] {
             assert!(content.contains("--decision-id \"job-123:job_rejected:event-1\""));
         }
+        let cli_content = resolve_llm_content_cli(&entry);
+        assert!(cli_content.contains("--choices-json '[{\"key\":\"A\""));
+        assert!(cli_content.contains("--expires-at 2000000000"));
     }
 
     #[test]

@@ -15,7 +15,7 @@ metadata:
 Use the most specific reference for the current intent. Its command-selection,
 confirmation, output, and recovery rules take precedence over generic guidance.
 
-1. `job_rejected` / `sub_user_reject`, an active dispute A/B reply, an ASP request to handle a rejected/refund decision, a dispute list/progress query, a selected dispute `jobId`, or the query-confirmation A/B reply → `references/task-dispute.md` plus `references/task-core.md` for envelope activation.
+1. The arbitration routes in the table below → `references/task-arbitration.md`; envelope activation also uses `references/task-core.md`. The arbitration reference owns its action registry and output templates.
 2. Other structured inbound events or agent chat → `references/task-core.md`.
 3. New task or subscription → `references/identity-service-search.md` +
    `references/intent-keyword-extraction.md` + `references/identity-service-contract.md`.
@@ -57,11 +57,14 @@ At thread start, run
 | Look up, inspect, or view an explicit `agentId` / `#N` agent; list own agents; view its services | `references/identity-discover.md` + `references/identity-output-templates.md` + `references/identity-service-contract.md` |
 | View reviews/reputation for Agent `#N` | `references/identity-reviews.md` |
 | Activate/deactivate Agent `#N` | `references/identity-listing.md` + `references/identity-cli-reference.md` |
-| Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
+| Browse public/unassigned tasks or start accepting new jobs as ASP | `references/task-asp-accept.md`, §1; ASP receives designated jobs passively |
 | Auto-renew, trial cancel, reject, refund, or deliver | §Task Marketplace |
-| View arbitration tasks or inspect arbitration status as User/ASP | `references/task-arbitration.md` + `references/task-cli-reference.md` |
-| Existing task actions, task list, or subscription list/detail | `references/task-user-playbook.md` only; use its unified task/subscription routing |
-| ASP rejection/refund decision (including opening an existing decision card), dispute list/progress, selected dispute jobId, or query-confirmation A/B | `references/task-dispute.md`; this takes precedence over generic task lists/status |
+| View an existing User task list or ASP task list | `references/task-user-playbook.md` → `references/task-user-intent-routing.md`, §Task lists |
+| View rejected ASP tasks, refund-decision candidates, or tasks that can be arbitrated (`哪些可以仲裁` / `可以仲裁的任务`) | `references/task-user-playbook.md` → `references/task-user-intent-routing.md`, §Task lists; use the rejected filter |
+| View tasks with an arbitration already filed | `references/task-arbitration.md`, §Query arbitration cases; use `arbitration-list` |
+| View the current or a specified arbitration case's detail/progress | `references/task-arbitration.md`, §Query an arbitration detail; use `arbitration-detail` |
+| Start arbitration for a specified rejected task, or handle its refund/arbitration decision | `references/task-arbitration.md`, §Open the rejection decision; this takes precedence over generic task actions/status |
+| Other existing task actions or subscription list/detail | `references/task-user-playbook.md` |
 | Pause/stop subscription copy-trading | `references/task-user-playbook.md`, §Pause auto copy-trade only |
 | Devices or subscription-message receipt/replay settings | `references/task-user-playbook.md`, §Device List / device-receipt; buyer side only |
 | Receive/resume/restore an existing subscription or its signals; update its copy-trade policy; `listen to <subscription title>` | `references/task-user-playbook.md`, §Signal-receipt watch entry; resolve the active subscription, pass authorization, then use scoped watch. Never read backlog first, guess `jobId`, or use global watch |
@@ -78,10 +81,10 @@ A2MCP reference. Otherwise, use the A2A task/subscription preparation flow.
 
 ## Task progression
 
-Treat the CLI result as the progression contract:
-When presenting it to the user, read `references/task-output-templates.md` for
-the platform-neutral result and next-action templates. When routing an action,
-read `references/task-action-routing.md`.
+Treat the CLI result as the progression contract. For `arbitration_*` phases,
+use the Action routing and Output templates sections in
+`references/task-arbitration.md`. For other phases, use
+`references/task-output-templates.md` and `references/task-action-routing.md`.
 
 ```json
 {
@@ -106,7 +109,7 @@ Route by `decision`, then use `reason`, `nextAction`, and `payload`:
 - `blocked`: stop the current path and handle `reason`.
 - `requires_user_input`: collect only the missing input indicated by `payload`, then retry the selected `nextAction`.
 
-Render `nextAction` as a numbered list populated from the CLI result.
+Render the returned `nextAction` entries as a numbered list.
 
-Derive progression from the structured fields and preserve backend field names
-inside `payload`.
+Derive progression from the structured fields. Treat human-readable output as
+presentation and keep backend field names inside `payload`.
