@@ -15,16 +15,42 @@ use crate::file_keyring;
 
 const SERVICE: &str = "onchainos";
 const UNIFIED_KEY: &str = "agentic-wallet";
+const FORCE_FILE_KEYRING_ENV: &str = "ONCHAINOS_FORCE_FILE_KEYRING";
 
 // --------------- internal helpers ---------------
+
+fn parse_bool(value: &str) -> bool {
+    value == "1" || value.eq_ignore_ascii_case("true")
+}
+
+/// Whether this process must avoid the OS keyring entirely.
+///
+/// Runtime configuration takes precedence over the value baked into test
+/// packages at compile time. This lets a test package default to the encrypted
+/// file store while still allowing an explicit runtime `0`/`false` override.
+fn force_file_keyring() -> bool {
+    std::env::var(FORCE_FILE_KEYRING_ENV)
+        .map(|value| parse_bool(value.trim()))
+        .unwrap_or_else(|_| {
+            option_env!("ONCHAINOS_FORCE_FILE_KEYRING")
+                .map(parse_bool)
+                .unwrap_or(false)
+        })
+}
+
+fn read_file_blob() -> Result<HashMap<String, String>> {
+    file_keyring::read_blob().map_err(|_| {
+        anyhow::anyhow!("Credentials corrupted. Please login again: onchainos wallet login")
+    })
+}
 
 /// Read the entire JSON blob from the keyring.
 /// Public so callers can batch-read multiple keys in a single access.
 ///
-/// Priority: OS keyring first (macOS/Windows always work); fall back to
-/// file_keyring only when OS returns empty or errors (headless Linux, Docker).
-/// This keeps macOS/Windows behaviour identical to the original code —
-/// file_keyring is never touched when the OS keyring is healthy.
+/// Priority: forced file keyring; otherwise OS keyring first on macOS/Windows,
+/// with file_keyring fallback when the OS store is empty or errors. This keeps
+/// release behavior unchanged while test packages can avoid OS authorization
+/// prompts entirely.
 ///
 /// If file_keyring fails (corrupted / undecryptable), we surface an actionable
 /// `Err` to the caller instead of silently purging every credential — silently
@@ -32,6 +58,9 @@ const UNIFIED_KEY: &str = "agentic-wallet";
 /// still expired" loop with no explanation (spec §3 / §8.5 #7). The caller maps
 /// the error to exit code 1.
 pub fn read_blob() -> Result<HashMap<String, String>> {
+    if force_file_keyring() {
+        return read_file_blob();
+    }
     if cfg!(target_os = "linux") {
         // Linux: file_keyring is the durable cross-process store.
         // Fall back to OS keyring only if file is empty (e.g. first run
@@ -74,26 +103,23 @@ fn read_blob_os_first() -> Result<HashMap<String, String>> {
             eprintln!("Warning: OS keyring read failed ({e}), trying file fallback");
         }
     }
-    match file_keyring::read_blob() {
-        Ok(map) => Ok(map),
-        Err(_) => {
-            // Same as the Linux path: surface corruption to the caller rather
-            // than silently purging every credential. See spec §3 / §8.5 #7.
-            Err(anyhow::anyhow!(
-                "Credentials corrupted. Please login again: onchainos wallet login"
-            ))
-        }
-    }
+    // Same as the Linux path: surface corruption to the caller rather than
+    // silently purging every credential. See spec §3 / §8.5 #7.
+    read_file_blob()
 }
 
 /// Write the entire JSON blob to the keyring.
 ///
+/// - Forced mode: file_keyring only; never touch the OS keyring.
 /// - macOS/Windows: OS keyring only; file_keyring on failure.
 /// - Linux: always write file_keyring (keyutils session keyring is not
 ///   reliably shared across processes — e.g. a Telegram bot runs in a
 ///   different session than the user's SSH shell). OS keyring is also
 ///   attempted best-effort for in-session convenience.
 fn write_blob(map: &HashMap<String, String>) -> Result<()> {
+    if force_file_keyring() {
+        return file_keyring::write_blob(map);
+    }
     if cfg!(target_os = "linux") {
         // Linux: file_keyring is the durable store; OS keyring best-effort.
         let result = file_keyring::write_blob(map);
@@ -169,9 +195,13 @@ pub fn store(credentials: &[(&str, &str)]) -> Result<()> {
     write_blob(&map)
 }
 
-/// Clear all credentials by deleting the single keyring entry.
-/// Also clears the file fallback to ensure no stale credentials remain.
+/// Clear credentials from the selected store. Forced mode deliberately leaves
+/// the OS keyring untouched, keeping test-package credentials isolated from a
+/// release installation on the same machine.
 pub fn clear_all() -> Result<()> {
+    if force_file_keyring() {
+        return file_keyring::clear_all();
+    }
     let _ = os_clear_all();
     file_keyring::clear_all()
 }
@@ -205,10 +235,48 @@ mod tests {
             fs::remove_dir_all(&dir).ok();
         }
         fs::create_dir_all(&dir).unwrap();
+        let previous_force = std::env::var_os(FORCE_FILE_KEYRING_ENV);
         std::env::set_var("ONCHAINOS_HOME", &dir);
+        std::env::set_var(FORCE_FILE_KEYRING_ENV, "1");
         f();
+        if let Some(previous_force) = previous_force {
+            std::env::set_var(FORCE_FILE_KEYRING_ENV, previous_force);
+        } else {
+            std::env::remove_var(FORCE_FILE_KEYRING_ENV);
+        }
         std::env::remove_var("ONCHAINOS_HOME");
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn forced_file_keyring_round_trip_never_needs_the_os_store() {
+        with_temp_home("forced_round_trip", || {
+            let mut map = HashMap::new();
+            map.insert("access_token".to_string(), "tok-123".to_string());
+
+            write_blob(&map).expect("forced write must use the encrypted file store");
+            let path = crate::home::onchainos_home().unwrap().join("keyring.enc");
+            assert!(path.is_file());
+            assert_eq!(read_blob().unwrap(), map);
+
+            clear_all().expect("forced clear must use the encrypted file store");
+            assert!(!path.exists());
+        });
+    }
+
+    #[test]
+    fn runtime_false_overrides_a_baked_file_keyring_default() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let previous_force = std::env::var_os(FORCE_FILE_KEYRING_ENV);
+        std::env::set_var(FORCE_FILE_KEYRING_ENV, "false");
+        assert!(!force_file_keyring());
+        if let Some(previous_force) = previous_force {
+            std::env::set_var(FORCE_FILE_KEYRING_ENV, previous_force);
+        } else {
+            std::env::remove_var(FORCE_FILE_KEYRING_ENV);
+        }
     }
 
     #[test]

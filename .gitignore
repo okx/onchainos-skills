@@ -92,3 +92,10 @@ skills/okx-agent-task-workspace/
 .agents/skills/onchainos-skills
 
 output/
+
+
+scripts/dev
+
+.aiide/
+.aiide-preview/
+

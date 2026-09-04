@@ -16,52 +16,26 @@ The task state machine has moved into the CLI (`onchainos agent next-action`) �
 
 ---
 
-## 🛑 Provider work is gated by v2 acceptance
+## 🛑 `deliver` is gated by `job_accepted`
 
-For the §1.3 designated-provider flow, the buyer creates and funds first. On
-`job_asp_selected` (single) or `sub_open` (subscription), follow
-[task-asp-accept.md](task-asp-accept.md): verify the exact registered Service,
-produce `ACCEPT / NEED_PARAMS / REJECT`, and use the new provider-decision
-commands. Do not use legacy `apply` or `asp-reject`.
+`apply` going on-chain does NOT advance the task status — it stays `created`. The User Agent then has to run `confirm-accept`, which triggers the `job_accepted` system event. **Only after `job_accepted` arrives** may the ASP run `onchainos agent deliver` / `okx-a2a xmtp-send` the deliverable.
 
-Real work and delivery start only after the ASP accept mutation is confirmed by
-the corresponding accepted/active event. A natural-language request is not itself
-authorization to execute.
+Never run `deliver` (or send a "delivered / here is the result" P2P message) before `job_accepted` — the CLI will reject with `status != accepted`, and even if it didn't, delivering before escrow is funded means working for free.
 
-On single-task `job_accepted`, reuse the designated registered Service's existing
-AI/Skill workflow with authoritative `serviceId`, description, complete
-`serviceParams`, and forwarded attachments. Do not replace it with an unrelated
-ad-hoc workflow. Any remaining clarification uses `okx-a2a session send`. On
-subscription `sub_asp_selected`, the latest
-subscription detail must report `subStatus/status=ACTIVE(1)` before notification
-or service startup; missing/non-Active state fails closed.
+Real work execution (calling external tools / generating output / etc.) ALSO waits for `job_accepted`. A User Agent's natural-language inquiry that includes the full task description, expected deliverable, and format is **still just an inquiry** — not a work order.
 
-## §1.6 Delivery contract
+> **Deprecated `--autotrade`:** the CLI still accepts this argument so older ASP scripts do not fail,
+> but ignores its value completely. It is never parsed, validated, appended to the XMTP message, or used
+> to drive User-side execution. Put the complete signal in `--deliverable-text` (or the delivered file).
 
-- Fetch authoritative detail before delivery. A one-time task must be `accepted`; a subscription must
-  be `ACTIVE` and within its backend service/buffer period.
-- `onchainos agent deliver` internally invokes `okx-a2a file upload` when the deliverable is a native
-  file, or when text exceeds 500 Unicode characters. Long text is sent as `.md`; local conversion or
-  upload failure falls back to inline text.
-- It then invokes `okx-a2a xmtp-send` with `[intent:deliver]`. A missing Buyer Agent id or any A2A
-  send failure stops the flow. For one-time tasks this explicitly forbids the on-chain submit.
-- Only after successful A2A delivery does a one-time task call the submit mutation and broadcast its
-  user operation. Subscription delivery saves locally and returns without calling single-task submit.
-- Use only the new `--file` / `--deliverable-text` inputs. The old ignored `--message` and
-  `--autotrade` delivery flags are not part of the new CLI contract.
-
-## §1.8 On-chain submission notification
-
-On `job_submitted`, do not resend the deliverable or send any A2A peer message. Notify only the ASP
-owner that the submit transaction is confirmed and the task is waiting for the User Agent's acceptance
-or rejection, then end the turn. `job_completed` and `job_rejected` remain action-required follow-ups.
+---
 
 ## Peer Message: `[user_rejected]`
 
 When the ASP sub session receives a peer message starting with `[user_rejected]:`, the User Agent has declined this ASP's application (either explicitly rejected, or accepted another ASP for the same job).
 
 1. **Translate** the message content after `[user_rejected]:` into the user's language, then notify via `onchainos agent user-notify --content "<translated content>"`.
-2. **Do NOT reply** to the User Agent — no `okx-a2a session send`, no `next-action`. This is a terminal notification.
+2. **Do NOT reply** to the User Agent — no `okx-a2a xmtp-send`, no `next-action`. This is a terminal notification.
 3. End turn.
 
 ---
@@ -92,20 +66,19 @@ Trigger: `my provided subscriptions` / `subscriptions I provide`. Command: `onch
 
 ## Subscription events (`sub_*`)
 
-For the ASP, most later subscription events are display-only notifications. Two
-events are action-required: `sub_open` owns the initial provider decision and
-`sub_user_reject` owns the later refund/dispute decision.
+For the ASP, **most** subscription events are display-only notifications: call `next-action --role asp`
+and render the returned message; don't push a decision, don't wait, don't transition state. The **one
+exception is `sub_user_reject`** — it requires an ASP refund/dispute decision (see its row below), so do
+NOT treat it as display-only or ignore it.
 
 | Event | Action |
 |---|---|
-| `sub_open` | **Run the §1.3 provider decision.** Fetch latest subscription detail, require CREATED, verify the exact registered Service, then return exactly `ACCEPT / NEED_PARAMS / REJECT` and follow [task-asp-accept.md](task-asp-accept.md). |
-| `sub_asp_selected` | Backend subscription-acceptance event (the Lark flow also calls this `sub_accepted`). The CLI fetches authoritative subscription detail, renders the fixed acceptance notice to the ASP owner, then starts the registered Service's existing AI/Skill workflow. If output is ready now, hand it to §1.6 delivery; for schedule/event-driven services initialize that workflow without inventing an empty deliverable. |
+| `sub_asp_selected` | Render the CLI's canonical `Content:` per the language rule below. End turn. |
 | `sub_complete_notify` / `sub_close_notify` / `sub_failed_notify` | Render the CLI's canonical terminal `Content:` per the language rule below, then follow `session-cleanup`. End turn. |
-| `sub_asp_agree` | ASP's own refund action; finish the ASP turn immediately. |
-| `sub_asp_dispute` | Continue and complete the existing automated subscription evidence flow returned by `next-action`. |
+| `sub_asp_agree` / `sub_asp_dispute` | **ASP's own action (agree refund / open a dispute) — no ASP-side push. Silently ignore. End turn.** Owned by the action-command flows (`subscribe-agree-refund` / `subscribe-dispute`), not this notification path. |
 | `sub_user_reject` | Read `task-arbitration.md` and use its unified A/B decision contract. |
 | `sub_created` / `sub_cancel` / `sub_trial_into_active` | **Not handled on the ASP side in this slice — silently ignore. End turn.** Buyer-only. |
-| `sub_renew` | Renewal → the **previous period's income is now claimable**. Run `onchainos agent subscribe-asp-claim <jobId> --agent-id <yours>` (claims your own funds — no buyer action, do not send a peer message), then push a short localized note via `onchainos agent user-notify`; if the CLI reports nothing claimable, end the turn silently. |
+| `sub_renew` | Renewal → the **previous period's income is now claimable**. Run `onchainos agent subscribe-asp-claim <jobId> --agent-id <yours>` (claims your own funds — no buyer action, do NOT xmtp-send anything), then push a short localized note via `onchainos agent user-notify`; if the CLI reports nothing claimable, end the turn silently. |
 
 #### ASP `sub_*` language rule
 

@@ -60,7 +60,7 @@ pub enum AgentCommand {
     /// Search public Agents
     Search(identity::SearchArgs),
 
-    /// Query an Agent's services
+    /// Query an Agent's services (optional --page / --page-size; defaults 1 / 3)
     #[command(name = "service-list")]
     ServiceList(identity::ServiceListArgs),
 
@@ -97,36 +97,48 @@ pub enum AgentCommand {
     #[command(name = "create-task")]
     CreateTask {
         #[arg(long)]
-        title: String,
-        #[arg(long)]
         description: String,
-        #[arg(long = "description-summary")]
-        description_summary: Option<String>,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        #[arg(long = "payment-token-symbol")]
-        payment_token_symbol: String,
-        #[arg(long = "payment-token-amount")]
-        payment_token_amount: String,
+        #[arg(long)]
+        budget: f64,
+        #[arg(long = "max-budget")]
+        max_budget: f64,
+        #[arg(long)]
+        currency: String,
+        #[arg(long)]
+        title: Option<String>,
+        /// Specified provider agentId (required; skip asp-match and negotiate directly)
+        #[arg(long)]
+        provider: String,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
+        /// Payment mode to set at creation time (required; escrow only).
+        #[arg(long = "payment-mode")]
+        payment_mode: String,
+        /// Service ID from asp/match response (required)
         #[arg(long = "service-id")]
         service_id: String,
-        #[arg(long = "service-params", default_value = "{}")]
-        service_params: String,
+        /// Service input parameters (natural language string)
+        #[arg(long = "service-params")]
+        service_params: Option<String>,
+        /// Service token contract address
         #[arg(long = "service-token-address")]
-        service_token_address: String,
+        service_token_address: Option<String>,
+        /// Service price (from asp/match feeAmount)
         #[arg(long = "service-token-amount")]
-        service_token_amount: String,
-        #[arg(long = "category-code")]
-        category_code: Option<String>,
-        #[arg(long = "min-credit-score")]
-        min_credit_score: Option<f64>,
-        #[arg(long, default_value = "private", value_parser = ["private", "public"])]
-        visibility: String,
-        #[arg(long = "chain-id", default_value_t = 196)]
-        chain_id: u64,
+        service_token_amount: Option<String>,
+        /// Exact provider service Guide. Stored locally before broadcast.
+        #[arg(long = "service-guide")]
+        service_guide: Option<String>,
+        /// SHA-256 of the exact service Guide when supplied by the provider.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// User-confirmed values for the matching Guide.
+        #[arg(long = "guide-consent-json")]
+        guide_consent_json: Option<String>,
+        /// Accepted for compatibility but ignored — user identity is auto-resolved.
+        #[arg(long = "agentId", alias = "agent-id", hide = true)]
+        _agent_id: Option<String>,
     },
 
     /// Create a subscription task
@@ -152,78 +164,23 @@ pub enum AgentCommand {
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
         #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        /// Copy-trade subscription marker: 0=off, 1=on
-        #[arg(long = "copy-trade", default_value_t = 0, value_parser = clap::value_parser!(i32).range(0..=1))]
-        copy_trade: i32,
-        /// Exact service description returned by asp-match. Only bounded
-        /// asset/tool hints are persisted; the raw prose is never executed.
-        #[arg(long = "service-description", default_value = "")]
-        service_description: String,
+        provider_agent_id: Option<String>,
+        /// Exact provider service Guide. Stored locally before broadcast.
+        #[arg(long = "service-guide")]
+        service_guide: Option<String>,
+        /// SHA-256 of the exact service Guide when supplied by the provider.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// User-confirmed values for the matching Guide.
+        #[arg(long = "guide-consent-json")]
+        guide_consent_json: Option<String>,
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
-        /// Explicit signal handling mode (`auto` or `notify_only`).
-        #[arg(long = "autotrade-mode")]
-        autotrade_mode: Option<String>,
-        /// Fixed quote amount used for every delivered signal.
-        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
-        /// e.g. 20.5; never minimal units; do not include a USDT/USDC suffix.]
-        #[arg(long = "autotrade-amount")]
-        autotrade_amount: Option<String>,
-        /// Per-delivery automatic-execution quote cap.
-        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
-        /// e.g. 50; never minimal units; do not include a USDT/USDC suffix.]
-        #[arg(long = "autotrade-cap")]
-        autotrade_cap: Option<String>,
-        /// Quote currency for amount/cap (`usdt` or `usdc`).
-        #[arg(long = "autotrade-quote")]
-        autotrade_quote: Option<String>,
-        /// User-authorized Trade Kit environment (`live` or `demo`).
-        #[arg(long = "autotrade-environment")]
-        autotrade_environment: Option<String>,
-        /// User-authorized Trade Kit derivative margin mode.
-        #[arg(long = "autotrade-margin-mode")]
-        autotrade_margin_mode: Option<String>,
-        /// User-authorized signal-entry order policy.
-        #[arg(long = "autotrade-order-policy")]
-        autotrade_order_policy: Option<String>,
-        /// User-selected Trade Kit credential source.
-        #[arg(long = "autotrade-auth-mode")]
-        autotrade_auth_mode: Option<String>,
-        /// User-confirmed settings as one JSON object. Stable product fields
-        /// stay flat; unknown fields must use typed entries under `extra`.
-        #[arg(long = "autotrade-settings-json")]
-        autotrade_settings_json: Option<String>,
-        /// Execution fields that the selected service requires the subscriber
-        /// to confirm. Repeat per field. Core names and matching value flags:
-        /// mode (--autotrade-mode), tradeAmount (--autotrade-amount),
-        /// cap (--autotrade-cap), quote (--autotrade-quote), environment
-        /// (--autotrade-environment), marginMode (--autotrade-margin-mode),
-        /// orderPolicy (--autotrade-order-policy), authMode
-        /// (--autotrade-auth-mode). Stable fields use their top-level name;
-        /// unknown fields use extra.<key> and a typed object in
-        /// --autotrade-settings-json. tradeAmountU is accepted only as a
-        /// deprecated alias for the public tradeAmount name.
-        #[arg(long = "autotrade-required-field")]
-        autotrade_required_fields: Vec<String>,
         #[arg(long, default_value = "")]
         format: String,
-    },
-
-    /// Replace the complete serviceParams during a v2 provider clarification round.
-    #[command(name = "service-param-update")]
-    ServiceParamUpdate {
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: String,
-        #[arg(long = "task-type", value_enum)]
-        task_type: task::user::service_param_update::ServiceParamTaskType,
-        #[arg(long = "request-id")]
-        request_id: String,
-        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
-        round: u8,
-        #[arg(long = "service-params")]
-        service_params: String,
+        /// Legacy compatibility input. Create-time device selection is rejected.
+        #[arg(long = "exclude-device", hide = true)]
+        exclude_device: Option<Vec<String>>,
     },
 
     /// Cancel a subscription (unified: trial cancel + close auto-renew)
@@ -620,6 +577,8 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long, default_value = "")]
         file: String,
+        #[arg(long, default_value = "Task completed, please review")]
+        message: String,
         /// Text deliverable content for auto-save. When non-empty and --file is empty,
         /// the CLI writes this to a temp file and persists it as a text deliverable.
         #[arg(long = "deliverable-text", default_value = "")]
@@ -627,6 +586,10 @@ pub enum AgentCommand {
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")]
         agent_id: String,
+        /// Deprecated compatibility argument. Accepted but ignored; only the
+        /// explicit text/file deliverable is sent and processed.
+        #[arg(long, default_value = "")]
+        autotrade: String,
     },
 
     /// Check deterministic local Trade Kit CLI/version/capability compatibility.
@@ -709,9 +672,6 @@ pub enum AgentCommand {
         /// `plugin-approved` alias is retained for compatibility).
         #[arg(long)]
         plugin: Option<String>,
-        /// Deprecated. Model routes are persisted with `subscription-route-set`.
-        #[arg(long)]
-        tool: Option<String>,
         /// Quote stablecoin dex trades pay with / settle into: `usdc` | `usdt`.
         /// Pass ONLY when the user named one; omitted keeps the stored choice
         /// (or the default, USDT).
@@ -813,53 +773,18 @@ pub enum AgentCommand {
         amount: String,
     },
 
-    /// Execute one admitted delivery through a venue-specific CLI and
-    /// deterministically report its terminal result to the job UI.
-    #[command(name = "autotrade-execute", hide = true)]
-    AutotradeExecute {
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long = "delivery-id")]
-        delivery_id: String,
-        /// dex | defi | trade_kit | polymarket | hyperliquid
-        #[arg(long)]
-        venue: String,
-        /// buy | sell
-        #[arg(long)]
-        action: String,
-        /// Exact persisted policy amount.
-        #[arg(long)]
-        amount: String,
-        /// `auto` for persisted grant execution; `one_time` for an exact
-        /// over-cap permit. `manual` is accepted only to fail closed for legacy callers.
-        #[arg(long = "execution-mode", default_value = "auto")]
-        execution_mode: String,
-        /// JSON array containing only the target CLI's argv (no program/shell).
-        #[arg(long = "command-json")]
-        command_json: String,
-        #[arg(long = "timeout-sec", default_value_t = 120)]
-        timeout_sec: u64,
-    },
-
     /// Reserve an Agent-direct delivery immediately before the selected
-    /// Skill/tool performs its money-moving call. This command validates local
-    /// authorization and idempotency but never accepts or executes target argv.
+    /// Skill/tool performs its money-moving call. This command validates the
+    /// active Guide+Consent contract and idempotency but never executes target argv.
     #[command(name = "autotrade-direct-claim", hide = true)]
     AutotradeDirectClaim {
         #[arg(long = "job-id")]
         job_id: String,
         #[arg(long = "delivery-id")]
         delivery_id: String,
-        /// Resolved quote amount used as authorization metadata.
+        /// Exact amount derived by the runtime Agent from Guide, Consent, and Signal.
         #[arg(long)]
         amount: String,
-        /// Current tool-account available quote amount. Required when the
-        /// persisted policy uses a percentage amount.
-        #[arg(long = "available-amount")]
-        available_amount: Option<String>,
-        /// auto | one_time (`manual` is legacy and rejected by authorization)
-        #[arg(long = "execution-mode", default_value = "auto")]
-        execution_mode: String,
     },
 
     /// Persist the documented result returned by an Agent-selected Skill/tool.
@@ -908,32 +833,6 @@ pub enum AgentCommand {
         reason: String,
     },
 
-    /// Persist a bounded model-selected route for an Active subscription.
-    #[command(name = "subscription-route-set", hide = true)]
-    SubscriptionRouteSet {
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long = "asset-class")]
-        asset_class: String,
-        #[arg(long = "skill-id")]
-        skill_id: String,
-        #[arg(long = "plugin-id")]
-        plugin_id: Option<String>,
-        #[arg(long)]
-        protocol: Option<String>,
-        #[arg(long = "requirement")]
-        requirements: Vec<String>,
-        #[arg(long = "delivery-id")]
-        delivery_id: String,
-    },
-
-    /// Clear cached model routes after an explicit incompatibility or reset.
-    #[command(name = "subscription-route-clear", hide = true)]
-    SubscriptionRouteClear {
-        #[arg(long = "job-id")]
-        job_id: String,
-    },
-
     /// Read-only first-entry gate for an explicitly scoped subscription watch.
     #[command(name = "autotrade-watch-precheck", hide = true)]
     AutotradeWatchPrecheck {
@@ -973,42 +872,6 @@ pub enum AgentCommand {
         agent_id: String,
         /// Optional decline reason recorded by the backend.
         #[arg(long, default_value = "")]
-        reason: String,
-    },
-
-    /// Accept a designated one-time task created and funded by the buyer.
-    #[command(name = "accept-job-by-provider")]
-    AcceptJobByProvider {
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: String,
-    },
-
-    /// Decline a designated one-time task and trigger its refund flow.
-    #[command(name = "decline-job-by-provider")]
-    DeclineJobByProvider {
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: String,
-        #[arg(long)]
-        reason: String,
-    },
-
-    /// Accept a designated subscription created and funded by the buyer.
-    #[command(name = "accept-subscription")]
-    AcceptSubscription {
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: String,
-    },
-
-    /// Decline a designated subscription and trigger its refund flow.
-    #[command(name = "decline-subscription")]
-    DeclineSubscription {
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: String,
-        #[arg(long)]
         reason: String,
     },
 
@@ -1343,7 +1206,7 @@ pub enum AgentCommand {
     ///                                              from the inbound notification
     ///
     /// All other inputs (`jobId`, `event`, `code`, `jobTitle`, `provider`, `data`,
-    /// etc.) are extracted from inside the `--message` JSON.
+    /// `peerTaskMinVersion`, etc.) are extracted from inside the `--message` JSON.
     /// This keeps the LLM-facing surface minimal: copy the envelope through, the
     /// CLI parses out whatever it needs.
     #[command(name = "next-action")]
@@ -1357,7 +1220,7 @@ pub enum AgentCommand {
         role: String,
         /// Full system event envelope as a JSON string — the entire `message` object.
         /// Required. Must contain at least `event` and `jobId`; optional fields the
-        /// CLI reads: `code` / `jobTitle` / `provider` / `data`
+        /// CLI reads: `code` / `jobTitle` / `provider` / `data` / `taskMinVersion`
         /// (plus any task-detail fields like `paymentMode` /
         /// `tokenAmount` / `tokenSymbol` / `serviceParams` that downstream scenes
         /// may consume directly).
@@ -1514,39 +1377,40 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         // ── Client (user) task commands ────────────────────────────
         AgentCommand::CreateTask {
-            title,
             description,
-            description_summary,
-            provider_agent_id,
-            payment_token_symbol,
-            payment_token_amount,
+            budget,
+            max_budget,
+            currency,
+            title,
+            provider,
             attachments,
+            payment_mode,
             service_id,
             service_params,
             service_token_address,
             service_token_amount,
-            category_code,
-            min_credit_score,
-            visibility,
-            chain_id,
+            service_guide,
+            service_guide_hash,
+            guide_consent_json,
+            _agent_id: _,
         } => {
             task::user::run_task(
                 T::Create {
-                    title,
                     description,
-                    description_summary,
-                    provider_agent_id,
-                    payment_token_symbol,
-                    payment_token_amount,
+                    budget,
+                    max_budget,
+                    currency,
+                    title,
+                    provider,
                     attachments,
+                    payment_mode,
                     service_id,
                     service_params,
                     service_token_address,
                     service_token_amount,
-                    category_code,
-                    min_credit_score,
-                    visibility,
-                    chain_id,
+                    service_guide,
+                    service_guide_hash,
+                    guide_consent_json,
                 },
                 ctx,
             )
@@ -1564,20 +1428,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             description,
             attachments,
             provider_agent_id,
-            copy_trade,
-            service_description,
+            service_guide,
+            service_guide_hash,
+            guide_consent_json,
             service_interval,
-            autotrade_mode,
-            autotrade_amount,
-            autotrade_cap,
-            autotrade_quote,
-            autotrade_environment,
-            autotrade_margin_mode,
-            autotrade_order_policy,
-            autotrade_auth_mode,
-            autotrade_settings_json,
-            autotrade_required_fields,
             format,
+            exclude_device,
         } => {
             task::user::run_task(
                 T::CreateSubscribe {
@@ -1591,43 +1447,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     description,
                     attachments,
                     provider_agent_id,
-                    copy_trade,
-                    service_description,
+                    service_guide,
+                    service_guide_hash,
+                    guide_consent_json,
                     service_interval,
-                    autotrade_mode,
-                    autotrade_amount,
-                    autotrade_cap,
-                    autotrade_quote,
-                    autotrade_environment,
-                    autotrade_margin_mode,
-                    autotrade_order_policy,
-                    autotrade_auth_mode,
-                    autotrade_settings_json,
-                    autotrade_required_fields,
                     format,
+                    exclude_device,
                 },
                 ctx,
-            )
-            .await
-        }
-
-        AgentCommand::ServiceParamUpdate {
-            job_id,
-            agent_id,
-            task_type,
-            request_id,
-            round,
-            service_params,
-        } => {
-            let mut client = task::common::network::task_api_client::TaskApiClient::new();
-            task::user::service_param_update::handle(
-                &mut client,
-                &job_id,
-                &agent_id,
-                task_type,
-                &request_id,
-                round,
-                &service_params,
             )
             .await
         }
@@ -2017,15 +1844,19 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Deliver {
             job_id,
             file,
+            message,
             deliverable_text,
             agent_id,
+            autotrade,
         } => {
             task::asp::run_provider(
                 task::asp::ProviderCommand::Deliver {
                     job_id,
                     file,
+                    message,
                     deliverable_text,
                     agent_id,
+                    autotrade,
                 },
                 ctx,
             )
@@ -2097,37 +1928,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::SubscriptionRouteSet {
-            job_id,
-            asset_class,
-            skill_id,
-            plugin_id,
-            protocol,
-            requirements,
-            delivery_id,
-        } => {
-            let asset_class = asset_class
-                .parse::<crate::asset_class::AssetClass>()
-                .map_err(anyhow::Error::msg)?;
-            let route = task::common::autotrade::profile::write_model_route(
-                &job_id,
-                asset_class,
-                &skill_id,
-                plugin_id.as_deref(),
-                protocol.as_deref(),
-                &requirements,
-                &delivery_id,
-            )?;
-            crate::output::success(route);
-            Ok(())
-        }
-
-        AgentCommand::SubscriptionRouteClear { job_id } => {
-            task::common::autotrade::profile::clear_model_routes(&job_id)?;
-            crate::output::success_empty();
-            Ok(())
-        }
-
         AgentCommand::AutotradeWatchPrecheck {
             job_id,
             review_existing,
@@ -2147,72 +1947,29 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             delivery_id,
             signal_type: _,
         } => {
-            use task::common::autotrade::{consent, executor};
-            let policy = consent::load_consent(&job_id)?;
-            if policy
-                .as_ref()
-                .is_some_and(|policy| policy.mode == consent::ConsentMode::Auto)
-            {
-                crate::output::success(serde_json::json!({
-                    "decision": false,
-                    "decisionPushed": false,
-                    "status": "policy_ready",
-                    "reason": "auto_authorization_already_persisted",
-                    "jobId": job_id,
-                    "deliveryId": delivery_id,
-                    "consentMode": "auto",
-                    "terminal": false,
-                    "guidance": "Re-read this delivery, run the normal grant/readiness checks, and execute only through autotrade-execute if eligible.",
-                }));
-                return Ok(());
-            }
+            use task::common::autotrade::executor;
+            // This hidden command is reached only from an in-flight legacy
+            // decision. A fixed-field Consent cannot satisfy the Guide +
+            // Guide Consent + resolved Signal contract, so never advertise a
+            // resumable execution path here.
             let outcome = executor::report_delivery(
                 &job_id,
                 &delivery_id,
                 "skipped",
-                task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                task::common::autotrade::GUIDE_EXECUTION_UNAVAILABLE_REASON,
             )?;
             let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(&job_id);
             crate::output::success(serde_json::json!({
                 "decision": false,
                 "decisionPushed": false,
                 "status": "skipped",
-                "reason": task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                "reason": task::common::autotrade::GUIDE_EXECUTION_UNAVAILABLE_REASON,
                 "jobId": job_id,
                 "deliveryId": delivery_id,
                 "terminal": true,
                 "outcome": outcome,
-                "guidance": "The deliverable was saved and no transaction was submitted. This subscription is notify-only because it has no active automatic execution policy. Do not create a per-delivery execution decision. The user may explicitly update the subscription for future automatic execution.",
+                "guidance": "The Signal remains saved for receive/display only. This retired Consent flow cannot authorize Guide-driven execution; do not create another execution decision.",
             }));
-            Ok(())
-        }
-
-        AgentCommand::AutotradeExecute {
-            job_id,
-            delivery_id,
-            venue,
-            action,
-            amount,
-            execution_mode,
-            command_json,
-            timeout_sec,
-        } => {
-            let outcome = task::common::autotrade::executor::execute(
-                task::common::autotrade::executor::ExecuteRequest {
-                    job_id: &job_id,
-                    delivery_id: &delivery_id,
-                    venue: &venue,
-                    action: &action,
-                    amount: &amount,
-                    execution_mode: task::common::autotrade::executor::ExecutionMode::parse(
-                        &execution_mode,
-                    )?,
-                    command_json: &command_json,
-                    timeout_sec,
-                },
-            )
-            .await?;
-            crate::output::success(outcome);
             Ok(())
         }
 
@@ -2220,15 +1977,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             job_id,
             delivery_id,
             amount,
-            available_amount,
-            execution_mode,
         } => {
-            let result = task::common::autotrade::executor::claim_direct(
+            let result = task::common::autotrade::executor::claim_guide_direct(
                 &job_id,
                 &delivery_id,
                 &amount,
-                available_amount.as_deref(),
-                task::common::autotrade::executor::ExecutionMode::parse(&execution_mode)?,
             )?;
             crate::output::success(result);
             Ok(())
@@ -2260,9 +2013,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             amount,
         } => {
             crate::output::success(task::common::autotrade::executor::authorize_one_time(
-                &job_id,
-                &delivery_id,
-                &amount,
+                    &job_id,
+                    &delivery_id,
+                    &amount,
             )?);
             Ok(())
         }
@@ -2524,7 +2277,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             agent_id,
             ttl_sec,
             plugin,
-            tool,
             quote,
             environment,
             margin_mode,
@@ -2556,9 +2308,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .transpose()?;
             let dynamic_settings =
                 consent::parse_dynamic_settings_json(settings_json.as_deref(), "--settings-json")?;
-            if tool.is_some() {
-                anyhow::bail!("--tool is deprecated; use subscription-route-set");
-            }
             let auto_continuation_id =
                 auto_write_continuation_id(&mode, continuation_id.as_deref())?;
             if mode == "pause" {
@@ -2835,54 +2584,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             .await
         }
 
-        AgentCommand::AcceptJobByProvider { job_id, agent_id } => {
-            task::asp::run_provider(
-                task::asp::ProviderCommand::AcceptJobByProvider { job_id, agent_id },
-                ctx,
-            )
-            .await
-        }
-
-        AgentCommand::DeclineJobByProvider {
-            job_id,
-            agent_id,
-            reason,
-        } => {
-            task::asp::run_provider(
-                task::asp::ProviderCommand::DeclineJobByProvider {
-                    job_id,
-                    agent_id,
-                    reason,
-                },
-                ctx,
-            )
-            .await
-        }
-
-        AgentCommand::AcceptSubscription { job_id, agent_id } => {
-            task::asp::run_provider(
-                task::asp::ProviderCommand::AcceptSubscription { job_id, agent_id },
-                ctx,
-            )
-            .await
-        }
-
-        AgentCommand::DeclineSubscription {
-            job_id,
-            agent_id,
-            reason,
-        } => {
-            task::asp::run_provider(
-                task::asp::ProviderCommand::DeclineSubscription {
-                    job_id,
-                    agent_id,
-                    reason,
-                },
-                ctx,
-            )
-            .await
-        }
-
         AgentCommand::SubscribeActive { agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
             task::asp::subscription::handle_active(&mut client, &agent_id).await
@@ -3061,6 +2762,17 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let job_title: Option<String> = msg_str("jobTitle");
             let provider: Option<String> = msg_str("provider");
             let data: Option<String> = msg_str("data");
+            let peer_task_min_version: Option<u32> = parsed_message
+                .get("taskMinVersion")
+                .and_then(|v| v.as_u64())
+                .and_then(|v| u32::try_from(v).ok())
+                .or_else(|| {
+                    parsed_message
+                        .get("payload")
+                        .and_then(|p| p.get("taskMinVersion"))
+                        .and_then(|v| v.as_u64())
+                        .and_then(|v| u32::try_from(v).ok())
+                });
             let parsed_message = Some(parsed_message);
             if !job_id.is_empty() {
                 if let Err(msg) = task::common::util::validate_job_id(&job_id) {
@@ -3069,11 +2781,46 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }
             if DEBUG_LOG {
                 eprintln!(
-                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}",
+                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
                     title = job_title.as_deref().unwrap_or("(none)"),
                     provider = provider.as_deref().unwrap_or("(none)"),
+                    peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
                 );
             }
+
+            // Version handshake: when peer's required minimum version is higher than the local TASK_MIN_VERSION,
+            // only prepend a notice line at the top of the script (so the agent can push an upgrade suggestion to the user);
+            // **do not block the flow** — the role flow continues to execute under the current protocol, and any actual
+            // compatibility issues (if any) are escalated when subsequent CLI / business layer errors surface.
+            let version_notice: Option<String> = if let Some(peer_min) = peer_task_min_version {
+                let local = task::common::config::TASK_MIN_VERSION;
+                if local < peer_min {
+                    if task::common::version_notice::should_show() {
+                        if DEBUG_LOG {
+                            eprintln!(
+                                "[next-action] version notice (non-blocking): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
+                            );
+                        }
+                        task::common::version_notice::mark_shown();
+                        Some("Before executing the scene below, run `onchainos agent user-notify` to notify the user (recommend upgrade but do **not** halt the flow). The `--content` template below is a sample — translate it to the user's language before sending:\n\
+                             ```bash\n\
+                             onchainos agent user-notify --content 'Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.'\n\
+                             ```\n\
+                             Then proceed to the scene below normally.\n\n".to_string())
+                    } else {
+                        if DEBUG_LOG {
+                            eprintln!(
+                                "[next-action] version notice suppressed (last shown within 48h): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
+                            );
+                        }
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
             // When --provider is passed, write the designated-provider file so generate_next_action takes the specified-provider path
             if let Some(ref pid) = provider {
@@ -3270,6 +3017,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
                 other => anyhow::bail!("--role 必须是 asp/user/evaluator，当前: {other}"),
             };
+            if let Some(notice) = &version_notice {
+                print!("{notice}");
+            }
             println!("{prompt}");
             Ok(())
         }
@@ -3453,8 +3203,22 @@ fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
 }
 
 fn parse_a2a_json_arg(raw: &str) -> anyhow::Result<serde_json::Value> {
-    serde_json::from_str(raw)
-        .map_err(|error| anyhow::anyhow!("--a2a-file payload is not valid JSON: {error}"))
+    match serde_json::from_str(raw) {
+        Ok(v) => Ok(v),
+        Err(strict_err) => {
+            let repaired = escape_control_chars_in_strings(raw);
+            match serde_json::from_str::<serde_json::Value>(&repaired) {
+                Ok(v) => {
+                    eprintln!(
+                        "[next-action] --a2a-file payload had raw control chars inside string values; \
+                         auto-repaired. Strict parse error was: {strict_err}"
+                    );
+                    Ok(v)
+                }
+                Err(_) => anyhow::bail!("--a2a-file payload is not valid JSON: {strict_err}"),
+            }
+        }
+    }
 }
 
 fn write_secure_temp_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
@@ -3554,17 +3318,16 @@ fn validate_a2a_file_arg(
     if !is_safe_a2a_file_path(fp) {
         anyhow::bail!("--a2a-file must point to a file under the OS temp directory");
     }
-    let metadata = std::fs::symlink_metadata(fp)
-        .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?;
-    if !metadata.file_type().is_file() {
-        anyhow::bail!("--a2a-file must be a regular file, not a symlink or directory");
-    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = metadata.permissions().mode() & 0o777;
-        if mode != 0o600 {
-            anyhow::bail!("--a2a-file must have mode 0600; run chmod 600");
+        let mode = std::fs::metadata(fp)
+            .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?
+            .permissions()
+            .mode()
+            & 0o777;
+        if mode & 0o077 != 0 {
+            anyhow::bail!("--a2a-file must not be readable, writable, or executable by group/others; use chmod 600");
         }
     }
     let raw =
@@ -3590,35 +3353,19 @@ fn validate_a2a_file_arg(
             "--a2a-file payload jobId {pj} does not match --message jobId {message_job_id}"
         );
     }
-    let receiver = payload
-        .get("receiverAgentId")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.receiverAgentId is required"))?;
-    if receiver != agent_id {
-        anyhow::bail!("--a2a-file receiverAgentId {receiver} does not match --agentId {agent_id}");
+    if let Some(receiver) = payload.get("receiverAgentId").and_then(|v| v.as_str()) {
+        if receiver != agent_id {
+            anyhow::bail!(
+                "--a2a-file receiverAgentId {receiver} does not match --agentId {agent_id}"
+            );
+        }
     }
     let content = payload
         .get("content")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.content is required"))?;
-    if content
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .map(str::trim)
-        != Some("[intent:deliver]")
-    {
-        anyhow::bail!("--a2a-file content must end with [intent:deliver]");
-    }
-    let embedded_job_id = content
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("jobId:"))
-        .map(str::trim)
-        .ok_or_else(|| anyhow::anyhow!("--a2a-file content.jobId is required"))?;
-    if embedded_job_id != pj {
-        anyhow::bail!(
-            "--a2a-file content jobId {embedded_job_id} does not match payload jobId {pj}"
-        );
+    if !content.contains("[intent:deliver]") {
+        anyhow::bail!("--a2a-file content must contain [intent:deliver]");
     }
     let canonical = serde_json::to_string(&payload)?;
     persist_validated_a2a_spool(pj, &canonical)
@@ -3637,7 +3384,6 @@ mod auto_consent_permit_tests {
             agent_id: Some("7".to_string()),
             ttl_sec: 3600,
             plugin: None,
-            tool: None,
             quote: None,
             environment: None,
             margin_mode: None,
@@ -3753,8 +3499,8 @@ mod auto_consent_permit_tests {
         assert!(completed.complete);
 
         run(auto_command(Some(completed.continuation_id.clone())), &ctx)
-            .await
-            .unwrap();
+        .await
+        .unwrap();
         assert_eq!(
             consent::load_consent("job-1").unwrap().unwrap().mode,
             ConsentMode::Auto
@@ -3877,16 +3623,22 @@ mod escape_control_chars_tests {
     }
 
     #[test]
-    fn rejects_a2a_file_arg_with_raw_control_char_json() {
+    fn canonicalizes_repaired_a2a_file_arg_for_downstream_strict_parse() {
         let path = write_temp_a2a(
             "raw-control-char.json",
             "{ \"msgType\":\"a2a-agent-chat\", \"jobId\":\"0xabc123\", \"receiverAgentId\":\"1696\", \"content\":\"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]\" }",
         );
 
-        let error = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
-            .expect_err("current A2A envelope must be strict JSON")
-            .to_string();
-        assert!(error.contains("payload is not valid JSON"));
+        let original = std::fs::read_to_string(&path).unwrap();
+        let got = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        let rewritten = std::fs::read_to_string(&got).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
+        assert_eq!(
+            parsed["content"].as_str().unwrap().lines().next(),
+            Some("jobId: 0xabc123")
+        );
+        std::fs::remove_file(got).ok();
     }
 
     #[test]
@@ -3942,7 +3694,7 @@ mod escape_control_chars_tests {
         let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
             .expect_err("missing intent must fail")
             .to_string();
-        assert!(err.contains("content must end with [intent:deliver]"));
+        assert!(err.contains("content must contain [intent:deliver]"));
     }
 
     #[test]
@@ -3975,43 +3727,6 @@ mod escape_control_chars_tests {
         assert!(err.contains("chmod 600"));
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn rejects_a2a_file_arg_with_non_exact_private_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let path = write_temp_a2a(
-            "owner-executable.json",
-            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
-        );
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
-
-        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
-            .expect_err("the new envelope contract requires exact mode 0600")
-            .to_string();
-        assert!(err.contains("mode 0600"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rejects_a2a_file_arg_symlink() {
-        use std::os::unix::fs::symlink;
-
-        let target = write_temp_a2a(
-            "symlink-target.json",
-            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
-        );
-        let link = target.with_file_name("symlink-envelope.json");
-        std::fs::remove_file(&link).ok();
-        symlink(&target, &link).unwrap();
-
-        let err = validate_a2a_file_arg(link.to_str().unwrap(), "0xabc123", "1696")
-            .expect_err("symlinked envelopes must fail closed")
-            .to_string();
-        assert!(err.contains("regular file"));
-        std::fs::remove_file(link).ok();
-    }
-
     #[test]
     fn rejects_a2a_file_arg_for_wrong_receiver() {
         let path = write_temp_a2a(
@@ -4024,91 +3739,9 @@ mod escape_control_chars_tests {
             .to_string();
         assert!(err.contains("receiverAgentId 8779 does not match --agentId 1696"));
     }
-
-    #[test]
-    fn rejects_a2a_file_arg_without_receiver() {
-        let path = write_temp_a2a(
-            "missing-receiver.json",
-            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
-        );
-
-        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
-            .expect_err("missing receiver must fail")
-            .to_string();
-        assert!(err.contains("payload.receiverAgentId is required"));
-    }
-
-    #[test]
-    fn rejects_a2a_file_arg_with_mismatched_embedded_job_id() {
-        let path = write_temp_a2a(
-            "wrong-embedded-job.json",
-            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xother\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
-        );
-
-        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
-            .expect_err("embedded jobId mismatch must fail")
-            .to_string();
-        assert!(err.contains("content jobId 0xother does not match payload jobId 0xabc123"));
-    }
 }
 
-fn detail_path_for_event(
-    client: &task::common::network::task_api_client::TaskApiClient,
-    job_id: &str,
-    event: &str,
-) -> String {
-    if matches!(
-        event,
-        "sub_open"
-            | "sub_created"
-            | "sub_asp_selected"
-            | "sub_user_reject"
-            | "user_decision_sub_user_reject"
-    ) {
-        client.subscribe_path(job_id)
-    } else {
-        client.task_path(job_id)
-    }
-}
-
-fn subscription_acceptance_status(detail: &serde_json::Value) -> Option<i64> {
-    detail["subStatus"]
-        .as_i64()
-        .or_else(|| {
-            detail["subStatus"]
-                .as_str()
-                .and_then(|value| value.parse().ok())
-        })
-        .or_else(|| detail["status"].as_i64())
-        .or_else(|| {
-            detail["status"]
-                .as_str()
-                .and_then(|value| value.parse().ok())
-        })
-}
-
-fn subscription_rejection_period_matches(
-    message: Option<&serde_json::Value>,
-    detail: &serde_json::Value,
-) -> bool {
-    let number = |value: Option<&serde_json::Value>| {
-        value.and_then(|value| {
-            value
-                .as_i64()
-                .or_else(|| value.as_str().and_then(|raw| raw.parse::<i64>().ok()))
-        })
-    };
-    ["periodIndex", "subStartTime", "subEndTime"]
-        .into_iter()
-        .all(
-            |key| match number(message.and_then(|value| value.get(key))) {
-                Some(event_value) => number(detail.get(key)) == Some(event_value),
-                None => true,
-            },
-        )
-}
-
-fn arbitration_decision_source_for_event(event: &str) -> Option<&'static str> {
+fn arbitration_decision_source(event: &str) -> Option<&'static str> {
     match event {
         "job_rejected" | "user_decision_job_rejected" => Some(task::arbitration::JOB_REJECTED),
         "sub_user_reject" | "user_decision_sub_user_reject" => {
@@ -4118,22 +3751,16 @@ fn arbitration_decision_source_for_event(event: &str) -> Option<&'static str> {
     }
 }
 
-fn arbitration_decision_stale_details(
+fn arbitration_decision_is_stale(
     source_event: &str,
     message: Option<&serde_json::Value>,
     detail: &serde_json::Value,
-) -> Option<serde_json::Value> {
+) -> bool {
+    let scalar = |value: Option<&serde_json::Value>| task::arbitration::scalar_string(value);
     match source_event {
-        task::arbitration::JOB_REJECTED => {
-            let status = detail["status"].as_i64().or_else(|| {
-                detail["status"]
-                    .as_str()
-                    .and_then(|value| value.parse().ok())
-            });
-            (status != Some(3)).then(|| serde_json::json!({"actualTaskStatus": status}))
-        }
+        task::arbitration::JOB_REJECTED => scalar(detail.get("status")).as_deref() != Some("3"),
         task::arbitration::SUB_USER_REJECT => {
-            let status = subscription_acceptance_status(detail);
+            let status = scalar(detail.get("subStatus")).or_else(|| scalar(detail.get("status")));
             let relay_binding = message
                 .and_then(|value| value.get("params"))
                 .and_then(|params| {
@@ -4142,41 +3769,26 @@ fn arbitration_decision_stale_details(
                         params.get("decisionBindingValue")?.as_str()?,
                     ))
                 });
-            let period_matches = match relay_binding {
-                Some((key, expected)) => task::arbitration::scalar_string(detail.get(key))
-                    .is_some_and(|actual| actual == expected),
-                None => subscription_rejection_period_matches(message, detail),
+            let period_matches = if let Some((key, expected)) = relay_binding {
+                scalar(detail.get(key)).as_deref() == Some(expected)
+            } else {
+                ["periodIndex", "subStartTime", "subEndTime"]
+                    .into_iter()
+                    .all(|key| match scalar(message.and_then(|value| value.get(key))) {
+                        Some(expected) => scalar(detail.get(key)) == Some(expected),
+                        None => true,
+                    })
             };
-            (status != Some(3) || !period_matches).then(|| {
-                serde_json::json!({
-                    "actualSubStatus": status,
-                    "periodMatches": period_matches,
-                })
-            })
+            status.as_deref() != Some("3") || !period_matches
         }
-        _ => Some(serde_json::json!({"unsupportedSourceEvent": source_event})),
-    }
-}
-
-fn subscription_acceptance_block_reason(detail: &serde_json::Value, event: &str) -> Option<String> {
-    match subscription_acceptance_status(detail) {
-        Some(1) => None,
-        Some(status) => Some(format!(
-            "[next-action blocked] Latest subscription status is {status}, not ACTIVE(1). Do not execute the {event} acceptance flow."
-        )),
-        None => Some(
-            format!(
-                "[next-action blocked] Latest subscription detail has no valid subStatus/status. Do not execute the {event} acceptance flow."
-            ),
-        ),
+        _ => true,
     }
 }
 
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).
 ///
 /// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
-/// Most network failures degrade to no prefetch. Acceptance notifications are
-/// stricter: they require authoritative detail and are blocked on fetch error.
+/// returns None on network/parse failure (does not block script output, graceful fallback).
 async fn check_status_freshness(
     job_id: &str,
     job_status_or_event: &str,
@@ -4243,10 +3855,9 @@ async fn check_status_freshness(
         "wakeup_notify",
     ];
 
-    let arbitration_decision_source = arbitration_decision_source_for_event(job_status_or_event);
-    let is_arbitration_decision_relay =
-        job_status_or_event.starts_with("user_decision_") && arbitration_decision_source.is_some();
-
+    let arbitration_source = arbitration_decision_source(job_status_or_event);
+    let is_arbitration_relay = job_status_or_event.starts_with("user_decision_")
+        && arbitration_source.is_some();
     let is_prefetch_only = PREFETCH_ONLY_EVENTS.contains(&job_status_or_event);
 
     if SKIP_ALL_EVENTS.contains(&job_status_or_event) {
@@ -4264,7 +3875,7 @@ async fn check_status_freshness(
     // Skip the gate but keep the pre-fetched context so the notification still renders title/service name.
     let is_display_only_sub = matches!(expected, Status::Other(ref s) if s == "subscription");
     if !is_prefetch_only
-        && !is_arbitration_decision_relay
+        && !is_arbitration_relay
         && matches!(expected, Status::Other(ref s) if s == "unknown")
     {
         if DEBUG_LOG {
@@ -4275,10 +3886,14 @@ async fn check_status_freshness(
 
     // Fetch task data — shared by both freshness-check and pre-fetch paths.
     let mut c = TaskApiClient::new();
-    let detail_path = detail_path_for_event(&c, job_id, job_status_or_event);
+    let detail_path = if arbitration_source == Some(task::arbitration::SUB_USER_REJECT) {
+        c.subscribe_path(job_id)
+    } else {
+        c.task_path(job_id)
+    };
     let resp = match c.get_with_identity(&detail_path, agent_id).await {
         Ok(r) => r,
-        Err(error) if arbitration_decision_source.is_some() => {
+        Err(error) if arbitration_source.is_some() => {
             return (
                 Some(task::arbitration::blocked_result(
                     "status_unavailable",
@@ -4291,43 +3906,22 @@ async fn check_status_freshness(
                 None,
             )
         }
-        Err(error)
-            if matches!(
-                job_status_or_event,
-                "job_accepted" | "sub_created" | "sub_asp_selected"
-            ) =>
-        {
-            return (
-                Some(format!(
-                    "[next-action blocked] Cannot fetch latest task detail for {job_status_or_event}: {error:#}. Do not display an acceptance notice from stale or incomplete event data."
-                )),
-                None,
-            );
-        }
         Err(_) => return (None, None),
     };
-
-    if matches!(job_status_or_event, "sub_created" | "sub_asp_selected") {
-        if let Some(reason) = subscription_acceptance_block_reason(&resp, job_status_or_event) {
-            return (Some(reason), None);
-        }
-    }
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
 
-    if let Some(source_event) = arbitration_decision_source {
-        if let Some(details) = arbitration_decision_stale_details(source_event, message, &resp) {
+    if let Some(source_event) = arbitration_source {
+        if arbitration_decision_is_stale(source_event, message, &resp) {
             return (
                 Some(task::arbitration::blocked_result(
                     "stale_event",
                     job_id,
-                    serde_json::json!({
-                        "sourceEvent": job_status_or_event,
-                        "freshness": details,
-                    }),
+                    serde_json::json!({"sourceEvent": job_status_or_event}),
                 )),
                 Some(ctx),
             );
         }
+        return (None, Some(ctx));
     }
 
     // For job_submitted: prefer an unprocessed spool delivery over an existing
@@ -4399,7 +3993,7 @@ async fn check_status_freshness(
     let prefetched = Some(ctx);
 
     // Pre-fetch-only events + display-class sub_* events: return data without freshness validation.
-    if is_prefetch_only || is_display_only_sub || is_arbitration_decision_relay {
+    if is_prefetch_only || is_display_only_sub {
         return (None, prefetched);
     }
 
@@ -4441,161 +4035,41 @@ async fn check_status_freshness(
 }
 
 #[cfg(test)]
-mod acceptance_detail_path_tests {
-    use super::{
-        arbitration_decision_source_for_event, arbitration_decision_stale_details,
-        detail_path_for_event, subscription_acceptance_block_reason,
-        subscription_acceptance_status, subscription_rejection_period_matches,
-    };
-    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+mod arbitration_freshness_tests {
+    use super::{arbitration_decision_is_stale, arbitration_decision_source};
 
     #[test]
-    fn user_acceptance_events_use_authoritative_detail_endpoint() {
-        let client = TaskApiClient::new();
+    fn decision_relay_rechecks_task_and_subscription_state() {
         assert_eq!(
-            detail_path_for_event(&client, "job-1", "job_accepted"),
-            "/priapi/v1/aieco/task/job-1"
-        );
-        assert_eq!(
-            detail_path_for_event(&client, "job-1", "sub_created"),
-            "/priapi/v1/aieco/task/subscribe/job-1"
-        );
-        assert_eq!(
-            detail_path_for_event(&client, "job-1", "sub_asp_selected"),
-            "/priapi/v1/aieco/task/subscribe/job-1"
-        );
-        assert_eq!(
-            detail_path_for_event(&client, "job-1", "sub_user_reject"),
-            "/priapi/v1/aieco/task/subscribe/job-1"
-        );
-        assert_eq!(
-            detail_path_for_event(&client, "job-1", "user_decision_sub_user_reject"),
-            "/priapi/v1/aieco/task/subscribe/job-1"
-        );
-    }
-
-    #[test]
-    fn subscription_acceptance_requires_active_authoritative_status() {
-        assert_eq!(
-            subscription_acceptance_status(&serde_json::json!({"subStatus": 1})),
-            Some(1)
-        );
-        assert_eq!(
-            subscription_acceptance_status(&serde_json::json!({"status": "1"})),
-            Some(1)
-        );
-        assert_eq!(
-            subscription_acceptance_status(&serde_json::json!({"subStatus": 0})),
-            Some(0)
-        );
-        assert_eq!(subscription_acceptance_status(&serde_json::json!({})), None);
-        assert_eq!(
-            subscription_acceptance_status(&serde_json::json!({"status": 1, "subStatus": 3})),
-            Some(3)
-        );
-        assert!(subscription_acceptance_block_reason(
-            &serde_json::json!({"subStatus": 1}),
-            "sub_created"
-        )
-        .is_none());
-        assert!(subscription_acceptance_block_reason(
-            &serde_json::json!({"subStatus": 0}),
-            "sub_created"
-        )
-        .is_some());
-        assert!(
-            subscription_acceptance_block_reason(&serde_json::json!({}), "sub_asp_selected")
-                .is_some()
-        );
-        assert!(subscription_acceptance_block_reason(
-            &serde_json::json!({"subStatus": 1}),
-            "sub_asp_selected"
-        )
-        .is_none());
-        let blocked = subscription_acceptance_block_reason(
-            &serde_json::json!({"subStatus": 0}),
-            "sub_asp_selected",
-        )
-        .unwrap();
-        assert!(blocked.contains("sub_asp_selected"));
-    }
-
-    #[test]
-    fn subscription_rejection_requires_matching_period_fields_when_event_supplies_them() {
-        let event = serde_json::json!({"periodIndex": 2, "subStartTime": "100"});
-        assert!(subscription_rejection_period_matches(
-            Some(&event),
-            &serde_json::json!({"periodIndex": 2, "subStartTime": 100})
-        ));
-        assert!(!subscription_rejection_period_matches(
-            Some(&event),
-            &serde_json::json!({"periodIndex": 3, "subStartTime": 100})
-        ));
-        assert!(!subscription_rejection_period_matches(
-            Some(&event),
-            &serde_json::json!({"periodIndex": 2})
-        ));
-        assert!(subscription_rejection_period_matches(
-            None,
-            &serde_json::json!({})
-        ));
-    }
-
-    #[test]
-    fn arbitration_decision_relay_rechecks_latest_backend_status() {
-        assert_eq!(
-            arbitration_decision_source_for_event("user_decision_job_rejected"),
+            arbitration_decision_source("user_decision_job_rejected"),
             Some("job_rejected")
         );
-        assert_eq!(
-            arbitration_decision_source_for_event("user_decision_sub_user_reject"),
-            Some("sub_user_reject")
-        );
-        assert!(arbitration_decision_stale_details(
+        assert!(!arbitration_decision_is_stale(
             "job_rejected",
             None,
             &serde_json::json!({"status": 3})
-        )
-        .is_none());
-        assert!(arbitration_decision_stale_details(
+        ));
+        assert!(arbitration_decision_is_stale(
             "job_rejected",
             None,
             &serde_json::json!({"status": 4})
-        )
-        .is_some());
-        assert!(arbitration_decision_stale_details(
+        ));
+
+        let relay = serde_json::json!({
+            "params": {
+                "decisionBindingKey": "periodIndex",
+                "decisionBindingValue": "2"
+            }
+        });
+        assert!(!arbitration_decision_is_stale(
             "sub_user_reject",
-            Some(&serde_json::json!({"periodIndex": 2})),
+            Some(&relay),
             &serde_json::json!({"subStatus": 3, "periodIndex": 2})
-        )
-        .is_none());
-        assert!(arbitration_decision_stale_details(
+        ));
+        assert!(arbitration_decision_is_stale(
             "sub_user_reject",
-            Some(&serde_json::json!({"periodIndex": 2})),
+            Some(&relay),
             &serde_json::json!({"subStatus": 3, "periodIndex": 3})
-        )
-        .is_some());
-        assert!(arbitration_decision_stale_details(
-            "sub_user_reject",
-            Some(&serde_json::json!({
-                "params": {
-                    "decisionBindingKey": "periodIndex",
-                    "decisionBindingValue": "2"
-                }
-            })),
-            &serde_json::json!({"subStatus": 3, "periodIndex": 2})
-        )
-        .is_none());
-        assert!(arbitration_decision_stale_details(
-            "sub_user_reject",
-            Some(&serde_json::json!({
-                "params": {
-                    "decisionBindingKey": "periodIndex",
-                    "decisionBindingValue": "2"
-                }
-            })),
-            &serde_json::json!({"subStatus": 3, "periodIndex": 3})
-        )
-        .is_some());
+        ));
     }
 }

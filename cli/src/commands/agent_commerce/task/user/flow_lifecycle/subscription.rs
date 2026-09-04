@@ -17,56 +17,8 @@ fn extract_i64(message: Option<&serde_json::Value>, key: &str) -> Option<i64> {
 fn service_name<'a>(message: Option<&'a serde_json::Value>, ctx: &'a FlowContext<'_>) -> &'a str {
     extract_str(message, "jobTitle")
         .or_else(|| extract_str(message, "title"))
-        .or_else(|| {
-            ctx.prefetched
-                .map(|p| p.title.as_str())
-                .filter(|value| !value.is_empty())
-        })
+        .or_else(|| ctx.prefetched.map(|p| p.description.as_str()))
         .unwrap_or("subscription")
-}
-
-pub(crate) fn sub_open(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
-    let token_amount = extract_str(message, "tokenAmount")
-        .or_else(|| ctx.prefetched.map(|value| value.token_amount.as_str()))
-        .filter(|value| !value.is_empty());
-    let token_symbol = extract_str(message, "tokenSymbol")
-        .or_else(|| ctx.prefetched.map(|value| value.token_symbol.as_str()))
-        .filter(|value| !value.is_empty() && *value != "?");
-    let content = if extract_i64(message, "trialType") == Some(1) {
-        super::super::content::sub_open_trial_user_notify(
-            ctx.job_id,
-            service_name(message, ctx),
-            token_amount,
-            token_symbol,
-        )
-    } else {
-        super::super::content::sub_open_user_notify(
-            ctx.job_id,
-            service_name(message, ctx),
-            token_amount,
-            token_symbol,
-        )
-    };
-
-    let provider_id = extract_str(message, "providerAgentId")
-        .or_else(|| ctx.prefetched.and_then(|p| p.provider_agent_id.as_deref()));
-    let session_block = match provider_id {
-        Some(pid) => create_sub_session(ctx.job_id, ctx.agent_id, pid),
-        None => format!(
-            "[sub_open] providerAgentId missing from event and task detail; session was not created.\n"
-        ),
-    };
-
-    format!(
-        "**Localize first** — rewrite the content below in the user's language before sending. \
-         Do NOT pass the English template verbatim to a non-English user.\n\
-         ```bash\n\
-         onchainos agent user-notify --content \"<localized content shown below>\"\n\
-         ```\n\
-         Content: {content}\n\n\
-         {session_block}\
-         **End this turn** after the notification is sent.\n"
-    )
 }
 
 pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
@@ -75,16 +27,10 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
     // anything else / absent → paid subscription with immediate first charge.
     // Defaulting the absent case to the paid variant matches the copy doc, which
     // defines that entry as the no-trial direct-subscribe notice.
-    let token_amount = extract_str(message, "tokenAmount")
-        .or_else(|| ctx.prefetched.map(|value| value.token_amount.as_str()))
-        .filter(|value| !value.is_empty());
-    let token_symbol = extract_str(message, "tokenSymbol")
-        .or_else(|| ctx.prefetched.map(|value| value.token_symbol.as_str()))
-        .filter(|value| !value.is_empty() && *value != "?");
     let content = if extract_i64(message, "trialType") == Some(1) {
         super::super::content::sub_created_trial_user_notify(
-            token_amount,
-            token_symbol,
+            extract_str(message, "tokenAmount"),
+            extract_str(message, "tokenSymbol"),
             // Wire has not finished the trail*→trial* field rename; keep the
             // legacy spelling as a read fallback until it does.
             extract_i64(message, "trialStartTime")
@@ -100,12 +46,20 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
         super::super::content::sub_created_user_notify(
             ctx.job_id,
             service_name(message, ctx),
-            token_amount,
-            token_symbol,
+            extract_str(message, "tokenAmount"),
+            extract_str(message, "tokenSymbol"),
             extract_i64(message, "subStartTime"),
             extract_i64(message, "subEndTime"),
             auto_renew,
         )
+    };
+
+    let provider_id = extract_str(message, "providerAgentId")
+        .or_else(|| ctx.prefetched.and_then(|p| p.provider_agent_id.as_deref()));
+
+    let session_block = match provider_id {
+        Some(pid) => create_sub_session(ctx.job_id, ctx.agent_id, pid),
+        None => String::new(),
     };
 
     let mut out = format!(
@@ -117,9 +71,13 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
          Content: {content}\n\n"
     );
 
-    // FR-7 / AC-8: no post-`sub_created` DApp text re-scan or install. Tool readiness
-    // was already surfaced at `asp-match` time via `autoTradePreflight`; the runtime
-    // re-checks tool status when the first real signal arrives.
+    if !session_block.is_empty() {
+        out.push_str(&session_block);
+        out.push('\n');
+    }
+
+    // No post-`sub_created` text re-scan, tool inference, or installation. The
+    // persisted Guide + Guide Consent contract controls later signal handling.
     out.push_str("**End this turn** after the notification is sent.\n");
 
     out
@@ -131,18 +89,15 @@ fn create_sub_session(job_id: &str, agent_id: &str, provider_id: &str) -> String
     use crate::commands::agent_commerce::task::common::okx_a2a;
 
     match okx_a2a::session_query_exists(job_id, agent_id, provider_id) {
-        Ok(true) => {
-            super::upload_and_forward_all_attachments(job_id, agent_id, provider_id);
-            return String::new();
-        }
+        Ok(true) => return String::new(),
         Ok(false) => {}
         Err(e) => {
-            return format!("[sub_open] session query failed: {e}\n");
+            return format!("[sub_created] session query failed: {e}\n");
         }
     }
 
     if let Err(e) = okx_a2a::session_create(job_id, agent_id, provider_id) {
-        return format!("[sub_open] session create failed: {e}\n");
+        return format!("[sub_created] session create failed: {e}\n");
     }
 
     let prefetch = "[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context. \
@@ -150,7 +105,7 @@ fn create_sub_session(job_id: &str, agent_id: &str, provider_id: &str) -> String
         (same turn or later turn), you MUST process it normally via task-user-sub-playbook.md \
         §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
     if let Err(e) = okx_a2a::session_send(job_id, Some(provider_id), prefetch) {
-        return format!("[sub_open] session send (SKILL_PREFETCH) failed: {e}\n");
+        return format!("[sub_created] session send (SKILL_PREFETCH) failed: {e}\n");
     }
 
     super::upload_and_forward_all_attachments(job_id, agent_id, provider_id);
@@ -687,73 +642,6 @@ mod tests {
             !out.contains("okx-dapp-discovery"),
             "sub_created must not route to dapp-discovery: {out}"
         );
-    }
-
-    #[test]
-    fn sub_created_falls_back_to_authoritative_title_and_payment() {
-        let prefetched =
-            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
-                &serde_json::json!({
-                    "title": "Authoritative Title",
-                    "description": "This is not the service title",
-                    "tokenAmount": "9.5",
-                    "tokenSymbol": "USDT",
-                    "subStatus": 1
-                }),
-            );
-        let ctx = FlowContext {
-            job_id: "job1",
-            agent_id: "agent1",
-            short_id: "s1",
-            title_display: "fallback",
-            title_query_hint: "",
-            title_in_extract: "",
-            terminal_session_hint: String::new(),
-            payment_mode: None,
-            prefetched: Some(&prefetched),
-            data: None,
-        };
-        let out = sub_created(&ctx, Some(&serde_json::json!({"event": "sub_created"})));
-        assert!(out.contains("subscribing to Authoritative Title"));
-        assert!(out.contains("First charge of 9.5 USDT completed"));
-        assert!(!out.contains("subscribing to This is not the service title"));
-    }
-
-    #[test]
-    fn sub_open_owns_session_and_attachment_setup() {
-        let source = include_str!("subscription.rs");
-        let sub_open = source
-            .split_once("pub(crate) fn sub_open")
-            .unwrap()
-            .1
-            .split_once("pub(crate) fn sub_created")
-            .unwrap()
-            .0;
-        let sub_created = source
-            .split_once("pub(crate) fn sub_created")
-            .unwrap()
-            .1
-            .split_once("fn create_sub_session")
-            .unwrap()
-            .0;
-        let session = source
-            .split_once("fn create_sub_session")
-            .unwrap()
-            .1
-            .split_once("pub(crate) fn sub_cancel")
-            .unwrap()
-            .0;
-
-        assert!(sub_open.contains("create_sub_session"));
-        assert!(!sub_created.contains("create_sub_session"));
-        let restored = session
-            .split_once("Ok(true)")
-            .unwrap()
-            .1
-            .split_once("Ok(false)")
-            .unwrap()
-            .0;
-        assert!(restored.contains("upload_and_forward_all_attachments"));
     }
 
     // FR-9: sub_expire_warn template selection across all three autoRenew values.

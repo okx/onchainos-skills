@@ -1,6 +1,6 @@
 # Ensure OKX A2A Communication Ready
 
-Recovery procedure for the OKX A2A communication runtime. Use it only when the environment looks unavailable or uninitialized — e.g. `okx-a2a` is missing, or an `okx-a2a` command (daemon / switch-runtime / agent refresh / setup / session / user notify) fails with a runtime or plugin error.
+Recovery procedure for the OKX A2A communication runtime. Use it only when the environment looks unavailable or uninitialized — e.g. `okx-a2a` is missing, or an `okx-a2a` command (daemon / switch-runtime / agent refresh / setup / session / xmtp-send / user notify) fails with a runtime or plugin error.
 
 Readiness is owned entirely by the `okx-a2a` CLI. This file is just the two steps that install it and let it repair itself; do not reimplement daemon / runtime-switch / plugin logic here.
 

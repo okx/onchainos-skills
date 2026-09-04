@@ -1,34 +1,9 @@
-//! Always-on, redacted Task API request/response traces for arbitration contract verification.
+//! Redacted local traces for arbitration contract verification.
 
 use serde_json::{json, Map, Value};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-
-pub fn record(
-    method: &str,
-    url: &str,
-    agent_id: &str,
-    body: Option<&Value>,
-    response: Option<&Value>,
-    error: Option<&str>,
-) {
-    if is_heartbeat(url) {
-        return;
-    }
-    let request = json!({
-        "method": method,
-        "agentId": agent_id,
-        "body": body.cloned().unwrap_or(Value::Null),
-    });
-    let envelope = json!({
-        "error": error.map(redact_error),
-        "req": redact_value(&request),
-        "res": response.map(redact_value).unwrap_or(Value::Null),
-        "url": redact_url(url),
-    });
-    persist(url, &envelope);
-}
 
 /// Record a complete local arbitration contract that does not cross the Task
 /// HTTP client boundary, such as decision, choice, list, and detail results.

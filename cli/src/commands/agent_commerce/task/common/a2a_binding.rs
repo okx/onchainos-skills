@@ -1,8 +1,6 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
-
 use tokio::process::Command;
 use tokio::time::timeout;
 
@@ -61,26 +59,12 @@ impl JobProviderPreBind {
 /// Runtime detection intentionally lives in okx-a2a so onchainos does not need
 /// to know Hermes/OpenClaw/Codex/Claude platform markers.
 pub async fn bind_job_provider_to_current_runtime(job_id: &str) -> Option<JobProviderPreBind> {
-    match bind_job_provider_to_current_runtime_required(job_id).await {
-        Ok(binding) => Some(binding),
-        Err(error) => {
-            eprintln!("[a2a-binding] WARN: {error}");
-            None
-        }
-    }
-}
-
-/// Strict binding gate for create-and-fund. A task must not be broadcast when
-/// the runtime that will receive `job_created` cannot be recorded locally.
-pub async fn bind_job_provider_to_current_runtime_required(
-    job_id: &str,
-) -> Result<JobProviderPreBind> {
     let job_id = job_id.trim();
     if job_id.is_empty() || job_id == "?" {
-        bail!("job-provider bind-current requires a valid jobId");
+        return None;
     }
     if is_truthy_env("OKX_A2A_DISABLE_JOB_PROVIDER_BINDING") {
-        bail!("job-provider binding is disabled by OKX_A2A_DISABLE_JOB_PROVIDER_BINDING");
+        return None;
     }
 
     let args = ["job-provider", "bind-current", "--job-id", job_id, "--json"];
@@ -97,30 +81,34 @@ pub async fn bind_job_provider_to_current_runtime_required(
                     .unwrap_or(false);
                 eprintln!("[a2a-binding] job provider bind-current ok: jobId={job_id} provider={provider} created={created}");
                 if provider != "unknown" {
-                    return Ok(JobProviderPreBind {
+                    return Some(JobProviderPreBind {
                         job_id: job_id.to_string(),
                         provider: provider.to_string(),
                         created,
                     });
                 }
+            } else {
+                eprintln!("[a2a-binding] job provider bind-current ok: jobId={job_id}");
             }
-            bail!("okx-a2a job-provider bind-current returned no provider for jobId={job_id}");
         }
         Ok(output) => {
-            bail!(
-                "okx-a2a job-provider bind-current failed: jobId={job_id} exit={:?} stderr={} stdout={}",
+            eprintln!(
+                "[a2a-binding] WARN: job provider bind-current failed: jobId={job_id} exit={:?} stderr={} stdout={}",
                 output.status.code(),
                 String::from_utf8_lossy(&output.stderr).trim(),
                 String::from_utf8_lossy(&output.stdout).trim()
             );
         }
         Err(e) => {
-            bail!("okx-a2a job-provider bind-current unavailable for jobId={job_id}: {e}");
+            eprintln!(
+                "[a2a-binding] WARN: job provider bind-current unavailable for jobId={job_id}: {e}"
+            );
         }
     }
+    None
 }
 
-async fn run_okx_a2a(args: &[&str]) -> std::result::Result<std::process::Output, String> {
+async fn run_okx_a2a(args: &[&str]) -> Result<std::process::Output, String> {
     let fut = Command::new(OKX_A2A)
         .args(args)
         .stdin(Stdio::null())

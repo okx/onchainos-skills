@@ -6,7 +6,7 @@
 //!                 current active account (with `myRole` / `counterpartyAgentId`
 //!                 annotations; used by user-session to route ad-hoc user
 //!                 instructions to a specific sub session via
-//!                 `okx-a2a session query` → `okx-a2a session send --json`)
+//!                 `okx-a2a session query` → `okx-a2a session send --no-wait`)
 
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
@@ -197,7 +197,16 @@ pub async fn handle_status(
     if let Some(dispute) = dispute.as_ref() {
         emit_arbitration_status(job_id, &resp, dispute);
     } else {
-        print_legacy_status(job_id, &resp);
+        let t = &resp;
+        let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
+        println!("Task status: {}", t["status"].as_i64().map(status_name).unwrap_or("?"));
+        println!("  jobId:    {job_id}");
+        println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
+        println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
+        println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
+        if let Some(pid) = t["providerAgentId"].as_str() {
+            println!("  asp: {pid}");
+        }
     }
     Ok(())
 }
@@ -237,51 +246,22 @@ pub async fn handle_list(
     }
 
     let mut path = format!("/priapi/v1/aieco/task/my?page={page}&page_size={limit}");
-    if let Some(s) = status {
-        path.push_str(&format!("&status={s}"));
-    }
+    if let Some(s) = status { path.push_str(&format!("&status={s}")); }
     let resp = client.get_with_identity(&path, &agent_id).await?;
     let tasks = resp["list"].as_array().cloned().unwrap_or_default();
     let total = resp["total"].as_u64().unwrap_or(0);
-    print_legacy_list(page, total, &tasks);
-    Ok(())
-}
-
-fn print_legacy_status(job_id: &str, task: &Value) {
-    let token_sym = task["tokenSymbol"].as_str().unwrap_or("?");
-    println!(
-        "Task status: {}",
-        task["status"].as_i64().map(status_name).unwrap_or("?")
-    );
-    println!("  jobId:    {job_id}");
-    println!("  title:    {}", task["title"].as_str().unwrap_or("?"));
-    println!(
-        "  budget:   {} {}",
-        task["tokenAmount"].as_str().unwrap_or("?"),
-        token_sym
-    );
-    println!(
-        "  user:    {}",
-        task["buyerAgentId"].as_str().unwrap_or("?")
-    );
-    if let Some(provider_id) = task["providerAgentId"].as_str() {
-        println!("  asp: {provider_id}");
-    }
-}
-
-fn print_legacy_list(page: u32, total: u64, tasks: &[Value]) {
     println!("Task list ({total} total, page {page}):");
-    for task in tasks {
-        let symbol = task["tokenSymbol"].as_str().unwrap_or("?");
-        println!(
-            "  [{}] {} — {} {}",
-            task["status"].as_i64().map(status_name).unwrap_or("?"),
-            task["jobId"].as_str().unwrap_or("?"),
-            task["tokenAmount"].as_str().unwrap_or("?"),
-            symbol,
+    for t in &tasks {
+        let sym = t["tokenSymbol"].as_str().unwrap_or("?");
+        println!("  [{}] {} — {} {}",
+            t["status"].as_i64().map(status_name).unwrap_or("?"),
+            t["jobId"].as_str().unwrap_or("?"),
+            t["tokenAmount"].as_str().unwrap_or("?"),
+            sym,
         );
-        println!("       {}", task["title"].as_str().unwrap_or("?"));
+        println!("       {}", t["title"].as_str().unwrap_or("?"));
     }
+    Ok(())
 }
 
 // ─── active-tasks ───────────────────────────────────────────────────────
@@ -327,8 +307,8 @@ fn short_job_id(jid: &str) -> String {
 
 fn parse_role_arg(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "user" => Some(1),
-        "asp" => Some(2),
+        "user"      => Some(1),
+        "asp"       => Some(2),
         "evaluator" => Some(3),
         _ => None,
     }
@@ -342,7 +322,7 @@ fn parse_role_arg(raw: &str) -> Option<i64> {
 ///   2. user-session renders the returned JSON to the user, lets the user pick a jobId
 ///   3. take `myAgentId` + `counterpartyAgentId` from the chosen row
 ///   4. (optional) `okx-a2a session query --job-id <jobId> --my-agent-id <myAgentId> --to-agent-id <counterpartyAgentId>` to confirm an active session exists
-///   5. `okx-a2a session send --job-id <jobId> --to-agent-id <counterpartyAgentId> --content <user's verbatim instruction> --json`
+///   5. `okx-a2a session send --no-wait --job-id <jobId> --to-agent-id <counterpartyAgentId> --content <user's verbatim instruction>`
 ///
 /// Output schema (via `output::success`):
 ///
@@ -380,7 +360,9 @@ pub async fn handle_active_tasks(
     // Optional --role filter.
     if let Some(raw) = role_filter {
         let want = parse_role_arg(raw).ok_or_else(|| {
-            anyhow::anyhow!("unrecognized --role value: {raw:?} (expected user / asp / evaluator)")
+            anyhow::anyhow!(
+                "unrecognized --role value: {raw:?} (expected user / asp / evaluator)"
+            )
         })?;
         agents.retain(|a| a.get("role").and_then(|v| v.as_i64()) == Some(want));
     }
@@ -398,9 +380,7 @@ pub async fn handle_active_tasks(
         let resp = match client.get_with_identity(path, agent_id).await {
             Ok(r) => r,
             Err(e) => {
-                if DEBUG_LOG {
-                    eprintln!("[active-tasks] agent {agent_id} query failed: {e}");
-                }
+                if DEBUG_LOG { eprintln!("[active-tasks] agent {agent_id} query failed: {e}"); }
                 continue;
             }
         };
@@ -413,10 +393,7 @@ pub async fn handle_active_tasks(
             }
 
             let user_id = t.get("buyerAgentId").and_then(|v| v.as_str()).unwrap_or("");
-            let provider_id = t
-                .get("providerAgentId")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let provider_id = t.get("providerAgentId").and_then(|v| v.as_str()).unwrap_or("");
 
             // Counterparty inferred from my role:
             // - I'm user (1) → counterparty is asp

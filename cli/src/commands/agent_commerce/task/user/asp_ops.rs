@@ -12,9 +12,9 @@ use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::identity::ServiceMatchArgs;
-use crate::commands::agent_commerce::task::common::autotrade::tooling;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::PaymentMode;
+use crate::commands::agent_commerce::task::common::autotrade::tooling;
 use crate::commands::agent_commerce::task::signing;
 
 // ── asp-match ────────────────────────────────────────────────────────────
@@ -118,7 +118,7 @@ fn add_service_guide_hash(
 }
 
 fn compact_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
-    let subscription_info = build_subscription_info(&service);
+    let subscription_info = build_subscription_info(service);
     let support_subscription = !subscription_info.is_null();
     let mut compact = serde_json::Map::new();
     for key in [
@@ -130,13 +130,12 @@ fn compact_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
         "feeToken",
         "feeTokenSymbol",
         "endpoint",
-        "autoTradePreflight",
     ] {
-        copy_field(&mut compact, &service, key);
+        copy_field(&mut compact, service, key);
     }
     add_service_guide_hash(&mut compact, service);
     if !support_subscription {
-        copy_field(&mut compact, &service, "feeAmount");
+        copy_field(&mut compact, service, "feeAmount");
     }
     compact.insert(
         "supportSubscription".to_string(),
@@ -203,16 +202,12 @@ fn service_online(service: &serde_json::Value) -> bool {
         == Some(1)
 }
 
-fn offline_x402_service(service: &serde_json::Value) -> bool {
-    !service_online(service)
+fn task_service_eligible(service: &serde_json::Value) -> bool {
+    service_online(service)
         && service
             .get("serviceType")
             .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| value.eq_ignore_ascii_case("A2MCP"))
-        && service
-            .get("endpoint")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty())
+            .is_some_and(|value| value.eq_ignore_ascii_case("A2A"))
 }
 
 pub(super) fn compact_task_service_for_ai(service: &serde_json::Value) -> serde_json::Value {
@@ -266,13 +261,6 @@ pub(super) fn compact_task_service_for_ai(service: &serde_json::Value) -> serde_
         serde_json::Value::Bool(support_subscription),
     );
     compact.insert("subscriptionInfo".to_string(), subscription_info);
-    compact.insert(
-        "autoTradePreflight".to_string(),
-        service
-            .get("autoTradePreflight")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({})),
-    );
     serde_json::Value::Object(compact)
 }
 
@@ -284,14 +272,10 @@ fn compact_task_service_select_response(resp: serde_json::Value) -> serde_json::
         .unwrap_or_default();
     let eligible_services = services
         .iter()
-        .filter(|service| service_online(service) || offline_x402_service(service))
+        .filter(|service| task_service_eligible(service))
         .collect::<Vec<_>>();
     let has_eligible_service = !eligible_services.is_empty();
-    let compact_services = if eligible_services.is_empty() {
-        services.iter().collect::<Vec<_>>()
-    } else {
-        eligible_services
-    }
+    let compact_services = eligible_services
         .into_iter()
         .map(compact_task_service_for_ai)
         .collect::<Vec<_>>();
@@ -308,7 +292,10 @@ fn compact_task_service_select_response(resp: serde_json::Value) -> serde_json::
         "matchStatus".to_string(),
         serde_json::Value::String(match_status.to_string()),
     );
-    compact.insert("services".to_string(), serde_json::Value::Array(compact_services));
+    compact.insert(
+        "services".to_string(),
+        serde_json::Value::Array(compact_services),
+    );
     for key in ["searchAfter", "hasMore", "unmatchReason"] {
         if let Some(value) = resp.get(key) {
             compact.insert(key.to_string(), value.clone());
@@ -322,12 +309,22 @@ fn apply_existing_subscription_annotations(
     existing: &[super::subscription_ops::ExistingSubscriptionSummary],
 ) {
     let mut blocking_services = 0_u64;
-    if let Some(services) = compact.get_mut("services").and_then(|value| value.as_array_mut()) {
+    if let Some(services) = compact
+        .get_mut("services")
+        .and_then(|value| value.as_array_mut())
+    {
         for service in services {
-            if service.get("supportSubscription").and_then(|value| value.as_bool()) != Some(true) {
+            if service
+                .get("supportSubscription")
+                .and_then(|value| value.as_bool())
+                != Some(true)
+            {
                 continue;
             }
-            let service_id = service.get("serviceId").and_then(|value| value.as_str()).unwrap_or("");
+            let service_id = service
+                .get("serviceId")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
             service["existingSubscription"] =
                 super::subscription_ops::existing_subscription_for_service(existing, service_id)
                     .map(|item| {
@@ -345,7 +342,8 @@ fn apply_existing_subscription_annotations(
 
 fn service_scalar_string(service: &serde_json::Value, key: &str) -> Option<String> {
     let value = service.get(key)?;
-    value.as_str()
+    value
+        .as_str()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
@@ -356,15 +354,20 @@ fn service_scalar_string(service: &serde_json::Value, key: &str) -> Option<Strin
 fn build_duplicate_subscription_resolution(
     compact: &serde_json::Value,
 ) -> Option<serde_json::Value> {
-    let selected = compact.get("services")?.as_array()?.first()
+    let selected = compact
+        .get("services")?
+        .as_array()?
+        .first()
         .filter(|service| !service["existingSubscription"].is_null())?;
     let existing = selected.get("existingSubscription")?;
     let current_service_id = service_scalar_string(selected, "serviceId").unwrap_or_default();
     let service_name = service_scalar_string(selected, "serviceName")
         .unwrap_or_else(|| current_service_id.clone());
     let job_id = service_scalar_string(existing, "jobId").unwrap_or_default();
-    let can_restore = existing.get("restoreListeningAvailable")
-        .and_then(|value| value.as_bool()).unwrap_or(false);
+    let can_restore = existing
+        .get("restoreListeningAvailable")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
 
     let base = format!(
         "Service \"{service_name}\" already has a subscription task, jobId: {job_id}. It cannot be created again."
@@ -376,7 +379,10 @@ fn build_duplicate_subscription_resolution(
     };
 
     let mut resolution = serde_json::Map::new();
-    resolution.insert("userFacingPrompt".to_string(), serde_json::Value::String(prompt));
+    resolution.insert(
+        "userFacingPrompt".to_string(),
+        serde_json::Value::String(prompt),
+    );
     if can_restore {
         resolution.insert(
             "nextAfterUserChoice".to_string(),
@@ -387,17 +393,25 @@ fn build_duplicate_subscription_resolution(
 }
 
 fn minimize_selected_duplicate_service(compact: &mut serde_json::Value) {
-    let Some(selected) = compact.get_mut("services")
+    let Some(selected) = compact
+        .get_mut("services")
         .and_then(|value| value.as_array_mut())
         .and_then(|services| services.first_mut())
-        .and_then(|service| service.as_object_mut()) else {
+        .and_then(|service| service.as_object_mut())
+    else {
         return;
     };
-    selected.retain(|key, _| matches!(
+    selected.retain(|key, _| {
+        matches!(
         key.as_str(),
-        "providerAgentId" | "serviceId" | "serviceName" | "serviceType"
-            | "supportSubscription" | "existingSubscription"
-    ));
+            "providerAgentId"
+                | "serviceId"
+                | "serviceName"
+                | "serviceType"
+                | "supportSubscription"
+                | "existingSubscription"
+        )
+    });
 }
 
 fn apply_duplicate_subscription_resolution(compact: &mut serde_json::Value) {
@@ -479,7 +493,10 @@ pub async fn handle_task_service_select(
 
     let mut data = service_match_data_from_stdout(&output.stdout)?;
     let inv = tooling::ToolInventory::detect();
-    if let Some(services) = data.get_mut("services").and_then(|value| value.as_array_mut()) {
+    if let Some(services) = data
+        .get_mut("services")
+        .and_then(|value| value.as_array_mut())
+    {
         for svc in services {
             let desc = svc["serviceDescription"].as_str().unwrap_or("");
             let pf = tooling::build_preflight(desc, &inv);
@@ -490,11 +507,17 @@ pub async fn handle_task_service_select(
     }
 
     let mut compact = compact_task_service_select_response(data);
-    let has_subscription_service = compact.get("services")
+    let has_subscription_service = compact
+        .get("services")
         .and_then(|value| value.as_array())
-        .map(|services| services.iter().any(|service| {
-            service.get("supportSubscription").and_then(|value| value.as_bool()) == Some(true)
-        }))
+        .map(|services| {
+            services.iter().any(|service| {
+                service
+                    .get("supportSubscription")
+                    .and_then(|value| value.as_bool())
+                    == Some(true)
+            })
+        })
         .unwrap_or(false);
     if has_subscription_service {
         let buyer_agent_id = agentic_id
@@ -502,11 +525,11 @@ pub async fn handle_task_service_select(
             .ok_or_else(|| anyhow::anyhow!(
                 "--agentic-id is required to check existing subscriptions before selecting a subscription service"
             ))?;
-        let existing =
-            super::subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
+        let existing = super::subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
                 client,
                 buyer_agent_id,
-            ).await?;
+        )
+        .await?;
         apply_existing_subscription_annotations(&mut compact, &existing);
         apply_duplicate_subscription_resolution(&mut compact);
     }
@@ -549,10 +572,12 @@ pub async fn handle_asp_match(
 
     let agent_id = match explicit_agent_id {
         Some(id) => id.to_string(),
-        None => signing::resolve_agent_id_by_role(
+        None => {
+            signing::resolve_agent_id_by_role(
             crate::commands::agent_commerce::task::common::AGENT_ROLE_USER,
         )
-        .await?,
+            .await?
+        }
     };
 
     let mut body = serde_json::json!({
@@ -571,24 +596,11 @@ pub async fn handle_asp_match(
         .await?;
     let mut resp = resp;
 
-    // Attach a per-service `autoTradePreflight` (FR-1/2): deterministic, local,
-    // non-networked. One inventory snapshot is shared across every service so all
-    // rows see a consistent readiness view. Any per-service internal error degrades
-    // to the sentinel preflight rather than failing the match.
-    let inv = tooling::ToolInventory::detect();
     if let Some(recs_mut) = resp["recommendations"].as_array_mut() {
         for rec in recs_mut.iter_mut() {
             if let Some(services) = rec["services"].as_array_mut() {
                 for svc in services.iter_mut() {
                     normalize_subscription_fee(svc);
-                    let desc = svc["serviceDescription"].as_str().unwrap_or("");
-                    // Build the (infallible) preflight, then serialize once here —
-                    // the sole genuinely fallible boundary. Only a serialization
-                    // failure degrades to the sentinel; classification never errors.
-                    let pf = tooling::build_preflight(desc, &inv);
-                    svc["autoTradePreflight"] = serde_json::to_value(&pf).unwrap_or_else(|_| {
-                        serde_json::to_value(tooling::degraded_preflight()).unwrap_or_default()
-                    });
                 }
             }
         }
@@ -633,14 +645,8 @@ pub async fn handle_asp_match(
         let sold = rec["soldCount"].as_u64().unwrap_or(0);
         let a2mcp = rec["supportA2MCP"].as_bool().unwrap_or(false);
 
-        println!(
-            "━━━ {}. {} ━━━",
-            i + 1,
-            format_provider(pid, pname)
-        );
-        println!(
-            "  security: {sec:.2} | feedback: {fb:.2} | sold: {sold} | A2MCP: {a2mcp}"
-        );
+        println!("━━━ {}. {} ━━━", i + 1, format_provider(pid, pname));
+        println!("  security: {sec:.2} | feedback: {fb:.2} | sold: {sold} | A2MCP: {a2mcp}");
 
         if let Some(services) = rec["services"].as_array() {
             for svc in services {
@@ -670,7 +676,8 @@ pub async fn handle_asp_match(
                     if !subs.is_empty() {
                         for sub in subs {
                             let interval = sub["interval"].as_str().unwrap_or("month");
-                            let fee = scalar_display(&sub["fee"]).unwrap_or_else(|| "?".to_string());
+                            let fee =
+                                scalar_display(&sub["fee"]).unwrap_or_else(|| "?".to_string());
                             print!("    Subscription: {fee} {fee_sym}/{interval}");
                             if support_trial {
                                 print!(" (trial available)");
@@ -680,10 +687,6 @@ pub async fn handle_asp_match(
                     }
                 }
 
-                if let Some(line) = preflight_summary_line(&svc["autoTradePreflight"]) {
-                    print!("    {line}");
-                    println!();
-                }
             }
         }
         println!();
@@ -698,14 +701,14 @@ pub async fn handle_asp_match(
 
 // ── set-asp ──────────────────────────────────────────────────────────────
 
-/// Map service-type ("A2A" / "A2MCP") to the corresponding on-chain paymentMode.
+/// Task creation supports A2A escrow only. A2MCP uses the direct invocation route.
 fn service_type_to_payment_mode(service_type: &str) -> Result<PaymentMode> {
     match service_type.to_ascii_uppercase().as_str() {
         "A2A" => Ok(PaymentMode::Escrow),
-        "A2MCP" => Ok(PaymentMode::X402),
-        _ => bail!(
-            "unsupported --service-type \"{service_type}\"; valid values: A2A, A2MCP"
+        "A2MCP" => bail!(
+            "legacy_a2mcp_flow_removed: A2MCP services must use invoke_a2mcp direct invocation"
         ),
+        _ => bail!("unsupported --service-type \"{service_type}\"; valid Task value: A2A"),
     }
 }
 
@@ -730,18 +733,20 @@ pub async fn handle_set_asp(
 
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, explicit_agent_id).await?;
-    let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
-    let current_mode = PaymentMode::from_int(
-        task_resp["paymentMode"].as_i64().unwrap_or(0) as i32,
-    );
+    let task_resp = client
+        .get_with_identity(&client.task_path(job_id), &agent_id)
+        .await?;
+    let current_mode = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
 
     // Step 1: sync paymentMode on-chain if it does not match the service_type.
     if current_mode != desired_mode {
-        let resp = client.post_with_identity(
+        let resp = client
+            .post_with_identity(
             &client.endpoint(job_id, "setPaymentMode"),
             &serde_json::json!({ "paymentMode": desired_mode.as_int() }),
             &agent_id,
-        ).await?;
+            )
+            .await?;
         let tx_hash = signing::sign_uop_and_broadcast(
             client,
             &resp["uopData"],
@@ -751,7 +756,8 @@ pub async fn handle_set_asp(
             signing::extract_biz_type(&resp),
             &agent_id,
             None,
-        ).await?;
+        )
+        .await?;
         audit::log(
             "cli",
             "user/set_asp_payment_mode_sync",
@@ -787,11 +793,7 @@ pub async fn handle_set_asp(
     }
 
     client
-        .post_with_identity(
-            &client.endpoint(job_id, "set/asp"),
-            &body,
-            &agent_id,
-        )
+        .post_with_identity(&client.endpoint(job_id, "set/asp"), &body, &agent_id)
         .await?;
 
     let old_provider = super::negotiate::get_designated_provider(job_id)
@@ -806,8 +808,6 @@ pub async fn handle_set_asp(
         }
     }
 
-    // Task creation supports A2A escrow only. Endpoint persistence belonged to
-    // the removed task-based A2MCP flow; direct A2MCP invocation owns routing.
     super::negotiate::save_designated_provider(job_id, provider_agent_id)?;
 
     audit::log(
@@ -912,64 +912,6 @@ pub async fn handle_user_reject(
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-/// Render the compact per-service preflight summary line for text mode, e.g.
-/// `Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(verification_unknown) · 1 reminder`.
-/// Returns `None` when the preflight object is absent.
-///
-/// NOTE: this line MUST NOT use `Copy-trade: on/off` wording — that reads as an
-/// "auto-trading already authorized" switch, which is misleading. Service
-/// classification is advisory; the saved delivery is interpreted later by the
-/// subscription-signal Skill, and real execution still requires consent,
-/// per-trade cap, tool readiness and any required account confirmation.
-/// We therefore surface a neutral `Trading-signal service: yes/no` instead.
-fn preflight_summary_line(pf: &serde_json::Value) -> Option<String> {
-    if !pf.is_object() {
-        return None;
-    }
-    // Neutral, non-authorizing phrasing. Missing/wrong-type values fail closed.
-    let is_signal = pf["isTradingSignal"].as_bool().unwrap_or(false);
-    let service = if is_signal { "yes" } else { "no" };
-    let classes: Vec<String> = pf["assetClasses"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    let classes_str = if classes.is_empty() {
-        "—".to_string()
-    } else {
-        classes.join(", ")
-    };
-    let tools: Vec<String> = pf["tools"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .map(|t| {
-                    let name = t["displayName"].as_str().unwrap_or("?");
-                    let readiness = t["readiness"].as_str().unwrap_or("?");
-                    format!("{name}({readiness})")
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let tools_str = if tools.is_empty() {
-        "none".to_string()
-    } else {
-        tools.join(", ")
-    };
-    let n = pf["reminders"].as_array().map(|a| a.len()).unwrap_or(0);
-    let reminders_str = if n == 1 {
-        "1 reminder".to_string()
-    } else {
-        format!("{n} reminders")
-    };
-    Some(format!(
-        "Trading-signal service: {service} · classes: {classes_str} · tools: {tools_str} · {reminders_str}"
-    ))
-}
-
 async fn resolve_agent(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -1006,7 +948,10 @@ mod tests {
         });
         super::normalize_subscription_fee(&mut service);
         assert_eq!(service["feeAmount"], json!(0.1));
-        assert_eq!(super::scalar_display(&service["feeAmount"]).as_deref(), Some("0.1"));
+        assert_eq!(
+            super::scalar_display(&service["feeAmount"]).as_deref(),
+            Some("0.1")
+        );
     }
 
     #[test]
@@ -1092,7 +1037,10 @@ mod tests {
         assert!(rec.get("avatar").is_none());
         assert!(compact.get("debug").is_none());
 
-        assert_eq!(svc["serviceDescription"], json!("Please provide the target market before subscribing."));
+        assert_eq!(
+            svc["serviceDescription"],
+            json!("Please provide the target market before subscribing.")
+        );
         assert_eq!(
             svc["serviceGuide"],
             json!("Choose the amount and slippage, then confirm.")
@@ -1100,16 +1048,7 @@ mod tests {
         assert!(svc["serviceGuideHash"]
             .as_str()
             .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
-        assert_eq!(svc["autoTradePreflight"]["schemaVersion"], json!(3));
-        assert_eq!(svc["autoTradePreflight"]["assetClasses"], json!(["spot"]));
-        assert_eq!(
-            svc["autoTradePreflight"]["tools"][0]["readiness"],
-            json!("verification_unknown")
-        );
-        assert_eq!(
-            svc["autoTradePreflight"]["tools"][0]["reason"],
-            json!("local_compatibility_not_checked")
-        );
+        assert!(svc.get("autoTradePreflight").is_none());
         assert!(svc.get("feeAmount").is_none());
         assert_eq!(svc["supportSubscription"], json!(true));
         assert_eq!(svc["subscriptionInfo"]["interval"], json!("month"));
@@ -1147,7 +1086,7 @@ mod tests {
         assert!(svc["subscriptionInfo"].is_null());
         assert_eq!(svc["feeAmount"], json!("5"));
         assert_eq!(svc["serviceDescription"], json!("Audit one transaction."));
-        assert_eq!(svc["autoTradePreflight"]["isTradingSignal"], json!(false));
+        assert!(svc.get("autoTradePreflight").is_none());
         assert!(svc.get("subscription").is_none());
     }
 
@@ -1234,20 +1173,7 @@ mod tests {
         assert_eq!(svc["securityRate"], json!(5));
         assert_eq!(svc["feedbackRate"], json!(100));
         assert_eq!(svc["soldCount"], json!(11));
-        assert_eq!(svc["autoTradePreflight"]["schemaVersion"], json!(3));
-        assert_eq!(
-            svc["autoTradePreflight"]["tools"][0]["reason"],
-            json!("local_compatibility_not_checked")
-        );
-        assert!(svc["autoTradePreflight"]["tools"][0]["checkedAt"].is_null());
-        assert_eq!(
-            svc["autoTradePreflight"]["tradeKitProbe"]["mode"],
-            json!("probe_before_confirmation")
-        );
-        assert_eq!(
-            svc["autoTradePreflight"]["tradeKitProbe"]["assetClasses"],
-            json!(["spot"])
-        );
+        assert!(svc.get("autoTradePreflight").is_none());
         assert!(svc.get("subscription").is_none());
         assert!(svc.get("asp").is_none());
     }
@@ -1267,12 +1193,11 @@ mod tests {
         let compact = super::compact_task_service_select_response(resp);
 
         assert_eq!(compact["matchStatus"], json!("no_online_service"));
-        assert_eq!(compact["services"].as_array().unwrap().len(), 1);
-        assert_eq!(compact["services"][0]["online"], json!(false));
+        assert!(compact["services"].as_array().unwrap().is_empty());
     }
 
     #[test]
-    fn compact_task_service_select_allows_offline_x402_and_filters_offline_a2a() {
+    fn compact_task_service_select_filters_non_a2a_and_offline_services() {
         let resp = json!({
             "services": [
                 {
@@ -1281,25 +1206,23 @@ mod tests {
                     "asp": { "onlineStatus": 0 }
                 },
                 {
-                    "serviceId": "offline-x402",
+                    "serviceId": "online-a2mcp",
                     "serviceType": "A2MCP",
-                    "endpoint": "https://example.invalid/x402",
+                    "endpoint": "https://example.invalid/a2mcp",
                     "feeAmount": "1",
-                    "asp": { "onlineStatus": 0 }
+                    "asp": { "onlineStatus": 1 }
                 }
             ]
         });
 
         let compact = super::compact_task_service_select_response(resp);
 
-        assert_eq!(compact["matchStatus"], json!("matched"));
-        assert_eq!(compact["services"].as_array().unwrap().len(), 1);
-        assert_eq!(compact["services"][0]["serviceId"], json!("offline-x402"));
-        assert_eq!(compact["services"][0]["online"], json!(false));
+        assert_eq!(compact["matchStatus"], json!("no_online_service"));
+        assert!(compact["services"].as_array().unwrap().is_empty());
     }
 
     #[test]
-    fn compact_task_service_select_does_not_treat_a2mcp_without_endpoint_as_x402() {
+    fn compact_task_service_select_does_not_route_a2mcp_into_task_flow() {
         let resp = json!({
             "services": [{
                 "serviceId": "offline-a2mcp",
@@ -1312,6 +1235,7 @@ mod tests {
         let compact = super::compact_task_service_select_response(resp);
 
         assert_eq!(compact["matchStatus"], json!("no_online_service"));
+        assert!(compact["services"].as_array().unwrap().is_empty());
     }
 
     fn duplicate_service(status: i64, restore: bool) -> serde_json::Value {
@@ -1341,14 +1265,20 @@ mod tests {
     #[test]
     fn duplicate_resolution_only_offers_restore_and_minimizes_selected_service() {
         let mut compact = duplicate_service(1, true);
-        let resolution = super::build_duplicate_subscription_resolution(&compact)
-            .expect("duplicate resolution");
+        let resolution =
+            super::build_duplicate_subscription_resolution(&compact).expect("duplicate resolution");
         assert_eq!(
             resolution["nextAfterUserChoice"],
             json!(["restore-listening"])
         );
-        assert!(resolution["userFacingPrompt"].as_str().unwrap().contains("jobId: job-42"));
-        assert!(resolution["userFacingPrompt"].as_str().unwrap().contains("restore listening"));
+        assert!(resolution["userFacingPrompt"]
+            .as_str()
+            .unwrap()
+            .contains("jobId: job-42"));
+        assert!(resolution["userFacingPrompt"]
+            .as_str()
+            .unwrap()
+            .contains("restore listening"));
         assert!(resolution.get("scenario").is_none());
         assert!(resolution.get("alternativeServices").is_none());
 
@@ -1366,20 +1296,25 @@ mod tests {
         let resolution = super::build_duplicate_subscription_resolution(&rejected)
             .expect("duplicate resolution");
         assert!(resolution.get("nextAfterUserChoice").is_none());
-        assert!(!resolution["userFacingPrompt"].as_str().unwrap().contains("restore listening"));
+        assert!(!resolution["userFacingPrompt"]
+            .as_str()
+            .unwrap()
+            .contains("restore listening"));
         assert!(resolution.get("scenario").is_none());
         assert!(resolution.get("alternativeServices").is_none());
     }
 
     #[test]
     fn subscription_annotations_report_checked_null_and_blocking_rows() {
-        let existing = vec![super::super::subscription_ops::ExistingSubscriptionSummary {
+        let existing = vec![
+            super::super::subscription_ops::ExistingSubscriptionSummary {
             job_id: "job-42".to_string(),
             service_id: "svc-trade".to_string(),
             provider_agent_id: "9967".to_string(),
             status_name: "ACTIVE".to_string(),
             restore_listening_available: true,
-        }];
+            },
+        ];
         let mut compact = json!({
             "services": [
                 {"serviceId": "svc-trade", "supportSubscription": true},
@@ -1392,7 +1327,10 @@ mod tests {
 
         assert_eq!(compact["subscriptionCheck"]["status"], "checked");
         assert_eq!(compact["subscriptionCheck"]["blockingServiceCount"], 1);
-        assert_eq!(compact["services"][0]["existingSubscription"]["jobId"], "job-42");
+        assert_eq!(
+            compact["services"][0]["existingSubscription"]["jobId"],
+            "job-42"
+        );
         assert!(compact["services"][1]["existingSubscription"].is_null());
         assert!(compact["services"][2].get("existingSubscription").is_none());
     }
@@ -1475,7 +1413,10 @@ mod tests {
     #[test]
     fn format_provider_with_name() {
         // FR-3.2: name present → `Agent <id>(<name>)`.
-        assert_eq!(super::format_provider("1506", "AlphaBot"), "Agent 1506(AlphaBot)");
+        assert_eq!(
+            super::format_provider("1506", "AlphaBot"),
+            "Agent 1506(AlphaBot)"
+        );
     }
 
     #[test]
@@ -1487,13 +1428,22 @@ mod tests {
     #[test]
     fn cli_asp_match_with_job_id_and_provider() {
         let cli = TestCli::parse_from([
-            "test", "asp-match",
-            "--job-id", "job-123",
-            "--provider-agent-id", "agent-456",
-            "--page", "2",
+            "test",
+            "asp-match",
+            "--job-id",
+            "job-123",
+            "--provider-agent-id",
+            "agent-456",
+            "--page",
+            "2",
         ]);
         match cli.cmd {
-            super::super::TaskCommand::AspMatch { job_id, provider_agent_id, page, .. } => {
+            super::super::TaskCommand::AspMatch {
+                job_id,
+                provider_agent_id,
+                page,
+                ..
+            } => {
                 assert_eq!(job_id, "job-123");
                 assert_eq!(provider_agent_id.as_deref(), Some("agent-456"));
                 assert_eq!(page, 2);
@@ -1505,12 +1455,19 @@ mod tests {
     #[test]
     fn cli_asp_match_with_payment_token_amount() {
         let cli = TestCli::parse_from([
-            "test", "asp-match",
-            "--job-id", "job-123",
-            "--payment-token-amount", "0.7",
+            "test",
+            "asp-match",
+            "--job-id",
+            "job-123",
+            "--payment-token-amount",
+            "0.7",
         ]);
         match cli.cmd {
-            super::super::TaskCommand::AspMatch { job_id, payment_token_amount, .. } => {
+            super::super::TaskCommand::AspMatch {
+                job_id,
+                payment_token_amount,
+                ..
+            } => {
                 assert_eq!(job_id, "job-123");
                 assert_eq!(payment_token_amount, Some(0.7));
             }
@@ -1523,19 +1480,33 @@ mod tests {
     #[test]
     fn cli_set_asp_required_fields() {
         let cli = TestCli::parse_from([
-            "test", "set-asp", "job-abc",
-            "--provider-agent-id", "prov-1",
-            "--service-id", "svc-99",
-            "--service-type", "A2MCP",
-            "--service-params", "查询内容：BTC price",
-            "--service-token-address", "0xUSDT",
-            "--service-token-amount", "10.5",
+            "test",
+            "set-asp",
+            "job-abc",
+            "--provider-agent-id",
+            "prov-1",
+            "--service-id",
+            "svc-99",
+            "--service-type",
+            "A2MCP",
+            "--service-params",
+            "查询内容：BTC price",
+            "--service-token-address",
+            "0xUSDT",
+            "--service-token-amount",
+            "10.5",
         ]);
         match cli.cmd {
             super::super::TaskCommand::SetAsp {
-                job_id, provider_agent_id, service_id, service_type, service_params,
-                service_token_address, service_token_amount,
-                payment_token_symbol, agent_id,
+                job_id,
+                provider_agent_id,
+                service_id,
+                service_type,
+                service_params,
+                service_token_address,
+                service_token_amount,
+                payment_token_symbol,
+                agent_id,
             } => {
                 assert_eq!(job_id, "job-abc");
                 assert_eq!(provider_agent_id, "prov-1");
@@ -1554,18 +1525,29 @@ mod tests {
     #[test]
     fn cli_set_asp_with_payment_symbol() {
         let cli = TestCli::parse_from([
-            "test", "set-asp", "job-abc",
-            "--provider-agent-id", "prov-1",
-            "--service-id", "svc-1",
-            "--service-type", "A2A",
-            "--service-params", "none",
-            "--service-token-address", "0xAddr",
-            "--service-token-amount", "5",
-            "--payment-token-symbol", "USDT",
+            "test",
+            "set-asp",
+            "job-abc",
+            "--provider-agent-id",
+            "prov-1",
+            "--service-id",
+            "svc-1",
+            "--service-type",
+            "A2A",
+            "--service-params",
+            "none",
+            "--service-token-address",
+            "0xAddr",
+            "--service-token-amount",
+            "5",
+            "--payment-token-symbol",
+            "USDT",
         ]);
         match cli.cmd {
             super::super::TaskCommand::SetAsp {
-                service_type, payment_token_symbol, ..
+                service_type,
+                payment_token_symbol,
+                ..
             } => {
                 assert_eq!(service_type, "A2A");
                 assert_eq!(payment_token_symbol.as_deref(), Some("USDT"));
@@ -1577,16 +1559,27 @@ mod tests {
     #[test]
     fn cli_set_asp_rejects_budget_fields() {
         assert!(TestCli::try_parse_from([
-            "test", "set-asp", "job-abc",
-            "--provider-agent-id", "prov-1",
-            "--service-id", "svc-1",
-            "--service-type", "A2A",
-            "--service-params", "none",
-            "--service-token-address", "0xAddr",
-            "--service-token-amount", "5",
-            "--payment-token-amount", "5",
-            "--payment-most-token-amount", "10",
-        ]).is_err());
+            "test",
+            "set-asp",
+            "job-abc",
+            "--provider-agent-id",
+            "prov-1",
+            "--service-id",
+            "svc-1",
+            "--service-type",
+            "A2A",
+            "--service-params",
+            "none",
+            "--service-token-address",
+            "0xAddr",
+            "--service-token-amount",
+            "5",
+            "--payment-token-amount",
+            "5",
+            "--payment-most-token-amount",
+            "10",
+        ])
+        .is_err());
     }
 
     #[test]
@@ -1597,13 +1590,21 @@ mod tests {
     #[test]
     fn cli_set_asp_missing_service_type_fails() {
         assert!(TestCli::try_parse_from([
-            "test", "set-asp", "job-abc",
-            "--provider-agent-id", "prov-1",
-            "--service-id", "svc-1",
-            "--service-params", "none",
-            "--service-token-address", "0xAddr",
-            "--service-token-amount", "5",
-        ]).is_err());
+            "test",
+            "set-asp",
+            "job-abc",
+            "--provider-agent-id",
+            "prov-1",
+            "--service-id",
+            "svc-1",
+            "--service-params",
+            "none",
+            "--service-token-address",
+            "0xAddr",
+            "--service-token-amount",
+            "5",
+        ])
+        .is_err());
     }
 
     // ── reset-asp ───────────────────────────────────────────────────
@@ -1641,9 +1642,7 @@ mod tests {
 
     #[test]
     fn cli_user_reject_with_agent_id() {
-        let cli = TestCli::parse_from([
-            "test", "user-reject", "job-rej", "--agent-id", "user-42",
-        ]);
+        let cli = TestCli::parse_from(["test", "user-reject", "job-rej", "--agent-id", "user-42"]);
         match cli.cmd {
             super::super::TaskCommand::UserReject { job_id, agent_id } => {
                 assert_eq!(job_id, "job-rej");
@@ -1658,156 +1657,174 @@ mod tests {
         assert!(TestCli::try_parse_from(["test", "user-reject"]).is_err());
     }
 
-    // ── create-task: V2 create-and-fund CLI contract ───────────────────
+    // ── create-task: --visibility removed (public task type deleted) ────
 
     #[test]
-    fn cli_create_rejects_legacy_flags() {
+    fn cli_create_rejects_visibility_flag() {
+        // `--visibility` no longer exists on create-task; supplying it is a clap parse error (AC-3).
+        // All other required flags are provided so `--visibility` is the sole cause of the error.
         assert!(TestCli::try_parse_from([
-            "test", "create",
-            "--title", "report",
-            "--description", "a long enough description text",
-            "--budget", "10", "--max-budget", "20",
-            "--payment-token-symbol", "USDT",
-            "--payment-token-amount", "10",
-            "--provider-agent-id", "agent-1",
-            "--service-id", "svc-1",
-            "--service-token-address", "0xAddr",
-            "--service-token-amount", "10",
-        ]).is_err());
+            "test",
+            "create",
+            "--description",
+            "a long enough description text",
+            "--budget",
+            "10",
+            "--max-budget",
+            "20",
+            "--currency",
+            "USDT",
+            "--provider",
+            "agent-1",
+            "--service-id",
+            "svc-1",
+            "--payment-mode",
+            "escrow",
+            "--visibility",
+            "0",
+        ])
+        .is_err());
     }
 
     #[test]
     fn cli_create_with_service_fields() {
         let cli = TestCli::parse_from([
-            "test", "create",
-            "--title", "report",
-            "--description", "a long enough description text",
-            "--payment-token-symbol", "USDT",
-            "--payment-token-amount", "10",
-            "--provider-agent-id", "agent-1",
-            "--service-id", "svc-1",
-            "--service-params", "{\"x\":1}",
-            "--service-token-address", "0xAddr",
-            "--service-token-amount", "5.0",
-            "--visibility", "private",
+            "test",
+            "create",
+            "--description",
+            "a long enough description text",
+            "--budget",
+            "10",
+            "--max-budget",
+            "20",
+            "--currency",
+            "USDT",
+            "--provider",
+            "agent-1",
+            "--service-id",
+            "svc-1",
+            "--payment-mode",
+            "escrow",
+            "--service-params",
+            "参数：x=1",
+            "--service-token-address",
+            "0xAddr",
+            "--service-token-amount",
+            "5.0",
         ]);
         match cli.cmd {
             super::super::TaskCommand::Create {
-                provider_agent_id, service_id, payment_token_amount, service_params,
-                service_token_address, service_token_amount, ..
+                provider,
+                service_id,
+                payment_mode,
+                service_params,
+                service_token_address,
+                service_token_amount,
+                ..
             } => {
-                assert_eq!(provider_agent_id, "agent-1");
+                assert_eq!(provider, "agent-1");
                 assert_eq!(service_id, "svc-1");
-                assert_eq!(payment_token_amount, "10");
-                assert_eq!(service_params, "{\"x\":1}");
-                assert_eq!(service_token_address, "0xAddr");
-                assert_eq!(service_token_amount, "5.0");
+                assert_eq!(payment_mode, "escrow");
+                assert_eq!(service_params.as_deref(), Some("参数：x=1"));
+                assert_eq!(service_token_address.as_deref(), Some("0xAddr"));
+                assert_eq!(service_token_amount.as_deref(), Some("5.0"));
             }
             _ => panic!("expected Create"),
         }
     }
 
     #[test]
-    fn cli_create_requires_confirmed_fixed_price_context() {
+    fn cli_create_requires_provider_service_id_payment_mode() {
+        // --provider, --service-id, --payment-mode are all required for create-task
+        // (oli-feedback). Omitting them is a clap parse error.
         let base = [
-            "test", "create",
-            "--title", "report",
-            "--description", "a long enough description text",
-            "--payment-token-symbol", "USDT",
-            "--payment-token-amount", "10",
+            "test",
+            "create",
+            "--description",
+            "a long enough description text",
+            "--budget",
+            "10",
+            "--max-budget",
+            "20",
+            "--currency",
+            "USDT",
         ];
+        // Missing all three required flags.
         assert!(TestCli::try_parse_from(base).is_err());
+        // Missing --payment-mode only.
         assert!(TestCli::try_parse_from([
-            "test", "create",
-            "--title", "report",
-            "--description", "a long enough description text",
-            "--payment-token-symbol", "USDT",
-            "--payment-token-amount", "10",
-            "--provider-agent-id", "agent-1",
-            "--service-id", "svc-1",
-            "--service-token-address", "0xAddr",
-        ]).is_err());
+            "test",
+            "create",
+            "--description",
+            "a long enough description text",
+            "--budget",
+            "10",
+            "--max-budget",
+            "20",
+            "--currency",
+            "USDT",
+            "--provider",
+            "agent-1",
+            "--service-id",
+            "svc-1",
+        ])
+        .is_err());
+        // Missing --service-id only.
         assert!(TestCli::try_parse_from([
-            "test", "create",
-            "--title", "report",
-            "--description", "a long enough description text",
-            "--payment-token-symbol", "USDT",
-            "--payment-token-amount", "10",
-            "--provider-agent-id", "agent-1",
-            "--service-id", "svc-1",
-            "--service-token-address", "0xAddr",
-            "--service-token-amount", "10",
-        ]).is_ok());
+            "test",
+            "create",
+            "--description",
+            "a long enough description text",
+            "--budget",
+            "10",
+            "--max-budget",
+            "20",
+            "--currency",
+            "USDT",
+            "--provider",
+            "agent-1",
+            "--payment-mode",
+            "escrow",
+        ])
+        .is_err());
+        // Missing --provider only.
+        assert!(TestCli::try_parse_from([
+            "test",
+            "create",
+            "--description",
+            "a long enough description text",
+            "--budget",
+            "10",
+            "--max-budget",
+            "20",
+            "--currency",
+            "USDT",
+            "--service-id",
+            "svc-1",
+            "--payment-mode",
+            "escrow",
+        ])
+        .is_err());
+        // All three present -> parses OK.
+        assert!(TestCli::try_parse_from([
+            "test",
+            "create",
+            "--description",
+            "a long enough description text",
+            "--budget",
+            "10",
+            "--max-budget",
+            "20",
+            "--currency",
+            "USDT",
+            "--provider",
+            "agent-1",
+            "--service-id",
+            "svc-1",
+            "--payment-mode",
+            "escrow",
+        ])
+        .is_ok());
     }
 
-    // ── preflight_summary_line — text-mode compact line (FR-1) ──────────
-    //
-    // Asserts the neutral, non-authorizing format (oli-feedback P0): the line
-    // renders `Trading-signal service: yes/no`, never `Copy-trade: on/off`.
-    //   `Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(verification_unknown) · 1 reminder`
-
-    #[test]
-    fn preflight_line_signal_singular_reminder() {
-        // isTradingSignal=true → "yes"; classes joined by ", "; tools "Name(readiness)"
-        // joined by ", "; a single reminder renders the singular "1 reminder".
-        let pf = serde_json::json!({
-            "isTradingSignal": true,
-            "assetClasses": ["prediction"],
-            "tools": [
-                {"displayName": "Polymarket", "readiness": "missing"},
-                {"displayName": "Trade Kit", "readiness": "verification_unknown"}
-            ],
-            "reminders": [{"kind": "install_plugin"}]
-        });
-        let line = super::preflight_summary_line(&pf).unwrap();
-        assert_eq!(
-            line,
-            "Trading-signal service: yes · classes: prediction · tools: Polymarket(missing), Trade Kit(verification_unknown) · 1 reminder"
-        );
-        // The misleading on/off authorization wording must never appear.
-        assert!(!line.contains("Copy-trade"));
-    }
-
-    #[test]
-    fn preflight_line_non_signal_empty_classes_and_tools() {
-        // isTradingSignal=false → "no"; empty assetClasses → em-dash placeholder;
-        // empty tools → "none"; zero reminders → plural "0 reminders".
-        let pf = serde_json::json!({
-            "isTradingSignal": false,
-            "assetClasses": [],
-            "tools": [],
-            "reminders": []
-        });
-        let line = super::preflight_summary_line(&pf).unwrap();
-        assert_eq!(
-            line,
-            "Trading-signal service: no · classes: — · tools: none · 0 reminders"
-        );
-        assert!(!line.contains("Copy-trade"));
-    }
-
-    #[test]
-    fn preflight_line_plural_reminders_multi_class() {
-        // Multiple classes join with ", "; N (≠1) reminders render the plural form.
-        let pf = serde_json::json!({
-            "isTradingSignal": true,
-            "assetClasses": ["spot", "perp"],
-            "tools": [{"displayName": "OnchainOS", "readiness": "ready"}],
-            "reminders": [{"kind": "choose_at_first_signal"}, {"kind": "configure_tool"}]
-        });
-        let line = super::preflight_summary_line(&pf).unwrap();
-        assert_eq!(
-            line,
-            "Trading-signal service: yes · classes: spot, perp · tools: OnchainOS(ready) · 2 reminders"
-        );
-        assert!(!line.contains("Copy-trade"));
-    }
-
-    #[test]
-    fn preflight_line_non_object_returns_none() {
-        // A non-object preflight (absent / wrong type) yields no summary line.
-        assert!(super::preflight_summary_line(&serde_json::Value::Null).is_none());
-        assert!(super::preflight_summary_line(&serde_json::json!("x")).is_none());
-        assert!(super::preflight_summary_line(&serde_json::json!([1, 2])).is_none());
-    }
 }

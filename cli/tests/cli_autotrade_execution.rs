@@ -1,101 +1,41 @@
 mod common;
 
-use common::{
-    create_auto_consent_via_continuation, fresh_home, onchainos, parse_stdout_json, scrubbed,
-};
-use serde_json::json;
+use common::{fresh_home, onchainos, parse_stdout_json, scrubbed};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::fs;
 
-#[cfg(unix)]
-fn write_fake_okx(path: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::write(
-        path,
-        r#"#!/bin/sh
-if [ "$1 $2" = "list-tools --json" ]; then
-  printf '%s\n' '{"version":"1.4.2","modules":[{"commands":[{"toolName":"market_get_ticker"},{"toolName":"market_get_instruments"},{"toolName":"account_get_config"},{"toolName":"spot_place_order"},{"toolName":"swap_get_leverage"},{"toolName":"swap_set_leverage"},{"toolName":"swap_place_order"},{"toolName":"swap_close_position"},{"toolName":"futures_get_leverage"},{"toolName":"futures_set_leverage"},{"toolName":"futures_place_order"},{"toolName":"futures_close_position"},{"toolName":"event_browse"},{"toolName":"event_get_series"},{"toolName":"event_get_events"},{"toolName":"event_get_markets"},{"toolName":"event_place_order"},{"toolName":"option_get_instruments"},{"toolName":"option_get_greeks"},{"toolName":"option_place_order"}]}]}'
-  exit 0
-fi
-case "$FAKE_OKX_MODE" in
-  auth_error)
-    echo "Error: HTTP 401 from OKX: API key doesn't exist" >&2
-    exit 1
-    ;;
-  nonzero_structured)
-    echo '{"ok":false,"error":"post-run failure"}'
-    exit 7
-    ;;
-  nonzero_opaque)
-    echo 'opaque transport failure' >&2
-    exit 9
-    ;;
-  status_only)
-    echo '{"ok":true,"status":"success"}'
-    ;;
-  receipt)
-    echo '{"ok":true,"data":{"ordId":"42"}}'
-    ;;
-  normalized_sentinels)
-    saw_tp=false
-    saw_sl=false
-    for arg in "$@"; do
-      [ "$arg" = "--tpOrdPx=-1" ] && saw_tp=true
-      [ "$arg" = "--slOrdPx=-1" ] && saw_sl=true
-    done
-    if [ "$saw_tp" = true ] && [ "$saw_sl" = true ]; then
-      echo '{"ok":true,"data":{"ordId":"normalized-42"}}'
-    else
-      echo "Error: negative TP/SL market sentinels were not normalized" >&2
-      exit 2
-    fi
-    ;;
-esac
-"#,
-    )
-    .unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
 }
 
-fn write_json(path: &std::path::Path, value: &serde_json::Value) {
+fn write_json(path: &std::path::Path, value: &Value) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
 }
 
-fn write_context(home: &std::path::Path, delivery_id: &str) -> serde_json::Value {
-    let context = json!({
-        "version": 1,
-        "jobId": "job1",
-        "agentId": "8315",
-        "providerAgentId": "8779",
-        "originSessionKey": "job:job1:my:8315:to:8779",
-        "deliveryId": delivery_id,
-        "savedPath": "/tmp/signal.txt",
-        "deliverableType": "text",
-        "receivedAtMs": 1
-    });
-    write_json(
-        &home.join(format!(
-            "autotrade/delivery-context/job1/{delivery_id}.json"
-        )),
-        &context,
+fn write_markdown(path: &std::path::Path, kind: &str, metadata: &Value, body: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let content = format!(
+        "<!-- onchainos-autotrade:{kind}\n{}\n-->\n\n{body}",
+        serde_json::to_string_pretty(metadata).unwrap()
     );
-    context
+    fs::write(path, content).unwrap();
 }
 
-fn write_direct_context(home: &std::path::Path, delivery_id: &str) {
+fn write_direct_context(home: &std::path::Path, delivery_id: &str, saved_path: &std::path::Path) {
     write_json(
         &home.join(format!(
             "autotrade/delivery-context/job1/{delivery_id}.json"
         )),
         &json!({
-            "version": 2,
+            "version": 1,
             "jobId": "job1",
             "agentId": "8315",
             "providerAgentId": "8779",
             "originSessionKey": "job:job1:my:8315:to:8779",
             "deliveryId": delivery_id,
-            "savedPath": "/tmp/signal.txt",
+            "savedPath": saved_path,
             "deliverableType": "text",
             "receivedAtMs": 1,
             "executionPath": "agent_direct"
@@ -103,908 +43,283 @@ fn write_direct_context(home: &std::path::Path, delivery_id: &str) {
     );
 }
 
-#[test]
-fn direct_claim_and_finalize_are_wired_and_never_cross_to_the_legacy_wrapper() {
-    let (_guard, home) = fresh_home("cli_autotrade_direct_execution");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    for delivery_id in ["delivery-direct", "delivery-no-fallback"] {
-        write_direct_context(&home, delivery_id);
-    }
+fn write_legacy_context(home: &std::path::Path, delivery_id: &str) {
     write_json(
-        &home.join("autotrade/consent/job1.json"),
-        &json!({
-            "version": 3,
-            "jobId": "job1",
-            "mode": "auto",
-            "capU": "20",
-            "tradeAmountU": "10",
-            "quoteToken": "usdt",
-            "createdAt": now,
-            "expiresAt": now + 3600
-        }),
-    );
-
-    let run = |args: &[&str]| {
-        let mut command = onchainos();
-        scrubbed(&mut command, &home).args(args).output().unwrap()
-    };
-    let claimed = run(&[
-        "agent",
-        "autotrade-direct-claim",
-        "--job-id",
-        "job1",
-        "--delivery-id",
-        "delivery-direct",
-        "--amount",
-        "10.0",
-    ]);
-    assert!(claimed.status.success());
-    let claimed = parse_stdout_json(&claimed);
-    assert_eq!(claimed["data"]["allowed"], true);
-    assert_eq!(claimed["data"]["status"], "claimed");
-    assert_eq!(claimed["data"]["amount"], "10");
-
-    let finalized = run(&[
-        "agent",
-        "autotrade-direct-finalize",
-        "--job-id",
-        "job1",
-        "--delivery-id",
-        "delivery-direct",
-        "--status",
-        "submitted",
-        "--tool-id",
-        "okx-cex-trade",
-        "--receipt-id",
-        "order:42",
-    ]);
-    assert!(finalized.status.success());
-    let finalized = parse_stdout_json(&finalized);
-    assert_eq!(finalized["data"]["status"], "submitted");
-    assert_eq!(finalized["data"]["venue"], "agent_direct/okx-cex-trade");
-    assert_eq!(finalized["data"]["receipt"]["receiptId"], "order:42");
-
-    let duplicate = run(&[
-        "agent",
-        "autotrade-direct-claim",
-        "--job-id",
-        "job1",
-        "--delivery-id",
-        "delivery-direct",
-        "--amount",
-        "10",
-    ]);
-    assert!(duplicate.status.success());
-    let duplicate = parse_stdout_json(&duplicate);
-    assert_eq!(duplicate["data"]["allowed"], false);
-    assert_eq!(duplicate["data"]["status"], "terminal");
-
-    let legacy = run(&[
-        "agent",
-        "autotrade-execute",
-        "--job-id",
-        "job1",
-        "--delivery-id",
-        "delivery-no-fallback",
-        "--venue",
-        "dex",
-        "--action",
-        "buy",
-        "--amount",
-        "10",
-        "--command-json",
-        r#"["swap","execute","--readable-amount","10"]"#,
-    ]);
-    assert!(!legacy.status.success());
-    assert!(parse_stdout_json(&legacy)["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("Agent-direct execution"));
-}
-
-#[test]
-fn unconfigured_deliveries_are_saved_as_terminal_skips_without_decisions() {
-    let (_guard, home) = fresh_home("cli_autotrade_unconfigured_delivery");
-    write_context(&home, "delivery-first");
-    write_context(&home, "delivery-second");
-    let empty_path = home.join("empty-path");
-    fs::create_dir_all(&empty_path).unwrap();
-
-    let request = |delivery_id: &str| {
-        let mut command = onchainos();
-        scrubbed(&mut command, &home)
-            .env("PATH", &empty_path)
-            .args([
-                "agent",
-                "autotrade-consent-request",
-                "--job-id",
-                "job1",
-                "--agent-id",
-                "8315",
-                "--delivery-id",
-                delivery_id,
-                "--signal-type",
-                "spot",
-            ])
-            .output()
-            .unwrap()
-    };
-
-    let first = request("delivery-first");
-    assert!(first.status.success());
-    let first_result = parse_stdout_json(&first);
-    assert_eq!(first_result["data"]["decision"], false);
-    assert_eq!(first_result["data"]["decisionPushed"], false);
-    assert_eq!(first_result["data"]["status"], "skipped");
-    assert_eq!(
-        first_result["data"]["reason"],
-        "execution_policy_not_configured"
-    );
-    assert_eq!(first_result["data"]["terminal"], true);
-
-    let second = request("delivery-second");
-    assert!(second.status.success());
-    let result = parse_stdout_json(&second);
-    assert_eq!(result["data"]["decision"], false);
-    assert_eq!(result["data"]["decisionPushed"], false);
-    assert_eq!(result["data"]["status"], "skipped");
-    assert_eq!(result["data"]["terminal"], true);
-    assert!(home
-        .join("autotrade/outcomes/job1/delivery-first.json")
-        .exists());
-    assert!(home
-        .join("autotrade/outcomes/job1/delivery-second.json")
-        .exists());
-    assert!(home
-        .join("autotrade/execution-latch/job1/delivery-first")
-        .exists());
-    assert!(home
-        .join("autotrade/execution-latch/job1/delivery-second")
-        .exists());
-}
-
-#[test]
-fn consent_request_reflects_the_latest_persisted_policy() {
-    let (_guard, home) = fresh_home("cli_autotrade_latest_policy");
-    write_context(&home, "delivery-manual");
-    write_context(&home, "delivery-auto");
-    let empty_path = home.join("empty-path");
-    fs::create_dir_all(&empty_path).unwrap();
-
-    let mut set_manual = onchainos();
-    let output = scrubbed(&mut set_manual, &home)
-        .env("PATH", &empty_path)
-        .args([
-            "agent",
-            "autotrade-consent-set",
-            "--job-id",
-            "job1",
-            "--agent-id",
-            "8315",
-            "--mode",
-            "manual",
-        ])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-
-    let mut manual_request = onchainos();
-    let output = scrubbed(&mut manual_request, &home)
-        .env("PATH", &empty_path)
-        .args([
-            "agent",
-            "autotrade-consent-request",
-            "--job-id",
-            "job1",
-            "--agent-id",
-            "8315",
-            "--delivery-id",
-            "delivery-manual",
-            "--signal-type",
-            "spot",
-        ])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let data = parse_stdout_json(&output)["data"].clone();
-    assert_eq!(data["status"], "skipped");
-    assert_eq!(data["reason"], "execution_policy_not_configured");
-
-    create_auto_consent_via_continuation(&home, "job1", "8315", Some("1"), Some("10"));
-    let mut auto_request = onchainos();
-    let output = scrubbed(&mut auto_request, &home)
-        .env("PATH", &empty_path)
-        .args([
-            "agent",
-            "autotrade-consent-request",
-            "--job-id",
-            "job1",
-            "--agent-id",
-            "8315",
-            "--delivery-id",
-            "delivery-auto",
-            "--signal-type",
-            "spot",
-        ])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let data = parse_stdout_json(&output)["data"].clone();
-    assert_eq!(data["status"], "policy_ready");
-    assert_eq!(data["reason"], "auto_authorization_already_persisted");
-    assert_eq!(data["consentMode"], "auto");
-}
-
-#[test]
-fn declined_paused_and_expired_policies_skip_without_mode_decisions() {
-    let (_guard, home) = fresh_home("cli_autotrade_inactive_policy_delivery");
-    let empty_path = home.join("empty-path");
-    fs::create_dir_all(&empty_path).unwrap();
-
-    let set_policy = |args: &[&str]| {
-        let mut command = onchainos();
-        let output = scrubbed(&mut command, &home)
-            .env("PATH", &empty_path)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-    };
-    let request = |delivery_id: &str| {
-        write_context(&home, delivery_id);
-        let mut command = onchainos();
-        let output = scrubbed(&mut command, &home)
-            .env("PATH", &empty_path)
-            .args([
-                "agent",
-                "autotrade-consent-request",
-                "--job-id",
-                "job1",
-                "--agent-id",
-                "8315",
-                "--delivery-id",
-                delivery_id,
-                "--signal-type",
-                "spot",
-            ])
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        let data = parse_stdout_json(&output)["data"].clone();
-        assert_eq!(data["decisionPushed"], false);
-        assert_eq!(data["status"], "skipped");
-        assert_eq!(data["reason"], "execution_policy_not_configured");
-        assert_eq!(data["terminal"], true);
-    };
-
-    set_policy(&[
-        "agent",
-        "autotrade-consent-set",
-        "--job-id",
-        "job1",
-        "--agent-id",
-        "8315",
-        "--mode",
-        "decline",
-    ]);
-    request("delivery-declined");
-
-    create_auto_consent_via_continuation(&home, "job1", "8315", None, None);
-    set_policy(&[
-        "agent",
-        "autotrade-consent-set",
-        "--job-id",
-        "job1",
-        "--mode",
-        "pause",
-    ]);
-    request("delivery-paused");
-
-    create_auto_consent_via_continuation(&home, "job1", "8315", None, None);
-    let consent_path = home.join("autotrade/consent/job1.json");
-    let mut consent: serde_json::Value =
-        serde_json::from_slice(&fs::read(&consent_path).unwrap()).unwrap();
-    consent["expiresAt"] = json!(1);
-    write_json(&consent_path, &consent);
-    request("delivery-expired");
-}
-
-#[test]
-fn preflight_amount_mismatch_is_persisted_without_spawning_trade() {
-    let (_guard, home) = fresh_home("cli_autotrade_execution");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    write_json(
-        &home.join("autotrade/delivery-context/job1/delivery-1.json"),
+        &home.join(format!(
+            "autotrade/delivery-context/job1/{delivery_id}.json"
+        )),
         &json!({
             "version": 1,
             "jobId": "job1",
             "agentId": "8315",
             "providerAgentId": "8779",
             "originSessionKey": "job:job1:my:8315:to:8779",
-            "deliveryId": "delivery-1",
-            "savedPath": "/tmp/signal.txt",
+            "deliveryId": delivery_id,
+            "savedPath": "/tmp/legacy-signal.txt",
             "deliverableType": "text",
             "receivedAtMs": 1
         }),
     );
-    write_json(
-        &home.join("autotrade/consent/job1.json"),
-        &json!({
-            "version": 1,
-            "jobId": "job1",
-            "mode": "auto",
-            "capU": "10",
-            "tradeAmountU": "1",
-            "quoteToken": "usdt",
-            "tradeEnvironment": "live",
-            "createdAt": now,
-            "expiresAt": now + 3600
-        }),
-    );
-    write_json(
-        &home.join("autotrade/grants/job1.json"),
-        &json!({
-            "version": 1,
-            "jobId": "job1",
-            "grants": {"dex": {"maxBuy": "10", "maxSell": "10"}},
-            "createdAt": now,
-            "expiresAt": now + 3600
-        }),
-    );
-    let empty_path = home.join("empty-path");
-    fs::create_dir_all(&empty_path).unwrap();
-    let mut command = onchainos();
-    let output = scrubbed(&mut command, &home)
-        .env("PATH", &empty_path)
-        .args([
-            "agent",
-            "autotrade-execute",
-            "--job-id",
-            "job1",
-            "--delivery-id",
-            "delivery-1",
-            "--venue",
-            "dex",
-            "--action",
-            "buy",
-            "--amount",
-            "1",
-            "--command-json",
-            r#"["swap","execute","--readable-amount","2"]"#,
-        ])
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let result = parse_stdout_json(&output);
-    assert_eq!(result["ok"], true);
-    assert_eq!(result["data"]["status"], "failed_before_submit");
-    assert_eq!(result["data"]["notificationPending"], true);
-    assert_eq!(result["data"]["notificationAttempts"], 1);
-    assert!(result["data"]["nextNotificationAttemptAt"]
-        .as_u64()
-        .unwrap_or_default()
-        > 0);
-    assert!(result["data"]["reason"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("does not match"));
-    assert!(home
-        .join("autotrade/outcomes/job1/delivery-1.json")
-        .exists());
 }
 
-#[cfg(unix)]
-#[test]
-fn trade_kit_execution_requires_and_matches_persisted_environment() {
-    let (_guard, home) = fresh_home("cli_autotrade_trade_environment_binding");
+fn write_guide_direct_fixture(home: &std::path::Path, delivery_id: &str) -> std::path::PathBuf {
+    let source = "Read this saved Signal with the matching Consent before executing one documented trade.";
+    let source_hash = sha256_hex(source.as_bytes());
+    let guide_hash = source_hash.clone();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    for delivery in ["delivery-missing-env", "delivery-mismatch-env"] {
-        write_context(&home, delivery);
-    }
-    write_json(
-        &home.join("autotrade/grants/job1.json"),
+    write_markdown(
+        &home.join("autotrade/guide/job1.md"),
+        "guide",
         &json!({
-            "version": 1,
-            "jobId": "job1",
-            "grants": {"trade_kit": {"maxBuy": "10", "maxSell": "10"}},
-            "createdAt": now,
-            "expiresAt": now + 3600
-        }),
-    );
-    let bin = home.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    write_fake_okx(&bin.join("okx"));
-
-    let write_policy = |environment: Option<&str>| {
-        let mut policy = json!({
             "version": 2,
             "jobId": "job1",
-            "mode": "auto",
-            "capU": "10",
-            "tradeAmountU": "1",
-            "quoteToken": "usdt",
+            "serviceId": "svc-guide",
+            "sourceHash": source_hash,
+            "createdAt": now
+        }),
+        source,
+    );
+    write_markdown(
+        &home.join("autotrade/consent/job1.md"),
+        "consent",
+        &json!({
+            "version": 1,
+            "jobId": "job1",
+            "guideHash": guide_hash,
+            "lifecycle": "active",
+            "values": {"strategyArmed": true},
             "createdAt": now,
             "expiresAt": now + 3600
-        });
-        if let Some(environment) = environment {
-            policy["tradeEnvironment"] = json!(environment);
-        }
-        policy["orderPolicy"] = json!("market");
-        write_json(&home.join("autotrade/consent/job1.json"), &policy);
-    };
-    let run = |delivery: &str| {
-        let mut command = onchainos();
-        let output = scrubbed(&mut command, &home)
-            .env("PATH", &bin)
-            .env("FAKE_OKX_MODE", "receipt")
-            .args([
-                "agent",
-                "autotrade-execute",
-                "--job-id",
-                "job1",
-                "--delivery-id",
-                delivery,
-                "--venue",
-                "trade_kit",
-                "--action",
-                "buy",
-                "--amount",
-                "1",
-                "--command-json",
-                r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
-            ])
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        parse_stdout_json(&output)
-    };
+        }),
+        "# Service Consent",
+    );
+    let saved_path = home.join(format!("{delivery_id}-signal.txt"));
+    fs::write(
+        &saved_path,
+        "BUY BTC-USDT with the Guide-declared amount of 2.5 units.",
+    )
+    .unwrap();
+    write_direct_context(home, delivery_id, &saved_path);
+    saved_path
+}
 
-    write_policy(None);
-    let missing = run("delivery-missing-env");
-    assert_eq!(missing["data"]["status"], "failed_before_submit");
-    assert!(missing["data"]["reason"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("persisted live or demo environment"));
-
-    write_policy(Some("demo"));
-    let mismatch = run("delivery-mismatch-env");
-    assert_eq!(mismatch["data"]["status"], "failed_before_submit");
-    assert!(mismatch["data"]["reason"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("does not match persisted consent"));
+fn run(home: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let mut command = onchainos();
+    scrubbed(&mut command, home).args(args).output().unwrap()
 }
 
 #[test]
-fn manual_policy_uses_the_same_persisted_result_bridge() {
-    let (_guard, home) = fresh_home("cli_autotrade_manual_execution");
+fn guide_direct_claim_requires_active_guide_consent_and_finalizes_once() {
+    let (_guard, home) = fresh_home("cli_autotrade_direct_execution");
+    let delivery_id = "delivery-direct";
+    let saved_path = write_guide_direct_fixture(&home, delivery_id);
+    assert!(!fs::read_to_string(&saved_path)
+        .unwrap()
+        .trim_start()
+        .starts_with('{'));
+
+    let claimed = run(
+        &home,
+        &[
+            "agent",
+            "autotrade-direct-claim",
+            "--job-id",
+            "job1",
+            "--delivery-id",
+            delivery_id,
+            "--amount",
+            "2.5",
+        ],
+    );
+    assert!(claimed.status.success());
+    assert_eq!(parse_stdout_json(&claimed)["data"]["status"], "claimed");
+
+    let finalized = run(
+        &home,
+        &[
+            "agent",
+            "autotrade-direct-finalize",
+            "--job-id",
+            "job1",
+            "--delivery-id",
+            delivery_id,
+            "--status",
+            "submitted",
+            "--tool-id",
+            "onchainos",
+            "--receipt-id",
+            "tx_42",
+        ],
+    );
+    assert!(finalized.status.success());
+    assert_eq!(parse_stdout_json(&finalized)["data"]["status"], "submitted");
+
+    let duplicate = run(
+        &home,
+        &[
+            "agent",
+            "autotrade-direct-claim",
+            "--job-id",
+            "job1",
+            "--delivery-id",
+            delivery_id,
+            "--amount",
+            "2.5",
+        ],
+    );
+    assert!(duplicate.status.success());
+    assert_eq!(parse_stdout_json(&duplicate)["data"]["status"], "terminal");
+}
+
+#[test]
+fn guide_direct_claim_requires_saved_signal_and_active_consent() {
+    let (_guard, home) = fresh_home("cli_autotrade_direct_revalidation");
+    let delivery_id = "delivery-revalidate";
+    let saved_path = write_guide_direct_fixture(&home, delivery_id);
+    fs::remove_file(&saved_path).unwrap();
+    let missing_signal_claim = run(
+        &home,
+        &[
+            "agent",
+            "autotrade-direct-claim",
+            "--job-id",
+            "job1",
+            "--delivery-id",
+            delivery_id,
+            "--amount",
+            "2.5",
+        ],
+    );
+    assert!(!missing_signal_claim.status.success());
+    let missing_signal_output = format!(
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&missing_signal_claim.stdout),
+        String::from_utf8_lossy(&missing_signal_claim.stderr)
+    );
+    assert!(
+        missing_signal_output.contains("saved subscription Signal is not available"),
+        "{missing_signal_output}"
+    );
+
+    let paused_delivery_id = "delivery-paused";
+    write_guide_direct_fixture(&home, paused_delivery_id);
+    fs::remove_file(home.join("autotrade/consent/job1.md")).unwrap();
+    assert!(!home.join("autotrade/consent/job1.md").exists());
+
+    let paused_claim = run(
+        &home,
+        &[
+            "agent",
+            "autotrade-direct-claim",
+            "--job-id",
+            "job1",
+            "--delivery-id",
+            paused_delivery_id,
+            "--amount",
+            "2.5",
+        ],
+    );
+    assert!(!paused_claim.status.success());
+    let paused_output = format!(
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&paused_claim.stdout),
+        String::from_utf8_lossy(&paused_claim.stderr)
+    );
+    assert!(
+        paused_output.contains("active local Service Guide and Guide Consent are required"),
+        "{paused_output}"
+    );
+}
+
+#[test]
+fn legacy_consent_request_is_terminal_skip_even_when_an_old_auto_record_exists() {
+    let (_guard, home) = fresh_home("cli_autotrade_legacy_skip");
+    let delivery_id = "delivery-legacy";
+    write_legacy_context(&home, delivery_id);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    write_context(&home, "delivery-manual");
     write_json(
         &home.join("autotrade/consent/job1.json"),
         &json!({
             "version": 1,
             "jobId": "job1",
-            "mode": "manual",
+            "mode": "auto",
+            "capU": "10",
             "tradeAmountU": "1",
-            "quoteToken": "usdt",
             "createdAt": now,
             "expiresAt": now + 3600
         }),
     );
-    let empty_path = home.join("empty-path");
-    fs::create_dir_all(&empty_path).unwrap();
-    let mut command = onchainos();
-    let output = scrubbed(&mut command, &home)
-        .env("PATH", &empty_path)
-        .args([
+
+    let output = run(
+        &home,
+        &[
             "agent",
-            "autotrade-execute",
+            "autotrade-consent-request",
             "--job-id",
             "job1",
+            "--agent-id",
+            "8315",
             "--delivery-id",
-            "delivery-manual",
-            "--venue",
-            "dex",
-            "--action",
-            "buy",
-            "--amount",
-            "1",
-            "--execution-mode",
-            "manual",
-            "--command-json",
-            r#"["swap","execute","--readable-amount","2"]"#,
-        ])
-        .output()
-        .unwrap();
-
+            delivery_id,
+            "--signal-type",
+            "spot",
+        ],
+    );
     assert!(output.status.success());
-    let result = parse_stdout_json(&output);
-    assert_eq!(result["data"]["status"], "failed_before_submit");
-    assert_eq!(result["data"]["executionMode"], "manual");
-    assert!(result["data"]["reason"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("dex readable amount"));
+    let data = parse_stdout_json(&output)["data"].clone();
+    assert_eq!(data["status"], "skipped");
+    assert_eq!(data["reason"], "guide_execution_unavailable");
+    assert_eq!(data["terminal"], true);
+    assert_ne!(data["status"], "policy_ready");
 }
 
 #[test]
-fn terminal_delivery_report_is_idempotent_and_blocks_later_execution() {
-    let (_guard, home) = fresh_home("cli_autotrade_delivery_report");
-    let context = write_context(&home, "delivery-report");
-    write_json(&home.join("autotrade/pending/job1.json"), &context);
-    let empty_path = home.join("empty-path");
-    fs::create_dir_all(&empty_path).unwrap();
+fn guide_draft_validation_command_is_removed() {
+    let (_guard, home) = fresh_home("cli_autotrade_guide_draft_validation");
+    let output = run(
+        &home,
+        &[
+            "agent",
+            "autotrade-guide-draft-validate",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("autotrade-guide-draft-validate"), "{stderr}");
+    assert!(!home.join("autotrade/guide").exists());
+}
 
-    let mut report = onchainos();
-    let report_output = scrubbed(&mut report, &home)
-        .env("PATH", &empty_path)
-        .args([
+#[test]
+fn stale_direct_delivery_never_reports_no_active_execution_consent() {
+    let (_guard, home) = fresh_home("cli_autotrade_stale_direct_delivery");
+    let delivery_id = "delivery-stale-direct";
+    let saved_path = home.join("signal.md");
+    fs::write(&saved_path, "raw Signal stays available to the user").unwrap();
+    write_direct_context(&home, delivery_id, &saved_path);
+
+    let output = run(
+        &home,
+        &[
             "agent",
             "autotrade-delivery-report",
             "--job-id",
             "job1",
             "--delivery-id",
-            "delivery-report",
+            delivery_id,
             "--status",
-            "skipped",
+            "failed_before_execution",
             "--reason",
-            "signal expired before execution",
-        ])
-        .output()
-        .unwrap();
-    assert!(report_output.status.success());
-    let first = parse_stdout_json(&report_output);
-    assert_eq!(first["data"]["status"], "skipped");
-    assert!(!home.join("autotrade/pending/job1.json").exists());
-
-    let mut execute = onchainos();
-    let execute_output = scrubbed(&mut execute, &home)
-        .env("PATH", &empty_path)
-        .args([
-            "agent",
-            "autotrade-execute",
-            "--job-id",
-            "job1",
-            "--delivery-id",
-            "delivery-report",
-            "--venue",
-            "dex",
-            "--action",
-            "buy",
-            "--amount",
-            "1",
-            "--command-json",
-            r#"["swap","execute","--readable-amount","1"]"#,
-        ])
-        .output()
-        .unwrap();
-    assert!(execute_output.status.success());
-    let duplicate = parse_stdout_json(&execute_output);
-    assert_eq!(duplicate["data"]["status"], "skipped");
-    assert_eq!(duplicate["data"]["reason"], "signal expired before execution");
-}
-
-#[test]
-fn over_cap_one_time_permit_is_exact_and_consumed_by_the_result_bridge() {
-    let (_guard, home) = fresh_home("cli_autotrade_one_time_execution");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let context = write_context(&home, "delivery-over-cap");
-    write_json(&home.join("autotrade/pending/job1.json"), &context);
-    write_json(
-        &home.join("autotrade/consent/job1.json"),
-        &json!({
-            "version": 1,
-            "jobId": "job1",
-            "mode": "auto",
-            "capU": "1",
-            "tradeAmountU": "1",
-            "quoteToken": "usdt",
-            "createdAt": now,
-            "expiresAt": now + 3600
-        }),
+            "No active execution consent",
+        ],
     );
-    let empty_path = home.join("empty-path");
-    fs::create_dir_all(&empty_path).unwrap();
-
-    let mut under_cap = onchainos();
-    let under_cap_output = scrubbed(&mut under_cap, &home)
-        .env("PATH", &empty_path)
-        .args([
-            "agent",
-            "autotrade-once-authorize",
-            "--job-id",
-            "job1",
-            "--delivery-id",
-            "delivery-over-cap",
-            "--amount",
-            "1",
-        ])
-        .output()
-        .unwrap();
-    assert!(!under_cap_output.status.success());
-    assert!(String::from_utf8_lossy(&under_cap_output.stdout)
-        .contains("only valid for an amount above the current cap"));
-
-    let mut authorize = onchainos();
-    let authorize_output = scrubbed(&mut authorize, &home)
-        .env("PATH", &empty_path)
-        .args([
-            "agent",
-            "autotrade-once-authorize",
-            "--job-id",
-            "job1",
-            "--delivery-id",
-            "delivery-over-cap",
-            "--amount",
-            "2",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        authorize_output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&authorize_output.stderr)
-    );
-    let permit = parse_stdout_json(&authorize_output);
-    assert_eq!(permit["data"]["amount"], "2");
-    assert!(home
-        .join("autotrade/one-time-permits/job1/delivery-over-cap.json")
-        .exists());
-
-    let mut execute = onchainos();
-    let execute_output = scrubbed(&mut execute, &home)
-        .env("PATH", &empty_path)
-        .args([
-            "agent",
-            "autotrade-execute",
-            "--job-id",
-            "job1",
-            "--delivery-id",
-            "delivery-over-cap",
-            "--venue",
-            "dex",
-            "--action",
-            "buy",
-            "--amount",
-            "2",
-            "--execution-mode",
-            "one_time",
-            "--command-json",
-            r#"["swap","execute","--readable-amount","3"]"#,
-        ])
-        .output()
-        .unwrap();
-    assert!(execute_output.status.success());
-    let result = parse_stdout_json(&execute_output);
-    assert_eq!(result["data"]["status"], "failed_before_submit");
-    assert_eq!(result["data"]["executionMode"], "one_time");
-    assert!(result["data"]["reason"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("dex readable amount"));
-    assert!(!home
-        .join("autotrade/one-time-permits/job1/delivery-over-cap.json")
-        .exists());
-    assert!(!home.join("autotrade/pending/job1.json").exists());
-}
-
-#[cfg(unix)]
-#[test]
-fn completed_trade_kit_commands_preserve_receipts_and_safe_failure_details() {
-    let (_guard, home) = fresh_home("cli_autotrade_conservative_receipt");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    for delivery in [
-        "delivery-nonzero",
-        "delivery-opaque",
-        "delivery-status",
-        "delivery-receipt",
-        "delivery-normalized",
-        "delivery-futures-place",
-        "delivery-option",
-        "delivery-event",
-        "delivery-close",
-        "delivery-auth-error",
-    ] {
-        write_context(&home, delivery);
-    }
-    write_json(
-        &home.join("autotrade/consent/job1.json"),
-        &json!({
-            "version": 1,
-            "jobId": "job1",
-            "mode": "auto",
-            "capU": "10",
-            "tradeAmountU": "1",
-            "quoteToken": "usdt",
-            "tradeEnvironment": "live",
-            "marginMode": "cross",
-            "orderPolicy": "market",
-            "createdAt": now,
-            "expiresAt": now + 3600
-        }),
-    );
-    write_json(
-        &home.join("autotrade/grants/job1.json"),
-        &json!({
-            "version": 1,
-            "jobId": "job1",
-            "grants": {"trade_kit": {"maxBuy": "10", "maxSell": "10"}},
-            "createdAt": now,
-            "expiresAt": now + 3600
-        }),
-    );
-    let bin = home.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    write_fake_okx(&bin.join("okx"));
-
-    let run = |delivery: &str, mode: &str, command_json: &str| {
-        let mut command = onchainos();
-        let output = scrubbed(&mut command, &home)
-            .env("PATH", &bin)
-            .env("FAKE_OKX_MODE", mode)
-            .args([
-                "agent",
-                "autotrade-execute",
-                "--job-id",
-                "job1",
-                "--delivery-id",
-                delivery,
-                "--venue",
-                "trade_kit",
-                "--action",
-                "buy",
-                "--amount",
-                "1",
-                "--command-json",
-                command_json,
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "delivery={delivery} mode={mode}\nstdout: {}\nstderr: {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        parse_stdout_json(&output)
-    };
-
-    let structured = run(
-        "delivery-nonzero",
-        "nonzero_structured",
-        r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
-    );
-    assert_eq!(structured["data"]["status"], "failed_before_submit");
-    assert!(structured["data"]["reason"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("post-run failure"));
-
-    let opaque = run(
-        "delivery-opaque",
-        "nonzero_opaque",
-        r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
-    );
-    assert_eq!(opaque["data"]["status"], "unknown_after_submit");
-    assert!(opaque["data"]["reason"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("opaque transport failure"));
-    assert_eq!(
-        run(
-            "delivery-status",
-            "status_only",
-            r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
-        )["data"]["status"],
-        "unknown_after_submit"
-    );
-    assert_eq!(
-        run(
-            "delivery-receipt",
-            "receipt",
-            r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
-        )["data"]["status"],
-        "submitted"
-    );
-
-    let normalized = run(
-        "delivery-normalized",
-        "normalized_sentinels",
-        r#"["--live","--json","swap","place","--sz","1","--side","buy","--tdMode","cross","--ordType","market","--tpTriggerPx","999999","--tpOrdPx","-1","--slTriggerPx","1","--slOrdPx","-1"]"#,
-    );
-    assert_eq!(normalized["data"]["status"], "submitted");
-    assert_eq!(normalized["data"]["receipt"]["ordId"], "normalized-42");
-
-    let futures_place = run(
-        "delivery-futures-place",
-        "receipt",
-        r#"["--live","futures","place","--instId","BTC-USDT-260925","--tdMode","cross","--side","buy","--ordType","market","--sz","1","--json"]"#,
-    );
-    assert_eq!(futures_place["data"]["status"], "submitted");
-
-    let option = run(
-        "delivery-option",
-        "receipt",
-        r#"["--live","option","place","--instId","BTC-USD-260925-100000-C","--tdMode","cross","--side","buy","--ordType","market","--sz","1","--json"]"#,
-    );
-    assert_eq!(option["data"]["status"], "submitted");
-
-    let event = run(
-        "delivery-event",
-        "receipt",
-        r#"["--live","event","place","BTC-ABOVE","buy","yes","1","--ordType","market","--json"]"#,
-    );
-    assert_eq!(event["data"]["status"], "submitted", "event={event}");
-    assert_eq!(event["data"]["receipt"]["ordId"], "42");
-
-    let mut close = onchainos();
-    let close_output = scrubbed(&mut close, &home)
-        .env("PATH", &bin)
-        .env("FAKE_OKX_MODE", "receipt")
-        .args([
-            "agent",
-            "autotrade-execute",
-            "--job-id",
-            "job1",
-            "--delivery-id",
-            "delivery-close",
-            "--venue",
-            "trade_kit",
-            "--action",
-            "sell",
-            "--amount",
-            "1",
-            "--command-json",
-            r#"["--live","--json","futures","close","--instId","BTC-USDT-260925","--mgnMode","cross","--posSide","long"]"#,
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        close_output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&close_output.stderr)
-    );
-    let close_result = parse_stdout_json(&close_output);
-    assert_eq!(close_result["data"]["status"], "submitted");
-    assert_eq!(close_result["data"]["receipt"]["ordId"], "42");
-
-    let auth_error = run(
-        "delivery-auth-error",
-        "auth_error",
-        r#"["spot","place","--sz","1","--side","buy","--ordType","market","--live"]"#,
-    );
-    assert_eq!(auth_error["data"]["status"], "failed_before_submit");
-    assert_eq!(
-        auth_error["data"]["failureCategory"],
-        "authentication_required"
-    );
-    assert!(auth_error["data"]["reason"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("API key doesn't exist"));
+    assert!(output.status.success());
+    let data = parse_stdout_json(&output)["data"].clone();
+    assert_eq!(data["status"], "skipped");
+    assert_eq!(data["reason"], "guide_execution_unavailable");
 }

@@ -286,6 +286,10 @@ const REDACT_FULL: &[&str] = &[
     // subscribe-device-update batch blob embeds jobIds; addr-prefix/suffix of the
     // JSON is meaningless, so redact wholesale.
     "--items",
+    // pending-decisions-v2 request / request-prompt template payload: the Base64
+    // JSON carries the untrusted task title. Redact wholesale so the title never
+    // lands in the audit log.
+    "--template-vars-b64",
 ];
 
 /// Flags whose next positional value is an address / email — keep prefix + suffix.
@@ -522,14 +526,11 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AutotradeConsentSet { .. } => "autotrade-consent-set".into(),
         AgentCommand::AutotradeConsentContinue { .. } => "autotrade-consent-continue".into(),
         AgentCommand::AutotradeConsentRequest { .. } => "autotrade-consent-request".into(),
-        AgentCommand::AutotradeExecute { .. } => "autotrade-execute".into(),
         AgentCommand::AutotradeDirectClaim { .. } => "autotrade-direct-claim".into(),
         AgentCommand::AutotradeDirectFinalize { .. } => "autotrade-direct-finalize".into(),
         AgentCommand::AutotradeOnceAuthorize { .. } => "autotrade-once-authorize".into(),
         AgentCommand::AutotradeOutcomeFlush { .. } => "autotrade-outcome-flush".into(),
         AgentCommand::AutotradeDeliveryReport { .. } => "autotrade-delivery-report".into(),
-        AgentCommand::SubscriptionRouteSet { .. } => "subscription-route-set".into(),
-        AgentCommand::SubscriptionRouteClear { .. } => "subscription-route-clear".into(),
         AgentCommand::AutotradeWatchPrecheck { .. } => "autotrade-watch-precheck".into(),
         AgentCommand::AutotradeCapAdjustRequest { .. } => "autotrade-cap-adjust-request".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
@@ -577,7 +578,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SessionCleanup { .. } => "session-cleanup".into(),
         AgentCommand::TaskInProgress { .. } => "task-in-progress".into(),
         AgentCommand::CreateSubscribe { .. } => "create-subscribe".into(),
-        AgentCommand::ServiceParamUpdate { .. } => "service-param-update".into(),
         AgentCommand::SubscribeCancel { .. } => "subscribe-cancel".into(),
         AgentCommand::StartAutorenew { .. } => "start-autorenew".into(),
         AgentCommand::SubscribeReject { .. } => "subscribe-reject".into(),
@@ -593,10 +593,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SetAsp { .. } => "set-asp".into(),
         AgentCommand::ResetAsp { .. } => "reset-asp".into(),
         AgentCommand::UserReject { .. } => "user-reject".into(),
-        AgentCommand::AcceptJobByProvider { .. } => "accept-job-by-provider".into(),
-        AgentCommand::DeclineJobByProvider { .. } => "decline-job-by-provider".into(),
-        AgentCommand::AcceptSubscription { .. } => "accept-subscription".into(),
-        AgentCommand::DeclineSubscription { .. } => "decline-subscription".into(),
     }
 }
 
@@ -1135,6 +1131,36 @@ mod tests {
         let args = vec_s(&["onchainos", "payment", "pay", "--payload=eyJhIjoxfQ"]);
         let out = redact_args(&args);
         assert_eq!(out[3], "--payload=[REDACTED]");
+    }
+
+    #[test]
+    fn redact_template_vars_b64() {
+        // The Base64 payload carries the untrusted task title and must never
+        // appear cleartext in the audit log.
+        // Two-arg form: `agent pending-decisions-v2 request-prompt ... --template-vars-b64 <b64>`.
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "pending-decisions-v2",
+            "request-prompt",
+            "--role",
+            "asp",
+            "--template-vars-b64",
+            "eyJfX09LWF9UQVNLX1RJVExFX18iOiJXZWVrbHkgUmVwb3J0In0=",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[6], "--template-vars-b64");
+        assert_eq!(out[7], "[REDACTED]");
+        // Equals form: `--template-vars-b64=<b64>`.
+        let args = vec_s(&[
+            "onchainos",
+            "agent",
+            "pending-decisions-v2",
+            "request",
+            "--template-vars-b64=eyJfX09LWF9UQVNLX1RJVExFX18iOiJYIn0=",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[4], "--template-vars-b64=[REDACTED]");
     }
 
     #[test]

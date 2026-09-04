@@ -13,7 +13,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
 use super::super::DEBUG_LOG;
-use super::api_trace;
+
 use crate::audit;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::wallet_api::WalletApiClient;
@@ -73,19 +73,6 @@ fn inject_session_cert(body: &Value) -> Value {
     body
 }
 
-fn redact_session_cert(body: &Value) -> Value {
-    let mut redacted = body.clone();
-    if let Some(object) = redacted.as_object_mut() {
-        if object.contains_key("sessionCert") {
-            object.insert(
-                "sessionCert".to_string(),
-                Value::String("<redacted>".to_string()),
-            );
-        }
-    }
-    redacted
-}
-
 /// Task backend API client (DoH-enabled, delegates to WalletApiClient).
 pub struct TaskApiClient {
     wallet: WalletApiClient,
@@ -135,8 +122,6 @@ impl TaskApiClient {
         format!("{TASK_PREFIX}/{job_id}/{action}")
     }
 
-    /// `/priapi/v1/aieco/task/dispute/my` — arbitration cases visible to the
-    /// current identity (shared by one-time and subscription tasks).
     pub fn dispute_list_path(&self, page: u32, page_size: u32) -> String {
         format!("{TASK_PREFIX}/dispute/my?page={page}&pageSize={page_size}")
     }
@@ -180,10 +165,7 @@ impl TaskApiClient {
             eprintln!("[TaskAPI] GET(jwt+agenticId) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
         }
         let started = Instant::now();
-        let result = self
-            .wallet
-            .get_authed_with_headers(path, &token, &query, Some(&headers))
-            .await;
+        let result = self.wallet.get_authed_with_headers(path, &token, &query, Some(&headers)).await;
         let elapsed = started.elapsed();
         match &result {
             Ok(data) => {
@@ -191,7 +173,6 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← {data}");
                 }
                 log_api("get", path, agent_id, true, elapsed, None, None);
-                api_trace::record("GET", &url, agent_id, None, Some(data), None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
@@ -199,31 +180,29 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← ERROR: {err_msg}");
                 }
                 log_api("get", path, agent_id, false, elapsed, Some(&err_msg), None);
-                api_trace::record("GET", &url, agent_id, None, None, Some(&err_msg));
             }
         }
         result
     }
 
     /// GET + JWT + identity header (agenticId) -> returns data (sessionCert is auto-injected as a query param).
-    pub async fn get_with_identity(&mut self, path: &str, agent_id: &str) -> Result<Value> {
+    pub async fn get_with_identity(
+        &mut self,
+        path: &str,
+        agent_id: &str,
+    ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await?;
         let cert = get_session_cert();
-        let query: Vec<(&str, &str)> = cert
-            .as_deref()
+        let query: Vec<(&str, &str)> = cert.as_deref()
             .map(|c| vec![("sessionCert", c)])
             .unwrap_or_default();
         if DEBUG_LOG {
-            eprintln!(
-                "[TaskAPI] GET {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}",
-                token.len()
-            );
+            eprintln!("[TaskAPI] GET {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
         }
         let headers = [("agenticId", agent_id)];
         let started = Instant::now();
-        let result = self
-            .wallet
+        let result = self.wallet
             .get_authed_with_headers(path, &token, &query, Some(&headers))
             .await;
         let elapsed = started.elapsed();
@@ -233,7 +212,6 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] GET {url} ← {data}");
                 }
                 log_api("get", path, agent_id, true, elapsed, None, None);
-                api_trace::record("GET", &url, agent_id, None, Some(data), None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
@@ -241,7 +219,6 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] GET {url} ← ERROR: {err_msg}");
                 }
                 log_api("get", path, agent_id, false, elapsed, Some(&err_msg), None);
-                api_trace::record("GET", &url, agent_id, None, None, Some(&err_msg));
             }
         }
         result
@@ -360,12 +337,11 @@ impl TaskApiClient {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await?;
         if DEBUG_LOG {
-            eprintln!("[TaskAPI] POST {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id} | body: {}", token.len(), redact_session_cert(&body));
+            eprintln!("[TaskAPI] POST {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id} | body: {body}", token.len());
         }
         let headers = [("agenticId", agent_id)];
         let started = Instant::now();
-        let result = self
-            .wallet
+        let result = self.wallet
             .post_authed_with_headers(path, &token, &body, Some(&headers))
             .await;
         let elapsed = started.elapsed();
@@ -375,7 +351,6 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] POST {url} ← {data}");
                 }
                 log_api("post", path, agent_id, true, elapsed, None, None);
-                api_trace::record("POST", &url, agent_id, Some(&body), Some(data), None);
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
@@ -383,54 +358,6 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] POST {url} ← ERROR: {err_msg}");
                 }
                 log_api("post", path, agent_id, false, elapsed, Some(&err_msg), None);
-                api_trace::record("POST", &url, agent_id, Some(&body), None, Some(&err_msg));
-            }
-        }
-        result
-    }
-
-    /// POST a state-changing request exactly once. A connect/timeout result is
-    /// unknown and must be reconciled against authoritative state before retry.
-    pub async fn post_mutation_with_identity(
-        &mut self,
-        path: &str,
-        body: &Value,
-        agent_id: &str,
-    ) -> Result<Value> {
-        let body = inject_session_cert(body);
-        let url = format!("{}{}", self.base_url, path);
-        let token = get_access_token().await?;
-        if DEBUG_LOG {
-            eprintln!("[TaskAPI] POST(no-retry) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id} | body: {}", token.len(), redact_session_cert(&body));
-        }
-        let headers = [("agenticId", agent_id)];
-        let started = Instant::now();
-        let result = self
-            .wallet
-            .post_authed_mutation_no_retry_with_headers(path, &token, &body, Some(&headers))
-            .await;
-        let elapsed = started.elapsed();
-        match &result {
-            Ok(data) => {
-                if DEBUG_LOG {
-                    eprintln!("[TaskAPI] POST(no-retry) {url} ← {data}");
-                }
-                log_api("post_mutation", path, agent_id, true, elapsed, None, None);
-            }
-            Err(error) => {
-                let message = format!("{error:#}");
-                if DEBUG_LOG {
-                    eprintln!("[TaskAPI] POST(no-retry) {url} ← ERROR: {message}");
-                }
-                log_api(
-                    "post_mutation",
-                    path,
-                    agent_id,
-                    false,
-                    elapsed,
-                    Some(&message),
-                    None,
-                );
             }
         }
         result
@@ -460,8 +387,7 @@ impl TaskApiClient {
         let extra = [("agenticId", agent_id)];
         let extra_meta = format!("contentType={content_type}; contentLength={content_len}");
         let started = Instant::now();
-        let result = self
-            .wallet
+        let result = self.wallet
             .post_authed_raw_with_headers(path, &token, body, content_type, Some(&extra))
             .await;
         let elapsed = started.elapsed();
@@ -470,49 +396,16 @@ impl TaskApiClient {
                 if DEBUG_LOG {
                     eprintln!("[TaskAPI] POST(raw) {url} ← {data}");
                 }
-                log_api(
-                    "post_raw",
-                    path,
-                    agent_id,
-                    true,
-                    elapsed,
-                    None,
-                    Some(&extra_meta),
-                );
+                log_api("post_raw", path, agent_id, true, elapsed, None, Some(&extra_meta));
             }
             Err(e) => {
                 let err_msg = format!("{e:#}");
                 if DEBUG_LOG {
                     eprintln!("[TaskAPI] POST(raw) {url} ← ERROR: {err_msg}");
                 }
-                log_api(
-                    "post_raw",
-                    path,
-                    agent_id,
-                    false,
-                    elapsed,
-                    Some(&err_msg),
-                    Some(&extra_meta),
-                );
+                log_api("post_raw", path, agent_id, false, elapsed, Some(&err_msg), Some(&extra_meta));
             }
         }
         result
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn debug_body_redacts_session_certificate() {
-        let body = serde_json::json!({
-            "jobId": "job-1",
-            "sessionCert": "secret-certificate"
-        });
-        let redacted = redact_session_cert(&body);
-        assert_eq!(redacted["jobId"], "job-1");
-        assert_eq!(redacted["sessionCert"], "<redacted>");
-        assert!(!redacted.to_string().contains("secret-certificate"));
     }
 }

@@ -7,13 +7,6 @@ const OKX_AI_SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
 const ARBITRATION_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/arbitration.rs");
 
 #[test]
-fn service_param_response_action_is_registered() {
-    assert!(ACTION_ROUTING.contains("| `send_task_params_response` |"));
-    assert!(ACTION_ROUTING.contains("`task-asp-accept.md`, `NEED_PARAMS`"));
-    assert!(ACTION_ROUTING.contains("`okx-a2a session send`"));
-}
-
-#[test]
 fn arbitration_actions_have_one_domain_registry() {
     for action in [
         "agree_refund",

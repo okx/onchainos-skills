@@ -4,8 +4,8 @@
 //! this module only provides the user / asp / evaluator / common / signing submodule implementations.
 
 pub mod arbitration;
-pub mod asp;
+pub mod user;
 pub mod common;
 pub mod evaluator;
+pub mod asp;
 pub mod signing;
-pub mod user;

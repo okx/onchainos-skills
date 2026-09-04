@@ -11,7 +11,7 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 - The next inbound envelope from the counterpart **still repeats the same wrong demand** (e.g. backtracking on a negotiation field already confirmed, or repeatedly asking you to run a command that doesn't exist)
 
 **Action**:
-1. **Do not reply to the counterpart again** — do not call `okx-a2a session send` to explain a second round; that will only make the peer agent loop along with you
+1. **Do not reply to the counterpart again** — do not call `okx-a2a xmtp-send` to explain a second round; that will only make the peer agent loop along with you
 2. Call `onchainos agent user-notify` to push to the user:
    ```
    [⚠️ Protocol misalignment] Task <jobId> is stuck
@@ -64,7 +64,7 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 
 ## 3. ❌ Absolute prohibition: broadcasting technical errors to the counterpart
 
-CLI errors / protocol misalignment / any internal exception → **do NOT `okx-a2a session send` the error details to the counterpart**.
+CLI errors / protocol misalignment / any internal exception → **do NOT `okx-a2a xmtp-send` the error details to the counterpart**.
 
 **Prohibited behaviors**:
 - ❌ "The `deliver` command failed because the recipient field returned by the backend is empty" ← exposes CLI command name + backend field name
@@ -81,19 +81,19 @@ CLI errors / protocol misalignment / any internal exception → **do NOT `okx-a2
 
 **Strict rule**: within the turn that pushes to the user session, send **at most one** generic "please wait" line to the counterpart; **never send a second**. Even if the counterpart pings you again afterward, still handle it via the §1 rule.
 
-## 4. ❌ Absolute prohibition: calling `okx-a2a session send` repeatedly to the same counterpart within a single turn
+## 4. ❌ Absolute prohibition: calling `okx-a2a xmtp-send` repeatedly to the same counterpart within a single turn
 
-Each agent turn has **no memory** and **no send-receipt feedback** — the command exiting `0` **counts as success**. LLMs often second-guess after the tool returns ("Did they receive that one? Should I send it again?"), causing 3-5 nearly identical `okx-a2a session send` calls to the same counterpart within a single turn.
+Each agent turn has **no memory** and **no send-receipt feedback** — the command exiting `0` **counts as success**. LLMs often second-guess after the tool returns ("Did they receive that one? Should I send it again?"), causing 3-5 nearly identical `okx-a2a xmtp-send` calls to the same counterpart within a single turn.
 
 **Iron rules**:
-- One next-action script lets you "send one session message" — **call it once and stop**, regardless of whether you think the message was clear or needs supplementing
-- `okx-a2a session send` exiting `0` ⇒ **treat as success**; do not resend just because the counterpart hasn't replied
+- One next-action script lets you "send one xmtp-send" — **call it once and stop**, regardless of whether you think the message was clear or needs supplementing
+- `okx-a2a xmtp-send` exiting `0` ⇒ **treat as success**; do not resend just because the counterpart hasn't replied
 - Want the counterpart to understand better? **Improve the next send** — not by resending in the same turn
-- When a script genuinely requires multiple `okx-a2a session send` calls (rare), the script will explicitly number them as **Step 1 / Step 2 / Step 3**
+- When a script genuinely requires multiple `okx-a2a xmtp-send` calls (rare), the script will explicitly number them as **Step 1 / Step 2 / Step 3**
 
 **Anti-pattern (real incident that happened)**:
 - After `deliver` completed, the script asked for one delivery notification, but the agent sent the same "deliverable submitted" message 5 times
 - After clarifying the escrow path, the agent sent the same duplicate message 3 times
 - Consequence: the peer agent mistakenly treated the messages as important / triggered its own loop / the user got spammed
 
-**Discriminator**: within the current turn, if you have **already** called `okx-a2a session send` once to a given (jobId, toAgentId) pair → **do not call it a second time in the current turn**. End the turn directly and wait for the next inbound envelope.
+**Discriminator**: within the current turn, if you have **already** called `okx-a2a xmtp-send` once to a given (jobId, toAgentId) pair → **do not call it a second time in the current turn**. End the turn directly and wait for the next inbound envelope.

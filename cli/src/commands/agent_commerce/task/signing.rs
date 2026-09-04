@@ -13,12 +13,12 @@ use serde_json::Value;
 use std::time::Duration;
 
 use crate::audit;
-use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
-    fetch_agent_by_id, fetch_my_agents, DEBUG_LOG, AGENT_ROLE_USER,
-    XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
+    fetch_agent_by_id, fetch_my_agents, AGENT_ROLE_USER, DEBUG_LOG, XLAYER_CHAIN_INDEX,
+    XLAYER_CHAIN_NAME,
 };
+use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::wallet_api::UnsignedInfoResponse;
 
 /// Return value from sign-and-broadcast helpers.
@@ -40,18 +40,13 @@ pub fn extract_biz_type(resp: &Value) -> i64 {
 /// - `address`: specified address. Pass `None` to use the account's default XLayer address.
 ///
 /// Returns (account_id, address).
-pub fn resolve_wallet(
-    account_id: Option<&str>,
-    address: Option<&str>,
-) -> Result<(String, String)> {
+pub fn resolve_wallet(account_id: Option<&str>, address: Option<&str>) -> Result<(String, String)> {
     let wallets = crate::wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!("not logged in; run `onchainos wallet auth` first"))?;
 
     let (resolved_acct, addr_info) = resolve_address(&wallets, address, XLAYER_CHAIN_NAME)?;
 
-    let acct_id = account_id
-        .map(|s| s.to_string())
-        .unwrap_or(resolved_acct);
+    let acct_id = account_id.map(|s| s.to_string()).unwrap_or(resolved_acct);
 
     Ok((acct_id, addr_info.address))
 }
@@ -104,16 +99,15 @@ pub async fn resolve_wallet_and_agent_for_task(
             .unwrap_or_default()
     };
 
-    let resp = client.get_with_identity(&client.task_path(job_id), &local_agent_id).await?;
+    let resp = client
+        .get_with_identity(&client.task_path(job_id), &local_agent_id)
+        .await?;
 
     let user_address = resp["buyerAgentAddress"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("task detail missing buyerAgentAddress field"))?;
 
-    let user_agent_id = resp["buyerAgentId"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let user_agent_id = resp["buyerAgentId"].as_str().unwrap_or("").to_string();
 
     let (account_id, address) = resolve_wallet(None, Some(user_address))?;
     Ok((account_id, address, user_agent_id))
@@ -223,9 +217,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
             ]),
             Some(&msg),
         );
-        anyhow::anyhow!(
-            "agentId={id} wallet {owner} not found locally ({msg})"
-        )
+        anyhow::anyhow!("agentId={id} wallet {owner} not found locally ({msg})")
     })?;
     Ok((account_id, address, id.to_string()))
 }
@@ -271,7 +263,7 @@ pub(crate) fn merge_biz_context(
 /// object (`data[0]`: `{ pkgId, orderId, orderType, txHash, bizUniqKey }`).
 ///
 /// Same flow as [`sign_uop_and_broadcast`]; used by callers that need the pkgId /
-/// orderId / bizUniqKey fields used by command result envelopes,
+/// orderId / bizUniqKey fields used by task broadcast result shapes,
 /// not just the txHash.
 #[allow(clippy::too_many_arguments)]
 pub async fn sign_uop_and_broadcast_full(
@@ -321,10 +313,11 @@ pub async fn sign_uop_and_broadcast_full(
     .await?;
     broadcast_body["bizContext"] = merge_biz_context(job_id, biz_type, biz_context_extra);
 
-    // `.context` (not `anyhow!("...: {e}")`) so the underlying `ApiCodeError`
-    // survives in the chain so callers can recover the backend `code` + `msg`.
-    // `{e:#}` still renders "broadcast failed: …".
-    let bc_resp = client.post_mutation_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
+    // `.context` (not `anyhow!("...: {e}")`) keeps the underlying
+    // `ApiCodeError` available to callers. `{e:#}` still renders the full chain.
+    let bc_resp = client
+        .post_with_identity(client.broadcast_path(), &broadcast_body, agent_id)
+        .await
         .context("broadcast failed")?;
 
     Ok(bc_resp.get(0).cloned().unwrap_or(Value::Null))
@@ -348,14 +341,18 @@ pub async fn sign_uop_and_broadcast(
     biz_context_extra: Option<&Value>,
 ) -> Result<String> {
     let first = sign_uop_and_broadcast_full(
-        client, uop_data, account_id, address, job_id, biz_type, agent_id, biz_context_extra,
+        client,
+        uop_data,
+        account_id,
+        address,
+        job_id,
+        biz_type,
+        agent_id,
+        biz_context_extra,
     )
     .await?;
 
-    Ok(first["txHash"]
-        .as_str()
-        .unwrap_or("pending")
-        .to_string())
+    Ok(first["txHash"].as_str().unwrap_or("pending").to_string())
 }
 
 /// Variant of sign_uop_and_broadcast used only for vote/commit scenarios:
@@ -418,7 +415,9 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
         "voteReportSummary": vote_report_summary,
     });
 
-    let bc_resp = client.post_mutation_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
+    let bc_resp = client
+        .post_with_identity(client.broadcast_path(), &broadcast_body, agent_id)
+        .await
         .map_err(|e| anyhow::anyhow!("broadcast failed: {e}"))?;
 
     Ok(bc_resp[0]["txHash"]
@@ -477,7 +476,9 @@ pub async fn sign_uop_and_broadcast_with_payment(
         "paymentVerify": payment_verify,
     });
 
-    let bc_resp = client.post_mutation_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
+    let bc_resp = client
+        .post_with_identity(client.broadcast_path(), &broadcast_body, agent_id)
+        .await
         .map_err(|e| anyhow::anyhow!("broadcast failed: {e}"))?;
 
     Ok(bc_resp[0]["txHash"]
@@ -503,13 +504,17 @@ pub fn sign_digest_with_session_key(digest: &str) -> Result<String> {
 /// Delegates to `agentic_wallet::sign::eip712_sign_raw` (gen-msg-hash → ed25519 → sign-msg).
 pub async fn sign_typed_data(typed_data: &Value, from_address: &str) -> Result<String> {
     if DEBUG_LOG {
-        eprintln!("[debug] sign_typed_data input: from={from_address}, typedData primaryType={}", typed_data["primaryType"]);
+        eprintln!(
+            "[debug] sign_typed_data input: from={from_address}, typedData primaryType={}",
+            typed_data["primaryType"]
+        );
     }
     let sig = crate::commands::agentic_wallet::sign::eip712_sign_raw(
         typed_data,
         XLAYER_CHAIN_INDEX,
         from_address,
-    ).await?;
+    )
+    .await?;
     if DEBUG_LOG {
         eprintln!("[debug] sign_typed_data returned signature: {sig}");
     }
@@ -540,7 +545,9 @@ pub async fn task_dual_sign_and_broadcast(
     // Step 1: POST pre-endpoint → typedData + nonce
     let pre_url = client.endpoint(job_id, pre_action);
     let pre_body = serde_json::json!({ "deadline": deadline });
-    let pre_resp = client.post_with_identity(&pre_url, &pre_body, agent_id).await
+    let pre_resp = client
+        .post_with_identity(&pre_url, &pre_body, agent_id)
+        .await
         .map_err(|e| anyhow::anyhow!("{pre_action} request failed: {e}"))?;
 
     let typed_data = &pre_resp["typedData"];
@@ -561,9 +568,7 @@ pub async fn task_dual_sign_and_broadcast(
         }
     });
     if let Some(extra) = extra_main_fields {
-        if let (Some(main_obj), Some(extra_obj)) =
-            (main_body.as_object_mut(), extra.as_object())
-        {
+        if let (Some(main_obj), Some(extra_obj)) = (main_body.as_object_mut(), extra.as_object()) {
             for (k, v) in extra_obj {
                 main_obj.insert(k.clone(), v.clone());
             }
@@ -571,17 +576,29 @@ pub async fn task_dual_sign_and_broadcast(
     }
 
     let main_url = client.endpoint(job_id, main_action);
-    let main_resp = client.post_with_identity(&main_url, &main_body, agent_id).await
+    let main_resp = client
+        .post_with_identity(&main_url, &main_body, agent_id)
+        .await
         .map_err(|e| anyhow::anyhow!("{main_action} request failed: {e}"))?;
 
     // Step 4: Sign uopHash + broadcast
     let biz_type = extract_biz_type(&main_resp);
     let tx_hash = sign_uop_and_broadcast(
-        client, &main_resp["uopData"], account_id, address, job_id, biz_type, agent_id,
+        client,
+        &main_resp["uopData"],
+        account_id,
+        address,
+        job_id,
+        biz_type,
+        agent_id,
         biz_context_extra,
-    ).await?;
+    )
+    .await?;
 
-    Ok(BroadcastResult { api_response: main_resp, tx_hash })
+    Ok(BroadcastResult {
+        api_response: main_resp,
+        tx_hash,
+    })
 }
 
 #[cfg(test)]

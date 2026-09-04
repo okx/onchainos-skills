@@ -30,32 +30,32 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
     }
 
     crate::commands::agent_commerce::task::common::review_gate::check_and_consume(job_id)?;
-    let result = signing::task_dual_sign_and_broadcast(
+        let result = signing::task_dual_sign_and_broadcast(
         client,
         job_id,
         "pre-complete",
         "complete",
-        None,
+            None,
         &account_id,
         &address,
         &agent_id,
-        None,
+            None,
     )
     .await?;
 
-    audit::log(
-        "cli",
-        "user/complete_submitted",
-        true,
-        Duration::default(),
-        Some(vec![
-            format!("jobId={job_id}"),
-            format!("agentId={agent_id}"),
-            format!("paymentMode=escrow"),
-            format!("txHash={}", result.tx_hash),
-        ]),
-        None,
-    );
+        audit::log(
+            "cli",
+            "user/complete_submitted",
+            true,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("paymentMode=escrow"),
+                format!("txHash={}", result.tx_hash),
+            ]),
+            None,
+        );
 
     Ok(())
 }

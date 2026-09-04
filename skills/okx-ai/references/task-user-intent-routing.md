@@ -1,5 +1,19 @@
 # User Intent Routing
 
+This is the sole free-text router for existing buyer tasks and subscriptions.
+Match the user's intent here before loading an execution playbook, a query flow,
+or the watch loop.
+
+| User request | Route |
+|---|---|
+| Selected task: re-submit, nudge, or change terms | This file's task-session forwarding flow below |
+| Task list, status, close, funding, or decision list | The matching section in this file |
+| Task attachment or deliverables | [`task-user-actions.md`](task-user-actions.md), selected section |
+| Subscription list or detail | [`task-subscription-view.md`](task-subscription-view.md) |
+| Rate or review an active subscription | §Rate an active subscription below |
+| Subscription device, receipt, refund, copy-trade, or signal action | [`task-user-playbook.md`](task-user-playbook.md), selected section |
+| Watch, history, or outstanding decisions | [`watch-core.md`](watch-core.md) |
+
 User-session needs to forward free-form user instructions targeting a specific task (e.g. "re-upload the dispute evidence for the cat-picture job" or "remind ASP 963 that the deliverable is overdue") to the **specific sub session that owns that task**, when there's no matching active pending decision.
 
 **Trigger phrases** — when the user says any of the following AND no matching entry exists in `pending-decisions-v2`, **MUST** enter this flow:
@@ -20,13 +34,12 @@ User-session needs to forward free-form user instructions targeting a specific t
 5. Dispatch the user's instruction to the sub via `okx-a2a session send` — the daemon resolves the session from `--job-id` + `--to-agent-id`:
 
    ```bash
-   okx-a2a session send \
+   okx-a2a session send --no-wait \
      --job-id <jobId> --to-agent-id <counterpartyAgentId> \
      --content "<user verbatim>
 
    ---
-   Reply to the user via `onchainos agent user-notify --content \"<localized natural-language reply>\"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `task-user-sub-playbook.md` §Communication Contract)." \
-     --json
+   Reply to the user via `onchainos agent user-notify --content \"<localized natural-language reply>\"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `task-user-sub-playbook.md` §Communication Contract)."
    ```
 
    Forward verbatim then append reply-path instruction. End turn.
@@ -53,8 +66,16 @@ onchainos agent my-tasks --task-type subscription --status-type 1 --page 1
 
 - Current-message `jobId`: match it exactly, advancing `--page` only while `hasNext=true`.
 - Context-only `jobId`: ask whether to use it.
-- No confirmed `jobId`: show a compact numbered list with Service, Provider, and `jobId`, then wait for
-  the user's choice; preserve pagination.
+- No confirmed `jobId`: introduce the list with the localized equivalent of
+  `I found the following unreviewed orders. Please select the order you want to review.` Then render
+  this compact table and wait for the user's choice; preserve pagination.
+
+  | # | Task | Provider | Status | Job ID |
+  |---|---|---|---|---|
+  | 1 | `<title>` | `Agent#<providerAgentId>` | `<statusName>` | `<jobId>` |
+
+  Use only values from the returned row. Render subscription `statusName` verbatim and do not add fee,
+  renewal, device, or billing fields.
 
 The selected row is the sole source of `jobId`, `buyerAgentId`, and `providerAgentId`. If no row matches
 or either Agent id is missing, report that the review cannot be submitted and stop. Do not call detail,
@@ -85,7 +106,22 @@ onchainos agent feedback-submit \
   --description "<verbatim user-authored review>"
 ```
 
-Pass the star value and review verbatim. Follow the CLI result; never omit `--description`.
+Pass the star value and review verbatim; never omit `--description`.
+
+Only `ok=true` with a non-empty `data.txHash` is success. Render the localized equivalent of this
+canonical result:
+
+```text
+Review submitted.
+
+- Task ID: <jobId>
+- Score: <score> / 5
+- Review: <description>
+- Transaction hash: <txHash>
+```
+
+Use the submitted values verbatim. If the command fails or `data.txHash` is missing, report the CLI
+error and never claim that the review succeeded.
 
 ---
 
@@ -95,15 +131,15 @@ When the user has multiple active tasks, every routing decision **must** anchor 
 
 - **Always confirm `jobId` before acting**. If ambiguous → ask which task or render an `active-tasks` numbered list. Never assume the most-recent task is the one they mean.
 - **Track each task's state independently**. Don't apply task A's context to task B.
-- **For task-scoped routing or action replies, echo the `jobId`** — `<title> (Job <shortId>)` is the standard prefix. Render task-list responses with the exact schemas in §Task lists.
+- **For task-scoped routing or action replies, echo the `jobId`** — `<title> (Job <shortId>)` is the standard prefix. This does not apply to task-list responses, which use the exact schemas in §Task list without added `jobId` fields.
 
 See [`entry-points.md`](./entry-points.md#multi-task-context-management) for the full deep-dive.
 
 ---
 
-## Task lists
+## Task list / "what am I working on"
 
-Task-list intents are read-only Task operations. Select the command from the requested identity and filter:
+Task-list intents are read-only Task operations. The user session answers list requests directly. Select the command from the requested identity and filter. Subscription-specific requests route through §Subscriptions below.
 
 | Intent | Command |
 |---|---|
@@ -177,7 +213,7 @@ Action:
 
 ## Status / progress query (specific task)
 
-Route arbitration creation, filed-case lists, and case details through `task-arbitration.md`. Keep rejected-task and pending-refund-decision lists in §Task lists with the rejected Task filter.
+Route arbitration creation, filed-case lists, and case details through `task-arbitration.md`. Keep rejected-task and pending-refund-decision lists in §Task list with the rejected Task filter.
 
 | Trigger | Action |
 |---|---|
@@ -190,10 +226,10 @@ Route arbitration creation, filed-case lists, and case details through `task-arb
 
 ## Replying to pending decisions (when `[USER_DECISION_REQUEST]` is in context)
 
-If your context contains an active `[USER_DECISION_REQUEST]` block (you're in "Waiting for user reply" state from a recent push), route the user's reply through the exact resolver command pre-filled in that block. CLI-driver blocks use `resolve-with-sessionkey`; queue-backed blocks use `resolve-prompt`.
+If your context contains an active `[USER_DECISION_REQUEST]` block (you're in "Waiting for user reply" state from a recent push), the user's reply routes via the matching block's pre-filled `resolve-prompt` command:
 
-- **Single active card** (latest block below the stale-notice line): run its pre-filled resolver with `--user-reply "<user's verbatim text>"`.
-- **Multiple blocks visible, user disambiguates with a jobId/label** (e.g. `Job 0x4652 select 1500`): scan context for the block whose `[job: <jobId>]` matches, then run that block's pre-filled resolver with the user's verbatim text as `--user-reply`.
+- **Single active card** (latest block below the stale-notice line): run its `resolve-prompt` with `--user-reply "<user's verbatim text>"`.
+- **Multiple blocks visible, user disambiguates with a jobId/label** (e.g. `Job 0x4652 select 1500`): scan context for the block whose `[job: <jobId>]` matches, then run THAT block's `resolve-prompt` with the user's verbatim text as `--user-reply`.
 - **Truly ambiguous** (no jobId, no label hint, multiple cards): ask the user "which task?" via plain text reply.
 
 ---
@@ -226,14 +262,14 @@ Triggers:
 
 | Trigger | Action |
 |---|---|
-| `my subscriptions` / `subscription list` / `what am I subscribed to` / `ongoing subscriptions` / `active subscriptions` / `ended subscriptions` | Use §Task lists with scope `subscription`; map generic requests to `all`, ongoing/active to `active`, and ended to `ended`. |
-| `subscription detail` / `show this subscription` | `onchainos agent subscribe-detail <jobId>` (id = the row's `jobId`) → render per [`task-user-playbook.md` §Subscription Detail](task-user-playbook.md). |
+| `my subscriptions` / `subscription list` / `what am I subscribed to` / `ongoing subscriptions` / `active subscriptions` / `ended subscriptions` | Route to [`task-subscription-view.md`](task-subscription-view.md). |
+| `subscription detail` / `show this subscription` | Route to [`task-subscription-view.md`](task-subscription-view.md); use the selected row's `jobId`. |
 | `device list` / `list my logged-in devices` / `which devices are online` | `onchainos agent device-list` → render per [`task-user-playbook.md` §Device List](task-user-playbook.md). |
 | `start receiving X on this device` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — fresh-read; `deviceList:null` already means default-all, so report already receiving without a write; otherwise union → overwrite → re-read. |
 | `start receiving Y on device X` / `also send Y to devices X and Z` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — resolve device names→ids via `device-list` (never fabricate an unresolvable name); `deviceList:null` already includes every logged-in device (no write), otherwise UNION with the fresh-read list → overwrite → re-read → confirm the complete receiving set. |
 | `stop pushing Y to device X` / `stop this device from receiving subscription Y` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — fresh-read; for `null`, fetch the complete `device-list` and materialize all-minus-target before overwrite; for an explicit array, subtract normally; read back remaining. |
 | `replay missed deliverables` / `discard offline deliverables` / `change how offline deliverables are handled` | [`task-user-playbook.md` §Subscription management → Change Offline-Deliverables Handling](task-user-playbook.md) — fresh-read `subscribe-detail` current `offlineReceiveFlag` → if already the target, say no change needed (do NOT re-write) → else `subscribe-offline-update --job-id <id> --flag <0/1>` → re-read to confirm. |
 | `receive signals` / `start receiving signals` / `are you receiving signals` / `resume watching subscribed services` / `continue receiving signals` / `resume subscription` / `restore subscription`, plus semantically equivalent wording in any language and the prompted `listen to <subscription title>` form from a just-created/rendered buyer-subscription context | [`task-user-playbook.md` §Signal-receipt watch entry](task-user-playbook.md) — when an ACTIVE buyer subscription is in current focus, treat even a bare restore/resume-subscription request as receipt + watch; resolve one subscription, ensure this device can receive, run authorization precheck before reading backlog, then enter sticky scoped watch. Multiple ACTIVE subscriptions require a choice; none stops without global fallback. |
-| `listen for task messages` / `watch task` with no specific task | [`task-user-playbook.md` §Listen entry](task-user-playbook.md) — confirm exactly one task ("Only one task can be watched at a time") → turn on this-device receipt → enter watch flow through the existing-subscription scoped-watch authorization gate. |
+| `listen for task messages` / `watch task` with no specific task | [`task-user-playbook.md` §Listen entry](task-user-playbook.md) — confirm exactly one task ("Only one task can be watched at a time") → turn on this-device receipt → enter sticky scoped watch. |
 
 ⚠️ **Device routing is subscription-only** — it governs A2A subscription-service message delivery, never one-time tasks, and remains buyer-side only. Do NOT route these list intents to `task-asp.md` or any ASP/provider rendering.

@@ -567,7 +567,7 @@ pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
     let escrow_addr: Address = p.escrow_contract.parse().context("escrow_contract parse")?;
     let fields = EscrowAuthFields {
         from: from_addr,
-        provider: p.provider.parse().context("provider parse")?,
+        provider: p.hook.parse().context("provider parse")?, // TODO: use provider or hook?
         receiver: p.receiver.parse().context("receiver parse")?,
         arbitrator: p.arbitrator.parse().context("arbitrator parse")?,
         currency: p.currency.parse().context("currency parse")?,
@@ -691,10 +691,7 @@ async fn tee_sign_eip3009(
     sign_body["sessionSignature"] = json!(session_signature_b64);
 
     if cfg!(feature = "debug-log") {
-        let mut redacted = sign_body.clone();
-        redacted["sessionCert"] = json!("<redacted>");
-        redacted["sessionSignature"] = json!("<redacted>");
-        eprintln!("[DEBUG][a2a-pay] POST sign-msg body={redacted}");
+        eprintln!("[DEBUG][a2a-pay] POST sign-msg body={sign_body}");
     }
     let signed_resp: Value = wallet_client
         .post_authed(
@@ -705,6 +702,9 @@ async fn tee_sign_eip3009(
         .await
         .map_err(format_api_error)
         .context("a2a-pay: sign-msg failed")?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] sign-msg response={signed_resp}");
+    }
     Ok(signed_resp[0]["signature"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'signature' in sign-msg response"))?

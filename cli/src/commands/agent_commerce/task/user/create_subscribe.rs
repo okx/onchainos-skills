@@ -1,25 +1,18 @@
 //! Create a subscription task.
 //!
-//! Flow: providerConfirmStatus → EIP-712 sign terms → createSubscription → local readiness → broadcast(bizType=204)
+//! Flow: providerConfirmStatus → EIP-712 sign terms → create → sign uopData → broadcast(bizType=101)
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::audit;
-use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
-use crate::commands::agent_commerce::task::common::autotrade::{
-    amount::Decimal,
-    consent::{self, DynamicConsentSettings, MarginMode, OrderPolicy, TradeKitAuthMode},
-    grants,
-    trade_kit::TradeEnvironment,
-};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::okx_a2a;
-use crate::commands::agent_commerce::task::common::subscription_identity::{
-    select_subscription_agent_id,
-};
-use crate::commands::agent_commerce::task::common::DEBUG_LOG;
+use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
+use crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id;
+use crate::commands::agent_commerce::task::common::{self, DEBUG_LOG};
 use crate::commands::agent_commerce::task::signing;
+use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 
 pub(crate) const SUBSCRIBE_API_PREFIX: &str = "/priapi/v1/aieco/task/subscribe";
 
@@ -30,59 +23,73 @@ pub struct CreateSubscribeParams {
     pub service_token_amount: String,
     pub service_token_address: String,
     pub auto_renew: i32,
-    pub copy_trade: i32,
     pub title: String,
     pub description: String,
     pub attachments: Option<Vec<String>>,
-    pub provider_agent_id: String,
-    pub service_description: String,
+    pub provider_agent_id: Option<String>,
+    /// Provider service Guide retained locally before the subscription broadcast.
+    pub service_guide: Option<String>,
+    /// Optional provider-supplied SHA-256 of `service_guide`.
+    pub service_guide_hash: Option<String>,
+    /// User-confirmed values for the matching Guide.
+    pub guide_consent_json: Option<String>,
     pub service_interval: String,
-    pub autotrade_mode: Option<String>,
-    pub autotrade_amount: Option<String>,
-    pub autotrade_cap: Option<String>,
-    pub autotrade_quote: Option<String>,
-    pub autotrade_environment: Option<String>,
-    pub autotrade_margin_mode: Option<String>,
-    pub autotrade_order_policy: Option<String>,
-    pub autotrade_auth_mode: Option<String>,
-    pub autotrade_settings_json: Option<String>,
-    pub autotrade_required_fields: Vec<String>,
     pub format: String,
+    pub exclude_device: Option<Vec<String>>,
 }
 
-const MAX_TITLE_CHARS: usize = 30;
+const MAX_TITLE_CHARS: usize = 64;
 const MAX_DESCRIPTION_CHARS: usize = 4096;
-const TRADE_AMOUNT_REQUIRED_FIELD: &str = "tradeAmount";
-const TRADE_AMOUNT_INTERNAL_ALIAS: &str = "tradeAmountU";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct SubscriptionAutoTradeConfig {
-    mode: consent::ConsentMode,
-    amount: Option<String>,
-    cap: Option<String>,
-    quote: String,
-    environment: Option<TradeEnvironment>,
-    margin_mode: Option<MarginMode>,
-    order_policy: Option<OrderPolicy>,
-    auth_mode: Option<TradeKitAuthMode>,
-    dynamic_settings: DynamicConsentSettings,
+/// The validated, ephemeral Guide + Consent input for one subscription create.
+///
+/// This is deliberately not a subscription state. A created subscription only
+/// exposes whether its persisted Guide and Consent are both active.
+#[derive(Debug)]
+struct GuideConsentInput {
+    draft: super::super::common::autotrade::guide::GuideDraft,
+    consent_values: BTreeMap<String, serde_json::Value>,
 }
 
 impl CreateSubscribeParams {
-    fn autotrade_requested(&self) -> bool {
-        self.autotrade_mode.is_some()
-            || self.autotrade_amount.is_some()
-            || self.autotrade_cap.is_some()
-            || self.autotrade_quote.is_some()
-            || self.autotrade_environment.is_some()
-            || self.autotrade_margin_mode.is_some()
-            || self.autotrade_order_policy.is_some()
-            || self.autotrade_auth_mode.is_some()
-            || self.autotrade_settings_json.is_some()
-            || !self.autotrade_required_fields.is_empty()
+    fn guide_draft(&self) -> Result<Option<super::super::common::autotrade::guide::GuideDraft>> {
+        super::super::common::autotrade::guide::parse_draft(
+            self.service_guide.as_deref(),
+            self.service_guide_hash.as_deref(),
+        )
     }
 
-    fn validate(&self) -> Result<()> {
+    fn guide_consent_values(&self) -> Result<BTreeMap<String, serde_json::Value>> {
+        let Some(raw) = self.guide_consent_json.as_deref() else {
+            return Ok(BTreeMap::new());
+        };
+        serde_json::from_str(raw)
+            .context("--guide-consent-json must be a JSON object")
+    }
+
+    fn validated_guide_consent(&self) -> Result<Option<GuideConsentInput>> {
+        let guide_draft = self.guide_draft()?;
+        let Some(draft) = guide_draft else {
+            if self.service_guide_hash.is_some() || self.guide_consent_json.is_some() {
+                bail!("guide-driven signal execution requires --service-guide");
+            }
+            return Ok(None);
+        };
+        if self.guide_consent_json.is_none() {
+            bail!("guide-driven signal execution requires --guide-consent-json, including {{}} when the Guide declares no consent fields");
+        }
+        let consent_values = self.guide_consent_values()?;
+        super::super::common::autotrade::guide::validate_consent_values(&consent_values)?;
+        Ok(Some(GuideConsentInput {
+            draft,
+            consent_values,
+        }))
+    }
+
+    fn validate(&self) -> Result<Option<GuideConsentInput>> {
+        if self.exclude_device.is_some() {
+            bail!("create-time device selection is unsupported; create the subscription for all logged-in devices, then adjust receiving devices with subscribe-device-update");
+        }
         if self.service_id.is_empty() {
             bail!("--service-id is required");
         }
@@ -93,13 +100,10 @@ impl CreateSubscribeParams {
             bail!("--service-token-address is required");
         }
         if self.auto_renew != 0 && self.auto_renew != 1 {
-            bail!("--auto-renew must be 0 (off) or 1 (on), got {}", self.auto_renew);
-        }
-        if self.copy_trade != 0 && self.copy_trade != 1 {
-            bail!("--copy-trade must be 0 (off) or 1 (on), got {}", self.copy_trade);
-        }
-        if self.provider_agent_id.trim().is_empty() {
-            bail!("--provider-agent-id is required; use the confirmed Service result unchanged");
+            bail!(
+                "--auto-renew must be 0 (off) or 1 (on), got {}",
+                self.auto_renew
+            );
         }
         if self.title.is_empty() {
             bail!("--title is required");
@@ -113,231 +117,139 @@ impl CreateSubscribeParams {
         if self.description.chars().count() > MAX_DESCRIPTION_CHARS {
             bail!("--description exceeds {MAX_DESCRIPTION_CHARS} characters");
         }
-        super::attachments::validate_attachment_sources(
-            self.attachments.as_deref().unwrap_or(&[]),
-        )?;
-        if self.autotrade_requested() && self.autotrade_mode.is_none() {
-            bail!("--autotrade-mode is required when configuring signal execution; choose auto or notify_only");
-        }
-        let autotrade_config = self.autotrade_config()?;
-        if autotrade_config.mode == consent::ConsentMode::Decline
-            && (self.autotrade_amount.is_some()
-                || self.autotrade_cap.is_some()
-                || self.autotrade_quote.is_some()
-                || self.autotrade_environment.is_some()
-                || self.autotrade_margin_mode.is_some()
-                || self.autotrade_order_policy.is_some()
-                || self.autotrade_auth_mode.is_some()
-                || self.autotrade_settings_json.is_some()
-                || self
-                    .autotrade_required_fields
-                    .iter()
-                    .any(|field| field != "mode"))
-        {
-            bail!("notify_only does not accept automatic execution settings");
-        }
-        self.validate_required_autotrade_fields(&autotrade_config)?;
-        Ok(())
-    }
-
-    fn validate_required_autotrade_fields(
-        &self,
-        config: &SubscriptionAutoTradeConfig,
-    ) -> Result<()> {
-        let mut missing = Vec::new();
-        let mut used_internal_trade_amount_alias = false;
-        for declared_field in &self.autotrade_required_fields {
-            let field = canonical_required_autotrade_field(declared_field);
-            used_internal_trade_amount_alias |= declared_field == TRADE_AMOUNT_INTERNAL_ALIAS;
-            let present = match field {
-                "mode" => self.autotrade_mode.is_some(),
-                TRADE_AMOUNT_REQUIRED_FIELD => config.amount.is_some(),
-                "cap" => config.cap.is_some(),
-                "quote" => true,
-                "environment" => config.environment.is_some(),
-                "marginMode" => config.margin_mode.is_some(),
-                "orderPolicy" => config.order_policy.is_some(),
-                "authMode" => config.auth_mode.is_some(),
-                other => consent::dynamic_setting_present(&config.dynamic_settings, other),
-            };
-            if !present && !missing.iter().any(|missing_field| missing_field == field) {
-                missing.push(field.to_string());
-            }
-        }
-        if !missing.is_empty() {
-            let alias_hint = if used_internal_trade_amount_alias
-                && missing
-                    .iter()
-                    .any(|field| field == TRADE_AMOUNT_REQUIRED_FIELD)
-            {
-                " (tradeAmountU is an internal consent field; use tradeAmount with --autotrade-required-field)"
-            } else {
-                ""
-            };
-            bail!(
-                "missing required automatic execution fields: {}{}",
-                missing.join(", "),
-                alias_hint
-            );
-        }
-        Ok(())
-    }
-
-    fn autotrade_config(&self) -> Result<SubscriptionAutoTradeConfig> {
-        let mode = match self.autotrade_mode.as_deref() {
-            None => consent::ConsentMode::Decline,
-            Some(mode) if mode.eq_ignore_ascii_case("auto") => consent::ConsentMode::Auto,
-            Some(mode)
-                if mode.eq_ignore_ascii_case("notify_only")
-                    || mode.eq_ignore_ascii_case("notify-only")
-                    || mode.eq_ignore_ascii_case("manual") =>
-            {
-                consent::ConsentMode::Decline
-            }
-            Some(_) => bail!("--autotrade-mode must be one of: auto | notify_only"),
-        };
-        let amount = parse_optional_positive_decimal(
-            self.autotrade_amount.as_deref(),
-            "--autotrade-amount",
-        )?;
-        let cap =
-            parse_optional_positive_decimal(self.autotrade_cap.as_deref(), "--autotrade-cap")?;
-        let quote = self
-            .autotrade_quote
-            .as_deref()
-            .unwrap_or(consent::DEFAULT_QUOTE)
-            .to_ascii_lowercase();
-        if !consent::QUOTE_WHITELIST.contains(&quote.as_str()) {
-            bail!("--autotrade-quote must be one of: usdt | usdc");
-        }
-        let environment = match self.autotrade_environment.as_deref() {
-            None => None,
-            Some(value) if value.eq_ignore_ascii_case("live") => Some(TradeEnvironment::Live),
-            Some(value) if value.eq_ignore_ascii_case("demo") => Some(TradeEnvironment::Demo),
-            Some(_) => bail!("--autotrade-environment must be one of: live | demo"),
-        };
-        let margin_mode = self
-            .autotrade_margin_mode
-            .as_deref()
-            .map(MarginMode::parse)
-            .transpose()?;
-        let order_policy = self
-            .autotrade_order_policy
-            .as_deref()
-            .map(OrderPolicy::parse)
-            .transpose()?;
-        let auth_mode = self
-            .autotrade_auth_mode
-            .as_deref()
-            .map(TradeKitAuthMode::parse)
-            .transpose()?;
-        let mut dynamic_settings = consent::parse_dynamic_settings_json(
-            self.autotrade_settings_json.as_deref(),
-            "--autotrade-settings-json",
-        )?;
-        if !self.autotrade_required_fields.is_empty() {
-            let mut required_fields = Vec::new();
-            for field in &self.autotrade_required_fields {
-                let field = canonical_required_autotrade_field(field).to_string();
-                consent::validate_required_field_name(&field)?;
-                if !required_fields.contains(&field) {
-                    required_fields.push(field);
+        if let Some(ref files) = self.attachments {
+            for file in files {
+                if !std::path::Path::new(file).exists() {
+                    bail!("attachment file not found: {file}");
                 }
             }
-            dynamic_settings.insert(
-                "requiredFields".to_string(),
-                serde_json::to_value(required_fields)?,
-            );
-            consent::validate_dynamic_settings(&dynamic_settings)?;
         }
-        consent::validate_amount_policy(amount.as_deref(), &dynamic_settings)?;
-
-        Ok(SubscriptionAutoTradeConfig {
-            mode,
-            amount,
-            cap,
-            quote,
-            environment,
-            margin_mode,
-            order_policy,
-            auth_mode,
-            dynamic_settings,
-        })
+        self.validated_guide_consent()
     }
+
 }
 
-fn canonical_required_autotrade_field(field: &str) -> &str {
-    match field {
-        TRADE_AMOUNT_INTERNAL_ALIAS => TRADE_AMOUNT_REQUIRED_FIELD,
-        other => other,
-    }
-}
-
-fn parse_optional_positive_decimal(value: Option<&str>, flag: &str) -> Result<Option<String>> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let parsed =
-        Decimal::parse(value).map_err(|_| anyhow::anyhow!("{flag} must be a positive decimal"))?;
-    if parsed.is_zero() {
-        bail!("{flag} must be greater than 0");
-    }
-    Ok(Some(parsed.to_plain_string()))
-}
-
-fn persist_subscription_autotrade(
+fn prepare_guide_consent(
     job_id: &str,
-    config: &SubscriptionAutoTradeConfig,
+    params: &CreateSubscribeParams,
+    execution: &GuideConsentInput,
 ) -> Result<()> {
-    // The default quote is an automatic-execution convenience, not a value the
-    // user authorized for a new notify-only policy.
-    let quote = (config.mode == consent::ConsentMode::Auto).then_some(config.quote.as_str());
-    consent::write_consent_policy_with_dynamic_settings(
+    let guide_file = execution.draft.clone().into_file(
         job_id,
-        config.mode,
-        config.cap.as_deref(),
-        config.amount.as_deref(),
-        quote,
-        config.environment,
-        config.margin_mode,
-        config.order_policy,
-        config.auth_mode,
-        Some(&config.dynamic_settings),
+        &params.service_id,
+        params.provider_agent_id.as_deref(),
+    );
+    super::super::common::autotrade::guide::write_guide(&guide_file, &execution.draft.source)?;
+    super::super::common::autotrade::guide::write_prepared_consent(
+        job_id,
+        &guide_file,
+        execution.consent_values.clone(),
         super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
     )?;
-    let grant_result = match config.mode {
-        consent::ConsentMode::Auto => grants::write_auto_grant(
-            job_id,
-            super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
-        ),
-        consent::ConsentMode::Manual | consent::ConsentMode::Decline => {
-            grants::clear_grant(job_id);
-            Ok(())
-        }
-    };
-    if let Err(err) = grant_result {
-        consent::clear_consent(job_id);
-        grants::clear_grant(job_id);
-        return Err(err);
-    }
     Ok(())
+}
+
+fn activate_guide_consent(job_id: &str) -> Result<()> {
+    super::super::common::autotrade::guide::activate_prepared_consent(job_id)
+}
+
+/// Assemble the `create` request body. `device_list` is ALWAYS embedded (even
+/// empty) so the created record never relies on server-default routing;
+/// `providerAgentId` is only present when a designated provider was requested.
+fn build_create_body(
+    params: &CreateSubscribeParams,
+    effective_use_trial: bool,
+    terms_for_create: serde_json::Value,
+    terms_sig: &str,
+) -> serde_json::Value {
+    let mut create_body = serde_json::json!({
+        "serviceId": params.service_id,
+        "useTrial": effective_use_trial,
+        "serviceParams": params.service_params,
+        "serviceTokenAmount": params.service_token_amount,
+        "serviceTokenAddress": params.service_token_address,
+        "autoRenew": params.auto_renew,
+        "title": params.title,
+        "description": params.description,
+        "serviceInterval": params.service_interval,
+        "terms": terms_for_create,
+        "termsSig": terms_sig,
+        "deviceList": serde_json::Value::Null,
+    });
+    if let Some(ref pid) = params.provider_agent_id {
+        create_body["providerAgentId"] = serde_json::json!(pid);
+    }
+    create_body
+}
+
+/// The json-mode success envelope data — retains `deviceRoutingDegraded: false`
+/// for compatibility, plus the `offlineReplaySupported` capability flag (always
+/// present). When the comm package cannot honor an offline-replay preference, it
+/// also carries
+/// `offlineReplayFixCommands` (the upgrade commands) so the skill can prompt an
+/// upgrade. These offline-replay fields are copy-only — they never change whether
+/// or how the subscription was created.
+fn build_create_success(
+    sub_id: &str,
+    tx_hash: &str,
+    offline_replay: &OfflineReplayCapability,
+    guide_and_consent_active: bool,
+) -> serde_json::Value {
+    let status = if guide_and_consent_active {
+        "active"
+    } else {
+        "none"
+    };
+    let mut envelope = serde_json::json!({
+        "subId": sub_id,
+        "txHash": tx_hash,
+        "deviceRoutingDegraded": false,
+        "offlineReplaySupported": offline_replay.supported,
+        "guideStatus": status,
+        "consentStatus": status,
+    });
+    if !offline_replay.supported {
+        envelope["offlineReplayFixCommands"] =
+            serde_json::json!(offline_replay.fix_commands_or_default());
+    }
+    envelope
+}
+
+fn build_duplicate_subscription_block(
+    service_id: &str,
+    existing: &super::subscription_ops::ExistingSubscriptionSummary,
+) -> serde_json::Value {
+    let base = format!(
+        "Service {service_id} already has a subscription task, jobId: {}. It cannot be created again.",
+        existing.job_id
+    );
+    let prompt = if existing.restore_listening_available {
+        format!("{base} Would you like to restore listening?")
+    } else {
+        base
+    };
+    let mut block = serde_json::json!({
+        "blockedReason": "duplicate-subscription",
+        "userFacingPrompt": prompt,
+        "existingSubscription": existing,
+    });
+    if existing.restore_listening_available {
+        block["nextAfterUserChoice"] = serde_json::json!(["restore-listening"]);
+    }
+    block
 }
 
 pub async fn handle_create_subscribe(
     client: &mut TaskApiClient,
     params: CreateSubscribeParams,
 ) -> Result<()> {
-    params.validate()?;
-    let autotrade_requested = params.autotrade_requested();
-    let autotrade_config = params.autotrade_config()?;
+    let guide_consent = params.validate()?;
 
-    ensure_tokens_refreshed().await
-        .map_err(|e| anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}"))?;
-    let has_session_cert = crate::wallet_store::load_session()?
-        .is_some_and(|session| !session.session_cert.trim().is_empty());
-    if !has_session_cert {
-        bail!("current login has no sessionCert; run `onchainos wallet login` again before create-subscribe");
-    }
+    let json_mode = params.format.eq_ignore_ascii_case("json");
+
+    ensure_tokens_refreshed().await.map_err(|e| {
+        anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}")
+    })?;
 
     let (user_agent_id, _) = super::create::resolve_user_agent().await?;
     let user_agent_id = select_subscription_agent_id(&user_agent_id, "")?;
@@ -345,45 +257,183 @@ pub async fn handle_create_subscribe(
         eprintln!("[create-subscribe] user identity check passed (agentId: {user_agent_id})");
     }
 
+    // Repeat the selection-time check immediately before the write path to
+    // close the confirmation-to-create race. Read or parse failures propagate,
+    // so no balance, signing, confirmation, create, or broadcast call follows.
+    let existing_subscriptions =
+        super::subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
+            client,
+            &user_agent_id,
+        )
+        .await?;
+    if let Some(existing) = super::subscription_ops::existing_subscription_for_service(
+        &existing_subscriptions,
+        &params.service_id,
+    ) {
+        return Err(crate::output::CliDuplicateSubscription {
+            data: build_duplicate_subscription_block(&params.service_id, existing),
+        }
+        .into());
+    }
+
+    if let Some(warning) = subscribe_balance_warning(
+        &params.service_token_amount,
+        &params.service_token_address,
+        &user_agent_id,
+    )
+    .await?
+    {
+        return Err(crate::output::CliFundingBlocked {
+            data: build_subscription_funding_block(&warning),
+        }
+        .into());
+    }
+
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
-    let receipt = super::v2::execute_create_subscription(
+
+    // Step 1: providerConfirmStatus → terms object
+    let mut confirm_body = serde_json::json!({
+        "serviceId": params.service_id,
+        "autoRenew": params.auto_renew,
+        "useTrial": params.use_trial,
+        "subId": 0,
+    });
+    if let Some(ref pid) = params.provider_agent_id {
+        confirm_body["providerAgentId"] = serde_json::json!(pid);
+    }
+
+    let confirm_resp = client
+        .post_with_identity(
+            &format!("{SUBSCRIBE_API_PREFIX}/providerConfirmStatus"),
+            &confirm_body,
+            &user_agent_id,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("providerConfirmStatus failed: {e}"))?;
+
+    if DEBUG_LOG {
+        eprintln!("[create-subscribe] providerConfirmStatus response: {confirm_resp}");
+    }
+
+    if confirm_resp.is_null() || confirm_resp.as_object().map_or(true, |o| o.is_empty()) {
+        bail!(
+            "providerConfirmStatus returned empty terms; the service may not support subscription"
+        );
+    }
+
+    let typed_data = &confirm_resp["typedData"];
+    if typed_data.is_null() || typed_data.as_object().map_or(true, |o| o.is_empty()) {
+        bail!("providerConfirmStatus response missing typedData");
+    }
+
+    // Step 2: EIP-712 sign terms (sign the typedData sub-object, not the full response)
+    let terms_sig = signing::sign_typed_data(typed_data, &address)
+        .await
+        .map_err(|e| anyhow::anyhow!("EIP-712 terms signing failed: {e}"))?;
+
+    if DEBUG_LOG {
+        eprintln!("[create-subscribe] termsSig: {terms_sig}");
+    }
+
+    // Step 3: POST create
+    // terms = providerConfirmStatus response minus the nested typedData
+    // (backend expects flat RenewalTerms fields only: asp, aspAgentId, token, subId, user, etc.)
+    let mut terms_for_create = confirm_resp.clone();
+    if let Some(obj) = terms_for_create.as_object_mut() {
+        obj.remove("typedData");
+    }
+
+    // useTrial must come from the backend response (the authoritative source), not the
+    // user-supplied flag — the backend may override it (e.g. trial already used).
+    let effective_use_trial = confirm_resp["useTrial"]
+        .as_bool()
+        .unwrap_or(params.use_trial);
+    if DEBUG_LOG && effective_use_trial != params.use_trial {
+        eprintln!(
+            "[create-subscribe] useTrial overridden by backend: requested={}, effective={}",
+            params.use_trial, effective_use_trial
+        );
+    }
+
+    let create_body = build_create_body(&params, effective_use_trial, terms_for_create, &terms_sig);
+
+    let create_resp = client
+        .post_with_identity(
+            &format!("{SUBSCRIBE_API_PREFIX}/create"),
+            &create_body,
+            &user_agent_id,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("create-subscribe failed: {e}"))?;
+
+    let sub_id = create_resp["jobId"].as_str().unwrap_or("?").to_string();
+    let biz_type = signing::extract_biz_type(&create_resp);
+    let uop_data = &create_resp["uopData"];
+
+    if let Some(ref files) = params.attachments {
+        if !files.is_empty() {
+            super::attachments::copy_attachments_to_job(&sub_id, files)?;
+        }
+    }
+
+    if DEBUG_LOG {
+        eprintln!("[create-subscribe] subId={sub_id}, bizType={biz_type}");
+    }
+
+    // Create time is the only safe point to bind the provider Guide and the
+    // subscriber's consent to the real backend `jobId`, while still allowing a
+    // local persistence failure to stop before signing/broadcasting.
+    let prepared_guide_consent = if let Some(ref guide_consent) = guide_consent {
+        prepare_guide_consent(&sub_id, &params, guide_consent)?;
+        true
+    } else {
+        false
+    };
+
+    // Bind the subscription job to the current AI runtime before broadcast.
+    // The on-chain creation event can be consumed while broadcast is still
+    // returning, so the provider mapping must already exist at that point.
+    let provider_prebind = common::a2a_binding::bind_job_provider_to_current_runtime(&sub_id).await;
+
+    // Step 4 + 5: sign uopData → broadcast (reuses the standard task broadcast endpoint)
+    let tx_hash = match signing::sign_uop_and_broadcast(
         client,
-        super::v2::CreateSubscriptionInput {
-            service_id: &params.service_id,
-            use_trial: params.use_trial,
-            service_params: &params.service_params,
-            service_token_amount: &params.service_token_amount,
-            service_token_address: &params.service_token_address,
-            auto_renew: params.auto_renew,
-            copy_trade: params.copy_trade,
-            title: &params.title,
-            description: &params.description,
-            provider_agent_id: &params.provider_agent_id,
-            service_interval: &params.service_interval,
-            attachments: params.attachments.as_deref().unwrap_or(&[]),
-        },
+        uop_data,
         &account_id,
         &address,
+        &sub_id,
+        biz_type,
         &user_agent_id,
-        |job_id| {
-            if autotrade_requested {
-                persist_subscription_autotrade(job_id, &autotrade_config)?;
-            }
-            if !params.service_description.trim().is_empty() {
-                crate::commands::agent_commerce::task::common::autotrade::profile::save_from_description(
-                    job_id,
-                    &params.service_id,
-                    Some(&params.provider_agent_id),
-                    &params.service_description,
-                )?;
-            }
-            Ok(())
-        },
+        None,
     )
-    .await?;
+    .await
+    {
+        Ok(tx_hash) => tx_hash,
+        Err(err) => {
+            if prepared_guide_consent {
+                super::super::common::autotrade::guide::abort_prepared_consent(&sub_id);
+            }
+            if let Some(prebind) = &provider_prebind {
+                prebind.rollback_if_created().await;
+            }
+            return Err(err);
+        }
+    };
 
-    let offline_replay = okx_a2a::probe_offline_replay_capability();
-    let tx_hash = receipt.broadcast["txHash"].as_str().unwrap_or("pending");
+    // A prepared Guide Consent becomes executable only after the subscription has been
+    // broadcast. Activation failure leaves it prepared, so delivery handling
+    // remains fail-closed even though the remote subscription now exists.
+    let guide_and_consent_active = if prepared_guide_consent {
+        match activate_guide_consent(&sub_id) {
+            Ok(()) => true,
+            Err(err) => {
+                eprintln!("[guide-execution] subscription created, but Guide Consent could not be activated: {err}");
+                false
+            }
+        }
+    } else {
+        false
+    };
 
     audit::log(
         "cli",
@@ -391,54 +441,113 @@ pub async fn handle_create_subscribe(
         true,
         Duration::default(),
         Some(vec![
-            format!("jobId={}", receipt.job_id),
+            format!("subId={sub_id}"),
             format!("agentId={user_agent_id}"),
             format!("serviceId={}", params.service_id),
-            format!("useTrial={}", receipt.effective_use_trial),
+            format!("useTrial={effective_use_trial}"),
             format!("autoRenew={}", params.auto_renew),
-            format!("copyTrade={}", params.copy_trade),
-            format!("autoTradeConfigRequested={autotrade_requested}"),
-            format!("autoTradeConfigured={autotrade_requested}"),
-            "bizType=204".to_string(),
+            format!("guideStatus={}", if guide_and_consent_active { "active" } else { "none" }),
+            format!("consentStatus={}", if guide_and_consent_active { "active" } else { "none" }),
             format!("txHash={tx_hash}"),
         ]),
         None,
     );
 
-    let mut payload = serde_json::json!({
-        "jobId": receipt.job_id,
-        "type": 204,
-        "bizType": 204,
-        "status": "broadcast_submitted",
-        "providerAgentId": params.provider_agent_id,
-        "serviceId": params.service_id,
-        "useTrial": receipt.effective_use_trial,
-        "autoRenew": params.auto_renew,
-        "copyTrade": params.copy_trade,
-        "runtimeBound": true,
-        "attachments": receipt.attachments,
-        "autoTradeConfigRequested": autotrade_requested,
-        "autoTradeConfigured": autotrade_requested,
-        "executionProfileSaved": !params.service_description.trim().is_empty(),
-        "offlineReplaySupported": offline_replay.supported,
-        "broadcast": receipt.broadcast,
-    });
-    if !offline_replay.supported {
-        payload["offlineReplayFixCommands"] =
-            serde_json::json!(offline_replay.fix_commands_or_default());
+    // Establish the provider XMTP session now (before the first delivery) so
+    // subscription deliverables are not held at consent=0. Delivery transport
+    // must not depend on the backend compatibility marker.
+    if let Some(pid) = params.provider_agent_id.as_deref() {
+        super::subscription_ops::ensure_subscription_session(&sub_id, &user_agent_id, pid);
     }
-    crate::output::success(serde_json::json!({
-        "phase": "creation",
-        "decision": "ready",
-        "reason": "broadcast_submitted",
-        "nextAction": [{
-            "id": "watch_task",
-            "recommend": true,
-            "params": {"jobId": receipt.job_id}
-        }],
-        "payload": payload,
-    }));
+
+    if json_mode {
+        // Copy-only capability probe: read AFTER the create has fully succeeded so
+        // its result can never influence whether the write was sent or judged.
+        let offline_replay = okx_a2a::probe_offline_replay_capability();
+        crate::output::success(build_create_success(
+            &sub_id,
+            &tx_hash,
+            &offline_replay,
+            guide_and_consent_active,
+        ));
+        // Balance is verified before create/broadcast; insufficiency exits earlier
+        // via the blocked funding-notice envelope.
+        if super::content::is_cli_mode() {
+            println!();
+            println!("{}", super::content::scoped_watch_handoff(&sub_id));
+        }
+        return Ok(());
+    }
+
+    println!("✓ Subscription submitted (transaction broadcast, awaiting on-chain confirmation)");
+    println!("  jobId:  {sub_id}");
+    println!("  txHash: {tx_hash}");
+    println!(
+        "  Guide: {}",
+        if guide_and_consent_active { "active" } else { "none" }
+    );
+    println!(
+        "  Consent: {}",
+        if guide_and_consent_active { "active" } else { "none" }
+    );
+    if let Some(ref pid) = params.provider_agent_id {
+        println!("  Designated provider: {pid}");
+    }
+    if !super::content::is_cli_mode() {
+        println!("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.");
+    }
+    if super::content::is_cli_mode() {
+        println!();
+        println!("{}", super::content::scoped_watch_handoff(&sub_id));
+    }
+
     Ok(())
+}
+
+async fn subscribe_balance_warning(
+    service_token_amount: &str,
+    service_token_address: &str,
+    user_agent_id: &str,
+) -> Result<Option<serde_json::Value>> {
+    let required: f64 = service_token_amount.parse().unwrap_or(0.0);
+    if required <= 0.0 {
+        return Ok(None);
+    }
+
+    let symbol = match common::util::resolve_token_symbol_by_address(
+        common::XLAYER_CHAIN_INDEX,
+        service_token_address,
+    )
+    .await
+    {
+        Ok(sym) => sym,
+        Err(e) => {
+            if DEBUG_LOG {
+                eprintln!(
+                    "[create-subscribe] ⚠ token symbol resolution failed \
+                     (skipping balance pre-check): {e}"
+                );
+            }
+            return Ok(None);
+        }
+    };
+
+    match common::ensure_sufficient_balance(required, &symbol).await {
+        Ok(()) => Ok(None),
+        Err(e) => match e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
+            Some(ib) => {
+                let ib_owned = ib.clone();
+                let (warning, _) =
+                    common::deposit_qr::balance_warning_json(&ib_owned, user_agent_id).await;
+                Ok(Some(warning))
+            }
+            None => Err(e),
+        },
+    }
+}
+
+fn build_subscription_funding_block(warning: &serde_json::Value) -> serde_json::Value {
+    common::funding_notice::funding_blocked_envelope(warning, "subscription", "Subscription")
 }
 
 #[cfg(test)]
@@ -455,15 +564,21 @@ mod tests {
     #[test]
     fn cli_create_subscribe_all_required() {
         let cli = TestCli::parse_from([
-            "test", "create-subscribe",
-            "--service-id", "svc_001",
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_001",
             "--use-trial",
-            "--service-token-amount", "10",
-            "--service-token-address", "0x6776",
-            "--auto-renew", "1",
-            "--title", "Signal Subscription",
-            "--description", "On-chain signal subscription service",
-            "--provider-agent-id", "asp-1",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0x6776",
+            "--auto-renew",
+            "1",
+            "--title",
+            "Signal Subscription",
+            "--description",
+            "On-chain signal subscription service",
         ]);
         match cli.cmd {
             super::super::TaskCommand::CreateSubscribe {
@@ -476,21 +591,13 @@ mod tests {
                 description,
                 attachments,
                 provider_agent_id,
-                copy_trade,
-                service_description,
+                service_guide,
+                service_guide_hash,
+                guide_consent_json,
                 service_params,
                 service_interval,
-                autotrade_mode,
-                autotrade_amount,
-                autotrade_cap,
-                autotrade_quote,
-                autotrade_environment,
-                autotrade_margin_mode,
-                autotrade_order_policy,
-                autotrade_auth_mode,
-                autotrade_settings_json,
-                autotrade_required_fields,
                 format,
+                exclude_device,
             } => {
                 assert_eq!(service_id, "svc_001");
                 assert!(use_trial);
@@ -500,22 +607,14 @@ mod tests {
                 assert_eq!(title, "Signal Subscription");
                 assert_eq!(description, "On-chain signal subscription service");
                 assert!(attachments.is_none());
-                assert_eq!(provider_agent_id, "asp-1");
-                assert_eq!(copy_trade, 0);
-                assert_eq!(service_description, "");
+                assert!(provider_agent_id.is_none());
+                assert!(service_guide.is_none());
+                assert!(service_guide_hash.is_none());
+                assert!(guide_consent_json.is_none());
                 assert_eq!(service_params, "");
                 assert_eq!(service_interval, "month");
-                assert!(autotrade_mode.is_none());
-                assert!(autotrade_settings_json.is_none());
-                assert!(autotrade_amount.is_none());
-                assert!(autotrade_cap.is_none());
-                assert!(autotrade_quote.is_none());
-                assert!(autotrade_environment.is_none());
-                assert!(autotrade_margin_mode.is_none());
-                assert!(autotrade_order_policy.is_none());
-                assert!(autotrade_auth_mode.is_none());
-                assert!(autotrade_required_fields.is_empty());
                 assert_eq!(format, "");
+                assert!(exclude_device.is_none());
             }
             _ => panic!("expected CreateSubscribe"),
         }
@@ -538,8 +637,6 @@ mod tests {
             "Subscription with files",
             "--description",
             "Subscription request with two supporting files",
-            "--provider-agent-id",
-            "asp-1",
             "--file",
             "/tmp/brief.pdf",
             "--file",
@@ -559,22 +656,81 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_block_only_offers_restore_for_active_subscription() {
+        let active = super::super::subscription_ops::ExistingSubscriptionSummary {
+            job_id: "job-active".to_string(),
+            service_id: "svc-1".to_string(),
+            provider_agent_id: "asp-1".to_string(),
+            status_name: "ACTIVE".to_string(),
+            restore_listening_available: true,
+        };
+        let active = super::build_duplicate_subscription_block("svc-1", &active);
+        assert_eq!(active["blockedReason"], "duplicate-subscription");
+        assert_eq!(active["existingSubscription"]["jobId"], "job-active");
+        assert!(active["userFacingPrompt"]
+            .as_str()
+            .unwrap()
+            .contains("jobId: job-active"));
+        assert!(active["userFacingPrompt"]
+            .as_str()
+            .unwrap()
+            .contains("cannot be created again"));
+        assert!(!active["userFacingPrompt"]
+            .as_str()
+            .unwrap()
+            .contains("ACTIVE"));
+        assert_eq!(
+            active["nextAfterUserChoice"],
+            serde_json::json!(["restore-listening"])
+        );
+
+        let rejected = super::super::subscription_ops::ExistingSubscriptionSummary {
+            job_id: "job-rejected".to_string(),
+            service_id: "svc-1".to_string(),
+            provider_agent_id: "asp-1".to_string(),
+            status_name: "REJECTED".to_string(),
+            restore_listening_available: false,
+        };
+        let rejected = super::build_duplicate_subscription_block("svc-1", &rejected);
+        assert!(rejected.get("nextAfterUserChoice").is_none());
+        assert!(!rejected["userFacingPrompt"]
+            .as_str()
+            .unwrap()
+            .contains("Restore listening"));
+        assert!(!rejected["userFacingPrompt"]
+            .as_str()
+            .unwrap()
+            .contains("REJECTED"));
+        assert!(rejected.get("serviceId").is_none());
+    }
+
+    #[test]
     fn cli_create_subscribe_with_provider() {
         let cli = TestCli::parse_from([
-            "test", "create-subscribe",
-            "--service-id", "svc_002",
-            "--service-token-amount", "5",
-            "--service-token-address", "0xAddr",
-            "--auto-renew", "0",
-            "--title", "Copy Trade",
-            "--description", "Auto copy trade subscription",
-            "--provider-agent-id", "agent-99",
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_002",
+            "--service-token-amount",
+            "5",
+            "--service-token-address",
+            "0xAddr",
+            "--auto-renew",
+            "0",
+            "--title",
+            "Copy Trade",
+            "--description",
+            "Auto copy trade subscription",
+            "--provider-agent-id",
+            "agent-99",
         ]);
         match cli.cmd {
             super::super::TaskCommand::CreateSubscribe {
-                provider_agent_id, use_trial, ..
+                provider_agent_id,
+                use_trial,
+                ..
             } => {
-                assert_eq!(provider_agent_id, "agent-99");
+                assert_eq!(provider_agent_id.as_deref(), Some("agent-99"));
                 assert!(!use_trial);
             }
             _ => panic!("expected CreateSubscribe"),
@@ -584,14 +740,20 @@ mod tests {
     #[test]
     fn cli_create_subscribe_bool_strings() {
         let cli = TestCli::parse_from([
-            "test", "create-subscribe",
-            "--service-id", "svc_003",
-            "--service-token-amount", "1",
-            "--service-token-address", "0xA",
-            "--auto-renew", "true",
-            "--title", "t",
-            "--description", "d for test bool strings ok",
-            "--provider-agent-id", "asp-1",
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_003",
+            "--service-token-amount",
+            "1",
+            "--service-token-address",
+            "0xA",
+            "--auto-renew",
+            "true",
+            "--title",
+            "t",
+            "--description",
+            "d for test bool strings ok",
         ]);
         match cli.cmd {
             super::super::TaskCommand::CreateSubscribe { auto_renew, .. } => {
@@ -604,28 +766,60 @@ mod tests {
     #[test]
     fn cli_create_subscribe_missing_service_id_fails() {
         assert!(TestCli::try_parse_from([
-            "test", "create-subscribe",
-            "--service-token-amount", "10",
-            "--service-token-address", "0xAddr",
-            "--auto-renew", "1",
-            "--title", "t",
-            "--description", "d",
-        ]).is_err());
+            "test",
+            "create-subscribe",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0xAddr",
+            "--auto-renew",
+            "1",
+            "--title",
+            "t",
+            "--description",
+            "d",
+        ])
+        .is_err());
     }
 
     #[test]
     fn cli_create_subscribe_rejects_create_time_device_selection() {
-        assert!(TestCli::try_parse_from([
-            "test", "create-subscribe",
-            "--service-id", "svc_001",
-            "--service-token-amount", "10",
-            "--service-token-address", "0xAddr",
-            "--auto-renew", "1",
-            "--title", "t",
-            "--description", "d",
-            "--provider-agent-id", "asp-1",
-            "--exclude-device", "device-2",
-        ]).is_err());
+        let cli = TestCli::try_parse_from([
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_001",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0xAddr",
+            "--auto-renew",
+            "1",
+            "--title",
+            "t",
+            "--description",
+            "d",
+            "--exclude-device",
+            "device-2",
+        ])
+        .expect("legacy flag remains parseable so the command can return a specific error");
+
+        let exclude_device = match cli.cmd {
+            super::super::TaskCommand::CreateSubscribe { exclude_device, .. } => exclude_device,
+            _ => panic!("expected CreateSubscribe"),
+        };
+        let mut params = params_fixture(None);
+        params.exclude_device = exclude_device;
+        let error = params
+            .validate()
+            .expect_err("create-time device selection must be rejected locally");
+
+        assert!(
+            error
+                .to_string()
+                .contains("create-time device selection is unsupported"),
+            "unexpected error: {error}"
+        );
     }
 
     // The backend create response is the first point where the subscription has
@@ -633,25 +827,29 @@ mod tests {
     // on-chain creation event cannot race ahead of local provider routing.
     #[test]
     fn create_subscribe_binds_job_provider_before_broadcast() {
-        let source = include_str!("v2/create_subscription.rs");
-        let job_id = source
-            .find("validate_create_response(&response)")
-            .expect("v2 create must validate jobId from the create response");
-        let readiness = source
-            .find("establish_local_readiness(&job_id)")
-            .expect("v2 create must establish local execution readiness");
-        let bind = source
-            .find("bind_job_provider_to_current_runtime_required(&job_id)")
-            .expect("v2 create must require runtime binding");
-        let broadcast = source
-            .find("signing::sign_uop_and_broadcast_full(")
-            .expect("v2 create must broadcast the subscription transaction");
-        let rollback = source
+        let source = include_str!("create_subscribe.rs");
+        let handler = source
+            .split_once("pub async fn handle_create_subscribe")
+            .expect("create-subscribe handler must exist")
+            .1
+            .split_once("#[cfg(test)]")
+            .expect("handler must precede its tests")
+            .0;
+
+        let job_id = handler
+            .find("let sub_id = create_resp[\"jobId\"]")
+            .expect("handler must read jobId from the create response");
+        let bind = handler
+            .find("bind_job_provider_to_current_runtime(&sub_id)")
+            .expect("handler must bind the subscription job to the current runtime");
+        let broadcast = handler
+            .find("signing::sign_uop_and_broadcast(")
+            .expect("handler must broadcast the subscription transaction");
+        let rollback = handler
             .find("prebind.rollback_if_created().await")
             .expect("handler must roll back a newly-created binding when broadcast fails");
 
-        assert!(job_id < readiness, "jobId must be resolved before local readiness");
-        assert!(readiness < bind, "local readiness must precede runtime binding");
+        assert!(job_id < bind, "jobId must be resolved before bind-current");
         assert!(bind < broadcast, "bind-current must run before broadcast");
         assert!(
             broadcast < rollback,
@@ -691,30 +889,27 @@ mod tests {
             service_token_amount: "10".to_string(),
             service_token_address: "0xtok".to_string(),
             auto_renew: 1,
-            copy_trade: 0,
             title: "t".to_string(),
             description: "d".to_string(),
             attachments: None,
-            provider_agent_id: provider.unwrap_or_default().to_string(),
-            service_description: String::new(),
+            provider_agent_id: provider.map(str::to_string),
+            service_guide: None,
+            service_guide_hash: None,
+            guide_consent_json: None,
             service_interval: "month".to_string(),
-            autotrade_mode: None,
-            autotrade_amount: None,
-            autotrade_cap: None,
-            autotrade_quote: None,
-            autotrade_environment: None,
-            autotrade_margin_mode: None,
-            autotrade_order_policy: None,
-            autotrade_auth_mode: None,
-            autotrade_settings_json: None,
-            autotrade_required_fields: Vec::new(),
             format: "json".to_string(),
+            exclude_device: None,
         }
+    }
+
+    fn attach_minimal_guide(params: &mut super::CreateSubscribeParams) {
+        params.service_guide = Some("Follow the saved Signal using only the confirmed Consent.".to_string());
+        params.guide_consent_json = Some("{}".to_string());
     }
 
     #[test]
     fn create_subscribe_rejects_missing_attachment_before_creation() {
-        let mut params = params_fixture(Some("asp-1"));
+        let mut params = params_fixture(None);
         params.attachments = Some(vec![
             "/path/that/does/not/exist/subscription-attachment.pdf".to_string(),
         ]);
@@ -722,79 +917,191 @@ mod tests {
         let error = params
             .validate()
             .expect_err("a missing attachment must stop subscription creation");
-        assert!(error.to_string().contains("attachment file is not readable"));
+        assert!(error.to_string().contains("attachment file not found"));
     }
 
     #[test]
-    fn cli_create_subscribe_accepts_copy_trade_argument() {
-        let cli = TestCli::parse_from([
-            "test", "create-subscribe",
-            "--service-id", "svc_001",
-            "--service-token-amount", "10",
-            "--service-token-address", "0x6776",
-            "--auto-renew", "1",
-            "--copy-trade", "0",
-            "--title", "Signal Subscription",
-            "--description", "On-chain signal subscription service",
-            "--provider-agent-id", "asp-1",
-        ]);
-        let super::super::TaskCommand::CreateSubscribe { copy_trade, .. } = cli.cmd else {
-            panic!("expected CreateSubscribe");
+    fn create_body_defaults_subscription_routing_to_all_devices() {
+        // A successful subscription create always uses the backend's default-all
+        // routing mode; create-time device selection is not supported.
+        let p = params_fixture(None);
+        let body = super::build_create_body(&p, false, serde_json::json!({ "asp": "x" }), "0xsig");
+        assert_eq!(body["deviceList"], serde_json::Value::Null);
+        assert!(body.get("deviceList").is_some());
+        assert_eq!(body["termsSig"], serde_json::json!("0xsig"));
+        assert!(body.get("providerAgentId").is_none());
+    }
+
+    #[test]
+    fn create_body_carries_default_all_routing_and_provider_when_present() {
+        let p = params_fixture(Some("agent-7"));
+        let body = super::build_create_body(&p, true, serde_json::json!({}), "0xsig");
+        assert_eq!(body["deviceList"], serde_json::Value::Null);
+        assert_eq!(body["providerAgentId"], serde_json::json!("agent-7"));
+        assert_eq!(body["useTrial"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn create_success_envelope_never_reports_device_routing_degradation() {
+        use crate::commands::agent_commerce::task::common::okx_a2a::OfflineReplayCapability;
+        // Supported comm package ⇒ offlineReplaySupported:true and NO fix-commands field.
+        let supported = OfflineReplayCapability {
+            supported: true,
+            fix_commands: Vec::new(),
         };
-        assert_eq!(copy_trade, 0);
+        let success = super::build_create_success("0xjob", "0xhash", &supported, true);
+        assert_eq!(success["deviceRoutingDegraded"], serde_json::json!(false));
+        assert_eq!(success["subId"], serde_json::json!("0xjob"));
+        assert_eq!(success["txHash"], serde_json::json!("0xhash"));
+        assert_eq!(success["offlineReplaySupported"], serde_json::json!(true));
+        assert_eq!(success["guideStatus"], serde_json::json!("active"));
+        assert_eq!(success["consentStatus"], serde_json::json!("active"));
+        assert!(success.get("offlineReplayFixCommands").is_none());
+        let ok = super::build_create_success("0xjob", "0xhash", &supported, false);
+        assert_eq!(ok["deviceRoutingDegraded"], serde_json::json!(false));
+        assert_eq!(ok["guideStatus"], serde_json::json!("none"));
+        assert_eq!(ok["consentStatus"], serde_json::json!("none"));
     }
 
     #[test]
-    fn cli_create_subscribe_accepts_complete_autotrade_configuration() {
+    fn create_success_envelope_carries_offline_replay_fix_commands_when_unsupported() {
+        use crate::commands::agent_commerce::task::common::okx_a2a::OfflineReplayCapability;
+        // Unsupported + probe supplied its own fixCommands → passed through verbatim.
+        let unsupported = OfflineReplayCapability {
+            supported: false,
+            fix_commands: vec!["npm i -g @okxweb3/a2a-node@1.2.3".to_string()],
+        };
+        let env = super::build_create_success("0xjob", "0xhash", &unsupported, false);
+        assert_eq!(env["offlineReplaySupported"], serde_json::json!(false));
+        assert_eq!(
+            env["offlineReplayFixCommands"],
+            serde_json::json!(["npm i -g @okxweb3/a2a-node@1.2.3"])
+        );
+        // Unsupported + no probe fixCommands → packaged default.
+        let unsupported_default = OfflineReplayCapability {
+            supported: false,
+            fix_commands: Vec::new(),
+        };
+        let env2 =
+            super::build_create_success("0xjob", "0xhash", &unsupported_default, false);
+        assert_eq!(
+            env2["offlineReplayFixCommands"],
+            serde_json::json!(["npm install -g @okxweb3/a2a-node@latest"])
+        );
+    }
+
+    #[test]
+    fn subscription_funding_block_uses_funding_notice_protocol() {
+        let warning = serde_json::json!({
+            "sufficient": false,
+            "chain": "XLayer",
+            "currency": "USDT",
+            "available": "0",
+            "required": "0.0001",
+            "shortfall": "0.0001",
+            "depositAddress": "0x1234567890abcdef1234567890abcdef12345678",
+            "depositChain": "XLayer"
+        });
+
+        let output = build_subscription_funding_block(&warning);
+        assert_eq!(output["blocked"], serde_json::json!(true));
+        assert_eq!(output["submitted"], serde_json::json!(false));
+        assert_eq!(output["mustRunFundingNotice"], serde_json::json!(true));
+        assert_eq!(
+            output["fundingNoticeCommand"],
+            "onchainos agent funding-notice --chain XLayer --currency USDT --shortfall 0.0001 --deposit-address 0x1234567890abcdef1234567890abcdef12345678 --available 0 --required 0.0001 --deposit-chain XLayer --reason subscription --format json"
+        );
+    }
+
+    #[test]
+    fn cli_create_subscribe_rejects_removed_copy_trade_argument() {
+        assert!(TestCli::try_parse_from([
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_001",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0x6776",
+            "--auto-renew",
+            "1",
+            "--copy-trade",
+            "0",
+            "--title",
+            "Signal Subscription",
+            "--description",
+            "On-chain signal subscription service",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn create_body_omits_retired_delivery_marker() {
+        let params = CreateSubscribeParams {
+            service_id: "svc_report_only".to_string(),
+            use_trial: false,
+            service_params: String::new(),
+            service_token_amount: "10".to_string(),
+            service_token_address: "0x6776".to_string(),
+            auto_renew: 0,
+            title: "Analytics report".to_string(),
+            description: "Read-only market report without trading signals".to_string(),
+            attachments: None,
+            provider_agent_id: Some("agent-99".to_string()),
+            service_guide: None,
+            service_guide_hash: None,
+            guide_consent_json: None,
+            service_interval: "month".to_string(),
+            format: "json".to_string(),
+            exclude_device: None,
+        };
+
+        let body = build_create_body(
+            &params,
+            false,
+            serde_json::json!({"subId": 0}),
+            "0xsignature",
+        );
+
+        assert!(body.get("copyTrade").is_none());
+        assert_eq!(body["providerAgentId"], serde_json::json!("agent-99"));
+        assert_eq!(body["description"], params.description);
+        assert!(body.get("descriptionSummary").is_none());
+        assert!(body.get("file").is_none());
+        assert!(body.get("attachments").is_none());
+    }
+
+    #[test]
+    fn cli_create_subscribe_accepts_guide_defined_consent_values() {
         let cli = TestCli::parse_from([
-            "test", "create-subscribe",
-            "--service-id", "svc_auto",
-            "--service-token-amount", "1",
-            "--service-token-address", "0xA",
-            "--auto-renew", "1",
-            "--title", "Signals",
-            "--description", "Execute the delivered signals",
-            "--provider-agent-id", "asp-1",
-            "--autotrade-mode", "auto",
-            "--copy-trade", "1",
-            "--autotrade-amount", "20.00",
-            "--autotrade-cap", "50",
-            "--autotrade-quote", "USDT",
-            "--autotrade-environment", "demo",
-            "--autotrade-margin-mode", "cross",
-            "--autotrade-order-policy", "market",
-            "--autotrade-auth-mode", "oauth",
-            "--autotrade-required-field", "environment",
-            "--autotrade-required-field", "orderPolicy",
-            "--autotrade-required-field", "marginMode",
-            "--autotrade-required-field", "authMode",
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_auto",
+            "--service-token-amount",
+            "1",
+            "--service-token-address",
+            "0xA",
+            "--auto-renew",
+            "1",
+            "--title",
+            "Signals",
+            "--description",
+            "Execute the delivered signals",
+            "--service-guide",
+            "guide body",
+            "--guide-consent-json",
+            r#"{"strategyArmed":true}"#,
         ]);
         let super::super::TaskCommand::CreateSubscribe {
-            autotrade_mode,
-            autotrade_amount,
-            autotrade_cap,
-            autotrade_quote,
-            autotrade_environment,
-            autotrade_margin_mode,
-            autotrade_order_policy,
-            autotrade_auth_mode,
-            autotrade_required_fields,
+            guide_consent_json,
             ..
-        } = cli.cmd else {
+        } = cli.cmd
+        else {
             panic!("expected CreateSubscribe");
         };
-        assert_eq!(autotrade_mode.as_deref(), Some("auto"));
-        assert_eq!(autotrade_amount.as_deref(), Some("20.00"));
-        assert_eq!(autotrade_cap.as_deref(), Some("50"));
-        assert_eq!(autotrade_quote.as_deref(), Some("USDT"));
-        assert_eq!(autotrade_environment.as_deref(), Some("demo"));
-        assert_eq!(autotrade_margin_mode.as_deref(), Some("cross"));
-        assert_eq!(autotrade_order_policy.as_deref(), Some("market"));
-        assert_eq!(autotrade_auth_mode.as_deref(), Some("oauth"));
-        assert_eq!(
-            autotrade_required_fields,
-            ["environment", "orderPolicy", "marginMode", "authMode"]
-        );
+        assert_eq!(guide_consent_json.as_deref(), Some(r#"{"strategyArmed":true}"#));
     }
 
     #[test]
@@ -804,20 +1111,7 @@ mod tests {
             Ok(_) => panic!("--help must exit through clap"),
         };
 
-        for expected in [
-            "mode (--autotrade-mode)",
-            "tradeAmount (--autotrade-amount)",
-            "cap (--autotrade-cap)",
-            "quote (--autotrade-quote)",
-            "environment",
-            "--autotrade-environment",
-            "marginMode (--autotrade-margin-mode)",
-            "orderPolicy (--autotrade-order-policy)",
-            "authMode",
-            "--autotrade-auth-mode",
-            "tradeAmountU",
-            "deprecated alias",
-        ] {
+        for expected in ["--guide-consent-json", "matching Guide"] {
             assert!(
                 help.contains(expected),
                 "help must contain {expected:?}: {help}"
@@ -826,296 +1120,59 @@ mod tests {
     }
 
     #[test]
-    fn create_validation_rejects_missing_declared_autotrade_fields() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("auto".to_string());
-        params.autotrade_environment = Some("demo".to_string());
-        params.autotrade_required_fields = vec![
-            "environment".to_string(),
-            "orderPolicy".to_string(),
-            "marginMode".to_string(),
-        ];
-
-        let error = params
-            .validate()
-            .expect_err("missing declared execution settings must block creation");
-        assert_eq!(
-            error.to_string(),
-            "missing required automatic execution fields: orderPolicy, marginMode"
-        );
-    }
-
-    #[test]
-    fn create_validation_accepts_user_confirmed_dynamic_required_field() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("auto".to_string());
-        params.autotrade_required_fields = vec![
-            "leverageMode".to_string(),
-            "leverage".to_string(),
-            "extra.maxConcurrentPositions".to_string(),
-        ];
-
-        assert_eq!(
-            params.validate().unwrap_err().to_string(),
-            "missing required automatic execution fields: leverageMode, leverage, extra.maxConcurrentPositions"
-        );
-        params.autotrade_settings_json = Some(
-            r#"{"leverageMode":"fixed","leverage":"2","extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3}}}"#
-                .to_string(),
-        );
-        assert!(params.validate().is_ok());
-        let settings = params.autotrade_config().unwrap().dynamic_settings;
-        assert_eq!(settings["leverage"], serde_json::json!("2"));
-        assert_eq!(
-            settings["extra"]["maxConcurrentPositions"]["value"],
-            serde_json::json!(3)
-        );
-        assert_eq!(
-            settings["requiredFields"],
-            serde_json::json!([
-                "leverageMode",
-                "leverage",
-                "extra.maxConcurrentPositions"
-            ])
-        );
-    }
-
-    #[test]
-    fn create_validation_persists_fixed_margin_amount_basis() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("auto".to_string());
-        params.autotrade_amount = Some("10".to_string());
-        params.autotrade_required_fields = vec![
-            "tradeAmount".to_string(),
-            "tradeAmountMode".to_string(),
-            "tradeAmountBasis".to_string(),
-        ];
-        params.autotrade_settings_json = Some(
-            r#"{"tradeAmountMode":"fixed_amount","tradeAmountBasis":"margin"}"#.to_string(),
-        );
-
-        assert!(params.validate().is_ok());
-        let config = params.autotrade_config().unwrap();
-        assert_eq!(config.amount.as_deref(), Some("10"));
-        assert_eq!(
-            config.dynamic_settings["tradeAmountMode"],
-            serde_json::json!("fixed_amount")
-        );
-        assert_eq!(
-            config.dynamic_settings["tradeAmountBasis"],
-            serde_json::json!("margin")
-        );
-        assert_eq!(
-            config.dynamic_settings["requiredFields"],
-            serde_json::json!(["tradeAmount", "tradeAmountMode", "tradeAmountBasis"])
-        );
-    }
-
-    #[test]
-    fn create_validation_enforces_asp_required_amount_and_cap() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("auto".to_string());
-        params.autotrade_required_fields = vec![
-            "tradeAmount".to_string(),
-            "cap".to_string(),
-            "tradeAmount".to_string(),
-        ];
-        assert_eq!(
-            params.validate().unwrap_err().to_string(),
-            "missing required automatic execution fields: tradeAmount, cap"
-        );
-
-        params.autotrade_amount = Some("10".to_string());
-        params.autotrade_cap = Some("100".to_string());
-        assert!(params.validate().is_ok());
-    }
-
-    #[test]
-    fn create_validation_accepts_public_trade_amount_required_field() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("auto".to_string());
-        params.autotrade_amount = Some("100".to_string());
-        params.autotrade_required_fields = vec![TRADE_AMOUNT_REQUIRED_FIELD.to_string()];
-
-        assert!(params.validate().is_ok());
-    }
-
-    #[test]
-    fn create_validation_normalizes_internal_trade_amount_alias() {
-        assert_eq!(
-            canonical_required_autotrade_field(TRADE_AMOUNT_INTERNAL_ALIAS),
-            TRADE_AMOUNT_REQUIRED_FIELD
-        );
-
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("auto".to_string());
-        params.autotrade_amount = Some("100".to_string());
-        params.autotrade_required_fields = vec![TRADE_AMOUNT_INTERNAL_ALIAS.to_string()];
-
-        assert!(params.validate().is_ok());
-    }
-
-    #[test]
-    fn create_validation_reports_public_trade_amount_name_when_missing() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("auto".to_string());
-        params.autotrade_required_fields = vec![TRADE_AMOUNT_REQUIRED_FIELD.to_string()];
-
-        assert_eq!(
-            params.validate().unwrap_err().to_string(),
-            "missing required automatic execution fields: tradeAmount"
-        );
-    }
-
-    #[test]
-    fn create_validation_deduplicates_alias_and_explains_internal_name() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("auto".to_string());
-        params.autotrade_required_fields = vec![
-            TRADE_AMOUNT_INTERNAL_ALIAS.to_string(),
-            TRADE_AMOUNT_REQUIRED_FIELD.to_string(),
-        ];
-
-        assert_eq!(
-            params.validate().unwrap_err().to_string(),
-            "missing required automatic execution fields: tradeAmount (tradeAmountU is an internal consent field; use tradeAmount with --autotrade-required-field)"
-        );
-    }
-
-    #[test]
-    fn autotrade_config_requires_explicit_mode_for_execution_fields() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_amount = Some("20".to_string());
-        assert_eq!(
-            params.validate().unwrap_err().to_string(),
-            "--autotrade-mode is required when configuring signal execution; choose auto or notify_only"
-        );
-    }
-
-    #[test]
-    fn autotrade_config_without_execution_fields_is_notify_only_and_not_requested() {
-        let params = params_fixture(Some("asp-1"));
-        let config = params.autotrade_config().unwrap();
-        assert_eq!(config.mode, consent::ConsentMode::Decline);
-        assert!(!params.autotrade_requested());
-    }
-
-    #[test]
-    fn autotrade_config_rejects_non_explicit_trade_environment() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("auto".to_string());
-        params.autotrade_environment = Some("configured".to_string());
-        assert!(params
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("--autotrade-environment must be one of: live | demo"));
-    }
-
-    #[test]
-    fn autotrade_config_normalizes_and_does_not_enforce_cap() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("auto".to_string());
-        params.autotrade_amount = Some("20.00".to_string());
-        params.autotrade_cap = Some("50.0".to_string());
-        params.autotrade_quote = Some("USDT".to_string());
-        let config = params.autotrade_config().unwrap();
-        assert_eq!(config.amount.as_deref(), Some("20"));
-        assert_eq!(config.cap.as_deref(), Some("50"));
-        assert_eq!(config.quote, "usdt");
-
-        params.autotrade_amount = Some("51".to_string());
-        assert!(params.validate().is_ok());
-        assert_eq!(
-            params.autotrade_config().unwrap().amount.as_deref(),
-            Some("51")
-        );
-    }
-
-    #[test]
-    fn autotrade_config_maps_legacy_manual_to_notify_only() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("manual".to_string());
-
-        let config = params.autotrade_config().unwrap();
-        assert_eq!(config.mode, consent::ConsentMode::Decline);
-        assert!(params.validate().is_ok());
-    }
-
-    #[test]
-    fn notify_only_rejects_automatic_execution_settings() {
-        let mut params = params_fixture(Some("asp-1"));
-        params.autotrade_mode = Some("notify_only".to_string());
-        params.autotrade_amount = Some("25".to_string());
-        assert_eq!(
-            params.validate().unwrap_err().to_string(),
-            "notify_only does not accept automatic execution settings"
-        );
-    }
-
-    #[test]
-    fn persist_subscription_autotrade_writes_consent_and_enforceable_grants() {
+    fn prepared_guide_consent_activates_only_after_broadcast() {
         let _lock = crate::home::TEST_ENV_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp")
-            .join("create_subscribe_autotrade");
+            .join("create_subscribe_guide");
         if home.exists() {
             std::fs::remove_dir_all(&home).ok();
         }
         std::fs::create_dir_all(&home).unwrap();
         std::env::set_var("ONCHAINOS_HOME", &home);
 
-        let config = SubscriptionAutoTradeConfig {
-            mode: consent::ConsentMode::Auto,
-            amount: Some("20".to_string()),
-            cap: Some("50".to_string()),
-            quote: "usdt".to_string(),
-            environment: Some(TradeEnvironment::Demo),
-            margin_mode: Some(MarginMode::Cross),
-            order_policy: Some(OrderPolicy::Market),
-            auth_mode: Some(TradeKitAuthMode::OAuth),
-            dynamic_settings: DynamicConsentSettings::new(),
-        };
-        persist_subscription_autotrade("job-subscribe-auto", &config).unwrap();
-
-        let stored = consent::load_consent("job-subscribe-auto")
-            .unwrap()
-            .expect("consent must exist");
-        assert_eq!(stored.mode, consent::ConsentMode::Auto);
-        assert_eq!(stored.trade_amount_u.as_deref(), Some("20"));
-        assert_eq!(stored.cap_u.as_deref(), Some("50"));
-        assert_eq!(stored.quote_token.as_deref(), Some("usdt"));
-        assert_eq!(stored.trade_environment, config.environment);
-        assert_eq!(stored.auth_mode, config.auth_mode);
-        assert_eq!(stored.margin_mode, config.margin_mode);
-        assert_eq!(stored.order_policy, config.order_policy);
-        assert!(grants::check_grant("job-subscribe-auto", "dex", "buy", "50").is_ok());
-        assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "50").is_ok());
-        assert!(grants::check_grant("job-subscribe-auto", "trade_kit", "sell", "51").is_ok());
-
-        let notify_only = SubscriptionAutoTradeConfig {
-            mode: consent::ConsentMode::Decline,
-            amount: None,
-            cap: None,
-            quote: consent::DEFAULT_QUOTE.to_string(),
-            environment: None,
-            margin_mode: None,
-            order_policy: None,
-            auth_mode: None,
-            dynamic_settings: DynamicConsentSettings::new(),
-        };
-        persist_subscription_autotrade("job-subscribe-notify", &notify_only).unwrap();
-        let stored = consent::load_consent("job-subscribe-notify")
-            .unwrap()
-            .expect("notify-only consent must exist");
-        assert_eq!(stored.mode, consent::ConsentMode::Decline);
-        assert_eq!(stored.quote_token, None);
-        assert!(grants::check_grant("job-subscribe-notify", "trade_kit", "buy", "1").is_err());
+        let mut params = params_fixture(None);
+        params.service_guide = Some("Place only as directed by this Guide and the saved Signal.".to_string());
+        params.guide_consent_json = Some(r#"{"strategyArmed":true}"#.to_string());
+        let consent = params.validate().unwrap().expect("Guide Consent input");
+        prepare_guide_consent("job-subscribe-guide", &params, &consent).unwrap();
+        assert!(home
+            .join("autotrade")
+            .join("guide")
+            .join("job-subscribe-guide.md")
+            .is_file());
+        assert!(home
+            .join("autotrade")
+            .join("consent")
+            .join("job-subscribe-guide.md")
+            .is_file());
+        assert_eq!(
+            crate::commands::agent_commerce::task::common::autotrade::guide::consent_snapshot("job-subscribe-guide").status,
+            "unavailable"
+        );
+        activate_guide_consent("job-subscribe-guide").unwrap();
+        assert_eq!(
+            crate::commands::agent_commerce::task::common::autotrade::guide::consent_snapshot("job-subscribe-guide").status,
+            "active"
+        );
 
         std::env::remove_var("ONCHAINOS_HOME");
         std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn guide_consent_requires_explicit_json_even_when_empty() {
+        let mut params = params_fixture(None);
+        attach_minimal_guide(&mut params);
+        params.guide_consent_json = None;
+
+        let error = params.validate().expect_err("Guide bundle needs explicit Consent");
+        assert!(
+            error.to_string().contains("--guide-consent-json"),
+            "unexpected error: {error}"
+        );
     }
 }

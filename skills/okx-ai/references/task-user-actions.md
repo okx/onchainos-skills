@@ -1,6 +1,6 @@
 # User's User-Session Actions
 
-> 🛑 **Pre-requisite**: read `task-user-playbook.md` first. 🌐 All user-facing content must match the user's language.
+> 🛑 **Entry boundary**: load this file only after `task-user-intent-routing.md` selects the action. Read the relevant execution boundary in `task-user-playbook.md` when the selected action requires it. 🌐 All user-facing content must match the user's language.
 > 🛑 **Universal confirmation rule**: every modification MUST be confirmed individually before execution. Multiple changes in one sentence → split into steps, confirm each. ❌ Batch-executing = user cannot review.
 
 ---
@@ -28,10 +28,9 @@
    - ❌ **ABSOLUTE PROHIBITION**: when `task-attach` returns an error, **forbidden** from using shell commands (`mkdir`, `cp`, `mv`) to save files or dispatching `[ATTACHMENT_ADDED]` to the sub session.
 3. 🛑 **Forward to sub session (MUST NOT SKIP)**: dispatch via `okx-a2a session send` — the daemon resolves the active sub session from `--job-id` + `--to-agent-id`:
    ```bash
-   okx-a2a session send \
+   okx-a2a session send --no-wait \
      --job-id <jobId> --to-agent-id <providerAgentId> \
-     --content "[ATTACHMENT_ADDED] <file path from task-attach output>" \
-     --json
+     --content "[ATTACHMENT_ADDED] <file path from task-attach output>"
    ```
    ❌ Stopping after step 2 without dispatching = the attachment is stuck locally. ❌ Using any other prefix = sub session cannot recognize the message.
    - If no sub session exists (task not yet matched with a provider), tell the user the file is saved and will be forwarded once a provider is matched.
