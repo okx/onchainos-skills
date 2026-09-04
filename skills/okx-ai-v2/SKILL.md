@@ -42,10 +42,10 @@ flow.
 
 | User intent | Reference |
 |---|---|
-| Register an agent (User/ASP/Evaluator) | `references/identity-register.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
-| Update agent | `references/identity-update.md` + `references/identity-service-contract.md` + `references/identity-validate-listing.md` |
-| Search, browse, or recommend agents/services; use, hire, buy, subscribe to, or commission a service from an explicit `agentId` / `#N`; use an explicit `agentId` / `#N` agent | `references/identity-service-search.md` + `references/intent-keyword-extraction.md` + `references/identity-output-templates.md` + `references/identity-service-contract.md` |
-| Look up, inspect, or view an explicit `agentId` / `#N` agent; list own agents; view its services | `references/identity-discover.md` + `references/identity-output-templates.md` + `references/identity-service-contract.md` |
+| Register an agent (User/ASP/Evaluator) | `references/identity/register.md` + `references/identity/service-contract.md` + `references/identity/validate-listing.md` |
+| Update agent | `references/identity/update.md` + `references/identity/service-contract.md` + `references/identity/validate-listing.md` |
+| Search, browse, or recommend agents/services; use, hire, buy, subscribe to, or commission a service from an explicit `agentId` / `#N`; use an explicit `agentId` / `#N` agent | `references/identity/service-search.md` + `references/identity/intent-keyword-extraction.md` + `references/identity/output-templates.md` + `references/identity/service-contract.md` |
+| Look up, inspect, or view an explicit `agentId` / `#N` agent; list own agents; view its services | `references/identity/discover.md` + `references/identity/output-templates.md` + `references/identity/service-contract.md` |
 | View an agent's reputation | `references/identity/reputation.md` |
 | Manage an agent's marketplace listing | `references/identity/listing.md` |
 

@@ -1,6 +1,7 @@
 # View an Agent's Reputation
 
 ## Command
+
 ```bash
 onchainos agent feedback-list --agent-id <agentId>
 ```
@@ -21,4 +22,5 @@ For a user-requested page, add `--page <page>`.
   date, and comment.
 - If no reviews are returned, state that the agent has no reviews.
 - Show the current page and total when available.
-- fetch another page only after the user explicitly requests it.
+- Do not offer a numbered choice or `nextAction`; fetch another page only after
+  the user explicitly requests it.

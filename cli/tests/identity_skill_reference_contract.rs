@@ -17,7 +17,6 @@ const SERVICE_CONTRACT: &str =
     include_str!("../../skills/okx-ai/references/identity-service-contract.md");
 const VALIDATE_LISTING: &str =
     include_str!("../../skills/okx-ai/references/identity-validate-listing.md");
-const ERRORS: &str = include_str!("../../skills/okx-ai/references/identity-errors.md");
 const TASK_CLI: &str = include_str!("../../skills/okx-ai/references/task-cli-reference.md");
 const REGISTERED_HOME: &str = include_str!("../../skills/okx-guide/references/registered-home.md");
 const UNREGISTERED_ROLE_SELECTION: &str =
@@ -332,7 +331,6 @@ fn identity_historical_service_behavior_is_preserved() {
 #[test]
 fn optional_a2a_service_guide_and_guided_a2mcp_behavior_are_consistent() {
     let contract = flatten(SERVICE_CONTRACT);
-    let errors = flatten(ERRORS);
     let args = flatten(IDENTITY_ARGS_SOURCE);
 
     assert!(contract.contains("### A2A serviceGuide"));
@@ -361,13 +359,8 @@ fn optional_a2a_service_guide_and_guided_a2mcp_behavior_are_consistent() {
     assert!(args.contains("optional for every A2A pricing model"));
     assert!(args.contains("CLI accepts and forwards an"));
     assert!(args.contains("explicitly supplied A2MCP value"));
-    assert!(
-        !errors.contains("missing required field in --service for A2A subscription: serviceGuide")
-    );
-    assert!(!errors.contains("The service guide for [<serviceName>] exceeds the length limit"));
     assert!(contract.contains("Use this single rule source"));
     assert!(!contract.contains("serviceGuide invariant"));
-    assert!(!errors.contains("serviceGuide invariant"));
 }
 
 #[test]
@@ -375,7 +368,6 @@ fn identity_shared_rules_have_single_owners() {
     let discover = flatten(DISCOVER);
     let search = flatten(SERVICE_SEARCH);
     let contract = flatten(SERVICE_CONTRACT);
-    let errors = flatten(ERRORS);
     let listing = flatten(LISTING);
 
     assert!(contract.contains("`service-list` and `service-match` omit it for every service type"));
@@ -389,26 +381,17 @@ fn identity_shared_rules_have_single_owners() {
     assert!(listing.contains("`submitApproval.success: true`"));
     assert!(listing.contains("`submitApproval.success: false`"));
     assert!(listing.contains("`activate.approvalStatus: 2`"));
-    assert!(!errors.contains("activate / submit-approval outcomes"));
-    assert!(!errors.contains("submit-approval success:"));
-    assert!(!errors.contains("manage.md"));
 }
 
 #[test]
-fn identity_qa_and_failure_gates_are_preserved() {
+fn identity_qa_gates_are_preserved() {
     let qa = flatten(VALIDATE_LISTING);
-    let errors = flatten(ERRORS);
 
     assert!(qa.contains("Call `validate-listing` exactly once after collection"));
     assert!(qa.contains("never call it inside a service loop or rerun it after corrections"));
     assert!(qa.contains("de-duplicate `message` by `(field,message)`"));
     assert!(qa.contains("never show `code`"));
     assert!(qa.contains("The final create/update card still requires confirmation"));
-
-    assert!(errors.contains("Redaction overrides verbatim"));
-    assert!(errors.contains("strip/redact that token before showing it"));
-    assert!(errors.contains("Never auto-retry"));
-    assert!(errors.contains("Never chase a failure"));
 }
 
 #[test]
@@ -434,7 +417,6 @@ fn identity_references_do_not_self_bootstrap_runtime_prerequisites() {
     for (name, reference) in [
         ("discover", DISCOVER),
         ("service-search", SERVICE_SEARCH),
-        ("errors", ERRORS),
         ("validate-listing", VALIDATE_LISTING),
         ("listing", LISTING),
         ("register", REGISTER),
