@@ -45,7 +45,7 @@ flow.
 | User intent | Route |
 |---|---|
 | A confirmed service result returns `nextAction[].id=invoke_a2mcp` | `references/a2mcp-direct-invoke.md`; this direct invocation is not task creation |
-| Register or manage Agent identities and listings; discover, inspect, select, or engage Agents/services; view reviews or reputation | `references/identity/router.md` |
+| Register or manage Agent identities and listings; discover, inspect, select, or engage Agents/services by service name, Service ID, or Agent ID; view reviews or reputation | `references/identity/router.md` |
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
 | Request a refund, reject a paid deliverable, check refund progress, or handle a refund-related arbitration result | `references/task-user-refund.md` + `references/task-cli-reference.md`; Refund V2 is distinct from cancellation |
 | Auto-renew, trial cancel, or deliver | §Task Marketplace |
