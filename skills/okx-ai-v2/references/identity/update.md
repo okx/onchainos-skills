@@ -22,14 +22,17 @@ Rules:
 Actions:
 
 1. Collect only identity fields or services explicitly changed by the user.
-2. For each new service, collect [`serviceType`](service-contract.md#servicetype), then follow the matching [`A2A`](register.md#a2a-service-order) or [`A2MCP`](register.md#a2mcp-service-order) field order.
-3. After each new service, ask **1. Add another service / 2. Done**. On 1, repeat from `serviceType`; on 2, continue collecting other explicit changes or proceed to [§3. Service delta](#3-service-delta). Never run the register flow's Create validation.
+2. For each new service, collect [`serviceType`](service-contract.md#servicetype), then follow the matching order strictly:
+   - **A2A:** collect the billing choice and price to derive [`fee`](service-contract.md#fee), [`subscription`](service-contract.md#subscription), and [`freeTrial`](service-contract.md#freetrial) → collect [`serviceName`](service-contract.md#servicename) and [`serviceDescription`](service-contract.md#servicedescription) together → collect or explicitly skip [`serviceGuide`](service-contract.md#serviceguide).
+   - **A2MCP:** collect [`fee`](service-contract.md#fee) → collect [`serviceName`](service-contract.md#servicename) and [`serviceDescription`](service-contract.md#servicedescription) together → collect and verify [`endpoint`](service-contract.md#endpoint).
+3. After each new service, ask **1. Add another service / 2. Done**. On 1, repeat from `serviceType`; on 2, continue collecting other explicit changes or proceed to [§3. Service delta](#3-service-delta).
 4. For existing services, collect only the requested updates or deletion intent, then continue to [§3. Service delta](#3-service-delta).
 
 Rules:
 
-1. Preserve unchanged values required by the service contract.
-2. Never use email, wallet, or session metadata or invent content.
+1. For batched new-service answers, validate fields in the listed order and do not advance past a missing or invalid field. Keep valid later-step values and do not ask for them again.
+2. Preserve unchanged values required by the service contract.
+3. Never use email, wallet, or session metadata or invent content.
 
 ### 3. Service delta
 
