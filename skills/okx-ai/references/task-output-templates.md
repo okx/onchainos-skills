@@ -54,19 +54,6 @@ Phase: <localized phase>
 Reply with a number.
 ```
 
-For `task_create_prepare`, use these reason mappings:
-
-| Reason | Result | Typical action label |
-|---|---|---|
-| `login_required` | Login is required. | Log in |
-| `user_identity_required` | A User Agent is required. | Register User Agent |
-| `unsupported_service_type` | This service type is not supported for task creation. | Stop |
-| `duplicate_subscription` | An active subscription already exists. | Restore listening / Stop |
-| `insufficient_balance` | The balance is insufficient. | Fund account |
-
-Use the exact action IDs returned by `nextAction`; the labels above are display
-guidance only.
-
 ## `decision=requires_user_input`
 
 ```text
@@ -112,47 +99,3 @@ auto-renewal are rendered.
 
 Reply with a number.
 ```
-
-For `task_create_prepare`, `nextAction.id=open_create_playbook` means to open
-the task-creation reference and continue its confirmation flow; it does not
-mean that the subscription has already been created.
-
-For `phase=service_routing` and `nextAction.id=invoke_a2mcp`, do not render the
-generic task-creation confirmation card above. Open
-`a2mcp-direct-invoke.md`. Preserve `payload.serviceSnapshot` verbatim; that
-reference owns parameter collection, supported-token and balance display,
-funding recovery, and the final mutually exclusive Confirm/Cancel card.
-
-## `task_create_prepare` phase mapping
-
-| Phase | Decision | Next action IDs |
-|---|---|---|
-| `login_validation` | `blocked` | `login` |
-| `identity_validation` | `blocked` | `register_user_agent` |
-| `service_validation` | `blocked` | `stop` |
-| `service_routing` | `ready` | `invoke_a2mcp` |
-| `subscription_validation` | `blocked` | `restore_subscription`, `stop` |
-| `payment_validation` | `blocked` | `fund_account` |
-| `creation` | `ready` | `open_create_playbook` |
-
-## Subscription completion phase mapping
-
-| Role | Phase | Decision | Reason | Next action IDs |
-|---|---|---|---|---|
-| User | `subscription_completion` | `ready` | `notification_required` | `finalize_user_subscription` |
-| ASP | `subscription_completion` | `ready` | `notification_required` | `notify_and_cleanup_subscription` |
-
-## Task completion phase mapping
-
-| Role | Phase | Decision | Reason | Next action IDs |
-|---|---|---|---|---|
-| User | `task_completion` | `ready` | `notification_and_rating_required` | `finalize_user_task` |
-| ASP | `task_completion` | `ready` | `notification_and_rating_required` | `finalize_asp_task` |
-
-## Deliverable review phase mapping
-
-| Decision | Reason | Next action IDs |
-|---|---|---|
-| `ready` | `completion_submitted` / `rejection_submitted` | `stop` |
-| `blocked` | `legacy_a2mcp_flow_removed` / `completion_failed` / `rejection_failed` | `stop` |
-| `requires_user_input` | `rejection_reason_required` | `request_rejection_reason` |

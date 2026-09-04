@@ -60,7 +60,7 @@ pub enum AgentCommand {
     /// Search public Agents
     Search(identity::SearchArgs),
 
-    /// Query an Agent's services
+    /// Query an Agent's services (optional --page / --page-size; defaults 1 / 3)
     #[command(name = "service-list")]
     ServiceList(identity::ServiceListArgs),
 
