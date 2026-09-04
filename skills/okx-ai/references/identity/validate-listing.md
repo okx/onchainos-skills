@@ -65,7 +65,7 @@ normal confirmation. If rejected, recollect and redraw; never silently store a s
 
 Never silently correct a semantic finding, repeat a draft, invent field content, or force advice.
 The only no-separate-confirmation exception is A2MCP Request Method URL/path stripping defined in
-[identity-service-contract.md §2. A2MCP serviceName and serviceDescription](identity-service-contract.md#2-a2mcp-servicename-and-servicedescription);
+[service-contract.md §2. A2MCP serviceName and serviceDescription](service-contract.md#2-a2mcp-servicename-and-servicedescription);
 apply it silently and show the result on the normal final card. All other
 normalizations—including malformed parameter specs and non-curl examples—must be shown and
 separately confirmed before storage as required by that section. A2MCP failure uses only the

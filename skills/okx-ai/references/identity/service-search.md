@@ -21,7 +21,7 @@ Read `services[]`, `searchAfter`, `hasMore`, and `tip`.
 ## Display
 
 **MUST** group `services[]` by `asp.aspAgentId` in returned order and render
-each group with the `Agent Service group` template in `identity-output-templates.md`.
+each group with the `Agent Service group` template in `output-templates.md`.
 
 **MUST** render all Agent groups, then the localized CLI `tip` once.
 

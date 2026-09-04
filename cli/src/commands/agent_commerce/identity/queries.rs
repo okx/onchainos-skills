@@ -137,7 +137,7 @@ pub(super) async fn get_my_agents_with_access_token(
     // approvalDisplayStatus / reputation are left intact.
     enrich_agent_get_rows(&mut out);
     // Additive: add a ready-to-render `cells` array per row (the list-table
-    // analog of `card`; references/identity-discover.md §My Agents columns). `agent get` is
+    // analog of `card`; references/identity/discover.md §My Agents columns). `agent get` is
     // now list-only — filtered by `--role` / `--owner-address` — so cells are
     // always meaningful.
     add_agent_list_cells(&mut out);
@@ -201,7 +201,7 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
     // approvalDisplayStatus / reputation are left intact.
     enrich_agent_get_rows(&mut out);
     // Additive: in LIST mode (no --agent-ids) add a ready-to-render `cells`
-    // array per row (references/identity-discover.md §My Agents columns). Detail mode (with
+    // array per row (references/identity/discover.md §My Agents columns). Detail mode (with
     // --agent-ids) already carries the `card`; the list-table `cells` are the
     // row analog and only meaningful for the list view.
     if args.agent_ids.is_none() {

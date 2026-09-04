@@ -34,7 +34,7 @@ Actions:
 
 1. User / Evaluator: collect the user-provided Name. Avatar and Description are optional; do not prompt for Description. If Description was not provided, omit `--description`.
 2. ASP Step 1: ask for Name, Description, and the required Avatar in one message. Name must be a brand name with no test markers or celebrity names; Description is a required one-sentence summary of the Agent. Once all three are ready, immediately render the Identity card (Role / Name / Description / Profile photo) with the uploaded CDN URL. Reply `1` advances to Step 2; it never runs create.
-3. ASP Step 2: follow `identity-service-contract.md` end to end. Continue only after explicit Done, using only its A2MCP endpoint-validation rules.
+3. ASP Step 2: follow `service-contract.md` end to end. Continue only after explicit Done, using only its A2MCP endpoint-validation rules.
 4. Reject avatar URLs. Upload a user-provided image with `agent upload` and pass the returned URL as `--picture`. ASP requires an uploaded avatar; for User / Evaluator without one, omit `--picture`.
 
 Rules:
@@ -44,7 +44,7 @@ Rules:
 
 ### 4. Service validation
 
-ASP only: after explicit Done, execute Create mode from `identity-validate-listing.md`. Continue only when it permits progression. User and Evaluator skip this step.
+ASP only: after explicit Done, execute Create mode from `validate-listing.md`. Continue only when it permits progression. User and Evaluator skip this step.
 
 ### 5. Final confirmation
 
@@ -57,7 +57,7 @@ Actions:
 Rules:
 
 1. Render each service Description verbatim without summarizing, rewriting, or omitting content; all
-   service display fields follow (`identity-service-contract.md#display-rules`).
+   service display fields follow (`service-contract.md#display-rules`).
 2. Display ASP Type exactly as `A2MCP` or `A2A`.
 3. Only `1` on the final card may trigger the single `agent create`. Do not skip confirmation, reuse an earlier confirmation, or show bash.
 
@@ -77,8 +77,8 @@ Rules:
 Actions:
 
 1. Report registration success. If an Agent ID is available, display it; otherwise state that it was not returned and tell the user to say `list my agents` to find it.
-2. For every role, run (`chat-comm-init.md`) and complete its communication setup/readiness check.
-3. For Evaluator only, after communication setup, ask whether the user wants to stake now. If yes, hand off to (`task-core.md`) §Pre-flight and then (`task-evaluator-staking.md`); if no, finish registration.
+2. For every role, run (`../chat-comm-init.md`) and complete its communication setup/readiness check.
+3. For Evaluator only, after communication setup, ask whether the user wants to stake now. If yes, hand off to (`../task-core.md`) §Pre-flight and then (`../task-evaluator-staking.md`); if no, finish registration.
 
 Rules:
 

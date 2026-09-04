@@ -117,7 +117,7 @@
   <line x1="658" y1="647" x2="682" y2="647" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
   <line x1="1000" y1="647" x2="1024" y2="647" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
   <rect x="62" y="620" width="285" height="58" rx="11" fill="#eff6ff" stroke="#bfdbfe"/>
-  <text x="78" y="645" class="chain">创建任务 → identity-discover.md</text>
+  <text x="78" y="645" class="chain">创建任务 → identity/discover.md</text>
   <text x="78" y="663" class="muted">识别意图，选择创建入口</text>
   <rect x="373" y="620" width="285" height="58" rx="11" fill="#faf5ff" stroke="#ddd6fe"/>
   <text x="389" y="645" class="chain">task-create-prepare --sid 35153</text>

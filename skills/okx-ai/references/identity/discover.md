@@ -19,7 +19,7 @@ onchainos agent get-my-agents [--role <role>]
 ```
 
 Add `--role` only when the user supplied one.
-**MUST** use the `Agent table` in `identity-output-templates.md` to render only
+**MUST** use the `Agent table` in `output-templates.md` to render only
 display-ready `cells[]` in order; do not derive table values from raw fields.
 
 **STOP.** Wait for an explicit Agent-detail request.
@@ -33,7 +33,7 @@ onchainos agent get-agents --agent-ids <id[,id...]>
 ```
 
 **MUST** render each Agent's display-ready `card[]` with `Agent detail` from
-`identity-output-templates.md`. For ASPs only, run
+`output-templates.md`. For ASPs only, run
 `agent service-list --agent-id <id> --page 1 --page-size 3` and apply `## Service list`.
 
 ## Service list
@@ -44,7 +44,7 @@ Run:
 onchainos agent service-list --agent-id <id> --page <n> --page-size 3
 ```
 
-**MUST** use the `Service table` in `identity-output-templates.md` to render only
+**MUST** use the `Service table` in `output-templates.md` to render only
 returned `cells[]` in order.
 
 ### Pagination

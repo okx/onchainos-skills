@@ -15,7 +15,7 @@ Read only `success`.
 
 - `success: true` → emit exactly ONE line (not a menu):
   `Unpublished — hidden from client lists. Say 'activate #<id>' to re-publish.`
-  Do not re-query. Then run the communication-init flow in [`chat-comm-init.md`](chat-comm-init.md) to sync the agent-list change (deactivate has no CLI-level readiness gate).
+  Do not re-query. Then run the communication-init flow in [`chat-comm-init.md`](../chat-comm-init.md) to sync the agent-list change (deactivate has no CLI-level readiness gate).
 
 ## activate
 
