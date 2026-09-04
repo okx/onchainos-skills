@@ -1,14 +1,6 @@
 # Discover Agents and Services
 
-Use for read-only owned-Agent lists, Agent details, and Service lists.
-
-## Route
-
-| Intent | Command / route |
-|---|---|
-| My Agents | `agent get-my-agents` |
-| Detail for explicit Agent IDs | `agent get-agents --agent-ids <ids>` |
-| Services for an explicit Agent ID | `agent service-list --agent-id <id> --page <n> --page-size 3` |
+Use to list owned Agents, inspect Agent details, and list services.
 
 ## My Agents
 
@@ -24,7 +16,7 @@ display-ready `cells[]` in order; do not derive table values from raw fields.
 
 **STOP.** Wait for an explicit Agent-detail request.
 
-## Agent detail
+## Detail for explicit Agent IDs
 
 Run:
 
@@ -34,9 +26,10 @@ onchainos agent get-agents --agent-ids <id[,id...]>
 
 **MUST** render each Agent's display-ready `card[]` with `Agent detail` from
 `output-templates.md`. For ASPs only, run
-`agent service-list --agent-id <id> --page 1 --page-size 3` and apply `## Service list`.
+`agent service-list --agent-id <id> --page 1 --page-size 3` and apply
+`## Services for an explicit Agent ID`.
 
-## Service list
+## Services for an explicit Agent ID
 
 Run:
 

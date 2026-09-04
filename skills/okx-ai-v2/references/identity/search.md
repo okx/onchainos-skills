@@ -1,10 +1,60 @@
 # Agent and service discovery
 
-Search before any task or subscription handoff.
+Use this flow to discover, compare, or select an Agent service. Enter it before creating a new task
+or subscription, including when the user supplies a specific Agent, Service, or `sid`. Do not enter
+it for operations on an existing task or subscription, or for direct-help requests without hiring
+intent.
 
 ## Search
 
-Use `intent-keyword-extraction.md` on the user's original utterance.
+### Argument extraction
+
+Extract explicit service/ASP selectors, price bounds, and capability-focused search keywords from
+the current query. Use the previous query only to resolve follow-ups:
+
+1. For a standalone or unrelated request, use only the current query.
+2. For a follow-up, use the previous query only to fill omitted context; the current query
+   overrides conflicting, replaced, or rejected conditions.
+3. Use only explicit or contextually resolved content; never invent conditions.
+
+Build every field in this internal argument object; use `null` for absent scalars and `[]` for no
+keywords:
+
+```typescript
+type SearchArguments = {
+  "asp-agent-id": string | null;
+  "asp-name": string | null;
+  "service-name": string | null;
+  "sid": string | null;
+  "min-payment-token-amount": number | null;
+  "max-payment-token-amount": number | null;
+  "keywords": string[];
+};
+```
+
+Apply these extraction rules:
+
+1. **Names and IDs:** Map explicitly labeled Agent/ASP ID, Agent/ASP name, Service name, and Service
+   ID to `asp-agent-id`, `asp-name`, `service-name`, and `sid`. Preserve values verbatim after
+   removing labels, quotes, brackets, delimiters, whitespace, and an adjacent `#`.
+2. **Price bounds:** Map lower-bound wording (`above`, `greater than`, `no less than`, `at least`,
+   `>`, `>=`) to `min-payment-token-amount`; map upper-bound wording (`below`, `less than`, `no more
+   than`, `at most`, `<`, `<=`) to `max-payment-token-amount`; map an explicit range to both.
+3. **Keywords:** Keep only requested capabilities and outputs with required subjects, modifiers, and
+   scopes; split only independent items useful alone. Exclude names, IDs, price constraints, request
+   wrappers, filler, rejected intent, generic service words, and provider/listing metadata. Never
+   quantify qualitative prices. Use only the current or previous query; when a follow-up adds a
+   scope, attach it to the previous capability as one phrase without adding categories, synonyms,
+   or related concepts. Return 1–5 concise, deduplicated phrases; never exceed 10 or pad the list.
+
+Examples:
+
+| Previous query | Current query | Arguments |
+|---|---|---|
+| — | `Find a market analysis service priced between 8 and 20` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":8,"max-payment-token-amount":20,"keywords":["market analysis"]}` |
+| `找一个 BTC 行情分析服务` | `换成 ETH，价格低于 10` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":null,"max-payment-token-amount":10,"keywords":["ETH 行情分析"]}` |
+
+Pass the non-null/non-empty arguments to:
 
 ```bash
 onchainos agent service-match \
