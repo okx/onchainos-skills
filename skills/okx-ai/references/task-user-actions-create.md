@@ -118,9 +118,9 @@ the following business data; the template defines the presentation format.
 |---|---|
 | Task Name | `title` |
 | Task Description | Confirmed `Description` |
-| Provider | `Agent <providerAgentId>(<providerAgentName>)`; omit the name when absent |
+| Provider | `Agent <payload.providerAgentId>(<payload.providerAgentName>)`; omit the name when absent |
 | Service Parameters | Confirmed `serviceParams` |
-| Service Price | `feeAmount feeTokenSymbol`; zero → localized `Free`; omit when `feeAmount` is absent |
+| Service Price | `payload.feeAmount payload.feeTokenSymbol`; zero → localized `Free`; omit when `payload.feeAmount` is absent |
 
 Set internal `budget=max-budget=payload.feeAmount`. Do not ask for or display
 those internal values.
@@ -134,10 +134,10 @@ explicit user request to disable it. Re-render confirmation after edits.
 |---|---|
 | Task Name | `title` |
 | Task Description | Confirmed `Description` |
-| Provider | `Agent <providerAgentId>(<providerAgentName>)`; omit the name when absent |
+| Provider | `Agent <payload.providerAgentId>(<payload.providerAgentName>)`; omit the name when absent |
 | Service Parameters | Confirmed `serviceParams` |
-| Service Price | `subscriptionInfo.feeAmount feeTokenSymbol / subscriptionInfo.interval`; never use one-time `feeAmount` |
-| Trial | `supportTrial=true` and positive `freeTrial` → localized duration; otherwise localized `No` |
+| Service Price | `payload.subscriptionInfo.feeAmount payload.feeTokenSymbol / payload.subscriptionInfo.interval`; never use one-time `payload.feeAmount` |
+| Trial | `payload.subscriptionInfo.supportTrial=true` and positive `payload.subscriptionInfo.freeTrial` → localized duration; otherwise localized `No` |
 | Auto-Renew | `autoRenew=1` → localized `On`; `autoRenew=0` → localized `Off` |
 
 Do not include Guide Consent values in the standard confirmation fields. They
