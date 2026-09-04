@@ -1,6 +1,4 @@
 const SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
-const CLI_REFERENCE: &str =
-    include_str!("../../skills/okx-ai/references/identity-cli-reference.md");
 const REGISTER: &str = include_str!("../../skills/okx-ai/references/identity-register.md");
 const UPDATE: &str = include_str!("../../skills/okx-ai/references/identity-update.md");
 const DISCOVER: &str = include_str!("../../skills/okx-ai/references/identity-discover.md");
@@ -14,11 +12,7 @@ const SERVICE_CONTRACT: &str =
     include_str!("../../skills/okx-ai/references/identity-service-contract.md");
 const VALIDATE_LISTING: &str =
     include_str!("../../skills/okx-ai/references/identity-validate-listing.md");
-const ERRORS: &str = include_str!("../../skills/okx-ai/references/identity-errors.md");
 const TASK_CLI: &str = include_str!("../../skills/okx-ai/references/task-cli-reference.md");
-const TASK_PUBLISH: &str =
-    include_str!("../../skills/okx-ai/references/task-user-actions-publish.md");
-const AI_GUIDE: &str = include_str!("../../skills/okx-guide/references/ai-guide.md");
 const REGISTERED_HOME: &str = include_str!("../../skills/okx-guide/references/registered-home.md");
 const UNREGISTERED_ROLE_SELECTION: &str =
     include_str!("../../skills/okx-guide/references/unregistered-role-selection.md");
@@ -30,41 +24,23 @@ fn flatten(text: &str) -> String {
 }
 
 #[test]
-fn identity_cli_reference_is_compact_and_owns_shared_cli_rules() {
-    let cli = flatten(CLI_REFERENCE);
-    assert!(CLI_REFERENCE.lines().count() <= 110);
-    assert!(cli.contains("Agent identities live on XLayer"));
-    assert!(cli.contains("Run each call prescribed by the active flow once"));
-    assert!(!cli.contains("reload after context compaction"));
-}
-
-#[test]
-fn identity_cli_reference_preserves_command_contracts() {
-    for command in [
-        "agent pre-check --role <user|asp|evaluator> [--consent-key <uuid>]",
-        "agent upload --file <local-image-path>",
-        "agent create --role <role> --name <name>",
-        "agent update --agent-id <id>",
-        "agent validate-listing --role <role>",
-        "`agent get-my-agents`",
-        "`agent get-agents`",
-        "`agent service-list`",
-        "`agent feedback-list`",
-        "agent activate --agent-id <id> --preferred-language <BCP-47>",
-        "agent deactivate --agent-id <id>",
-        "agent search --query <text>",
-        "agent get [--agent-ids <ids>]",
-        "agent get-by-address --communication-address <address>",
-        "agent xmtp-sign --key-uuid <uuid> --message <text>",
-    ] {
-        assert!(
-            CLI_REFERENCE.contains(command),
-            "missing contract: {command}"
-        );
-    }
-    assert!(CLI_REFERENCE.contains("Never add `--chain`, `--address`, or undocumented `--format`"));
-    assert!(CLI_REFERENCE.contains("`agent consent` (the command does not exist)"));
-    assert!(!CLI_REFERENCE.contains("agent service-match [--keywords"));
+fn identity_cli_contracts_are_owned_by_their_active_flows() {
+    let reviews = flatten(REVIEWS);
+    let listing = flatten(LISTING);
+    assert!(reviews.contains(
+        "onchainos agent feedback-list --agent-id <id> [--page <n>] [--page-size <1..50>]"
+    ));
+    assert!(
+        listing.contains("onchainos agent activate --agent-id <id> --preferred-language <BCP-47>")
+    );
+    assert!(listing.contains("onchainos agent deactivate --agent-id <id>"));
+    assert_eq!(reviews.matches("Run once").count(), 1);
+    assert_eq!(listing.matches("Run once").count(), 2);
+    assert!(listing.contains("never chase a successful toggle with `agent get-agents`"));
+    assert!(reviews.contains("Read `average` and the review array from `items` or `list`"));
+    assert!(listing.contains(
+        "Read `blockType`, `agentRole`, `activate`, and optional `submitApproval` in the order below"
+    ));
     assert!(SERVICE_SEARCH.contains(r"onchainos agent service-match \"));
     assert!(SERVICE_SEARCH.contains("onchainos agent service-match --search-after <cursor>"));
 }
@@ -115,15 +91,9 @@ fn task_flows_own_task_feedback_commands() {
     assert!(TASK_CLI.contains("agent task-feedback --agent-id <rater> --task-id <jobId>"));
     assert!(!TASK_CLI.contains("--score <0-100>"));
 
-    assert!(!CLI_REFERENCE.contains("agent feedback-submit"));
-    assert!(!CLI_REFERENCE.contains("agent task-feedback"));
+    assert!(!REVIEWS.contains("agent feedback-submit"));
+    assert!(!REVIEWS.contains("agent task-feedback"));
 
-    assert!(TASK_PUBLISH.contains("identity-cli-reference.md"));
-    assert!(!TASK_PUBLISH.contains("onchainos agent get-my-agents --role user"));
-    assert!(!TASK_PUBLISH.contains("onchainos agent service-list --agent-id"));
-
-    assert!(AI_GUIDE.contains("../../okx-ai/references/identity-cli-reference.md"));
-    assert!(REGISTERED_HOME.contains("../../okx-ai/references/identity-cli-reference.md"));
     assert!(REGISTERED_HOME.contains("./unregistered-role-selection.md"));
     assert!(UNREGISTERED_ROLE_SELECTION.contains("../../okx-ai/references/identity-register.md"));
     assert!(!REGISTERED_HOME.contains("onchainos agent search --query"));
@@ -131,13 +101,12 @@ fn task_flows_own_task_feedback_commands() {
 
 #[test]
 fn identity_write_gates_are_preserved() {
-    let cli = flatten(CLI_REFERENCE);
     let register = flatten(REGISTER);
     let update = flatten(UPDATE);
     let service_contract = flatten(SERVICE_CONTRACT);
     let validate_listing = flatten(VALIDATE_LISTING);
     assert!(register.contains("`agent pre-check` **requires** `--role`"));
-    assert!(register.contains("Invoke the initial form from `identity-cli-reference.md`"));
+    assert!(register.contains("Run the initial `agent pre-check`"));
     assert!(register.contains("confirmation cannot be skipped or reused from an earlier action"));
     assert!(update.contains("Obtain fresh explicit confirmation for the final diff"));
     assert!(service_contract
@@ -145,7 +114,6 @@ fn identity_write_gates_are_preserved() {
     assert!(service_contract.contains("wait for explicit Done"));
     assert!(!update.contains("Add another / Done"));
     assert!(validate_listing.contains("**Update:** after collection"));
-    assert!(cli.contains("never follow a successful write with a query or poll"));
     assert!(register.contains("Continue to §4 only after explicit Done"));
     assert!(register.contains("it never runs `agent create`"));
     assert!(register.contains("I won't run anything until you reply **1**"));
@@ -268,6 +236,15 @@ fn identity_read_and_toggle_behavior_is_preserved() {
 }
 
 #[test]
+fn service_list_pagination_matches_service_search_pattern() {
+    let discover = flatten(DISCOVER);
+    let update = flatten(UPDATE);
+    assert!(discover.contains("When `hasMore == true` and the user asks for more"));
+    assert!(discover.contains("--page <page+1> --page-size 3"));
+    assert!(update.contains("If absent and `hasMore:true`, fetch `page+1` with `--page-size 3` after the user replies \"view more\""));
+}
+
+#[test]
 fn identity_historical_service_behavior_is_preserved() {
     let contract = flatten(SERVICE_CONTRACT);
     let qa = flatten(VALIDATE_LISTING);
@@ -308,7 +285,6 @@ fn identity_historical_service_behavior_is_preserved() {
 #[test]
 fn optional_a2a_service_guide_and_guided_a2mcp_behavior_are_consistent() {
     let contract = flatten(SERVICE_CONTRACT);
-    let errors = flatten(ERRORS);
     let args = flatten(IDENTITY_ARGS_SOURCE);
 
     assert!(contract.contains("### A2A serviceGuide"));
@@ -337,60 +313,39 @@ fn optional_a2a_service_guide_and_guided_a2mcp_behavior_are_consistent() {
     assert!(args.contains("optional for every A2A pricing model"));
     assert!(args.contains("CLI accepts and forwards an"));
     assert!(args.contains("explicitly supplied A2MCP value"));
-    assert!(
-        !errors.contains("missing required field in --service for A2A subscription: serviceGuide")
-    );
-    assert!(!errors.contains("The service guide for [<serviceName>] exceeds the length limit"));
     assert!(contract.contains("Use this single rule source"));
     assert!(!contract.contains("serviceGuide invariant"));
-    assert!(!errors.contains("serviceGuide invariant"));
 }
 
 #[test]
 fn identity_shared_rules_have_single_owners() {
-    let cli = flatten(CLI_REFERENCE);
     let discover = flatten(DISCOVER);
     let search = flatten(SERVICE_SEARCH);
     let contract = flatten(SERVICE_CONTRACT);
-    let errors = flatten(ERRORS);
     let listing = flatten(LISTING);
 
     assert!(contract.contains("`service-list` and `service-match` omit it for every service type"));
     assert!(!discover.contains("Never display `serviceGuide`"));
     assert!(!search.contains("Never display `serviceGuide`"));
 
-    assert!(cli.contains("Use service `id` only to build an update/delete delta; never display it"));
-    assert!(
-        discover.contains("Command syntax and response fields live in `identity-cli-reference.md`")
-    );
+    assert!(UPDATE.contains("Never use the numeric raw `id`; use `serviceId`"));
     assert!(!discover.contains("Never display the raw `serviceId`"));
     assert!(!search.contains("Never display the raw `serviceId`"));
-
-    assert!(!cli.contains("A continuation cannot repeat initial filters"));
 
     assert!(listing.contains("`submitApproval.success: true`"));
     assert!(listing.contains("`submitApproval.success: false`"));
     assert!(listing.contains("`activate.approvalStatus: 2`"));
-    assert!(!errors.contains("activate / submit-approval outcomes"));
-    assert!(!errors.contains("submit-approval success:"));
-    assert!(!errors.contains("manage.md"));
 }
 
 #[test]
-fn identity_qa_and_failure_gates_are_preserved() {
+fn identity_qa_gates_are_preserved() {
     let qa = flatten(VALIDATE_LISTING);
-    let errors = flatten(ERRORS);
 
     assert!(qa.contains("Call `validate-listing` exactly once after collection"));
     assert!(qa.contains("never call it inside a service loop or rerun it after corrections"));
     assert!(qa.contains("de-duplicate `message` by `(field,message)`"));
     assert!(qa.contains("never show `code`"));
     assert!(qa.contains("The final create/update card still requires confirmation"));
-
-    assert!(errors.contains("Redaction overrides verbatim"));
-    assert!(errors.contains("strip/redact that token before showing it"));
-    assert!(errors.contains("Never auto-retry"));
-    assert!(errors.contains("Never chase a failure"));
 }
 
 #[test]
@@ -414,10 +369,8 @@ fn evaluator_registration_continues_to_staking() {
 #[test]
 fn identity_references_do_not_self_bootstrap_runtime_prerequisites() {
     for (name, reference) in [
-        ("cli", CLI_REFERENCE),
         ("discover", DISCOVER),
         ("service-search", SERVICE_SEARCH),
-        ("errors", ERRORS),
         ("validate-listing", VALIDATE_LISTING),
         ("listing", LISTING),
         ("register", REGISTER),

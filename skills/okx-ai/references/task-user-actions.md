@@ -1,6 +1,6 @@
 # User's User-Session Actions
 
-> 🛑 **Pre-requisite**: read `task-user-playbook.md` first. 🌐 All user-facing content must match the user's language.
+> 🛑 **Entry boundary**: load this file only after `task-user-intent-routing.md` selects the action. Read the relevant execution boundary in `task-user-playbook.md` when the selected action requires it. 🌐 All user-facing content must match the user's language.
 > 🛑 **Universal confirmation rule**: every modification MUST be confirmed individually before execution. Multiple changes in one sentence → split into steps, confirm each. ❌ Batch-executing = user cannot review.
 
 ---

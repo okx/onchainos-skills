@@ -1868,7 +1868,6 @@ mod tests {
             let initial = consent::parse_dynamic_settings_json(
                 Some(
                     &serde_json::json!({
-                        "serviceGuideHash": format!("sha256:{}", "a".repeat(64)),
                         "requiredFields": ["extra.legacyRiskBucket"],
                         "extra": {
                             "legacyRiskBucket": {

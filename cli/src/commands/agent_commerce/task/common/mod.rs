@@ -25,6 +25,7 @@ pub mod okx_a2a;
 pub mod onchainos_self;
 pub mod payment_mode;
 pub mod pending_v2;
+pub mod template_vars;
 pub mod prefilled_notify;
 pub mod prefilled_rating;
 pub mod query;
@@ -556,13 +557,23 @@ pub async fn handle_profile(agent_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Spawn `onchainos agent service-list --agent-id <id>` as subprocess and
+/// Spawn `onchainos agent service-list --agent-id <id> --page 1 --page-size 100`
+/// as subprocess and
 /// return the parsed `data` field (services array/object).
 pub(crate) async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Value> {
     let exe = std::env::current_exe().map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
 
     let output = tokio::process::Command::new(&exe)
-        .args(["agent", "service-list", "--agent-id", agent_id])
+        .args([
+            "agent",
+            "service-list",
+            "--agent-id",
+            agent_id,
+            "--page",
+            "1",
+            "--page-size",
+            "100",
+        ])
         .output()
         .await
         .map_err(|e| anyhow::anyhow!("spawn `agent service-list` failed: {e}"))?;

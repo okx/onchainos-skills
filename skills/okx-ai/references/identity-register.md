@@ -1,6 +1,6 @@
 # Register flow
 
-Registration flow for User, ASP, and Evaluator identities. Use canonical roles, user-provided data, and the CLI reference below. Require explicit final confirmation, never fabricate fields or IDs, and handle failures through `identity-errors.md`.
+Registration flow for User, ASP, and Evaluator identities. Use canonical roles, user-provided data, and the CLI reference below. Require explicit final confirmation and never fabricate fields or IDs.
 
 ## Workflow
 
@@ -66,8 +66,7 @@ Rules:
 Actions:
 
 1. After final confirmation, run `agent create` once with all confirmed fields and, for ASP, every confirmed service.
-2. Handle non-success responses through `identity-errors.md`; never interpret an error code inline.
-3. Resolve the Agent ID using the CLI-reference precedence. If neither supported ID field exists, do not output a bare `#`.
+2. Resolve the Agent ID using the CLI-reference precedence. If neither supported ID field exists, do not output a bare `#`.
 
 Rules:
 

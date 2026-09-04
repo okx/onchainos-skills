@@ -114,6 +114,15 @@ pub enum TaskCommand {
         /// Service price (from asp/match feeAmount)
         #[arg(long = "service-token-amount")]
         service_token_amount: Option<String>,
+        /// Exact provider service Guide. Stored locally before broadcast.
+        #[arg(long = "service-guide")]
+        service_guide: Option<String>,
+        /// SHA-256 of the exact service Guide when supplied by the provider.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// User-confirmed values for the matching Guide.
+        #[arg(long = "guide-consent-json")]
+        guide_consent_json: Option<String>,
     },
     /// Create a subscription task (providerConfirmStatus → EIP-712 sign → create → broadcast)
     CreateSubscribe {
@@ -146,51 +155,18 @@ pub enum TaskCommand {
         /// Designated provider agent ID
         #[arg(long = "provider-agent-id")]
         provider_agent_id: Option<String>,
-        /// Exact service description returned by asp-match. Used only to persist
-        /// bounded asset/tool hints; the raw prose is never executed.
-        #[arg(long = "service-description", default_value = "")]
-        service_description: String,
+        /// Exact provider service Guide. Stored locally before broadcast.
+        #[arg(long = "service-guide")]
+        service_guide: Option<String>,
+        /// SHA-256 of the exact service Guide when supplied by the provider.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// User-confirmed values for the matching Guide.
+        #[arg(long = "guide-consent-json")]
+        guide_consent_json: Option<String>,
         /// Service billing interval (from asp-match subscription.interval, e.g. "month")
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
-        /// Explicit signal handling mode (`auto` or `notify_only`).
-        #[arg(long = "autotrade-mode")]
-        autotrade_mode: Option<String>,
-        /// Fixed quote-currency amount used for every delivered signal.
-        #[arg(long = "autotrade-amount")]
-        autotrade_amount: Option<String>,
-        /// Optional per-delivery cap metadata (not enforced).
-        #[arg(long = "autotrade-cap")]
-        autotrade_cap: Option<String>,
-        /// Quote currency for amount/cap (`usdt` or `usdc`).
-        #[arg(long = "autotrade-quote")]
-        autotrade_quote: Option<String>,
-        /// User-authorized Trade Kit environment (`live` or `demo`).
-        #[arg(long = "autotrade-environment")]
-        autotrade_environment: Option<String>,
-        /// User-authorized Trade Kit derivative margin mode.
-        #[arg(long = "autotrade-margin-mode")]
-        autotrade_margin_mode: Option<String>,
-        /// User-authorized signal-entry order policy.
-        #[arg(long = "autotrade-order-policy")]
-        autotrade_order_policy: Option<String>,
-        /// User-selected Trade Kit credential source.
-        #[arg(long = "autotrade-auth-mode")]
-        autotrade_auth_mode: Option<String>,
-        /// User-confirmed tool-specific settings as one JSON object.
-        #[arg(long = "autotrade-settings-json")]
-        autotrade_settings_json: Option<String>,
-        /// Execution fields that the selected service requires the subscriber
-        /// to confirm. Repeat per field. Core names and matching value flags:
-        /// mode (--autotrade-mode), tradeAmount (--autotrade-amount),
-        /// cap (--autotrade-cap), quote (--autotrade-quote), environment
-        /// (--autotrade-environment), marginMode (--autotrade-margin-mode),
-        /// orderPolicy (--autotrade-order-policy), authMode
-        /// (--autotrade-auth-mode). Guide-defined fields must be supplied by
-        /// --autotrade-settings-json. tradeAmountU is accepted only as a
-        /// deprecated alias for the public tradeAmount name.
-        #[arg(long = "autotrade-required-field")]
-        autotrade_required_fields: Vec<String>,
         /// Output format: "json" for raw JSON
         #[arg(long, default_value = "")]
         format: String,
@@ -386,21 +362,37 @@ fn parse_bool_or_int(s: &str, flag: &str) -> Result<i32> {
     }
 }
 
-/// Build the optional post-login subscription block. An empty subscription
-/// list deliberately produces no block (the product's zero-disturb contract),
-/// while a missing device snapshot is kept as JSON null so the renderer uses
-/// the documented this-device-only degraded view.
+/// Build the optional post-login subscription hint. Only active subscriptions
+/// are surfaced, keeping wallet login quiet for ended-only histories.
+fn active_subscription_count(subscriptions: &serde_json::Value) -> u64 {
+    subscriptions
+        .get("list")
+        .and_then(serde_json::Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter(|item| {
+                    item.get("status").and_then(serde_json::Value::as_i64) == Some(1)
+                        || item
+                            .get("statusName")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|status| status.eq_ignore_ascii_case("ACTIVE"))
+                })
+                .count() as u64
+        })
+        .unwrap_or(0)
+}
+
 fn compose_post_login_subscriptions(
     subscriptions: serde_json::Value,
     subscriptions_empty: bool,
-    devices: Option<serde_json::Value>,
+    _devices: Option<serde_json::Value>,
 ) -> Option<serde_json::Value> {
-    if subscriptions_empty {
+    let active_count = active_subscription_count(&subscriptions);
+    if subscriptions_empty || active_count == 0 {
         return None;
     }
     Some(serde_json::json!({
-        "subscriptions": subscriptions,
-        "devices": devices,
+        "activeSubscriptionCount": active_count,
     }))
 }
 
@@ -540,10 +532,7 @@ impl ServiceGuideStatus {
 fn stored_service_guide_hash(
     snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
 ) -> Option<&str> {
-    snapshot
-        .dynamic_settings
-        .get("serviceGuideHash")
-        .and_then(serde_json::Value::as_str)
+    snapshot.guide_hash.as_deref()
 }
 
 fn service_guide_status(
@@ -1875,6 +1864,9 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             service_params,
             service_token_address,
             service_token_amount,
+            service_guide,
+            service_guide_hash,
+            guide_consent_json,
         } => {
             create::handle_create(
                 &mut client,
@@ -1891,6 +1883,9 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                     service_params,
                     service_token_address,
                     service_token_amount,
+                    service_guide,
+                    service_guide_hash,
+                    guide_consent_json,
                 },
             )
             .await
@@ -1904,22 +1899,14 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             auto_renew,
             title,
             description,
-            attachments,
             provider_agent_id,
-            service_description,
+            service_guide,
+            service_guide_hash,
+            guide_consent_json,
             service_interval,
-            autotrade_mode,
-            autotrade_amount,
-            autotrade_cap,
-            autotrade_quote,
-            autotrade_environment,
-            autotrade_margin_mode,
-            autotrade_order_policy,
-            autotrade_auth_mode,
-            autotrade_settings_json,
-            autotrade_required_fields,
             format,
             exclude_device,
+            attachments,
         } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             create_subscribe::handle_create_subscribe(
@@ -1933,22 +1920,14 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                     auto_renew,
                     title,
                     description,
-                    attachments,
                     provider_agent_id,
-                    service_description,
+                    service_guide,
+                    service_guide_hash,
+                    guide_consent_json,
                     service_interval,
-                    autotrade_mode,
-                    autotrade_amount,
-                    autotrade_cap,
-                    autotrade_quote,
-                    autotrade_environment,
-                    autotrade_margin_mode,
-                    autotrade_order_policy,
-                    autotrade_required_fields,
                     format,
                     exclude_device,
-                    autotrade_auth_mode,
-                    autotrade_settings_json,
+                    attachments,
                 },
             )
             .await
@@ -2138,6 +2117,7 @@ mod post_login_tests {
             margin_mode: active.then_some(MarginMode::Cross),
             order_policy: active.then_some(OrderPolicy::Market),
             auth_mode: active.then_some(TradeKitAuthMode::OAuth),
+            guide_hash: None,
             dynamic_settings: Default::default(),
             created_at: active.then_some(1),
             expires_at: active.then_some(u64::MAX),
@@ -2155,23 +2135,35 @@ mod post_login_tests {
     }
 
     #[test]
-    fn non_empty_subscriptions_include_complete_device_snapshot() {
-        let subscriptions = json!({ "list": [{ "jobId": "j1" }] });
-        let devices = json!({ "list": [{ "deviceId": "d1" }], "total": 1 });
-        let block =
-            compose_post_login_subscriptions(subscriptions.clone(), false, Some(devices.clone()))
-                .expect("non-empty subscriptions must produce a block");
-        assert_eq!(block["subscriptions"], subscriptions);
-        assert_eq!(block["devices"], devices);
+    fn active_subscriptions_produce_a_count_only_hint() {
+        let block = compose_post_login_subscriptions(
+            json!({ "list": [{ "jobId": "j1", "status": 1 }] }),
+            false,
+            Some(json!({ "list": [{ "deviceId": "d1" }], "total": 1 })),
+        )
+        .expect("active subscriptions must produce a hint");
+        assert_eq!(block, json!({ "activeSubscriptionCount": 1 }));
     }
 
     #[test]
-    fn device_failure_keeps_subscriptions_and_selects_degraded_render() {
-        let subscriptions = json!({ "list": [{ "jobId": "j1" }] });
-        let block = compose_post_login_subscriptions(subscriptions.clone(), false, None)
-            .expect("subscription data must survive a device-list failure");
-        assert_eq!(block["subscriptions"], subscriptions);
-        assert!(block["devices"].is_null());
+    fn ended_only_subscriptions_produce_no_post_login_hint() {
+        let block = compose_post_login_subscriptions(
+            json!({ "list": [{ "jobId": "j1", "status": 6 }] }),
+            false,
+            None,
+        );
+        assert!(block.is_none());
+    }
+
+    #[test]
+    fn device_failure_does_not_block_an_active_subscription_hint() {
+        let block = compose_post_login_subscriptions(
+            json!({ "list": [{ "jobId": "j1", "statusName": "ACTIVE" }] }),
+            false,
+            None,
+        )
+        .expect("active subscription hint must not need device data");
+        assert_eq!(block, json!({ "activeSubscriptionCount": 1 }));
     }
 
     #[test]
@@ -2378,11 +2370,11 @@ mod post_login_tests {
             false,
         );
         assert!(bind_pre_delivery_consent_context(
-                &precheck,
-                "job-watch",
-                "user-1",
-                AssetClass::Spot
-            )
+            &precheck,
+            "job-watch",
+            "user-1",
+            AssetClass::Spot
+        )
         .is_err());
     }
 
@@ -2462,10 +2454,7 @@ mod post_login_tests {
         let subscription = active_executable_subscription();
         let executable = executable_with_current_guide(Some("Choose a fixed amount."));
         let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
-        snapshot.dynamic_settings.insert(
-            "serviceGuideHash".to_string(),
-            json!(executable.service_guide_hash.clone().unwrap()),
-        );
+        snapshot.guide_hash = executable.service_guide_hash.clone();
         let result = compose_scoped_watch_autotrade_precheck_with_executable(
             "job-watch",
             "user-1",
@@ -2484,10 +2473,7 @@ mod post_login_tests {
         let subscription = active_executable_subscription();
         let executable = executable_with_current_guide(Some("Choose a risk bucket."));
         let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
-        snapshot.dynamic_settings.insert(
-            "serviceGuideHash".to_string(),
-            json!(format!("sha256:{}", "a".repeat(64))),
-        );
+        snapshot.guide_hash = Some(format!("sha256:{}", "a".repeat(64)));
         snapshot.dynamic_settings.insert(
             "requiredFields".to_string(),
             json!(["extra.legacyRiskBucket"]),
@@ -2529,10 +2515,7 @@ mod post_login_tests {
         let subscription = active_executable_subscription();
         let executable = executable_with_current_guide(None);
         let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
-        snapshot.dynamic_settings.insert(
-            "serviceGuideHash".to_string(),
-            json!(format!("sha256:{}", "b".repeat(64))),
-        );
+        snapshot.guide_hash = Some(format!("sha256:{}", "b".repeat(64)));
         let result = compose_scoped_watch_autotrade_precheck_with_executable(
             "job-watch",
             "user-1",
@@ -2568,7 +2551,7 @@ mod post_login_tests {
         assert_eq!(result["existingConsent"]["tradeAmountU"], "10");
 
         bind_subscription_restore_consent_context(&result, "job-watch", "user-1", AssetClass::Spot)
-        .expect("review must remain bound to the canonical subscription");
+            .expect("review must remain bound to the canonical subscription");
     }
 
     #[test]

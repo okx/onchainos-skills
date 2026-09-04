@@ -5,7 +5,8 @@
 //! Identity check: invokes the identity-module CLI (`onchainos agent get-my-agents`) to verify
 //! that the current user has a user identity (role=1) before running the publish flow.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::time::Duration;
 
@@ -41,14 +42,56 @@ pub struct CreateTaskParams {
     pub service_params: Option<String>,
     pub service_token_address: Option<String>,
     pub service_token_amount: Option<String>,
+    pub service_guide: Option<String>,
+    pub service_guide_hash: Option<String>,
+    pub guide_consent_json: Option<String>,
 }
 
 struct ValidatedParams {
     currency: String,
     title: String,
+    guide_consent: Option<GuideConsentInput>,
+}
+
+#[derive(Debug)]
+struct GuideConsentInput {
+    draft: super::super::common::autotrade::guide::GuideDraft,
+    consent_values: BTreeMap<String, serde_json::Value>,
 }
 
 impl CreateTaskParams {
+    fn guide_draft(&self) -> Result<Option<super::super::common::autotrade::guide::GuideDraft>> {
+        super::super::common::autotrade::guide::parse_draft(
+            self.service_guide.as_deref(),
+            self.service_guide_hash.as_deref(),
+        )
+    }
+
+    fn guide_consent_values(&self) -> Result<BTreeMap<String, serde_json::Value>> {
+        let Some(raw) = self.guide_consent_json.as_deref() else {
+            return Ok(BTreeMap::new());
+        };
+        serde_json::from_str(raw).context("--guide-consent-json must be a JSON object")
+    }
+
+    fn validated_guide_consent(&self) -> Result<Option<GuideConsentInput>> {
+        let Some(draft) = self.guide_draft()? else {
+            if self.service_guide_hash.is_some() || self.guide_consent_json.is_some() {
+                bail!("Guide Consent requires --service-guide");
+            }
+            return Ok(None);
+        };
+        if self.guide_consent_json.is_none() {
+            bail!("--guide-consent-json is required with --service-guide, including {{}} when the Guide declares no consent fields");
+        }
+        let consent_values = self.guide_consent_values()?;
+        super::super::common::autotrade::guide::validate_consent_values(&consent_values)?;
+        Ok(Some(GuideConsentInput {
+            draft,
+            consent_values,
+        }))
+    }
+
     fn validate(&self) -> Result<ValidatedParams> {
         let desc_len = self.description.chars().count();
         if desc_len < MIN_DESCRIPTION_CHARS {
@@ -102,8 +145,31 @@ impl CreateTaskParams {
             }
         }
 
-        Ok(ValidatedParams { currency, title })
+        Ok(ValidatedParams {
+            currency,
+            title,
+            guide_consent: self.validated_guide_consent()?,
+        })
     }
+}
+
+fn prepare_guide_consent(
+    job_id: &str,
+    params: &CreateTaskParams,
+    execution: &GuideConsentInput,
+) -> Result<()> {
+    let guide_file = execution.draft.clone().into_file(
+        job_id,
+        &params.service_id,
+        Some(&params.provider),
+    );
+    super::super::common::autotrade::guide::write_guide(&guide_file, &execution.draft.source)?;
+    super::super::common::autotrade::guide::write_prepared_consent(
+        job_id,
+        &guide_file,
+        execution.consent_values.clone(),
+        super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
+    )
 }
 
 // ─── Validation helpers ─────────────────────────────────────────────────
@@ -267,6 +333,14 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
     // sign_uop_and_broadcast returns — the file must already exist.
     //
     super::negotiate::save_designated_provider(&job_id, &params.provider)?;
+
+    let prepared_guide_consent = if let Some(ref guide_consent) = validated.guide_consent {
+        prepare_guide_consent(&job_id, &params, guide_consent)?;
+        true
+    } else {
+        false
+    };
+
     let provider_prebind = common::a2a_binding::bind_job_provider_to_current_runtime(&job_id).await;
 
     let tx_hash = match signing::sign_uop_and_broadcast(
@@ -283,11 +357,26 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
     {
         Ok(tx_hash) => tx_hash,
         Err(err) => {
+            if prepared_guide_consent {
+                super::super::common::autotrade::guide::abort_prepared_consent(&job_id);
+            }
             if let Some(prebind) = &provider_prebind {
                 prebind.rollback_if_created().await;
             }
             return Err(err);
         }
+    };
+
+    let guide_and_consent_active = if prepared_guide_consent {
+        match super::super::common::autotrade::guide::activate_prepared_consent(&job_id) {
+            Ok(()) => true,
+            Err(err) => {
+                eprintln!("[guide-execution] task created, but Guide Consent could not be activated: {err}");
+                false
+            }
+        }
+    } else {
+        false
     };
 
     audit::log(
@@ -303,6 +392,22 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
             format!("maxBudget={}", params.max_budget),
             format!("designatedProvider={}", params.provider),
             format!("paymentMode={}", params.payment_mode),
+            format!(
+                "guideStatus={}",
+                if guide_and_consent_active {
+                    "active"
+                } else {
+                    "none"
+                }
+            ),
+            format!(
+                "consentStatus={}",
+                if guide_and_consent_active {
+                    "active"
+                } else {
+                    "none"
+                }
+            ),
             format!("txHash={tx_hash}"),
         ]),
         None,
@@ -339,6 +444,8 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
         "jobId": job_id,
         "txHash": tx_hash,
         "guidance": guidance,
+        "guideStatus": if guide_and_consent_active { "active" } else { "none" },
+        "consentStatus": if guide_and_consent_active { "active" } else { "none" },
     });
     if !params.provider.is_empty() {
         data["designatedProvider"] = serde_json::json!(params.provider);
@@ -514,6 +621,9 @@ mod tests {
             service_params: None,
             service_token_address: None,
             service_token_amount: None,
+            service_guide: None,
+            service_guide_hash: None,
+            guide_consent_json: None,
         }
     }
 

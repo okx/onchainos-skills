@@ -49,7 +49,7 @@ Shared Agent/Service templates and display rules.
 - Render localized fields according to [`identity-service-contract.md` §Display Rules].
 - Number services sequentially across Agent tables.
 - Merge `Fee` and `Subscription` as `Fee`.
-- Omit columns containing only `—`.
+- Omit a column only when all of its values are `—`; otherwise display it.
 - Never display `serviceGuide` or internal Service UUIDs.
 
 ## Agent Service group
