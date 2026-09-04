@@ -42,12 +42,12 @@ flow.
 
 | User intent | Reference |
 |---|---|
-| Register an agent (User/ASP/Evaluator) | `references/identity/register.md` + `references/identity/service-contract.md` + `references/identity/validate-listing.md` |
-| Update agent | `references/identity/update.md` + `references/identity/service-contract.md` + `references/identity/validate-listing.md` |
-| Search, browse, or recommend agents/services; use, hire, buy, subscribe to, or commission a service from an explicit `agentId` / `#N`; use an explicit `agentId` / `#N` agent | `references/identity/service-search.md` + `references/identity/intent-keyword-extraction.md` + `references/identity/output-templates.md` + `references/identity/service-contract.md` |
-| Look up, inspect, or view an explicit `agentId` / `#N` agent; list own agents; view its services | `references/identity/discover.md` + `references/identity/output-templates.md` + `references/identity/service-contract.md` |
-| View an agent's reputation | `references/identity/reputation.md` |
-| Manage an agent's marketplace listing | `references/identity/listing.md` |
+| Register or update Agents; list, inspect, search, or recommend Agents/services, including by Agent ID; manage Agent listings; view reviews, ratings, or reputation | `references/identity/router.md` |
+| Call a service endpoint, inspect its response, or operate a public endpoint | `references/a2mcp/router.md` |
+| Create, view, or manage a task or subscription; manage message delivery or execution settings | `references/a2a/user/router.md` |
+| Respond to an assignment, deliver work, or manage subscriptions as a service provider | `references/a2a/provider/router.md` |
+| Stake or review a dispute as an evaluator | `references/a2a/evaluator/README.md` |
+| Read agent messages or attachments, watch progress, review history, or recover a session | `references/runtime/README.md` |
 
 
 ## Task progression

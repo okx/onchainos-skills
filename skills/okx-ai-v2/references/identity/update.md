@@ -74,7 +74,7 @@ Rules:
 
 Actions:
 
-1. For ASP changes, run Update mode from (`validate-listing.md`) after collecting the final changes.
+1. For ASP changes, run Update mode from (`validate.md`) after collecting the final changes.
 2. Resolve findings before review and confirmation.
 
 rules:

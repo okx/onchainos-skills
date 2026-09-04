@@ -2,7 +2,7 @@
 
 Use this contract for ASP service payload fields, display, and create workflows. For update behavior,
 follow [`update.md`](update.md); for validation, follow
-[`validate-listing.md`](validate-listing.md). In mixed batches, apply the workflow
+[`validate.md`](validate.md). In mixed batches, apply the workflow
 matching each service's `serviceType`.
 
 ## Shared payload
@@ -168,5 +168,5 @@ Rules:
 
 ## Validate
 
-At the register/update QA gate, follow `validate-listing.md` for timing, input scope, update-key
+At the register/update QA gate, follow `validate.md` for timing, input scope, update-key
 stripping, semantic merging, and finding resolution.

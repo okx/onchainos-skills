@@ -44,7 +44,7 @@ Rules:
 
 ### 4. Service validation
 
-ASP only: after explicit Done, execute Create mode from `validate-listing.md`. Continue only when it permits progression. User and Evaluator skip this step.
+ASP only: after explicit Done, execute Create mode from `validate.md`. Continue only when it permits progression. User and Evaluator skip this step.
 
 ### 5. Final confirmation
 
