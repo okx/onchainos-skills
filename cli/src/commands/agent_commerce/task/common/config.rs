@@ -81,17 +81,5 @@ pub fn is_cli_mode() -> bool {
             .is_some()
 }
 
-/// Task protocol version number — a single value used in both directions: it is both
-/// "the version I am currently on" and "the minimum version I require the peer to be on".
-///
-/// - **Sender**: every `okx-a2a xmtp-send` puts this value into `payload.taskMinVersion`.
-/// - **Receiver**: next-action reads peer's value via `--peerTaskMinVersion`;
-///   if `local TASK_MIN_VERSION < peer.taskMinVersion` then the local side is stale and
-///   the version_mismatch script is emitted, prompting the user to run `onchainos upgrade`.
-///
-/// Bump rule: only +1 when the task protocol (state machine / envelope schema / payload schema)
-/// changes in a **backwards-incompatible** way; pure bug fixes / copy tweaks must not bump it.
-pub const TASK_MIN_VERSION: u32 = 1;
-
 #[cfg(test)]
 mod tests {}

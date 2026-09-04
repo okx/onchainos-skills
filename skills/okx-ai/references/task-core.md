@@ -62,35 +62,6 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 > 🛑 `--message` source: system event → the entire `message` object ; a2a-agent-chat → top-level `jobId`. NEVER cache from prior turn.
 > 🛑 `--role` MUST be re-resolved every event via `--role auto`. Never reuse sub's bound role.
 
-## Subscription Notifications (display-class)
-
-`sub_*` system events route through **Activation #1 exactly like every other system event**: run
-`next-action --role auto` with the envelope's `message`, then process its structured progression or legacy script as defined in Activation #1.
-🛑 Do NOT compose the notification yourself — not from this file, not from memory. The CLI is the
-canonical renderer: copy, freshness gate, dedup, and audit all live in the CLI layer, and they are
-silently bypassed if you hand-render.
-
-Display-class semantics of the returned script — the CLI enforces these; never add behavior on top:
-
-- Execute exactly what the script says and nothing more: **never** add a `pending-decisions` /
-  `pending_v2` / `user_attention` push, a state transition, or a wait-for-input of your own. (The
-  only sub_* script that itself carries a decision is the ASP side's `sub_user_reject` — see the
-  role bullet below; every other returned script is notify-and-end.)
-- The backend-delivered `jobStatus` / `subStatus` is displayed as-is, never re-derived. Primary key
-  is `jobId` (there is no `subId`). Amount = `tokenAmount` (decimal string, shown verbatim with
-  `tokenSymbol`).
-- When localizing the returned copy: a line the CLI omitted stays omitted (absent optional field —
-  never re-add or error); `failReason` is free backend text (may be non-English) — keep it verbatim,
-  do not interpret or translate it.
-- Role resolution is the CLI's job (`--role auto`): each side receives only its own script. The one
-  non-display exception is the ASP side's `sub_user_reject`, which is a **decision** (see
-  task-asp.md — not display-only); every other `sub_*` script is display-only.
-
-The per-event copy is intentionally NOT reproduced here. The canonical renderer is the CLI
-(`content.rs` behind `next-action`); a human-readable copy mirror for review/debug/localization
-reference lives in [`task-sub-copy-reference.md`](task-sub-copy-reference.md) — it is not part of
-any activation flow and must never be used to hand-compose a notification.
-
 ## Pre-flight
 
 > 🛑 **User sub/backup skip** — if this session was triggered by Activation #1 (system event) or #2 (a2a-agent-chat) AND the resolved role is **user** (`sender.role == 2` or system event routed to user agent), skip Pre-flight entirely. The user session already verified the environment; CLI commands will surface runtime errors if anything changed.

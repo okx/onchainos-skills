@@ -102,7 +102,9 @@ Route by `decision`, then use `reason`, `nextAction`, and `payload`:
 - `blocked`: stop the current path and handle `reason`.
 - `requires_user_input`: collect only the missing input indicated by `payload`, then retry the selected `nextAction`.
 
-Render `nextAction` as a numbered list. Never invent actions not returned by the CLI.
+Render `nextAction` as a numbered list when user choice is required. Execute a
+single safe action directly when its routing reference requires no confirmation.
+Never invent actions not returned by the CLI.
 
 Do not infer progression from human-readable output. Keep backend field names
 inside `payload` unchanged.
