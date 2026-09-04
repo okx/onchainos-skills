@@ -2,18 +2,14 @@
 
 Validate ASP listings.
 
-## Workflow
-
-### Validate listing
+## Validate listing
 
 - **Create:** after explicit Done for every service, validate the full identity and service set.
 - **Update:** after collection, run only when the agent name/description or a service create/update
-  changed. Use new-or-current identity values and only changed create/update services. Omit
-  [`operation`](service-contract.md#operation) and [`id`](service-contract.md#id) from
-  `validate-listing`; pass `--service '[]'` when no service is validated.
+  changed. Use new-or-current identity values and only changed create/update services.
 - **Both:** call `validate-listing` once after collection, never in a service loop or after corrections.
 
-### Add semantic checks
+## Add semantic checks
 
 Keep all CLI findings and add only what requires semantic judgment:
 
@@ -26,7 +22,7 @@ Keep all CLI findings and add only what requires semantic judgment:
   - Reason: `The request description is incomplete — it is missing one or more of: what the service does, the parameter specification, the request method, or the CURL request example. Buyers and the sandbox cannot determine how to call this service.`
   - Suggestion: `In the request description, include all four: (1) what the service does, (2) each key parameter — all on one line, separated by ;, in the format name(type, required/optional): meaning (append the default value for an optional parameter), (3) the request method (POST/GET or tool name), (4) a working CURL example using the real endpoint.`
 
-### Present results
+## Present results
 
 - Preserve CLI severities. Use only the rules above for semantic severity and exceptions; never
   restate or reinterpret them.
@@ -34,7 +30,7 @@ Keep all CLI findings and add only what requires semantic judgment:
 - Otherwise, map dotted `field` values to identity/service card rows; translate and de-duplicate
   `message` by `(field,message)`; never show `code`; retain originals; bold affected name rows.
 
-### Resolve findings
+## Resolve findings
 
 - Ask one localized choice set, then redraw.
 - Label every semantic rewrite `drafted from your words — please review` and obtain normal
