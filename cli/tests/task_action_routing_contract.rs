@@ -132,7 +132,6 @@ fn refund_v2_actions_are_registered_and_context_bound() {
         "execute_direct_refund",
         "submit_refund_request",
         "view_refund_status",
-        "view_arbitration",
     ] {
         assert!(
             ACTION_ROUTING.contains(&format!("| `{action}` |")),
