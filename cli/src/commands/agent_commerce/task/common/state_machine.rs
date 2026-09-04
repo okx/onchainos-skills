@@ -418,8 +418,9 @@ impl Event {
             "negotiate_reply" => Event::NegotiateReply,
             // Network / restart recovery
             "wakeup_notify" => Event::WakeupNotify,
-            // Subscription lifecycle (`sub_created` starts the ASP decision flow;
-            // later events are notifications/service-start signals).
+            // Subscription lifecycle (`sub_open` starts the ASP decision flow;
+            // `sub_created` is the Buyer acceptance event and
+            // `sub_asp_selected` starts the ASP service workflow).
             "sub_open" => Event::SubOpen,
             "sub_created" => Event::SubCreated,
             "sub_asp_selected" => Event::SubAspSelected,
@@ -768,7 +769,7 @@ impl SubStatus {
 pub fn sub_status_after_event(e: &Event) -> Option<SubStatus> {
     match e {
         Event::SubOpen => Some(SubStatus::Created),
-        Event::SubCreated => Some(SubStatus::Created),
+        Event::SubCreated => Some(SubStatus::Active),
         Event::SubAspSelected => Some(SubStatus::Active),
         Event::SubTrialIntoActive => Some(SubStatus::Active),
         Event::SubRenew => None, // success=Active, fail=eventually Closed
@@ -1094,7 +1095,7 @@ mod tests {
         );
         assert_eq!(
             sub_status_after_event(&Event::SubCreated),
-            Some(SubStatus::Created)
+            Some(SubStatus::Active)
         );
         assert_eq!(
             sub_status_after_event(&Event::SubAspSelected),

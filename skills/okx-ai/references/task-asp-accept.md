@@ -6,9 +6,10 @@ already created and funded the task. The ASP no longer applies or counter-applie
 ## Trigger and authoritative status
 
 - Single task trigger: `job_asp_selected`.
-- Subscription trigger: `sub_created`, delivered to both Buyer and ASP after the
-  Buyer's create-subscribe transaction is confirmed. `sub_open` is obsolete and
-  must not trigger this flow.
+- Subscription trigger: `sub_open`, delivered to both Buyer and ASP after the
+  Buyer's create-subscribe transaction is confirmed. The later acceptance event
+  is role-specific: `sub_created` goes to the Buyer and `sub_asp_selected` goes
+  to the ASP.
 - The ASP runtime must make and execute this decision itself. Dashboards,
   dispatchers, simulators, and other external hooks are read-only and must not
   call the provider-decision commands or send a synthetic XMTP deliverable.
@@ -48,6 +49,9 @@ Reconfirm the latest status is CREATED, then run exactly one command:
 ```bash
 # single task — backend type/broadcast bizType 203
 onchainos agent accept-job-by-provider <jobId> --agent-id <aspAgentId>
+
+# subscription — backend type/broadcast bizType 205
+onchainos agent accept-subscription <jobId> --agent-id <aspAgentId>
 ```
 
 The command calls the documented mutation once, validates `jobId`, `uopData`,
@@ -61,6 +65,10 @@ A concrete reason is mandatory and capped at 512 Unicode characters:
 ```bash
 # single task — type/bizType 202
 onchainos agent decline-job-by-provider <jobId> \
+  --agent-id <aspAgentId> --reason "<reason>"
+
+# subscription — type/bizType 206
+onchainos agent decline-subscription <jobId> \
   --agent-id <aspAgentId> --reason "<reason>"
 ```
 

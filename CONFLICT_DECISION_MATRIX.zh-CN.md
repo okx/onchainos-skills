@@ -2,6 +2,8 @@
 
 合并方向：将 `origin/codex/a2a-skill-cli-contract` 合入 `origin/codex/a2a-skill-cli-contract-elvis`
 
+> **生命周期结论已被覆盖（2026-09-04）：**以后端广播契约为权威来源。bizType 204 向 Buyer 和 ASP 发送 `sub_open`；bizType 205 向 Buyer 发送 `sub_created`、向 ASP 发送 `sub_asp_selected`。下文中删除 `sub_open` 的旧决策仅保留为历史合并记录。
+
 - **Elvis / ours / HEAD：** `e69c6fd05c83ac1090d8f4c9d4e883666ef3eda8`
 - **Contract / theirs：** `6bb02d665c7d`（最新刷新；原始审计基于 `c7e071bb58b906a51498be105163f739e387d6df`）
 - **共同祖先：** `6ff8fc6b093f04cfe80c66248f7cf8f3bb7c39e9`
