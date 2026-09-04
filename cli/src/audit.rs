@@ -598,6 +598,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::UserReject { .. } => "user-reject".into(),
         AgentCommand::AcceptJobByProvider { .. } => "accept-job-by-provider".into(),
         AgentCommand::DeclineJobByProvider { .. } => "decline-job-by-provider".into(),
+        AgentCommand::AcceptSubscription { .. } => "accept-subscription".into(),
+        AgentCommand::DeclineSubscription { .. } => "decline-subscription".into(),
     }
 }
 
