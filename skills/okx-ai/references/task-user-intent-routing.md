@@ -20,12 +20,13 @@ User-session needs to forward free-form user instructions targeting a specific t
 5. Dispatch the user's instruction to the sub via `okx-a2a session send` — the daemon resolves the session from `--job-id` + `--to-agent-id`:
 
    ```bash
-   okx-a2a session send --no-wait \
+   okx-a2a session send \
      --job-id <jobId> --to-agent-id <counterpartyAgentId> \
      --content "<user verbatim>
 
    ---
-   Reply to the user via `onchainos agent user-notify --content \"<localized natural-language reply>\"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `task-user-sub-playbook.md` §Communication Contract)."
+   Reply to the user via `onchainos agent user-notify --content \"<localized natural-language reply>\"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `task-user-sub-playbook.md` §Communication Contract)." \
+     --json
    ```
 
    Forward verbatim then append reply-path instruction. End turn.

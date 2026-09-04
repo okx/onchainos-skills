@@ -7,7 +7,7 @@ Route `nextAction[].id` through this table and treat the legacy prose field
 |---|---|---|---|
 | `login` | `okx-agentic-wallet` login flow | Owning Skill | Rerun prepare with the same `sid` |
 | `register_user_agent` | `identity-register.md` with User Agent role | Required | Rerun prepare with the same `sid` |
-| `route_payment_protocol` | `okx-agent-payments-protocol` | Owning Skill | End task creation |
+| `invoke_a2mcp` | `a2mcp-direct-invoke.md` | Parameters are collected and validated automatically; only payment is confirmed in that playbook | Run the A2MCP direct-invocation flow |
 | `fund_account` | Wallet funding flow | Required | Rerun prepare with the same `sid` |
 | `restore_subscription` | `task-user-duplicate-subscription-guide.md` | Required | Enter scoped watch |
 | `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |
@@ -16,11 +16,17 @@ Route `nextAction[].id` through this table and treat the legacy prose field
 | `sub_agree_refund` | `task-dispute.md` §Execute resolved rejection action | Reference-owned | Reference-owned |
 | `sub_dispute` | `task-dispute.md` §Execute resolved rejection action | Reference-owned | Reference-owned |
 | `view_dispute` | `task-dispute.md` §Query dispute | Reference-owned | Reference-owned |
-| `stop` | End the current flow | Immediate | End the current flow |
+| `send_task_params_response` | `task-asp-accept.md`, `NEED_PARAMS`; send the returned `params` unchanged through `okx-a2a session send` | No | ASP fetches latest detail and reevaluates the complete `serviceParams` |
+| `watch_task` | `watch-core.md`, scoped watch for `params.jobId` | No | Continue until the Watch stop condition |
+| `stop` | End the current flow | No | Run no further command |
 
 ## Routing rules
 
 - Read this file when a CLI result contains `nextAction`.
+- `invoke_a2mcp` is valid only with `phase=service_routing`,
+  `decision=ready`, `reason=a2mcp_service_confirmed`,
+  `payload.schemaVersion=1`, and `payload.serviceSnapshot`. A mismatch blocks;
+  do not infer or fall back to a payment route.
 - For `reason=duplicate_subscription`, read
   `task-user-duplicate-subscription-guide.md` before presenting or executing
   any returned action.

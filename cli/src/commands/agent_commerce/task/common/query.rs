@@ -6,7 +6,7 @@
 //!                 current active account (with `myRole` / `counterpartyAgentId`
 //!                 annotations; used by user-session to route ad-hoc user
 //!                 instructions to a specific sub session via
-//!                 `okx-a2a session query` → `okx-a2a session send --no-wait`)
+//!                 `okx-a2a session query` → `okx-a2a session send --json`)
 
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
@@ -532,7 +532,7 @@ fn parse_role_arg(raw: &str) -> Option<i64> {
 ///   2. user-session renders the returned JSON to the user, lets the user pick a jobId
 ///   3. take `myAgentId` + `counterpartyAgentId` from the chosen row
 ///   4. (optional) `okx-a2a session query --job-id <jobId> --my-agent-id <myAgentId> --to-agent-id <counterpartyAgentId>` to confirm an active session exists
-///   5. `okx-a2a session send --no-wait --job-id <jobId> --to-agent-id <counterpartyAgentId> --content <user's verbatim instruction>`
+///   5. `okx-a2a session send --job-id <jobId> --to-agent-id <counterpartyAgentId> --content <user's verbatim instruction> --json`
 ///
 /// Output schema (via `output::success`):
 ///

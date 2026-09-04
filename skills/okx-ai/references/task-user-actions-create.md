@@ -156,24 +156,23 @@ selector. Do not pass localized display values or add `descriptionSummary`.
 
 ```bash
 onchainos agent create-task \
-  --description <confirmed Description> \
-  --budget <payload.feeAmount> \
-  --max-budget <payload.feeAmount> \
-  --currency <payload.feeTokenSymbol> \
   --title <title> \
-  --provider <payload.providerAgentId> \
+  --description <confirmed Description> \
+  --provider-agent-id <payload.providerAgentId> \
+  --payment-token-symbol <payload.feeTokenSymbol> \
+  --payment-token-amount <payload.feeAmount> \
   --service-id <payload.serviceId> \
-  --payment-mode escrow \
-  [--service-params <confirmed non-empty serviceParams>] \
-  [--service-token-address <payload.feeToken>] \
-  [--service-token-amount <payload.feeAmount>] \
+  --service-params '<confirmed JSON serviceParams, or {}>' \
+  --service-token-address <payload.feeToken> \
+  --service-token-amount <payload.feeAmount> \
   [--file <attachment> ...]
 ```
 
-Repeat `--file` for each attachment. Follow structured CLI errors and
-`data.guidance` for routing; translate user-facing guidance while preserving
-IDs, URLs, raw tokens, and command identifiers. Enter `watch-core.md`
-immediately if the command prints a `[Watch]` block.
+Pass the confirmed Service context unchanged. Do not re-check price, balance,
+ASP selection, or ask for another confirmation. Repeat `--file` for each
+attachment. On `reason=broadcast_submitted`, route `nextAction.id=watch_task`
+through `task-action-routing.md`; task creation is final only after
+`job_created` is received.
 
 ### Subscription creation
 
@@ -187,6 +186,7 @@ onchainos agent create-subscribe \
   --service-token-amount <payload.subscriptionInfo.feeAmount> \
   --service-token-address <payload.feeToken> \
   --auto-renew <retained autoRenew> \
+  --copy-trade <1 when retained autotrade mode is auto; otherwise 0> \
   --title <title> \
   --description <confirmed Description> \
   --provider-agent-id <payload.providerAgentId> \
@@ -204,11 +204,13 @@ Repeat `--file` for each attachment. Repeat
 `--autotrade-required-field` only for execution fields explicitly required by
 the current Guide. Follow structured errors from `task-cli-reference.md`.
 
-Read `autoTradeConfigRequested` and `autoTradeConfigured` from the success
-data. `true/true` means the requested local policy was saved; `true/false`
-means creation succeeded but local execution configuration was not persisted,
-which is reported without retrying creation. `false/false` is an unconfigured
-notification-only subscription and must not be described as automatic.
+Read these fields from `payload`, not from a legacy top-level success object.
+`jobId` is the subscription identifier. `type` and `bizType` must both be 204.
+`autoTradeConfigRequested=true` implies `autoTradeConfigured=true`: requested
+local execution configuration is now a pre-broadcast requirement, so a local
+write failure blocks broadcast instead of returning partial success.
+`false/false` is an unconfigured notification-only subscription and must not be
+described as automatic. Then execute `nextAction.id=watch_task`.
 
 On success, continue to `task-user-playbook.md` **Post-creation:
 Offline-deliverables question**, then its mandatory Watch check. Do not add

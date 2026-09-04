@@ -8,9 +8,7 @@
 //! - `flow_negotiate.rs` — negotiation / matching phase
 //! - `flow_lifecycle.rs` — task execution + arbitration + terminal states
 
-use crate::commands::agent_commerce::task::common::config::{
-    SubscriptionTradePath, TASK_MIN_VERSION,
-};
+use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 use crate::commands::agent_commerce::task::common::util::short_job_id;
 use crate::commands::agent_commerce::task::common::DEBUG_LOG;
@@ -119,7 +117,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20Then send SKILL_PREFETCH:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\"\n\
+                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\" --json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x207. **Upload pending attachments (if any):**\n\
                      \x20\x20\x20\x20```bash\n\
@@ -127,7 +125,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20If non-empty JSON array, iterate each file:\n\
                      \x20\x20\x20\x20a) `okx-a2a file upload --file-path <path> --agent-id {agent_id} --job-id {job_id}` → obtain fileKey + decryption-metadata.\n\
-                     \x20\x20\x20\x20b) `okx-a2a xmtp-send --job-id {job_id} --to-agent-id <agentId>` with attachment content (all fields verbatim from upload output).\n\
+                     \x20\x20\x20\x20b) `okx-a2a session send --job-id {job_id} --to-agent-id <agentId> --content \"<attachment content; all upload fields verbatim>\" --json`.\n\
                      \x20\x20\x20\x20⚠️ Failure MUST NOT block — skip failed files.\n\
                      \x20\x20\x20\x20If empty (`[]`), skip.\n\
                      \x20\x20\x20\x20End the turn. Wait for `provider_applied`.\n\
@@ -208,16 +206,14 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_created"),
             ref_header,
             format!("  onchainos agent asp-match --job-id {job_id} --agent-id <agentId>  # Search matching ASPs"),
-            format!("  onchainos agent set-payment-mode {job_id} --payment-mode <escrow|x402> --token-symbol <sym> --token-amount <amt> [--endpoint <url>]  # Set payment mode (standalone)"),
+            format!("  onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <sym> --token-amount <amt>  # Set A2A escrow payment mode"),
             format!("  onchainos agent confirm-accept {job_id}  # Confirm accept (reads provider/token/amount from task detail API)"),
-            format!("  onchainos agent task-402-pay {job_id} --provider-agent-id <agentId> --accepts <json> --endpoint <url> --token-symbol <sym> --token-amount <amt> --force  # x402: replay endpoint → accept on-chain (threads paymentTxHash)"),
             format!("  onchainos agent close {job_id}          # Close task"),
-            format!("  onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <svc> --service-type <A2A|A2MCP> --service-params \"<params>\" --service-token-address <addr> --service-token-amount <amt>  # Re-set ASP + service (off-chain, triggers job_created)"),
+            format!("  onchainos agent set-asp {job_id} --provider-agent-id <agentId> --service-id <svc> --service-type A2A --service-params \"<params>\" --service-token-address <addr> --service-token-amount <amt>  # Re-set ASP + A2A service"),
             format!("  onchainos agent reject-apply {job_id}  # Reject the current provider's apply (off-chain)"),
         ],
         Status::Accepted => vec![
-            "(escrow) ASP is executing the task, waiting for job_submitted to enter review".to_string(),
-            "(x402) ASP delivery already completed in the accept phase".to_string(),
+            "ASP is executing the escrow task, waiting for job_submitted to enter review".to_string(),
         ],
         Status::Submitted => vec![
             next_action("job_submitted"),
@@ -239,7 +235,6 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "(terminal) Task is COMPLETE — **funds released to ASP**".to_string(),
             "  ▸ escrow review approved → release escrow funds to ASP".to_string(),
             "  ▸ evaluation ASP wins (dispute_resolved seller-wins) → release escrow funds to ASP".to_string(),
-            "  ▸ x402 funds were already paid in the accept phase".to_string(),
             "Keep the sub session (do not close), for later reference.".to_string(),
         ],
         Status::Failed => vec![
@@ -288,10 +283,6 @@ pub async fn generate_next_action(
         parse_status_or_event, Event,
     };
 
-    let version_prefix = format!(
-        "[Protocol version] When calling `okx-a2a xmtp-send`, the `--payload` parameter is **required**, with value `{{\"taskMinVersion\":{TASK_MIN_VERSION}}}`.\n\n",
-    );
-
     // Short jobId, used in pending-decisions-v2 request --user-content / --list-label as the `[Job <shortID>]` prefix.
     // Serves as a dual disambiguation anchor for the user and user agent when multiple prompts run concurrently. See user-sub-playbook.md §Communication Contract.
     let short_id = short_job_id(job_id);
@@ -314,7 +305,7 @@ pub async fn generate_next_action(
     // This file only tells the agent **what content to send where at each step**, without re-explaining tool usage.
     //
     // Three communication CLI commands:
-    //   - okx-a2a xmtp-send: send to provider (peer sub session), params --job-id + --to-agent-id + --message
+    //   - okx-a2a session send: send to provider (peer sub session), params --job-id + --to-agent-id + --content
     //   - onchainos agent user-notify: notify the user (no user decision needed), params: --content
     //   - onchainos agent pending-decisions-v2 request: needs user interaction (confirm / decide), params: --user-content + --list-label + --source-event
     //     (internally pushes via the okx-a2a user_attention table; the user-session agent then renders + relays the user's reply back to the sub)
@@ -362,7 +353,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             "[user-flow] parsed event: {:?} | okx-a2a commands involved: {}",
             event,
             match &event {
-                Event::JobCreated => "okx-a2a session create (create group) → okx-a2a xmtp-send (send negotiation message)",
+                Event::JobCreated => "okx-a2a session create (create group) → okx-a2a session send (send negotiation message)",
                 Event::ProviderApplied => "in-process branch by over_most_budget: confirm-accept (within budget) OR reject-apply + 3/4-option card (over budget)",
                 Event::JobProviderReject => "in-process POST /reset/asp → playbook tells agent to localize + 3/4-option card",
                 Event::JobAccepted => "onchainos agent user-notify (notify accept success)",
@@ -374,7 +365,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 Event::JobAutoRefunded => "onchainos agent user-notify (claimAutoRefund tx receipt)",
                 Event::NegotiateReply =>
                     "natural-language reply (max 2 rounds; over-limit → mark-failed + user decision card)",
-                Event::AttachmentAdded => "okx-a2a file upload → okx-a2a xmtp-send (upload + forward attachment to provider)",
+                Event::AttachmentAdded => "okx-a2a file upload → okx-a2a session send (upload + forward attachment to provider)",
                 Event::DeliverableReceived => "task-deliverable-save (download + save deliverable immediately)",
                 _ => "none",
             }
@@ -384,9 +375,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
     let body = match event {
         // ─── Negotiation / matching phase → flow_negotiate ──────────────────────────
         Event::JobCreated => super::flow_negotiate::job_created(&ctx).await,
-        Event::Other(ref s)
-            if s == "designated_a2a" || s == "designated_x402" || s == "designated_error" =>
-        {
+        Event::Other(ref s) if s == "designated_a2a" || s == "designated_error" => {
             let dp_id = super::negotiate::get_designated_provider(job_id)
                 .ok()
                 .flatten()
@@ -402,9 +391,6 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                                     .to_string()
                             })
                     }
-                    "designated_x402" => super::flow_negotiate::designated::branch_x402(
-                        job_id, agent_id, &short_id, &dp_id, None,
-                    ),
                     _ => super::flow_negotiate::designated::branch_error(
                         job_id, agent_id, &short_id, &dp_id,
                     ),
@@ -478,6 +464,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             }
         }
         // ─── Subscription lifecycle events ──────────────────────────────────────────────
+        Event::SubOpen => super::flow_lifecycle::subscription::sub_open(&ctx, message),
         Event::SubCreated => super::flow_lifecycle::subscription::sub_created(&ctx, message),
         Event::SubCancel => super::flow_lifecycle::subscription::sub_cancel(&ctx, message),
         Event::SubUserReject => super::flow_lifecycle::subscription::sub_user_reject(&ctx, message),
@@ -675,7 +662,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      If ambiguous (e.g. unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (or none, if it says `[to: backup]` / you run in a backup sub — NEVER your own agentId) and `--source-event asp_match_pick`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply. Reply with an ASP's number (1/2/3) or agentId to pick, see more ASPs, or cancel.\"\n"
                     )
                 },
-                "not_provider" | "no_asp_found" | "provider_offline" | "x402_invalid" | "over_budget" => {
+                "not_provider" | "no_asp_found" | "provider_offline" | "over_budget" => {
                     // CLI mode (Claude Code / Codex): drop the passive "Waiting for ASP to accept"
                     // phrase — it reads as a turn-end cue to LLM-driven watch loops and suppresses re-arm.
                     let success_line = if super::content::is_cli_mode() {
@@ -685,7 +672,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                     };
                     format!(
                     "[User decision relay] source_event=`{source}`, user's verbatim reply: `{reply}`\n\n\
-                     The push was an A/B/C choice (designated agent not a provider / no ASP available / designated provider offline / x402 endpoint invalid / quote over budget). **Semantic mapping** — decide:\n\n\
+                     The push was an A/B/C choice (designated agent not a provider / no ASP available / designated provider offline / quote over budget). **Semantic mapping** — decide:\n\n\
                      \x20\x20• **A — Specify another ASP** — typical intents: A / 选A / `specify` / `指定`, **with a 3-digit agentId in the reply** (e.g. `A 864` / `指定 864` / just `864`). Action (switch-asp flow):\n\
                      \x20\x20\x20\x201. Reject current ASP (safe even if none active):\n\
                      \x20\x20\x20\x20```bash\n\
@@ -816,137 +803,6 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      \x20\x20• **C — Close** — typical intents: C / `close` / `cancel`. Action: `onchainos agent close {job_id}`.\n\n\
                      If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event {source}`. **`--user-content` and `--list-label` must be localized**.\n"
                 )},
-                "x402_price_mismatch" => format!(
-                    "[User decision relay] source_event=`x402_price_mismatch`, user's verbatim reply: `{reply}`\n\n\
-                     The push was an Accept/Reject choice (x402 endpoint price differs from the registered fee). **Semantic mapping** — decide:\n\n\
-                     \x20\x20• **Accept** — typical intents: A / 选A / `accept` / `接受` / `同意` / `agree` / yes / OK.\n\
-                     \x20\x20\x20\x20Read `endpoint`, `amountHuman`, `tokenSymbol`, `acceptsJson` from the `[PRICE_CONTEXT]` block in the `--llm-content` of the pending decision.\n\
-                     \x20\x20\x20\x20Proceed to set-payment-mode:\n\n\
-                     \x20\x20\x20\x20Check `paymentMode` from the `[Pre-fetched task context]` or from context.\n\
-                     \x20\x20\x20\x20▸ **If paymentMode is already `3`** → skip `set-payment-mode`:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20▸ **Otherwise** → push payment mode on-chain:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol> --token-amount <amountHuman> --endpoint <endpoint>\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20**Result branch:**\n\
-                     \x20\x20\x20\x20\x20\x20- `\"alreadySet\": true` → call `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
-                     \x20\x20\x20\x20\x20\x20- `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n\n\
-                     \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`.\n\
-                     \x20\x20\x20\x20Action: `onchainos agent mark-failed {job_id} --provider <designated agentId from context>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → compose as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick` (**localize all footer keywords**); if empty → push via `--source-event no_asp_found`.\n\n\
-                     If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event x402_price_mismatch`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=accept this price  B=reject and switch ASP\".\n"
-                ),
-                "x402_input_required" => format!(
-                    "[User decision relay] source_event=`x402_input_required`, user's verbatim reply: `{reply}`\n\n\
-                     The user was shown the x402 inputRequired field form (pre-filled from serviceParams + blanks for user input). **Semantic mapping** — decide:\n\n\
-                     \x20\x20• **Confirm** — typical intents: A / 选A / `confirm` / `确认` / `ok` / `yes` / `好` / `可以`. Use the pre-filled values as-is.\n\
-                     \x20\x20• **Provide/modify values** — user typed field values or corrections (e.g. `address: 0x123...`, `B` + new values). Parse the reply, update the fields.\n\n\
-                     **Execution flow (follow in strict order):**\n\n\
-                     **Step 1 — Parse the user's reply and assemble the `--body` JSON:**\n\
-                     \x20\x20- If confirm → use the pre-filled values from the `[IR_CONTEXT]` block in the `--llm-content` of the pending decision.\n\
-                     \x20\x20- If user provided new/modified values → merge with pre-filled values (user input overrides).\n\
-                     \x20\x20- Assemble all field values into a flat JSON object.\n\n\
-                     **Step 2 — Validate the body via `x402-check --body`:**\n\
-                     Read `endpoint` from the `[IR_CONTEXT]` block. If missing, fallback to `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId> --format json`.\n\
-                     ```bash\n\
-                     onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id} --body '<assembled JSON from Step 1>'\n\
-                     ```\n\
-                     \x20\x20- If the re-check returns `valid: true` → extract `acceptsJson`, `amountHuman`, `tokenSymbol` and proceed to **Step 3**.\n\
-                     \x20\x20- If the re-check fails → notify the user of the validation error and re-ask via `pending-decisions-v2 request` with `--source-event x402_input_required`.\n\n\
-                     **Step 2b — Price & budget guard:**\n\
-                     Compare `amountHuman` from x402-check output against the fee and budget (check in this order — over-budget takes priority):\n\n\
-                     \x20\x201. **Over-budget**: Read `maxBudget` from the `[Pre-fetched task context]`. If it is a valid non-negative number and `amountHuman` > `maxBudget` (zero is a real cap):\n\
-                     \x20\x20\x20\x20Push an `over_budget` decision card:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event over_budget --list-label \"[Over budget <shortJobId>] budget decision\" --user-content \"<compose from template below>\"\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20`--user-content` template (translate to user's language):\n\
-                     \x20\x20\x20\x20The x402 endpoint's actual price is <amountHuman> <tokenSymbol>, which exceeds your max budget (<maxBudget>). Choose next step:\n\
-                     \x20\x20\x20\x20A. Specify another ASP — provide the agentId\n\
-                     \x20\x20\x20\x20B. Close the job\n\
-                     \x20\x20\x20\x20→ **end this turn** and wait for the user's reply.\n\n\
-                     \x20\x202. **Price-mismatch**: Read `feeAmount` from the `[IR_CONTEXT]` block. Trigger when `feeAmount` is zero and `amountHuman` is positive, or when both values are positive and `|amountHuman - feeAmount| / feeAmount > 0.01` (delta > 1%):\n\
-                     \x20\x20\x20\x20Push a `x402_ir_price_confirm` decision card:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --source-event x402_ir_price_confirm --list-label \"[x402 price <shortJobId>] price confirmation\" --user-content \"<compose from template below>\"\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20`--user-content` template (translate):\n\
-                     \x20\x20\x20\x20[Job <shortJobId>] The x402 endpoint's actual price is <amountHuman> <tokenSymbol>, which differs from the registered fee <feeAmount> <feeTokenSymbol>. Accept this price?\n\
-                     \x20\x20\x20\x20A. Accept — continue with this price\n\
-                     \x20\x20\x20\x20B. Reject — switch to another ASP\n\
-                     \x20\x20\x20\x20`--llm-content` (keep English; fill actual values):\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20[PRICE_CONTEXT] endpoint=<endpoint> amountHuman=<amountHuman> tokenSymbol=<tokenSymbol> acceptsJson=<acceptsJson> body=<assembled body JSON>\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20→ **end this turn** and wait for the user's reply.\n\n\
-                     \x20\x203. **Both pass** → proceed to **Step 3**.\n\n\
-                     **Step 3 — set-payment-mode (if needed):**\n\
-                     Check the current task's `paymentMode` from the `[Pre-fetched task context]` or from context.\n\n\
-                     \x20\x20▸ **If paymentMode is already `3` (x402)** → skip `set-payment-mode` and call `next-action` immediately:\n\
-                     \x20\x20```bash\n\
-                     \x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
-                     \x20\x20```\n\n\
-                     \x20\x20▸ **Otherwise** → push payment mode on-chain:\n\
-                     \x20\x20```bash\n\
-                     \x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol from Step 2> --token-amount <amountHuman from Step 2> --endpoint <endpoint>\n\
-                     \x20\x20```\n\
-                     \x20\x20**Result branch:**\n\
-                     \x20\x20\x20\x20- Output contains `\"alreadySet\": true` → call `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}' ` immediately.\n\
-                     \x20\x20\x20\x20- Output contains `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n\n\
-                     **Remember the assembled `--body` JSON** — you must pass it to `task-402-pay` in the `job_payment_mode_changed` turn.\n"
-                ),
-                "x402_ir_price_confirm" => format!(
-                    "[User decision relay] source_event=`x402_ir_price_confirm`, user's verbatim reply: `{reply}`\n\n\
-                     The user was shown a price-mismatch warning after filling x402 inputRequired fields. **Semantic mapping:**\n\n\
-                     \x20\x20• **Accept** — typical intents: A / 选A / `accept` / `接受` / yes / OK.\n\
-                     \x20\x20\x20\x20Read `endpoint`, `amountHuman`, `tokenSymbol`, `acceptsJson`, `body` from the `[PRICE_CONTEXT]` block in the `--llm-content` of the pending decision.\n\
-                     \x20\x20\x20\x20Proceed to set-payment-mode:\n\n\
-                     \x20\x20\x20\x20Check `paymentMode` from the `[Pre-fetched task context]` or from context.\n\
-                     \x20\x20\x20\x20▸ **If paymentMode is already `3`** → skip `set-payment-mode`:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20▸ **Otherwise** → push payment mode on-chain:\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <tokenSymbol> --token-amount <amountHuman> --endpoint <endpoint>\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20**Result branch:**\n\
-                     \x20\x20\x20\x20\x20\x20- `\"alreadySet\": true` → call `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_payment_mode_changed\",\"jobId\":\"{job_id}\",\"paymentMode\":3}}'` immediately.\n\
-                     \x20\x20\x20\x20\x20\x20- `\"confirming\": true` → **end this turn** and wait for `job_payment_mode_changed`.\n\n\
-                     \x20\x20\x20\x20**Remember the `body` from PRICE_CONTEXT** — pass it to `task-402-pay --body` in the `job_payment_mode_changed` turn.\n\n\
-                     \x20\x20• **Reject** — typical intents: B / 选B / `reject` / `拒绝` / no / `换`.\n\
-                     \x20\x20\x20\x20Action: `onchainos agent mark-failed {job_id} --provider <designated agentId from context>` then `onchainos agent asp-match --job-id {job_id}` to fetch alternatives; if list non-empty → compose as `--user-content` for `pending-decisions-v2 request --source-event asp_match_pick` (**localize all footer keywords**); if empty → push via `--source-event no_asp_found`.\n\n\
-                     If ambiguous: re-ask via `pending-decisions-v2 request` with `--source-event x402_ir_price_confirm`. **`--user-content` and `--list-label` must be localized**. Reference (English): \"I didn't catch your reply, please clarify: A=accept this price  B=reject and switch ASP\".\n"
-                ),
-                "x402_replay_input" => format!(
-                    "[User decision relay] source_event=`x402_replay_input`, user's verbatim reply: `{reply}`\n\n\
-                     The user was asked to provide business parameters for an x402 endpoint that already accepted payment but could not deliver without a request body.\n\n\
-                     **Execution flow (follow in strict order):**\n\n\
-                     **Step 1 — Parse the user's reply and assemble the `--body` JSON:**\n\
-                     \x20\x20Read the `[REPLAY_CONTEXT]` block from the `--llm-content` of the pending decision.\n\
-                     \x20\x20Extract field requirements from `requiredFields`.\n\
-                     \x20\x20Map the user's reply values to the field names → assemble a flat JSON object.\n\n\
-                     **Step 2 — Re-run task-402-pay with `--body`:**\n\
-                     Read `endpoint`, `providerAgentId`, `acceptsJson`, `feeTokenSymbol`, `feeAmount` from the `[REPLAY_CONTEXT]` block.\n\
-                     ```bash\n\
-                     onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint> --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --body '<assembled JSON from Step 1>' --force\n\
-                     ```\n\
-                     `task-402-pay` will re-sign (new EIP-3009 proof) and skip direct/accept (already accepted on-chain). The endpoint replay now includes the body.\n\n\
-                     **Step 3 — Branch on result:**\n\n\
-                     \x20\x20▸ replaySuccess=true:\n\
-                     \x20\x20\x20\x20**3a** — Notify user with the FULL deliverable via `onchainos agent user-notify`:\n\
-                     \x20\x20\x20\x20Localize. Copy `replayBodyDisplay` verbatim into the notification (do NOT summarize or truncate).\n\
-                     \x20\x20\x20\x20**3b** — Run `complete` immediately (the `job_accepted` event already passed):\n\
-                     \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20onchainos agent complete {job_id}\n\
-                     \x20\x20\x20\x20```\n\
-                     \x20\x20\x20\x20→ **End this turn.** Wait for `job_completed` event.\n\n\
-                     \x20\x20▸ replaySuccess=false:\n\
-                     \x20\x20\x20\x20Re-push `pending-decisions-v2 request` with `--source-event x402_replay_input`, include the validation error in `--user-content` so the user can correct their input.\n\
-                     \x20\x20\x20\x20→ **End this turn.** Wait for user's corrected reply.\n"
-                ),
                 "set_asp_params" => {
                     // CLI mode (Claude Code / Codex): drop the passive "Waiting for ASP to accept"
                     // phrase — it reads as a turn-end cue to LLM-driven watch loops and suppresses re-arm.
@@ -974,7 +830,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```\n\
                      Then send SKILL_PREFETCH:\n\
                      ```bash\n\
-                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\"\n\
+                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\" --json\n\
                      ```\n\
                      5. **Upload pending attachments (if any):**\n\
                      ```bash\n\
@@ -982,7 +838,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```\n\
                      If non-empty JSON array, iterate each file:\n\
                      a) `okx-a2a file upload --file-path <path> --agent-id {agent_id} --job-id {job_id}` → obtain fileKey + decryption-metadata.\n\
-                     b) `okx-a2a xmtp-send --job-id {job_id} --to-agent-id <providerAgentId>` with attachment content (all fields verbatim from upload output).\n\
+                     b) `okx-a2a session send --job-id {job_id} --to-agent-id <providerAgentId> --content \"<attachment content; all upload fields verbatim>\" --json`.\n\
                      ⚠️ Failure MUST NOT block — skip failed files.\n\
                      If empty (`[]`), skip.\n\
                      6. On failure → relay the error to the user and re-ask via `pending-decisions-v2 request` with `--source-event set_asp_params`.\n\
@@ -1006,10 +862,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
     };
 
     // Minimal-output short-circuit: applies to events whose body is self-contained
-    // and does NOT call any of the IRON-RULE-governed commands (okx-a2a xmtp-send /
+    // and does NOT call any of the IRON-RULE-governed commands (okx-a2a session send /
     // okx-a2a session status / sessions_spawn / pending-decisions-v2 request).
-    // Skip every preamble (the IRON RULEs do not apply) and version_prefix
-    // (no `okx-a2a xmtp-send` call to validate).
+    // Skip every preamble (the IRON RULEs do not apply).
     let use_cli_minimal = matches!(
         event_str,
         "job_created" |
@@ -1021,7 +876,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             // Subscription notifications are self-contained display bodies (they call only
             // `user-notify` / `session-cleanup`, no IRON-RULE commands), so skip the shared
             // preamble + xmtp version prefix.
-            "sub_created" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
+            "sub_open" | "sub_created" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
             "sub_trial_into_active" | "sub_renew" | "sub_expire_warn" |
             "sub_complete_notify" | "sub_close_notify" | "sub_failed_notify" |
             "sub_reject_refund_notify"
@@ -1031,11 +886,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
     } else {
         format!("{preamble_slim}{prefetched_block}{body}")
     };
-    let result = if use_cli_minimal {
-        core
-    } else {
-        format!("{version_prefix}{core}")
-    };
+    let result = core;
     if DEBUG_LOG {
         let preview: String = result.chars().take(200).collect();
         eprintln!(
@@ -1119,7 +970,8 @@ mod tests {
     }
 
     // Every user-side subscription event renders a display notification, never a decision.
-    const USER_NON_TERMINAL: [&str; 5] = [
+    const USER_NON_TERMINAL: [&str; 6] = [
+        "sub_open",
         "sub_created",
         "sub_trial_into_active",
         "sub_renew",
@@ -1205,8 +1057,7 @@ mod tests {
         // The relay carries deliveryId, so the receiving Job Session can load
         // the exact immutable context even after the pending pointer is cleared.
         consent::clear_pending_signal(JOB_ID);
-        let rendered =
-            persisted_autotrade_delivery_context(JOB_ID, Some("msg:signal-1"));
+        let rendered = persisted_autotrade_delivery_context(JOB_ID, Some("msg:signal-1"));
         assert!(rendered.contains("[Persisted delivery context"));
         assert!(!rendered.contains("originSessionKey"));
         assert!(rendered.contains("\"deliveryId\":\"msg:signal-1\""));
@@ -1356,23 +1207,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn x402_input_recheck_treats_zero_as_a_real_budget_and_fee() {
-        let out = run(
-            "user_decision_x402_input_required",
-            json!({
-                "event": "user_decision_x402_input_required",
-                "jobId": JOB_ID,
-                "data": "A"
-            }),
-        )
-        .await;
-
-        assert!(out.contains("zero is a real cap"));
-        assert!(out.contains("`feeAmount` is zero"));
-        assert!(!out.contains("If `maxBudget` > 0 AND"));
-    }
-
-    #[tokio::test]
     async fn subscription_events_render_notify_and_never_decide() {
         for evt in USER_NON_TERMINAL.iter().chain(USER_TERMINAL.iter()) {
             let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
@@ -1459,6 +1293,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sub_open_is_created_and_waits_for_asp() {
+        let out = run(
+            "sub_open",
+            json!({
+                "event": "sub_open", "jobId": JOB_ID, "trialType": 0,
+                "providerAgentId": "9967", "tokenSymbol": "USDT", "tokenAmount": "12.34"
+            }),
+        )
+        .await;
+        assert!(
+            out.contains("[Subscription Created]"),
+            "created copy: {out}"
+        );
+        assert!(
+            out.contains("waiting for the ASP to accept"),
+            "waiting state: {out}"
+        );
+        assert!(
+            out.contains("12.34 USDT has been funded"),
+            "funding copy: {out}"
+        );
+        assert!(
+            !out.contains("status: Active"),
+            "must not claim active: {out}"
+        );
+    }
+
+    #[tokio::test]
     async fn sub_created_trial_branch_renders_trial_started_not_first_charge() {
         let out = run(
             "sub_created",
@@ -1470,11 +1332,11 @@ mod tests {
         )
         .await;
         assert!(
-            out.contains("[Trial Started]"),
+            out.contains("[Trial Subscription Accepted]"),
             "trialType=1 → trial copy: {out}"
         );
         assert!(
-            !out.contains("First charge") && !out.contains("[Subscribed]"),
+            !out.contains("First charge") && !out.contains("[Subscription Accepted]"),
             "trial order must not claim a completed first charge: {out}"
         );
 
@@ -1487,7 +1349,7 @@ mod tests {
         ] {
             let out = run("sub_created", msg).await;
             assert!(
-                out.contains("[Subscribed]"),
+                out.contains("[Subscription Accepted]"),
                 "paid path keeps Sub-1-2 copy: {out}"
             );
             assert!(

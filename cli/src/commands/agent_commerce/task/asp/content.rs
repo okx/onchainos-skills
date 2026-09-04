@@ -7,14 +7,14 @@
 //!    status enums (`created`/`accepted` etc.) / CLI flags (`--*`) /
 //!    skill names (`okx-ai` etc.) /
 //!    status field names (`jobStatus`/`paymentMode`) are all banned.
-//!    **The string literals in this file are English** (escrow/x402, review window
+//!    **The string literals in this file are English** (escrow, review window
 //!    expired, task completed, etc.) and serve as the source-of-truth that the sub
 //!    agent localizes via LOCALIZATION_PREFIX — English users see them as-is,
 //!    non-English users see equivalents produced by the sub agent (e.g. Chinese
-//!    users see the equivalent of "escrow/x402, review window expired, task completed"). The no-technical-jargon
+//!    users see the equivalent of "escrow, review window expired, task completed"). The no-technical-jargon
 //!    rule applies to all languages, not just English.
 //!
-//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
+//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a session send`
 //!    to the User Agent's sub agent. Naming suffix: `_to_buyer`.
 //!    Rule: protocol literals are allowed (`[intent:*]` / `fileKey`/`digest` etc.);
 //!    **do NOT instruct the peer to run CLIs** — the peer has its own flow.rs and
@@ -326,7 +326,7 @@ pub fn deliver_file_to_user(job_id: &str) -> String {
     )
 }
 
-/// Build the actual text-deliver XMTP message with real content (used by deliver.rs).
+/// Build the actual text-deliver A2A session message with real content (used by deliver.rs).
 pub fn build_text_deliver_message(job_id: &str, text: &str) -> String {
     format!(
         "jobId: {job_id}\n\
@@ -338,7 +338,7 @@ pub fn build_text_deliver_message(job_id: &str, text: &str) -> String {
     )
 }
 
-/// Build the actual file-deliver XMTP message with real upload metadata (used by deliver.rs).
+/// Build the actual file-deliver A2A session message with real upload metadata (used by deliver.rs).
 pub fn build_file_deliver_message(
     job_id: &str,
     upload: &crate::commands::agent_commerce::task::common::okx_a2a::FileUploadResult,

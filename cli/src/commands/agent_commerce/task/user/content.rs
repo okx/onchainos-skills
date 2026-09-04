@@ -13,12 +13,12 @@
 //!    that preserves all field labels, data values, and structure (see `localization_prefix`
 //!    in flow.rs for the strict rules).
 //!    Terminology: Job (not Task), User Agent, ASP (Agent Service Provider),
-//!    escrow / x402 lowercase, agentId in camelCase for data fields.
+//!    escrow lowercase, agentId in camelCase for data fields.
 //!    Label format: `[Label]` bracket prefix (e.g. `[Job Accepted]`).
 //!    Decision prompts (❓) carry the `[Job {short_id} — you are the User Agent]` prefix.
 //!    User reply instructions use descriptive phrasing (naturally translatable by the sub agent).
 //!
-//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
+//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a session send`
 //!    to the provider sub agent. Naming suffix: `_to_seller`.
 //!    Rule: may contain protocol literals (`[intent:*]` etc.);
 //!    **never instruct the peer to call CLI** (the peer has its own flow.rs and decides based on chain events;
@@ -116,16 +116,6 @@ pub fn job_accepted_escrow_user_notify(job_id: &str, _title: &str) -> String {
     )
 }
 
-/// `Event::JobAccepted` Branch B (x402) — user notification when endpoint replay failed (B-2-4).
-pub fn job_accepted_x402_replay_fail_user_notify(job_id: &str) -> String {
-    format!(
-        "[x402 Replay Failed] Job `{job_id}` was accepted but the endpoint replay failed.\n\
-         HTTP status: <replayStatus>\n\
-         Error: <replayBody>\n\
-         The job is now in `accepted` status. Please give a new instruction; the agent will not auto-retry."
-    )
-}
-
 // ── Event::JobRejected ─────────────────────────────────────────────
 
 /// `Event::JobRejected` Step 1 — user notification that the rejection is confirmed on-chain.
@@ -158,17 +148,6 @@ pub fn job_completed_escrow_user_notify(
         "[Job Completed] {title} (`{job_id}`) — approved by the User Agent; funds released to the ASP.\n\
          - Spent: {token_amount} {token_symbol}\n\
          - Payment: escrow"
-    )
-}
-
-/// `Event::JobCompleted` Branch B (x402) — final summary notification (B-4-3).
-pub fn job_completed_x402_user_notify(job_id: &str, title: &str) -> String {
-    format!(
-        "[x402 Job Completed] {title} (`{job_id}`) — all steps complete.\n\
-         - Spent: <tokenAmount> <tokenSymbol>\n\
-         - Payment: x402\n\
-         - Deliverable saved to: <deliverableSavedPath from task-402-pay output; if not in context, omit this line>\n\
-         - Deliverable summary: <one-line summary of the replayBodyDisplay content from task-402-pay; if not in context, omit this line>"
     )
 }
 
@@ -253,14 +232,6 @@ pub fn payment_mode_escrow_user_notify(job_id: &str, title: &str) -> String {
     format!("[Payment Mode Set] {title} (`{job_id}`) — payment mode updated successfully; ASP <providerName> (<providerAgentId>) is accepting...")
 }
 
-/// x402 set-payment-mode confirmed on-chain; transition notification before task-402-pay.
-pub fn x402_paying_user_notify(job_id: &str, title: &str) -> String {
-    format!(
-        "Payment in progress —【{title}】(`{job_id}`) — x402 agreement reached with the ASP; \
-         fee: <tokenAmount> <tokenSymbol>. Paying and fetching the deliverable..."
-    )
-}
-
 // ── Pseudo events (close) ──────────────────────────────────────────
 
 /// User notification after closing a job (B-7-11).
@@ -339,38 +310,6 @@ pub fn escalation_protocol_misread_notify(job_id: &str) -> String {
     format!("[⚠️ Protocol Misalignment] Job `{job_id}` — the remote agent repeatedly sends messages that do not match the current flow. Replies have stopped. Please intervene manually to continue.")
 }
 
-// ── x402 replay result (job_payment_mode_changed) ────────────────
-
-/// x402 replay success — deliverable received, awaiting on-chain confirmation.
-pub fn x402_replay_success_user_notify(job_id: &str) -> String {
-    let trailing = if is_cli_mode() {
-        "\n         On-chain confirmation is in progress. The job will auto-complete and a final completion notice will follow shortly."
-    } else {
-        "\n         Waiting for on-chain confirmation. The job will auto-complete once confirmed."
-    };
-    format!(
-        "[x402 Deliverable Received] Job `{job_id}` endpoint replayed successfully.\n\
-         ASP agentId: <providerAgentId>\n\
-         Amount: <tokenAmount> <tokenSymbol>\n\n\
-         If CLI output contains `deliverableSavedPath`:\n\
-         \x20\x20Deliverable saved to: <deliverableSavedPath>\n\n\
-         If CLI output does NOT contain `deliverableSavedPath` (save failed):\n\
-         \x20\x20---Deliverable---\n\
-         \x20\x20<replayBodyDisplay in full>\n\
-         \x20\x20---End of deliverable---{trailing}"
-    )
-}
-
-// ── complete failure (job_accepted x402 branch) ──────────────────
-
-/// x402 complete command failed — notify user with retry command.
-pub fn complete_failed_user_notify(job_id: &str) -> String {
-    format!(
-        "[⚠️ Complete Failed] Job `{job_id}` — the completion step failed. \
-         Please retry later or reply with a new instruction."
-    )
-}
-
 // ── create_task notification ─────────────────────────────────────
 
 /// create_task success — with designated provider.
@@ -386,7 +325,7 @@ pub fn create_task_designated_user_notify() -> String {
 pub fn escalation_cli_failed_notify(job_id: &str) -> String {
     format!(
         "[⚠️ Operation Failed] Job `{job_id}`\n\
-         - Action: <e.g. match ASPs / submit review / pay via x402>\n\
+         - Action: <e.g. match ASPs / submit review / escrow payment>\n\
          - Error: <one-sentence summary of stderr / error field>\n\
          - Current status: <describe in plain language, e.g. waiting for provider / under review / payment pending>\n\
          \n\
@@ -424,7 +363,52 @@ pub(crate) fn fmt_epoch(ts: Option<i64>) -> Option<String> {
         .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
 }
 
-/// `sub_created` — subscription confirmed, first charge taken (user).
+/// `sub_open` — subscription create-and-fund confirmed, awaiting ASP action.
+pub fn sub_open_user_notify(
+    job_id: &str,
+    service_name: &str,
+    token_amount: Option<&str>,
+    token_symbol: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "[Subscription Created] Job {job_id} (subscribing to {service_name}) is on-chain and waiting for the ASP to accept."
+    );
+    match (token_amount, token_symbol) {
+        (Some(amount), Some(symbol)) => out.push_str(&format!(
+            " {amount} {symbol} has been funded for the subscription but the subscription is not active yet."
+        )),
+        (Some(amount), None) => out.push_str(&format!(
+            " {amount} has been funded for the subscription but the subscription is not active yet."
+        )),
+        _ => out.push_str(" The subscription is not active yet."),
+    }
+    out
+}
+
+/// Trial variant of `sub_open`; the trial starts only after ASP acceptance.
+pub fn sub_open_trial_user_notify(
+    job_id: &str,
+    service_name: &str,
+    token_amount: Option<&str>,
+    token_symbol: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "[Trial Subscription Created] Job {job_id} (subscribing to {service_name}) is on-chain and waiting for the ASP to accept. The free trial has not started yet."
+    );
+    if let Some(amount) = token_amount {
+        match token_symbol {
+            Some(symbol) => out.push_str(&format!(
+                " If accepted, {amount} {symbol} is the paid-period price after the trial."
+            )),
+            None => out.push_str(&format!(
+                " If accepted, {amount} is the paid-period price after the trial."
+            )),
+        }
+    }
+    out
+}
+
+/// `sub_created` — ASP accepted; subscription is active and service starts.
 pub fn sub_created_user_notify(
     job_id: &str,
     service_name: &str,
@@ -435,7 +419,7 @@ pub fn sub_created_user_notify(
     auto_renew: bool,
 ) -> String {
     let mut out = format!(
-        "[Subscribed] Job {job_id} (subscribing to {service_name}) is on-chain, status: Active"
+        "[Subscription Accepted] The ASP accepted Job {job_id} (subscribing to {service_name}); the subscription is Active and service has started"
     );
     if let (Some(s), Some(e)) = (fmt_epoch(period_start), fmt_epoch(period_end)) {
         out.push_str(&format!(", current period {s}–{e}"));
@@ -459,7 +443,7 @@ pub fn sub_created_user_notify(
     out
 }
 
-/// `sub_created` with `trialType=1` — free trial started, nothing charged yet (user).
+/// `sub_created` with `trialType=1` — ASP accepted and the free trial started.
 /// Renders the trial-start copy: the trial window is charge-free, so the
 /// immediate-first-charge copy from `sub_created_user_notify` must never be shown
 /// for a trial order (the real first charge is announced by `sub_trial_into_active`).
@@ -471,7 +455,9 @@ pub fn sub_created_trial_user_notify(
     trial_start: Option<i64>,
     trial_end: Option<i64>,
 ) -> String {
-    let mut out = String::from("[Trial Started] Your free trial is active");
+    let mut out = String::from(
+        "[Trial Subscription Accepted] The ASP accepted the subscription; your free trial is active",
+    );
     if let (Some(s), Some(e)) = (fmt_epoch(trial_start), fmt_epoch(trial_end)) {
         out.push_str(&format!(" ({s}\u{2013}{e})"));
     }
@@ -728,9 +714,7 @@ pub fn sub_close_notify_user_notify(
     if let (Some(s), Some(e)) = (fmt_epoch(period_start), fmt_epoch(period_end)) {
         out.push_str(&format!("'s current period ({s}–{e})"));
     }
-    out.push_str(&format!(
-        " has ended. Job {job_id} status: Closed."
-    ));
+    out.push_str(&format!(" has ended. Job {job_id} status: Closed."));
     out
 }
 
@@ -924,10 +908,14 @@ mod tests {
             Some(1_700_500_000),
             true,
         );
-        assert!(out.starts_with("[Subscribed]"), "canonical prefix: {out}");
+        assert!(
+            out.starts_with("[Subscription Accepted]"),
+            "canonical prefix: {out}"
+        );
+        assert!(out.contains("The ASP accepted"));
         assert!(out.contains("Job job-1"));
         assert!(out.contains("subscribing to My Sub"));
-        assert!(out.contains("status: Active"));
+        assert!(out.contains("subscription is Active and service has started"));
         assert!(out.contains("current period"));
         assert!(
             out.contains("First charge of 1.500000 USDT completed"),
@@ -938,6 +926,26 @@ mod tests {
             out.contains("next charge date:"),
             "nextChargeAt = subEndTime → clause present: {out}"
         );
+    }
+
+    #[test]
+    fn sub_open_paid_is_created_but_not_active() {
+        let out = sub_open_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
+        assert!(out.starts_with("[Subscription Created]"));
+        assert!(out.contains("waiting for the ASP to accept"));
+        assert!(out.contains("1.5 USDT has been funded"));
+        assert!(out.contains("not active yet"));
+        assert!(!out.contains("First charge"));
+    }
+
+    #[test]
+    fn sub_open_trial_does_not_claim_trial_started() {
+        let out = sub_open_trial_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
+        assert!(out.starts_with("[Trial Subscription Created]"));
+        assert!(out.contains("waiting for the ASP to accept"));
+        assert!(out.contains("free trial has not started yet"));
+        assert!(out.contains("1.5 USDT is the paid-period price"));
+        assert!(!out.contains("Trial Started"));
     }
 
     #[test]
@@ -992,9 +1000,13 @@ mod tests {
             Some(1_700_000_000),
             Some(1_700_500_000),
         );
-        assert!(out.starts_with("[Trial Started]"), "trial prefix: {out}");
         assert!(
-            out.contains("Your free trial is active ("),
+            out.starts_with("[Trial Subscription Accepted]"),
+            "trial prefix: {out}"
+        );
+        assert!(out.contains("The ASP accepted"));
+        assert!(
+            out.contains("your free trial is active ("),
             "date range rendered: {out}"
         );
         assert!(
@@ -1015,7 +1027,8 @@ mod tests {
     fn sub_created_trial_degrades_without_amount_or_dates() {
         let bare = sub_created_trial_user_notify(None, None, None, None);
         assert_eq!(
-            bare, "[Trial Started] Your free trial is active.",
+            bare,
+            "[Trial Subscription Accepted] The ASP accepted the subscription; your free trial is active.",
             "no amount → whole conversion sentence omitted; no dates → no range"
         );
         let no_dates = sub_created_trial_user_notify(Some("1.5"), None, None, None);

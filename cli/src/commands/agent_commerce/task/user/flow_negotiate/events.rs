@@ -4,90 +4,23 @@ use super::super::flow::FlowContext;
 
 pub(crate) fn job_payment_mode_changed(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
-    let agent_id = ctx.agent_id;
     let title_display = ctx.title_display;
-    let title_query_hint = ctx.title_query_hint;
-    let pm = ctx.payment_mode;
 
-    let short_id = if job_id.len() >= 8 { &job_id[..8] } else { job_id };
-
-    let mut out = format!(
-    "[Current state] job_payment_mode_changed (payment-mode switch is on-chain)\n\
-     [Role] User Agent\n\n\
-     🛑 **You MUST notify the user of the payment-mode change.**\n\
-     ❌ Do NOT call set-payment-mode again / apply / confirm-accept.\n\n\
-     [Your next actions]\n\n\
-     {title_query_hint}");
-
-    // ── escrow branch ──
-    if pm != Some(3) {
-        let payment_escrow_notify = super::super::content::payment_mode_escrow_user_notify(job_id, title_display);
-        out.push_str(&format!("\
-     ━━━━━━━━━ escrow (paymentMode=1) ━━━━━━━━━\n\n\
-     **Step 2 - notify the user via `onchainos agent user-notify`**:\n\
-     \x20\x20```bash\n\
-     \x20\x20onchainos agent user-notify --content \"<translated content from the template below>\"\n\
-     \x20\x20```\n\
-     \x20\x20content template: {payment_escrow_notify}\n\n\
-     -> **end this turn** and wait for provider_applied.\n\n"));
+    if ctx.payment_mode == Some(3) {
+        return "[Legacy A2MCP Task payment] This path was removed. Do not sign, replay, or continue this Task flow; restart from an upstream invoke_a2mcp event.\n"
+            .to_string();
     }
 
-    // ── x402 branch ──
-    if pm != Some(1) {
-        let x402_paying = super::super::content::x402_paying_user_notify(job_id, title_display);
-        let x402_replay_ok = super::super::content::x402_replay_success_user_notify(job_id);
-        let cmd_replay_input = format!("onchainos agent pending-decisions-v2 request --job-id {job_id} --role user --agent-id {agent_id} --user-content \"<compose from template below>\" --list-label \"[x402 replay input {short_id}] field input\" --source-event x402_replay_input");
-
-        out.push_str(&format!("\
-     ━━━━━━━━━ x402 (paymentMode=3) ━━━━━━━━━\n\n\
-     Extract endpoint, acceptsJson, feeTokenSymbol, feeAmount, providerAgentId from the previous turn.\n\
-     ⚠️ **If any parameter is missing** (context compaction): run `onchainos agent common context {job_id} --role user --agent-id {agent_id}` for providerAgentId, then `onchainos agent asp-match --job-id {job_id} --provider-agent-id <providerAgentId> --format json` for endpoint, then `onchainos agent x402-check --endpoint <endpoint> --agent-id {agent_id}` for acceptsJson/feeTokenSymbol/feeAmount.\n\n\
-     **Step 2 — notify payment in progress**:\n\
-     \x20\x20```bash\n\
-     \x20\x20onchainos agent user-notify --content \"<translated>\"\n\
-     \x20\x20```\n\
-     \x20\x20content template: {x402_paying}\n\n\
-     **Step 3 — sign + accept + replay (atomic):**\n\
-     ```bash\n\
-     onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint> --token-symbol <feeTokenSymbol> --token-amount <feeAmount> [--body '<serviceBody JSON>'] --force\n\
-     ```\n\
-     `--body`: pass the JSON body from `x402_input_required` confirmation if it happened; omit otherwise.\n\
-     `--force`: required — the on-chain broadcast is gated by a confirming prompt; automated flow must pass it.\n\
-     Output: {{ jobId, accepted, paymentTxHash, status, replaySuccess, replayStatus, replayBody, replayBodyDisplay, broadcast, deliverableSavedPath, txHash }}\n\
-     If `accepted=false` and `status=pending` (replay did not settle): do NOT retry blindly — surface the pending state to the user.\n\n\
-     **Step 4 — notify user with deliverable path**:\n\
-     If `deliverableSavedPath` is present → show saved path only (no preview/summary needed; user can read the local file).\n\
-     If `deliverableSavedPath` is absent (save failed) → embed full `replayBodyDisplay` so the user can still see what they paid for.\n\n\
-     ▸ replaySuccess=true:\n\
-     **Localize first** — translate the content below into the user's language before sending.\n\
-     ```bash\n\
-     onchainos agent user-notify --content \"<localized content>\"\n\
-     ```\n\
-     Content:\n\
-     \x20\x20{x402_replay_ok}\n\
-     -> **end this turn** and wait for `job_accepted`.\n\
-     🛑 When `job_accepted` arrives, call `onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"job_accepted\",\"jobId\":\"{job_id}\"}}'`.\n\
-     ❌ Do NOT re-run this turn's commands (double payment) or skip next-action (job stuck).\n\n\
-     ▸ replaySuccess=false:\n\
-     Check `replayBody` for `requiredArgs` / `fields` / `status: \"input_required\"`.\n\n\
-     \x20\x20▸▸ **Endpoint needs business parameters** → push decision card:\n\
-     \x20\x20**Localize first** — translate the `--user-content` and `--list-label` values below into the user's language before running.\n\
-     \x20\x20```bash\n\
-     \x20\x20{cmd_replay_input}\n\
-     \x20\x20```\n\
-     \x20\x20`--user-content` template:\n\
-     \x20\x20[Job {short_id}] x402 payment succeeded but the endpoint requires parameters to deliver.\n\
-     \x20\x20Already paid: <feeAmount> <feeTokenSymbol>\n\
-     \x20\x20Required: <list each field from replayBody>\n\
-     \x20\x20Please provide the values.\n\
-     \x20\x20`--llm-content`: `[REPLAY_CONTEXT] endpoint=<> providerAgentId=<> acceptsJson=<> feeTokenSymbol=<> feeAmount=<> requiredFields: <copy from replayBody>`\n\
-     \x20\x20-> **end this turn**. `job_accepted` handler will detect the pending decision and skip its notification.\n\n\
-     \x20\x20▸▸ **Otherwise** (generic failure) → do NOT notify. **end this turn** and wait for `job_accepted`.\n"));
-    }
-
-    out
+    let payment_escrow_notify =
+        super::super::content::payment_mode_escrow_user_notify(job_id, title_display);
+    format!(
+        "[Current state] job_payment_mode_changed (A2A escrow is on-chain)\n\
+         [Role] User Agent\n\n\
+         Notify the user via `onchainos agent user-notify`, using this localized template:\n\
+         {payment_escrow_notify}\n\n\
+         End this turn and wait for provider_applied.\n"
+    )
 }
-
 /// Negotiation reply handler — natural-language exchange, max 2 rounds.
 ///
 /// Round counting: the LLM checks how many user replies have already been
@@ -161,7 +94,7 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
         "{task_block}\
          [Negotiation] negotiate_reply (ASP sent a natural-language message)\n\
          [Role] User (User)\n\n\
-         **2-round limit**: count how many user replies (your `okx-a2a xmtp-send` calls) have already been sent in this sub session's conversation history.\n\
+         **2-round limit**: count how many user replies (your `okx-a2a session send` calls) have already been sent in this sub session's conversation history.\n\
          - Rounds sent < 2 → reply normally (see below).\n\
          - Rounds sent ≥ 2 → negotiation exceeded the 2-round limit. **Do NOT reply.** Jump to **[Over-limit]** below.\n\n\
          **Reply about**: scope, requirements, deliverable format, timeline, clarifying questions.\n\n\
@@ -170,11 +103,11 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
          \x20\x20❌ `set-payment-mode` / `confirm-accept` / `reject-apply` / `apply` — no on-chain action belongs in this event.\n\n\
          [Normal reply — single CLI call, then end the turn]\n\n\
          ```bash\n\
-         okx-a2a xmtp-send \\\n\
+         okx-a2a session send \\\n\
          \x20\x20--job-id {job_id} \\\n\
          \x20\x20--to-agent-id {provider_agent_id} \\\n\
-         \x20\x20--message '<natural-language reply, {reply_hint}>' \\\n\
-         \x20\x20--no-wait\n\
+         \x20\x20--content '<natural-language reply, {reply_hint}>' \\\n\
+         \x20\x20--json\n\
          ```\n\n\
          ⏱ 5-minute timeout: if the ASP does not reply within 5 minutes, treat as over-limit (see below).\n\n\
          {over_limit_section}",
@@ -197,11 +130,13 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>) -> String {
 
     // Step 0 — reset the rejected ASP binding on the task record (empty body).
     let mut client = TaskApiClient::new();
-    let reset_result = client.post_with_identity(
-        &client.endpoint(job_id, "reset/asp"),
-        &serde_json::json!({}),
-        agent_id,
-    ).await;
+    let reset_result = client
+        .post_with_identity(
+            &client.endpoint(job_id, "reset/asp"),
+            &serde_json::json!({}),
+            agent_id,
+        )
+        .await;
 
     if let Err(e) = reset_result {
         return format!(
@@ -216,12 +151,16 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>) -> String {
          B. Designate a specific ASP by agentId\n\
          C. Close the task"
     );
-    let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
-        job_id, "user", agent_id, None,
-        &user_content,
-        &format!("[Reject {short_id}] next-step decision"),
-        "job_provider_reject",
-    );
+    let request_block =
+        crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
+            job_id,
+            "user",
+            agent_id,
+            None,
+            &user_content,
+            &format!("[Reject {short_id}] next-step decision"),
+            "job_provider_reject",
+        );
 
     format!(
     "[job_provider_reject] ✅ ASP binding reset (reset/asp) completed in-process.\n\n\
@@ -231,4 +170,3 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>) -> String {
      {request_block}\n"
     )
 }
-

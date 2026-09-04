@@ -1,3 +1,4 @@
+pub mod a2mcp_probe;
 pub mod chat;
 pub mod identity;
 pub mod task;
@@ -13,6 +14,13 @@ use task::common::DEBUG_LOG;
 /// Shared `agent` namespace for identity + task-system commands.
 #[derive(Subcommand)]
 pub enum AgentCommand {
+    /// Stateless OKX.AI A2MCP direct invocation (probe / balance refresh / prepare).
+    #[command(name = "a2mcp-probe")]
+    A2mcpProbe {
+        #[command(subcommand)]
+        command: a2mcp_probe::A2mcpProbeCommand,
+    },
+
     // ── Identity ────────────────────────────────────────────────────────────
     /// Register a new Agent identity
     Create(identity::CreateArgs),
@@ -89,42 +97,36 @@ pub enum AgentCommand {
     #[command(name = "create-task")]
     CreateTask {
         #[arg(long)]
+        title: String,
+        #[arg(long)]
         description: String,
-        #[arg(long)]
-        budget: f64,
-        #[arg(long = "max-budget")]
-        max_budget: f64,
-        #[arg(long)]
-        currency: String,
-        #[arg(long)]
-        title: Option<String>,
-        /// Specified provider agentId (required; skip asp-match, negotiate directly with this provider or x402 accept)
-        #[arg(long)]
-        provider: String,
-        /// Designated service endpoint (persisted for multi-service providers)
-        #[arg(long)]
-        endpoint: Option<String>,
+        #[arg(long = "description-summary")]
+        description_summary: Option<String>,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
+        #[arg(long = "payment-token-symbol")]
+        payment_token_symbol: String,
+        #[arg(long = "payment-token-amount")]
+        payment_token_amount: String,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
-        /// Payment mode to set at creation time (required; escrow / x402).
-        #[arg(long = "payment-mode")]
-        payment_mode: String,
-        /// Service ID from asp/match response (required)
         #[arg(long = "service-id")]
         service_id: String,
-        /// Service input parameters (natural language string)
-        #[arg(long = "service-params")]
-        service_params: Option<String>,
-        /// Service token contract address
+        #[arg(long = "service-params", default_value = "{}")]
+        service_params: String,
         #[arg(long = "service-token-address")]
-        service_token_address: Option<String>,
-        /// Service price (from asp/match feeAmount)
+        service_token_address: String,
         #[arg(long = "service-token-amount")]
-        service_token_amount: Option<String>,
-        /// Accepted for compatibility but ignored — user identity is auto-resolved.
-        #[arg(long = "agentId", alias = "agent-id", hide = true)]
-        _agent_id: Option<String>,
+        service_token_amount: String,
+        #[arg(long = "category-code")]
+        category_code: Option<String>,
+        #[arg(long = "min-credit-score")]
+        min_credit_score: Option<f64>,
+        #[arg(long, default_value = "private", value_parser = ["private", "public"])]
+        visibility: String,
+        #[arg(long = "chain-id", default_value_t = 196)]
+        chain_id: u64,
     },
 
     /// Create a subscription task
@@ -150,7 +152,10 @@ pub enum AgentCommand {
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
         #[arg(long = "provider-agent-id")]
-        provider_agent_id: Option<String>,
+        provider_agent_id: String,
+        /// Copy-trade subscription marker: 0=off, 1=on
+        #[arg(long = "copy-trade", default_value_t = 0, value_parser = clap::value_parser!(i32).range(0..=1))]
+        copy_trade: i32,
         /// Exact service description returned by asp-match. Only bounded
         /// asset/tool hints are persisted; the raw prose is never executed.
         #[arg(long = "service-description", default_value = "")]
@@ -203,9 +208,22 @@ pub enum AgentCommand {
         autotrade_required_fields: Vec<String>,
         #[arg(long, default_value = "")]
         format: String,
-        /// Legacy compatibility input. Create-time device selection is rejected.
-        #[arg(long = "exclude-device", hide = true)]
-        exclude_device: Option<Vec<String>>,
+    },
+
+    /// Replace the complete serviceParams during a v2 provider clarification round.
+    #[command(name = "service-param-update")]
+    ServiceParamUpdate {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long = "task-type", value_enum)]
+        task_type: task::user::service_param_update::ServiceParamTaskType,
+        #[arg(long = "request-id")]
+        request_id: String,
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
+        round: u8,
+        #[arg(long = "service-params")]
+        service_params: String,
     },
 
     /// Cancel a subscription (unified: trial cancel + close auto-renew)
@@ -436,67 +454,44 @@ pub enum AgentCommand {
         include_terminal: bool,
     },
 
+    /// List arbitration tasks visible to one User or ASP identity.
+    #[command(name = "arbitration-list")]
+    ArbitrationList {
+        /// User or ASP agentId used as the agenticId request header.
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        page: u32,
+        #[arg(long = "page-size", default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..))]
+        page_size: u32,
+    },
+
+    /// Show the current arbitration state visible to one User or ASP identity.
+    #[command(name = "arbitration-detail")]
+    ArbitrationDetail {
+        job_id: String,
+        /// User or ASP agentId used as the agenticId request header.
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
     /// Set payment mode on-chain (standalone, before confirm-accept)
     #[command(name = "set-payment-mode")]
     SetPaymentMode {
         job_id: String,
-        /// escrow / x402
+        /// Escrow only. Legacy task-based x402/A2MCP is no longer supported.
         #[arg(long = "payment-mode")]
         payment_mode: Option<String>,
         #[arg(long = "token-symbol")]
         token_symbol: Option<String>,
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
-        /// x402 service endpoint URL
-        #[arg(long)]
-        endpoint: Option<String>,
     },
 
     /// Client confirms provider and executes payment (setPaymentMode must be done first).
     /// All parameters are auto-resolved from the task detail API.
     #[command(name = "confirm-accept")]
     ConfirmAccept { job_id: String },
-
-    /// x402 Phase 2: x402_pay signing + direct/accept + endpoint replay
-    #[command(name = "task-402-pay")]
-    Task402Pay {
-        job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        /// JSON accepts array from the HTTP 402 response
-        #[arg(long)]
-        accepts: String,
-        /// x402 provider endpoint URL (for replay after signing)
-        #[arg(long)]
-        endpoint: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        /// Payer address (optional)
-        #[arg(long)]
-        from: Option<String>,
-        /// JSON business body to POST during replay (for endpoints that require business parameters)
-        #[arg(long)]
-        body: Option<String>,
-        /// Bypass the confirming gate and broadcast the on-chain accept immediately (FR-7.3)
-        #[arg(long, default_value_t = false)]
-        force: bool,
-    },
-
-    /// Validate an x402 endpoint and extract pricing info
-    #[command(name = "x402-check")]
-    X402Check {
-        /// x402 provider endpoint URL
-        #[arg(long)]
-        endpoint: String,
-        /// User agent ID (used for auth on token detail queries)
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-        /// JSON business body to POST (for endpoints that require business parameters to return 402)
-        #[arg(long)]
-        body: Option<String>,
-    },
 
     /// Designated-provider routing: service-list + profile in one call
     #[command(name = "designated-route")]
@@ -507,29 +502,6 @@ pub enum AgentCommand {
         /// Target registered service ID (preferred for exact selection)
         #[arg(long = "service-id")]
         service_id: Option<String>,
-        /// Target service endpoint (for multi-service providers)
-        #[arg(long)]
-        endpoint: Option<String>,
-    },
-
-    /// Validate x402 endpoint + price match + budget check in one call
-    #[command(name = "x402-validate")]
-    X402Validate {
-        /// x402 provider endpoint URL
-        #[arg(long)]
-        endpoint: String,
-        /// User agent ID
-        #[arg(long = "agent-id")]
-        agent_id: String,
-        /// Job ID (for budget lookup)
-        #[arg(long = "job-id")]
-        job_id: String,
-        /// Registered fee amount from designated-route
-        #[arg(long = "fee-amount")]
-        fee_amount: String,
-        /// Registered fee token symbol from designated-route
-        #[arg(long = "fee-token")]
-        fee_token: String,
     },
 
     /// Client confirms task complete and releases payment
@@ -648,8 +620,6 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long, default_value = "")]
         file: String,
-        #[arg(long, default_value = "Task completed, please review")]
-        message: String,
         /// Text deliverable content for auto-save. When non-empty and --file is empty,
         /// the CLI writes this to a temp file and persists it as a text deliverable.
         #[arg(long = "deliverable-text", default_value = "")]
@@ -657,10 +627,6 @@ pub enum AgentCommand {
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Deprecated compatibility argument. Accepted but ignored; only the
-        /// explicit text/file deliverable is sent and processed.
-        #[arg(long, default_value = "")]
-        autotrade: String,
     },
 
     /// Check deterministic local Trade Kit CLI/version/capability compatibility.
@@ -1010,6 +976,42 @@ pub enum AgentCommand {
         reason: String,
     },
 
+    /// Accept a designated one-time task created and funded by the buyer.
+    #[command(name = "accept-job-by-provider")]
+    AcceptJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
+    /// Decline a designated one-time task and trigger its refund flow.
+    #[command(name = "decline-job-by-provider")]
+    DeclineJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+
+    /// Accept a designated subscription created and funded by the buyer.
+    #[command(name = "accept-subscription")]
+    AcceptSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
+    /// Decline a designated subscription and trigger its refund flow.
+    #[command(name = "decline-subscription")]
+    DeclineSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+
     /// ASP: list my still-active subscription jobs (continuous-delivery phase) as a JSON array
     /// — the resident dispatch script's fan-out set. Source: GET /subscribe/my.
     #[command(name = "subscribe-active")]
@@ -1341,7 +1343,7 @@ pub enum AgentCommand {
     ///                                              from the inbound notification
     ///
     /// All other inputs (`jobId`, `event`, `code`, `jobTitle`, `provider`, `data`,
-    /// `peerTaskMinVersion`, etc.) are extracted from inside the `--message` JSON.
+    /// etc.) are extracted from inside the `--message` JSON.
     /// This keeps the LLM-facing surface minimal: copy the envelope through, the
     /// CLI parses out whatever it needs.
     #[command(name = "next-action")]
@@ -1355,7 +1357,7 @@ pub enum AgentCommand {
         role: String,
         /// Full system event envelope as a JSON string — the entire `message` object.
         /// Required. Must contain at least `event` and `jobId`; optional fields the
-        /// CLI reads: `code` / `jobTitle` / `provider` / `data` / `taskMinVersion`
+        /// CLI reads: `code` / `jobTitle` / `provider` / `data`
         /// (plus any task-detail fields like `paymentMode` /
         /// `tokenAmount` / `tokenSymbol` / `serviceParams` that downstream scenes
         /// may consume directly).
@@ -1489,6 +1491,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     );
 
     match cmd {
+        AgentCommand::A2mcpProbe { command } => a2mcp_probe::run(command, ctx).await,
         // ── Identity ────────────────────────────────────────────────
         AgentCommand::Create(args) => identity::create(args, ctx).await,
         AgentCommand::Update(args) => identity::update(args, ctx).await,
@@ -1511,36 +1514,39 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         // ── Client (user) task commands ────────────────────────────
         AgentCommand::CreateTask {
-            description,
-            budget,
-            max_budget,
-            currency,
             title,
-            provider,
-            endpoint,
+            description,
+            description_summary,
+            provider_agent_id,
+            payment_token_symbol,
+            payment_token_amount,
             attachments,
-            payment_mode,
             service_id,
             service_params,
             service_token_address,
             service_token_amount,
-            _agent_id: _,
+            category_code,
+            min_credit_score,
+            visibility,
+            chain_id,
         } => {
             task::user::run_task(
                 T::Create {
-                    description,
-                    budget,
-                    max_budget,
-                    currency,
                     title,
-                    provider,
-                    endpoint,
+                    description,
+                    description_summary,
+                    provider_agent_id,
+                    payment_token_symbol,
+                    payment_token_amount,
                     attachments,
-                    payment_mode,
                     service_id,
                     service_params,
                     service_token_address,
                     service_token_amount,
+                    category_code,
+                    min_credit_score,
+                    visibility,
+                    chain_id,
                 },
                 ctx,
             )
@@ -1558,6 +1564,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             description,
             attachments,
             provider_agent_id,
+            copy_trade,
             service_description,
             service_interval,
             autotrade_mode,
@@ -1571,7 +1578,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             autotrade_settings_json,
             autotrade_required_fields,
             format,
-            exclude_device,
         } => {
             task::user::run_task(
                 T::CreateSubscribe {
@@ -1585,6 +1591,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     description,
                     attachments,
                     provider_agent_id,
+                    copy_trade,
                     service_description,
                     service_interval,
                     autotrade_mode,
@@ -1598,9 +1605,29 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     autotrade_settings_json,
                     autotrade_required_fields,
                     format,
-                    exclude_device,
                 },
                 ctx,
+            )
+            .await
+        }
+
+        AgentCommand::ServiceParamUpdate {
+            job_id,
+            agent_id,
+            task_type,
+            request_id,
+            round,
+            service_params,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::user::service_param_update::handle(
+                &mut client,
+                &job_id,
+                &agent_id,
+                task_type,
+                &request_id,
+                round,
+                &service_params,
             )
             .await
         }
@@ -1785,12 +1812,36 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .await
         }
 
+        AgentCommand::ArbitrationList {
+            agent_id,
+            page,
+            page_size,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::arbitration_query::handle_arbitration_list(
+                &mut client,
+                &agent_id,
+                page,
+                page_size,
+            )
+            .await
+        }
+
+        AgentCommand::ArbitrationDetail { job_id, agent_id } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::arbitration_query::handle_arbitration_detail(
+                &mut client,
+                &job_id,
+                &agent_id,
+            )
+            .await
+        }
+
         AgentCommand::SetPaymentMode {
             job_id,
             payment_mode,
             token_symbol,
             token_amount,
-            endpoint,
         } => {
             task::user::run_task(
                 T::SetPaymentMode {
@@ -1798,7 +1849,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     payment_mode,
                     token_symbol,
                     token_amount,
-                    endpoint,
                 },
                 ctx,
             )
@@ -1809,79 +1859,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::user::run_task(T::ConfirmAccept { job_id }, ctx).await
         }
 
-        AgentCommand::Task402Pay {
-            job_id,
-            provider_agent_id,
-            accepts,
-            endpoint,
-            token_symbol,
-            token_amount,
-            from,
-            body,
-            force,
-        } => {
-            task::user::run_task(
-                T::Task402Pay {
-                    job_id,
-                    provider_agent_id,
-                    accepts,
-                    endpoint,
-                    token_symbol,
-                    token_amount,
-                    from,
-                    body,
-                    force,
-                },
-                ctx,
-            )
-            .await
-        }
-
-        AgentCommand::X402Check {
-            endpoint,
-            agent_id,
-            body,
-        } => {
-            task::user::run_task(
-                T::X402Check {
-                    endpoint,
-                    agent_id,
-                    body,
-                },
-                ctx,
-            )
-            .await
-        }
-
         AgentCommand::DesignatedRoute {
             provider,
             service_id,
-            endpoint,
-        } => {
-            task::common::handle_designated_route(
-                &provider,
-                service_id.as_deref(),
-                endpoint.as_deref(),
-            )
-            .await
-        }
-
-        AgentCommand::X402Validate {
-            endpoint,
-            agent_id,
-            job_id,
-            fee_amount,
-            fee_token,
-        } => {
-            task::common::handle_x402_validate(
-                &endpoint,
-                &agent_id,
-                &job_id,
-                &fee_amount,
-                &fee_token,
-            )
-            .await
-        }
+        } => task::common::handle_designated_route(&provider, service_id.as_deref()).await,
 
         AgentCommand::Complete { job_id } => {
             task::user::run_task(T::Complete { job_id }, ctx).await
@@ -2046,19 +2027,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Deliver {
             job_id,
             file,
-            message,
             deliverable_text,
             agent_id,
-            autotrade,
         } => {
             task::asp::run_provider(
                 task::asp::ProviderCommand::Deliver {
                     job_id,
                     file,
-                    message,
                     deliverable_text,
                     agent_id,
-                    autotrade,
                 },
                 ctx,
             )
@@ -2076,7 +2053,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::common::autotrade::trade_kit::TradeEnvironment::parse(&environment)
                     .map_err(anyhow::Error::msg)?;
             let result =
-                task::common::autotrade::trade_kit::probe_runtime(&asset_classes, environment).await;
+                task::common::autotrade::trade_kit::probe_runtime(&asset_classes, environment)
+                    .await;
             crate::output::success(result);
             Ok(())
         }
@@ -2236,8 +2214,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     venue: &venue,
                     action: &action,
                     amount: &amount,
-                    execution_mode:
-                        task::common::autotrade::executor::ExecutionMode::parse(&execution_mode)?,
+                    execution_mode: task::common::autotrade::executor::ExecutionMode::parse(
+                        &execution_mode,
+                    )?,
                     command_json: &command_json,
                     timeout_sec,
                 },
@@ -2290,13 +2269,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             delivery_id,
             amount,
         } => {
-            crate::output::success(
-                task::common::autotrade::executor::authorize_one_time(
-                    &job_id,
-                    &delivery_id,
-                    &amount,
-                )?,
-            );
+            crate::output::success(task::common::autotrade::executor::authorize_one_time(
+                &job_id,
+                &delivery_id,
+                &amount,
+            )?);
             Ok(())
         }
 
@@ -2379,10 +2356,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             settings_json,
             cancel,
         } => {
+            use task::common::autotrade::consent;
             use task::common::autotrade::continuation::{
                 self, ExplicitValues, Origin, SelectedMode, StartBinding,
             };
-            use task::common::autotrade::consent;
             if cancel {
                 if mode.is_some()
                     || origin.is_some()
@@ -2402,9 +2379,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 {
                     anyhow::bail!("--cancel does not accept configuration arguments");
                 }
-                let continuation_id = continuation_id
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("--continuation-id is required with --cancel"))?;
+                let continuation_id = continuation_id.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("--continuation-id is required with --cancel")
+                })?;
                 continuation::cancel(&job_id, &agent_id, continuation_id)?;
                 crate::output::success(serde_json::json!({
                     "jobId": job_id,
@@ -2414,10 +2391,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
 
-            let selected_mode = mode
-                .as_deref()
-                .map(SelectedMode::parse)
-                .transpose()?;
+            let selected_mode = mode.as_deref().map(SelectedMode::parse).transpose()?;
             let values = ExplicitValues {
                 trade_amount_u: trade_amount.as_deref(),
                 cap_u: cap.as_deref(),
@@ -2493,8 +2467,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         original_delivery_id: delivery_id.as_deref(),
                         required_fields: Some(&effective_required_fields),
                         service_guide_hash: restore_context.service_guide_hash.as_deref(),
-                        service_guide_hash_resolved: restore_context
-                            .service_guide_hash_resolved,
+                        service_guide_hash_resolved: restore_context.service_guide_hash_resolved,
                         seed_consent: seed_consent.as_ref(),
                     }),
                     &job_id,
@@ -2515,11 +2488,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     );
                 }
                 let continuation_id = continuation_id.as_deref().expect("checked above");
-                let existing = continuation::load_for_resume(
-                    &job_id,
-                    &agent_id,
-                    continuation_id,
-                )?;
+                let existing = continuation::load_for_resume(&job_id, &agent_id, continuation_id)?;
                 if existing.origin == Origin::SubscriptionRestore {
                     let asset_class = existing
                         .signal_type
@@ -2595,10 +2564,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .as_deref()
                 .map(consent::TradeKitAuthMode::parse)
                 .transpose()?;
-            let dynamic_settings = consent::parse_dynamic_settings_json(
-                settings_json.as_deref(),
-                "--settings-json",
-            )?;
+            let dynamic_settings =
+                consent::parse_dynamic_settings_json(settings_json.as_deref(), "--settings-json")?;
             if tool.is_some() {
                 anyhow::bail!("--tool is deprecated; use subscription-route-set");
             }
@@ -2621,9 +2588,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 grants::clear_grant(&job_id);
                 consent::clear_pending_signal(&job_id);
                 task::common::autotrade::continuation::clear(&job_id);
-                let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(
-                    &job_id,
-                );
+                let _ =
+                    task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(&job_id);
                 crate::output::success(
                     serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id}),
                 );
@@ -2844,8 +2810,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::common::autotrade::continuation::clear(&job_id);
             }
             consent::clear_pending_signal(&job_id);
-            crate::output::success(
-                serde_json::json!({
+            crate::output::success(serde_json::json!({
                     "consentMode": if mode_enum == consent::ConsentMode::Auto { "auto" } else { "notify_only" },
                     "cap": cap,
                     "tradeEnvironment": persisted_environment,
@@ -2853,8 +2818,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     "orderPolicy": persisted_order_policy,
                     "authMode": persisted_auth_mode,
                     "replayed": false
-                }),
-            );
+            }));
             Ok(())
         }
         AgentCommand::AgreeRefund { job_id, agent_id } => {
@@ -2872,6 +2836,54 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         } => {
             task::asp::run_provider(
                 task::asp::ProviderCommand::AspReject {
+                    job_id,
+                    agent_id,
+                    reason,
+                },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::AcceptJobByProvider { job_id, agent_id } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::AcceptJobByProvider { job_id, agent_id },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::DeclineJobByProvider {
+            job_id,
+            agent_id,
+            reason,
+        } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::DeclineJobByProvider {
+                    job_id,
+                    agent_id,
+                    reason,
+                },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::AcceptSubscription { job_id, agent_id } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::AcceptSubscription { job_id, agent_id },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::DeclineSubscription {
+            job_id,
+            agent_id,
+            reason,
+        } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::DeclineSubscription {
                     job_id,
                     agent_id,
                     reason,
@@ -3059,17 +3071,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let job_title: Option<String> = msg_str("jobTitle");
             let provider: Option<String> = msg_str("provider");
             let data: Option<String> = msg_str("data");
-            let peer_task_min_version: Option<u32> = parsed_message
-                .get("taskMinVersion")
-                .and_then(|v| v.as_u64())
-                .and_then(|v| u32::try_from(v).ok())
-                .or_else(|| {
-                    parsed_message
-                        .get("payload")
-                        .and_then(|p| p.get("taskMinVersion"))
-                        .and_then(|v| v.as_u64())
-                        .and_then(|v| u32::try_from(v).ok())
-                });
             let parsed_message = Some(parsed_message);
             if !job_id.is_empty() {
                 if let Err(msg) = task::common::util::validate_job_id(&job_id) {
@@ -3078,46 +3079,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }
             if DEBUG_LOG {
                 eprintln!(
-                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
+                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}",
                     title = job_title.as_deref().unwrap_or("(none)"),
                     provider = provider.as_deref().unwrap_or("(none)"),
-                    peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
                 );
             }
-
-            // Version handshake: when peer's required minimum version is higher than the local TASK_MIN_VERSION,
-            // only prepend a notice line at the top of the script (so the agent can push an upgrade suggestion to the user);
-            // **do not block the flow** — the role flow continues to execute under the current protocol, and any actual
-            // compatibility issues (if any) are escalated when subsequent CLI / business layer errors surface.
-            let version_notice: Option<String> = if let Some(peer_min) = peer_task_min_version {
-                let local = task::common::config::TASK_MIN_VERSION;
-                if local < peer_min {
-                    if task::common::version_notice::should_show() {
-                        if DEBUG_LOG {
-                            eprintln!(
-                                "[next-action] version notice (non-blocking): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                            );
-                        }
-                        task::common::version_notice::mark_shown();
-                        Some("Before executing the scene below, run `onchainos agent user-notify` to notify the user (recommend upgrade but do **not** halt the flow). The `--content` template below is a sample — translate it to the user's language before sending:\n\
-                             ```bash\n\
-                             onchainos agent user-notify --content 'Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.'\n\
-                             ```\n\
-                             Then proceed to the scene below normally.\n\n".to_string())
-                    } else {
-                        if DEBUG_LOG {
-                            eprintln!(
-                                "[next-action] version notice suppressed (last shown within 48h): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                            );
-                        }
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
 
             // When --provider is passed, write the designated-provider file so generate_next_action takes the specified-provider path
             if let Some(ref pid) = provider {
@@ -3247,22 +3213,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    // x402 (paymentMode=3): the user paid the ASP at request time via
-                    // the A2MCP service endpoint, so the on-chain events are pure
-                    // receipts — provider has no business action for any of them.
-                    // Route every x402 event to the observer-only a2mcp playbook.
-                    let use_a2mcp = matches!(payment_mode, Some(3));
-                    if use_a2mcp {
-                        task::asp::flow::generate_a2mcp_next_action(
-                            &job_id,
-                            &event,
-                            &agent_id,
-                            title_ref,
-                            data.as_deref(),
-                            prefetched.as_ref(),
-                            parsed_message.as_ref(),
+                    if payment_mode == Some(3) {
+                        format!(
+                            "legacy_a2mcp_flow_removed: task-based A2MCP processing is disabled for job {job_id}. Stop; do not deliver, complete, sign, or pay."
                         )
-                        .await
                     } else {
                         task::asp::flow::generate_next_action(
                             &job_id,
@@ -3326,9 +3280,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
                 other => anyhow::bail!("--role 必须是 asp/user/evaluator，当前: {other}"),
             };
-            if let Some(notice) = &version_notice {
-                print!("{notice}");
-            }
             println!("{prompt}");
             Ok(())
         }
@@ -3512,22 +3463,8 @@ fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
 }
 
 fn parse_a2a_json_arg(raw: &str) -> anyhow::Result<serde_json::Value> {
-    match serde_json::from_str(raw) {
-        Ok(v) => Ok(v),
-        Err(strict_err) => {
-            let repaired = escape_control_chars_in_strings(raw);
-            match serde_json::from_str::<serde_json::Value>(&repaired) {
-                Ok(v) => {
-                    eprintln!(
-                        "[next-action] --a2a-file payload had raw control chars inside string values; \
-                         auto-repaired. Strict parse error was: {strict_err}"
-                    );
-                    Ok(v)
-                }
-                Err(_) => anyhow::bail!("--a2a-file payload is not valid JSON: {strict_err}"),
-            }
-        }
-    }
+    serde_json::from_str(raw)
+        .map_err(|error| anyhow::anyhow!("--a2a-file payload is not valid JSON: {error}"))
 }
 
 fn write_secure_temp_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
@@ -3627,16 +3564,17 @@ fn validate_a2a_file_arg(
     if !is_safe_a2a_file_path(fp) {
         anyhow::bail!("--a2a-file must point to a file under the OS temp directory");
     }
+    let metadata = std::fs::symlink_metadata(fp)
+        .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?;
+    if !metadata.file_type().is_file() {
+        anyhow::bail!("--a2a-file must be a regular file, not a symlink or directory");
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(fp)
-            .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?
-            .permissions()
-            .mode()
-            & 0o777;
-        if mode & 0o077 != 0 {
-            anyhow::bail!("--a2a-file must not be readable, writable, or executable by group/others; use chmod 600");
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode != 0o600 {
+            anyhow::bail!("--a2a-file must have mode 0600; run chmod 600");
         }
     }
     let raw =
@@ -3662,19 +3600,35 @@ fn validate_a2a_file_arg(
             "--a2a-file payload jobId {pj} does not match --message jobId {message_job_id}"
         );
     }
-    if let Some(receiver) = payload.get("receiverAgentId").and_then(|v| v.as_str()) {
-        if receiver != agent_id {
-            anyhow::bail!(
-                "--a2a-file receiverAgentId {receiver} does not match --agentId {agent_id}"
-            );
-        }
+    let receiver = payload
+        .get("receiverAgentId")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.receiverAgentId is required"))?;
+    if receiver != agent_id {
+        anyhow::bail!("--a2a-file receiverAgentId {receiver} does not match --agentId {agent_id}");
     }
     let content = payload
         .get("content")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.content is required"))?;
-    if !content.contains("[intent:deliver]") {
-        anyhow::bail!("--a2a-file content must contain [intent:deliver]");
+    if content
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(str::trim)
+        != Some("[intent:deliver]")
+    {
+        anyhow::bail!("--a2a-file content must end with [intent:deliver]");
+    }
+    let embedded_job_id = content
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("jobId:"))
+        .map(str::trim)
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file content.jobId is required"))?;
+    if embedded_job_id != pj {
+        anyhow::bail!(
+            "--a2a-file content jobId {embedded_job_id} does not match payload jobId {pj}"
+        );
     }
     let canonical = serde_json::to_string(&payload)?;
     persist_validated_a2a_spool(pj, &canonical)
@@ -3726,11 +3680,10 @@ mod auto_consent_permit_tests {
             "plugin-ready-check",
         ] {
             assert_eq!(auto_write_continuation_id(mode, None).unwrap(), None);
-            assert!(auto_write_continuation_id(
-                mode,
-                Some("atc_0123456789abcdef0123456789abcdef")
-            )
-            .is_err());
+            assert!(
+                auto_write_continuation_id(mode, Some("atc_0123456789abcdef0123456789abcdef"))
+                    .is_err()
+            );
         }
     }
 
@@ -3747,9 +3700,7 @@ mod auto_consent_permit_tests {
         let consent = final_writer
             .find("write_consent_policy_with_dynamic_settings")
             .expect("consent write");
-        let grant = final_writer
-            .find("write_auto_grant")
-            .expect("grant write");
+        let grant = final_writer.find("write_auto_grant").expect("grant write");
         let consume = final_writer
             .find("consume_auto_write")
             .expect("permit consumption");
@@ -3781,7 +3732,9 @@ mod auto_consent_permit_tests {
         };
 
         let missing = run(auto_command(None), &ctx).await.unwrap_err();
-        assert!(missing.to_string().contains("--continuation-id is required"));
+        assert!(missing
+            .to_string()
+            .contains("--continuation-id is required"));
         assert!(consent::load_consent("job-1").unwrap().is_none());
         assert!(grants::check_grant("job-1", "trade_kit", "buy", "1").is_err());
 
@@ -3809,12 +3762,9 @@ mod auto_consent_permit_tests {
         .unwrap();
         assert!(completed.complete);
 
-        run(
-            auto_command(Some(completed.continuation_id.clone())),
-            &ctx,
-        )
-        .await
-        .unwrap();
+        run(auto_command(Some(completed.continuation_id.clone())), &ctx)
+            .await
+            .unwrap();
         assert_eq!(
             consent::load_consent("job-1").unwrap().unwrap().mode,
             ConsentMode::Auto
@@ -3824,9 +3774,7 @@ mod auto_consent_permit_tests {
         let replay = run(auto_command(Some(completed.continuation_id)), &ctx)
             .await
             .unwrap_err();
-        assert!(replay
-            .to_string()
-            .contains("no live consent continuation"));
+        assert!(replay.to_string().contains("no live consent continuation"));
 
         std::env::remove_var("ONCHAINOS_HOME");
         let _ = std::fs::remove_dir_all(dir);
@@ -3939,22 +3887,16 @@ mod escape_control_chars_tests {
     }
 
     #[test]
-    fn canonicalizes_repaired_a2a_file_arg_for_downstream_strict_parse() {
+    fn rejects_a2a_file_arg_with_raw_control_char_json() {
         let path = write_temp_a2a(
             "raw-control-char.json",
             "{ \"msgType\":\"a2a-agent-chat\", \"jobId\":\"0xabc123\", \"receiverAgentId\":\"1696\", \"content\":\"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]\" }",
         );
 
-        let original = std::fs::read_to_string(&path).unwrap();
-        let got = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
-        let rewritten = std::fs::read_to_string(&got).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
-        assert_eq!(
-            parsed["content"].as_str().unwrap().lines().next(),
-            Some("jobId: 0xabc123")
-        );
-        std::fs::remove_file(got).ok();
+        let error = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("current A2A envelope must be strict JSON")
+            .to_string();
+        assert!(error.contains("payload is not valid JSON"));
     }
 
     #[test]
@@ -4010,7 +3952,7 @@ mod escape_control_chars_tests {
         let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
             .expect_err("missing intent must fail")
             .to_string();
-        assert!(err.contains("content must contain [intent:deliver]"));
+        assert!(err.contains("content must end with [intent:deliver]"));
     }
 
     #[test]
@@ -4043,6 +3985,43 @@ mod escape_control_chars_tests {
         assert!(err.contains("chmod 600"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a2a_file_arg_with_non_exact_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = write_temp_a2a(
+            "owner-executable.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("the new envelope contract requires exact mode 0600")
+            .to_string();
+        assert!(err.contains("mode 0600"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a2a_file_arg_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let target = write_temp_a2a(
+            "symlink-target.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+        let link = target.with_file_name("symlink-envelope.json");
+        std::fs::remove_file(&link).ok();
+        symlink(&target, &link).unwrap();
+
+        let err = validate_a2a_file_arg(link.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("symlinked envelopes must fail closed")
+            .to_string();
+        assert!(err.contains("regular file"));
+        std::fs::remove_file(link).ok();
+    }
+
     #[test]
     fn rejects_a2a_file_arg_for_wrong_receiver() {
         let path = write_temp_a2a(
@@ -4055,12 +4034,81 @@ mod escape_control_chars_tests {
             .to_string();
         assert!(err.contains("receiverAgentId 8779 does not match --agentId 1696"));
     }
+
+    #[test]
+    fn rejects_a2a_file_arg_without_receiver() {
+        let path = write_temp_a2a(
+            "missing-receiver.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("missing receiver must fail")
+            .to_string();
+        assert!(err.contains("payload.receiverAgentId is required"));
+    }
+
+    #[test]
+    fn rejects_a2a_file_arg_with_mismatched_embedded_job_id() {
+        let path = write_temp_a2a(
+            "wrong-embedded-job.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xother\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("embedded jobId mismatch must fail")
+            .to_string();
+        assert!(err.contains("content jobId 0xother does not match payload jobId 0xabc123"));
+    }
+}
+
+fn detail_path_for_event(
+    client: &task::common::network::task_api_client::TaskApiClient,
+    job_id: &str,
+    event: &str,
+) -> String {
+    if matches!(event, "sub_open" | "sub_created" | "sub_asp_selected") {
+        client.subscribe_path(job_id)
+    } else {
+        client.task_path(job_id)
+    }
+}
+
+fn subscription_acceptance_status(detail: &serde_json::Value) -> Option<i64> {
+    detail["subStatus"]
+        .as_i64()
+        .or_else(|| {
+            detail["subStatus"]
+                .as_str()
+                .and_then(|value| value.parse().ok())
+        })
+        .or_else(|| detail["status"].as_i64())
+        .or_else(|| {
+            detail["status"]
+                .as_str()
+                .and_then(|value| value.parse().ok())
+        })
+}
+
+fn subscription_acceptance_block_reason(detail: &serde_json::Value, event: &str) -> Option<String> {
+    match subscription_acceptance_status(detail) {
+        Some(1) => None,
+        Some(status) => Some(format!(
+            "[next-action blocked] Latest subscription status is {status}, not ACTIVE(1). Do not execute the {event} acceptance flow."
+        )),
+        None => Some(
+            format!(
+                "[next-action blocked] Latest subscription detail has no valid subStatus/status. Do not execute the {event} acceptance flow."
+            ),
+        ),
+    }
 }
 
 /// Returns a warning text when inconsistent (used to prepend to the top of the script output).
 ///
 /// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
-/// returns None on network/parse failure (does not block script output, graceful fallback).
+/// Most network failures degrade to no prefetch. Acceptance notifications are
+/// stricter: they require authoritative detail and are blocked on fetch error.
 async fn check_status_freshness(
     job_id: &str,
     job_status_or_event: &str,
@@ -4148,10 +4196,30 @@ async fn check_status_freshness(
 
     // Fetch task data — shared by both freshness-check and pre-fetch paths.
     let mut c = TaskApiClient::new();
-    let resp = match c.get_with_identity(&c.task_path(job_id), agent_id).await {
+    let detail_path = detail_path_for_event(&c, job_id, job_status_or_event);
+    let resp = match c.get_with_identity(&detail_path, agent_id).await {
         Ok(r) => r,
+        Err(error)
+            if matches!(
+                job_status_or_event,
+                "job_accepted" | "sub_created" | "sub_asp_selected"
+            ) =>
+        {
+            return (
+                Some(format!(
+                    "[next-action blocked] Cannot fetch latest task detail for {job_status_or_event}: {error:#}. Do not display an acceptance notice from stale or incomplete event data."
+                )),
+                None,
+            );
+        }
         Err(_) => return (None, None),
     };
+
+    if matches!(job_status_or_event, "sub_created" | "sub_asp_selected") {
+        if let Some(reason) = subscription_acceptance_block_reason(&resp, job_status_or_event) {
+            return (Some(reason), None);
+        }
+    }
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
 
     if job_status_or_event == "sub_user_reject" {
@@ -4241,8 +4309,7 @@ async fn check_status_freshness(
             {
                 return (Some(prompt), Some(ctx));
             }
-        } else if let Ok(Some(manifest)) =
-            task::common::deliverables::read_manifest("user", job_id)
+        } else if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("user", job_id)
         {
             if let Some(entry) = manifest.entries.last() {
                 let dir = task::common::deliverables::deliverables_dir("user", job_id)
@@ -4307,4 +4374,71 @@ async fn check_status_freshness(
          **MUST NOT**: do NOT guess the next step; do NOT call any task CLI before getting a fresh playbook; do NOT push this warning to the user via `onchainos agent user-notify`.\n",
         expected_str = expected.as_str(),
     )), prefetched)
+}
+
+#[cfg(test)]
+mod acceptance_detail_path_tests {
+    use super::{
+        detail_path_for_event, subscription_acceptance_block_reason, subscription_acceptance_status,
+    };
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+
+    #[test]
+    fn user_acceptance_events_use_authoritative_detail_endpoint() {
+        let client = TaskApiClient::new();
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "job_accepted"),
+            "/priapi/v1/aieco/task/job-1"
+        );
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "sub_created"),
+            "/priapi/v1/aieco/task/subscribe/job-1"
+        );
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "sub_asp_selected"),
+            "/priapi/v1/aieco/task/subscribe/job-1"
+        );
+    }
+
+    #[test]
+    fn subscription_acceptance_requires_active_authoritative_status() {
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"subStatus": 1})),
+            Some(1)
+        );
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"status": "1"})),
+            Some(1)
+        );
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"subStatus": 0})),
+            Some(0)
+        );
+        assert_eq!(subscription_acceptance_status(&serde_json::json!({})), None);
+        assert!(subscription_acceptance_block_reason(
+            &serde_json::json!({"subStatus": 1}),
+            "sub_created"
+        )
+        .is_none());
+        assert!(subscription_acceptance_block_reason(
+            &serde_json::json!({"subStatus": 0}),
+            "sub_created"
+        )
+        .is_some());
+        assert!(
+            subscription_acceptance_block_reason(&serde_json::json!({}), "sub_asp_selected")
+                .is_some()
+        );
+        assert!(subscription_acceptance_block_reason(
+            &serde_json::json!({"subStatus": 1}),
+            "sub_asp_selected"
+        )
+        .is_none());
+        let blocked = subscription_acceptance_block_reason(
+            &serde_json::json!({"subStatus": 0}),
+            "sub_asp_selected",
+        )
+        .unwrap();
+        assert!(blocked.contains("sub_asp_selected"));
+    }
 }

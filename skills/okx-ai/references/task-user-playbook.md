@@ -15,6 +15,34 @@
 
 ---
 
+## §1.7 Deliverable intake contract
+
+- Pass the complete raw `a2a-agent-chat` envelope through `next-action --a2a-file`; the envelope must
+  be strict JSON, and the path must be a regular (not symlinked) `0600` file under the OS temp directory. Do not flatten file metadata or text into
+  `--message` fields—the new protocol has no legacy fallback.
+- The CLI requires matching envelope/embedded `jobId`, the exact receiving User Agent, and a terminal
+  `[intent:deliver]`. File deliveries require non-empty `fileKey`, `digest`, `salt`, `nonce`, and
+  `secret`; text deliveries use the complete body between the delimiters. Validation, download, and
+  persistence failures are fail-closed and never create an acceptance decision.
+- A successful task-detail prefetch identifies a one-time task. If its authoritative status is already
+  `submitted`, create the acceptance decision immediately; otherwise save and wait for `job_submitted`.
+- A delivery absent from the one-time task registry must pass the ACTIVE subscription lookup before the
+  copy-trade Skill path. Before a money-moving command, require `tradeRecordsV1.ok=true` from
+  `okx-a2a capabilities --json`, query the exact `(jobId, deliveryId)` through
+  `okx-a2a trade-records query`, and do not execute when any record exists. Persist the one terminal
+  attempt using `okx-a2a trade-records insert`; a post-submit record failure must never trigger a retry.
+
+## §1.8 `job_submitted`
+
+- If the single-task deliverable is already saved and its local path is still a regular file, create
+  the acceptance decision card. Stale prefetched/manifest metadata never counts as a deliverable.
+- If no deliverable is available, write only the internal out-of-order marker and take no user-facing
+  action: no notification, no decision card, and no manual chat-history extraction. The later validated
+  `[intent:deliver]` intake consumes the marker and creates the card after persistence succeeds. If
+  the marker itself cannot be persisted, remain internal and fail closed; never claim it was retained.
+
+---
+
 ## User Intent Routing
 
 > When the user-session receives free-form text targeting a specific task and no pending decision matches, load [`task-user-intent-routing.md`](task-user-intent-routing.md) and follow its routing flow.
@@ -44,7 +72,7 @@
 
 AFTER `create-subscribe` succeeds, render the English block below verbatim or translate it faithfully per §Localization. `{jobTitle}` is the **just-created REAL subscription title** — never a sample.
 
-**Ordering with the mandatory watch:** render this block, but do **not** pause or wait for the user's choice. Immediately continue to §Post-creation: Watch check below and enter watch. Handle the user's preference only when their reply arrives; the preference question must never delay the initial watch or the `sub_created` event.
+**Ordering with the mandatory watch:** render this block, but do **not** pause or wait for the user's choice. Immediately continue to §Post-creation: Watch check below and enter watch. Handle the user's preference only when their reply arrives; the preference question must never delay the initial watch or the `sub_open` event.
 
 **Device-routing copy contract:** after every successful creation, render the single device-routing line in the response template below after the success title and before the offline-deliverables question. The line is informational only: do not ask a device question or wait for a device confirmation.
 
@@ -78,7 +106,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 - `[Watch]` block present → read `skills/okx-ai/references/watch-core.md` and enter its Watch generation. A returned notification, deliverable, or empty poll does **not** end the turn; dispatch the complete batch and re-enter the same scoped command until `watch-core.md` says to stop or a `decision_request` requires the user's reply.
 - No `[Watch]` block → **end this turn immediately**.
 
-🛑 This Watch handoff is the **last non-Watch action in the creation flow** — once entered, `watch-core.md` owns the rest of the turn, including every required dispatch and re-entry. Do not run unrelated creation commands after the handoff, and do not confuse "last creation action" with permission to stop after the first watch result. On the `sub_created` event the agent only sends the subscription notification and starts the watch — it does NOT re-scan the description for DApp names, does NOT auto-install any plugin, and does NOT pre-select a tool. Local tool preparation is non-blocking and happens at its `serviceGuide` step, or as the post-guide fallback only when that step is absent; the visible Install/connect flow runs only if the user explicitly chooses it and delegates authentication to `okx-cex-auth`. Trade Kit readiness is not repeated on every delivery or for a compatible cached route. Authentication and trading availability are decided only by the final target command. A failed delivery remains visible and is never auto-replayed, while future deliveries continue normally.
+🛑 This Watch handoff is the **last non-Watch action in the creation flow** — once entered, `watch-core.md` owns the rest of the turn, including every required dispatch and re-entry. Do not run unrelated creation commands after the handoff, and do not confuse "last creation action" with permission to stop after the first watch result. On `sub_open`, the CLI establishes or restores the designated ASP session and independently forwards pending attachments; the agent sends the created/waiting-for-ASP notification. It does NOT re-scan the description for DApp names, does NOT auto-install any plugin, and does NOT pre-select a tool. Local tool preparation is non-blocking and happens at its `serviceGuide` step, or as the post-guide fallback only when that step is absent; the visible Install/connect flow runs only if the user explicitly chooses it and delegates authentication to `okx-cex-auth`. Trade Kit readiness is not repeated on every delivery or for a compatible cached route. Authentication and trading availability are decided only by the final target command. A failed delivery remains visible and is never auto-replayed, while future deliveries continue normally.
 
 ### Subscription management (user-initiated)
 

@@ -54,8 +54,8 @@ retained in context, not that Service's `serviceId`. Omit it when neither exists
 otherwise preprocess or enrich the input or output.
 
 - `matchStatus=no_match` → if `asp-agent-id` was supplied, say that the specified ASP has no matching service; otherwise say that no matching service was found. Ask the user to adjust the description or specify/change the provider.
-- `matchStatus=no_online_service` → matches exist, but none is eligible (offline non-x402 services remain ineligible). Ask whether to view alternatives or adjust the description/provider.
-- `matchStatus=matched` → render the service confirmation card from `data.services[0]`. The CLI keeps original ranking while filtering candidates to online services plus offline A2MCP services with a non-empty endpoint.
+- `matchStatus=no_online_service` → matches exist, but none is an online A2A Task service. Ask whether to view alternatives or adjust the description/provider.
+- `matchStatus=matched` → render the service confirmation card from `data.services[0]`. The CLI preserves ranking while filtering to online A2A Task services.
 
 **Subscription duplicate gate — before the normal service confirmation card:**
 - For a selected service with `supportSubscription == true`, require `subscriptionCheck.status == \"checked\"` and inspect `services[0].existingSubscription`. The CLI has already compared the exact `serviceId` against this buyer's subscriptions. A missing check is a hard stop: report that existing subscriptions could not be verified and do not confirm or create.
@@ -67,9 +67,9 @@ otherwise preprocess or enrich the input or output.
 
 **Service confirmation gate**:
 - Show Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
-- Render `serviceType` verbatim (for example, `A2A` or `A2MCP`); never translate or localize it.
+- Require `serviceType=A2A` and render it verbatim. If any A2MCP service reaches this Task playbook, stop with `legacy_a2mcp_flow_removed`; the upstream confirmed-service route must emit `invoke_a2mcp` instead.
 - For a non-subscription Service, render `feeAmount` with `feeTokenSymbol`. If `feeAmount` is zero (number or numeric string), render localized `Free` instead of `0 <symbol>`.
-- An offline A2MCP service with a non-empty endpoint is eligible; do not reject it for being offline. Offline non-x402 services remain ineligible.
+- Offline services are ineligible for Task creation.
 - Ask the user to confirm using this service. Offer \"show 3 alternatives\" only when `hasMore == true` and `searchAfter` is a non-empty string; otherwise state that no more alternatives are available.
 - If the user chooses alternatives, call:
   ```bash
@@ -324,10 +324,13 @@ onchainos agent create-subscribe \\
   --service-token-amount \"<subscriptionInfo.feeAmount>\" \\
   --service-token-address \"<feeToken>\" \\
   --auto-renew <0|1> \\
+  --copy-trade <1 when confirmed mode is auto; otherwise 0> \\
   --title \"<title>\" \\
   --description \"<description>\" \\
+  --service-params '<confirmed JSON serviceParams, or {{}}>' \\
   --service-description \"<serviceDescription>\" \\
   --provider-agent-id <agentId> \\
+  --service-interval \"<subscriptionInfo.interval>\" \\
   --autotrade-mode <auto|notify_only> \\
   [--autotrade-amount \"<decimal-number>\"] \\
   [--autotrade-cap \"<decimal-number>\"] \\
@@ -337,7 +340,8 @@ onchainos agent create-subscribe \\
   [--autotrade-order-policy <market|signal_price_limit>] \
   [--autotrade-auth-mode <oauth|api_key>] \
   [--autotrade-settings-json '<user-confirmed JSON object>'] \
-  [--autotrade-required-field <canonical-or-guide-defined-field>]...
+  [--autotrade-required-field <canonical-or-guide-defined-field>]... \\
+  --format json
 ```
 - Always pass the explicitly confirmed mode; there is no default. For `notify_only`, pass no other `--autotrade-*` value and declare only `--autotrade-required-field mode`. For `auto`, pass amount, cap, quote, Trade Kit environment, margin mode, order policy, and authentication mode only from user-authored context. Pass the final confirmed non-core settings together through `--autotrade-settings-json`; omit the flag when there are none. For a confirmed Trade Kit route, environment and order policy are required; margin mode is additionally required for `perp`. Pass `--autotrade-auth-mode` whenever the user completed or explicitly selected OAuth/API Key; otherwise the first executable delivery asks once before starting Trade Kit. ASP suggestions alone are never values.
 - Pass one `--autotrade-required-field` for every execution field that this flow required the user to confirm. Include fields explicitly required by `serviceGuide`, or by `serviceDescription` only when the guide is absent. Use the public core names `mode`, `tradeAmount`, `cap`, `quote`, `environment`, `marginMode`, `orderPolicy`, and `authMode`; specifically, declare a fixed amount as `tradeAmount`, never the internal consent key `tradeAmountU`. For a confirmed Trade Kit route, always include `environment` and `orderPolicy`, plus `marginMode` for `perp`. Stable settings use their exact top-level names. Unknown fields use `extra.<camelCaseKey>` and must have the matching object under `extra` in `--autotrade-settings-json`. Do not include tool installation, OAuth/API-key readiness, or ASP-suggested values. The CLI validates this declaration before any remote create request and persists the normalized list in consent.
@@ -361,16 +365,14 @@ fn create_task_regular() -> String {
 Step 4 -- Regular field collection
 ================================================
 
-For regular tasks, collect Currency internally but do not show it in the confirmation form. Derive Budget and Max budget from the selected service:
+Consume the fixed payment context from the selected Service:
 
-1. **Payment token** (--currency): Only USDT / USDG. Fuzzy input (\"U\"/\"USD\") → ask \"USDT or USDG?\".
-   - Validate: must match `feeTokenSymbol` from task-service-select. Mismatch → ask user to change token or designate another provider.
-2. Read `feeAmount` from the exact selected service. Missing/non-numeric → stop before confirmation.
-   - `budget = feeAmount`
-   - `max_budget = feeAmount`
-   - Apply the existing create-task amount rules (non-negative, <=6 decimals, max 10M). Do not ask the user for either value.
+1. `paymentTokenSymbol = feeTokenSymbol`.
+2. `paymentTokenAmount = feeAmount`.
+3. `serviceTokenAddress = feeToken` and `serviceTokenAmount = feeAmount`.
+4. Infer `serviceParams` below, then encode the confirmed key/value data as one JSON object; use `{{}}` when no input is required.
 
-3. **serviceParams inference** (same logic as §serviceParams inference below).
+Missing or invalid confirmed fields → stop before confirmation. Do not independently re-price the Service, query balance, offer a max budget, or negotiate another amount.
 
 → Proceed to **Step 5** (regular confirmation form).
 
@@ -389,7 +391,7 @@ Never add execution mode, per-signal amount, per-signal cap, quote currency, Tra
 | Service params | <serviceParams readable display, or \"None\"> |
 | Service price | <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this row if feeAmount has a value) |
 
-Payment mode: A2A → `escrow`, A2MCP → `x402` (from serviceType; do not ask user, do not show as a card row).
+Payment mode is always `escrow` for this Task playbook; do not ask the user or show it as a card row.
 
 > Confirm and publish?
 
@@ -401,10 +403,8 @@ Step 5.5 -- Route by user decision (separate turn)
 
 - Confirm / publish → Step 6
 - Edit description → update search intent → **re-run task-service-select** (may switch branch; if branch changes, load the other branch playbook via `next-action`) → Step 4 → Step 5
-- Edit budget/max-budget → validate the proposed value(s) with the existing rules, including `max_budget >= budget`; keep an omitted field unchanged and do not auto-adjust the other field. Invalid → explain and keep the current values. Valid → show the proposed value(s) separately, ask for one explicit confirmation, and end the turn. After confirmation, update the existing field(s) and return to Step 5; the confirmation form still omits both budget rows.
-- Edit currency → update → re-validate → Step 5
 - Edit serviceParams → update → Step 5
-- Change ASP → update `--asp-agent-id` to the new agentId → **re-run task-service-select** (may switch branch) → reset budget/max_budget from the newly selected service fee → Step 4 → Step 5
+- Change ASP or Service → **re-run task-service-select** and replace the whole confirmed Service context → Step 4 → Step 5
 
 ================================================
 Step 6 -- Publish regular (create-task)
@@ -412,18 +412,20 @@ Step 6 -- Publish regular (create-task)
 
 ```bash
 onchainos agent create-task \\
-  --description \"<description>\" --title \"<title>\" \\
-  --budget <budget> --max-budget <max_budget> --currency <USDT|USDG> \\
-  --provider <agentId> --service-id <serviceId> --payment-mode <escrow|x402> \\
-  [--service-params \"<params>\"] [--service-token-address <addr>] [--service-token-amount <amt>]
+  --title \"<title>\" --description \"<description>\" \\
+  --provider-agent-id <agentId> \\
+  --payment-token-symbol <feeTokenSymbol> --payment-token-amount <feeAmount> \\
+  --service-id <serviceId> --service-params '<confirmed JSON object or {{}}>' \\
+  --service-token-address <feeToken> --service-token-amount <feeAmount> \\
+  [--file \"<attachment-path>\" ...]
 ```
-- `--provider`, `--service-id`, `--payment-mode` required. Payment mode: A2A→escrow, A2MCP→x402.
+- Pass the confirmed Service context unchanged. The command does not repeat price, balance, ASP, or payment-mode decisions.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
-- After `create-task` succeeds, budget and max budget are locked; never offer a direct edit.
+- `reason=broadcast_submitted` means the UserOperation was submitted, not that `job_created` has arrived.
+- Route `nextAction.id=watch_task` through `task-action-routing.md` immediately.
 
-{attachments_stop}",
+Do not call `task-attach`, `set-payment-mode`, `confirm-accept`, `okx-a2a session create`, or `okx-a2a file upload` in this step. Attachments were saved locally by `create-task`; A2A forwarding starts only from the later `job_created` flow.",
         service_params = service_params_inference(),
-        attachments_stop = attachments_and_stop(),
     )
 }
 
@@ -461,8 +463,8 @@ fn upload_and_forward_one(
         filename = upload.filename,
     );
 
-    okx_a2a::xmtp_send(job_id, to_agent_id, &msg)
-        .map_err(|e| format!("xmtp-send failed for {file_path}: {e}"))
+    okx_a2a::session_send(job_id, Some(to_agent_id), &msg)
+        .map_err(|e| format!("session send failed for {file_path}: {e}"))
 }
 
 /// Upload + forward ALL pending attachments for a job. Best-effort: failures
@@ -496,7 +498,7 @@ pub(crate) fn upload_and_forward_all_attachments(
     ok_count
 }
 
-/// Rust fast-path for `attachment_added`: upload + xmtp-send in-process,
+/// Rust fast-path for `attachment_added`: upload + session send in-process,
 /// then return a notify-only prompt for the LLM.
 pub(crate) fn attachment_added_cli(
     ctx: &super::super::flow::FlowContext<'_>,
@@ -641,7 +643,10 @@ mod tests {
             "| Trial |",
             "| Auto-renew |",
         ] {
-            assert!(out.contains(expected_row), "missing confirmation row {expected_row}");
+            assert!(
+                out.contains(expected_row),
+                "missing confirmation row {expected_row}"
+            );
         }
         let form = out
             .split("Step 5 -- Subscription confirmation form")
@@ -661,9 +666,7 @@ mod tests {
         assert!(out.contains("--autotrade-environment <live|demo>"));
         assert!(out.contains("--autotrade-auth-mode <oauth|api_key>"));
         assert!(out.contains("--autotrade-required-field"));
-        assert!(out.contains(
-            "The CLI validates this declaration before any remote create request"
-        ));
+        assert!(out.contains("The CLI validates this declaration before any remote create request"));
         assert!(out.contains("Do not compare amount with cap"));
         assert!(out.contains("tradeAmountBasis=notional"));
         assert!(out.contains("tradeAmountBasis=margin"));
@@ -705,9 +708,7 @@ mod tests {
         assert!(out.contains(
             "Never compress this\nreview into a one-line `internal execution configuration` summary"
         ));
-        assert!(out.contains(
-            "A reply confirming Step 4.5 never also answers auto-renew"
-        ));
+        assert!(out.contains("A reply confirming Step 4.5 never also answers auto-renew"));
         assert!(out.contains(
             "For each `extra` entry, use its `label`, exact `value`, and optional `unit`"
         ));
@@ -735,16 +736,18 @@ mod tests {
             "playbook must keep preflight advisory: {out}"
         );
         assert!(out.contains("continue creating the subscription"));
-        assert!(
-            !out.contains("  --copy-trade"),
-            "removed copy-trade argument must not appear: {out}"
-        );
+        assert!(out.contains("--copy-trade <1 when confirmed mode is auto; otherwise 0>"));
+        assert!(out.contains("--service-params '<confirmed JSON serviceParams, or {}>'"));
+        assert!(out.contains("--service-interval \"<subscriptionInfo.interval>\""));
+        assert!(out.contains("--format json"));
         assert!(
             !out.contains("re-run `task-service-select` exactly once"),
             "preflight absence must not force an extra match: {out}"
         );
         assert!(out.contains("ASP text is not the user's answer"));
-        assert!(out.contains("Trade Kit preparation and connection fallback (optional; separate turn)"));
+        assert!(
+            out.contains("Trade Kit preparation and connection fallback (optional; separate turn)")
+        );
         assert!(out.contains("guide did not already contain a handled Trade Kit preparation step"));
         assert!(out.contains("Install/connect Trade Kit"));
         assert!(out.contains("Later — continue subscribing"));
@@ -795,43 +798,33 @@ mod tests {
     }
 
     #[test]
-    fn regular_create_task_requires_full_balance_notice_before_watch() {
+    fn regular_create_task_routes_structured_success_to_watch() {
         let out = create_task_regular();
-        assert!(out.contains("balanceWarning"));
-        assert!(out.contains("blockedReason=insufficient-balance"));
-        assert!(out.contains("save the exact `create-task` command + `balanceWarning`"));
-        assert!(out.contains("if `fundingNoticeCommand` exists, run it"));
-        assert!(out.contains("`terminal-unicode`"));
-        assert!(out.contains("show `terminalQr` + full notice"));
-        assert!(out.contains("`image-notify`"));
-        assert!(out.contains("run `notifyCommandArgs`"));
-        assert!(out.contains("If missing, show `balanceWarning`"));
-        assert!(out.contains("END TURN"));
-        assert!(out.contains("do not create again or Watch"));
-        assert!(out.contains("Legacy submitted `balanceWarning`"));
-        assert!(out.contains("do not Watch"));
+        assert!(out.contains("reason=broadcast_submitted"));
+        assert!(out.contains("nextAction.id=watch_task"));
+        assert!(out.contains("not that `job_created` has arrived"));
     }
 
     #[test]
-    fn regular_create_task_defaults_budget_to_service_fee_without_showing_it() {
+    fn regular_create_task_uses_fixed_service_price_without_negotiation() {
         let out = create_task_regular();
 
-        assert!(out.contains("budget = feeAmount"));
-        assert!(out.contains("max_budget = feeAmount"));
-        assert!(!out.contains("ask user explicitly"));
+        assert!(out.contains("paymentTokenAmount = feeAmount"));
+        assert!(out.contains("Do not independently re-price"));
+        assert!(!out.contains("max_budget = feeAmount"));
         assert!(!out.contains("| Budget |"));
         assert!(!out.contains("| Max budget |"));
         assert!(!out.contains("| Payment token |"));
-        assert!(out.contains("non-negative"));
     }
 
     #[test]
-    fn regular_create_task_keeps_pre_create_budget_edits_with_separate_confirmation() {
+    fn regular_create_task_uses_only_new_cli_flags() {
         let out = create_task_regular();
 
-        assert!(out.contains("Edit budget/max-budget"));
-        assert!(out.contains("show the proposed value(s) separately"));
-        assert!(out.contains("do not auto-adjust the other field"));
-        assert!(out.contains("After `create-task` succeeds, budget and max budget are locked"));
+        assert!(out.contains("--provider-agent-id"));
+        assert!(out.contains("--payment-token-symbol"));
+        assert!(out.contains("--payment-token-amount"));
+        assert!(!out.contains("--max-budget"));
+        assert!(!out.contains("--payment-mode <"));
     }
 }

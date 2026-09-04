@@ -230,7 +230,7 @@ pub fn handle_save(params: &SaveParams<'_>) -> Result<SaveResult> {
 
 // ── Review-awaiting-deliverable marker ───────────────────────────────
 //
-// When `job_submitted` arrives before the XMTP `[intent:deliver]` message,
+// When `job_submitted` arrives before the A2A `[intent:deliver]` message,
 // the user has no deliverable to review yet. A marker file is written so
 // that the later `deliverable_received` event can detect this and directly
 // output the review prompt instead of "wait for job_submitted".

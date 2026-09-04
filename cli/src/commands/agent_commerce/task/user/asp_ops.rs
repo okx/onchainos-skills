@@ -806,19 +806,9 @@ pub async fn handle_set_asp(
         }
     }
 
-    // FR-8.3/AC-9: resolve and persist the correct multi-service endpoint from the
-    // provider's service catalog (previously persisted endpoint-less). A2A /
-    // no-endpoint services resolve to None → unchanged routing (FR-8.5/AC-11).
-    let resolved_endpoint: Option<String> =
-        crate::commands::agent_commerce::task::common::find_service(provider_agent_id, service_id)
-            .await?
-            .and_then(|svc| svc.get("endpoint").and_then(|v| v.as_str()).map(str::to_string))
-            .filter(|s| !s.is_empty());
-    super::negotiate::save_designated_provider_with_endpoint(
-        job_id,
-        provider_agent_id,
-        resolved_endpoint.as_deref(),
-    )?;
+    // Task creation supports A2A escrow only. Endpoint persistence belonged to
+    // the removed task-based A2MCP flow; direct A2MCP invocation owns routing.
+    super::negotiate::save_designated_provider(job_id, provider_agent_id)?;
 
     audit::log(
         "cli",
@@ -1668,21 +1658,21 @@ mod tests {
         assert!(TestCli::try_parse_from(["test", "user-reject"]).is_err());
     }
 
-    // ── create-task: --visibility removed (public task type deleted) ────
+    // ── create-task: V2 create-and-fund CLI contract ───────────────────
 
     #[test]
-    fn cli_create_rejects_visibility_flag() {
-        // `--visibility` no longer exists on create-task; supplying it is a clap parse error (AC-3).
-        // All other required flags are provided so `--visibility` is the sole cause of the error.
+    fn cli_create_rejects_legacy_flags() {
         assert!(TestCli::try_parse_from([
             "test", "create",
+            "--title", "report",
             "--description", "a long enough description text",
             "--budget", "10", "--max-budget", "20",
-            "--currency", "USDT",
-            "--provider", "agent-1",
+            "--payment-token-symbol", "USDT",
+            "--payment-token-amount", "10",
+            "--provider-agent-id", "agent-1",
             "--service-id", "svc-1",
-            "--payment-mode", "escrow",
-            "--visibility", "0",
+            "--service-token-address", "0xAddr",
+            "--service-token-amount", "10",
         ]).is_err());
     }
 
@@ -1690,80 +1680,63 @@ mod tests {
     fn cli_create_with_service_fields() {
         let cli = TestCli::parse_from([
             "test", "create",
+            "--title", "report",
             "--description", "a long enough description text",
-            "--budget", "10", "--max-budget", "20",
-            "--currency", "USDT",
-            "--provider", "agent-1",
+            "--payment-token-symbol", "USDT",
+            "--payment-token-amount", "10",
+            "--provider-agent-id", "agent-1",
             "--service-id", "svc-1",
-            "--payment-mode", "escrow",
-            "--service-params", "参数：x=1",
+            "--service-params", "{\"x\":1}",
             "--service-token-address", "0xAddr",
             "--service-token-amount", "5.0",
+            "--visibility", "private",
         ]);
         match cli.cmd {
             super::super::TaskCommand::Create {
-                provider, service_id, payment_mode, service_params,
+                provider_agent_id, service_id, payment_token_amount, service_params,
                 service_token_address, service_token_amount, ..
             } => {
-                assert_eq!(provider, "agent-1");
+                assert_eq!(provider_agent_id, "agent-1");
                 assert_eq!(service_id, "svc-1");
-                assert_eq!(payment_mode, "escrow");
-                assert_eq!(service_params.as_deref(), Some("参数：x=1"));
-                assert_eq!(service_token_address.as_deref(), Some("0xAddr"));
-                assert_eq!(service_token_amount.as_deref(), Some("5.0"));
+                assert_eq!(payment_token_amount, "10");
+                assert_eq!(service_params, "{\"x\":1}");
+                assert_eq!(service_token_address, "0xAddr");
+                assert_eq!(service_token_amount, "5.0");
             }
             _ => panic!("expected Create"),
         }
     }
 
     #[test]
-    fn cli_create_requires_provider_service_id_payment_mode() {
-        // --provider, --service-id, --payment-mode are all required for create-task
-        // (oli-feedback). Omitting them is a clap parse error.
+    fn cli_create_requires_confirmed_fixed_price_context() {
         let base = [
             "test", "create",
+            "--title", "report",
             "--description", "a long enough description text",
-            "--budget", "10", "--max-budget", "20",
-            "--currency", "USDT",
+            "--payment-token-symbol", "USDT",
+            "--payment-token-amount", "10",
         ];
-        // Missing all three required flags.
         assert!(TestCli::try_parse_from(base).is_err());
-        // Missing --payment-mode only.
         assert!(TestCli::try_parse_from([
             "test", "create",
+            "--title", "report",
             "--description", "a long enough description text",
-            "--budget", "10", "--max-budget", "20",
-            "--currency", "USDT",
-            "--provider", "agent-1",
+            "--payment-token-symbol", "USDT",
+            "--payment-token-amount", "10",
+            "--provider-agent-id", "agent-1",
             "--service-id", "svc-1",
+            "--service-token-address", "0xAddr",
         ]).is_err());
-        // Missing --service-id only.
         assert!(TestCli::try_parse_from([
             "test", "create",
+            "--title", "report",
             "--description", "a long enough description text",
-            "--budget", "10", "--max-budget", "20",
-            "--currency", "USDT",
-            "--provider", "agent-1",
-            "--payment-mode", "escrow",
-        ]).is_err());
-        // Missing --provider only.
-        assert!(TestCli::try_parse_from([
-            "test", "create",
-            "--description", "a long enough description text",
-            "--budget", "10", "--max-budget", "20",
-            "--currency", "USDT",
+            "--payment-token-symbol", "USDT",
+            "--payment-token-amount", "10",
+            "--provider-agent-id", "agent-1",
             "--service-id", "svc-1",
-            "--payment-mode", "escrow",
-        ]).is_err());
-        // All three present -> parses OK.
-        assert!(TestCli::try_parse_from([
-            "test", "create",
-            "--description", "a long enough description text",
-            "--budget", "10", "--max-budget", "20",
-            "--currency", "USDT",
-            "--provider", "agent-1",
-            "--service-id", "svc-1",
-            "--payment-mode", "escrow",
+            "--service-token-address", "0xAddr",
+            "--service-token-amount", "10",
         ]).is_ok());
     }
 
