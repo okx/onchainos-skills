@@ -145,8 +145,7 @@ subscription identifier. Render the broadcast transaction hash when present,
 attachment count, and `guideStatus` / `consentStatus` / `executionProfileSaved`.
 Then execute
 the returned `nextAction.id=watch_task`. Do not establish the A2A session in
-this creation step; the `sub_created` event owns session establishment or
-restoration and pending-attachment forwarding.
+this creation step; the `sub_created` event owns that transition.
 
 For `phase=service_routing` and `nextAction.id=invoke_a2mcp`, do not render the
 generic task-creation confirmation card above. Open

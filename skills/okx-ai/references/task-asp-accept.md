@@ -6,6 +6,12 @@ already created and funded the task. The ASP no longer applies or counter-applie
 ## Trigger and authoritative status
 
 - Single task trigger: `job_asp_selected`.
+- Subscription trigger: `sub_created`, delivered to both Buyer and ASP after the
+  Buyer's create-subscribe transaction is confirmed. `sub_open` is obsolete and
+  must not trigger this flow.
+- The ASP runtime must make and execute this decision itself. Dashboards,
+  dispatchers, simulators, and other external hooks are read-only and must not
+  call the provider-decision commands or send a synthetic XMTP deliverable.
 - Fetch the latest detail before every decision.
 - Continue only when `status == CREATED (0)`.
 - `ACCEPTED (1)` means a duplicate trigger: end successfully without a

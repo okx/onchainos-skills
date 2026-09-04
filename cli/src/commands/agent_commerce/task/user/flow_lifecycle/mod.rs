@@ -2,14 +2,18 @@
 
 mod core;
 mod dispute;
-mod terminal;
 mod manage;
 pub(super) mod subscription;
+mod terminal;
 
-pub(super) use self::core::{provider_applied, job_accepted, deliverable_received_cli, job_submitted, approve_review, reject_review, job_completed};
-pub(crate) use self::core::{
-    resume_queued_subscription_delivery, try_recover_from_temp_file,
+pub(super) use self::core::{
+    approve_review, deliverable_received_cli, job_accepted, job_completed, job_submitted,
+    provider_applied, reject_review,
 };
-pub(super) use dispute::{job_rejected, job_disputed, dispute_resolved};
-pub(super) use terminal::{job_refunded, job_auto_refunded, job_expired, job_closed, submit_expired, reject_expired, review_deadline_warn, close_task, reward_claimed, wakeup_notify, staked_and_unknown};
-pub(super) use manage::{create_task, attachment_added_cli, upload_and_forward_all_attachments};
+pub(crate) use self::core::{resume_queued_subscription_delivery, try_recover_from_temp_file};
+pub(super) use dispute::{dispute_resolved, job_disputed, job_rejected};
+pub(super) use manage::{attachment_added_cli, create_task, upload_and_forward_all_attachments};
+pub(super) use terminal::{
+    close_task, job_auto_refunded, job_closed, job_expired, job_refunded, reject_expired,
+    review_deadline_warn, reward_claimed, staked_and_unknown, submit_expired, wakeup_notify,
+};

@@ -463,7 +463,11 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             }
         }
         // ─── Subscription lifecycle events ──────────────────────────────────────────────
+        Event::SubOpen => super::flow_lifecycle::subscription::sub_open(&ctx, message),
         Event::SubCreated => super::flow_lifecycle::subscription::sub_created(&ctx, message),
+        Event::SubAspSelected => {
+            super::flow_lifecycle::subscription::sub_asp_selected(&ctx, message)
+        }
         Event::SubCancel => super::flow_lifecycle::subscription::sub_cancel(&ctx, message),
         Event::SubUserReject => super::flow_lifecycle::subscription::sub_user_reject(&ctx, message),
         Event::SubAspAgree => super::flow_lifecycle::subscription::sub_asp_agree(&ctx, message),
@@ -874,7 +878,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             // Subscription notifications are self-contained display bodies (they call only
             // `user-notify` / `session-cleanup`, no IRON-RULE commands), so skip the shared
             // preamble + xmtp version prefix.
-            "sub_created" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
+            "sub_open" | "sub_created" | "sub_asp_selected" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
             "sub_trial_into_active" | "sub_renew" | "sub_expire_warn" |
             "sub_complete_notify" | "sub_close_notify" | "sub_failed_notify" |
             "sub_reject_refund_notify"
@@ -968,8 +972,9 @@ mod tests {
     }
 
     // Every user-side subscription event renders a display notification, never a decision.
-    const USER_NON_TERMINAL: [&str; 5] = [
+    const USER_NON_TERMINAL: [&str; 6] = [
         "sub_created",
+        "sub_asp_selected",
         "sub_trial_into_active",
         "sub_renew",
         "sub_user_reject",
@@ -1297,11 +1302,51 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_created_trial_branch_renders_trial_started_not_first_charge() {
+    async fn sub_created_is_created_and_waits_for_asp() {
         let out = run(
             "sub_created",
             json!({
-                "event": "sub_created", "jobId": JOB_ID, "trialType": 1,
+                "event": "sub_created", "jobId": JOB_ID, "trialType": 0,
+                "providerAgentId": "9967", "tokenSymbol": "USDT", "tokenAmount": "12.34"
+            }),
+        )
+        .await;
+        assert!(
+            out.contains("[Subscription Created]"),
+            "created copy: {out}"
+        );
+        assert!(
+            out.contains("waiting for the ASP to accept"),
+            "waiting state: {out}"
+        );
+        assert!(
+            out.contains("12.34 USDT has been funded"),
+            "funding copy: {out}"
+        );
+        assert!(
+            !out.contains("status: Active"),
+            "must not claim active: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sub_open_is_an_ignored_compatibility_event() {
+        let out = run(
+            "sub_open",
+            json!({ "event": "sub_open", "jobId": JOB_ID }),
+        )
+        .await;
+        assert!(out.contains("obsolete"), "legacy marker: {out}");
+        assert!(!out.contains("user-notify"), "must stay silent: {out}");
+        assert!(!out.contains("session create"), "must not create a session: {out}");
+    }
+
+    #[tokio::test]
+    async fn sub_asp_selected_trial_branch_renders_trial_started_not_first_charge() {
+        let out = run(
+            "sub_asp_selected",
+            json!({
+                "event": "sub_asp_selected", "jobId": JOB_ID, "trialType": 1,
                 "tokenSymbol": "USDT", "tokenAmount": "12.34",
                 "trialStartTime": 1_700_000_000, "trialEndTime": 1_700_500_000
             }),
@@ -1318,12 +1363,12 @@ mod tests {
 
         // trialType=0 and absent trialType must both keep the paid-subscribe copy.
         for msg in [
-            json!({ "event": "sub_created", "jobId": JOB_ID, "trialType": 0,
+            json!({ "event": "sub_asp_selected", "jobId": JOB_ID, "trialType": 0,
                     "tokenSymbol": "USDT", "tokenAmount": "12.34" }),
-            json!({ "event": "sub_created", "jobId": JOB_ID,
+            json!({ "event": "sub_asp_selected", "jobId": JOB_ID,
                     "tokenSymbol": "USDT", "tokenAmount": "12.34" }),
         ] {
-            let out = run("sub_created", msg).await;
+            let out = run("sub_asp_selected", msg).await;
             assert!(
                 out.contains("[Subscribed]"),
                 "paid path keeps Sub-1-2 copy: {out}"
