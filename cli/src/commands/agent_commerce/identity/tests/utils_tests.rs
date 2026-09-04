@@ -1269,6 +1269,43 @@ fn add_feedback_list_cells_walks_list_key() {
     assert_eq!(cells[4], json!({ "label": "Comment", "value": "Great" }));
 }
 
+#[test]
+fn add_feedback_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in [
+        (1, 3, 7, true),
+        (2, 3, 7, true),
+        (3, 3, 7, false),
+        (1, 3, 3, false),
+        (1, 3, 0, false),
+    ] {
+        let mut data = json!({
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        });
+
+        add_feedback_list_cells(&mut data);
+
+        assert_eq!(data["hasMore"], json!(expected));
+    }
+}
+
+#[test]
+fn add_feedback_list_cells_derives_has_more_from_string_metadata() {
+    let mut data = json!({
+        "items": [],
+        "page": "2",
+        "pageSize": "3",
+        "total": "7",
+    });
+
+    add_feedback_list_cells(&mut data);
+
+    assert_eq!(data["hasMore"], json!(true));
+}
+
 // ─── build_precheck (registration §2 uniqueness) ─────────────────────
 
 #[test]
