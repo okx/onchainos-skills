@@ -263,7 +263,7 @@ pub(crate) fn merge_biz_context(
 /// object (`data[0]`: `{ pkgId, orderId, orderType, txHash, bizUniqKey }`).
 ///
 /// Same flow as [`sign_uop_and_broadcast`]; used by callers that need the pkgId /
-/// orderId / bizUniqKey fields used by task broadcast result shapes,
+/// orderId / bizUniqKey fields used by command result envelopes,
 /// not just the txHash.
 #[allow(clippy::too_many_arguments)]
 pub async fn sign_uop_and_broadcast_full(
@@ -283,10 +283,9 @@ pub async fn sign_uop_and_broadcast_full(
     let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
         .map_err(|e| anyhow::anyhow!("failed to parse uopData: {e}"))?;
 
-    // Simulation-failure guard: backend returns non-empty uopData but executeResult=false means
-    // on-chain estimateGas already reverted (contract check failed / insufficient balance / insufficient approve, etc.);
-    // at this point hash/uopHash are empty strings, and continuing to broadcast would only be
-    // rejected by downstream guards and mask the real failure reason. Throw executeErrorMsg directly here.
+    // Backend preflight guard: executeResult=false means the lifecycle service
+    // rejected this prepared operation before client signing/broadcast. Surface
+    // executeErrorMsg without claiming which RPC simulation primitive produced it.
     let exec_ok = match &unsigned.execute_result {
         Value::Bool(b) => *b,
         Value::Null => true,
@@ -294,11 +293,11 @@ pub async fn sign_uop_and_broadcast_full(
     };
     if !exec_ok {
         let err_msg = if unsigned.execute_error_msg.is_empty() {
-            "transaction simulation failed".to_string()
+            "no error detail returned".to_string()
         } else {
             unsigned.execute_error_msg.clone()
         };
-        bail!("transaction simulation failed (on-chain estimateGas reverted, unrelated to gas/native balance): {}", err_msg);
+        bail!("backend transaction preflight failed: {}", err_msg);
     }
 
     let mut broadcast_body = build_broadcast_body(
@@ -313,10 +312,11 @@ pub async fn sign_uop_and_broadcast_full(
     .await?;
     broadcast_body["bizContext"] = merge_biz_context(job_id, biz_type, biz_context_extra);
 
-    // `.context` (not `anyhow!("...: {e}")`) keeps the underlying
-    // `ApiCodeError` available to callers. `{e:#}` still renders the full chain.
+    // `.context` (not `anyhow!("...: {e}")`) so the underlying `ApiCodeError`
+    // survives in the chain so callers can recover the backend `code` + `msg`.
+    // `{e:#}` still renders "broadcast failed: …".
     let bc_resp = client
-        .post_with_identity(client.broadcast_path(), &broadcast_body, agent_id)
+        .post_mutation_with_identity(client.broadcast_path(), &broadcast_body, agent_id)
         .await
         .context("broadcast failed")?;
 
@@ -389,11 +389,11 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
     };
     if !exec_ok {
         let err_msg = if unsigned.execute_error_msg.is_empty() {
-            "transaction simulation failed".to_string()
+            "no error detail returned".to_string()
         } else {
             unsigned.execute_error_msg.clone()
         };
-        bail!("transaction simulation failed (on-chain estimateGas reverted, unrelated to gas/native balance): {}", err_msg);
+        bail!("backend transaction preflight failed: {}", err_msg);
     }
 
     let mut broadcast_body = build_broadcast_body(
@@ -416,7 +416,7 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
     });
 
     let bc_resp = client
-        .post_with_identity(client.broadcast_path(), &broadcast_body, agent_id)
+        .post_mutation_with_identity(client.broadcast_path(), &broadcast_body, agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("broadcast failed: {e}"))?;
 
@@ -453,11 +453,11 @@ pub async fn sign_uop_and_broadcast_with_payment(
     };
     if !exec_ok {
         let err_msg = if unsigned.execute_error_msg.is_empty() {
-            "transaction simulation failed".to_string()
+            "no error detail returned".to_string()
         } else {
             unsigned.execute_error_msg.clone()
         };
-        bail!("transaction simulation failed (on-chain estimateGas reverted, unrelated to gas/native balance): {}", err_msg);
+        bail!("backend transaction preflight failed: {}", err_msg);
     }
 
     let mut broadcast_body = build_broadcast_body(
@@ -477,7 +477,7 @@ pub async fn sign_uop_and_broadcast_with_payment(
     });
 
     let bc_resp = client
-        .post_with_identity(client.broadcast_path(), &broadcast_body, agent_id)
+        .post_mutation_with_identity(client.broadcast_path(), &broadcast_body, agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("broadcast failed: {e}"))?;
 

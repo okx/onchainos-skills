@@ -51,6 +51,10 @@ CLAUDE.local.md
 
 # AI Assistant directories (auto-generated)
 .agents/
+.codex/bin/
+.codex/build/
+.codex/runtime/
+.codex/skills/
 .cursor
 .ai-mat
 .cursorrules
@@ -78,6 +82,8 @@ run.sh
 test-cases.json
 
 **/evals/
+!skills/okx-ai-v2/evals/
+!skills/okx-ai-v2/evals/**
 
 # Agent task workspace (local only)
 skills/okx-agent-task-workspace/
@@ -93,9 +99,13 @@ skills/okx-agent-task-workspace/
 
 output/
 
-
 scripts/dev
 
 .aiide/
 .aiide-preview/
 
+# Local Codex build artifacts
+.codex/cargo/
+.codex/onchainos/
+.codex/target-global/
+artifacts/

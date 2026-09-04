@@ -34,12 +34,13 @@ User-session needs to forward free-form user instructions targeting a specific t
 5. Dispatch the user's instruction to the sub via `okx-a2a session send` — the daemon resolves the session from `--job-id` + `--to-agent-id`:
 
    ```bash
-   okx-a2a session send --no-wait \
+   okx-a2a session send \
      --job-id <jobId> --to-agent-id <counterpartyAgentId> \
      --content "<user verbatim>
 
    ---
-   Reply to the user via `onchainos agent user-notify --content \"<localized natural-language reply>\"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `task-user-sub-playbook.md` §Communication Contract)."
+   Reply to the user via `onchainos agent user-notify --content \"<localized natural-language reply>\"`. If a user decision is needed (A/B/C / approve / reject / etc.), use `pending-decisions-v2 request` instead (see `task-user-sub-playbook.md` §Communication Contract)." \
+     --json
    ```
 
    Forward verbatim then append reply-path instruction. End turn.
@@ -51,6 +52,27 @@ User-session needs to forward free-form user instructions targeting a specific t
 - ❌ Do NOT call `okx-a2a session send` multiple times in one turn.
 
 **Output schema of `active-tasks`**: see [`task-cli-reference.md → active-tasks`](task-cli-reference.md#active-tasks).
+
+---
+
+## Refund or refund progress
+
+Triggers: `refund`, `get my money back`, `apply for a refund`, `refund status`,
+`where is my refund`, or a refund-related `dispute` / `arbitration` request.
+
+Read and follow [`task-user-refund.md`](task-user-refund.md). This route takes
+precedence over generic task-scoped forwarding and over the disabled legacy
+`close`/`reject`/`subscribe-reject`/`claim-auto-refund` flows. A User asking for
+arbitration does not gain authority to invoke an ASP or Evaluator command;
+Refund V2 first reads the authoritative state and returns only currently valid
+actions.
+
+An explicit request only to cancel trial conversion or turn off formal
+auto-renew, without asking to return paid funds, remains Subscription management
+in `task-user-playbook.md`. If the wording could mean either cancellation or
+returning funds, ask which outcome the User wants before any write.
+`subscribe-cancel` remains valid only for that cancellation-only flow and is not
+a refund fallback.
 
 ---
 
@@ -156,26 +178,40 @@ Render and paginate per [`task-user-playbook.md` §Unified My Tasks](task-user-p
 
 ## Close a task (irreversible)
 
-Triggers (only when there's no active card the user might be answering): `close this task` / `cancel the task` / `drop this job` / `withdraw the task`.
+Triggers (only when there's no active card the user might be answering and the
+User is not asking for paid funds back): `close this task` / `cancel the task` /
+`drop this job` / `withdraw the task`.
 
-**Preconditions**: clear jobId in context; status must be `created` (no provider accepted yet).
+**Precondition**: a clear jobId in context. Do not infer status from conversation
+history; Refund V2 reads authoritative state.
 
-**Action**: `onchainos agent close <jobId> --agent-id <agentId>` after explicit user confirmation.
+**Action**: run the read-only `onchainos agent refund-prepare <jobId>`. Render the
+returned task/refund details and exact action, ask for explicit confirmation,
+then use `refund-execute --confirm` with the unchanged `operation` and
+`refundContextId`. If preparation returns a block or read-only action, do not
+substitute a legacy command.
+
+If the request mentions a refund, payment return, refund progress, or
+refund-related arbitration, do not use this section; enter Refund V2 instead.
 
 🛑 **CRITICAL ambiguity — `close` vs `resolve C`**:
 - `close` is overloaded:
-  1. **In "Waiting for user reply" state** on a `recommend_pick` card → run the block's pre-filled `resolve-prompt` command with the user's verbatim reply (CLI maps it to `close`).
-  2. **Outside Waiting state** → `onchainos agent close <jobId>` directly.
+  1. **In "Waiting for user reply" state** on a `recommend_pick` card → run the
+     block's pre-filled `resolve-prompt` command with the user's verbatim reply;
+     the resulting close intent must hand off to Refund V2 preparation.
+  2. **Outside Waiting state** → start with `refund-prepare` directly.
 - 🔴 I-9: case (1) mistakenly mis-routed. **Default when in doubt**: prefer `resolve-prompt`.
 
-## Funding completed (after balanceWarning)
+The legacy `agent close` entry is disabled and never performs the write.
 
-Trigger: `I topped up`, only with saved `balanceWarning`.
-No saved warning → ask which payment/task; do not Watch.
+## Funding completed
 
-Action:
-- Saved pending create command → rerun it. If still insufficient, render `funding-notice` again and END TURN.
-- Saved `jobId` only → Claude Code/Codex read `watch-core.md` and run scoped watch; Hermes/OpenClaw rely on native push and END TURN.
+- Latest shared Funding result → route the funding-complete intent to
+  [`funding.md`](../../okx-agentic-wallet/references/funding.md). That Reference owns balance
+  verification and the plain-language handoff back to task creation.
+- Legacy saved `balanceWarning` with a `jobId` only → Claude Code/Codex read
+  `watch-core.md` and run scoped watch; Hermes/OpenClaw rely on native push and
+  END TURN.
 
 ---
 
@@ -183,7 +219,7 @@ Action:
 
 | Intent                                                                        | Action | Detail |
 |-------------------------------------------------------------------------------|---|---|
-| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity-service-search.md`](identity-service-search.md) commissioning search. Confirm its single `service-match` result, run `task-create-prepare`, then route its `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md). Never read `data.action` from `task-create-prepare`; that field does not exist in its response. | user publish flow |
+| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity-service-search.md`](identity-service-search.md) commissioning search. Confirm its single `service-match` result and run `task-create-prepare`. A structured insufficient-balance result enters shared Funding immediately; otherwise route its `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md). Never read `data.action` from `task-create-prepare`; that field does not exist in its response. | user publish flow |
 | Take specific task (ASP) — `take {jobId}` / `contact the User Agent of {jobId}` | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | task-asp-accept.md §1 |
 | Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |

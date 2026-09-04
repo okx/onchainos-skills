@@ -35,7 +35,6 @@ pub mod state_machine;
 pub mod subscription_identity;
 pub mod user_lang;
 pub mod util;
-pub mod version_notice;
 
 use util::{fmt_unix_secs, validate_job_id};
 
@@ -108,7 +107,7 @@ struct TaskDetail {
     /// Backend spec: the token symbol returned directly (USDT / USDG).
     token_symbol: Option<String>,
     token_amount: Option<String>,
-    /// 0=unset / 1=escrow / 3=legacy-disabled Task payment
+    /// 0=unset / 1=escrow / 3=x402
     payment_mode: Option<i32>,
     /// 0=created / 1=accepted / 2=submitted / 3=rejected / 4=disputed / 5=complete / 7=close
     status: Option<i32>,
@@ -146,20 +145,31 @@ pub struct PreFetchedDeliverable {
 pub struct PreFetchedTaskContext {
     pub title: String,
     pub description: String,
+    /// Authoritative task kind: 0 = one-time, 1 = subscription.
+    pub job_type: Option<i64>,
     pub token_symbol: String,
     pub token_amount: String,
     pub payment_mode: Option<i64>,
     pub max_budget: Option<String>,
     pub provider_agent_id: Option<String>,
+    pub provider_name: Option<String>,
     pub user_agent_id: Option<String>,
     pub status: Option<i64>,
     pub deliverable: Option<PreFetchedDeliverable>,
     pub service_id: Option<String>,
+    pub service_name: Option<String>,
     pub service_token_address: Option<String>,
     pub service_token_amount: Option<String>,
     pub service_params: Option<String>,
     pub user_agent_address: Option<String>,
     pub token_address: Option<String>,
+    /// Optional transaction metadata verified by Refund V2's local order
+    /// reconciliation. Raw task-detail hash aliases never populate it.
+    pub verified_transaction_hash: Option<String>,
+    /// Durable local proof that this checkout submitted a Refund V2 request
+    /// for the exact task/payment snapshot now being displayed.
+    /// Raw task/subscription API responses never populate this flag.
+    pub refund_request_provenance: bool,
     /// Acceptance/review deadline (unix seconds). `Some` when the API returned a
     /// positive `expireTime`, else `now()+expireConfig.reviewDeadline` when that
     /// is positive, else `None` (no reminder — backward compatible).
@@ -174,6 +184,18 @@ pub struct PreFetchedTaskContext {
 impl PreFetchedTaskContext {
     /// Build from the raw `serde_json::Value` returned by GET /task/{jobId}.
     pub fn from_api_response(v: &serde_json::Value) -> Self {
+        let string = |keys: &[&str]| {
+            keys.iter().find_map(|key| {
+                let value = v.get(*key)?;
+                value
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+                    .or_else(|| value.as_i64().map(|value| value.to_string()))
+                    .or_else(|| value.as_u64().map(|value| value.to_string()))
+            })
+        };
         // FR-1: prefer server-precise expireTime; else approximate now()+reviewDeadline.
         let expire_time = v
             .get("expireTime")
@@ -189,20 +211,35 @@ impl PreFetchedTaskContext {
         Self {
             title: v["title"].as_str().unwrap_or("").to_string(),
             description: v["description"].as_str().unwrap_or("").to_string(),
-            token_symbol: v["tokenSymbol"].as_str().unwrap_or("?").to_string(),
-            token_amount: v["tokenAmount"].as_str().unwrap_or("").to_string(),
-            payment_mode: v["paymentMode"].as_i64(),
+            job_type: v["jobType"]
+                .as_i64()
+                .or_else(|| v["jobType"].as_str().and_then(|value| value.parse().ok())),
+            token_symbol: string(&["tokenSymbol", "paymentTokenSymbol"])
+                .unwrap_or_else(|| "?".to_string()),
+            token_amount: string(&["paymentTokenAmount", "tokenAmount"]).unwrap_or_default(),
+            payment_mode: v["paymentMode"].as_i64().or_else(|| {
+                v["paymentMode"]
+                    .as_str()
+                    .and_then(|value| value.parse().ok())
+            }),
             max_budget: v["paymentMostTokenAmount"].as_str().map(String::from),
-            provider_agent_id: v["providerAgentId"].as_str().map(String::from),
-            user_agent_id: v["buyerAgentId"].as_str().map(String::from),
-            status: v["status"].as_i64(),
+            provider_agent_id: string(&["providerAgentId", "aspAgentId"]),
+            provider_name: string(&["providerAgentName", "aspAgentName", "providerName"]),
+            user_agent_id: string(&["buyerAgentId", "userAgentId"]),
+            status: v["subStatus"]
+                .as_i64()
+                .or_else(|| v["status"].as_i64())
+                .or_else(|| string(&["subStatus", "status"]).and_then(|value| value.parse().ok())),
             deliverable: None,
-            service_id: v["serviceId"].as_str().map(String::from),
-            service_token_address: v["serviceTokenAddress"].as_str().map(String::from),
-            service_token_amount: v["serviceTokenAmount"].as_str().map(String::from),
+            service_id: string(&["serviceId"]),
+            service_name: string(&["serviceName"]),
+            service_token_address: string(&["serviceTokenAddress"]),
+            service_token_amount: string(&["serviceTokenAmount"]),
             service_params: v["serviceParams"].as_str().map(String::from),
             user_agent_address: v["buyerAgentAddress"].as_str().map(String::from),
-            token_address: v["tokenAddress"].as_str().map(String::from),
+            token_address: string(&["paymentTokenAddress", "tokenAddress"]),
+            verified_transaction_hash: None,
+            refund_request_provenance: false,
             expire_time,
             // FR-2: additive, backward compatible — absent/non-bool testFlag ⇒ false.
             test_flag: v["testFlag"].as_bool().unwrap_or(false),
@@ -213,7 +250,7 @@ impl PreFetchedTaskContext {
     pub fn format_inline(&self) -> String {
         let pm_label = match self.payment_mode {
             Some(1) => String::from("escrow (1)"),
-            Some(3) => String::from("legacy-disabled (3)"),
+            Some(3) => String::from("x402 (3)"),
             Some(v) => format!("{v} (unknown)"),
             None => String::from("unknown"),
         };
@@ -523,8 +560,8 @@ pub async fn fetch_agent_by_id(agent_id: &str) -> Option<serde_json::Value> {
 /// numeric codes) are rejected to keep the CLI surface single-source-of-truth.
 fn parse_role_filter(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "user"      => Some(AGENT_ROLE_USER),
-        "asp"       => Some(AGENT_ROLE_ASP),
+        "user" => Some(AGENT_ROLE_USER),
+        "asp" => Some(AGENT_ROLE_ASP),
         "evaluator" => Some(AGENT_ROLE_EVALUATOR),
         _ => None,
     }
@@ -561,19 +598,32 @@ pub async fn handle_profile(agent_id: &str) -> Result<()> {
 /// as subprocess and
 /// return the parsed `data` field (services array/object).
 pub(crate) async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Value> {
+    spawn_service_list_filtered(agent_id, None).await
+}
+
+/// Spawn the public service-list command, optionally applying its documented
+/// backend-side `--service-id` filter.
+async fn spawn_service_list_filtered(
+    agent_id: &str,
+    service_id: Option<&str>,
+) -> Result<serde_json::Value> {
     let exe = std::env::current_exe().map_err(|e| anyhow::anyhow!("current_exe failed: {e}"))?;
 
-    let output = tokio::process::Command::new(&exe)
-        .args([
-            "agent",
-            "service-list",
-            "--agent-id",
-            agent_id,
-            "--page",
-            "1",
-            "--page-size",
-            "100",
-        ])
+    let mut command = tokio::process::Command::new(&exe);
+    command.args([
+        "agent",
+        "service-list",
+        "--agent-id",
+        agent_id,
+        "--page",
+        "1",
+        "--page-size",
+        "100",
+    ]);
+    if let Some(service_id) = service_id.filter(|value| !value.is_empty()) {
+        command.args(["--service-id", service_id]);
+    }
+    let output = command
         .output()
         .await
         .map_err(|e| anyhow::anyhow!("spawn `agent service-list` failed: {e}"))?;
@@ -602,8 +652,9 @@ pub(crate) async fn spawn_service_list(agent_id: &str) -> Result<serde_json::Val
 /// - `Ok(None)`         — service-list fetched, but no entry has this serviceId
 ///                        (e.g. User Agent designated a stale / unregistered serviceId)
 /// - `Err(e)`           — service-list fetch failed entirely (subprocess died,
-///                        backend rejected, JSON parse failed). Callers usually
-///                        want to treat this as "no match" — use `.ok().flatten()`.
+///                        backend rejected, JSON parse failed). This is an
+///                        operational error, never evidence that the service
+///                        does not match and never a reason to decline a task.
 ///
 /// Response navigation: scans every group's `list` (`data[*].list[*]`, flattened
 /// by the same logic that `designated_route_inner` uses); the first `serviceId`
@@ -615,7 +666,7 @@ pub(crate) async fn find_service(
     if service_id.is_empty() {
         return Ok(None);
     }
-    let data = spawn_service_list(agent_id).await?;
+    let data = spawn_service_list_filtered(agent_id, Some(service_id)).await?;
     // service-list returns two ID fields per entry: numeric `id` (e.g. 2301)
     // and UUID `serviceId` (e.g. "06d89519-..."). The task system passes UUIDs
     // while identity update/delete uses numeric ids. Match against BOTH fields
@@ -658,17 +709,20 @@ fn find_service_in_data(
 ///
 /// Output shape:
 /// ```json
-/// { "route": "a2a"|"error",
+/// { "route": "x402"|"a2a"|"error",
 ///   "errorType": "not_provider"|"offline",   // only when route=error
 ///   "providerName": "...",
 ///   "onlineStatus": 1|2,
-///   "errorType": "a2mcp_direct_invoke_required" // A2MCP is not a Task route
+///   "serviceId": "...", "serviceType": "A2MCP",
+///   "endpoint": "https://...", "feeAmount": "0.01",
+///   "feeToken": "0x...", "feeTokenSymbol": "USDT" // route=x402
 /// }
 /// ```
 /// In-process variant of the `designated-route` query — returns the resolved
 /// route JSON (the same shape that `handle_designated_route` would print to
-/// stdout). Used by user CLI flows to inline the A2A routing query without an
-/// LLM round-trip.
+/// stdout). Used by user CLI flows to inline the routing query without an
+/// LLM round-trip. Errors propagate; success cases (a2a / x402 / error) are
+/// all encoded as `Ok(json)`.
 fn scalar_text(value: &serde_json::Value) -> Option<String> {
     value
         .as_str()
@@ -790,7 +844,6 @@ pub async fn designated_route_inner(
                 "onlineStatus": online_status,
             }));
         }
-
         if online_status == 2 {
         Ok(serde_json::json!({
                 "route": "error",
@@ -1116,20 +1169,20 @@ pub fn flatten_agent_groups(data: &serde_json::Value) -> Vec<serde_json::Value> 
 // ─── Status descriptions ────────────────────────────────────────────────
 fn status_desc(s: &str) -> &str {
     match s {
-        "init"      => "Initializing (awaiting on-chain confirmation)",
-        "created"   => "Awaiting acceptance (Created)",
-        "accepted"  => "Accepted; ASP executing (Accepted)",
+        "init" => "Initializing (awaiting on-chain confirmation)",
+        "created" => "Awaiting acceptance (Created)",
+        "accepted" => "Accepted; ASP executing (Accepted)",
         "submitted" => "ASP submitted deliverable; awaiting User Agent review (Submitted)",
         "rejected" => {
             "User Agent rejected deliverable; evaluation possible within freeze period (Rejected)"
         }
-        "disputed"      => "Evaluation in progress (Disputed)",
+        "disputed" => "Evaluation in progress (Disputed)",
         "admin_stopped" => "Admin stopped the task (AdminStopped)",
         "completed" | "complete" => "Task completed; funds released (Complete)",
-        "failed"    => "Evaluation concluded; task closed (Failed)",
-        "close"     => "User Agent closed the task (Close)",
-        "expired"   => "Task expired (Expired)",
-        _           => "Unknown status",
+        "failed" => "Evaluation concluded; task closed (Failed)",
+        "close" => "User Agent closed the task (Close)",
+        "expired" => "Task expired (Expired)",
+        _ => "Unknown status",
     }
 }
 
@@ -1195,10 +1248,10 @@ async fn build_context(
 
     let role_enum = state_machine::Role::parse(role);
     let role_cn = match role_enum {
-        Some(state_machine::Role::User)     => "User Agent",
-        Some(state_machine::Role::Asp)  => "Agent Service Provider (ASP)",
+        Some(state_machine::Role::User) => "User Agent",
+        Some(state_machine::Role::Asp) => "Agent Service Provider (ASP)",
         Some(state_machine::Role::Evaluator) => "Evaluator Agent",
-        None                                 => role,
+        None => role,
     };
 
     // The spec returns status as an integer only; derive the enum locally via Status::from_int and use as_str() for the display string.
@@ -1243,7 +1296,7 @@ async fn build_context(
     out.push_str(&format!("- Description: {}\n", task.description));
 
     let amount = task.token_amount.as_deref().unwrap_or("not set");
-    let token  = task.token_address.as_deref().unwrap_or("");
+    let token = task.token_address.as_deref().unwrap_or("");
     let symbol = task.token_symbol.as_deref().unwrap_or("UNKNOWN");
     out.push_str(&format!("- Budget: {amount} {symbol} (token: {token})\n"));
     if let Some(max_amt) = &task.payment_most_token_amount {
@@ -1307,10 +1360,10 @@ async fn build_context(
 
     // ── Role guide that must be loaded ───────────────────────────────────
     let skill_file = match role {
-        "user"      => "task-user-sub-playbook.md",
-        "asp"       => "task-asp.md",
+        "user" => "task-user-sub-playbook.md",
+        "asp" => "task-asp.md",
         "evaluator" => "task-evaluator.md",
-        _           => "",
+        _ => "",
     };
     if !skill_file.is_empty() {
         out.push_str("[⚠️ Must Execute Immediately]\n");
@@ -1362,6 +1415,29 @@ mod expire_time_tests {
         let v = json!({ "title": "x" });
         let ctx = PreFetchedTaskContext::from_api_response(&v);
         assert_eq!(ctx.expire_time, None);
+    }
+
+    #[test]
+    fn subscription_detail_fields_map_to_common_context() {
+        let v = json!({
+            "subStatus": "0",
+            "userAgentId": "buyer-1",
+            "aspAgentId": "asp-1",
+            "aspAgentName": "Alice ASP",
+            "serviceName": "Audit",
+            "paymentTokenAmount": "10.00",
+            "paymentTokenSymbol": "USDT",
+            "paymentTokenAddress": "0xtoken"
+        });
+        let ctx = PreFetchedTaskContext::from_api_response(&v);
+        assert_eq!(ctx.status, Some(0));
+        assert_eq!(ctx.user_agent_id.as_deref(), Some("buyer-1"));
+        assert_eq!(ctx.provider_agent_id.as_deref(), Some("asp-1"));
+        assert_eq!(ctx.provider_name.as_deref(), Some("Alice ASP"));
+        assert_eq!(ctx.service_name.as_deref(), Some("Audit"));
+        assert_eq!(ctx.token_amount, "10.00");
+        assert_eq!(ctx.token_symbol, "USDT");
+        assert_eq!(ctx.token_address.as_deref(), Some("0xtoken"));
     }
 
     // AC-8: `expireTime == 0` is filtered out; with no expireConfig it falls to None.

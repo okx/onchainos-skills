@@ -22,9 +22,7 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::common::okx_a2a;
 use crate::commands::agent_commerce::task::common::query as common_query;
 use crate::commands::agent_commerce::task::common::state_machine::SubStatus;
-use crate::commands::agent_commerce::task::common::subscription_identity::{
-    select_subscription_agent_id,
-};
+use crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id;
 use crate::commands::agent_commerce::task::common::{AGENT_ROLE_ASP, AGENT_ROLE_USER};
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
@@ -241,32 +239,13 @@ pub async fn handle_start_autorenew(client: &mut TaskApiClient, sub_id: &str) ->
 
 // ── subscribe-reject ────────────────────────────────────────────────────
 
-/// Direct CLI entry — validates reason, resolves agent, then delegates to inner.
-pub async fn handle_subscribe_reject(
-    client: &mut TaskApiClient,
-    sub_id: &str,
-    reason: &str,
-) -> Result<()> {
-    if reason.is_empty() {
-        bail!("--reason is required for subscribe-reject");
-    }
-    if reason.chars().count() > 2000 {
-        bail!("--reason exceeds 2000 characters");
-    }
-
-    ensure_tokens_refreshed().await?;
-    let (user_agent_id, _) = resolve_user_agent().await?;
-
-    handle_subscribe_reject_inner(client, sub_id, reason, &user_agent_id).await
-}
-
 /// Inner implementation — caller has already validated reason and resolved agent_id.
 pub(crate) async fn handle_subscribe_reject_inner(
     client: &mut TaskApiClient,
     sub_id: &str,
     reason: &str,
     user_agent_id: &str,
-) -> Result<()> {
+) -> Result<String> {
     let user_agent_id = select_subscription_agent_id(user_agent_id, "")?;
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
 
@@ -302,16 +281,19 @@ pub(crate) async fn handle_subscribe_reject_inner(
         None,
     );
 
-    println!("✓ Subscription rejection in progress (transaction broadcast)");
-    println!("  subId:  {sub_id}");
-    println!("  txHash: {tx_hash}");
+    Ok(tx_hash)
+}
 
-    if super::content::is_cli_mode() {
-        println!();
-        println!("{}", super::content::scoped_watch_handoff(sub_id));
-    }
-
-    Ok(())
+/// Disabled legacy CLI entry. Refund V2 owns paid subscription rejection.
+pub async fn handle_subscribe_reject(
+    client: &mut TaskApiClient,
+    sub_id: &str,
+    reason: &str,
+) -> Result<()> {
+    let _ = (client, reason);
+    bail!(
+        "direct subscribe-reject is disabled by Refund V2; run `onchainos agent refund-prepare {sub_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
+    )
 }
 
 // ── subscribe-detail ────────────────────────────────────────────────────
@@ -338,8 +320,7 @@ pub async fn handle_subscribe_detail(
     let json_mode = format.eq_ignore_ascii_case("json");
 
     let resp = fetch_subscribe_detail_for_agent(client, sub_id, &agent_id).await?;
-    let is_buyer =
-        !agent_id.is_empty() && resp["buyerAgentId"].as_str() == Some(agent_id.as_str());
+    let is_buyer = !agent_id.is_empty() && resp["buyerAgentId"].as_str() == Some(agent_id.as_str());
 
     // Checking an active subscription on a fresh device establishes the provider
     // session (drains any held deliverables). Runs before the json early-return so
@@ -581,6 +562,14 @@ pub(crate) struct ExistingSubscriptionSummary {
     pub(crate) provider_agent_id: String,
     pub(crate) status_name: String,
     pub(crate) restore_listening_available: bool,
+    /// Retained for preparation-time confirmation cards, but deliberately
+    /// omitted from the create-subscribe duplicate error contract.
+    #[serde(skip_serializing)]
+    pub(crate) title: String,
+    /// Raw backend status used by task-create-prepare so its decision matches
+    /// the write-boundary duplicate check exactly.
+    #[serde(skip_serializing)]
+    pub(crate) status: i64,
 }
 
 fn blocks_duplicate_creation(status: i64) -> bool {
@@ -604,17 +593,14 @@ fn summarize_non_terminal_buyer_subscriptions(
             provider_agent_id: item.provider_agent_id,
             status_name: status_name(item.status),
             restore_listening_available: item.status == SubStatus::Active.code(),
+            title: item.title,
+            status: item.status,
         })
         .collect::<Vec<_>>();
 
     // Historical duplicate rows can exist. Surface ACTIVE first because it is
     // the only status for which the product may offer "Restore listening".
-    summaries.sort_by_key(|item| {
-        (
-            !item.restore_listening_available,
-            item.job_id.clone(),
-        )
-    });
+    summaries.sort_by_key(|item| (!item.restore_listening_available, item.job_id.clone()));
     summaries
 }
 
@@ -650,11 +636,13 @@ pub(crate) fn existing_subscription_for_service<'a>(
 pub fn status_name(status: i64) -> String {
     match status {
         -1 => "INIT".to_string(),
+        0 => "CREATED".to_string(),
         1 => "ACTIVE".to_string(),
         3 => "REJECTED".to_string(),
         4 => "DISPUTED".to_string(),
         6 => "COMPLETED".to_string(),
         7 => "CLOSED".to_string(),
+        8 => "EXPIRED".to_string(),
         9 => "FAILED".to_string(),
         n => format!("UNKNOWN_{n}"),
     }
@@ -670,15 +658,17 @@ pub fn parse_status_filter(s: &str) -> Result<i32, String> {
     }
     match s.to_ascii_uppercase().as_str() {
         "INIT" => Ok(-1),
+        "CREATED" => Ok(0),
         "ACTIVE" => Ok(1),
         "REJECTED" => Ok(3),
         "DISPUTED" => Ok(4),
         "COMPLETED" => Ok(6),
         "CLOSED" => Ok(7),
+        "EXPIRED" => Ok(8),
         "FAILED" => Ok(9),
         _ => Err(format!(
-            "invalid status '{s}': expected a code (-1/1/3/4/6/7/9) or a name \
-             (INIT/ACTIVE/REJECTED/DISPUTED/COMPLETED/CLOSED/FAILED)"
+            "invalid status '{s}': expected a code (-1/0/1/3/4/6/7/8/9) or a name \
+             (INIT/CREATED/ACTIVE/REJECTED/DISPUTED/COMPLETED/CLOSED/EXPIRED/FAILED)"
         )),
     }
 }
@@ -910,12 +900,7 @@ pub(crate) fn enrich_buyer_subscription_page(
     let wrapper: SubscriptionList = serde_json::from_value(data)
         .map_err(|e| anyhow!("failed to parse subscription page: {e}"))?;
     let this_device_id = crate::device::id::get_cached_device_id();
-    let mut list = filter_subscriptions(
-        wrapper.list,
-        SubscriptionRole::Buyer,
-        agent_id,
-        None,
-    );
+    let mut list = filter_subscriptions(wrapper.list, SubscriptionRole::Buyer, agent_id, None);
     for item in &mut list {
         enrich_subscription_info(item, this_device_id, true);
     }
@@ -990,11 +975,7 @@ pub(crate) async fn fetch_my_subscriptions_snapshot_for_agent(
     if matches!(role, SubscriptionRole::Buyer) {
         for item in &list {
             if should_ensure_subscription_session(item.status) {
-                ensure_subscription_session(
-                    &item.job_id,
-                    &header_agent,
-                    &item.provider_agent_id,
-                );
+                ensure_subscription_session(&item.job_id, &header_agent, &item.provider_agent_id);
             }
         }
     }
@@ -1101,8 +1082,12 @@ mod tests {
     fn subscription_session_is_gated_only_by_active_status() {
         assert!(should_ensure_subscription_session(SubStatus::Active.code()));
         assert!(!should_ensure_subscription_session(SubStatus::Init.code()));
-        assert!(!should_ensure_subscription_session(SubStatus::Closed.code()));
-        assert!(!should_ensure_subscription_session(SubStatus::Failed.code()));
+        assert!(!should_ensure_subscription_session(
+            SubStatus::Closed.code()
+        ));
+        assert!(!should_ensure_subscription_session(
+            SubStatus::Failed.code()
+        ));
     }
 
     #[test]
@@ -1123,15 +1108,13 @@ mod tests {
 
     #[test]
     fn duplicate_summary_prefers_active_and_only_active_can_restore_listening() {
-        let row = |job_id: &str, service_id: &str, buyer: &str, status: i64| {
-            SubscriptionInfo {
-                job_id: job_id.to_string(),
-                service_id: service_id.to_string(),
-                buyer_agent_id: buyer.to_string(),
-                provider_agent_id: "asp-1".to_string(),
-                status,
-                ..SubscriptionInfo::default()
-            }
+        let row = |job_id: &str, service_id: &str, buyer: &str, status: i64| SubscriptionInfo {
+            job_id: job_id.to_string(),
+            service_id: service_id.to_string(),
+            buyer_agent_id: buyer.to_string(),
+            provider_agent_id: "asp-1".to_string(),
+            status,
+            ..SubscriptionInfo::default()
         };
         let summaries = summarize_non_terminal_buyer_subscriptions(
             vec![
@@ -1322,7 +1305,7 @@ mod tests {
     #[test]
     fn status_filter_accepts_codes_and_names_and_rejects_garbage() {
         // Name arm is the inverse of status_name for every documented code.
-        for code in [-1i64, 1, 3, 4, 6, 7, 9] {
+        for code in [-1i64, 0, 1, 3, 4, 6, 7, 8, 9] {
             assert_eq!(parse_status_filter(&status_name(code)), Ok(code as i32));
         }
         assert_eq!(parse_status_filter("1"), Ok(1));
@@ -1336,13 +1319,15 @@ mod tests {
     }
 
     #[test]
-    fn status_name_covers_all_seven_codes_and_unknown() {
+    fn status_name_covers_all_documented_codes_and_unknown() {
         assert_eq!(status_name(-1), "INIT");
+        assert_eq!(status_name(0), "CREATED");
         assert_eq!(status_name(1), "ACTIVE");
         assert_eq!(status_name(3), "REJECTED");
         assert_eq!(status_name(4), "DISPUTED");
         assert_eq!(status_name(6), "COMPLETED");
         assert_eq!(status_name(7), "CLOSED");
+        assert_eq!(status_name(8), "EXPIRED");
         assert_eq!(status_name(9), "FAILED");
         assert_eq!(status_name(2), "UNKNOWN_2");
         assert_eq!(status_name(42), "UNKNOWN_42");

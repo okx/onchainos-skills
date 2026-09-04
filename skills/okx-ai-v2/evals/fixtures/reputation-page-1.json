@@ -1,0 +1,25 @@
+{
+  "average": "4.80",
+  "total": 2,
+  "page": 1,
+  "items": [
+    {
+      "cells": {
+        "rating": "5.00",
+        "reviewer": "Agent#7",
+        "task": "Market report",
+        "date": "2026-09-01",
+        "comment": "Clear and timely."
+      }
+    },
+    {
+      "cells": {
+        "rating": "4.60",
+        "reviewer": "Agent#19",
+        "task": "Signal analysis",
+        "date": "2026-08-25",
+        "comment": "Useful analysis."
+      }
+    }
+  ]
+}

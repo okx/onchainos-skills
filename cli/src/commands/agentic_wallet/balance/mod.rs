@@ -130,6 +130,67 @@ pub(crate) async fn ensure_wallet_accounts_fresh(
     Ok(())
 }
 
+/// Refresh account/address facts atomically and propagate any backend failure.
+/// Deposit and QR flows use this stricter boundary because a stale address is a
+/// funds-loss risk; ordinary cache users retain the best-effort helper above.
+pub(crate) async fn refresh_wallet_accounts_strict(
+    client: &mut WalletApiClient,
+    access_token: &str,
+    wallets: &mut WalletsJson,
+) -> Result<()> {
+    let account_list = client
+        .account_list(access_token, &wallets.project_id)
+        .await
+        .map_err(format_api_error)?;
+    let account_ids: Vec<String> = account_list.iter().map(|a| a.account_id.clone()).collect();
+    let address_data = client
+        .account_address_list(access_token, &account_ids)
+        .await
+        .map_err(format_api_error)?;
+
+    let accounts: Vec<wallet_store::AccountInfo> = account_list
+        .iter()
+        .map(|a| wallet_store::AccountInfo {
+            project_id: a.project_id.clone(),
+            account_id: a.account_id.clone(),
+            account_name: a.account_name.clone(),
+            is_default: a.is_default,
+        })
+        .collect();
+    let mut accounts_map = std::collections::HashMap::new();
+    for item in &address_data {
+        accounts_map.insert(
+            item.account_id.clone(),
+            AccountMapEntry {
+                address_list: item
+                    .addresses
+                    .iter()
+                    .map(|a| AddressInfo {
+                        account_id: item.account_id.clone(),
+                        address: a.address.clone(),
+                        chain_index: a.chain_index.clone(),
+                        chain_name: a.chain_name.clone(),
+                        address_type: a.address_type.clone(),
+                        chain_path: a.chain_path.clone(),
+                    })
+                    .collect(),
+            },
+        );
+    }
+    if !account_ids.contains(&wallets.selected_account_id) {
+        wallets.selected_account_id = accounts
+            .iter()
+            .find(|account| account.is_default)
+            .or_else(|| accounts.first())
+            .map(|account| account.account_id.clone())
+            .unwrap_or_default();
+    }
+    wallets.accounts = accounts;
+    wallets.accounts_map = accounts_map;
+    wallet_store::save_wallets(wallets)?;
+    Ok(())
+}
+
 // ── usdValue enrichment ───────────────────────────────────────────────
 
 /// XLayer chainIndex — used to pin it to the top of the results.
@@ -796,6 +857,291 @@ pub(super) async fn cmd_balance(
         "details": data,
     }));
     Ok(())
+}
+
+/// Fresh post-funding verification shared by every Funding caller.
+///
+/// The command owns the current balance and exact readable shortfall. It never
+/// stores, reconstructs, or executes the operation that preceded Funding.
+pub(super) async fn cmd_funding_check(
+    chain: &str,
+    token_address: &str,
+    required: &str,
+    asset: &str,
+) -> Result<()> {
+    let asset = asset.trim();
+    if asset.is_empty() {
+        bail!("--asset must not be blank");
+    }
+    // Validate the required amount before making a network request.
+    crate::funding::readable_shortfall(required, "0")
+        .ok_or_else(|| anyhow::anyhow!("--required must be a non-negative plain decimal"))?;
+
+    let profile = super::chain_profile::resolve(chain).await?;
+    let matched = match query_token_readable(&profile.chain_index, token_address).await {
+        Ok(matched) => matched,
+        Err(_) => {
+            output::success(json!({
+                "phase": "funding_verification",
+                "decision": "blocked",
+                "reason": "balance_unavailable",
+                "nextAction": [],
+                "payload": {
+                    "chainIndex": profile.chain_index,
+                    "chainName": crate::chains::chain_display_name(&profile.chain_index),
+                    "asset": {
+                        "symbol": asset,
+                        "tokenAddress": token_address,
+                    },
+                    "currentBalance": Value::Null,
+                    "required": required,
+                    "shortfall": Value::Null,
+                    "sufficient": Value::Null,
+                },
+            }));
+            return Ok(());
+        }
+    };
+    // An exact token query that succeeds but returns no holding means the
+    // account owns zero of that asset; transport/query failures returned above.
+    let current_balance = matched
+        .as_ref()
+        .map(|token| token.balance.clone())
+        .unwrap_or_else(|| "0".to_string());
+    let symbol = matched
+        .and_then(|token| token.symbol)
+        .unwrap_or_else(|| asset.to_string());
+    let shortfall = crate::funding::readable_shortfall(required, &current_balance)
+        .ok_or_else(|| anyhow::anyhow!("wallet returned a non-decimal balance"))?;
+    let sufficient = shortfall == "0";
+
+    let mut payload = json!({
+        "chainIndex": profile.chain_index,
+        "chainName": crate::chains::chain_display_name(&profile.chain_index),
+        "asset": {
+            "symbol": symbol,
+            "tokenAddress": token_address,
+        },
+        "currentBalance": current_balance,
+        "required": required,
+        "shortfall": shortfall,
+        "sufficient": sufficient,
+    });
+
+    if !sufficient {
+        match crate::funding::resolve_current_funding_bundle(&profile.chain_index, None).await {
+            Ok(bundle) => {
+                payload["fundingTarget"] = serde_json::to_value(&bundle.target)?;
+                payload["qr"] = serde_json::to_value(&bundle.qr)?;
+            }
+            Err(_) => {
+                output::success(json!({
+                    "phase": "funding_verification",
+                    "decision": "blocked",
+                    "reason": "funding_target_unavailable",
+                    "nextAction": [],
+                    "payload": payload,
+                }));
+                return Ok(());
+            }
+        }
+    }
+
+    output::success(json!({
+        "phase": "funding_verification",
+        "decision": if sufficient { "ready" } else { "blocked" },
+        "reason": if sufficient { "funding_sufficient" } else { "insufficient_balance" },
+        "nextAction": [],
+        "payload": payload,
+    }));
+    Ok(())
+}
+
+// ── query_token_readable_balance ──────────────────────────────────────
+
+/// Find the readable-decimal `balance` of the token whose `(tokenAddress,
+/// chainIndex)` equals `(token_address, chain_index)`.
+///
+/// The empty string `""` matches the chain's native token. `tokenAddress`
+/// comparison is ASCII-case-insensitive so EVM checksum-cased contract addresses
+/// still match; `chainIndex` must match exactly, so a same-symbol token on the
+/// wrong chain is skipped (matching is `(tokenAddress, chainIndex)`, never
+/// `symbol` — spec §2.6). Handles both the array-of-groups and single-group
+/// shapes and both `tokenAssets`/`assets` keys, mirroring `project_token_fields`.
+/// Returns `None` when no such token is present.
+#[allow(dead_code)]
+fn match_readable_balance(data: &Value, chain_index: &str, token_address: &str) -> Option<String> {
+    match_readable_token(data, chain_index, token_address).map(|m| m.balance)
+}
+
+/// A balance token record matched by `(tokenAddress, chainIndex)`: the readable
+/// balance plus the record's display `symbol`.
+///
+/// `symbol` is `None` when the record omits it or carries only an empty string —
+/// callers never surface an empty symbol (spec §2.1 contract-token / §2.6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchedToken {
+    pub balance: String,
+    pub symbol: Option<String>,
+    pub decimals: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenMetadata {
+    pub symbol: Option<String>,
+    pub decimals: u32,
+}
+
+/// Query authoritative token metadata for an exact `(chainIndex,
+/// tokenAddress)` pair. Funding adapters use this only when a zero holding is
+/// absent from the balance list or a raw minimal-unit amount must be rendered.
+pub async fn query_token_metadata(
+    chain_index: &str,
+    token_address: &str,
+) -> Result<TokenMetadata> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let chain_index_number = chain_index
+        .parse::<u64>()
+        .map_err(|_| anyhow::anyhow!("invalid numeric chain index: {chain_index}"))?;
+    let mut client = WalletApiClient::new()?;
+    let info = client
+        .get_token_info(&access_token, chain_index_number, token_address)
+        .await
+        .map_err(format_api_error)?;
+    let item = info.as_array().and_then(|items| items.first()).unwrap_or(&info);
+    let decimals = item
+        .get("decimals")
+        .and_then(value_as_u32)
+        .or_else(|| item.get("decimal").and_then(value_as_u32))
+        .ok_or_else(|| anyhow::anyhow!("token metadata missing decimals"))?;
+    let symbol = item
+        .get("tokenSymbol")
+        .or_else(|| item.get("symbol"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    Ok(TokenMetadata { symbol, decimals })
+}
+
+fn value_as_u32(value: &Value) -> Option<u32> {
+    value
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+}
+
+/// Find the token whose `(tokenAddress, chainIndex)` equals `(token_address,
+/// chain_index)` and return its readable balance + display symbol.
+///
+/// Matching rules are identical to [`match_readable_balance`] (which delegates
+/// here): `""` matches the chain native token, `tokenAddress` compares
+/// ASCII-case-insensitively, `chainIndex` must match exactly. Returns `None` when
+/// no such token is present.
+fn match_readable_token(
+    data: &Value,
+    chain_index: &str,
+    token_address: &str,
+) -> Option<MatchedToken> {
+    let groups = match data.as_array() {
+        Some(arr) => arr.as_slice(),
+        None => std::slice::from_ref(data),
+    };
+    for group in groups {
+        let tokens = group["tokenAssets"]
+            .as_array()
+            .or_else(|| group["assets"].as_array());
+        if let Some(tokens) = tokens {
+            for token in tokens {
+                let ta = token["tokenAddress"].as_str().unwrap_or("");
+                if token_chain_index(token) == chain_index && ta.eq_ignore_ascii_case(token_address)
+                {
+                    let balance = match &token["balance"] {
+                        Value::String(s) => s.clone(),
+                        Value::Number(n) => n.to_string(),
+                        _ => return None,
+                    };
+                    // Empty / whitespace-only symbols collapse to `None` so the
+                    // caller never renders an empty `asset.symbol`.
+                    let symbol = token["symbol"]
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string);
+                    let decimals = token["decimal"]
+                        .as_u64()
+                        .and_then(|value| u32::try_from(value).ok())
+                        .or_else(|| {
+                            token["decimal"]
+                                .as_str()
+                                .and_then(|value| value.parse::<u32>().ok())
+                        });
+                    return Some(MatchedToken {
+                        balance,
+                        symbol,
+                        decimals,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Query the readable-decimal `balance` of a single token identified by
+/// `(token_address, chain_index)` for the active account.
+///
+/// `token_address` is the ERC-20 contract address, or the empty string `""` for
+/// the chain's native token. The returned `balance` is a readable decimal string
+/// (`[UNIT: readable]`); the same token object also carries `rawBalance` if a
+/// minimal-unit comparison is ever needed. Matching is on both `tokenAddress` and
+/// `chainIndex` — never `symbol` — so a same-symbol token on another chain is
+/// never returned (spec §2.6). Reuses the shared account-freshness +
+/// `balance_single` + `project_token_fields` path; no new endpoint.
+///
+/// Returns `Ok(Some(balance))` when the token is held, and `Ok(None)` when it is
+/// absent (the caller decides whether absence means "0" or an error). Consumed by
+/// the Wallet Send `10004` scene (T10) and the Swap scene (T11), where balance is
+/// queried only when needed.
+#[allow(dead_code)]
+pub async fn query_token_readable_balance(
+    chain_index: &str,
+    token_address: &str,
+) -> Result<Option<String>> {
+    Ok(query_token_readable(chain_index, token_address)
+        .await?
+        .map(|m| m.balance))
+}
+
+/// Query the matched token record — readable balance **and** display symbol — for
+/// `(token_address, chain_index)` on the active account.
+///
+/// Same account-freshness + `balance_single` + `project_token_fields` path as
+/// [`query_token_readable_balance`] (which delegates here), so the Swap balance
+/// contract is unchanged. Returns `Ok(Some(_))` when the token is held (a real
+/// zero balance included) and `Ok(None)` when it is absent; an `Err` means the
+/// query itself failed. Funding callers distinguish absence (`Ok(None)`, a real
+/// zero holding) from query failure (`Err`, balance unavailable) and read the
+/// contract-token symbol from `MatchedToken.symbol` when present.
+#[allow(dead_code)]
+pub async fn query_token_readable(
+    chain_index: &str,
+    token_address: &str,
+) -> Result<Option<MatchedToken>> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut wallets = wallet_store::load_wallets()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let mut client = WalletApiClient::new()?;
+    ensure_wallet_accounts_fresh(&mut client, &access_token, &mut wallets, false).await?;
+    let account_id = resolve_active_account_id(&wallets)?;
+
+    let query_refs: Vec<(&str, &str)> =
+        vec![("accountId", account_id.as_str()), ("chains", chain_index)];
+    let mut data = client
+        .balance_single(&access_token, &query_refs)
+        .await
+        .map_err(format_api_error)?;
+    project_token_fields(&mut data);
+    Ok(match_readable_token(&data, chain_index, token_address))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────
@@ -1619,5 +1965,137 @@ mod tests {
         assert_eq!(arr[0], json!("not-an-object"));
         assert_eq!(arr[1], json!(42));
         assert_eq!(sorted_keys(&arr[2]), KEPT_KEYS_SORTED.to_vec());
+    }
+
+    // ── match_readable_balance ───────────────────────────────────────
+
+    /// A fixture balance list in the array-of-groups shape returned by
+    /// `balance_single`: native OKB on XLayer (196), plus two same-symbol USDC
+    /// tokens on different chains with different contract addresses.
+    fn make_readable_balance_fixture() -> Value {
+        json!([{
+            "accountId": "acc-1",
+            "tokenAssets": [
+                { "symbol": "OKB",  "chainIndex": "196", "tokenAddress": "",                                           "balance": "0.08504764" },
+                { "symbol": "USDC", "chainIndex": "196", "tokenAddress": "0x74b7f16337b8972027f6196a17a631ac6de26d22", "balance": "12.5" },
+                { "symbol": "USDC", "chainIndex": "1",   "tokenAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "balance": "999.0" },
+            ]
+        }])
+    }
+
+    #[test]
+    fn match_readable_balance_native_by_empty_address() {
+        // native token is identified by an empty tokenAddress on chain 196
+        let data = make_readable_balance_fixture();
+        assert_eq!(
+            match_readable_balance(&data, "196", ""),
+            Some("0.08504764".to_string())
+        );
+    }
+
+    #[test]
+    fn match_readable_balance_erc20_by_full_contract_address() {
+        let data = make_readable_balance_fixture();
+        assert_eq!(
+            match_readable_balance(&data, "196", "0x74b7f16337b8972027f6196a17a631ac6de26d22"),
+            Some("12.5".to_string())
+        );
+    }
+
+    #[test]
+    fn match_readable_balance_rejects_wrong_chain_same_symbol() {
+        // USDC exists on both chain 1 and chain 196. Matching is by
+        // (tokenAddress, chainIndex) — never symbol — so each CA resolves to its
+        // own chain's balance, and the chain-1 CA queried under chain 196 misses.
+        let data = make_readable_balance_fixture();
+        assert_eq!(
+            match_readable_balance(&data, "1", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+            Some("999.0".to_string())
+        );
+        assert_eq!(
+            match_readable_balance(&data, "196", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+            None
+        );
+    }
+
+    #[test]
+    fn match_readable_balance_address_match_is_case_insensitive() {
+        // an EVM checksum-cased CA must still match the lowercase stored form
+        let data = make_readable_balance_fixture();
+        assert_eq!(
+            match_readable_balance(&data, "1", "0xA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"),
+            Some("999.0".to_string())
+        );
+    }
+
+    #[test]
+    fn match_readable_balance_absent_token_returns_none() {
+        // token not held on that (address, chain) → None (caller decides "0" vs error)
+        let data = make_readable_balance_fixture();
+        assert_eq!(match_readable_balance(&data, "56", ""), None);
+        assert_eq!(
+            match_readable_balance(&data, "196", "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
+            None
+        );
+    }
+
+    #[test]
+    fn match_readable_balance_handles_assets_key_and_single_group() {
+        // single-group (not array) shape, `assets` key, numeric chainIndex
+        let data = json!({
+            "assets": [
+                { "symbol": "ETH", "chainIndex": 1, "tokenAddress": "", "balance": "1.25" }
+            ]
+        });
+        assert_eq!(
+            match_readable_balance(&data, "1", ""),
+            Some("1.25".to_string())
+        );
+    }
+
+    // ── match_readable_token (balance + symbol) ──────────────────────
+
+    #[test]
+    fn match_readable_token_carries_symbol_for_contract_token() {
+        // The contract-token record's own `symbol` is returned alongside balance,
+        // matched by (tokenAddress, chainIndex) — never fabricated (spec §2.1).
+        let data = make_readable_balance_fixture();
+        let m = match_readable_token(&data, "196", "0x74b7f16337b8972027f6196a17a631ac6de26d22")
+            .expect("USDC on 196 is present");
+        assert_eq!(m.balance, "12.5");
+        assert_eq!(m.symbol.as_deref(), Some("USDC"));
+    }
+
+    #[test]
+    fn match_readable_token_carries_symbol_for_native_token() {
+        let data = make_readable_balance_fixture();
+        let m = match_readable_token(&data, "196", "").expect("native OKB on 196 is present");
+        assert_eq!(m.balance, "0.08504764");
+        assert_eq!(m.symbol.as_deref(), Some("OKB"));
+    }
+
+    #[test]
+    fn match_readable_token_empty_or_missing_symbol_collapses_to_none() {
+        // A held token whose record omits `symbol` (or carries only whitespace)
+        // yields `symbol == None` so the caller never renders an empty symbol.
+        let data = json!({
+            "tokenAssets": [
+                { "chainIndex": "1", "tokenAddress": "", "balance": "1.0" },
+                { "symbol": "   ", "chainIndex": "1", "tokenAddress": "0xabc", "balance": "2.0" }
+            ]
+        });
+        let native = match_readable_token(&data, "1", "").expect("native present");
+        assert_eq!(native.balance, "1.0");
+        assert_eq!(native.symbol, None);
+
+        let blank = match_readable_token(&data, "1", "0xabc").expect("token present");
+        assert_eq!(blank.balance, "2.0");
+        assert_eq!(blank.symbol, None);
+    }
+
+    #[test]
+    fn match_readable_token_absent_returns_none() {
+        let data = make_readable_balance_fixture();
+        assert_eq!(match_readable_token(&data, "56", ""), None);
     }
 }

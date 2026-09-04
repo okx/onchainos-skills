@@ -14,6 +14,58 @@ communication rules; it does not match free-text user intents.
 
 ---
 
+## §1.7 Deliverable intake contract
+
+- Pass the complete raw `a2a-agent-chat` envelope through `next-action --a2a-file`; the envelope must
+  be strict JSON, and the path must be a regular (not symlinked) `0600` file under the OS temp directory. Do not flatten file metadata or text into
+  `--message` fields—the new protocol has no legacy fallback.
+- The CLI requires matching envelope/embedded `jobId`, the exact receiving User Agent, and a terminal
+  `[intent:deliver]`. File deliveries require non-empty `fileKey`, `digest`, `salt`, `nonce`, and
+  `secret`; text deliveries use the complete body between the delimiters. Validation, download, and
+  persistence failures are fail-closed and never create an acceptance decision.
+- A successful task-detail prefetch identifies a one-time task. If its authoritative status is already
+  `submitted`, create the acceptance decision immediately; otherwise save and wait for `job_submitted`.
+- A delivery absent from the one-time task registry must pass the ACTIVE subscription lookup. Without
+  an active local Service Guide + matching Guide Consent, save and display the Signal only. With an
+  active Guide contract, apply the exact Guide to the saved Signal using only user-confirmed Consent.
+  Before a money-moving command, require `tradeRecordsV1.ok=true`, query the exact
+  `(jobId, deliveryId)`, and stop when any record exists; then reserve the delivery with
+  `autotrade-direct-claim`. After the one execution attempt, call `autotrade-direct-finalize` and persist
+  the terminal trade record. A post-submit persistence failure must never trigger a retry or replay.
+
+## §1.8 `job_submitted`
+
+- If the single-task deliverable is already saved and its local path is still a regular file, create
+  the acceptance decision card. Stale prefetched/manifest metadata never counts as a deliverable.
+  Card delivery is exactly-once per job: delivery-first and `job_submitted`-first paths share a
+  durable CLI marker, and a replay/concurrent request becomes a successful no-op.
+- If no deliverable is available, write only the internal out-of-order marker and take no user-facing
+  action: no notification, no decision card, and no manual chat-history extraction. The later validated
+  `[intent:deliver]` intake consumes the marker and creates the card after persistence succeeds. If
+  the marker itself cannot be persisted, remain internal and fail closed; never claim it was retained.
+
+---
+
+## User Intent Routing
+
+> When the user-session receives free-form text targeting a specific task and no pending decision matches, load [`task-user-intent-routing.md`](task-user-intent-routing.md) and follow its routing flow.
+
+| Intent | Trigger examples | Route to |
+|---|---|---|
+| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`identity-service-search.md`](identity-service-search.md) commissioning search, then route the `task-create-prepare` response's `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md); do not read `data.action` from that response |
+| Add attachment / image | "attach a file/image to a task" | [`task-user-actions.md`](task-user-actions.md) §2 |
+| Stop task | "stop task / close task" | [`task-user-actions.md`](task-user-actions.md) §3 |
+| View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
+| Subscription task list | "my subscriptions / subscription list / ongoing subscriptions / active subscriptions / ended subscriptions" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Task list → §Unified My Tasks. User-initiated lists use `my-tasks --task-type subscription`, never `my-subscriptions`. |
+| Rate | "rate this task / rate this subscription / review jobId X / give X five stars / leave feedback" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Rate an active subscription |
+| Refund, paid-deliverable rejection, or refund progress | "refund / get my money back / apply for refund / reject paid delivery / refund status / refund arbitration" | [`task-user-refund.md`](task-user-refund.md); do not route through disabled legacy close/reject/subscribe-reject/claim-auto-refund commands |
+| Other subscription task ops | "auto-renew / trial cancel / subscription charge / subscription cost" | §Subscription below |
+| Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
+| Re-submit / nudge | "re-submit / nudge" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
+| Task list / status / close / decision list | "my tasks / view decisions / close task" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
+
+---
+
 ## Deposit-address QR (insufficient-balance — MANDATORY)
 
 🛑 **Rule:** if `fundingNoticeCommand` exists, run it and follow its output exactly. For `image-notify`, put `markdownImage` under option 1. Never summarize the 4 options/address/gas/resume.
@@ -43,7 +95,7 @@ direct/fallback subscription route that did not receive a CLI-provided confirmat
 
 AFTER `create-subscribe` succeeds, render the English block below verbatim or translate it faithfully per §Localization. `{jobTitle}` is the **just-created REAL subscription title** — never a sample.
 
-**Ordering with the mandatory watch:** render this block, but do **not** pause or wait for the user's choice. Immediately continue to §Post-creation: Watch check below and enter watch. Handle the user's preference only when their reply arrives; the preference question must never delay the initial watch or the `sub_created` event.
+**Ordering with the mandatory watch:** render this block, but do **not** pause or wait for the user's choice. Immediately continue to §Post-creation: Watch check below and enter watch. Handle the user's preference only when their reply arrives; the preference question must never delay the initial watch or the `sub_open` event.
 
 **Device-routing copy contract:** after every successful creation, render the single device-routing line in the response template below after the success title and before the offline-deliverables question. The line is informational only: do not ask a device question or wait for a device confirmation.
 
@@ -77,7 +129,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 - `[Watch]` block present → read `skills/okx-ai/references/watch-core.md` and enter its Watch generation. A returned notification, deliverable, or empty poll does **not** end the turn; dispatch the complete batch and re-enter the same scoped command until `watch-core.md` says to stop or a `decision_request` requires the user's reply.
 - No `[Watch]` block → **end this turn immediately**.
 
-🛑 This Watch handoff is the **last non-Watch action in the creation flow** — once entered, `watch-core.md` owns the rest of the turn, including every required dispatch and re-entry. Do not run unrelated creation commands after the handoff, and do not confuse "last creation action" with permission to stop after the first watch result. On the `sub_created` event the agent only sends the subscription notification and starts the watch — it does NOT re-scan the description for DApp names, auto-install a plugin, or pre-select a tool. Local tool preparation is non-blocking and occurs only at the matching `serviceGuide` step; the visible Install/connect flow runs only if the user explicitly chooses it and delegates authentication to `okx-cex-auth`. Trade Kit readiness is not repeated on every delivery or for a compatible cached route. Authentication and trading availability are decided only by the final target command. A failed delivery remains visible and is never auto-replayed, while future deliveries continue normally.
+🛑 This Watch handoff is the **last non-Watch action in the creation flow** — once entered, `watch-core.md` owns the rest of the turn, including every required dispatch and re-entry. Do not run unrelated creation commands after the handoff, and do not confuse "last creation action" with permission to stop after the first watch result. On `sub_open`, the CLI establishes or restores the designated ASP session and independently forwards pending attachments; the agent sends the created/waiting-for-ASP notification. It does NOT re-scan the description for DApp names, does NOT auto-install any plugin, and does NOT pre-select a tool. Local tool preparation is non-blocking and happens at its `serviceGuide` step, or as the post-guide fallback only when that step is absent; the visible Install/connect flow runs only if the user explicitly chooses it and delegates authentication to `okx-cex-auth`. Trade Kit readiness is not repeated on every delivery or for a compatible cached route. Authentication and trading availability are decided only by the final target command. A failed delivery remains visible and is never auto-replayed, while future deliveries continue normally.
 
 ### Subscription management (user-initiated)
 
@@ -85,9 +137,8 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 |---|---|---|
 | Subscription detail | `subscribe-detail {subId} --format json` | show subscription detail; **always pass `--format json`** when you render or consume fields (the default text output is a human glance: it shows raw `offline` / `devices` but not `thisDeviceReceives` or joined names) |
 | Enable auto-renew | `start-autorenew {subId}` | on-chain, needs EIP-712 sign; may require approve |
-| Cancel subscription (trial cancel / close auto-renew) | `subscribe-cancel {subId}` | unified: trial → cancel auto-conversion, no charge incurred, Closed; active → close auto-renew, current period continues to expiry |
-| Apply for refund (`refund` / `apply for refund` / `reject delivery` / `dispute` / `request evaluation` / `arbitration`) | `reject {id} --reason "..."` | **unified command** — auto-detects subscription vs regular task. Any matching intent → **always use `reject`** first |
-| Claim refund after timeout | `claim-auto-refund {id}` | 🛑 **NEVER use as first step** — only after `reject` AND ASP misses 1-day response window |
+| Cancel subscription (trial conversion / formal auto-renew) | `subscribe-cancel {subId}` | cancellation is not Refund V2: trial → cancel auto-conversion while the trial continues; formal → close auto-renew while the current period continues |
+| Request or check a refund | `refund-prepare` | read [`task-user-refund.md`](task-user-refund.md), then use only returned Refund V2 actions |
 | Active subscription cost | `subscribe-cost` | total monthly cost of active formal subscriptions (no params needed) |
 | Pause / stop auto copy-trading | `autotrade-consent-set --job-id <jobId> --mode pause` | Direct local action; follow §Pause auto copy-trade below. Do **not** load `task-user-sub-playbook.md`, query subscription state, or resolve an agent id. |
 | Start receiving on this device | `subscribe-device-update --job-id <id> --device-list <fresh list + this device>` | **fresh-read first** (`subscribe-detail <id> --format json` or `my-subscriptions`). If `deviceList:null`, default-all is active: report already receiving and do **NOT** write. For an explicit array, do not write if this device is present; otherwise union, write, re-read, and mark `✅ Yes (added now)`. |
@@ -178,42 +229,19 @@ onchainos agent autotrade-consent-set --job-id <jobId> --mode pause
 - **Overwrite from fresh read:** the new `--device-list` is ALWAYS built from the just-re-read state (`subscribe-detail <id> --format json` / `my-subscriptions`), never from conversational memory — `subscribe-device-update` overwrites wholesale, so a list read short by even one id silently stops that device from receiving. A fresh `null` is a routing mode, not an empty base list: enabling any device is a no-op; disabling one requires materializing the complete `device-list` first.
 - **Neutral copy:** promise only "messages for this subscription task"; make no promise about system-notification scope.
 
-### Reject + refund flow (detailed)
+### Refund V2
 
-> **Intent mapping**: "refund" / "apply for refund" / "reject delivery" / "dispute" / "evaluation" / "request evaluation" / "arbitration" → `reject` (Step 1 below).
-> The `reject` command is unified — it auto-detects subscription vs regular task by `jobType`.
-> 🛑 `claim-auto-refund` is NOT the entry point — NEVER call it directly for a refund intent. It is only used in Step 3 after ASP timeout.
-<!-- retention: Keep arbitration-family action aliases for input recognition. Route them directly to reject without a legacy-role rename prompt; these are task actions, not the Evaluator role. -->
+Refund, refund progress, and refund-related arbitration are owned exclusively by
+[`task-user-refund.md`](task-user-refund.md). Do not reproduce its task versus
+subscription classification here, and do not translate a Refund V2 intent into
+the disabled legacy writes `reject`, `close`, `subscribe-reject`, or
+`claim-auto-refund`. `subscribe-cancel` remains cancellation-only and must not
+stand in for a refund.
 
-**Reason gate (blocking):** A refund reason must be explicitly authored by the user. If the user only
-requests refund/rejection/cancellation, ask for the reason and end the turn without running `reject`.
-Pass an explicit user-authored reason verbatim.
-Never use the refund request itself, a default, an example, or model-generated text as the reason.
-
-When the user is unhappy with a delivery (subscription or regular task):
-
-```
-Step 1 — Reject (on-chain, user initiates)
-  onchainos agent reject {id} --reason "quality not met"
-  → auto-detects: subscription → /subscribe/{id}/reject; regular → pre-reject/reject dual-sign
-  → status = Rejected
-  → ASP has 1 day to respond
-
-Step 2 — ASP responds (one of three outcomes)
-  A. ASP agrees to refund → sub_asp_agree event → status = Failed (funds returned)
-  B. ASP files dispute   → sub_asp_dispute event → status = Disputed (awaiting DM evaluation)
-  C. ASP does not respond within 1 day
-     → user may claim refund manually:
-
-Step 3 — Claim refund (only after ASP timeout)
-  onchainos agent claim-auto-refund {subId}
-  → status = Failed (funds returned)
-```
-
-Key rules:
-- `reject` requires `--reason` (max 2000 chars); for subscriptions, one rejection allowed per subscription.
-- `claim-auto-refund` is only valid when status = Rejected AND the ASP response window has passed.
-- If the ASP files a dispute, the user must wait for the Dispute Manager's ruling (follows the existing on-chain dispute resolution flow).
+Use the implemented `agent refund-prepare` / `agent refund-execute` contract.
+Unsupported state/type combinations return a `*_contract_required` block; a
+legacy command is not a safe fallback because it lacks the Refund V2 context
+binding and structured progression result.
 
 ## Unified My Tasks
 
@@ -290,9 +318,34 @@ Translate the CLI's canonical `statusName` to the user's locked language. Use th
 | `completed` | `Completed` |
 | `close` | `Closed` |
 | `expired` | `Expired` |
-| `failed` | `Refunded` |
+| `failed` | `Failed` |
 
-`failed` means refunded, not a generic failure. Render `status_<n>` as `Unknown status (<n>)` or its faithful translation. If `statusName` is absent or malformed, render `—`; never infer from numeric `status`.
+`failed` is task-kind dependent. For a one-time task, fresh backend
+chain-projected Failed(9) represents a successful refund transition. For a
+subscription it may instead represent terminal charge failure, so never label
+the list row itself as a completed refund. When the User asks about the refund,
+run `refund-prepare` and say "refund completed" only for
+`reason=refund_confirmed`. Under the unchanged backend contract, a semantic
+result event (`sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
+`job_auto_refunded`, or `dispute_resolved`) may describe the branch but cannot
+create proof. Polling and restart recovery require durable local Refund V2
+`request-refund` provenance bound to job, Buyer, formal `jobType=1`, exact
+positive original amount, and token address plus fresh Buyer-owned Failed(9).
+Provider/Service, period, token-symbol, and `paymentMode` fields veto only on a
+two-sided mismatch; absence reduces detail/display only. Event-only Failed(9),
+`sub_failed_notify`, and bare subscription Failed(9) may not prove a refund.
+For `dispute_resolved`, durable local refund-request provenance plus fresh
+composed job type, Buyer ownership, and exact terminal status are required for
+both status 9 (User wins/refund) and status 6 (ASP wins/no refund); without
+them, announce no verdict and perform no rating, notification, or cleanup.
+Because current `sub_failed_notify` input lacks trustworthy event
+provenance/cause, treat it as non-terminal and incomplete regardless of whether
+durable refund intent is found: make no fund-direction claim, emit no terminal
+marker, perform no cleanup, and keep only read-only reconciliation. A missing Tx Hash
+may be shown as unavailable and does not invalidate confirmation; no
+`refundTxHash` or `settlementTxHash` field is required. Render `status_<n>` as
+`Unknown status (<n>)` or its faithful translation. If `statusName` is absent
+or malformed, render `—`; never infer from numeric `status`.
 
 ### Independent pagination
 

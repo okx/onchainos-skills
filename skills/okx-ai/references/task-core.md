@@ -46,7 +46,9 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
      --agentId <envelope's top-level agentId> \
      --message '<the envelope.message object as a JSON string>'
    ```
-   🛑 **Strictly execute the returned script. Do NOT run any method or command outside the script.**
+   🛑 Treat the CLI result as authoritative: route structured progression through
+   [`task-action-routing.md`](task-action-routing.md); otherwise execute only the returned script.
+   Never infer behavior or notification content from the envelope.
    🛑 **Mandatory whenever an `event` field is present** — regardless of session history or any "Read the … skill" / "SKILL.md" wording inside the envelope (that wording does NOT make it a prefetch). Never classify a message that carries `event` as a skill-prefetch or as "no action".
    🛑 `--message` is JSON — inside string values, escape `\n` `\t` `\"` `\\`; no raw newlines.
 2. **a2a-agent-chat** — `msgType == "a2a-agent-chat"` + `jobId`:
@@ -60,35 +62,6 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 
 > 🛑 `--message` source: system event → the entire `message` object ; a2a-agent-chat → top-level `jobId`. NEVER cache from prior turn.
 > 🛑 `--role` MUST be re-resolved every event via `--role auto`. Never reuse sub's bound role.
-
-## Subscription Notifications (display-class)
-
-`sub_*` system events route through **Activation #1 exactly like every other system event**: run
-`next-action --role auto` with the envelope's `message`, then strictly execute the returned script.
-🛑 Do NOT compose the notification yourself — not from this file, not from memory. The CLI is the
-canonical renderer: copy, freshness gate, dedup, and audit all live in the CLI layer, and they are
-silently bypassed if you hand-render.
-
-Display-class semantics of the returned script — the CLI enforces these; never add behavior on top:
-
-- Execute exactly what the script says and nothing more: **never** add a `pending-decisions` /
-  `pending_v2` / `user_attention` push, a state transition, or a wait-for-input of your own. (The
-  only sub_* script that itself carries a decision is the ASP side's `sub_user_reject` — see the
-  role bullet below; every other returned script is notify-and-end.)
-- The backend-delivered `jobStatus` / `subStatus` is displayed as-is, never re-derived. Primary key
-  is `jobId` (there is no `subId`). Amount = `tokenAmount` (decimal string, shown verbatim with
-  `tokenSymbol`).
-- When localizing the returned copy: a line the CLI omitted stays omitted (absent optional field —
-  never re-add or error); `failReason` is free backend text (may be non-English) — keep it verbatim,
-  do not interpret or translate it.
-- Role resolution is the CLI's job (`--role auto`): each side receives only its own script. The one
-  non-display exception is the ASP side's `sub_user_reject`, which is a **decision** (see
-  task-asp.md — not display-only); every other `sub_*` script is display-only.
-
-The per-event copy is intentionally NOT reproduced here. The canonical renderer is the CLI
-(`content.rs` behind `next-action`); a human-readable copy mirror for review/debug/localization
-reference lives in [`task-sub-copy-reference.md`](task-sub-copy-reference.md) — it is not part of
-any activation flow and must never be used to hand-compose a notification.
 
 ## Pre-flight
 
@@ -125,15 +98,53 @@ When dealing with integer values of any of the fields below, **look up the table
 |---|---|
 | `paymentMode` | `0` = unset / `1` = escrow / `3` = legacy-disabled (stop; never execute the removed Task payment flow) |
 | `sender.role` (a2a-agent-chat) | Counterparty: `1` = User Agent (you are ASP) / `2` = ASP (you are User Agent) |
-| `vote` (by Evaluator) | `0` = Dispute upheld (User Agent wins, funds refunded) / `1` = Dispute not upheld (ASP wins, funds released to ASP) |
-| `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete (funds released to ASP) / `7`=close (funds returned to user) / `8`=expired / `9`=failed (evaluation refunds user) |
+| `vote` (by Evaluator) | `0` = Dispute upheld (User Agent wins; refund verdict) / `1` = Dispute not upheld (ASP wins; release verdict) |
+| `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete / `7`=close / `8`=expired / `9`=failed (one-time refund terminal; subscription refund-or-charge-failure terminal) |
 
 🛑 **Iron rule**: before writing any semantic judgment about these fields, **cross-check the table above**. Misreading = wrong on-chain action.
+
+For User-facing refund finality, follow
+[`task-user-refund.md`](task-user-refund.md). Fresh backend chain-projected
+one-time Failed(9), or positive-amount escrow Closed(7), can confirm the refund
+without a Tx Hash. Bare subscription Failed(9) is overloaded with charge
+failure and remains ambiguous. Subscription confirmation instead combines a
+durable local Refund V2 `request-refund` record bound to the same job, Buyer,
+formal `jobType=1` subscription, exact positive original amount, and token
+address with fresh composed detail proving Buyer ownership and Failed(9). Legacy
+events such as `sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
+`job_auto_refunded`, and `dispute_resolved` may describe the branch, but cannot
+create proof by themselves. Event-only Failed(9) therefore remains ambiguous.
+For `dispute_resolved`, both status 6 (ASP wins/no refund) and status 9 (User
+wins/refund) require that same durable local request provenance plus fresh
+composed job type, Buyer ownership, and terminal status; otherwise do not
+announce a verdict or perform rating, notification, or cleanup side effects.
+`sub_failed_notify` is only a charge/conversion-failure label. Because the
+current event input has no trustworthy provenance/cause and Failed(9) is
+overloaded, it remains non-terminal and read-only even when no durable local
+refund intent is found: no terminal marker and no cleanup. Optional
+Provider/Service, period, token-symbol, and `paymentMode` fields veto only when
+both recorded and fresh values exist and conflict; their absence does not break
+the core provenance binding or finality.
+No new backend cause/query or typed settlement source is required. A Tx Hash is
+optional, with no required
+`refundTxHash` or `settlementTxHash` field. A vote, pending broadcast receipt,
+or `uopData.executeResult` preflight is not refund finality.
+
+## User Intent Routing
+
+> When the user-session receives free-form text targeting a specific task and no pending decision matches, load [`task-user-intent-routing.md`](task-user-intent-routing.md) and follow its routing flow.
+
+| Intent | Trigger examples | Detail |
+|---|---|---|
+| Take specific task (ASP) | "take {jobId} / accept task X / take task X / contact the User Agent of {jobId}" — **specific jobId** | [`task-asp-accept.md §1`](task-asp-accept.md) — ASPs are passive; there is no proactive-accept path. Designated tasks arrive via the `JobAspSelected` system event; reply with passive-readiness guidance and wait. **Do NOT directly `apply`** — apply is system-event-triggered only. |
+| Stake (Evaluator) | "I want to stake" | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
+| Re-submit / nudge / change terms | "re-submit / nudge / change currency" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
+| Task list / status / close / decision list | "my tasks / view decisions / close task" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
 
 ## Additional Resources
 
 - [`task-cli-reference.md`](task-cli-reference.md) — full CLI argument table
-- [`task-state-machine.md`](task-state-machine.md) — 54 events + 11 statuses
+- [`task-state-machine.md`](task-state-machine.md) — 58 events + 11 statuses
 - [`task-exception-escalation.md`](task-exception-escalation.md) — shared exception rules
 - [`task-user-intent-routing.md`](task-user-intent-routing.md) — user session free-form text routing
 - [`task-evaluator-decision-rubric.md`](task-evaluator-decision-rubric.md) — decision methodology

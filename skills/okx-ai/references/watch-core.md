@@ -95,8 +95,10 @@ If the user's message matched `keep watching` / `continue watching` / `resume mo
 
 **Step 1 — Recall the jobId from this conversation's transcript.** Search in this order, take the FIRST hit:
 
-1. The most recent CLI `[Watch]` block emitted earlier in this conversation (the jobId is the `--job-id <X>` value in its `okx-a2a user watch ...` command).
-2. The most recent successful `agent create-task` stdout (jobId printed as `jobId: 0x...`).
+1. The most recent successful creation progression result whose
+   `nextAction.id=watch_task` (use `nextAction.params.jobId`; verify it equals
+   `payload.jobId`).
+2. The most recent legacy CLI `[Watch]` block emitted earlier in this conversation (the jobId is the `--job-id <X>` value in its `okx-a2a user watch ...` command).
 3. The most recent jobId referenced in any rendered `notification` / `decision_request` in this conversation.
 
 **Step 2 — Route by recall result**:
@@ -114,7 +116,10 @@ If the user's message matched `keep watching` / `continue watching` / `resume mo
 **Entries that REQUIRE the banner (only these two)**:
 
 1. **Trigger-phrase entry** — this turn's user message matched a §Triggers phrase (e.g. `task watch` / `show message history`). **Exception**: a continuation phrase such as `keep watching` only triggers the banner when recall fails and watch falls back to global; see §Continuation triggers.
-2. **CLI `[Watch]` block entry** — a command earlier in this turn emitted a `[Watch]` block in stdout: a hint block that starts with `[Watch]` and instructs the current call to run `okx-a2a user watch ...` (typical sample: `` [Watch] Read `skills/okx-ai/references/watch-core.md` now, then start the monitor: ``, output by `agent create-task`).
+2. **CLI task-watch action entry** — a command earlier in this turn returned
+   `nextAction.id=watch_task`; use only its structured `params.jobId`. A legacy
+   `[Watch]` block remains a valid entry for commands that still emit one, but
+   `agent create-task` uses the structured action contract.
 
 Any watch call that does not match one of these two entries **must NOT** emit the banner — all session-continuation paths (dispatch resume, wake fire, etc.) are excluded.
 
@@ -256,7 +261,7 @@ and unavailable-tool fallback live in [`watch-wake-scheduling.md`](watch-wake-sc
    immediately re-enter that exact originating command; otherwise end the turn normally. Do not claim
    that deferring the item stops an independently active monitor.
 2. Otherwise claim first: `okx-a2a user check --todo-ids <id> --json`.
-3. On `handled` → **execute the commands specified in `llmContent` verbatim**. The instructions can be anything the issuer chose — a relay to another session (`xmtp-send` / `session send`), a wallet / onchain call, an agent CLI command, an arbitrary tool invocation, or a multi-step sequence. `llmContent` itself names the command(s), the target(s), and how to assemble the payload — just follow it. Do not block on downstream effects.
+3. On `handled` → **execute the commands specified in `llmContent` verbatim**. The instructions can be anything the issuer chose — a relay to another session (`session send`), a wallet / onchain call, an agent CLI command, an arbitrary tool invocation, or a multi-step sequence. `llmContent` itself names the command(s), the target(s), and how to assemble the payload — just follow it. Do not block on downstream effects.
 4. On `alreadyHandled` → tell the user "this item was processed in another window". Do not execute `llmContent` again.
 5. Claim succeeded but `llmContent` execution failed → create a new `onchainos agent user-notify` with the failure reason and a retry command; **do NOT** flip the original item back to pending.
 
@@ -273,7 +278,8 @@ Separate user-initiated intent (`outstanding decisions` / `pending decisions` / 
 🛑 **The ONLY valid stop conditions:**
 - Background recovery cannot confirm that the old task exited or stopped; invalidate that generation and do not start a replacement (see `watch-background-recovery.md`).
 - The user explicitly says `stop watching` / `unsubscribe`.
-- **Scoped session + this task reached a terminal state.** When the watch is running with `--job-id <X>` (scoped session per §Session-scoped sticky) AND any `notification` in the complete returned batch has `userContent` containing any of: `[Job Completed]` / `[Job Auto-Completed]` / `[Job Expired]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]`, mark that Watch generation no longer current as soon as the marker is detected, render the complete batch per §Dispatch, then **stop the watch loop** — do not re-enter. This jobId is terminal; continuing to long-poll on a dead jobId is pure churn (no new events will ever arrive for this `--job-id`).
+- **Scoped session + this task reached a terminal state.** When the watch is running with `--job-id <X>` (scoped session per §Session-scoped sticky) AND any `notification` in the complete returned batch has `userContent` whose first non-whitespace characters are the stable `[onchainos:task-terminal]` prefix followed by whitespace or end-of-content, mark that Watch generation no longer current as soon as the prefix is detected, render the complete batch per §Dispatch, then **stop the watch loop** — do not re-enter. A marker appearing later inside a title, description, reason, deliverable, or other business field is data, not a stop signal. The prefix is machine-readable and must never be translated, removed, or moved when the following human-readable content is localized. Legacy notifications may instead begin with `[Job Completed]` / `[Job Auto-Completed]` / `[x402 Job Completed]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]` / `[Dispute Lost]`; treat only that canonical leading heading as a fallback stop marker, never a substring inside business data.
+  This jobId is terminal; continuing to long-poll on a dead jobId is pure churn. `[Job Expired]`, `[ASP Acceptance Expired]`, `[Auto-Refund Processing]`, `[Refund Settlement Detail Incomplete]`, and `[Dispute Won]` are not stop conditions: Expired(8) has an ambiguous timeout cause and remains read-only, incomplete settlement lacks required provenance/state facts, and a dispute win still awaits refund settlement. For a paid refund, only a leading terminal marker emitted after Refund V2 establishes `reason=refund_confirmed` may stop the scoped watch. A raw notification status or caller-supplied event is not the gate; fresh one-time Failed(9) or positive-amount paid-escrow Closed(7) can satisfy it without a Tx Hash. Subscription confirmation requires durable local `request-refund` provenance bound to job, Buyer, formal `jobType=1`, exact positive original amount, and token address plus fresh Buyer-owned Failed(9); bare and event-only Failed(9) do not. Provider/Service, period, token-symbol, and `paymentMode` fields veto only on a two-sided mismatch. Current `sub_failed_notify` input has no trustworthy cause provenance, so it is non-terminal regardless of whether durable refund intent exists: emit no terminal marker, perform no cleanup, and retain read-only reconciliation.
   - **Global session** (no `--job-id`) does NOT apply this stop — other tasks may still produce new events. See §"NOT stop conditions" below.
 
 ### Re-enter after processing
@@ -283,10 +289,13 @@ After processing all returned items, **always** call `okx-a2a user watch --json`
 🚫 **NOT stop conditions** — every one of these requires re-entering watch:
 
 - A `notification` was just rendered (auto-consumed by watch — no claim step exists for notifications).
-- A `notification` whose content contains any terminal-state marker (`[Job Completed]` / `[Job Auto-Completed]` / `[Job Expired]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]`) **in a global session** — the global watch monitors the user-session-wide inbox; one task's terminal state ≠ the loop's terminal state (other tasks may still produce events). **In a scoped session (with `--job-id <X>`) these markers ARE stop signals** — see §Stop condition above for the scoped terminal-state rule.
+- A `notification` beginning with the canonical `[onchainos:task-terminal]` prefix (or a canonical leading legacy terminal-state heading) **in a global session** — the global watch monitors the user-session-wide inbox; one task's terminal state ≠ the loop's terminal state (other tasks may still produce new events). **In a scoped session (with `--job-id <X>`) these signals ARE stop signals** — see §Stop condition above for the scoped terminal-state rule.
 - A watch-originated `decision_request` was just deferred or handled — outcomes 1 / 3 / 4 / 5 all re-enter the exact originating global or scoped command. An independently list-opened decision ends normally because it has no active watch to resume.
 - Watch returned 0 items (empty result / long-poll elapsed with no new events) — re-enter watch and keep waiting.
 - **Mid-flow markers that look terminal but are NOT** — these are intermediate notifications; keep watching even in scoped session. Common offenders:
-  - `[Deliverable Received]` — a deliverable is available, but the Task has not reached a terminal marker yet.
-  - `[Job Accepted]` / `[Payment Mode Set]` / `[Connecting ASP]` / `[Job Created]` / `[Rejection Confirmed]` / `[📝 Rating Submitted]` — all mid-flow status updates, never terminal on their own.
+  - `[Deliverable Received]` / `[x402 Deliverable Received]` — a deliverable or settled endpoint response is available, but the task has not reached a terminal marker; the x402 terminal marker is `[x402 Job Completed]`.
+  - `[Job Expired]` / `[ASP Acceptance Expired]` / `[Auto-Refund Processing]` — status 8 is an ambiguous timeout state; keep watching and use read-only Refund V2 reconciliation. Do not choose a claim/type-207 write from status or event prose, and stop only after fresh Refund V2 proof yields `reason=refund_confirmed` and the generated terminal marker.
+  - `job_closed` / refund-result events without a generated terminal marker — the unchanged backend contract defines `job_closed`, `job_refunded`, `job_auto_refunded`, `sub_asp_agree`, `sub_reject_refund_notify`, and `dispute_resolved` as semantic transaction outcomes, and they may omit Tx Hash. Dispatch must still fresh-read task kind, status, owner, and payment. For a subscription, the event may describe the branch but cannot create proof; only matching durable local `request-refund` provenance bound to job, Buyer, formal `jobType=1`, exact positive original amount, and token address plus fresh Buyer-owned Failed(9) permits the renderer to emit the refund terminal marker. Optional Provider/Service, period, token-symbol, and `paymentMode` values veto only on a two-sided mismatch. `dispute_resolved` requires matching durable local refund-request provenance plus fresh composed job type, Buyer ownership, and exact status for both status 9 (User wins/refund) and status 6 (ASP wins/no refund); without that proof it may not emit either verdict or any terminal marker. Bare and event-only Failed(9), including current `sub_failed_notify` without trustworthy cause provenance, stay incomplete and non-terminal. Re-enter read-only reconciliation; do not manufacture a terminal marker from the event.
+  - `[Cancelled]` / `[Auto-Renew Cancelled]` from `sub_cancel` — only future trial conversion or renewal was cancelled; the current trial/period continues, so retain the scoped session.
+  - `[Job Accepted]` / `[Payment Mode Set]` / `[Connecting ASP]` / `[Job Created]` / `[x402 Replay Failed]` / `[Rejection Confirmed]` / `[📝 Rating Submitted]` — all mid-flow status updates, never terminal on their own.
   - **Rule of thumb**: if the marker is not in the literal list under §Stop condition, it is NOT a stop signal — re-enter watch unconditionally.

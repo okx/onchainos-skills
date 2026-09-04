@@ -73,6 +73,16 @@ fn inject_session_cert(body: &Value) -> Value {
     body
 }
 
+fn redact_session_cert(body: &Value) -> Value {
+    let mut redacted = body.clone();
+    if let Some(object) = redacted.as_object_mut() {
+        if object.contains_key("sessionCert") {
+            object.insert("sessionCert".to_string(), Value::String("<redacted>".to_string()));
+        }
+    }
+    redacted
+}
+
 /// Task backend API client (DoH-enabled, delegates to WalletApiClient).
 pub struct TaskApiClient {
     wallet: WalletApiClient,
@@ -333,7 +343,7 @@ impl TaskApiClient {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await?;
         if DEBUG_LOG {
-            eprintln!("[TaskAPI] POST {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id} | body: {body}", token.len());
+            eprintln!("[TaskAPI] POST {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id} | body: {}", token.len(), redact_session_cert(&body));
         }
         let headers = [("agenticId", agent_id)];
         let started = Instant::now();
@@ -354,6 +364,44 @@ impl TaskApiClient {
                     eprintln!("[TaskAPI] POST {url} ← ERROR: {err_msg}");
                 }
                 log_api("post", path, agent_id, false, elapsed, Some(&err_msg), None);
+            }
+        }
+        result
+    }
+
+    /// POST a state-changing request exactly once. A connect/timeout result is
+    /// unknown and must be reconciled against authoritative state before retry.
+    pub async fn post_mutation_with_identity(
+        &mut self,
+        path: &str,
+        body: &Value,
+        agent_id: &str,
+    ) -> Result<Value> {
+        let body = inject_session_cert(body);
+        let url = format!("{}{}", self.base_url, path);
+        let token = get_access_token().await?;
+        if DEBUG_LOG {
+            eprintln!("[TaskAPI] POST(no-retry) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id} | body: {}", token.len(), redact_session_cert(&body));
+        }
+        let headers = [("agenticId", agent_id)];
+        let started = Instant::now();
+        let result = self.wallet
+            .post_authed_mutation_no_retry_with_headers(path, &token, &body, Some(&headers))
+            .await;
+        let elapsed = started.elapsed();
+        match &result {
+            Ok(data) => {
+                if DEBUG_LOG {
+                    eprintln!("[TaskAPI] POST(no-retry) {url} ← {data}");
+                }
+                log_api("post_mutation", path, agent_id, true, elapsed, None, None);
+            }
+            Err(error) => {
+                let message = format!("{error:#}");
+                if DEBUG_LOG {
+                    eprintln!("[TaskAPI] POST(no-retry) {url} ← ERROR: {message}");
+                }
+                log_api("post_mutation", path, agent_id, false, elapsed, Some(&message), None);
             }
         }
         result
@@ -403,5 +451,22 @@ impl TaskApiClient {
             }
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_body_redacts_session_certificate() {
+        let body = serde_json::json!({
+            "jobId": "job-1",
+            "sessionCert": "secret-certificate"
+        });
+        let redacted = redact_session_cert(&body);
+        assert_eq!(redacted["jobId"], "job-1");
+        assert_eq!(redacted["sessionCert"], "<redacted>");
+        assert!(!redacted.to_string().contains("secret-certificate"));
     }
 }

@@ -22,7 +22,7 @@ pub(crate) fn branch_a2a_cli(job_id: &str, agent_id: &str, dp_id: &str) -> Optio
         Ok(true) => return Some(format!(
             "[Designated ASP route: A2A] ASP {dp_id}\n\n\
              🛑 Sub session already exists for this job; the first inquiry has already been sent in a prior turn. \
-             End this turn immediately — do not create a group, do not send any message, do not run `okx-a2a session status` / `okx-a2a session create` / `okx-a2a xmtp-send`.\n"
+             End this turn immediately — do not create a group, do not send any message, do not run `okx-a2a session status` / `okx-a2a session create` / `okx-a2a session send`.\n"
         )),
         Ok(false) => { /* fall through to create */ }
         Err(e) => return Some(format!("[branch_a2a_cli] ERROR: okx-a2a session query failed: {e}\n")),
@@ -42,7 +42,7 @@ pub(crate) fn branch_a2a_cli(job_id: &str, agent_id: &str, dp_id: &str) -> Optio
 
     // B-Step 1.5 — SKILL_PREFETCH: pre-load the user playbook into the
     // freshly created sub session so its first inbound message has the
-    // correct context. Fire-and-forget (--no-wait baked into helper).
+    // correct context. The helper performs one bounded JSON-mode send.
     let prefetch = "[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context. This prefetch message itself requires no action — but when the NEXT inbound message arrives (same turn or later turn), you MUST process it normally via task-user-sub-playbook.md §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
     if let Err(e) = okx_a2a::session_send(job_id, Some(dp_id), prefetch) {
         return Some(format!(
@@ -79,27 +79,27 @@ pub(crate) fn branch_error(job_id: &str, agent_id: &str, short_id: &str, dp_id: 
             &service_not_found_content,
             &format!("[Service gone {short_id}] next-step decision"),
             "service_not_found",
-    );
+        );
     let block_not_provider =
         crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
             job_id,
             "user",
             agent_id,
             Some(dp_id),
-        &not_provider,
-        &format!("[Not ASP {short_id}] next-step decision"),
-        "not_provider",
-    );
+            &not_provider,
+            &format!("[Not ASP {short_id}] next-step decision"),
+            "not_provider",
+        );
     let block_offline =
         crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
             job_id,
             "user",
             agent_id,
             Some(dp_id),
-        &provider_offline,
-        &format!("[Offline {short_id}] next-step decision"),
-        "provider_offline",
-    );
+            &provider_offline,
+            &format!("[Offline {short_id}] next-step decision"),
+            "provider_offline",
+        );
 
     format!("\
          [Designated ASP route: error] ASP {dp_id} encountered a routing error.\n\

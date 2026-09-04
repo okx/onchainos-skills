@@ -5,8 +5,8 @@
 //! - `asp_ops.rs`      — ASP match + set-asp (scene 1)
 //! - `negotiate.rs`    — negotiation (scene 2, agent sub session)
 //! - `accept.rs`       — confirm accept + fund (scene 3)
-//! - `complete.rs`     — confirm completion (scene 5)
-//! - `reject.rs`       — reject deliverable (scene 6)
+//! - `v2/complete.rs`  — confirm completion (scene 5)
+//! - `v2/reject.rs`    — reject deliverable (scene 6)
 //! - `close.rs`        — close task (scene 7) + claim arbitration reward
 //!
 //! Shared:
@@ -17,7 +17,6 @@ mod asp_ops;
 pub(crate) mod attachments;
 mod claim_auto_refund;
 mod close;
-mod complete;
 mod content;
 mod create;
 mod create_subscribe;
@@ -26,16 +25,18 @@ mod offline_receive;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
-pub(crate) use flow_lifecycle::{route_subscription_delivery_to_skill, try_recover_from_temp_file};
+pub(crate) use flow_lifecycle::try_recover_from_temp_file;
 mod flow_negotiate;
 pub(crate) mod my_tasks;
 pub(crate) mod negotiate;
 mod query;
-mod reject;
+pub(crate) mod refund_v2;
 mod reject_apply;
 mod service_detail;
+pub(crate) mod service_param_update;
 pub(crate) mod subscription_ops;
 mod task_create_prepare;
+mod v2;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -84,36 +85,36 @@ pub enum TaskCommand {
     /// Create a new task (Client only)
     Create {
         #[arg(long)]
+        title: String,
+        #[arg(long)]
         description: String,
-        #[arg(long)]
-        budget: f64,
-        #[arg(long = "max-budget")]
-        max_budget: f64,
-        #[arg(long)]
-        currency: String,
-        #[arg(long)]
-        title: Option<String>,
-        /// Designated provider agentId (required; skip asp-match and negotiate directly).
-        #[arg(long)]
-        provider: String,
+        #[arg(long = "description-summary")]
+        description_summary: Option<String>,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
+        #[arg(long = "payment-token-symbol")]
+        payment_token_symbol: String,
+        #[arg(long = "payment-token-amount")]
+        payment_token_amount: String,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
-        /// Payment mode to set at creation time (required; escrow only).
-        #[arg(long = "payment-mode")]
-        payment_mode: String,
-        /// Service ID from asp/match response (required)
         #[arg(long = "service-id")]
         service_id: String,
-        /// Service input parameters (natural language string)
-        #[arg(long = "service-params")]
-        service_params: Option<String>,
-        /// Service token contract address
+        #[arg(long = "service-params", default_value = "{}")]
+        service_params: String,
         #[arg(long = "service-token-address")]
-        service_token_address: Option<String>,
-        /// Service price (from asp/match feeAmount)
+        service_token_address: String,
         #[arg(long = "service-token-amount")]
-        service_token_amount: Option<String>,
+        service_token_amount: String,
+        #[arg(long = "category-code")]
+        category_code: Option<String>,
+        #[arg(long = "min-credit-score")]
+        min_credit_score: Option<f64>,
+        #[arg(long, default_value = "private", value_parser = ["private", "public"])]
+        visibility: String,
+        #[arg(long = "chain-id", default_value_t = 196)]
+        chain_id: u64,
         /// Exact provider service Guide. Stored locally before broadcast.
         #[arg(long = "service-guide")]
         service_guide: Option<String>,
@@ -124,7 +125,7 @@ pub enum TaskCommand {
         #[arg(long = "guide-consent-json")]
         guide_consent_json: Option<String>,
     },
-    /// Create a subscription task (providerConfirmStatus → EIP-712 sign → create → broadcast)
+    /// Create a subscription task (providerConfirmStatus → sign → createSubscription → broadcast)
     CreateSubscribe {
         #[arg(long = "service-id")]
         service_id: String,
@@ -143,7 +144,7 @@ pub enum TaskCommand {
         /// Auto-renew: 0/false=off, 1/true=on
         #[arg(long = "auto-renew")]
         auto_renew: String,
-        /// Subscription title (max 64 chars)
+        /// Subscription title (max 30 Unicode characters)
         #[arg(long)]
         title: String,
         /// Subscription description (max 4096 chars)
@@ -152,9 +153,9 @@ pub enum TaskCommand {
         /// Local file paths to attach to the subscription after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
-        /// Designated provider agent ID
+        /// Designated provider agent ID from the confirmed Service result
         #[arg(long = "provider-agent-id")]
-        provider_agent_id: Option<String>,
+        provider_agent_id: String,
         /// Exact provider service Guide. Stored locally before broadcast.
         #[arg(long = "service-guide")]
         service_guide: Option<String>,
@@ -167,12 +168,9 @@ pub enum TaskCommand {
         /// Service billing interval (from asp-match subscription.interval, e.g. "month")
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
-        /// Output format: "json" for raw JSON
+        /// Output format (the v2 success envelope is always structured JSON)
         #[arg(long, default_value = "")]
         format: String,
-        /// Legacy compatibility input. Create-time device selection is rejected.
-        #[arg(long = "exclude-device", hide = true)]
-        exclude_device: Option<Vec<String>>,
     },
     /// Search matching ASPs for an existing task
     AspMatch {
@@ -259,13 +257,36 @@ pub enum TaskCommand {
     ConfirmAccept { job_id: String },
     /// Client confirms task complete and releases payment
     Complete { job_id: String },
-    /// Client rejects deliverable
+    /// Disabled direct rejection; use Refund V2 preparation and confirmation.
     Reject {
         job_id: String,
         #[arg(long)]
         reason: String,
     },
-    /// Client closes task (only valid while Open)
+    /// Read-only Refund V2 eligibility and next-action preparation.
+    #[command(name = "refund-prepare")]
+    RefundPrepare {
+        job_id: String,
+        /// User-authored refund reason. Required only for an active refundable task.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Execute an explicitly confirmed operation returned by refund-prepare.
+    #[command(name = "refund-execute")]
+    RefundExecute {
+        job_id: String,
+        #[arg(long, value_enum)]
+        operation: refund_v2::RefundOperation,
+        #[arg(long = "refund-context-id")]
+        refund_context_id: String,
+        /// Exact user-authored reason returned through the prepare action params.
+        #[arg(long)]
+        reason: Option<String>,
+        /// Explicitly confirms the current prepared refund operation.
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
+    },
+    /// Disabled legacy close. Use Refund V2 preparation.
     Close {
         job_id: String,
         #[arg(long = "agent-id")]
@@ -277,7 +298,8 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Client claims auto-refund after seller timeout (submit_expired / reject_expired)
+    /// Disabled legacy write command. Use `refund-prepare`; a cause-specific
+    /// timeout claim requires a backend Refund V2 contract.
     ClaimAutoRefund { job_id: String },
     /// Reject a provider's apply (on-chain pass-through; status stays `created`)
     RejectApply {
@@ -300,7 +322,7 @@ pub enum TaskCommand {
     /// Enable auto-renew on a subscription (needs EIP-712 terms signing)
     #[command(name = "start-autorenew")]
     StartAutorenew { sub_id: String },
-    /// Reject a subscription delivery
+    /// Disabled direct subscription rejection; use Refund V2 preparation.
     #[command(name = "subscribe-reject")]
     SubscribeReject {
         sub_id: String,
@@ -1531,7 +1553,7 @@ async fn scoped_watch_autotrade_precheck_inner(
     }
     if result.get("reason").and_then(serde_json::Value::as_str) == Some("configuration_required") {
         if let Some(file) = autotrade::continuation::load_live_for_job(job_id, &snapshot.agent_id)?
-    {
+        {
             if file.origin == autotrade::continuation::Origin::SubscriptionRestore {
                 let guide_hash_resolved = result
                     .get("guideHashResolved")
@@ -1638,16 +1660,16 @@ pub(crate) async fn prepare_post_login_subscriptions(
     };
     let devices =
         match device_routing::fetch_device_list_snapshot(&mut client, &agent_id, 1, 20).await {
-        Ok(snapshot) => snapshot,
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!(
-                    "[DEBUG][post-login] pre-registration device snapshot unavailable: {e:#}"
-                );
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                if cfg!(feature = "debug-log") {
+                    eprintln!(
+                        "[DEBUG][post-login] pre-registration device snapshot unavailable: {e:#}"
+                    );
+                }
+                return None;
             }
-            return None;
-        }
-    };
+        };
     let Some(current_device_was_registered) =
         device_snapshot_contains(&devices, &current_device_id)
     else {
@@ -1810,7 +1832,7 @@ pub(crate) async fn finalize_post_login_subscriptions(
             Some(prepared.pre_registration_devices)
         } else {
             match device_routing::fetch_device_list_snapshot(&mut client, &prepared.agent_id, 1, 20)
-            .await
+                .await
             {
                 Ok(snapshot)
                     if device_snapshot_contains(&snapshot, &prepared.current_device_id)
@@ -1852,18 +1874,21 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         // ── User actions ─────────────────────────────────────────
         TaskCommand::Create {
-            description,
-            budget,
-            max_budget,
-            currency,
             title,
-            provider,
+            description,
+            description_summary,
+            provider_agent_id,
+            payment_token_symbol,
+            payment_token_amount,
             attachments,
-            payment_mode,
             service_id,
             service_params,
             service_token_address,
             service_token_amount,
+            category_code,
+            min_credit_score,
+            visibility,
+            chain_id,
             service_guide,
             service_guide_hash,
             guide_consent_json,
@@ -1871,18 +1896,21 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             create::handle_create(
                 &mut client,
                 create::CreateTaskParams {
-                    description,
-                    budget,
-                    max_budget,
-                    currency,
                     title,
-                    provider,
+                    description,
+                    description_summary,
+                    provider_agent_id,
+                    payment_token_symbol,
+                    payment_token_amount,
                     attachments,
-                    payment_mode,
                     service_id,
                     service_params,
                     service_token_address,
                     service_token_amount,
+                    category_code,
+                    min_credit_score,
+                    visibility,
+                    chain_id,
                     service_guide,
                     service_guide_hash,
                     guide_consent_json,
@@ -1899,14 +1927,13 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             auto_renew,
             title,
             description,
+            attachments,
             provider_agent_id,
             service_guide,
             service_guide_hash,
             guide_consent_json,
             service_interval,
             format,
-            exclude_device,
-            attachments,
         } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
             create_subscribe::handle_create_subscribe(
@@ -1920,14 +1947,13 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                     auto_renew,
                     title,
                     description,
+                    attachments,
                     provider_agent_id,
                     service_guide,
                     service_guide_hash,
                     guide_consent_json,
                     service_interval,
                     format,
-                    exclude_device,
-                    attachments,
                 },
             )
             .await
@@ -2019,9 +2045,35 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::ConfirmAccept { job_id } => {
             accept::handle_confirm_accept(&mut client, &job_id, None).await
         }
-        TaskCommand::Complete { job_id } => complete::handle_complete(&mut client, &job_id).await,
-        TaskCommand::Reject { job_id, reason } => {
-            reject::handle_reject(&mut client, &job_id, &reason).await
+        TaskCommand::Complete { job_id } => {
+            let result = v2::complete::handle(&mut client, &job_id).await?;
+            crate::output::success(result);
+            Ok(())
+        }
+        TaskCommand::Reject { job_id, reason: _ } => {
+            anyhow::bail!(
+                "direct reject is disabled by Refund V2; run `onchainos agent refund-prepare {job_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
+            )
+        }
+        TaskCommand::RefundPrepare { job_id, reason } => {
+            refund_v2::handle_prepare(&mut client, &job_id, reason.as_deref()).await
+        }
+        TaskCommand::RefundExecute {
+            job_id,
+            operation,
+            refund_context_id,
+            reason,
+            confirm,
+        } => {
+            refund_v2::handle_execute(
+                &mut client,
+                &job_id,
+                operation,
+                &refund_context_id,
+                reason.as_deref(),
+                confirm,
+            )
+            .await
         }
         TaskCommand::Close { job_id, agent_id } => {
             close::handle_close(&mut client, &job_id, agent_id.as_deref()).await
@@ -2050,8 +2102,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::StartAutorenew { sub_id } => {
             subscription_ops::handle_start_autorenew(&mut client, &sub_id).await
         }
-        TaskCommand::SubscribeReject { sub_id, reason } => {
-            reject::handle_reject(&mut client, &sub_id, &reason).await
+        TaskCommand::SubscribeReject { sub_id, reason: _ } => {
+            subscription_ops::handle_subscribe_reject(&mut client, &sub_id, "").await
         }
         TaskCommand::SubscribeDetail { sub_id, format } => {
             subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await

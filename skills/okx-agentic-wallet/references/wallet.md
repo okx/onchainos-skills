@@ -67,6 +67,39 @@ Field rules:
 
 For a SUI contract call, provide the unsigned PTB from the maintained integration or SDK with `--sui-tx-bytes`.
 
+## Insufficient-Balance Top-up Recovery (Wallet Send)
+
+When `wallet send` returns `phase=funding_required`, `decision=blocked`,
+and `reason=insufficient_balance`, enter the shared Funding Reference
+immediately. Full field list:
+[wallet-cli-reference.md](wallet-cli-reference.md) → Common insufficient-balance result.
+
+The CLI produces this common Funding result for a real backend `code=10004`, or when
+`executeResult=false` is followed by a fresh chain-and-token balance query that
+proves `requested > balance`. It must not classify from `executeErrorMsg` text
+alone. If that balance query cannot confirm a shortfall, keep the ordinary
+simulation-failure path and show `executeErrorMsg`. When `balance` is `null` the
+balance is unavailable — show "当前余额暂不可用".
+
+**Recovery flow**:
+
+1. Follow [funding.md](funding.md) immediately. Its shared Funding-required
+   template displays the balance, shortfall, address, and QR in the same
+   response. Do not duplicate its address, QR, network, or fallback rules here.
+2. After shared Funding verifies a sufficient balance, it asks whether to
+   continue the interrupted operation using the current conversation context.
+   If the user continues this transfer, treat that reply as a new Wallet Send
+   intent and rebuild the request from current user/context input.
+3. Run `wallet send` without `--force`. The new preview replaces every prior
+   result and requires the ordinary explicit confirmation. If the original
+   transfer details are no longer clear, ask for them instead of reconstructing
+   or guessing them.
+
+A “funded” event authorizes only the read-only refresh. A later explicit request
+to continue authorizes only a new preview request.
+It never authorizes the transfer, and no previous confirmation survives the new
+CLI result.
+
 ## Approvals (via contract-call)
 
 Never execute unlimited approvals. Do not set the approve amount to `type(uint256).max` / `2^256-1` / any "infinite" value, and do not call `setApprovalForAll(operator, true)`. If the user explicitly requests unlimited approval: warn it is irreversible and lets the spender drain all tokens, require a second explicit confirmation, and even then cap the amount to what is needed (e.g. swap amount + 10%). If the user still insists, refuse and suggest they execute manually via a block explorer.

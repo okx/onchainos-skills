@@ -52,7 +52,8 @@ flow.
 | View reviews/reputation for Agent `#N` | `references/identity-reviews.md` |
 | Activate/deactivate Agent `#N` | `references/identity-listing.md` |
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
-| Auto-renew, trial cancel, reject, refund, or deliver | §Task Marketplace |
+| Request a refund, reject a paid deliverable, check refund progress, or handle a refund-related arbitration result | `references/task-user-refund.md` + `references/task-cli-reference.md`; Refund V2 is distinct from cancellation |
+| Auto-renew, trial cancel, or deliver | §Task Marketplace |
 | View arbitration tasks or inspect arbitration status as User/ASP | `references/task-arbitration.md` + `references/task-cli-reference.md` |
 | Existing task actions, task list, or subscription list/detail | `references/task-user-playbook.md` only; use its unified task/subscription routing |
 | Pause/stop subscription copy-trading | `references/task-user-playbook.md`, §Pause auto copy-trade only |
@@ -78,11 +79,16 @@ read `references/task-action-routing.md`.
 
 ```json
 {
-  "phase": "balance_validation",
+  "phase": "funding_required",
   "decision": "blocked",
   "reason": "insufficient_balance",
-  "nextAction": [{"id": "fund_account", "recommend": true}],
-  "payload": {}
+  "nextAction": [],
+  "payload": {
+    "operation": "task_creation",
+    "fundingTarget": {},
+    "qr": {},
+    "fundingNeed": {}
+  }
 }
 ```
 
@@ -98,7 +104,15 @@ Route by `decision`, then use `reason`, `nextAction`, and `payload`:
 - `blocked`: stop the current path and handle `reason`.
 - `requires_user_input`: collect only the missing input indicated by `payload`, then retry the selected `nextAction`.
 
-Render `nextAction` as a numbered list. Never invent actions not returned by the CLI.
+A structured `phase=funding_required`, `decision=blocked`,
+`reason=insufficient_balance` result has no action-routing entry. Open
+[`funding.md`](../okx-agentic-wallet/references/funding.md) immediately; that
+Reference owns balance verification and the handoff back to a fresh task
+preview.
+
+Render `nextAction` as a numbered list when user choice is required. Execute a
+single safe action directly when its routing reference requires no confirmation.
+Never invent actions not returned by the CLI.
 
 Do not infer progression from human-readable output. Keep backend field names
 inside `payload` unchanged. 

@@ -28,9 +28,10 @@
    - ❌ **ABSOLUTE PROHIBITION**: when `task-attach` returns an error, **forbidden** from using shell commands (`mkdir`, `cp`, `mv`) to save files or dispatching `[ATTACHMENT_ADDED]` to the sub session.
 3. 🛑 **Forward to sub session (MUST NOT SKIP)**: dispatch via `okx-a2a session send` — the daemon resolves the active sub session from `--job-id` + `--to-agent-id`:
    ```bash
-   okx-a2a session send --no-wait \
+   okx-a2a session send \
      --job-id <jobId> --to-agent-id <providerAgentId> \
-     --content "[ATTACHMENT_ADDED] <file path from task-attach output>"
+     --content "[ATTACHMENT_ADDED] <file path from task-attach output>" \
+     --json
    ```
    ❌ Stopping after step 2 without dispatching = the attachment is stuck locally. ❌ Using any other prefix = sub session cannot recognize the message.
    - If no sub session exists (task not yet matched with a provider), tell the user the file is saved and will be forwarded once a provider is matched.
@@ -48,8 +49,16 @@
 
 **Trigger**: "stop task" / "close task"
 
-1. Confirm: "Confirm closing task <jobId>? Funds will be refunded after closing; the operation is irreversible."
-2. User confirms → `onchainos agent close <jobId>`
+1. Run the read-only `onchainos agent refund-prepare <jobId>` and render the
+   returned task/refund details and action. Fresh Refund V2 state decides whether
+   this is a zero-price close, a paid direct refund, a trial cancellation, or a
+   blocked contract gap.
+2. Ask for explicit confirmation of the exact returned write action. On
+   confirmation, execute its unchanged `operation` and `refundContextId` through
+   `onchainos agent refund-execute ... --confirm`.
+
+Never call legacy `agent close`; it is registered only to return deterministic
+migration guidance and performs no network write.
 
 ### 3.2 Other non-terms input
 

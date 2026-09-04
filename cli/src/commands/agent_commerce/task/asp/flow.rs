@@ -8,59 +8,166 @@
 
 use crate::commands::agent_commerce::task::common::util::short_job_id;
 
-/// Extract the decision deadline (unix seconds) from a `job_rejected` event
-/// `message` JSON. Returns `None` when the field is absent, non-numeric, or
-/// `<= 0` (FR-4 / FR-5 graceful no-op).
+#[derive(Clone, Copy)]
+enum ProviderAssignmentType {
+    Single,
+    Subscription,
+}
+
+async fn provider_assignment_playbook(
+    job_id: &str,
+    agent_id: &str,
+    assignment_type: ProviderAssignmentType,
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    message: Option<&serde_json::Value>,
+) -> String {
+    let task_type = match assignment_type {
+        ProviderAssignmentType::Single => "single",
+        ProviderAssignmentType::Subscription => "subscription",
+    };
+    let event_name = match assignment_type {
+        ProviderAssignmentType::Single => "job_asp_selected",
+        ProviderAssignmentType::Subscription => "sub_open",
+    };
+    let accept_command = match assignment_type {
+        ProviderAssignmentType::Single => "accept-job-by-provider",
+        ProviderAssignmentType::Subscription => "accept-subscription",
+    };
+    let decline_command = match assignment_type {
+        ProviderAssignmentType::Single => "decline-job-by-provider",
+        ProviderAssignmentType::Subscription => "decline-subscription",
+    };
+    let p = match prefetched {
+        Some(value) => value,
+        None => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 Latest task detail could not be fetched. Stop with an error; do NOT accept, decline, or send task_params_request.\n\
+                 jobId={job_id}\n"
+            );
+        }
+    };
+    match p.status {
+        Some(0) => {}
+        Some(1) => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 Latest backend status is ACCEPTED/ACTIVE. This is a duplicate trigger: end idempotently.\n\
+                 Do NOT repeat the mutation or broadcast. jobId={job_id}\n"
+            );
+        }
+        Some(status) => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 Latest backend status is {status}, not CREATED(0). End idempotently; do NOT mutate or broadcast.\n\
+                 jobId={job_id}\n"
+            );
+        }
+        None => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 Latest backend detail has no status. Stop with an error; do NOT accept or decline.\n\
+                 jobId={job_id}\n"
+            );
+        }
+    }
+
+    let msg_str = |key: &str| {
+        message
+            .and_then(|value| value.get(key))
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+    };
+    let service_id = msg_str("serviceId")
+        .or_else(|| p.service_id.as_deref().filter(|value| !value.is_empty()))
+        .unwrap_or("");
+    if service_id.is_empty() {
+        return format!(
+            "[Current state] {event_name}\n[Role] ASP\n\n\
+             No serviceId is present. Run the v2 decline command (reason is required, ≤512 Unicode characters):\n\
+             ```bash\n\
+             onchainos agent {decline_command} {job_id} --agent-id {agent_id} --reason \"designated serviceId is missing\"\n\
+             ```\n"
+        );
+    }
+
+    let service = match crate::commands::agent_commerce::task::common::find_service(
+        agent_id, service_id,
+    )
+    .await
+    {
+        Ok(Some(service)) => service,
+        Ok(None) => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 `onchainos agent service-list --agent-id {agent_id} --service-id {service_id}` completed but returned no matching service.\n\
+                 Run exactly:\n\
+                 ```bash\n\
+                 onchainos agent {decline_command} {job_id} --agent-id {agent_id} --reason \"designated service is not registered\"\n\
+                 ```\n"
+            );
+        }
+        Err(error) => {
+            return format!(
+                "[Current state] {event_name}\n[Role] ASP\n\n\
+                 Service lookup failed: {error:#}\n\
+                 Stop with an error. Do NOT decline: a timeout, malformed response, or temporary service-list failure is not a capability rejection.\n\
+                 jobId={job_id}\n"
+            );
+        }
+    };
+
+    let service_name = service
+        .get("serviceName")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let service_description = service
+        .get("serviceDescription")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let buyer_agent_id = p.user_agent_id.as_deref().unwrap_or("<buyerAgentId>");
+    let service_params = p.service_params.as_deref().unwrap_or("{}");
+
+    format!(
+        "[Current state] {event_name}; latest backend status=CREATED(0)\n\
+         [Role] ASP\n\n\
+         Evaluate ONCE using only these four inputs:\n\
+         - task description: {description}\n\
+         - serviceParams: {service_params}\n\
+         - attachments: inspect the attachments already forwarded into this job session\n\
+         - registered service: {service_name} (`{service_id}`): {service_description}\n\n\
+         Output exactly one internal conclusion: `ACCEPT`, `NEED_PARAMS`, or `REJECT`. Do not invent a fourth result.\n\n\
+         **ACCEPT** — immediately before mutation, rely on the latest detail above (CREATED). Run:\n\
+         ```bash\n\
+         onchainos agent {accept_command} {job_id} --agent-id {agent_id}\n\
+         ```\n\
+         The command calls the documented {task_type} provider-accept endpoint, signs uopData, broadcasts bizType {accept_type}, and requires a full receipt. End the turn; duplicate accepted events must not repeat it.\n\n\
+         **REJECT** — generate one concrete reason (required, ≤512 Unicode characters), then run:\n\
+         ```bash\n\
+         onchainos agent {decline_command} {job_id} --agent-id {agent_id} --reason \"<reason>\"\n\
+         ```\n\
+         The reason is placed in broadcast bizContext; do not use legacy `asp-reject`.\n\n\
+         **NEED_PARAMS** — send one natural-language question followed by the structured block below through the existing A2A session:\n\
+         ```bash\n\
+         okx-a2a session send --job-id {job_id} --to-agent-id {buyer_agent_id} --content \"<natural-language request>\\n\\n[intent:task_params_request]\\n{{\\\"version\\\":1,\\\"jobId\\\":\\\"{job_id}\\\",\\\"taskType\\\":\\\"{task_type}\\\",\\\"requestId\\\":\\\"<unique-request-id>\\\",\\\"round\\\":<1-3>,\\\"missing\\\":[\\\"<field>\\\"]}}\" --json\n\
+         ```\n\
+         Count only a response for which the buyer successfully updated the backend as a successful round. Ignore duplicate requestId/response messages. Maximum: 3 successful update/response rounds. After the third successful update, fetch current detail and evaluate once more; if still NEED_PARAMS, decline.\n\n\
+         When `[intent:task_params_response]` arrives: fetch latest detail again. If status is not CREATED, stop. If CREATED, evaluate the updated complete serviceParams again. The buyer-side required ordering is:\n\
+         ```bash\n\
+         onchainos agent service-param-update {job_id} --agent-id {buyer_agent_id} --task-type {task_type} --request-id '<request-id>' --round <same-round> --service-params '<complete JSON>'\n\
+         # only after exit 0 and backendUpdated=true:\n\
+         okx-a2a session send --job-id {job_id} --to-agent-id {agent_id} --content \"[intent:task_params_response]\\n{{\\\"version\\\":1,\\\"jobId\\\":\\\"{job_id}\\\",\\\"requestId\\\":\\\"<request-id>\\\",\\\"round\\\":<same-round>,\\\"backendUpdated\\\":true}}\" --json\n\
+         ```\n",
+        description = p.description,
+        accept_type = 203,
+    )
+}
+
 fn reject_expire_time(message: Option<&serde_json::Value>) -> Option<i64> {
     message
         .and_then(|m| m.get("expireTime"))
         .and_then(|v| v.as_i64())
         .filter(|&t| t > 0)
-}
-
-/// Pure ASP price-gate decision: pick the `(status, summary, action)` tuple for
-/// the designated-service accept flow. Extracted from `generate_next_action` so
-/// the branch is unit-testable (the enclosing async fn does network I/O).
-///
-/// FR-3: when `test_flag` is set (backend-derived sandbox-review allowlist), the
-/// numeric quote-vs-fee gate is skipped and the decision is the exact same accept
-/// tuple as a normal `offer >= fee` accept — so the emitted playbook text is
-/// byte-identical to a normal accept and carries no bypass marker.
-fn price_gate_decision(
-    offer_num: Option<f64>,
-    fee_num: Option<f64>,
-    offer_amount: &str,
-    svc_fee: &str,
-    user_token_symbol: &str,
-    test_flag: bool,
-) -> (&'static str, String, &'static str) {
-    // Bind the accept tuple once so the test-accept path is byte-identical to it.
-    let accept = || {
-        (
-            "OK",
-            format!("User Agent offer {offer_amount} ≥ registered fee {svc_fee} ✅"),
-            "Apply at offer amount.",
-        )
-    };
-    match (offer_num, fee_num) {
-        _ if test_flag => accept(),
-        (Some(o), Some(f)) if o >= f => accept(),
-        (Some(_), Some(_)) => (
-            "TOO_LOW",
-            format!("User Agent offer {offer_amount} < registered fee {svc_fee} ❌"),
-            "Reject — price below registered floor.",
-        ),
-        (_, None) => (
-            "ESTIMATE",
-            format!("registered fee not set; User Agent offer {offer_amount} {user_token_symbol} — judge by task complexity"),
-            "If offer is fair for the workload → apply at offer; else counter-apply at your fair price (do NOT reject for price alone).",
-        ),
-        _ => (
-            "PARSE_FAIL",
-            format!("could not parse offer=`{offer_amount}` fee=`{svc_fee}`"),
-            "Treat as ESTIMATE; LLM judges based on complexity.",
-        ),
-    }
 }
 
 /// Generate the structured next-action prompt for the ASP based on event.
@@ -82,9 +189,8 @@ pub async fn generate_next_action(
         parse_status_or_event, Event,
     };
 
-    // (Old MCP-era `okx-a2a xmtp-send` `payload` version handshake was removed when the script
-    // migrated to `okx-a2a xmtp-send`, which has no equivalent `payload` parameter.
-    // Protocol version is now enforced server-side, not via wire-level payload tagging.)
+    // Protocol compatibility is enforced by preflight before task execution,
+    // not by tagging individual A2A messages with a legacy payload field.
 
     // Short jobId, used as the `[Job <shortId> — you are the ASP]` prefix on the first
     // When multiple prompts run concurrently it provides the user and the user agent a
@@ -138,7 +244,7 @@ pub async fn generate_next_action(
                             "\x20\x20- paymentMode: {v} ({})\n",
                             match v {
                                 1 => "escrow",
-                                3 => "legacy-disabled",
+                                3 => "x402",
                                 _ => "unknown",
                             }
                         )
@@ -196,24 +302,20 @@ pub async fn generate_next_action(
     // tool usage.
     //
     // NOTE: `send_to_peer` helper was removed — the deliver CLI now handles
-    // xmtp_send internally (upload + [intent:deliver] message + on-chain submit).
+    // XMTP peer send internally (upload + [intent:deliver] message + on-chain submit).
     // Other events that need peer messaging construct the command inline.
 
-    // Shared "execute task autonomously" guidance for escrow Step 2 — the script does
-    // not prescribe how to do it; list a few examples so the agent knows "pick your own
-    // tool" is the expected behavior.
+    // V2 accepted-task execution is anchored to the designated registered Service.
+    // The provider may use that Service's existing tools internally, but must not
+    // replace it with an unrelated ad-hoc workflow.
     let execute_task = format!(
-        "Pick the right tool / capability for the task content to get the work done. For example:\n\
-        \x20\x20• `Generate a cat image` → call an image-generation tool, get the local file path\n\
-        \x20\x20• `Check the weather` → call wttr.in / a weather API, get a text result\n\
-        \x20\x20• `Audit a smart contract` → read the code, produce an audit report\n\
-        Tool choice is outside the script's scope; the agent decides autonomously.\n\n\
-        ⚠️ If you have questions about task details / acceptance criteria → run `okx-a2a xmtp-send` (resolve `<buyerAgentId>` from the task fields above):\n\
+        "Reuse the designated registered Service's existing AI/Skill workflow. Feed it the authoritative description, complete serviceParams, and forwarded attachments from the Task fields/session; do not substitute an unrelated workflow and do not re-run provider acceptance.\n\n\
+        ⚠️ If a new question about task details / acceptance criteria is still required, use the existing A2A session (resolve `<buyerAgentId>` from the Task fields above):\n\
         \x20\x20\x20\x20```bash\n\
         \x20\x20\x20\x20okx-a2a xmtp-send \\\n\
         \x20\x20\x20\x20\x20\x20--job-id {job_id} \\\n\
         \x20\x20\x20\x20\x20\x20--to-agent-id <buyerAgentId> \\\n\
-        \x20\x20\x20\x20\x20\x20--message \"<plain natural-language question to the User Agent>\"\n\
+        \x20\x20\x20\x20\x20\x20--message \"<plain natural-language question to the User Agent>\" --json\n\
         \x20\x20\x20\x20```\n\
         End this turn after sending, wait for the reply; once you have the answer, start the work. Do not guess and produce a deliverable that misses the mark."
     );
@@ -227,7 +329,6 @@ pub async fn generate_next_action(
          onchainos agent session-cleanup --job-id {job_id}\n\
          ```\n\
          Then follow the command's output to close conversations (if applicable).");
-
     let event = parse_status_or_event(event_str);
     match event {
         // ─── Scene 3: Apply has been recorded on-chain (escrow path; the User Agent issues the payment) ──
@@ -251,16 +352,16 @@ pub async fn generate_next_action(
             )
         },
 
-        // ─── Scene 4: User Agent has confirmed the apply; execute and deliver ──
+        // ─── §1.5: designated-provider acceptance confirmed; execute and deliver ──
         Event::JobAccepted => {
             let user_notify = super::content::job_accepted_user_notify(job_id, agent_id);
-            let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol", "serviceParams", "buyerAgentId"]);
+            let task_fields = inline_task_fields(&["title", "description", "tokenAmount", "tokenSymbol", "serviceId", "serviceParams", "buyerAgentId"]);
             format!(
-            "[Current state] job_accepted (User Agent has confirmed the apply)\n\
+            "[Current state] job_accepted (your provider acceptance is confirmed)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              [Your next action (strict order, do not skip steps)]\n\n\
              {task_fields}\n\
-             **Step 1 — Notify the user (apply accepted) via `onchainos agent user-notify`**:\n\n\
+             **Step 1 — Notify the ASP owner (acceptance succeeded) via `onchainos agent user-notify`**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
              onchainos agent user-notify --content \"<localized content shown below>\"\n\
@@ -268,43 +369,43 @@ pub async fn generate_next_action(
              content:\n\
              {user_notify}\n\n\
              Fill the `<title>` / `<description>` / `<tokenAmount>` / `<tokenSymbol>` placeholders from the **Task fields** block above.\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` `received apply confirmation` filler to the User Agent — the User Agent just ran confirm-accept; they already know.\n\n\
-             **Step 2 — Autonomously execute the task and prepare the deliverable**:\n\
+             ⚠️ Do NOT send any A2A acceptance filler to the Buyer Agent — both sides receive the authoritative `job_accepted` system event.\n\n\
+             **Step 2 — Start the designated Service workflow and prepare the deliverable**:\n\
              {execute_task}\n\n\
              **Step 3 — Deliver** (single CLI command — handles file upload, peer notification, on-chain submit, and local save internally):\n\n\
              ⚠️ Do NOT call `okx-a2a file upload` or `okx-a2a xmtp-send` yourself — the `deliver` CLI handles all of this internally:\n\
-             \x20\x20- file_upload (when needed) → xmtp_send `[intent:deliver]` to the User Agent → on-chain submit → local persistent save.\n\
-             \x20\x20- Text deliverables >200 characters are auto-converted to a `.md` file and sent as file attachment.\n\n\
+             \x20\x20- file upload (when needed) → XMTP-send `[intent:deliver]` to the User Agent → on-chain submit → local persistent save.\n\
+             \x20\x20- Text deliverables over 500 Unicode characters are auto-converted to a `.md` file and sent as a file attachment; if conversion/upload fails, the CLI falls back to inline text.\n\
+             \x20\x20- A2A delivery must succeed before a single task can be submitted on-chain. Subscription delivery never calls the single-task submit API.\n\n\
              ▸ **File deliverable** — pass `--file` with the local file path:\n\
              ```bash\n\
              onchainos agent deliver {job_id} --file \"<local file path>\" --agent-id {agent_id}\n\
              ```\n\n\
-             ▸ **Text deliverable** — `--file \"\"` + heredoc-wrapped `--deliverable-text`:\n\
+             ▸ **Text deliverable** — pass only the heredoc-wrapped `--deliverable-text` (exactly one delivery-input flag):\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"\" --agent-id {agent_id} \\\n\
+             onchainos agent deliver {job_id} --agent-id {agent_id} \\\n\
              \x20\x20--deliverable-text \"$(cat <<'OKX_TEXT_EOF'\n\
              <full text deliverable content>\n\
              OKX_TEXT_EOF\n\
              )\"\n\
              ```\n\n\
              **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
-             🛑 **The next system events for this ASP are `job_completed` OR `job_rejected` — both are action-required, NEITHER is observer-only.** ASP does NOT receive a `job_submitted` envelope after deliver.\n\n\
+             The backend now opens the Buyer review after successful submission. The ASP does **not** wait for `job_submitted`; end this turn and wait for `job_completed` or `job_rejected`.\n\n\
              [Follow-up events]\n\
              - `job_completed` (User Agent reviewed and accepted) — auto-rate the User Agent + notify the user\n\
              - `job_rejected`  (User Agent rejected the deliverable) — push dispute-vs-refund decision to the user\n"
             )
         }
 
-        // ─── Scene 5: Deliverable confirmed on-chain (observer-only) ──────────────────
-        // In the new flow the deliverable was already sent to the User Agent via okx-a2a xmtp-send
-        // in Scene 4 A-Step 2; when the job_submitted system event reaches this sub there
-        // is no need to okx-a2a xmtp-send again, to avoid the User Agent receiving duplicate messages.
+        // Optional compatibility event: the Buyer is the required recipient.
+        // `onchainos agent deliver` already sent the deliverable to the User Agent.
+        // When job_submitted reaches this sub, never send it to the peer again.
         Event::JobSubmitted => {
             let user_notify = super::content::job_submitted_user_notify(job_id);
             format!(
             "[System notification] job_submitted (deliverable confirmed on-chain; task state is now submitted)\n\
              [Role] ASP (Agent Service ASP)\n\n\
-             ⚠️ **observer-only toward the User Agent (peer)** — the deliverable was already sent in the `job_accepted` script (Step 3); this event **must NOT trigger a second okx-a2a xmtp-send** to the User Agent (duplicating would cause loop). The user-side notify in Step 1 below targets your OWN user (the ASP wallet owner), NOT the User Agent-peer.\n\n\
+             ⚠️ The deliverable was already sent by `onchainos agent deliver`; this event **must NOT trigger a second A2A send** to the User Agent. The notification below targets the ASP owner only.\n\n\
              **Step 1 — Notify the user of the submit milestone via `onchainos agent user-notify`**:\n\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
@@ -313,7 +414,7 @@ pub async fn generate_next_action(
              content:\n\
              {user_notify}\n\n\
              **Step 2 — End this turn.** Wait for `job_completed` / `job_rejected` to drive the next action.\n\n\
-             🛑 **DO NOT extend `observe silently` to the next event.** When `job_completed` or `job_rejected` arrives, those are **action-required** events (auto-rate the User Agent / push a dispute-vs-refund decision to the user). Treating a subsequent `job_completed` envelope as silent = the user never gets the completion notice + the User Agent never gets rated.\n\n\
+             When `job_completed` or `job_rejected` arrives, those are **action-required** events (auto-rate the User Agent / push a dispute-vs-refund decision to the user).\n\n\
              [Follow-up events]\n\
              - `job_completed` (review passed) — auto-rate the User Agent + notify the user\n\
              - `job_rejected`  (User Agent rejected) — push dispute-vs-refund decision to the user\n"
@@ -335,7 +436,7 @@ pub async fn generate_next_action(
             "[Current state] job_rejected (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              🛑 **MUST push the dispute/refund decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = 24h timeout → auto-refund.\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\
+             ⚠️ Do NOT send `okx-a2a session send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\
              ⚠️ **24h hard deadline** — if the user does not decide within 24h, funds are auto-refunded to the User Agent. (Agent-side context; do NOT include in `--user-content` unless the localized template already mentions it.)\n\n\
              **Step 1 — Push the decision to the user via `pending-decisions-v2 request-prompt`**:\n\n\
              🌐 **Localize first** — translate the source template below to the user's language before passing to `--user-content`. Keep `[Job <shortId>]`, the `A.` / `B.` letters, the shortId hex.\n\
@@ -364,7 +465,7 @@ pub async fn generate_next_action(
              ```\n\
              CLI internals: POST /dispute/approve → uopData → sign uopHash → broadcast. Wait for the on-chain `dispute_approved` notification.\n\n\
              ⚠️ **After dispute raise ends this turn directly**:\n\
-             - Do NOT send any okx-a2a xmtp-send to the User Agent (`dispute raised` is filler; wait until phase 2 completes)\n\
+             - Do NOT send any okx-a2a session send to the User Agent (`dispute raised` is filler; wait until phase 2 completes)\n\
              - Do NOT call `dispute confirm` in the same turn (must wait for the on-chain dispute_approved notification)\n\n\
              [Follow-up events]\n\
              - `dispute_approved` system notification → call next-action to fetch the phase-2 script (dispute confirm)\n\
@@ -381,7 +482,7 @@ pub async fn generate_next_action(
              ```\n\
              CLI internals: POST /dispute → uopData → sign uopHash → broadcast. Wait for the on-chain `job_disputed` notification.\n\n\
              ⚠️ **After dispute confirm ends this turn directly**:\n\
-             - Do NOT okx-a2a xmtp-send the User Agent (still filler state)\n\
+             - Do NOT okx-a2a session send the User Agent (still filler state)\n\
              - Do NOT submit evidence in the same turn (evidence goes through dispute upload; must wait for the `job_disputed` notification + user-provided content)\n\n\
              [Follow-up events]\n\
              - `job_disputed` system notification\n"
@@ -396,7 +497,7 @@ pub async fn generate_next_action(
              onchainos agent agree-refund {job_id} --agent-id {agent_id}\n\
              ```\n\n\
              After Step 1 → **end this turn**.\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` `agreed to refund` filler to the User Agent — both sides receive the `job_refunded` system event.\n\
+             ⚠️ Do NOT send `okx-a2a session send` `agreed to refund` filler to the User Agent — both sides receive the `job_refunded` system event.\n\
              ⚠️ Do NOT push to the user with `onchainos agent user-notify`.\n"
         ),
 
@@ -442,7 +543,7 @@ pub async fn generate_next_action(
             "[Current state] sub_user_reject (the buyer rejected the current subscription period)\n\
              [Role] ASP (subscription)\n\n\
              🛑 **Push the refund/dispute decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay); a plain reply doesn't reach the user-session, so either path lets the ~1-day window lapse into an auto-refund.\n\
-             ⚠️ Limited reaction window (about 1 day). Let the USER choose — do NOT decide autonomously; do NOT `okx-a2a xmtp-send` the buyer (they just rejected — they know).\n\n\
+             ⚠️ Limited reaction window (about 1 day). Let the USER choose — do NOT decide autonomously; do NOT `okx-a2a session send` the buyer (they just rejected — they know).\n\n\
              **Step 1 — push the decision to the user**:\n\n\
              🌐 **Localize first** — translate the content between the markers to the user's language; keep the `A.` / `B.` letters and the `[Decision {short_id}]` label. Do NOT translate, move, or re-inline the reserved `{copy_ph}` / `{label_ph}` tokens or the `--template-vars-b64` value — they are substituted in-process.\n\
              ```bash\n\
@@ -471,7 +572,7 @@ pub async fn generate_next_action(
              ```\n\
              🌐 Localize the `--reason` text to the user's language; keep it ≤2000 chars. It is persisted on-chain in the evaluation record (broadcast bizContext) — pass the ASP's actual argument, not an empty string.\n\
              CLI internals: POST /task/{{jobId}}/dispute/approveAndCreateDispute (approve + create in ONE call — not the two-phase task dispute raise/confirm) → uopData → sign → broadcast (reason on bizContext); subStatus → Disputed.\n\n\
-             After Step 1 → **end this turn**. Do NOT `okx-a2a xmtp-send` the buyer.\n"
+             After Step 1 → **end this turn**. Do NOT `okx-a2a session send` the buyer.\n"
         ),
 
         // ─── Subscription: user chose to agree to refund (pseudo-event) ──
@@ -483,52 +584,11 @@ pub async fn generate_next_action(
              onchainos agent subscribe-agree-refund {job_id} --agent-id {agent_id}\n\
              ```\n\
              CLI internals: POST /subscribe/{{subId}}/agreeRefund (subId == jobId) → uopData → sign → broadcast; subStatus → Failed (this period refunded).\n\n\
-             After Step 1 → **end this turn**. Do NOT `okx-a2a xmtp-send` the buyer.\n"
+             After Step 1 → **end this turn**. Do NOT `okx-a2a session send` the buyer.\n"
         ),
 
         // ─── Scene 7: Task completed (review passed / evaluation won) ────────────────
-        Event::JobCompleted => {
-            let user_notify = super::content::job_completed_user_notify(job_id);
-            let rating_notify = super::content::rating_submitted_user_notify(job_id);
-            let task_fields = inline_task_fields(&["title", "tokenAmount", "tokenSymbol", "buyerAgentId"]);
-            format!(
-            "[Current state] job_completed (task completed; funds received)\n\
-             [Role] ASP (Agent Service ASP)\n\n\
-             [Your next action]\n\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` thanks / `done` filler to the User Agent — they just completed; they know.\n\n\
-             {task_fields}\n\
-             **Step 1 — Notify the user of task completion via `onchainos agent user-notify`**:\n\n\
-             🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-             ```bash\n\
-             onchainos agent user-notify --content \"<localized content shown below>\"\n\
-             ```\n\
-             content:\n\
-             {user_notify}\n\n\
-             🛑 Do NOT end this turn — Step 2 (auto-rate) and Step 2.5 (notify rating) below are MANDATORY.\n\n\
-             **Step 2 — 🛑 Auto-rate the User Agent (MANDATORY):**\n\
-             Based on the task description, requirements clarity, communication, and overall collaboration, generate:\n\
-             \x20\x20- Score: 0.00–5.00 (two decimal places). Guide: 5.00 = excellent User Agent (clear requirements, timely responses), 4.00 = good, 3.00 = acceptable, 2.00 = vague requirements or slow, 1.00 = problematic, 0.00 = abusive/non-responsive.\n\
-             \x20\x20- Comment: one sentence, ≤100 characters, evaluating how well the deliverable matches the description.\n\
-             Then execute:\n\
-             ```bash\n\
-             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --score <X.XX> --task-id {job_id} --description \"<comment, ≤100 chars>\"\n\
-             ```\n\
-             ⚠️ `--agent-id` is the User Agent being rated (buyerAgentId from the **Task fields** block at the top); `--creator-id` is the ASP's own agent id ({agent_id}).\n\n\
-             **Step 2.5 — Notify the user of the submitted rating**:\n\
-             🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-             After feedback-submit, run `onchainos agent user-notify` to notify the user:\n\
-             - ✅ **Success** (output contains `txHash`):\n\
-             ```bash\n\
-             onchainos agent user-notify --content \"<localized content shown below>\"\n\
-             ```\n\
-             content (fill `<score>` with the X.XX value and `<description>` with the comment you just used in Step 2; fill `<title>` from task context):\n\
-             {rating_notify}\n\
-             - ❌ **Failure** (error / non-zero exit code) → silently skip; do NOT notify the user, do NOT retry.\n\n\
-             **Step 3 — Terminal wrap-up (keep the sub session):**\n\
-             {terminal_session_hint}\n\
-             Task fully complete.\n"
-            )
-        }
+        Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id).await,
 
         // ─── Scene 6.5: Evaluation ruling (won / lost branches distinguished by jobStatus in the inbound envelope) ─
         Event::DisputeResolved => {
@@ -544,7 +604,7 @@ pub async fn generate_next_action(
              - `jobStatus = \"complete\"` → **you (ASP) won**; funds released to you\n\
              - `jobStatus = \"failed\"` → **you (ASP) lost**; funds refunded to the User Agent\n\
              [Your next action (branch by win/loss)]\n\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` `ruling supports party X` filler to the User Agent — both sides receive the `dispute_resolved` system event.\n\n\
+             ⚠️ Do NOT send `okx-a2a session send` `ruling supports party X` filler to the User Agent — both sides receive the `dispute_resolved` system event.\n\n\
              {task_fields}\n\
              ━━━━━━━━━━━━━ Branch A: jobStatus=complete (ASP won) ━━━━━━━━━━━━━\n\n\
              **A-Step 1 — Check claimable rewards (account-pull)**:\n\
@@ -629,7 +689,7 @@ pub async fn generate_next_action(
             "[Current state] job_refunded (funds refunded to the User Agent)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              [Your next action]\n\n\
-             ⚠️ Do NOT send `okx-a2a xmtp-send` `refund on-chain` filler to the User Agent — both sides already receive the `job_refunded` system event.\n\
+             ⚠️ Do NOT send `okx-a2a session send` `refund on-chain` filler to the User Agent — both sides already receive the `job_refunded` system event.\n\
              {terminal_session_hint}\n\n\
              **End this turn directly**; the refund flow is fully complete.\n"
         ),
@@ -645,7 +705,7 @@ pub async fn generate_next_action(
              session, calls `dispute upload` (which also auto-attaches the deliverable copy saved under\n\
              `~/.onchainos/deliverables/asp/{job_id}/`), and then notifies the user via\n\
              `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
-             **Do NOT** `okx-a2a xmtp-send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
+             **Do NOT** `okx-a2a session send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
              {task_fields}\n\
              **Step 1 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
              ```bash\n\
@@ -668,7 +728,7 @@ pub async fn generate_next_action(
              **Step 4 — Notify the user (after upload returns):**\n\n\
              content:\n\
              \x20\x20\x20\x20[Evaluation opened] Evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverable). Awaiting the evaluator's verdict.\n\n\
-             **Step 5 — End this turn.** Do NOT `okx-a2a xmtp-send` anything to the User Agent.\n\n\
+             **Step 5 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
              - dispute_resolved → lost, funds refunded to the User Agent\n"
@@ -684,230 +744,43 @@ pub async fn generate_next_action(
              Designated tasks arrive via a `job_asp_selected` event when the User Agent designates this ASP.\n".to_string(),
 
         // ─── Scene 1.5: User Agent designated this ASP for a private task ──────────
-        Event::JobAspSelected => {
-            // CODE-DRIVEN PATH: fetch service-list, match by serviceId, pre-compute price
-            // gate, emit deterministic playbook. LLM only does the semantic capability
-            // judgment (does task description fit service description?) and picks ONE
-            // of two pre-built actions (apply or okx-a2a xmtp-send-reject). Single turn, no
-            // intermediate CLI calls in the LLM context.
-            // Field sourcing priority — `--message` envelope wins (it's the inbound
-            // system event payload, source-of-truth for this turn). Falls back to
-            // `prefetched` (GET /task API response) when the envelope omits a field.
-            let p = prefetched;
-            let msg_str = |k: &str| -> Option<&str> {
-                message.and_then(|m| m.get(k)).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
-            };
+        Event::JobAspSelected => provider_assignment_playbook(
+            job_id,
+            agent_id,
+            ProviderAssignmentType::Single,
+            prefetched,
+            message,
+        )
+        .await,
 
-            let service_id = msg_str("serviceId")
-                .or_else(|| p.and_then(|x| x.service_id.as_deref()).filter(|s| !s.is_empty()))
-                .unwrap_or("");
-            // User Agent's offered amount: task-level `tokenAmount`. Envelope wins over prefetched.
-            let offer_amount = msg_str("tokenAmount")
-                .or_else(|| p.map(|x| x.token_amount.as_str()).filter(|s| !s.is_empty()))
-                .unwrap_or("");
-            // User Agent's token symbol — task-level; envelope wins. Stays as Option so missing
-            // tokenSymbol triggers the incomplete-terms guard (do NOT silent-fallback to USDT
-            // — applying with the wrong token would lock the wrong escrow currency).
-            let user_token_symbol_opt = msg_str("tokenSymbol")
-                .or_else(|| p.map(|x| x.token_symbol.as_str()).filter(|s| !s.is_empty() && *s != "?"));
-            let task_title = msg_str("jobTitle")
-                .or_else(|| msg_str("title"))
-                .or_else(|| p.map(|x| x.title.as_str()).filter(|s| !s.is_empty()))
-                .unwrap_or("");
-            let task_desc = msg_str("description")
-                .or_else(|| p.map(|x| x.description.as_str()).filter(|s| !s.is_empty()))
-                .unwrap_or("");
-
-            // Render-helper for the three early-bailout branches (no service / empty
-            // offer / missing token symbol). All share: notify + end turn, no on-chain
-            // action, no asp-reject (User Agent is in incomplete state and needs to re-route).
-            let render_bailout = |header: &str, user_notify: &str| -> String {
-                format!(
-                    "[Current state] job_asp_selected — {header}. jobId=`{job_id}` agentId={agent_id}\n\n\
-                     **Notify the user, then end the turn**:\n\n\
-                     🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                     ```bash\n\
-                     onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                     ```\n\
-                     content:\n\
-                     {user_notify}\n"
-                )
-            };
-
-            if service_id.is_empty() {
-                let user_notify = super::content::job_asp_selected_no_service_notify(job_id);
-                render_bailout("designated by User Agent, but no specific `serviceId` was pinned", &user_notify)
-            } else if offer_amount.is_empty() {
-                let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenAmount");
-                render_bailout("designation envelope missing `tokenAmount`", &user_notify)
-            } else if user_token_symbol_opt.is_none() {
-                let user_notify = super::content::job_asp_selected_missing_terms_notify(job_id, "tokenSymbol");
-                render_bailout("designation envelope missing `tokenSymbol`", &user_notify)
-            } else {
-                // Restructuring into `else if let Some(..)` would relocate this entire
-                // multi-hundred-line branch; `is_none()` was just checked above, so this
-                // unwrap cannot panic.
-                #[allow(clippy::unnecessary_unwrap)]
-                let user_token_symbol = user_token_symbol_opt.unwrap();
-                // CODE: fetch service catalog and find the designated entry.
-                let matched = crate::commands::agent_commerce::task::common::find_service(agent_id, service_id).await.ok().flatten();
-
-                // Build a reject template factory — the reason can be either a code-determined
-                // fixed string (passed verbatim) or the LLM-fillable `<reason>` placeholder.
-                // Backend off-chain endpoint: POST /priapi/v1/aieco/task/{jobId}/asp/reject — no signing required.
-                let build_reject_template = |reason_for_cli: &str, reason_for_notify: &str| {
-                    let notify_body = super::content::job_asp_selected_rejected_notify(job_id, reason_for_notify);
-                    format!(
-                        "**REJECT path** — run in order, then end the turn:\n\
-                         ❌ Do NOT call `apply`. ❌ Do NOT `okx-a2a xmtp-send` the User Agent. (Agent-side constraint; do NOT include in any `--content` / `--reason` text below.)\n\n\
-                         ```bash\n\
-                         onchainos agent asp-reject {job_id} --agent-id {agent_id} --reason \"{reason_for_cli}\"\n\
-                         ```\n\
-                         Then notify the user:\n\n\
-                         🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                         ```bash\n\
-                         onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                         ```\n\
-                         content (only the lines between `=== BEGIN ===` and `=== END ===` — do NOT include the markers themselves, do NOT append anything else):\n\
-                         === BEGIN ===\n\
-                         {notify_body}\n\
-                         === END ===\n"
-                    )
-                };
-                // Generic LLM-driven reject template — only `capability mismatch` is
-                // LLM-decidable here. `price too low` is handled by the TOO_LOW branch
-                // (code-decided) and `designated service not registered` by the
-                // matched=None branch (code-decided), so the menu collapses to one
-                // option. Kept as a placeholder so the CLI / notify wording stays
-                // verbatim-aligned across the rendered playbook.
-                let reject_template = build_reject_template(
-                    "capability mismatch",
-                    "capability mismatch — the designated service does not match the task",
-                );
-
-                match matched {
-                    None => {
-                        // CODE-decided REJECT: service not in catalog. Reason is fully known.
-                        let reject_template_fixed = build_reject_template(
-                            "designated service not registered",
-                            "designated service not registered",
-                        );
-                        format!(
-                            "[Auto-decision] ❌ REJECT — designated `serviceId={service_id}` is NOT in your registered catalog (service-list returned no match). This is the ONLY action; no LLM judgment needed.\n\n\
-                             Task: {task_title}\n\
-                             User Agent offer: {offer_amount} {user_token_symbol}\n\n\
-                             {reject_template_fixed}"
-                        )
-                    }
-                    Some(svc) => {
-                        let svc_name = svc.get("serviceName").and_then(|v| v.as_str()).unwrap_or("");
-                        let svc_desc = svc.get("serviceDescription").and_then(|v| v.as_str()).unwrap_or("");
-                        let svc_fee  = svc.get("fee").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).unwrap_or("");
-
-                        // CODE: numerical price gate.
-                        // `fee_num=None` means "service has no registered fee" → LLM estimates by complexity.
-                        let offer_num = offer_amount.parse::<f64>().ok();
-                        let fee_num = if svc_fee.is_empty() { None } else { svc_fee.parse::<f64>().ok() };
-                        // FR-3: allowlisted sandbox tasks skip the price gate (backend-derived).
-                        let test_flag = prefetched.map(|pf| pf.test_flag).unwrap_or(false);
-                        let (price_status, price_summary, price_action) = price_gate_decision(
-                            offer_num,
-                            fee_num,
-                            offer_amount,
-                            svc_fee,
-                            user_token_symbol,
-                            test_flag,
-                        );
-
-                        // Deterministic apply command — uses User Agent's token symbol (per spec).
-                        // After apply, push a user-facing notification via `onchainos agent user-notify`.
-                        let apply_failed_notify = super::content::job_asp_selected_apply_failed_notify(job_id, "<one-line error from apply's stderr>");
-                        let apply_template = format!(
-                            "**APPLY path** — run apply, then branch by exit code:\n\
-                             ```bash\n\
-                             onchainos agent apply {job_id} --agent-id {agent_id} --token-amount {offer_amount} --token-symbol {user_token_symbol}\n\
-                             ```\n\n\
-                             ✅ **On success** (exit code 0 + `txHash` in stdout) — end the turn directly; wait for the `provider_applied` system event. \n\n\
-                             ❌ **On failure** (non-zero exit / stderr / no txHash) — push a failure notification instead:\n\n\
-                             🌐 **Localize first** — fill `<one-line error from apply's stderr>`, then rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
-                             ```bash\n\
-                             onchainos agent user-notify --content \"<localized content shown below>\"\n\
-                             ```\n\
-                             content:\n\
-                             {apply_failed_notify}\n\n\
-                             Then end the turn. Do NOT retry apply automatically — the user will decide manually.\n"
-                        );
-
-                        // Counter-offer apply template — same `apply` CLI as above but `--token-amount`
-                        // is a placeholder the LLM fills with its own fair price. Token symbol stays
-                        // the User Agent's specified token (we don't counter the currency, only the amount).
-                        let apply_counter_template = format!(
-                            "**APPLY-COUNTER path** — capability fits but the User Agent's offer is unfair for the workload. Apply at YOUR fair price (User Agent will see the difference and decide whether to confirm-accept):\n\
-                             ```bash\n\
-                             onchainos agent apply {job_id} --agent-id {agent_id} --token-amount <YOUR_FAIR_PRICE> --token-symbol {user_token_symbol}\n\
-                             ```\n\
-                             ⚠️ `<YOUR_FAIR_PRICE>` — substitute a numeric value YOU judge fair for this workload (e.g. `0.05`). Same token as the User Agent's offer ({user_token_symbol}); do NOT change the symbol.\n\
-                             ⚠️ Do NOT self-discount to 0 / free. Do NOT throw a wildly inflated number (e.g. 100×). Stay within the tier the workload actually fits.\n\n\
-                             ✅ **On success** (exit 0 + `txHash`) — end the turn directly; wait for the `provider_applied` system event. \n\n\
-                             ❌ **On failure** — same as APPLY path: push failure notification, do NOT auto-retry.\n"
-                        );
-
-                        // Decide which branches the LLM can take, based on the code-computed price gate.
-                        let llm_decision = match price_status {
-                            "OK" => format!(
-                                "**LLM judgment** — single question: does the service description capability-match the task description?\n\
-                                 \x20\x20• YES → run **APPLY path** below.\n\
-                                 \x20\x20• NO  → run **REJECT path** below (reason = capability mismatch).\n\n\
-                                 {apply_template}\n\
-                                 {reject_template}"
-                            ),
-                            "TOO_LOW" => {
-                                // Price-too-low reason is fully determined in code; no LLM judgment.
-                                let too_low_reason = format!(
-                                    "price below registered fee: offer {offer_amount} {user_token_symbol} < registered fee {svc_fee} {user_token_symbol}"
-                                );
-                                let too_low_template = build_reject_template(&too_low_reason, &too_low_reason);
-                                format!(
-                                    "**Auto-decision** — price gate already FAILED in code (see Price below). Capability is moot; run **REJECT path** regardless.\n\n\
-                                     {too_low_template}"
-                                )
-                            },
-                            "ESTIMATE" | "PARSE_FAIL" => format!(
-                                "**LLM judgment** — two questions:\n\
-                                 \x20\x20• Capability: does the service description match the task?\n\
-                                 \x20\x20• Price: is the User Agent's offer fair for this task's workload?\n\
-                                 \x20\x20• Capability NO → run **REJECT path** below.\n\
-                                 \x20\x20• Capability YES + price fair → run **APPLY path** below.\n\
-                                 \x20\x20• Capability YES + price unfair (offer below the right tier for this workload) → run **APPLY-COUNTER path** at YOUR fair price. **Counter instead of rejecting — don't refuse work that you can actually do; let the User Agent decide whether to confirm-accept at your price.**\n\n\
-                                 💰 **Workload tier rubric** (no registered fee on this service — estimate by complexity):\n\
-                                 \x20\x20- ✅ Reference comparable tasks / the User Agent's offer / task complexity for a reasonable estimate. If the User Agent's offer is already at-or-above your workload estimate → ACCEPT; never counter down.\n\
-                                 \x20\x20- ❌ Don't blindly throw out something like 100 USDT / USDG.\n\
-                                 \x20\x20- ❌ Don't self-discount to 0 / free — `price is always asked, never assumed`.\n\
-                                 \x20\x20- ⚠️ The ranges below are denominated in USD-pegged stablecoins (**USDT / USDG**). If `{user_token_symbol}` is one of these, use the ranges directly; if it is a non-USD token (ETH / BTC / a non-stable token), convert the ranges to that token's spot-price equivalent before judging — DO NOT apply the numeric ranges as-is.\n\
-                                 \x20\x20- Simple query tasks (1 API call / 1 datum) typically 0.001–0.05 USDT/USDG; complex tasks (multi-step / long text generation / reports) 0.05–1 USDT/USDG; deep research > 1 USDT/USDG requires solid justification.\n\n\
-                                 {apply_template}\n\
-                                 {apply_counter_template}\n\
-                                 {reject_template}"
-                            ),
-                            _ => unreachable!(),
-                        };
-
-                        format!(
-                            "[Auto-decision context — pre-computed by CLI]\n\
-                             \x20\x20Task title:          {task_title}\n\
-                             \x20\x20Task description:    {task_desc}\n\
-                             \x20\x20Designated service:  {svc_name} (`{service_id}`)\n\
-                             \x20\x20Service description: {svc_desc}\n\
-                             \x20\x20User Agent offer:    {offer_amount} {user_token_symbol}\n\
-                             \x20\x20Price gate ({price_status}): {price_summary}\n\
-                             \x20\x20Recommended action:  {price_action}\n\
-                             \x20\x20Apply currency:      {user_token_symbol} (User Agent's specified token)\n\n\
-                             {llm_decision}"
-                        )
-                    }
-                }
-            }
+        // ─── Job notifications (display-only) ──────────────────────────────
+        Event::JobAspAcceptExpire => match prefetched {
+            Some(task) => super::v2::notification::job_asp_accept_expire(job_id, task),
+            None => super::v2::notification::authoritative_context_required(
+                job_id,
+                "job_asp_accept_expire",
+                &["taskDetail"],
+            ),
         },
+        Event::JobAspRejectClosed => match prefetched {
+            Some(task) => super::v2::notification::job_asp_reject_closed(job_id, task, message),
+            None => super::v2::notification::authoritative_context_required(
+                job_id,
+                "job_asp_reject_closed",
+                &["taskDetail"],
+            ),
+        },
+        Event::JobAspRejectExpire => match prefetched {
+            Some(task) => super::v2::notification::job_asp_reject_expire(job_id, task),
+            None => super::v2::notification::authoritative_context_required(
+                job_id,
+                "job_asp_reject_expire",
+                &["taskDetail"],
+            ),
+        },
+        Event::SubAspClaimNotify => {
+            super::v2::notification::sub_asp_claim_notify(job_id, message)
+        }
 
         // ─── User Agent-driven tx receipt notifications; no ASP action needed ─────
         Event::JobClosed
@@ -942,7 +815,7 @@ pub async fn generate_next_action(
              ```\n\
              CLI internals: POST /claimAutoComplete → uopData → sign uopHash → broadcast. Wait for the on-chain `job_completed` notification.\n\n\
              ⚠️ **After claim-auto-complete, end the turn directly**:\n\
-             - Do NOT send any okx-a2a xmtp-send to the User Agent (filler in between; wait until the job_completed on-chain receipt arrives)\n\
+             - Do NOT send any okx-a2a session send to the User Agent (filler in between; wait until the job_completed on-chain receipt arrives)\n\
              - Do NOT push to the user with `onchainos agent user-notify`\n\n\
              [Follow-up events]\n\
              - `job_completed` (success) → next-action provides the funds-received script (push to user; conversation retained)\n\
@@ -965,7 +838,7 @@ pub async fn generate_next_action(
             "[System notification] submit_deadline_warn (deadline for submitting the deliverable is approaching)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              🛑 **MUST push the submit-now/let-timeout decision via `pending-decisions-v2 request`** — `onchainos agent user-notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = the deadline silently expires → auto-refund to the User Agent.\n\
-             ❌ Do NOT `okx-a2a xmtp-send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
+             ❌ Do NOT `okx-a2a session send` the User Agent — the deadline warning is between the ASP and the user, not the User Agent's business.\n\n\
              **Push the decision to the user (3-substep protocol; read ALL 3 before running any command)**:\n\n\
              {request_block}\n\
              ⚠️ **Do NOT auto-run `onchainos agent deliver` later** — only the user knows whether the deliverable is actually ready; the agent must not decide \"deliverable is ready\" on the user's behalf.\n",
@@ -1024,8 +897,8 @@ pub async fn generate_next_action(
             )
         }
 
-        // job_auto_refunded — User Agent-side tx receipt; not the ASP's concern
-        Event::JobAutoRefunded => "[System notification] job_auto_refunded (User Agent-side claimAutoRefund tx receipt; not the ASP's concern)\n\
+        // job_auto_refunded — buyer/backend Refund V2 settlement receipt; not the ASP's concern
+        Event::JobAutoRefunded => "[System notification] job_auto_refunded (buyer/backend Refund V2 settlement receipt; not the ASP's concern)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n".to_string(),
 
@@ -1043,7 +916,7 @@ pub async fn generate_next_action(
              onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<value of the message.jobStatus field>\",\"jobId\":\"{job_id}\"}}'\n\
              ```\n\
              Follow the returned script for what to do in the current status.\n\n\
-             ⚠️ **Do NOT** okx-a2a xmtp-send the User Agent something like `I'm back online` — the peer does not care about your connection status.\n\
+             ⚠️ **Do NOT** okx-a2a session send the User Agent something like `I'm back online` — the peer does not care about your connection status.\n\
              ⚠️ If the Step 2 script is a passive-wait kind (e.g. status=accepted: ASP is working / status=submitted: waiting for User Agent review), only emit a `task resumed` notification and end the turn; do not proactively run business actions.\n"
             )
         }
@@ -1129,7 +1002,7 @@ pub async fn generate_next_action(
                  ```bash\n\
                  onchainos agent user-notify --content \"<translated text>\"\n\
                  ```\n\
-                 ❌ Do NOT okx-a2a xmtp-send the User Agent. ❌ Do NOT retry apply.\n\n\
+                 ❌ Do NOT okx-a2a session send the User Agent. ❌ Do NOT retry apply.\n\n\
                  {terminal_session_hint}\n"
             )
         }
@@ -1152,6 +1025,12 @@ pub async fn generate_next_action(
             let buyer_agent_id = msg_str("buyerAgentId")
                 .or_else(|| prefetched.and_then(|p| p.user_agent_id.as_deref()))
                 .filter(|s| !s.is_empty());
+            let token_amount = msg_str("tokenAmount")
+                .or_else(|| prefetched.map(|p| p.token_amount.as_str()))
+                .filter(|s| !s.is_empty());
+            let token_symbol = msg_str("tokenSymbol")
+                .or_else(|| prefetched.map(|p| p.token_symbol.as_str()))
+                .filter(|s| !s.is_empty() && *s != "?");
             // Trial subscribers charge nothing on selection — the ASP must not be told a
             // payment was received (mirrors the buyer-side sub_created trialType branch).
             // trail* is the pre-rename field spelling kept as a read fallback (AC-17).
@@ -1160,8 +1039,8 @@ pub async fn generate_next_action(
                     title,
                     buyer_agent_id,
                     job_id,
-                    msg_str("tokenAmount"),
-                    msg_str("tokenSymbol"),
+                    token_amount,
+                    token_symbol,
                     msg_i64("trialStartTime").or_else(|| msg_i64("trailStartTime")),
                     msg_i64("trialEndTime").or_else(|| msg_i64("trailEndTime")),
                 )
@@ -1170,50 +1049,68 @@ pub async fn generate_next_action(
                     title,
                     buyer_agent_id,
                     job_id,
-                    msg_str("tokenAmount"),
-                    msg_str("tokenSymbol"),
+                    token_amount,
+                    token_symbol,
                     msg_i64("subStartTime"),
                     msg_i64("subEndTime"),
                 )
             };
-            sub_asp_notify("sub_asp_selected (you were selected for a subscription)", &content, None)
+            let task_fields = inline_task_fields(&[
+                "title",
+                "description",
+                "serviceParams",
+                "buyerAgentId",
+                "serviceId",
+            ]);
+            sub_asp_accepted_start(
+                "sub_asp_selected (subscription acceptance confirmed)",
+                &content,
+                &task_fields,
+                job_id,
+                agent_id,
+            )
         }
         Event::SubCompleteNotify => {
             let title = message
-                .and_then(|m| m.get("jobTitle").or_else(|| m.get("title")))
+                .and_then(|m| m.get("jobTitle"))
                 .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty());
+                .filter(|s| !s.is_empty())
+                .or_else(|| prefetched.map(|task| task.title.as_str()).filter(|s| !s.is_empty()));
             let period_end = message.and_then(|m| m.get("subEndTime")).and_then(|v| v.as_i64());
-            sub_asp_notify(
-                "sub_complete_notify (subscription completed)",
-                &super::content::sub_complete_notify_asp_notify(title, job_id, period_end),
-                Some(terminal_session_hint.as_str()),
-            )
+            super::v2::sub_complete_notify::handle(job_id, title, period_end)
         }
         Event::SubCloseNotify => {
             let title = message
                 .and_then(|m| m.get("jobTitle").or_else(|| m.get("title")))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty());
-            sub_asp_notify(
+            let asp_reject_reason = message
+                .and_then(|m| m.get("aspRejectReason"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            display_notify(
                 "sub_close_notify (subscription closed)",
-                &super::content::sub_close_notify_asp_notify(title, job_id),
+                &super::content::sub_close_notify_asp_notify(title, job_id, asp_reject_reason),
                 Some(terminal_session_hint.as_str()),
             )
         }
         Event::SubFailedNotify => {
-            let title = message
-                .and_then(|m| m.get("jobTitle").or_else(|| m.get("title")))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty());
-            let reason = message
-                .and_then(|m| m.get("failReason").or_else(|| m.get("reason")))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty());
-            sub_asp_notify(
-                "sub_failed_notify (subscription failed)",
-                &super::content::sub_failed_notify_asp_notify(title, job_id, reason),
-                Some(terminal_session_hint.as_str()),
+            // The unchanged backend shares Failed(9) across refund and
+            // charge/conversion failures, while the inbound event JSON has no
+            // trusted system provenance. Fresh provider ownership/status is
+            // checked by the outer gate, but caller title/reason fields still
+            // cannot establish a cause or a terminal cleanup decision.
+            let title = prefetched
+                .map(|detail| detail.title.trim())
+                .filter(|title| !title.is_empty())
+                .unwrap_or("Subscription title unavailable");
+            let content = format!(
+                "[Subscription Result Needs Reconciliation] {title} (`{job_id}`) is in fresh Failed(9) status, but the authoritative backend detail does not expose whether this was a refund or a charge/conversion failure. The caller-provided `sub_failed_notify` title and reason fields are not trusted result evidence. Do not report either outcome, take a settlement action, or close the ASP session from this event. Wait for an authoritative lifecycle result or inspect the latest subscription status read-only."
+            );
+            display_notify(
+                "sub_failed_notify (result cause unverified)",
+                &content,
+                None,
             )
         }
         // ─── Subscription evaluation: ASP auto-submits evidence ───────────────────
@@ -1227,7 +1124,7 @@ pub async fn generate_next_action(
              session, calls `dispute upload` (which also auto-attaches the most recent 20 deliverables saved under\n\
              `~/.onchainos/deliverables/asp/{job_id}/`), and then notifies the user via\n\
              `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
-             **Do NOT** `okx-a2a xmtp-send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
+             **Do NOT** `okx-a2a session send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
              {task_fields}\n\
              **Step 1 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
              ```bash\n\
@@ -1250,7 +1147,7 @@ pub async fn generate_next_action(
              **Step 4 — Notify the user (after upload returns):**\n\n\
              content:\n\
              \x20\x20\x20\x20[Evaluation opened] Subscription evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverables). Awaiting the evaluator's verdict.\n\n\
-             **Step 5 — End this turn.** Do NOT `okx-a2a xmtp-send` anything to the User Agent.\n\n\
+             **Step 5 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
              - dispute_resolved → lost, funds refunded to the User Agent\n"
@@ -1272,18 +1169,27 @@ pub async fn generate_next_action(
              ```\n\
              CLI internals: POST /subscribe/{{subId}}/aspClaim (subId == jobId) → uopData → sign → broadcast. It claims everything outstanding for this subscription in one shot.\n\
              **Step 2 — Report:** on success push a short localized note via `onchainos agent user-notify --content \"<claim submitted, tx …>\"` — a background session's reply text never reaches the operator. If the CLI reports nothing claimable / already claimed, end the turn silently.\n\
-             Do NOT `okx-a2a xmtp-send` anything to the User Agent — this involves no buyer action.\n"
+             Do NOT `okx-a2a session send` anything to the User Agent — this involves no buyer action.\n"
         ),
 
         // sub_asp_agree is the ASP's OWN action (agree refund); the existing action-command
         // flow (subscribe-agree-refund) owns that lifecycle, not this notification path.
+        Event::SubOpen => provider_assignment_playbook(
+            job_id,
+            agent_id,
+            ProviderAssignmentType::Subscription,
+            prefetched,
+            message,
+        )
+        .await,
+
         Event::SubCreated
         | Event::SubCancel
         | Event::SubTrialIntoActive
         | Event::SubExpireWarn
         | Event::SubRejectRefundNotify
         | Event::SubAspAgree => format!(
-            "[System notification] {event} (not handled on the ASP side in this slice)\n\
+            "[System notification] {event} (obsolete or not handled on the ASP side in this slice)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n",
             event = event.as_str()
@@ -1297,8 +1203,8 @@ pub async fn generate_next_action(
 
 /// Render an ASP-side display notification: the localize-then-user-notify scaffold wrapping the
 /// canonical English `content`, optionally followed by the terminal session-cleanup hint. Used by
-/// the subscription arms, which are notify-only (no state transition, no on-chain action).
-fn sub_asp_notify(header: &str, content: &str, terminal_hint: Option<&str>) -> String {
+/// display-only arms, which have no state transition or on-chain action.
+fn display_notify(header: &str, content: &str, terminal_hint: Option<&str>) -> String {
     let tail = match terminal_hint {
         Some(h) => format!("\n{h}\n"),
         None => String::new(),
@@ -1312,6 +1218,31 @@ fn sub_asp_notify(header: &str, content: &str, terminal_hint: Option<&str>) -> S
          ```\n\
          content:\n\
          {content}\n{tail}"
+    )
+}
+
+/// Acceptance is not display-only: after notifying the ASP owner, hand the
+/// active subscription into the existing service execution/skill flow.
+fn sub_asp_accepted_start(
+    header: &str,
+    content: &str,
+    task_fields: &str,
+    job_id: &str,
+    agent_id: &str,
+) -> String {
+    format!(
+        "[System notification] {header}\n\
+         [Role] ASP (Agent Service ASP)\n\n\
+         {task_fields}\n\
+         **Step 1 — Notify the ASP owner** (localize the fixed template first; fill any `<...>` value from the task context and never send a literal placeholder):\n\
+         ```bash\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
+         ```\n\
+         content:\n\
+         {content}\n\n\
+         **Step 2 — Start service execution now.** Reuse the registered Service's existing AI/Skill workflow with the authoritative description, serviceParams, and attachments above. Do not re-run provider acceptance and do not send filler to the Buyer Agent.\n\n\
+         - If this execution produces a deliverable now, hand it to the §1.6 delivery command for job `{job_id}` as ASP `{agent_id}`.\n\
+         - If the Service is schedule/event driven, initialize its existing schedule/listener and then end the turn; do not invent an empty deliverable.\n"
     )
 }
 
@@ -1370,7 +1301,7 @@ fn user_attachment_received_cli(
              ```bash\n\
              onchainos agent user-notify --content \"<translate: [Job {short_id}] User Agent attachment download failed — encryption metadata incomplete. The User Agent may need to re-send.>\"\n\
              ```\n\n\
-             ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
+             ❌ Do NOT reply to the User Agent via okx-a2a session send.\n\
              **End this turn.**\n"
         );
     }
@@ -1387,7 +1318,7 @@ fn user_attachment_received_cli(
                  ```bash\n\
                  onchainos agent user-notify --content \"<translate: [Job {short_id}] User Agent attachment download failed. Please check network and retry.>\"\n\
                  ```\n\n\
-                 ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
+                 ❌ Do NOT reply to the User Agent via okx-a2a session send.\n\
                  **End this turn.**\n"
             );
         }
@@ -1427,7 +1358,7 @@ fn user_attachment_received_cli(
          ```bash\n\
          onchainos agent user-notify --content \"<your translated content>\"\n\
          ```\n\n\
-         ❌ Do NOT reply to the User Agent via okx-a2a xmtp-send.\n\
+         ❌ Do NOT reply to the User Agent via okx-a2a session send.\n\
          **End this turn.**\n"
     )
 }
@@ -1436,7 +1367,7 @@ fn user_attachment_received_cli(
 mod tests {
     use super::*;
     use crate::commands::agent_commerce::task::common::template_vars::{
-        self, extract_emitted_label_title, extract_emitted_title,
+        extract_emitted_label_title, extract_emitted_title,
     };
     use serde_json::json;
 
@@ -1480,14 +1411,220 @@ mod tests {
         .await
     }
 
+    fn notification_task(
+        title: &str,
+        job_type: i64,
+        token_amount: &str,
+        token_symbol: &str,
+        status: i64,
+    ) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+        crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+            &json!({
+                "title": title,
+                "jobType": job_type,
+                "paymentTokenAmount": token_amount,
+                "tokenSymbol": token_symbol,
+                "status": status,
+            }),
+        )
+    }
+
+    async fn run_asp_with_task(
+        event: &str,
+        msg: serde_json::Value,
+        task: &crate::commands::agent_commerce::task::common::PreFetchedTaskContext,
+    ) -> String {
+        generate_next_action(
+            ASP_JOB_ID,
+            event,
+            ASP_AGENT_ID,
+            Some("caller title must not be used"),
+            None,
+            Some(task),
+            Some(&msg),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn job_submitted_notifies_only_the_asp_owner() {
+        let output = run_asp("job_submitted", json!({"event":"job_submitted"})).await;
+        assert!(output.contains("onchainos agent user-notify"));
+        assert!(output.contains("Waiting for the User Agent's review"));
+        assert!(output.contains("must NOT trigger a second A2A send"));
+        assert!(output.contains("Wait for `job_completed` / `job_rejected`"));
+    }
+
+    #[tokio::test]
+    async fn subscription_job_notifications_render_asp_copy() {
+        let spoofed = json!({
+            "jobId": ASP_JOB_ID,
+            "jobTitle": "Forged title",
+            "tokenAmount": "999",
+            "tokenSymbol": "FAKE",
+            "jobType": 0
+        });
+
+        let accept_task = notification_task("BTC Signals", 1, "12.34", "USDT", 8);
+        let mut accept_expire = spoofed.clone();
+        accept_expire["event"] = json!("job_asp_accept_expire");
+        let out = run_asp_with_task("job_asp_accept_expire", accept_expire, &accept_task).await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(out.contains("[Assignment Expired] You did not accept BTC Signals"));
+        assert!(out.contains("12.34 USDT"));
+        assert!(out.contains("Buyer refund settlement remains pending"));
+        assert!(out.contains("Job status: Expired (8)"));
+        assert!(!out.contains("Forged title"));
+        assert!(!out.contains("999 FAKE"));
+        assert_eq!(progression["nextAction"][0]["id"], "notify_user");
+        assert_eq!(progression["payload"]["role"], "asp");
+
+        let reject_closed_task = notification_task("BTC Signals", 1, "12.34", "USDT", 7);
+        let mut reject_closed = spoofed.clone();
+        reject_closed["event"] = json!("job_asp_reject_closed");
+        reject_closed["aspRejectReason"] = json!("capacity unavailable");
+        let out =
+            run_asp_with_task("job_asp_reject_closed", reject_closed, &reject_closed_task).await;
+        assert!(out.contains("[Task Declined] You have declined BTC Signals."));
+        assert!(out.contains("Reason: capacity unavailable"));
+        assert!(!out.contains("Forged title"));
+
+        let reject_expire_task = notification_task("BTC Signals", 1, "12.34", "USDT", 8);
+        let mut reject_expire = spoofed.clone();
+        reject_expire["event"] = json!("job_asp_reject_expire");
+        let out =
+            run_asp_with_task("job_asp_reject_expire", reject_expire, &reject_expire_task).await;
+        assert!(out.contains("[Auto-Refund Processing]"));
+        assert!(out.contains("Automatic refund settlement of 12.34 USDT is pending."));
+        assert!(out.contains("Job status: Expired (8)"));
+        assert!(out.contains("No further service delivery is required."));
+        assert!(!out.contains("Job status: Closed"));
+        assert!(!out.contains("Job status: Failed"));
+        assert!(!out.contains("999 FAKE"));
+
+        let mut claim_notify = json!({
+            "jobId": ASP_JOB_ID,
+            "jobTitle": "BTC Signals",
+            "tokenAmount": "12.34",
+            "tokenSymbol": "USDT",
+            "jobType": 1
+        });
+        claim_notify["event"] = json!("sub_asp_claim_notify");
+        claim_notify["txHash"] = json!("0xreceive");
+        let out = run_asp("sub_asp_claim_notify", claim_notify).await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(out.contains("[Income Collected]"));
+        assert!(!out.contains("Subscription income collected\n"));
+        assert!(out.contains("12.34 USDT for BTC Signals"));
+        assert!(out.contains("Transaction: 0xreceive"));
+        assert_eq!(progression["nextAction"][0]["id"], "notify_user");
+        assert_eq!(progression["payload"]["event"], "sub_asp_claim_notify");
+    }
+
+    #[tokio::test]
+    async fn ordinary_job_notifications_split_free_and_paid_copy() {
+        let spoofed = json!({
+            "jobId": ASP_JOB_ID,
+            "jobTitle": "Forged subscription",
+            "tokenAmount": "999",
+            "tokenSymbol": "FAKE",
+            "jobType": 1
+        });
+
+        let free_task = notification_task("One-off analysis", 0, "0", "USDT", 8);
+        let mut free = spoofed.clone();
+        free["event"] = json!("job_asp_accept_expire");
+        let out = run_asp_with_task("job_asp_accept_expire", free, &free_task).await;
+        assert!(out.contains("[Assignment Expired]"));
+        assert!(out.contains("No paid amount needs to be returned."));
+        assert!(!out.contains("Buyer refund settlement remains pending"));
+
+        let paid_task = notification_task("One-off analysis", 0, "5", "USDT", 8);
+        let mut paid = spoofed.clone();
+        paid["event"] = json!("job_asp_accept_expire");
+        let out = run_asp_with_task("job_asp_accept_expire", paid, &paid_task).await;
+        assert!(out.contains("Escrowed amount: 5 USDT"));
+        assert!(out.contains("Buyer refund settlement remains pending"));
+        assert!(!out.contains("999 FAKE"));
+
+        let declined_task = notification_task("One-off analysis", 0, "0", "USDT", 7);
+        let mut declined = spoofed.clone();
+        declined["event"] = json!("job_asp_reject_closed");
+        declined["aspRejectReason"] = json!("policy");
+        let out = run_asp_with_task("job_asp_reject_closed", declined, &declined_task).await;
+        assert!(out.contains("[Job Declined]"));
+        assert!(out.contains("Job status: Closed"));
+
+        let free_refund_task = notification_task("One-off analysis", 0, "0.000", "USDT", 8);
+        let mut free_refund = spoofed;
+        free_refund["event"] = json!("job_asp_reject_expire");
+        let out = run_asp_with_task("job_asp_reject_expire", free_refund, &free_refund_task).await;
+        assert!(out.contains("[Refund Response Expired]"));
+        assert!(out.contains("Job status: Expired (8)"));
+        assert!(out.contains("No further service delivery is required."));
+        assert!(!out.contains("Job status: Failed"));
+        assert!(!out.contains("Job status: Closed"));
+    }
+
+    #[tokio::test]
+    async fn provider_assignment_duplicate_accept_is_idempotent() {
+        let single =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({"status": 1}),
+            );
+        let output = provider_assignment_playbook(
+            ASP_JOB_ID,
+            ASP_AGENT_ID,
+            ProviderAssignmentType::Single,
+            Some(&single),
+            None,
+        )
+        .await;
+        assert!(output.contains("duplicate trigger"));
+        assert!(output.contains("Do NOT repeat the mutation or broadcast"));
+        assert!(!output.contains("accept-job-by-provider 0xsub01"));
+    }
+
+    #[tokio::test]
+    async fn sub_open_starts_provider_decision() {
+        let output = run_asp(
+            "sub_open",
+            json!({ "event": "sub_open", "jobId": ASP_JOB_ID }),
+        )
+        .await;
+        assert!(output.contains("[Current state] sub_open"));
+        assert!(output.contains("Latest task detail could not be fetched"));
+        assert!(!output.contains("obsolete"));
+    }
+
+    #[tokio::test]
+    async fn provider_assignment_requires_fresh_detail() {
+        let output = provider_assignment_playbook(
+            ASP_JOB_ID,
+            ASP_AGENT_ID,
+            ProviderAssignmentType::Single,
+            None,
+            None,
+        )
+        .await;
+        assert!(output.contains("could not be fetched"));
+        assert!(output.contains("do NOT accept, decline"));
+
+        let subscription = provider_assignment_playbook(
+            ASP_JOB_ID,
+            ASP_AGENT_ID,
+            ProviderAssignmentType::Subscription,
+            None,
+            None,
+        )
+        .await;
+        assert!(subscription.contains("[Current state] sub_open"));
+        assert!(!subscription.contains("[Current state] sub_created"));
+    }
+
     #[tokio::test]
     async fn asp_handled_subscription_events_render_notify() {
-        for evt in [
-            "sub_asp_selected",
-            "sub_complete_notify",
-            "sub_close_notify",
-            "sub_failed_notify",
-        ] {
+        for evt in ["sub_asp_selected", "sub_close_notify", "sub_failed_notify"] {
             let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
             assert!(
                 out.contains("onchainos agent user-notify"),
@@ -1502,18 +1639,14 @@ mod tests {
 
     #[tokio::test]
     async fn asp_terminal_subscription_events_carry_cleanup_hint() {
-        for evt in [
-            "sub_complete_notify",
-            "sub_close_notify",
-            "sub_failed_notify",
-        ] {
+        for evt in ["sub_close_notify"] {
             let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
             assert!(
                 out.contains("session-cleanup"),
                 "{evt}: terminal ASP event must append the cleanup hint"
             );
         }
-        // sub_asp_selected is display-only and non-terminal → no cleanup hint.
+        // sub_asp_selected starts service execution and is non-terminal → no cleanup hint.
         for evt in ["sub_asp_selected"] {
             let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
             assert!(
@@ -1521,6 +1654,33 @@ mod tests {
                 "{evt}: non-terminal ASP event must NOT append the cleanup hint"
             );
         }
+        let unverified = run_asp(
+            "sub_failed_notify",
+            json!({"event": "sub_failed_notify", "jobId": ASP_JOB_ID}),
+        )
+        .await;
+        assert!(
+            unverified.contains("result cause unverified"),
+            "{unverified}"
+        );
+        assert!(!unverified.contains("session-cleanup"), "{unverified}");
+    }
+
+    #[tokio::test]
+    async fn asp_sub_complete_routes_structured_progression() {
+        let out = run_asp(
+            "sub_complete_notify",
+            json!({ "event": "sub_complete_notify", "jobId": ASP_JOB_ID }),
+        )
+        .await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+
+        assert_eq!(progression["decision"], "ready");
+        assert_eq!(
+            progression["nextAction"][0]["id"],
+            "notify_and_cleanup_subscription"
+        );
+        assert_eq!(progression["payload"]["cleanup"]["jobId"], ASP_JOB_ID);
     }
 
     #[tokio::test]
@@ -1531,6 +1691,66 @@ mod tests {
         )
         .await;
         assert!(out.contains("5.5 USDT"), "ASP terms echoed verbatim: {out}");
+        assert!(
+            out.contains("Start service execution now"),
+            "accepted subscription must enter the existing service workflow: {out}"
+        );
+        assert!(
+            out.contains("§1.6 delivery command"),
+            "immediate output must hand off to delivery: {out}"
+        );
+        assert!(!out.contains("Notify the user, then end the turn"));
+    }
+
+    #[tokio::test]
+    async fn asp_job_accepted_notifies_then_executes_and_delivers() {
+        let out = run_asp(
+            "job_accepted",
+            json!({ "event": "job_accepted", "jobId": ASP_JOB_ID }),
+        )
+        .await;
+        assert!(out.contains("your provider acceptance is confirmed"));
+        assert!(out.contains("Notify the ASP owner"));
+        assert!(out.contains("registered Service's existing AI/Skill workflow"));
+        assert!(out.contains("serviceId"));
+        assert!(out.contains("okx-a2a xmtp-send"));
+        assert!(!out.contains("okx-a2a session send"));
+        assert!(out.contains("onchainos agent deliver"));
+        assert!(!out.contains("--file \"\""));
+        assert!(out.contains("exactly one delivery-input flag"));
+        assert!(!out.contains("User Agent has confirmed the apply"));
+    }
+
+    #[tokio::test]
+    async fn asp_subscription_startup_falls_back_to_authoritative_detail() {
+        let prefetched =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "title": "Authoritative Service",
+                    "description": "Service description",
+                    "buyerAgentId": "buyer-9",
+                    "tokenAmount": "7.5",
+                    "tokenSymbol": "USDT",
+                    "serviceId": "service-1",
+                    "serviceParams": "{\"symbol\":\"SOL\"}",
+                    "subStatus": 1
+                }),
+            );
+        let out = generate_next_action(
+            ASP_JOB_ID,
+            "sub_asp_selected",
+            ASP_AGENT_ID,
+            None,
+            None,
+            Some(&prefetched),
+            Some(&json!({"event": "sub_asp_selected"})),
+        )
+        .await;
+        assert!(out.contains("Authoritative Service"));
+        assert!(out.contains("Buyer: buyer-9"));
+        assert!(out.contains("7.5 USDT"));
+        assert!(out.contains("serviceId: service-1"));
+        assert!(out.contains("Start service execution now"));
     }
 
     #[tokio::test]
@@ -1540,16 +1760,20 @@ mod tests {
             json!({ "event": "sub_complete_notify", "jobId": ASP_JOB_ID, "jobTitle": "AlphaBot", "subEndTime": 1786547115 }),
         )
         .await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let content = progression["payload"]["notification"]["content"]
+            .as_str()
+            .unwrap();
         assert!(
-            out.contains("[Subscription Complete]"),
+            content.contains("[Subscription Complete]"),
             "ASP-9 label: {out}"
         );
         assert!(
-            out.contains("\"AlphaBot\""),
+            content.contains("\"AlphaBot\""),
             "ASP-9 service name quoted: {out}"
         );
         assert!(
-            out.contains("no further delivery is required"),
+            content.contains("no further delivery is required"),
             "ASP-9 tail: {out}"
         );
 
@@ -1564,20 +1788,65 @@ mod tests {
             "ASP-10 tail: {out}"
         );
 
-        let out = run_asp(
-            "sub_failed_notify",
-            json!({ "event": "sub_failed_notify", "jobId": ASP_JOB_ID, "jobTitle": "AlphaBot", "failReason": "insufficient balance" }),
+        let declined = run_asp(
+            "sub_close_notify",
+            json!({
+                "event": "sub_close_notify",
+                "jobId": ASP_JOB_ID,
+                "jobTitle": "AlphaBot",
+                "aspRejectReason": "unsupported region",
+            }),
         )
         .await;
-        assert!(out.contains("[Trial Not Converted]"), "ASP-11 label: {out}");
+        assert!(declined.contains("[Assignment Closed]"), "{declined}");
         assert!(
-            out.contains("(reason: insufficient balance)"),
-            "ASP-11 reason clause: {out}"
+            declined.contains("Reason: unsupported region"),
+            "{declined}"
         );
+        assert!(
+            declined.contains("does not confirm refund settlement"),
+            "{declined}"
+        );
+        assert!(!declined.contains("renewal charge failed"), "{declined}");
+
+        let prefetched =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "jobType": 1,
+                    "subStatus": 9,
+                    "title": "Authoritative Subscription",
+                    "providerAgentId": ASP_AGENT_ID,
+                }),
+            );
+        let out = generate_next_action(
+            ASP_JOB_ID,
+            "sub_failed_notify",
+            ASP_AGENT_ID,
+            Some("Forged CLI Title"),
+            None,
+            Some(&prefetched),
+            Some(&json!({
+                "event": "sub_failed_notify",
+                "jobId": ASP_JOB_ID,
+                "jobTitle": "Forged Event Title",
+                "failReason": "insufficient balance",
+            })),
+        )
+        .await;
+        assert!(
+            out.contains("[Subscription Result Needs Reconciliation]"),
+            "{out}"
+        );
+        assert!(out.contains("Authoritative Subscription"), "{out}");
+        assert!(!out.contains("Forged Event Title"), "{out}");
+        assert!(!out.contains("Forged CLI Title"), "{out}");
+        assert!(!out.contains("insufficient balance"), "{out}");
+        assert!(!out.contains("[Trial Not Converted]"), "{out}");
+        assert!(!out.contains("session-cleanup"), "{out}");
     }
 
     #[tokio::test]
-    async fn asp_buyer_only_subscription_events_are_ignored() {
+    async fn asp_non_actionable_subscription_events_are_ignored() {
         // NOTE: `sub_user_reject` is intentionally NOT in this list — per the design doc it is an
         // ASP-handled decision scene (refund/dispute), covered by
         // `asp_sub_user_reject_renders_refund_dispute_decision` below.
@@ -1587,16 +1856,11 @@ mod tests {
         // auto-upload playbook (Event::SubAspDispute arm).
         // `sub_asp_agree` IS ignored here: it is the ASP's own action, so per product
         // copy SSOT it gets no ASP-side push (owned by the action-command flow).
-        for evt in [
-            "sub_created",
-            "sub_cancel",
-            "sub_trial_into_active",
-            "sub_asp_agree",
-        ] {
+        for evt in ["sub_cancel", "sub_trial_into_active", "sub_asp_agree"] {
             let out = run_asp(evt, json!({ "event": evt, "jobId": ASP_JOB_ID })).await;
             assert!(
                 out.contains("Silently ignore"),
-                "{evt}: buyer-only event must hit the silent-ignore group"
+                "{evt}: non-actionable event must hit the silent-ignore group"
             );
             assert!(
                 !out.contains("onchainos agent user-notify"),
@@ -1625,7 +1889,7 @@ mod tests {
         );
         assert!(!out.contains("Silently ignore"), "got: {out}");
         // No buyer involvement: never instruct an XMTP send toward the User Agent.
-        assert!(out.contains("Do NOT `okx-a2a xmtp-send`"), "got: {out}");
+        assert!(out.contains("Do NOT `okx-a2a session send`"), "got: {out}");
     }
 
     #[tokio::test]
@@ -1708,257 +1972,6 @@ mod tests {
         );
     }
 
-    /// A hostile title payload. In zsh, `${(e)}`
-    /// forces eval and `${(#):-96}` yields a backtick, so this reconstructs and
-    /// runs `id>&2` IF any byte of it ever reaches a zsh command line. The whole
-    /// point of the hotfix is that it never does — it travels only inside the
-    /// shell-safe Base64 `--template-vars-b64` payload. Kept byte-identical to the
-    /// integration test (`cli/tests/shell_injection_sub_user_reject.rs`).
-    const HOSTILE_ZSH_TITLE: &str = "x${(e):-${(#):-96}id>&2${(#):-96}}";
-
-    // Exercise the ACTUAL `Event::SubUserReject` renderer (not a hand-assembled
-    // command) with the hostile zsh payload, through the production title
-    // extraction path. This closes the composition gap the integration test flags:
-    // the real renderer must emit the placeholder-carrying `request-prompt` with a
-    // single shell-safe Base64 payload, and the raw attacker title must never
-    // appear in the emitted command/playbook while decoding back byte-for-byte
-    // under BOTH whitelisted keys.
-    #[tokio::test]
-    async fn asp_sub_user_reject_hostile_payload_stays_out_of_shell() {
-        // Production (`agent_commerce/mod.rs`) reads ONLY `message.jobTitle` as the
-        // 4th arg (title_ref); mirror that so this is a real production combination.
-        let msg = json!({
-            "event": "sub_user_reject",
-            "jobId": ASP_JOB_ID,
-            "jobTitle": HOSTILE_ZSH_TITLE,
-            "subStartTime": 1_700_000_000,
-            "subEndTime": 1_700_500_000,
-            "rejectWindowEndsAt": 1_700_600_000,
-            "tokenAmount": "0.0005",
-            "tokenSymbol": "USDT"
-        });
-        let title_ref = production_title_ref(&msg);
-        let out = generate_next_action(
-            ASP_JOB_ID,
-            "sub_user_reject",
-            ASP_AGENT_ID,
-            title_ref,
-            None,
-            None,
-            Some(&msg),
-        )
-        .await;
-
-        // Direct-push semantic preserved: request-prompt, not queue-backed request.
-        assert!(
-            out.contains("pending-decisions-v2 request-prompt"),
-            "must emit request-prompt: {out}"
-        );
-        // Both reserved placeholders are present in the emitted command/playbook.
-        assert!(
-            out.contains("{{__OKX_TASK_TITLE__}}"),
-            "emitted copy must carry the decision-copy placeholder: {out}"
-        );
-        assert!(
-            out.contains("{{__OKX_TASK_LABEL_TITLE__}}"),
-            "emitted list-label must carry the label placeholder: {out}"
-        );
-        // Exactly one `--template-vars-b64` FLAG (the prose mentions the flag name
-        // in backticks, so match the flag-with-value form to count only the real
-        // command flag).
-        assert_eq!(
-            out.matches("--template-vars-b64 \"").count(),
-            1,
-            "exactly one --template-vars-b64 flag must be emitted: {out}"
-        );
-        // The raw attacker title must not appear anywhere in the emitted output.
-        assert!(
-            !out.contains(HOSTILE_ZSH_TITLE),
-            "raw hostile title must NOT appear in the emitted command/playbook: {out}"
-        );
-        // The Base64 payload decodes back to the hostile title, byte-for-byte,
-        // under BOTH whitelisted keys.
-        assert_eq!(
-            extract_emitted_title(&out),
-            HOSTILE_ZSH_TITLE,
-            "decoded __OKX_TASK_TITLE__ must equal the hostile title"
-        );
-        assert_eq!(
-            extract_emitted_label_title(&out),
-            HOSTILE_ZSH_TITLE,
-            "decoded __OKX_TASK_LABEL_TITLE__ must equal the hostile title"
-        );
-        // Source event, short jobId label and the A/B refund/dispute copy are intact.
-        assert!(
-            out.contains("--source-event sub_user_reject"),
-            "source event must remain sub_user_reject: {out}"
-        );
-        assert!(
-            out.contains("[Decision 0xsub01] {{__OKX_TASK_LABEL_TITLE__}} — refund or dispute"),
-            "short jobId label with placeholder must be present: {out}"
-        );
-        assert!(
-            out.contains("A. File a dispute for evaluation.")
-                && out.contains("B. Confirm the refund for this period."),
-            "A/B refund/dispute copy must be preserved: {out}"
-        );
-    }
-
-    // Reproduce the EXACT production title extraction from `agent_commerce/mod.rs`
-    // so the precedence cases below are the ones the real caller can actually
-    // produce (title precedence tests must mirror the production
-    // caller"). Production reads ONLY `message.jobTitle`:
-    //   - `mod.rs` `let job_title = msg_str("jobTitle");` — this layer's `msg_str`
-    //     does NOT filter empty strings, so `jobTitle: ""` becomes `Some("")`;
-    //   - `mod.rs` `let title_ref = job_title.as_deref();` is the 4th arg passed to
-    //     `generate_next_action`;
-    //   - `flow.rs` `let title_display = job_title.unwrap_or("<title>");`.
-    // So `title_display` is a pure function of `message.jobTitle`; a test that sets
-    // `title_display` independently of `jobTitle` is an impossible production
-    // combination. This helper returns exactly what production passes as the 4th
-    // arg (the `jobTitle` value, borrow-checked against `message`).
-    fn production_title_ref(message: &serde_json::Value) -> Option<&str> {
-        message.get("jobTitle").and_then(|v| v.as_str())
-    }
-
-    // Preserve the base title-source precedence, proven
-    // through the production extraction path. The list-label uses `title_display`
-    // (= `jobTitle` or the literal `<title>`); the decision copy resolves
-    // `jobTitle` → `title` → `title_display`. These two base values are carried as
-    // SEPARATE whitelisted vars, never collapsed, and for each case the base-vs-head
-    // final user-content / list-label are byte-for-byte identical. The four rows are
-    // the complete production precedence table.
-    #[tokio::test]
-    async fn sub_user_reject_title_precedence_preserved_byte_for_byte() {
-        use std::collections::BTreeMap;
-        const SUB_START: i64 = 1_700_000_000;
-        const SUB_END: i64 = 1_700_500_000;
-        const RW: i64 = 1_700_600_000;
-
-        struct Case {
-            name: &'static str,
-            // Only the message fields the production caller reads. `title_display`
-            // and the two expected titles are DERIVED (never hand-set independently).
-            job_title: Option<&'static str>,
-            title: Option<&'static str>,
-            // The P0-checklist expected outcomes, asserted verbatim.
-            expected_title_display: &'static str,
-            expected_copy: &'static str,
-            expected_label: &'static str,
-        }
-        let cases = [
-            // jobTitle=JobT, title=PlainT → title_display JobT / copy JobT / label JobT
-            Case { name: "jobTitle=JobT, title=PlainT", job_title: Some("JobT"), title: Some("PlainT"),
-                   expected_title_display: "JobT", expected_copy: "JobT", expected_label: "JobT" },
-            // no jobTitle, title=PlainT → title_display <title> / copy PlainT / label <title>
-            Case { name: "no jobTitle, title=PlainT", job_title: None, title: Some("PlainT"),
-                   expected_title_display: "<title>", expected_copy: "PlainT", expected_label: "<title>" },
-            // neither → title_display <title> / copy <title> / label <title>
-            Case { name: "neither", job_title: None, title: None,
-                   expected_title_display: "<title>", expected_copy: "<title>", expected_label: "<title>" },
-            // jobTitle="", title="" → title_display "" / copy "" / label ""
-            Case { name: "jobTitle=\"\", title=\"\"", job_title: Some(""), title: Some(""),
-                   expected_title_display: "", expected_copy: "", expected_label: "" },
-        ];
-
-        for c in cases {
-            let mut m = serde_json::Map::new();
-            m.insert("event".into(), json!("sub_user_reject"));
-            m.insert("jobId".into(), json!(ASP_JOB_ID));
-            m.insert("subStartTime".into(), json!(SUB_START));
-            m.insert("subEndTime".into(), json!(SUB_END));
-            m.insert("rejectWindowEndsAt".into(), json!(RW));
-            m.insert("tokenAmount".into(), json!("0.0005"));
-            m.insert("tokenSymbol".into(), json!("USDT"));
-            if let Some(jt) = c.job_title {
-                m.insert("jobTitle".into(), json!(jt));
-            }
-            if let Some(t) = c.title {
-                m.insert("title".into(), json!(t));
-            }
-            let msg = serde_json::Value::Object(m);
-
-            // The 4th arg is exactly what the production caller passes (title_ref).
-            let title_ref = production_title_ref(&msg);
-            let out = generate_next_action(
-                ASP_JOB_ID,
-                "sub_user_reject",
-                ASP_AGENT_ID,
-                title_ref,
-                None,
-                None,
-                Some(&msg),
-            )
-            .await;
-
-            // title_display derivation mirrors flow.rs (`job_title.unwrap_or("<title>")`).
-            let title_display = title_ref.unwrap_or("<title>");
-            assert_eq!(
-                title_display, c.expected_title_display,
-                "[{}] production title_display",
-                c.name
-            );
-            let expected_copy = c.expected_copy;
-            let expected_label = c.expected_label;
-
-            // The two base titles are carried independently (never collapsed) and
-            // equal the P0-checklist expectations.
-            assert_eq!(
-                extract_emitted_title(&out),
-                expected_copy,
-                "[{}] decision-copy title var",
-                c.name
-            );
-            assert_eq!(
-                extract_emitted_label_title(&out),
-                expected_label,
-                "[{}] list-label title var",
-                c.name
-            );
-
-            // Base-vs-head final user-content (decision copy) byte-for-byte.
-            let base_copy = crate::commands::agent_commerce::task::asp::content::sub_user_reject_asp_decision_copy(
-                expected_copy,
-                Some(SUB_START),
-                Some(SUB_END),
-                Some(RW),
-                Some("0.0005"),
-                Some("USDT"),
-            );
-            let head_copy_tmpl = crate::commands::agent_commerce::task::asp::content::sub_user_reject_asp_decision_copy(
-                template_vars::TITLE_PLACEHOLDER,
-                Some(SUB_START),
-                Some(SUB_END),
-                Some(RW),
-                Some("0.0005"),
-                Some("USDT"),
-            );
-            let mut copy_vars = BTreeMap::new();
-            copy_vars.insert("__OKX_TASK_TITLE__".to_string(), expected_copy.to_string());
-            let head_copy = template_vars::render_all(&[head_copy_tmpl.as_str()], &copy_vars)
-                .expect("copy renders")
-                .remove(0);
-            assert_eq!(head_copy, base_copy, "[{}] user-content byte-for-byte", c.name);
-
-            // Base-vs-head final list-label byte-for-byte (short_id slot is stable
-            // across base/head, so a fixed sentinel isolates the title substitution).
-            let label_tmpl = format!(
-                "[Decision SID] {} — refund or dispute",
-                template_vars::LABEL_TITLE_PLACEHOLDER
-            );
-            let mut label_vars = BTreeMap::new();
-            label_vars.insert(
-                "__OKX_TASK_LABEL_TITLE__".to_string(),
-                expected_label.to_string(),
-            );
-            let head_label = template_vars::render_all(&[label_tmpl.as_str()], &label_vars)
-                .expect("label renders")
-                .remove(0);
-            let base_label = format!("[Decision SID] {expected_label} — refund or dispute");
-            assert_eq!(head_label, base_label, "[{}] list-label byte-for-byte", c.name);
-        }
-    }
-
     #[tokio::test]
     async fn asp_sub_dispute_guidance_passes_reason() {
         // The dispute outcome must thread a `--reason` so it reaches the on-chain
@@ -2003,51 +2016,19 @@ mod tests {
         );
         assert!(!out.contains("+58692"), "no five-digit year: {out}");
     }
+    #[tokio::test]
+    async fn sub_complete_notify_ignores_legacy_title_field() {
+        let out = run_asp(
+            "sub_complete_notify",
+            json!({ "event": "sub_complete_notify", "title": "Legacy title" }),
+        )
+        .await;
+
+        assert!(
+            !out.contains("Legacy title"),
+            "legacy title must be ignored: {out}"
+        );
+    }
 
     // ── FR-3: price gate test_flag short-circuit (sandbox ASP review) ────
-
-    // test_flag forces OK even when the offer is below the registered fee.
-    #[test]
-    fn price_gate_test_flag_forces_ok_when_below_fee() {
-        let (status, _summary, action) =
-            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", true);
-        assert_eq!(status, "OK");
-        assert_eq!(action, "Apply at offer amount.");
-    }
-
-    // Normal path (test_flag=false): offer below fee ⇒ TOO_LOW (regression).
-    #[test]
-    fn price_gate_normal_below_fee_is_too_low() {
-        let (status, _summary, action) =
-            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", false);
-        assert_eq!(status, "TOO_LOW");
-        assert_eq!(action, "Reject — price below registered floor.");
-    }
-
-    // Normal path (test_flag=false): offer at/above fee ⇒ OK.
-    #[test]
-    fn price_gate_normal_at_or_above_fee_is_ok() {
-        let (status, _summary, action) =
-            price_gate_decision(Some(2.0), Some(1.0), "2", "1", "USDT", false);
-        assert_eq!(status, "OK");
-        assert_eq!(action, "Apply at offer amount.");
-    }
-
-    // §6 / A-CLISPEC invariant 2: a test_flag accept is byte-identical to a
-    // normal accept — same tuple, so no downstream consumer can distinguish them.
-    #[test]
-    fn price_gate_test_flag_ok_string_matches_normal_ok() {
-        // Test-accept: below fee but test_flag=true.
-        let test_accept =
-            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", true);
-        // Normal-accept: same amounts, offer >= fee, test_flag=false.
-        let normal_accept =
-            price_gate_decision(Some(0.00001), Some(1.0), "0.00001", "1", "USDT", false);
-        // Prove the normal-accept path with identical inputs (offer >= fee).
-        let normal_ok = price_gate_decision(Some(1.0), Some(1.0), "0.00001", "1", "USDT", false);
-        // The normal below-fee case rejects; the test path accepts with the OK tuple.
-        assert_eq!(normal_accept.0, "TOO_LOW");
-        // The test-accept tuple is byte-identical to a genuine OK accept.
-        assert_eq!(test_accept, normal_ok);
-    }
 }
