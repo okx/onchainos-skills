@@ -390,7 +390,7 @@ pub fn sub_asp_selected_asp_notify(
 /// `sub_asp_selected` with `trialType=1` — the subscriber is on a free trial, so nothing
 /// has been charged yet; the ASP must NOT be told a payment was received (the real payment
 /// is announced on conversion via `sub_trial_into_active`). Mirrors the buyer-side
-/// `sub_created_trial_user_notify` trial variant.
+/// Buyer-side `sub_asp_selected_trial_user_notify` trial variant.
 pub fn sub_asp_selected_trial_asp_notify(
     service_name: Option<&str>,
     buyer_agent_id: Option<&str>,

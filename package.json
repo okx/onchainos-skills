@@ -43,6 +43,10 @@
     ".mcp.json.example"
   ],
   "scripts": {
+    "dev:init": "bash scripts/onchainos-local-dev-setup.sh init",
+    "dev:init:test": "bash scripts/test-onchainos-local-dev-setup.sh",
+    "dev:skills": "bash scripts/onchainos-local-dev-setup.sh skills",
+    "dev:cli": "bash scripts/onchainos-local-dev-setup.sh cli",
     "sync-shared": "bash scripts/sync-shared.sh",
     "bumpVersion": "bash scripts/bump-version.sh",
     "postinstall": "echo '\\n  onchainos-skills installed!\\n  Skills: okx-agentic-wallet, okx-dex-market, okx-defi, okx-ai, okx-guide, okx-agent-payments-protocol, okx-dapp-discovery\\n  Docs: https://web3.okx.com\\n'"
