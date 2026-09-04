@@ -1,7 +1,5 @@
 # Agent and service discovery
 
-Search before any task or subscription handoff.
-
 ## Search
 
 Use `intent-keyword-extraction.md` on the user's original utterance.
