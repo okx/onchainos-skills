@@ -2,8 +2,7 @@
 
 Standalone flow for updating an Agent: verify ownership, apply only explicit changes, preserve
 unchanged data, confirm the final diff, and run one update. Use only the CLI reference at the end of
-this document; Handle failures through
-(`identity-errors.md`).
+this document.
 
 ## Workflow
 
@@ -101,7 +100,6 @@ Actions:
 
 1. After confirmation, run `agent update` once with the confirmed identity fields and service deltas.
 2. On success, output `Update saved.`
-3. On any CLI error or non-success response, load (`identity-errors.md`) and follow its handling rules.
 
 rules:
 
