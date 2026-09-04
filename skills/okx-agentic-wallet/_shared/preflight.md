@@ -1,6 +1,10 @@
 # Preflight Checks
 
-> At the start of each thread, run the following checks in order.
+> Run once per conversation/task thread, before the first CLI command that
+> requires this shared preflight. Do not rerun it for later user turns or
+> sub-operations in the same thread. Rerun it only when the CLI requires it,
+> the previous preflight action requests a retry, or the user explicitly asks
+> to recheck or update the environment.
 
 1. Run: `onchainos preflight --skill-version <this skill's frontmatter version>`
 2. Read `data.action` from the JSON it prints:

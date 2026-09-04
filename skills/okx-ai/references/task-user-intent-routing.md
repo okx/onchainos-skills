@@ -1,5 +1,19 @@
 # User Intent Routing
 
+This is the sole free-text router for existing buyer tasks and subscriptions.
+Match the user's intent here before loading an execution playbook, a query flow,
+or the watch loop.
+
+| User request | Route |
+|---|---|
+| Selected task: re-submit, nudge, or change terms | This file's task-session forwarding flow below |
+| Task list, status, close, funding, or decision list | The matching section in this file |
+| Task attachment or deliverables | [`task-user-actions.md`](task-user-actions.md), selected section |
+| Subscription list or detail | [`task-subscription-view.md`](task-subscription-view.md) |
+| Rate or review an active subscription | §Rate an active subscription below |
+| Subscription device, receipt, refund, copy-trade, or signal action | [`task-user-playbook.md`](task-user-playbook.md), selected section |
+| Watch, history, or outstanding decisions | [`watch-core.md`](watch-core.md) |
+
 User-session needs to forward free-form user instructions targeting a specific task (e.g. "re-upload the dispute evidence for the cat-picture job" or "remind ASP 963 that the deliverable is overdue") to the **specific sub session that owns that task**, when there's no matching active pending decision.
 
 **Trigger phrases** — when the user says any of the following AND no matching entry exists in `pending-decisions-v2`, **MUST** enter this flow:
@@ -125,7 +139,7 @@ See [`entry-points.md`](./entry-points.md#multi-task-context-management) for the
 
 ## Task list / "what am I working on"
 
-When the user asks for **their task list without a specific jobId**, the user session answers directly (do NOT 6-step forward). Triggers include `my tasks` / `what am I working on` / `list my tasks` / `active tasks` / `ongoing tasks` / `show all my tasks` / `task list` / `ended tasks` / `subscription tasks` / `one-time tasks` and semantically equivalent wording in any language.
+When the user asks for **their task list without a specific jobId**, the user session answers directly (do NOT 6-step forward). Triggers include `my tasks` / `what am I working on` / `list my tasks` / `active tasks` / `ongoing tasks` / `show all my tasks` / `task list` / `ended tasks` / `one-time tasks` and semantically equivalent wording in any language. Subscription-specific requests route through §Subscriptions below.
 
 Run `onchainos agent my-tasks --task-type <type> --status-type <status> --page 1`, choosing each parameter independently:
 
@@ -227,8 +241,8 @@ Triggers:
 
 | Trigger | Action |
 |---|---|
-| `my subscriptions` / `subscription list` / `what am I subscribed to` / `ongoing subscriptions` / `active subscriptions` / `ended subscriptions` | Use §Task list with scope `subscription`; map generic requests to `all`, ongoing/active to `active`, and ended to `ended`. |
-| `subscription detail` / `show this subscription` | `onchainos agent subscribe-detail <jobId>` (id = the row's `jobId`) → render per [`task-user-playbook.md` §Subscription Detail](task-user-playbook.md). |
+| `my subscriptions` / `subscription list` / `what am I subscribed to` / `ongoing subscriptions` / `active subscriptions` / `ended subscriptions` | Route to [`task-subscription-view.md`](task-subscription-view.md). |
+| `subscription detail` / `show this subscription` | Route to [`task-subscription-view.md`](task-subscription-view.md); use the selected row's `jobId`. |
 | `device list` / `list my logged-in devices` / `which devices are online` | `onchainos agent device-list` → render per [`task-user-playbook.md` §Device List](task-user-playbook.md). |
 | `start receiving X on this device` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — fresh-read; `deviceList:null` already means default-all, so report already receiving without a write; otherwise union → overwrite → re-read. |
 | `start receiving Y on device X` / `also send Y to devices X and Z` | [`task-user-playbook.md` §Subscription management](task-user-playbook.md) — resolve device names→ids via `device-list` (never fabricate an unresolvable name); `deviceList:null` already includes every logged-in device (no write), otherwise UNION with the fresh-read list → overwrite → re-read → confirm the complete receiving set. |

@@ -12,16 +12,10 @@ metadata:
 
 ## Reference priority
 
-Use the most specific reference for the current intent. Its command-selection,
-confirmation, output, and recovery rules take precedence over generic guidance.
-
-1. Structured inbound events or agent chat → `references/task-core.md`.
-2. New task or subscription → `references/identity-service-search.md` +
-   `references/intent-keyword-extraction.md` + `references/identity-service-contract.md`.
-3. Existing task/subscription operations → `references/task-user-playbook.md`.
-4. Task watch or wake → `references/watch-core.md`.
-5. Identity operations → the applicable `references/identity-*.md` file.
-6. A2A runtime or communication setup → `references/chat-comm-init.md`.
+Use the `Routing` table below as the only top-level intent map. The selected
+feature reference overrides generic guidance for command selection,
+confirmation, output, and recovery. Structured inbound envelopes take
+precedence over free-text routing.
 
 ## Envelope precedence
 
@@ -42,8 +36,9 @@ preserve IDs, URLs, raw tokens, and `A2A`/`A2MCP`.
 
 ## Preflight
 
-At thread start, run
-[`../okx-agentic-wallet/_shared/preflight.md`](../okx-agentic-wallet/_shared/preflight.md).
+Before the first CLI command that uses this skill, follow the shared
+[`../okx-agentic-wallet/_shared/preflight.md`](../okx-agentic-wallet/_shared/preflight.md)
+flow.
 
 ## Routing
 
@@ -63,10 +58,10 @@ At thread start, run
 | Pause/stop subscription copy-trading | `references/task-user-playbook.md`, §Pause auto copy-trade only |
 | Devices or subscription-message receipt/replay settings | `references/task-user-playbook.md`, §Device List / device-receipt; buyer side only |
 | Receive/resume/restore an existing subscription or its signals; update its copy-trade policy; `listen to <subscription title>` | `references/task-user-playbook.md`, §Signal-receipt watch entry; resolve the active subscription, pass authorization, then use scoped watch. Never read backlog first, guess `jobId`, or use global watch |
+| Existing buyer task or subscription: list, detail, review, device/receipt settings, copy-trade, or other action | `references/task-user-intent-routing.md`; this is the only free-text task-intent router |
 | Watch tasks, history, or outstanding decisions | `references/watch-core.md` end to end |
 | Scheduler wake prompt for `okx-a2a user watch --json` | `references/watch-core.md`, §Auto-timeout wake entry guard; apply its chronology guard |
 | Missing/uninitialized `okx-a2a`, runtime/plugin errors, or A2A communication setup | `references/chat-comm-init.md`; attachments → `chat-file-attachment.md`; full CLI options → `chat-cli-reference.md` |
-| Rate / review a subscription task · give stars or feedback for a jobId | [`references/task-user-intent-routing.md`](references/task-user-intent-routing.md) §Rate an active subscription |
 
 Discovery is read-only. For hire, buy, subscribe, or publish requests, run
 service discovery first, wait for explicit user confirmation, then pass the
