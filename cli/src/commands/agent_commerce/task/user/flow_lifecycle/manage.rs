@@ -59,7 +59,7 @@ otherwise preprocess or enrich the input or output.
 
 **Subscription duplicate gate — before the normal service confirmation card:**
 - For a selected service with `supportSubscription == true`, require `subscriptionCheck.status == \"checked\"` and inspect `services[0].existingSubscription`. The CLI has already compared the exact `serviceId` against this buyer's subscriptions. A missing check is a hard stop: report that existing subscriptions could not be verified and do not confirm or create.
-- `existingSubscription == null` → no non-terminal subscription exists for this service; continue normally. COMPLETED / CLOSED / FAILED historical subscriptions do not block a new one.
+- `existingSubscription == null` → no subscription that blocks duplicate creation exists for this service; continue normally. COMPLETED / CLOSED / EXPIRED / FAILED historical subscriptions do not block a new one; settlement for an Expired job remains separate.
 - `existingSubscription != null` → require top-level `duplicateSubscription`. A missing object is a hard stop. Do **not** call `service-list`, render the normal confirmation card, or continue to Steps 3.5–6. Do not query, list, or suggest the ASP's other services.
   - Render only `duplicateSubscription.userFacingPrompt`, translated faithfully to the user's language. Preserve the selected service name and `jobId` exactly. The duplicate result intentionally omits fee, trial, description, and readiness so these details cannot leak into the reply.
   - Offer only the actions in `nextAfterUserChoice`. ACTIVE includes only **Restore listening**; INIT / REJECTED / DISPUTED / unknown non-terminal ends after the duplicate warning with no follow-up action.
@@ -544,7 +544,7 @@ mod tests {
             .expect("confirmation gate must exist");
         assert!(duplicate_gate < confirmation_gate);
         assert!(out.contains("services[0].existingSubscription"));
-        assert!(out.contains("COMPLETED / CLOSED / FAILED historical subscriptions do not block"));
+        assert!(out.contains("COMPLETED / CLOSED / EXPIRED / FAILED historical subscriptions do not block"));
         assert!(out.contains("require top-level `duplicateSubscription`"));
         assert!(out.contains("duplicateSubscription.userFacingPrompt"));
         assert!(out.contains("intentionally omits fee, trial, description, and readiness"));

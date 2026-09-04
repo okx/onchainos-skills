@@ -8,7 +8,7 @@
 //!
 //! This command runs stage 1 only. After completion, wait for the `dispute_approved` notification
 //! before calling `next-action` to fetch the stage 2 script — **do NOT call dispute confirm in the same turn**.
-//! reason is a user-facing log only; not put on-chain.
+//! reason is included in the stage-1 broadcast bizContext for the later dispute creation.
 
 use anyhow::{bail, Context, Result};
 use std::time::Duration;
@@ -71,6 +71,7 @@ pub async fn handle_dispute_raise(
         .await
         .context("dispute raise (stage 1): dispute/approve API request failed")?;
 
+    let reason_json = serde_json::json!({ "reason": reason });
     let approve_tx = signing::sign_uop_and_broadcast(
         client,
         &approve_resp["uopData"],
@@ -79,7 +80,7 @@ pub async fn handle_dispute_raise(
         job_id,
         signing::extract_biz_type(&approve_resp),
         agent_id,
-        None,
+        Some(&reason_json),
     )
     .await
     .context("dispute raise (stage 1): approve on-chain broadcast failed")?;
