@@ -231,17 +231,10 @@ onchainos agent autotrade-consent-set --job-id <jobId> --mode pause
 
 ### Refund V2
 
-Refund, refund progress, and refund-related arbitration are owned exclusively by
-[`task-user-refund.md`](task-user-refund.md). Do not reproduce its task versus
-subscription classification here, and do not translate a Refund V2 intent into
-the disabled legacy writes `reject`, `close`, `subscribe-reject`, or
-`claim-auto-refund`. `subscribe-cancel` remains cancellation-only and must not
-stand in for a refund.
-
-Use the implemented `agent refund-prepare` / `agent refund-execute` contract.
-Unsupported state/type combinations return a `*_contract_required` block; a
-legacy command is not a safe fallback because it lacks the Refund V2 context
-binding and structured progression result.
+Route Buyer refund requests, progress checks, and refund-related results to
+[`task-user-refund.md`](task-user-refund.md). It is the single source for
+eligibility, confirmation, settlement, and recovery. Cancellation remains a
+separate flow; execute only actions returned by Refund V2.
 
 ## Unified My Tasks
 
@@ -320,40 +313,10 @@ Translate the CLI's canonical `statusName` to the user's locked language. Use th
 | `expired` | `Expired` |
 | `failed` | `Failed` |
 
-`failed` is task-kind dependent. For a one-time task, fresh backend
-chain-projected Failed(9) represents a successful refund transition. For a
-subscription it may instead represent terminal charge failure, so never label
-the list row itself as a completed refund. When the User asks about the refund,
-run `refund-prepare` and say "refund completed" only for
-`reason=refund_confirmed`. Under the unchanged backend contract, a semantic
-result event (`sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
-`job_auto_refunded`, `job_asp_reject_expire`, or `dispute_resolved`) may
-describe the branch but cannot create proof. Polling and restart recovery for
-subscription Failed(9) require fresh Buyer ownership plus the provenance for
-the established branch: durable local Refund V2 `request-refund` provenance for
-a User-requested or provider refund-decision-timeout path. It binds job, Buyer,
-formal `jobType=1`, exact positive original amount, and token address. Fresh
-Buyer-owned paid non-trial acceptance/delivery Expired(8) is a separate
-terminal contract: it confirms that the refund has arrived without Failed(9),
-Tx Hash, request provenance, or a local observation journal. A direct read
-follows `stop`; a scoped lifecycle/watch event emits the terminal marker and
-cleans up. Offer no Buyer claim/finalize write.
-Trial and zero-amount Expired(8) instead use terminal
-`expired_without_refundable_payment` with `settlement.state=not_required`; do
-not claim fund movement.
-Provider/Service, period, token-symbol, and `paymentMode` fields veto only on a
-two-sided mismatch; absence reduces detail/display only. Event-only Failed(9),
-`sub_failed_notify`, and bare subscription Failed(9) may not prove a refund.
-For `dispute_resolved`, durable local refund-request provenance plus fresh
-composed job type, Buyer ownership, and exact terminal status are required for
-both status 9 (User wins/refund) and status 6 (ASP wins/no refund); without
-them, announce no verdict and perform no rating, notification, or cleanup.
-Because current `sub_failed_notify` input lacks trustworthy event
-provenance/cause, treat it as non-terminal and incomplete regardless of whether
-durable refund intent is found: make no fund-direction claim, emit no terminal
-marker, perform no cleanup, and keep only read-only reconciliation. A missing Tx Hash
-may be shown as unavailable and does not invalidate confirmation; no
-`refundTxHash` or `settlementTxHash` field is required. Render `status_<n>` as
+`failed` is task-kind dependent, so never label a list row itself as a
+completed refund. When the User asks about refund status, run `refund-prepare`
+and follow [`task-user-refund.md`](task-user-refund.md); only its structured
+result controls settlement and terminal wording. Render `status_<n>` as
 `Unknown status (<n>)` or its faithful translation. If `statusName` is absent
 or malformed, render `—`; never infer from numeric `status`.
 

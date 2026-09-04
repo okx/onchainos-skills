@@ -2,7 +2,7 @@
 
 | Intent | Read |
 |---|---|
-| Request a refund, check refund eligibility/status, or interpret a refund result | `../../../../okx-ai/references/task-user-refund.md` |
+| Request a refund, reject a paid deliverable, check refund eligibility/status, or interpret a refund result | `../../../../okx-ai/references/task-user-refund.md` |
 | Create, view, or manage a one-time job | `job.md` |
 | My subscriptions, Active/Ended list, or selected detail | `subscription.md` |
 | Device delivery, offline delivery, or signal receipt | `receipt.md` |

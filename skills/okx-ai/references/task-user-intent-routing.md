@@ -11,7 +11,8 @@ or the watch loop.
 | Task attachment or deliverables | [`task-user-actions.md`](task-user-actions.md), selected section |
 | Subscription list or detail | [`task-subscription-view.md`](task-subscription-view.md) |
 | Rate or review an active subscription | §Rate an active subscription below |
-| Subscription device, receipt, refund, copy-trade, or signal action | [`task-user-playbook.md`](task-user-playbook.md), selected section |
+| Refund, paid-deliverable rejection, or refund progress for a task or subscription | [`task-user-refund.md`](task-user-refund.md) |
+| Subscription device, receipt, copy-trade, or signal action | [`task-user-playbook.md`](task-user-playbook.md), selected section |
 | Watch, history, or outstanding decisions | [`watch-core.md`](watch-core.md) |
 
 User-session needs to forward free-form user instructions targeting a specific task (e.g. "re-upload the dispute evidence for the cat-picture job" or "remind ASP 963 that the deliverable is overdue") to the **specific sub session that owns that task**, when there's no matching active pending decision.
@@ -153,8 +154,6 @@ When the user has multiple active tasks, every routing decision **must** anchor 
 - **Always confirm `jobId` before acting**. If ambiguous → ask which task or render an `active-tasks` numbered list. Never assume the most-recent task is the one they mean.
 - **Track each task's state independently**. Don't apply task A's context to task B.
 - **For task-scoped routing or action replies, echo the `jobId`** — `<title> (Job <shortId>)` is the standard prefix. This does not apply to task-list responses, which use the exact schemas in §Task list without added `jobId` fields.
-
-See [`entry-points.md`](./entry-points.md#multi-task-context-management) for the full deep-dive.
 
 ---
 

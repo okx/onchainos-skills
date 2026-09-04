@@ -102,43 +102,11 @@ When dealing with integer values of any of the fields below, **look up the table
 
 🛑 **Iron rule**: before writing any semantic judgment about these fields, **cross-check the table above**. Misreading = wrong on-chain action.
 
-For User-facing refund finality, follow
-[`task-user-refund.md`](task-user-refund.md). Fresh backend chain-projected
-one-time Failed(9), or positive-amount escrow Closed(7), can confirm the refund
-without a Tx Hash. Bare subscription Failed(9) is overloaded with charge
-failure and remains ambiguous. Subscription confirmation instead combines
-fresh Buyer-owned Failed(9) core facts with the provenance for the established
-branch: a durable local Refund V2 `request-refund` record for a User-requested
-or provider refund-decision-timeout path. That provenance binds the same job,
-Buyer, formal `jobType=1` subscription, exact positive original amount, and
-token address. Legacy events such as `sub_asp_agree`,
-`sub_reject_refund_notify`, `job_asp_reject_expire`, `job_refunded`,
-`job_auto_refunded`, and `dispute_resolved` may describe the branch, but cannot
-create proof by themselves. Event-only Failed(9) therefore remains ambiguous.
-Fresh Buyer-owned paid non-trial acceptance/delivery Expired(8), task kind, and
-exact positive original payment independently prove `refund_confirmed`; no
-later Failed(9), Tx Hash, request provenance, or local observation journal is
-required. A scoped lifecycle/watch event emits the terminal marker and cleans
-up without a Buyer claim/finalize write; a direct read follows its returned
-`stop`. Trial and zero-amount Expired(8) are terminal
-`expired_without_refundable_payment` outcomes with
-`settlement.state=not_required`; never claim fund movement. Both terminal
-status-8 results set `rules.providerTimeoutRefundExpected=false`.
-For `dispute_resolved`, both status 6 (ASP wins/no refund) and status 9 (User
-wins/refund) require that same durable local request provenance plus fresh
-composed job type, Buyer ownership, and terminal status; otherwise do not
-announce a verdict or perform rating, notification, or cleanup side effects.
-`sub_failed_notify` is only a charge/conversion-failure label. Because the
-current event input has no trustworthy provenance/cause and Failed(9) is
-overloaded, it remains non-terminal and read-only even when no durable local
-refund intent is found: no terminal marker and no cleanup. Optional
-Provider/Service, period, token-symbol, and `paymentMode` fields veto only when
-both recorded and fresh values exist and conflict; their absence does not break
-the core provenance binding or finality.
-No new backend cause/query or typed settlement source is required. A Tx Hash is
-optional, with no required
-`refundTxHash` or `settlementTxHash` field. A vote, pending broadcast receipt,
-or `uopData.executeResult` preflight is not refund finality.
+For any refund request, progress check, or refund-related lifecycle result,
+follow [`task-user-refund.md`](task-user-refund.md). An event selects the flow
+but never authorizes a write or replaces the fresh Refund V2 result. That
+reference is the single source for settlement, provenance, terminal rendering,
+and retry behavior.
 
 ## User Intent Routing
 

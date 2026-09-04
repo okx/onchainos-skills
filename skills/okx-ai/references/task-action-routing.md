@@ -44,75 +44,14 @@ legacy prose field `action`.
   any returned action.
 - Refund action IDs are valid only for `payload.schemaVersion=2`. For refund
   write actions, use `params.jobId`, `params.operation`, and
-  `params.refundContextId` unchanged.
-  Never reconstruct an operation from prose or substitute the disabled legacy
-  writes `close`, `reject`, `subscribe-reject`, or `claim-auto-refund` for a
-  missing Refund V2 action. `subscribe-cancel` is cancellation-only and never a
-  refund substitute.
-- No expired-refund claim/finalize action exists. Paid non-trial one-time and
-  formal-subscription acceptance/delivery Expired(8) return terminal
-  `refund_confirmed`: fresh authoritative Expired means the automatic refund
-  has arrived. Never invoke `claim-auto-refund` or another Buyer write. Trial
-  and zero-amount expiry return terminal
-  `expired_without_refundable_payment` with `settlement.state=not_required` and
-  must not claim fund movement. A direct `refund-prepare` read renders that
-  terminal result and follows its returned `stop` action; `stop` does not imply
-  a separate session-cleanup command. When the same result is produced while
-  dispatching a scoped lifecycle/watch event, emit the terminal marker, clean
-  up that scoped session, and do not re-enter the watch.
-- `job_expired`, legacy `submit_expired`, `job_asp_accept_expire`,
-  `job_asp_reject_closed`, and `job_asp_reject_expire` are events, not action IDs
-  or settlement proof. Route only actions from a fresh `refund-prepare`; never
-  execute or report refund completion from event prose alone. For paid
-  acceptance/delivery Expired(8), fresh ownership, task kind, and exact positive
-  original amount establish terminal `refund_confirmed` without Failed(9), Tx
-  Hash, or request provenance. In a scoped event/watch dispatch, emit the
-  terminal marker, clean up, and never ask the Buyer to claim or finalize it.
-  Trial or zero-amount Expired(8) is also terminal but uses
-  `expired_without_refundable_payment` with no fund-movement claim.
-  `job_asp_reject_expire` instead requires fresh Failed(9) plus matching durable
-  `request-refund` provenance with the same core owner/type/payment binding
-  before it can return terminal `refund_confirmed`; the event alone cannot.
-  In particular, `job_asp_reject_closed` does not exempt a subscription at
-  status 7 from the normal subscription rule: only matching durable local
-  `request-refund` provenance plus a later fresh refund terminal can resolve
-  the refund, never a new client write inferred from the close event.
-- Refund V2 reuses the unchanged backend lifecycle contract. `job_closed`,
-  `job_refunded`, and `job_auto_refunded` are backend transaction-result
-  notifications, not write actions and not `uopData.executeResult` preflight;
-  the standard event-envelope success gate still applies before branch routing.
-  For subscriptions, `sub_asp_agree`, `sub_reject_refund_notify`,
-  `job_asp_reject_expire`, `job_refunded`, `job_auto_refunded`, and
-  `dispute_resolved` are semantic result events. Route every event through a
-  fresh Refund V2 read. A
-  matching one-time positive-amount paid-escrow Closed(7) or Failed(9) may
-  return `refund_confirmed`. A subscription at Failed(9) may return
-  `refund_confirmed` only
-  when durable local `request-refund` provenance binds the same job, Buyer,
-  formal `jobType=1` subscription, exact positive original amount, and token
-  address, and fresh composed detail proves Buyer ownership and Failed(9).
-  Separately, fresh paid non-trial Expired(8) confirms an acceptance/delivery
-  timeout refund for either task kind without local provenance. A legacy event
-  may describe the ASP-agree, timeout, or dispute branch, but event-only and
-  bare Failed(9) remain ambiguous.
-  For `dispute_resolved`, neither Completed(6) nor Failed(9) is a verdict gate
-  by itself: both ASP-won/no-refund and User-won/refund rendering require the
-  durable local `request-refund` provenance plus fresh composed job type,
-  Buyer ownership, and matching terminal status. Without that proof, do not
-  announce a verdict, rate, notify, or clean up from the caller-supplied event.
-  `sub_failed_notify` names a charge/conversion-failure branch but is not trusted
-  cause proof by itself. With the current caller-supplied/replayable event and
-  overloaded Failed(9), fail closed even when no durable refund intent is found:
-  emit no terminal marker, perform no cleanup, and retain read-only
-  reconciliation. Only independently trustworthy event provenance/cause
-  returned by the CLI may make that charge-failure branch terminal.
-  Provider/Service, period, token-symbol, and `paymentMode` fields are optional
-  provenance comparisons: when both recorded and fresh values exist, a mismatch
-  vetoes; absence does not invalidate the core binding or finality and only
-  reduces available detail/display.
-  Tx Hash is optional in every confirmed branch; no `refundTxHash` or
-  `settlementTxHash` field is required. Follow only the fresh result's
-  actions/terminal marker.
+  `params.refundContextId` unchanged. Execute only the exact action returned by
+  the latest preparation result; never reconstruct an operation from prose or
+  combine parameters from different results.
+- Never substitute the disabled legacy writes `close`, `reject`,
+  `subscribe-reject`, or `claim-auto-refund` for a missing Refund V2 action.
+  `subscribe-cancel` is cancellation-only and is not a refund substitute.
+- Refund settlement evidence, event handling, and terminal behavior are owned
+  by [`task-user-refund.md` Finality](task-user-refund.md#progress-arbitration-and-finality).
 - `refund-execute` always requires explicit selection of the displayed write
   action. Supplying a reason never substitutes for that confirmation.
 - Preserve the returned order; `recommend=true` marks the preferred option.
