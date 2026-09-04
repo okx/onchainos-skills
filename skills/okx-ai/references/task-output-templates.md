@@ -148,9 +148,9 @@ the returned `nextAction.id=watch_task`. Do not establish the A2A session in
 this creation step; the `sub_open` event owns that transition.
 
 For `phase=service_routing` and `nextAction.id=invoke_a2mcp`, do not render the
-generic task-creation confirmation card above. Open
-`a2mcp-direct-invoke.md`. Preserve `payload.serviceSnapshot` verbatim; that
-reference owns parameter collection, supported-token and balance display,
+generic task-creation confirmation card above. Continue through the owning
+A2MCP route selected by `SKILL.md`. Preserve `payload.serviceSnapshot` verbatim;
+that route owns parameter collection, supported-token and balance display,
 funding recovery, and the final mutually exclusive Confirm/Cancel card.
 
 ## Refund V2

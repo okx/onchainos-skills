@@ -7,7 +7,7 @@ legacy prose field `action`.
 |---|---|---|---|
 | `login` | `okx-agentic-wallet` login flow | Owning Skill | Rerun the originating prepare with its returned binding (`params.jobId` for Refund V2; `sid` where another flow returns one) |
 | `register_user_agent` | `identity/register.md` with User Agent role | Required | Rerun the originating prepare with its returned binding (`params.jobId` for Refund V2; `sid` where another flow returns one) |
-| `invoke_a2mcp` | `a2mcp-direct-invoke.md` | Parameters are collected and validated automatically; only payment is confirmed in that playbook | Run the A2MCP direct-invocation flow |
+| `invoke_a2mcp` | `a2mcp-direct-invoke.md` | Missing parameters are collected from the user and validated automatically; no separate parameter confirmation. Only payment requires confirmation | Run the A2MCP direct-invocation flow |
 | `restore_subscription` | `task-user-duplicate-subscription-guide.md` | Required | Enter scoped watch |
 | `open_create_playbook` | `task-user-actions-create.md` | Step 3 only | Create after confirmation |
 | `send_task_params_response` | `task-asp-accept.md`, `NEED_PARAMS` for one-time tasks; send the returned `params` unchanged through `okx-a2a session send` | No | ASP fetches latest detail and reevaluates the complete `serviceParams` |
