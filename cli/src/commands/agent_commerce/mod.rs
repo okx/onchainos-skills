@@ -3936,7 +3936,7 @@ fn detail_path_for_event(
     job_id: &str,
     event: &str,
 ) -> String {
-    if matches!(event, "sub_created" | "sub_asp_selected") {
+    if matches!(event, "sub_open" | "sub_created" | "sub_asp_selected") {
         client.subscribe_path(job_id)
     } else {
         client.task_path(job_id)
@@ -4002,7 +4002,8 @@ async fn check_status_freshness(
         "provider_conversation",
         // Subscription lifecycle events use subscription status rather than the
         // standard task status. Keep prefetching here; the strict CREATED/ACTIVE
-        // checks for sub_created/sub_asp_selected run below.
+        // checks for sub_open/sub_created/sub_asp_selected run below.
+        "sub_open",
         "sub_created",
         "sub_cancel",
         "sub_user_reject",
@@ -4062,7 +4063,7 @@ async fn check_status_freshness(
     let expected = status_when_event(&event);
     // Subscription events use a separate subStatus lifecycle, so skip the generic
     // task-status gate. Strict event-specific checks below require CREATED(0) for
-    // sub_created and ACTIVE(1) for sub_asp_selected.
+    // sub_open and ACTIVE(1) for sub_created/sub_asp_selected.
     let is_subscription_event = matches!(expected, Status::Other(ref s) if s == "subscription");
     if !is_prefetch_only && matches!(expected, Status::Other(ref s) if s == "unknown") {
         if DEBUG_LOG {
@@ -4079,12 +4080,12 @@ async fn check_status_freshness(
         Err(error)
             if matches!(
                 job_status_or_event,
-                "job_accepted" | "sub_created" | "sub_asp_selected"
+                "job_accepted" | "sub_open" | "sub_created" | "sub_asp_selected"
             ) =>
         {
             return (
                 Some(format!(
-                    "[next-action blocked] Cannot fetch latest task detail for {job_status_or_event}: {error:#}. Do not display an acceptance notice from stale or incomplete event data."
+                    "[next-action blocked] Cannot fetch latest task detail for {job_status_or_event}: {error:#}. Do not execute this subscription event flow from stale or incomplete event data."
                 )),
                 None,
             );
@@ -4093,8 +4094,8 @@ async fn check_status_freshness(
     };
 
     let subscription_status_expectation = match job_status_or_event {
-        "sub_created" => Some((0, "CREATED")),
-        "sub_asp_selected" => Some((1, "ACTIVE")),
+        "sub_open" => Some((0, "CREATED")),
+        "sub_created" | "sub_asp_selected" => Some((1, "ACTIVE")),
         _ => None,
     };
     if let Some((expected_status, expected_name)) = subscription_status_expectation {
@@ -4221,6 +4222,10 @@ mod authoritative_detail_path_tests {
             "/priapi/v1/aieco/task/job-1"
         );
         assert_eq!(
+            detail_path_for_event(&client, "job-1", "sub_open"),
+            "/priapi/v1/aieco/task/subscribe/job-1"
+        );
+        assert_eq!(
             detail_path_for_event(&client, "job-1", "sub_created"),
             "/priapi/v1/aieco/task/subscribe/job-1"
         );
@@ -4247,18 +4252,25 @@ mod authoritative_detail_path_tests {
         assert_eq!(subscription_acceptance_status(&serde_json::json!({})), None);
         assert!(subscription_event_block_reason(
             &serde_json::json!({"subStatus": 0}),
-            "sub_created",
+            "sub_open",
             0,
             "CREATED"
         )
         .is_none());
         assert!(subscription_event_block_reason(
             &serde_json::json!({"subStatus": 1}),
-            "sub_created",
+            "sub_open",
             0,
             "CREATED"
         )
         .is_some());
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 1}),
+            "sub_created",
+            1,
+            "ACTIVE"
+        )
+        .is_none());
         assert!(
             subscription_event_block_reason(
                 &serde_json::json!({}),

@@ -19,7 +19,7 @@ The task state machine has moved into the CLI (`onchainos agent next-action`) �
 ## 🛑 One-time provider work is gated by v2 acceptance
 
 For the §1.3 designated-provider flow, the buyer creates and funds first. On
-`job_asp_selected` (single) or `sub_created` (subscription), follow
+`job_asp_selected` (single) or `sub_open` (subscription), follow
 [task-asp-accept.md](task-asp-accept.md): verify the exact registered Service,
 produce `ACCEPT / NEED_PARAMS / REJECT`, and use the new provider-decision
 commands. Do not use legacy `apply` or `asp-reject`.
@@ -95,7 +95,7 @@ Trigger: `my provided subscriptions` / `subscriptions I provide`. Command: `onch
 ## Subscription events (`sub_*`)
 
 For the ASP, most later subscription events are display-only notifications. Two
-events are action-required: `sub_created` owns the initial provider decision and
+events are action-required: `sub_open` owns the initial provider decision and
 `sub_user_reject` owns the later refund/dispute decision.
 
 The ASP runtime owns this lifecycle end to end. An external dashboard,
@@ -105,8 +105,8 @@ state only.
 
 | Event | Action |
 |---|---|
-| `sub_created` | **Run the §1.3 provider decision inside the ASP runtime.** The backend sends this event to both Buyer and ASP after the Buyer's create-subscribe transaction is confirmed. Fetch latest subscription detail, require CREATED, verify the exact registered Service, then return exactly `ACCEPT / NEED_PARAMS / REJECT` and follow [task-asp-accept.md](task-asp-accept.md). |
-| `sub_open` | Obsolete compatibility event. Silently ignore; it must not trigger a provider decision, session setup, mutation, or notification. |
+| `sub_open` | **Run the §1.3 provider decision inside the ASP runtime.** The backend sends this event to both Buyer and ASP after the Buyer's create-subscribe transaction is confirmed. Fetch latest subscription detail, require CREATED, verify the exact registered Service, then return exactly `ACCEPT / NEED_PARAMS / REJECT` and follow [task-asp-accept.md](task-asp-accept.md). |
+| `sub_created` | Buyer-only acceptance event. Silently ignore if it is unexpectedly delivered to the ASP; `sub_asp_selected` owns the ASP acceptance-confirmed flow. |
 | `sub_asp_selected` | **Run §1.5 inside the ASP runtime.** This is the current backend subscription-acceptance event; the Lark flow calls the stage `sub_accepted`, but do not wait for a separate event with that name. The CLI fetches authoritative subscription detail, renders the fixed acceptance notice to the ASP owner, then starts the registered Service's existing AI/Skill workflow. If output is ready now, hand it to §1.6 delivery; for schedule/event-driven services initialize that workflow without inventing an empty deliverable. |
 | `sub_complete_notify` | Route the structured result through [`task-action-routing.md`](task-action-routing.md). |
 | `sub_close_notify` / `sub_failed_notify` | Render the CLI's canonical terminal `Content:` per the language rule below, then follow `session-cleanup`. End turn. |

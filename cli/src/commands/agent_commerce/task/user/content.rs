@@ -363,8 +363,8 @@ pub(crate) fn fmt_epoch(ts: Option<i64>) -> Option<String> {
         .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
 }
 
-/// `sub_created` — subscription create-and-fund confirmed, awaiting ASP action.
-pub fn sub_created_user_notify(
+/// `sub_open` — subscription create-and-fund confirmed, awaiting ASP action.
+pub fn sub_open_user_notify(
     job_id: &str,
     service_name: &str,
     token_amount: Option<&str>,
@@ -385,8 +385,8 @@ pub fn sub_created_user_notify(
     out
 }
 
-/// Trial variant of `sub_created`; the trial starts only after ASP acceptance.
-pub fn sub_created_trial_user_notify(
+/// Trial variant of `sub_open`; the trial starts only after ASP acceptance.
+pub fn sub_open_trial_user_notify(
     job_id: &str,
     service_name: &str,
     token_amount: Option<&str>,
@@ -408,8 +408,8 @@ pub fn sub_created_trial_user_notify(
     out
 }
 
-/// `sub_asp_selected` — ASP accepted; subscription is active and service starts.
-pub fn sub_asp_selected_user_notify(
+/// `sub_created` — ASP accepted; subscription is active and service starts for the Buyer.
+pub fn sub_created_user_notify(
     job_id: &str,
     service_name: &str,
     token_amount: Option<&str>,
@@ -443,13 +443,13 @@ pub fn sub_asp_selected_user_notify(
     out
 }
 
-/// `sub_asp_selected` with `trialType=1` — ASP accepted and the free trial started.
+/// `sub_created` with `trialType=1` — ASP accepted and the free trial started.
 /// Renders the trial-start copy: the trial window is charge-free, so the
-/// immediate-first-charge copy from `sub_asp_selected_user_notify` must never be shown
+/// immediate-first-charge copy from `sub_created_user_notify` must never be shown
 /// for a trial order (the real first charge is announced by `sub_trial_into_active`).
 /// The duration label slot (`{trialDisplay}`) has no envelope source, so only the
 /// date range renders; the charge sentence needs an amount and degrades away without one.
-pub fn sub_asp_selected_trial_user_notify(
+pub fn sub_created_trial_user_notify(
     token_amount: Option<&str>,
     token_symbol: Option<&str>,
     trial_start: Option<i64>,
@@ -1106,8 +1106,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_asp_selected_renders_active_and_first_charge_verbatim() {
-        let out = sub_asp_selected_user_notify(
+    fn sub_created_renders_active_and_first_charge_verbatim() {
+        let out = sub_created_user_notify(
             "job-1",
             "My Sub",
             Some("1.500000"),
@@ -1133,8 +1133,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_created_paid_is_created_but_not_active() {
-        let out = sub_created_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
+    fn sub_open_paid_is_created_but_not_active() {
+        let out = sub_open_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
         assert!(out.starts_with("[Subscription Created]"));
         assert!(out.contains("waiting for the ASP to accept"));
         assert!(out.contains("1.5 USDT has been funded"));
@@ -1143,8 +1143,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_created_trial_does_not_claim_trial_started() {
-        let out = sub_created_trial_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
+    fn sub_open_trial_does_not_claim_trial_started() {
+        let out = sub_open_trial_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
         assert!(out.starts_with("[Trial Subscription Created]"));
         assert!(out.contains("waiting for the ASP to accept"));
         assert!(out.contains("free trial has not started yet"));
@@ -1153,8 +1153,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_asp_selected_auto_renew_off() {
-        let out = sub_asp_selected_user_notify(
+    fn sub_created_auto_renew_off() {
+        let out = sub_created_user_notify(
             "job-1",
             "My Sub",
             Some("1.5"),
@@ -1174,8 +1174,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_asp_selected_conditional_next_charge_and_degrades() {
-        let with = sub_asp_selected_user_notify(
+    fn sub_created_conditional_next_charge_and_degrades() {
+        let with = sub_created_user_notify(
             "job-1",
             "My Sub",
             Some("1.5"),
@@ -1185,7 +1185,7 @@ mod tests {
             true,
         );
         assert!(with.contains("next charge date:"), "clause present: {with}");
-        let bare = sub_asp_selected_user_notify("job-1", "My Sub", None, None, None, None, false);
+        let bare = sub_created_user_notify("job-1", "My Sub", None, None, None, None, false);
         assert!(bare.contains("Job job-1"));
         assert!(!bare.contains("First charge"));
         assert!(!bare.contains("current period"));
@@ -1197,8 +1197,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_asp_selected_trial_renders_trial_started_no_charge() {
-        let out = sub_asp_selected_trial_user_notify(
+    fn sub_created_trial_renders_trial_started_no_charge() {
+        let out = sub_created_trial_user_notify(
             Some("1.500000"),
             Some("USDT"),
             Some(1_700_000_000),
@@ -1224,14 +1224,14 @@ mod tests {
     }
 
     #[test]
-    fn sub_asp_selected_trial_degrades_without_amount_or_dates() {
-        let bare = sub_asp_selected_trial_user_notify(None, None, None, None);
+    fn sub_created_trial_degrades_without_amount_or_dates() {
+        let bare = sub_created_trial_user_notify(None, None, None, None);
         assert_eq!(
             bare,
             "[Trial Started] Your free trial is active.",
             "no amount → whole conversion sentence omitted; no dates → no range"
         );
-        let no_dates = sub_asp_selected_trial_user_notify(Some("1.5"), None, None, None);
+        let no_dates = sub_created_trial_user_notify(Some("1.5"), None, None, None);
         assert!(
             no_dates.contains("After it ends, 1.5 will be auto-charged to convert"),
             "amount without symbol/date still announces conversion: {no_dates}"

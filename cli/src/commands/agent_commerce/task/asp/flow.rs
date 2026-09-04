@@ -27,7 +27,7 @@ async fn provider_assignment_playbook(
     };
     let event_name = match assignment_type {
         ProviderAssignmentType::Single => "job_asp_selected",
-        ProviderAssignmentType::Subscription => "sub_created",
+        ProviderAssignmentType::Subscription => "sub_open",
     };
     let accept_command = match assignment_type {
         ProviderAssignmentType::Single => "accept-job-by-provider",
@@ -1152,7 +1152,7 @@ pub async fn generate_next_action(
 
         // sub_asp_agree is the ASP's OWN action (agree refund); the existing action-command
         // flow (subscribe-agree-refund) owns that lifecycle, not this notification path.
-        Event::SubCreated => provider_assignment_playbook(
+        Event::SubOpen => provider_assignment_playbook(
             job_id,
             agent_id,
             ProviderAssignmentType::Subscription,
@@ -1161,7 +1161,7 @@ pub async fn generate_next_action(
         )
         .await,
 
-        Event::SubOpen
+        Event::SubCreated
         | Event::SubCancel
         | Event::SubTrialIntoActive
         | Event::SubExpireWarn
@@ -1503,15 +1503,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_open_is_ignored_instead_of_starting_provider_decision() {
+    async fn sub_open_starts_provider_decision() {
         let output = run_asp(
             "sub_open",
             json!({ "event": "sub_open", "jobId": ASP_JOB_ID }),
         )
         .await;
-        assert!(output.contains("obsolete"));
-        assert!(output.contains("Silently ignore"));
-        assert!(!output.contains("accept-subscription"));
+        assert!(output.contains("[Current state] sub_open"));
+        assert!(output.contains("Latest task detail could not be fetched"));
+        assert!(!output.contains("obsolete"));
     }
 
     #[tokio::test]
@@ -1535,8 +1535,8 @@ mod tests {
             None,
         )
         .await;
-        assert!(subscription.contains("[Current state] sub_created"));
-        assert!(!subscription.contains("[Current state] sub_open"));
+        assert!(subscription.contains("[Current state] sub_open"));
+        assert!(!subscription.contains("[Current state] sub_created"));
     }
 
     #[tokio::test]

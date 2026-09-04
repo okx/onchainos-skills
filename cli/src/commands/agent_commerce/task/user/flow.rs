@@ -1010,8 +1010,8 @@ mod tests {
 
     // Every user-side subscription event renders a display notification, never a decision.
     const USER_NON_TERMINAL: [&str; 6] = [
+        "sub_open",
         "sub_created",
-        "sub_asp_selected",
         "sub_trial_into_active",
         "sub_renew",
         "sub_user_reject",
@@ -1336,7 +1336,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_created_renders_amount_verbatim() {
+    async fn sub_created_renders_active_amount_verbatim() {
         let out = run(
             "sub_created",
             json!({ "event": "sub_created", "jobId": JOB_ID, "tokenSymbol": "USDT", "tokenAmount": "12.34" }),
@@ -1346,11 +1346,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_created_is_created_and_waits_for_asp() {
+    async fn sub_open_is_created_and_waits_for_asp() {
         let out = run(
-            "sub_created",
+            "sub_open",
             json!({
-                "event": "sub_created", "jobId": JOB_ID, "trialType": 0,
+                "event": "sub_open", "jobId": JOB_ID, "trialType": 0,
                 "providerAgentId": "9967", "tokenSymbol": "USDT", "tokenAmount": "12.34"
             }),
         )
@@ -1374,9 +1374,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_open_is_an_ignored_compatibility_event() {
-        let out = run("sub_open", json!({ "event": "sub_open", "jobId": JOB_ID })).await;
-        assert!(out.contains("obsolete"), "legacy marker: {out}");
+    async fn sub_asp_selected_is_ignored_on_buyer_side() {
+        let out = run(
+            "sub_asp_selected",
+            json!({ "event": "sub_asp_selected", "jobId": JOB_ID }),
+        )
+        .await;
+        assert!(out.contains("ASP-side only"), "role marker: {out}");
         assert!(!out.contains("user-notify"), "must stay silent: {out}");
         assert!(
             !out.contains("session create"),
@@ -1385,11 +1389,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_asp_selected_trial_branch_renders_trial_started_not_first_charge() {
+    async fn sub_created_trial_branch_renders_trial_started_not_first_charge() {
         let out = run(
-            "sub_asp_selected",
+            "sub_created",
             json!({
-                "event": "sub_asp_selected", "jobId": JOB_ID, "trialType": 1,
+                "event": "sub_created", "jobId": JOB_ID, "trialType": 1,
                 "tokenSymbol": "USDT", "tokenAmount": "12.34",
                 "trialStartTime": 1_700_000_000, "trialEndTime": 1_700_500_000
             }),
@@ -1406,12 +1410,12 @@ mod tests {
 
         // trialType=0 and absent trialType must both keep the paid-subscribe copy.
         for msg in [
-            json!({ "event": "sub_asp_selected", "jobId": JOB_ID, "trialType": 0,
+            json!({ "event": "sub_created", "jobId": JOB_ID, "trialType": 0,
                     "tokenSymbol": "USDT", "tokenAmount": "12.34" }),
-            json!({ "event": "sub_asp_selected", "jobId": JOB_ID,
+            json!({ "event": "sub_created", "jobId": JOB_ID,
                     "tokenSymbol": "USDT", "tokenAmount": "12.34" }),
         ] {
-            let out = run("sub_asp_selected", msg).await;
+            let out = run("sub_created", msg).await;
             assert!(
                 out.contains("[Subscribed]"),
                 "paid path keeps Sub-1-2 copy: {out}"

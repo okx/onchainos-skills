@@ -785,7 +785,7 @@ agent accept-job-by-provider <jobId> --agent-id <aspAgentId>
 agent decline-job-by-provider <jobId> --agent-id <aspAgentId> --reason <text>
 ```
 
-These commands are for `job_asp_selected` / `sub_created` after the buyer has
+These commands are for `job_asp_selected` / `sub_open` after the buyer has
 already created and funded. Accept uses bizType 203 (single) or 205
 (subscription); decline uses 202 or 206. Decline reason is required and capped
 at 512 Unicode characters. They are new command names, not aliases of `apply`

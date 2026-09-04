@@ -2,6 +2,8 @@
 
 Merge direction: `origin/codex/a2a-skill-cli-contract` into `origin/codex/a2a-skill-cli-contract-elvis`
 
+> **Superseded lifecycle note (2026-09-04):** the backend broadcast contract is authoritative. bizType 204 emits `sub_open` to Buyer and ASP; bizType 205 emits `sub_created` to Buyer and `sub_asp_selected` to ASP. Older decisions below that remove `sub_open` are historical only.
+
 - **Elvis / ours / HEAD:** `e69c6fd05c83ac1090d8f4c9d4e883666ef3eda8`
 - **Contract / theirs:** `6bb02d665c7d` (latest refresh; original audit used `c7e071bb58b906a51498be105163f739e387d6df`)
 - **Merge base:** `6ff8fc6b093f04cfe80c66248f7cf8f3bb7c39e9`
