@@ -114,33 +114,43 @@ fn required_service_string(service: &Value, key: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("selected Service is missing required field `{key}`"))
 }
 
-fn duplicate_subscription_context(service: &Value) -> Result<Option<DuplicateSubscriptionContext>> {
-    if service.get("isSubscribing").and_then(Value::as_bool) != Some(true) {
+fn duplicate_subscription_context(
+    existing: &super::subscription_ops::ExistingSubscriptionSummary,
+) -> Result<DuplicateSubscriptionContext> {
+    let job_id = existing.job_id.trim();
+    if job_id.is_empty() {
+        bail!("blocking buyer subscription is missing required field `jobId`");
+    }
+    let title = existing.title.trim();
+    if title.is_empty() {
+        bail!("blocking buyer subscription is missing required field `title`");
+    }
+    Ok(DuplicateSubscriptionContext {
+        job_id: job_id.to_string(),
+        title: title.to_string(),
+        status: existing.status,
+        active: existing.restore_listening_available,
+    })
+}
+
+fn duplicate_subscription_for_service(
+    service: &Value,
+    existing_subscriptions: &[super::subscription_ops::ExistingSubscriptionSummary],
+) -> Result<Option<DuplicateSubscriptionContext>> {
+    if service
+        .get("supportSubscription")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
         return Ok(None);
     }
-    let info = service
-        .get("subscribedInfo")
-        .and_then(Value::as_object)
-        .ok_or_else(|| anyhow!("subscribing Service is missing subscribedInfo"))?;
-    let job_id = scalar_string(info.get("jobId"))
-        .ok_or_else(|| anyhow!("subscribedInfo is missing required field `jobId`"))?;
-    let title = scalar_string(info.get("title"))
-        .ok_or_else(|| anyhow!("subscribedInfo is missing required field `title`"))?;
-    let status = info
-        .get("status")
-        .and_then(Value::as_i64)
-        .ok_or_else(|| anyhow!("subscribedInfo is missing numeric field `status`"))?;
-    let active = info
-        .get("isActive")
-        .and_then(Value::as_bool)
-        .ok_or_else(|| anyhow!("subscribedInfo is missing boolean field `isActive`"))?;
-
-    Ok(Some(DuplicateSubscriptionContext {
-        job_id,
-        title,
-        status,
-        active,
-    }))
+    let service_id = required_service_string(service, "serviceId")?;
+    super::subscription_ops::existing_subscription_for_service(
+        existing_subscriptions,
+        &service_id,
+    )
+    .map(duplicate_subscription_context)
+    .transpose()
 }
 
 async fn fetch_service_detail(user_agent_id: &str, sid: &str) -> Result<Value> {
@@ -241,7 +251,7 @@ fn normalize_service(mut service: Value) -> Value {
 }
 
 pub(crate) async fn handle_task_create_prepare(
-    _client: &mut TaskApiClient,
+    client: &mut TaskApiClient,
     sid: &str,
 ) -> Result<()> {
     if cfg!(feature = "debug-log") {
@@ -302,7 +312,21 @@ pub(crate) async fn handle_task_create_prepare(
         return Ok(());
     }
 
-    let duplicate_subscription = duplicate_subscription_context(&service)?;
+    // Match create-subscribe's write-boundary source and status policy. The
+    // Service detail isSubscribing flag may omit settlement-pending EXPIRED(8)
+    // rows that still block duplicate creation.
+    let duplicate_subscription =
+        if service.get("supportSubscription").and_then(Value::as_bool) == Some(true) {
+            let existing_subscriptions =
+                super::subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
+                    client,
+                    &user_agent_id,
+                )
+                .await?;
+            duplicate_subscription_for_service(&service, &existing_subscriptions)?
+        } else {
+            None
+        };
     let service = normalize_service(service);
     if let Some(existing) = duplicate_subscription.as_ref() {
         emit(
@@ -409,19 +433,17 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_payload_uses_authoritative_subscribed_info() {
-        let service = json!({
-            "isSubscribing": true,
-            "subscribedInfo": {
-                "jobId": "job-42",
-                "isActive": true,
-                "title": "Signal Subscription",
-                "status": 1
-            }
-        });
-        let existing = duplicate_subscription_context(&service)
-            .expect("valid duplicate metadata")
-            .expect("duplicate subscription");
+    fn duplicate_payload_uses_authoritative_buyer_subscription() {
+        let summary = super::super::subscription_ops::ExistingSubscriptionSummary {
+            job_id: "job-42".to_string(),
+            service_id: "svc-42".to_string(),
+            provider_agent_id: "asp-42".to_string(),
+            status_name: "ACTIVE".to_string(),
+            restore_listening_available: true,
+            title: "Signal Subscription".to_string(),
+            status: 1,
+        };
+        let existing = duplicate_subscription_context(&summary).expect("valid duplicate metadata");
 
         assert_eq!(
             duplicate_payload(&existing),
@@ -443,21 +465,46 @@ mod tests {
 
     #[test]
     fn inactive_duplicate_only_allows_stop() {
-        let service = json!({
-            "isSubscribing": true,
-            "subscribedInfo": {
-                "jobId": "job-43",
-                "isActive": false,
-                "title": "Paused Signals",
-                "status": 3
-            }
-        });
-        let existing = duplicate_subscription_context(&service)
-            .expect("valid duplicate metadata")
-            .expect("duplicate subscription");
+        let summary = super::super::subscription_ops::ExistingSubscriptionSummary {
+            job_id: "job-43".to_string(),
+            service_id: "svc-43".to_string(),
+            provider_agent_id: "asp-43".to_string(),
+            status_name: "EXPIRED".to_string(),
+            restore_listening_available: false,
+            title: "Paused Signals".to_string(),
+            status: 8,
+        };
+        let existing = duplicate_subscription_context(&summary).expect("valid duplicate metadata");
 
-        assert_eq!(existing.status, 3);
+        assert_eq!(existing.status, 8);
+        assert_eq!(existing.title, "Paused Signals");
         assert_eq!(duplicate_next_actions(&existing), next_action("stop", true));
+    }
+
+    #[test]
+    fn expired_buyer_subscription_blocks_when_service_detail_says_not_subscribing() {
+        let service = json!({
+            "serviceId": "svc-expired",
+            "supportSubscription": true,
+            "isSubscribing": false
+        });
+        let summaries = vec![super::super::subscription_ops::ExistingSubscriptionSummary {
+            job_id: "job-expired".to_string(),
+            service_id: "svc-expired".to_string(),
+            provider_agent_id: "asp-expired".to_string(),
+            status_name: "EXPIRED".to_string(),
+            restore_listening_available: false,
+            title: "Expired Signals".to_string(),
+            status: 8,
+        }];
+
+        let existing = duplicate_subscription_for_service(&service, &summaries)
+            .expect("duplicate lookup")
+            .expect("expired subscription must block");
+
+        assert_eq!(existing.job_id, "job-expired");
+        assert_eq!(existing.status, 8);
+        assert!(!existing.active);
     }
 
     #[test]

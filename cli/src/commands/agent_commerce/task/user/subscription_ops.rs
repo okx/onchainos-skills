@@ -562,6 +562,14 @@ pub(crate) struct ExistingSubscriptionSummary {
     pub(crate) provider_agent_id: String,
     pub(crate) status_name: String,
     pub(crate) restore_listening_available: bool,
+    /// Retained for preparation-time confirmation cards, but deliberately
+    /// omitted from the create-subscribe duplicate error contract.
+    #[serde(skip_serializing)]
+    pub(crate) title: String,
+    /// Raw backend status used by task-create-prepare so its decision matches
+    /// the write-boundary duplicate check exactly.
+    #[serde(skip_serializing)]
+    pub(crate) status: i64,
 }
 
 fn blocks_duplicate_creation(status: i64) -> bool {
@@ -585,6 +593,8 @@ fn summarize_non_terminal_buyer_subscriptions(
             provider_agent_id: item.provider_agent_id,
             status_name: status_name(item.status),
             restore_listening_available: item.status == SubStatus::Active.code(),
+            title: item.title,
+            status: item.status,
         })
         .collect::<Vec<_>>();
 
