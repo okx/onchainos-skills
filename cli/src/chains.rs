@@ -86,6 +86,41 @@ pub fn ensure_supported_chain(chain_index: &str, raw_input: &str) -> Result<()> 
     );
 }
 
+/// Return whether a chain is explicitly known to use the shared EVM address.
+///
+/// Dynamic backend metadata wins when present. Static fallback is intentionally
+/// an allowlist: an unknown future chain must never inherit an EVM deposit
+/// address merely because it is not one of today's known non-EVM chains.
+pub fn is_evm_chain(chain_index: &str) -> bool {
+    if let Ok(cache) = crate::wallet_store::load_chain_cache() {
+        if let Some(entry) = cache
+            .chains
+            .iter()
+            .find(|entry| chain_index_of(entry).as_deref() == Some(chain_index))
+        {
+            if let Some(is_evm) = entry.get("isEvmChain").and_then(|value| value.as_bool()) {
+                return is_evm;
+            }
+        }
+    }
+
+    matches!(
+        chain_index,
+        "1" | "10"
+            | "56"
+            | "137"
+            | "196"
+            | "250"
+            | "324"
+            | "1952"
+            | "8453"
+            | "42161"
+            | "43114"
+            | "59144"
+            | "534352"
+    )
+}
+
 /// Resolve a chain name to its OKX chainIndex string.
 /// Accepts both names ("ethereum", "solana") and raw chain IDs ("1", "501").
 /// Returns an owned String since the input may need case conversion.

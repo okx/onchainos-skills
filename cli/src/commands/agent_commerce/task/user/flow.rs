@@ -159,19 +159,24 @@ pub(super) fn notify_and_end(canonical_content: &str) -> String {
     )
 }
 
-/// Same as `notify_and_end` but appends a deposit-address hint for QR rendering.
+/// Same as `notify_and_end` but appends the deposit address and Common QR output.
+/// This preserves the legacy subscription funding UX after the standalone
+/// `wallet qrcode` command was removed.
 pub(super) fn notify_and_end_with_deposit(
     canonical_content: &str,
     deposit_address: &str,
 ) -> String {
+    let qr = crate::qr::build_qr_output(deposit_address, None);
+    let qr_json = serde_json::to_string(&qr).unwrap_or_else(|_| "{}".to_string());
     format!(
         "**Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
          ```bash\n\
-         onchainos agent user-notify --content \"<localized content shown below>\" --image-path <tmp.png>\n\
+         onchainos agent user-notify --content \"<localized content shown below>\"\n\
          ```\n\
          Content: {canonical_content}\n\n\
          Deposit address: {deposit_address} (XLayer)\n\
-         Run `onchainos wallet qrcode --address {deposit_address} --format png --output <tmp.png>` before `user-notify`. Keep all 4 options and the address; do not rely on tool output. TTY: show Unicode QR. Non-TTY: run `user-notify --image-path`; plain reply is not enough. If image sending fails, show the address text and do not claim QR is scannable. Keep `--content` text-only: no `![...](file://...)` or local image paths.\n\n\
+         Common QR output: {qr_json}\n\
+         Keep all 4 options and the address. Preserve the existing QR behavior using the returned fields: TTY renders `terminalQr`; non-TTY runs `notifyCommandArgs` and renders `markdownImage`. Put the QR immediately after the deposit address. If the QR fields are absent, show the address and do not claim a QR is scannable. Keep `--content` text-only: no local image path in the content itself.\n\n\
          End turn after the call.\n"
     )
 }
@@ -421,11 +426,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::Other(ref s) if s == "reject_review" => {
             super::flow_lifecycle::reject_review(&ctx).await
         }
-        Event::JobCompleted => {
-            super::v2::job_completed::handle(job_id, agent_id)
-                .await
-                .to_string()
-        }
+        Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id)
+            .await
+            .to_string(),
         Event::DisputeResolved => super::flow_lifecycle::dispute_resolved(&ctx),
         Event::JobRefunded => super::flow_lifecycle::job_refunded(&ctx),
         Event::JobAutoRefunded => super::flow_lifecycle::job_auto_refunded(&ctx),
@@ -492,6 +495,18 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         }
         Event::SubRejectRefundNotify => {
             super::flow_lifecycle::subscription::sub_reject_refund_notify(&ctx, message)
+        }
+        Event::JobAspAcceptExpire => {
+            super::v2::notification::job_asp_accept_expire(job_id, message).to_string()
+        }
+        Event::JobAspRejectClosed => {
+            super::v2::notification::job_asp_reject_closed(job_id, message).to_string()
+        }
+        Event::JobAspRejectExpire => {
+            super::v2::notification::job_asp_reject_expire(job_id, message).to_string()
+        }
+        Event::SubAspClaimNotify => {
+            super::v2::notification::sub_asp_claim_notify(job_id).to_string()
         }
         // ─── Events the user never receives + unknown fallback ──────────────────────────
         Event::Staked
@@ -885,7 +900,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
             "sub_open" | "sub_created" | "sub_asp_selected" | "sub_cancel" | "sub_user_reject" | "sub_asp_agree" | "sub_asp_dispute" |
             "sub_trial_into_active" | "sub_renew" | "sub_expire_warn" |
             "sub_complete_notify" | "sub_close_notify" | "sub_failed_notify" |
-            "sub_reject_refund_notify"
+            "sub_reject_refund_notify" |
+            "job_asp_accept_expire" | "job_asp_reject_closed" | "job_asp_reject_expire" |
+            "sub_asp_claim_notify"
     );
     let core = if use_cli_minimal || event_str == "create_task" {
         body
@@ -1009,23 +1026,27 @@ mod tests {
     ];
 
     #[test]
-    fn deposit_notification_requires_visible_assistant_message() {
+    fn deposit_notification_uses_common_qr_without_wallet_qrcode() {
         let out = notify_and_end_with_deposit(
             "Insufficient balance. 1. Scan or deposit. 2. Swap. 3. Bridge. 4. Withdraw.",
             "0x1234567890abcdef1234567890abcdef12345678",
         );
+        // The `wallet qrcode` subcommand was removed (spec §1.2 / §10.3) — the deposit
+        // notification playbook must NOT instruct the agent to shell out to it.
+        assert!(!out.contains("wallet qrcode"));
+        // Still a visible user-notify carrying the deposit address and Common QR
+        // contract so the existing funding UX remains available.
         assert!(out.contains("onchainos agent user-notify"));
-        assert!(out.contains("--image-path <tmp.png>"));
-        assert!(out.contains("onchainos wallet qrcode --address 0x1234567890abcdef1234567890abcdef12345678 --format png --output <tmp.png>"));
+        assert!(out.contains("0x1234567890abcdef1234567890abcdef12345678"));
+        assert!(out.contains("Common QR output"));
+        assert!(out.contains("terminalQr"));
+        assert!(out.contains("notifyCommandArgs"));
+        assert!(out.contains("markdownImage"));
+        assert!(out.contains("immediately after the deposit address"));
         assert!(out.contains("<localized content shown below>"));
         assert!(out.contains("Keep all 4 options and the address"));
-        assert!(out.contains("do not rely on tool output"));
-        assert!(out.contains("TTY: show Unicode QR"));
-        assert!(out.contains("Non-TTY"));
-        assert!(out.contains("run `user-notify --image-path`"));
-        assert!(out.contains("plain reply is not enough"));
-        assert!(out.contains("do not claim QR is scannable"));
-        assert!(out.contains("no `![...](file://...)`"));
+        assert!(out.contains("do not claim a QR is scannable"));
+        assert!(out.contains("no local image path in the content itself"));
     }
 
     #[tokio::test]
@@ -1229,7 +1250,9 @@ mod tests {
             }),
         )
         .await;
-        assert!(out.contains("migration from an older card for a delivery pinned to `agent_direct`"));
+        assert!(
+            out.contains("migration from an older card for a delivery pinned to `agent_direct`")
+        );
         assert!(out.contains("autotrade-direct-claim"));
         assert!(out.contains("autotrade-direct-finalize"));
         assert!(out.contains("Do not persist a route"));
@@ -1273,11 +1296,8 @@ mod tests {
         // Unconditionally terminal events always append the cleanup hint.
         // V2 sub_complete_notify fetches task detail and verifies its terminal
         // output in the V2 module without a live backend dependency.
-        const ALWAYS_TERMINAL: [&str; 3] = [
-            "sub_asp_agree",
-            "sub_close_notify",
-            "sub_failed_notify",
-        ];
+        const ALWAYS_TERMINAL: [&str; 3] =
+            ["sub_asp_agree", "sub_close_notify", "sub_failed_notify"];
         for evt in ALWAYS_TERMINAL {
             let out = run(evt, json!({ "event": evt, "jobId": JOB_ID })).await;
             assert!(
@@ -1355,14 +1375,13 @@ mod tests {
 
     #[tokio::test]
     async fn sub_open_is_an_ignored_compatibility_event() {
-        let out = run(
-            "sub_open",
-            json!({ "event": "sub_open", "jobId": JOB_ID }),
-        )
-        .await;
+        let out = run("sub_open", json!({ "event": "sub_open", "jobId": JOB_ID })).await;
         assert!(out.contains("obsolete"), "legacy marker: {out}");
         assert!(!out.contains("user-notify"), "must stay silent: {out}");
-        assert!(!out.contains("session create"), "must not create a session: {out}");
+        assert!(
+            !out.contains("session create"),
+            "must not create a session: {out}"
+        );
     }
 
     #[tokio::test]
@@ -1436,6 +1455,99 @@ mod tests {
         );
         // Terminal notice (RefundSettled → Failed): carries the user-notify display scaffold.
         assert!(out.contains("user-notify"), "display notification: {out}");
+    }
+
+    #[tokio::test]
+    async fn subscription_job_notifications_render_user_copy() {
+        let common = json!({
+            "jobId": JOB_ID,
+            "jobTitle": "BTC Signals",
+            "tokenAmount": "12.34",
+            "tokenSymbol": "USDT",
+            "providerName": "Signal ASP",
+            "providerAgentId": "5263",
+            "jobType": 1
+        });
+
+        let mut accept_expire = common.clone();
+        accept_expire["event"] = json!("job_asp_accept_expire");
+        let out = run("job_asp_accept_expire", accept_expire).await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(out.contains("[Job Timed Out] The ASP did not accept BTC Signals within 3 hours."));
+        assert!(out.contains("12.34 USDT"));
+        assert!(out.contains("ASP: Signal ASP (5263)"));
+        assert!(out.contains("trial eligibility remains unaffected"));
+        assert_eq!(progression["nextAction"][0]["id"], "notify_user");
+        assert_eq!(progression["payload"]["role"], "user");
+
+        let mut reject_closed = common.clone();
+        reject_closed["event"] = json!("job_asp_reject_closed");
+        reject_closed["aspRejectReason"] = json!("capacity unavailable");
+        let out = run("job_asp_reject_closed", reject_closed).await;
+        assert!(out.contains("[ASP Declined] The ASP declined BTC Signals."));
+        assert!(out.contains("Reason: capacity unavailable"));
+        assert!(out.contains("subscription did not begin"));
+
+        let mut reject_expire = common;
+        reject_expire["event"] = json!("job_asp_reject_expire");
+        let out = run("job_asp_reject_expire", reject_expire).await;
+        assert!(out.contains("[Automatic Refund]"));
+        assert!(!out.contains("response deadline:"));
+        assert!(out.contains("Job status: Closed"));
+    }
+
+    #[tokio::test]
+    async fn ordinary_job_notifications_split_free_and_paid_copy() {
+        let base = json!({
+            "jobId": JOB_ID,
+            "jobTitle": "One-off analysis",
+            "tokenSymbol": "USDT",
+            "providerName": "Analyst",
+            "providerAgentId": "42",
+            "jobType": 0
+        });
+
+        let mut free = base.clone();
+        free["event"] = json!("job_asp_accept_expire");
+        free["tokenAmount"] = json!("0");
+        let out = run("job_asp_accept_expire", free).await;
+        assert!(out.contains("[Job Expired]"));
+        assert!(!out.contains("escrowed amount"));
+
+        let mut paid = base.clone();
+        paid["event"] = json!("job_asp_reject_closed");
+        paid["tokenAmount"] = json!("5");
+        paid["aspRejectReason"] = json!("policy");
+        let out = run("job_asp_reject_closed", paid).await;
+        assert!(out.contains("escrowed amount of 5 USDT"));
+        assert!(out.contains("Job status: Closed"));
+
+        let mut free_refund = base;
+        free_refund["event"] = json!("job_asp_reject_expire");
+        free_refund["tokenAmount"] = json!("0.000");
+        let out = run("job_asp_reject_expire", free_refund).await;
+        assert!(out.contains("[Refund Process Completed]"));
+        assert!(out.contains("Job status: Failed"));
+    }
+
+    #[tokio::test]
+    async fn sub_asp_claim_notify_is_silent_for_user_role() {
+        let out = run(
+            "sub_asp_claim_notify",
+            json!({
+                "event": "sub_asp_claim_notify",
+                "jobId": JOB_ID,
+                "jobTitle": "BTC Signals",
+                "tokenAmount": "12.34",
+                "tokenSymbol": "USDT",
+                "txHash": "0xreceive"
+            }),
+        )
+        .await;
+        let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(progression["reason"], "notification_not_required");
+        assert_eq!(progression["nextAction"][0]["id"], "stop");
+        assert!(progression["payload"].get("notification").is_none());
     }
 
     #[tokio::test]

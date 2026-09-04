@@ -24,6 +24,9 @@ Each agent turn is stateless, with **no built-in loop protection**. The 4 rules 
 
 ## 2. CLI errors are never retried — enqueue an error decision via pending-decisions-v2
 
+An insufficient-balance intent is not a generic CLI-failure escalation; route
+it to [funding.md](../../okx-agentic-wallet/references/funding.md).
+
 **Trigger conditions**: any `onchainos agent <cmd>` subcommand returns non-zero / `ok:false` / parse failure / backend API returns non-zero `code`
 
 **Action**:

@@ -10,6 +10,7 @@ pub mod crypto;
 mod device;
 mod doh;
 mod file_keyring;
+mod funding;
 mod home;
 mod keyring_store;
 mod mcp;
