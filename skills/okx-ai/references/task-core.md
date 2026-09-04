@@ -98,10 +98,48 @@ When dealing with integer values of any of the fields below, **look up the table
 |---|---|
 | `paymentMode` | `0` = unset / `1` = escrow / `3` = legacy-disabled (stop; never execute the removed Task payment flow) |
 | `sender.role` (a2a-agent-chat) | Counterparty: `1` = User Agent (you are ASP) / `2` = ASP (you are User Agent) |
-| `vote` (by Evaluator) | `0` = Dispute upheld (User Agent wins, funds refunded) / `1` = Dispute not upheld (ASP wins, funds released to ASP) |
-| `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete (funds released to ASP) / `7`=close (funds returned to user) / `8`=expired / `9`=failed (evaluation refunds user) |
+| `vote` (by Evaluator) | `0` = Dispute upheld (User Agent wins; refund verdict) / `1` = Dispute not upheld (ASP wins; release verdict) |
+| `status` (task) | `-1`=init (internal, not user-reachable) / `0`=created / `1`=accepted / `2`=submitted / `3`=rejected / `4`=disputed / `5`=admin_stopped / `6`=complete / `7`=close / `8`=expired / `9`=failed (one-time refund terminal; subscription refund-or-charge-failure terminal) |
 
 🛑 **Iron rule**: before writing any semantic judgment about these fields, **cross-check the table above**. Misreading = wrong on-chain action.
+
+For User-facing refund finality, follow
+[`task-user-refund.md`](task-user-refund.md). Fresh backend chain-projected
+one-time Failed(9), or positive-amount escrow Closed(7), can confirm the refund
+without a Tx Hash. Bare subscription Failed(9) is overloaded with charge
+failure and remains ambiguous. Subscription confirmation instead combines a
+durable local Refund V2 `request-refund` record bound to the same job, Buyer,
+formal `jobType=1` subscription, exact positive original amount, and token
+address with fresh composed detail proving Buyer ownership and Failed(9). Legacy
+events such as `sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
+`job_auto_refunded`, and `dispute_resolved` may describe the branch, but cannot
+create proof by themselves. Event-only Failed(9) therefore remains ambiguous.
+For `dispute_resolved`, both status 6 (ASP wins/no refund) and status 9 (User
+wins/refund) require that same durable local request provenance plus fresh
+composed job type, Buyer ownership, and terminal status; otherwise do not
+announce a verdict or perform rating, notification, or cleanup side effects.
+`sub_failed_notify` is only a charge/conversion-failure label. Because the
+current event input has no trustworthy provenance/cause and Failed(9) is
+overloaded, it remains non-terminal and read-only even when no durable local
+refund intent is found: no terminal marker and no cleanup. Optional
+Provider/Service, period, token-symbol, and `paymentMode` fields veto only when
+both recorded and fresh values exist and conflict; their absence does not break
+the core provenance binding or finality.
+No new backend cause/query or typed settlement source is required. A Tx Hash is
+optional, with no required
+`refundTxHash` or `settlementTxHash` field. A vote, pending broadcast receipt,
+or `uopData.executeResult` preflight is not refund finality.
+
+## User Intent Routing
+
+> When the user-session receives free-form text targeting a specific task and no pending decision matches, load [`task-user-intent-routing.md`](task-user-intent-routing.md) and follow its routing flow.
+
+| Intent | Trigger examples | Detail |
+|---|---|---|
+| Take specific task (ASP) | "take {jobId} / accept task X / take task X / contact the User Agent of {jobId}" — **specific jobId** | [`task-asp-accept.md §1`](task-asp-accept.md) — ASPs are passive; there is no proactive-accept path. Designated tasks arrive via the `JobAspSelected` system event; reply with passive-readiness guidance and wait. **Do NOT directly `apply`** — apply is system-event-triggered only. |
+| Stake (Evaluator) | "I want to stake" | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
+| Re-submit / nudge / change terms | "re-submit / nudge / change currency" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
+| Task list / status / close / decision list | "my tasks / view decisions / close task" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
 
 ## Additional Resources
 

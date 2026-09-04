@@ -1,6 +1,7 @@
 const PUBLISH_ACTIONS: &str =
     include_str!("../../skills/okx-ai/references/task-user-actions-create.md");
 const USER_PLAYBOOK: &str = include_str!("../../skills/okx-ai/references/task-user-playbook.md");
+const USER_REFUND: &str = include_str!("../../skills/okx-ai/references/task-user-refund.md");
 
 #[test]
 fn skill_confirmation_templates_never_expose_execution_configuration() {
@@ -58,10 +59,12 @@ fn skill_playbooks_delegate_optional_trade_kit_setup_to_agent_skills() {
 }
 
 #[test]
-fn refund_requires_a_user_authored_reason_before_reject() {
-    assert!(USER_PLAYBOOK.contains("A refund reason must be explicitly authored by the user"));
-    assert!(USER_PLAYBOOK.contains("ask for the reason and end the turn without running `reject`"));
-    assert!(USER_PLAYBOOK.contains(
-        "Never use the refund request itself, a default, an example, or model-generated text as the reason"
-    ));
+fn refund_v2_requires_a_user_authored_reason_and_explicit_confirmation() {
+    assert!(USER_REFUND.contains("It must be non-blank"));
+    assert!(USER_REFUND.contains("authored by the User"));
+    assert!(USER_REFUND.contains("Never supply,"));
+    assert!(USER_REFUND.contains("paraphrase, translate, or improve it"));
+    assert!(USER_REFUND.contains("refund-execute"));
+    assert!(USER_REFUND.contains("--confirm"));
+    assert!(USER_PLAYBOOK.contains("task-user-refund.md"));
 }

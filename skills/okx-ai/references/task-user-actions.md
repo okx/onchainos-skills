@@ -49,8 +49,16 @@
 
 **Trigger**: "stop task" / "close task"
 
-1. Confirm: "Confirm closing task <jobId>? Funds will be refunded after closing; the operation is irreversible."
-2. User confirms → `onchainos agent close <jobId>`
+1. Run the read-only `onchainos agent refund-prepare <jobId>` and render the
+   returned task/refund details and action. Fresh Refund V2 state decides whether
+   this is a zero-price close, a paid direct refund, a trial cancellation, or a
+   blocked contract gap.
+2. Ask for explicit confirmation of the exact returned write action. On
+   confirmation, execute its unchanged `operation` and `refundContextId` through
+   `onchainos agent refund-execute ... --confirm`.
+
+Never call legacy `agent close`; it is registered only to return deterministic
+migration guidance and performs no network write.
 
 ### 3.2 Other non-terms input
 

@@ -390,7 +390,7 @@ pub fn sub_asp_selected_asp_notify(
 /// `sub_asp_selected` with `trialType=1` — the subscriber is on a free trial, so nothing
 /// has been charged yet; the ASP must NOT be told a payment was received (the real payment
 /// is announced on conversion via `sub_trial_into_active`). Mirrors the buyer-side
-/// Buyer-side `sub_asp_selected_trial_user_notify` trial variant.
+/// Buyer-side `sub_created_trial_user_notify` trial variant.
 pub fn sub_asp_selected_trial_asp_notify(
     service_name: Option<&str>,
     buyer_agent_id: Option<&str>,
@@ -442,9 +442,19 @@ pub fn sub_complete_notify_asp_notify(
     out
 }
 
-/// ASP terminal notice: subscription ended because the renewal charge failed during grace (Closed).
-pub fn sub_close_notify_asp_notify(service_name: Option<&str>, job_id: &str) -> String {
+/// ASP terminal notice. An `aspRejectReason` identifies the v2 pre-acceptance
+/// provider-decline branch; without it, preserve the legacy renewal-failure copy.
+pub fn sub_close_notify_asp_notify(
+    service_name: Option<&str>,
+    job_id: &str,
+    asp_reject_reason: Option<&str>,
+) -> String {
     let svc = service_name_clause(" to", service_name);
+    if let Some(reason) = asp_reject_reason.filter(|value| !value.trim().is_empty()) {
+        return format!(
+            "[Assignment Closed] You declined the user's subscription{svc} before activation. Reason: {reason}. Job {job_id} status: Closed — do not start or continue delivery. This notice does not confirm refund settlement and authorizes no funds action."
+        );
+    }
     format!(
         "[Subscription Ended] The user's subscription{svc} has ended because the renewal charge failed during the grace period. Job {job_id} status: Closed — please stop delivering the service."
     )
@@ -515,9 +525,11 @@ pub fn subscription_job_asp_accept_expire_asp_notify(
     token_symbol: &str,
 ) -> String {
     format!(
-        "[Job Timed Out] You did not respond to {job_name} within 3 hours, and the job has timed out.\n\
-         Job ID: {job_id}\n\n\
-         The escrowed amount of {amount} {token_symbol} will be returned automatically to the user's wallet address."
+        "[Assignment Expired] You did not accept {job_name} before the deadline.\n\
+         Job ID: {job_id}\n\
+         Job status: Expired (8)\n\
+         Escrowed amount: {amount} {token_symbol}\n\
+         No further service delivery is required. Buyer refund settlement remains pending; this notification is not proof of completed settlement or funds receipt."
     )
 }
 
@@ -531,15 +543,16 @@ pub fn regular_job_asp_accept_expire_asp_notify(
 ) -> String {
     let payment = if is_paid {
         format!(
-            " The escrowed amount of {amount} {token_symbol} will be returned automatically to the User Agent's wallet."
+            "\nEscrowed amount: {amount} {token_symbol}\nBuyer refund settlement remains pending; this notification is not proof of completed settlement or funds receipt."
         )
     } else {
-        String::new()
+        "\nNo paid amount needs to be returned.".to_string()
     };
     format!(
-        "[Job Expired] You did not respond to {job_name} within 3 hours, and the job has expired.{payment}\n\n\
+        "[Assignment Expired] You did not accept {job_name} before the deadline.\n\n\
          Job ID: {job_id}\n\
-         Job status: Expired"
+         Job status: Expired (8){payment}\n\
+         No further service delivery is required."
     )
 }
 
@@ -578,10 +591,11 @@ pub fn subscription_job_asp_reject_expire_asp_notify(
     token_symbol: &str,
 ) -> String {
     format!(
-        "[Automatic Refund] You did not process the refund request for {job_name} by the deadline. The refund of {amount} {token_symbol} will be returned automatically to the user's wallet.\n\
+        "[Auto-Refund Processing] You did not process the refund request for {job_name} by the deadline. Automatic refund settlement of {amount} {token_symbol} is pending.\n\
          Job ID: {job_id}\n\
-         Job status: Closed\n\
-         No further service delivery is required."
+         Job status: Expired (8)\n\
+         No further service delivery is required.\n\
+         This notification is not proof of completed settlement or funds receipt."
     )
 }
 
@@ -595,15 +609,19 @@ pub fn regular_job_asp_reject_expire_asp_notify(
 ) -> String {
     if is_paid {
         format!(
-            "[Automatic Refund] You did not process the refund request for {job_name} by the deadline. The refund of {amount} {token_symbol} will be returned automatically to the User Agent's wallet.\n\n\
+            "[Auto-Refund Processing] You did not process the refund request for {job_name} by the deadline. Automatic refund settlement of {amount} {token_symbol} is pending.\n\n\
              Job ID: {job_id}\n\
-             Job status: Failed"
+             Job status: Expired (8)\n\
+             No further service delivery is required.\n\
+             This notification is not proof of completed settlement or funds receipt."
         )
     } else {
         format!(
-            "[Refund Response Timed Out] You did not process the refund request for {job_name} by the deadline. No payment was made for this job, so no refund is required.\n\n\
+            "[Refund Response Expired] You did not process the refund request for {job_name} by the deadline. No paid amount needs to be returned.\n\n\
              Job ID: {job_id}\n\
-             Job status: Failed"
+             Job status: Expired (8)\n\
+             No further service delivery is required.\n\
+             This notification is not proof of completed settlement or funds receipt."
         )
     }
 }
@@ -637,7 +655,7 @@ mod tests {
                 "12.34",
                 "USDT",
             ),
-            "[Job Timed Out] You did not respond to BTC Signals within 3 hours, and the job has timed out.\nJob ID: job-1\n\nThe escrowed amount of 12.34 USDT will be returned automatically to the user's wallet address."
+            "[Assignment Expired] You did not accept BTC Signals before the deadline.\nJob ID: job-1\nJob status: Expired (8)\nEscrowed amount: 12.34 USDT\nNo further service delivery is required. Buyer refund settlement remains pending; this notification is not proof of completed settlement or funds receipt."
         );
         assert_eq!(
             subscription_job_asp_reject_closed_asp_notify(
@@ -654,7 +672,7 @@ mod tests {
                 "12.34",
                 "USDT",
             ),
-            "[Automatic Refund] You did not process the refund request for BTC Signals by the deadline. The refund of 12.34 USDT will be returned automatically to the user's wallet.\nJob ID: job-1\nJob status: Closed\nNo further service delivery is required."
+            "[Auto-Refund Processing] You did not process the refund request for BTC Signals by the deadline. Automatic refund settlement of 12.34 USDT is pending.\nJob ID: job-1\nJob status: Expired (8)\nNo further service delivery is required.\nThis notification is not proof of completed settlement or funds receipt."
         );
         assert_eq!(
             sub_asp_claim_notify_asp_notify(
@@ -670,7 +688,7 @@ mod tests {
             regular_job_asp_accept_expire_asp_notify(
                 "One-off analysis", "job-2", "0", "USDT", false,
             ),
-            "[Job Expired] You did not respond to One-off analysis within 3 hours, and the job has expired.\n\nJob ID: job-2\nJob status: Expired"
+            "[Assignment Expired] You did not accept One-off analysis before the deadline.\n\nJob ID: job-2\nJob status: Expired (8)\nNo paid amount needs to be returned.\nNo further service delivery is required."
         );
         assert_eq!(
             regular_job_asp_reject_closed_asp_notify("One-off analysis", "job-2", "policy"),
@@ -680,7 +698,13 @@ mod tests {
             regular_job_asp_reject_expire_asp_notify(
                 "One-off analysis", "job-2", "5", "USDT", true,
             ),
-            "[Automatic Refund] You did not process the refund request for One-off analysis by the deadline. The refund of 5 USDT will be returned automatically to the User Agent's wallet.\n\nJob ID: job-2\nJob status: Failed"
+            "[Auto-Refund Processing] You did not process the refund request for One-off analysis by the deadline. Automatic refund settlement of 5 USDT is pending.\n\nJob ID: job-2\nJob status: Expired (8)\nNo further service delivery is required.\nThis notification is not proof of completed settlement or funds receipt."
+        );
+        assert_eq!(
+            regular_job_asp_reject_expire_asp_notify(
+                "One-off analysis", "job-3", "0", "USDT", false,
+            ),
+            "[Refund Response Expired] You did not process the refund request for One-off analysis by the deadline. No paid amount needs to be returned.\n\nJob ID: job-3\nJob status: Expired (8)\nNo further service delivery is required.\nThis notification is not proof of completed settlement or funds receipt."
         );
     }
 
@@ -755,7 +779,7 @@ mod tests {
         // away; a literal `<title>` placeholder must never appear in the body.
         let selected = sub_asp_selected_asp_notify(None, None, "job-1", None, None, None, None);
         let complete = sub_complete_notify_asp_notify(None, "job-1", None);
-        let closed = sub_close_notify_asp_notify(None, "job-1");
+        let closed = sub_close_notify_asp_notify(None, "job-1", None);
         let failed = sub_failed_notify_asp_notify(None, "job-1", None);
         for out in [&selected, &complete, &closed, &failed] {
             assert!(!out.contains("<title>"), "no literal placeholder: {out}");
@@ -767,6 +791,15 @@ mod tests {
             closed.contains("The user's subscription has ended because the renewal charge failed")
         );
         assert!(failed.contains("The user's free trial failed to convert to a paid subscription"));
+    }
+
+    #[test]
+    fn sub_close_asp_decline_copy_preserves_reason_without_refund_claim() {
+        let out = sub_close_notify_asp_notify(Some("My Sub"), "job-1", Some("unsupported region"));
+        assert!(out.contains("You declined the user's subscription to \"My Sub\""));
+        assert!(out.contains("Reason: unsupported region"));
+        assert!(out.contains("does not confirm refund settlement"));
+        assert!(!out.contains("renewal charge failed"));
     }
 
     #[test]

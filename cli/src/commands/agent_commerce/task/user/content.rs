@@ -162,25 +162,87 @@ const EVALUATION_REASONS_BLOCK: &str = concat!(
     "    ... (one line per entry; first skip entries whose voterReportSummary is missing / empty / whitespace, then number the kept entries consecutively starting at 1 in array order — do NOT preserve gaps from the original index; omit this whole `- Evaluation reasons:` section if voteReportSummaries is missing, not an array, empty, or every entry would be skipped — do NOT print a header with no body, do NOT fabricate filler text)",
 );
 
+fn refund_party(provider_name: Option<&str>, provider_id: Option<&str>) -> String {
+    match (provider_name, provider_id) {
+        (Some(name), Some(id)) => format!("{name} ({id})"),
+        (Some(name), None) => name.to_string(),
+        (None, Some(id)) => format!("name unavailable ({id})"),
+        (None, None) => "not provided by the final event".to_string(),
+    }
+}
+
+fn amount_and_token(amount: Option<&str>, symbol: Option<&str>) -> String {
+    match (amount, symbol) {
+        (Some(amount), Some(symbol)) => format!("{amount} {symbol}"),
+        (Some(amount), None) => format!("{amount} (token symbol unavailable)"),
+        _ => "not provided by the final event".to_string(),
+    }
+}
+
 /// `Event::DisputeResolved` — user wins (B-5-4).
-pub fn dispute_won_user_notify(job_id: &str, title: &str) -> String {
+#[allow(clippy::too_many_arguments)]
+pub fn dispute_won_user_notify(
+    job_id: &str,
+    title: &str,
+    provider_name: Option<&str>,
+    provider_id: Option<&str>,
+    service_name: Option<&str>,
+    amount: Option<&str>,
+    symbol: Option<&str>,
+    refund_confirmed: bool,
+    tx_hash: Option<&str>,
+) -> String {
+    let settlement = if refund_confirmed {
+        format!(
+            "- Refund amount: {}\n\
+             - Tx Hash: {}\n\
+             - Refund status: Settled; funds returned to the User Agent wallet.",
+            amount_and_token(amount, symbol),
+            tx_hash.unwrap_or("unavailable")
+        )
+    } else {
+        format!(
+            "- Refund amount: {} (approved; settlement verification pending)\n\
+             - Tx Hash: unavailable\n\
+             The ruling favors the User Agent, but the available lifecycle facts do not yet verify the settlement result. Reconcile through Refund V2 before reporting completion.",
+            amount_and_token(amount, symbol)
+        )
+    };
     format!(
         "[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
-         - Refund: <tokenAmount> <tokenSymbol>\n\
+         - Refund ASP: {}\n\
+         - Service: {}\n\
+         {settlement}\n\
          - Outcome: ClientWins\n\
-         {EVALUATION_REASONS_BLOCK}\n\
-         This job is complete."
+         {EVALUATION_REASONS_BLOCK}",
+        refund_party(provider_name, provider_id),
+        service_name.unwrap_or("not provided by the final event"),
     )
 }
 
 /// `Event::DisputeResolved` — user loses (B-5-5).
-pub fn dispute_lost_user_notify(job_id: &str, title: &str) -> String {
+#[allow(clippy::too_many_arguments)]
+pub fn dispute_lost_user_notify(
+    job_id: &str,
+    title: &str,
+    provider_name: Option<&str>,
+    provider_id: Option<&str>,
+    service_name: Option<&str>,
+    amount: Option<&str>,
+    symbol: Option<&str>,
+) -> String {
     format!(
-        "[Dispute Lost] {title} (`{job_id}`) — dispute resolved; ASP wins.\n\
-         - Loss: <tokenAmount> <tokenSymbol> (funds released to the ASP)\n\
+        "[Dispute Lost] {title} (`{job_id}`) — the refund request was not approved; ASP wins.\n\
+         - Refund: Not issued\n\
+         - ASP: {}\n\
+         - Service: {}\n\
+         - Original payment: {} (funds released to the ASP)\n\
          - Outcome: ASPWins\n\
          {EVALUATION_REASONS_BLOCK}\n\
-         This job is complete."
+         This job is complete.",
+        refund_party(provider_name, provider_id),
+        service_name.unwrap_or("not provided by the final event"),
+        amount_and_token(amount, symbol),
     )
 }
 
@@ -214,7 +276,21 @@ pub fn job_auto_refunded_user_notify(job_id: &str, title: &str) -> String {
 /// `Event::JobExpired` — job expired (B-7-1).
 pub fn job_expired_user_notify(job_id: &str) -> String {
     format!(
-        "[Job Expired] Job `{job_id}` has expired (no ASP accepted before the accept deadline, or no deliverable submitted before the submit deadline). The job is now closed."
+        "[Job Expired] Job `{job_id}` is in Expired status after a deadline elapsed. Expired is not proof that escrow has been refunded. Run `onchainos agent refund-prepare {job_id}` to reconcile the authoritative refund state and keep watching for the final settlement event."
+    )
+}
+
+/// The designated ASP did not accept before the v2 acceptance deadline.
+pub fn job_asp_accept_expire_user_notify(job_id: &str, title: &str) -> String {
+    format!(
+        "[ASP Acceptance Expired] {title} (`{job_id}`) was not accepted before the deadline. The task is Expired, but refund settlement is not final. Run `onchainos agent refund-prepare {job_id}` and follow only the returned Refund V2 actions."
+    )
+}
+
+/// The ASP did not agree to refund or open a dispute before the response deadline.
+pub fn job_asp_reject_expire_user_notify(job_id: &str, title: &str) -> String {
+    format!(
+        "[Auto-Refund Processing] {title} (`{job_id}`): the ASP did not resolve the refund request before the deadline, so backend automatic refund settlement is in progress. Do not initiate a client-side refund claim. Run `onchainos agent refund-prepare {job_id}` to view the authoritative state and keep watching for `job_auto_refunded`; no refund is final until that settlement is verified."
     )
 }
 
@@ -243,15 +319,9 @@ pub fn close_user_notify(job_id: &str) -> String {
 
 /// `Event::SubmitExpired` — ASP missed the submit deadline (B-7-5).
 pub fn submit_expired_user_notify(job_id: &str) -> String {
-    if is_cli_mode() {
-        format!(
-            "Job `{job_id}` — the ASP did not submit the deliverable before the deadline. An auto-refund is in progress; funds will return to your wallet and a final refund-settled notice will follow shortly."
-        )
-    } else {
-        format!(
-            "Job `{job_id}` — the ASP did not submit the deliverable before the deadline. An auto-refund has been requested; funds will return to your wallet."
-        )
-    }
+    format!(
+        "[Submit Deadline Expired] Job `{job_id}` — the ASP did not submit the deliverable before the deadline. This notification did not send a refund transaction. Run `onchainos agent refund-prepare {job_id}` to inspect authoritative Refund V2 state. A cause-specific timeout claim remains unavailable until the backend exposes its V2 contract."
+    )
 }
 
 // ── Event::RejectExpired ───────────────────────────────────────────
@@ -363,8 +433,8 @@ pub(crate) fn fmt_epoch(ts: Option<i64>) -> Option<String> {
         .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
 }
 
-/// `sub_created` — subscription create-and-fund confirmed, awaiting ASP action.
-pub fn sub_created_user_notify(
+/// `sub_open` — subscription create-and-fund confirmed, awaiting ASP action.
+pub fn sub_open_user_notify(
     job_id: &str,
     service_name: &str,
     token_amount: Option<&str>,
@@ -385,8 +455,8 @@ pub fn sub_created_user_notify(
     out
 }
 
-/// Trial variant of `sub_created`; the trial starts only after ASP acceptance.
-pub fn sub_created_trial_user_notify(
+/// Trial variant of `sub_open`; the trial starts only after ASP acceptance.
+pub fn sub_open_trial_user_notify(
     job_id: &str,
     service_name: &str,
     token_amount: Option<&str>,
@@ -408,8 +478,8 @@ pub fn sub_created_trial_user_notify(
     out
 }
 
-/// `sub_asp_selected` — ASP accepted; subscription is active and service starts.
-pub fn sub_asp_selected_user_notify(
+/// `sub_created` — ASP accepted; subscription is active and service starts for the Buyer.
+pub fn sub_created_user_notify(
     job_id: &str,
     service_name: &str,
     token_amount: Option<&str>,
@@ -443,13 +513,13 @@ pub fn sub_asp_selected_user_notify(
     out
 }
 
-/// `sub_asp_selected` with `trialType=1` — ASP accepted and the free trial started.
+/// `sub_created` with `trialType=1` — ASP accepted and the free trial started.
 /// Renders the trial-start copy: the trial window is charge-free, so the
-/// immediate-first-charge copy from `sub_asp_selected_user_notify` must never be shown
+/// immediate-first-charge copy from `sub_created_user_notify` must never be shown
 /// for a trial order (the real first charge is announced by `sub_trial_into_active`).
 /// The duration label slot (`{trialDisplay}`) has no envelope source, so only the
 /// date range renders; the charge sentence needs an amount and degrades away without one.
-pub fn sub_asp_selected_trial_user_notify(
+pub fn sub_created_trial_user_notify(
     token_amount: Option<&str>,
     token_symbol: Option<&str>,
     trial_start: Option<i64>,
@@ -612,11 +682,11 @@ pub fn sub_asp_dispute_user_notify(
     out
 }
 
-/// `sub_cancel` — cancellation outcome (user). Terminal-ness is decided by the caller from
-/// `cancelResult` + `trialType` (see `flow_lifecycle::subscription::sub_cancel`); this function only builds the copy:
+/// `sub_cancel` — cancellation outcome (user). Cancellation affects future
+/// conversion/renewal and is non-terminal because the current trial/period continues:
 /// - `cancel_result == "fail"` (either branch) → the free-text `failReason` is shown verbatim.
 /// - success + `trialType == 1` (trial cancel) → auto-conversion cancelled; the trial
-///   continues unaffected until `trialEndsAt` (`trialEndTime`, legacy fallback `trailEndTime`), no charge after it ends (terminal).
+///   continues unaffected until `trialEndsAt` (`trialEndTime`, legacy fallback `trailEndTime`), no charge after it ends.
 /// - success + `trialType == 0` (formal-period cancel) → auto-renew cancelled; the
 ///   current period stays active until `periodEnd` (`subEndTime`), then the job moves to Completed
 ///   (non-terminal). An absent `trialType` falls into this non-terminal branch
@@ -701,13 +771,20 @@ pub fn sub_complete_notify_user_notify(
     out
 }
 
-/// `sub_close_notify` (user side) — current period ended; service closed (terminal).
+/// `sub_close_notify` (user side) — service is Closed, but buyer refund
+/// settlement remains non-terminal until separately proven.
 pub fn sub_close_notify_user_notify(
     service_name: &str,
     job_id: &str,
     period_start: Option<i64>,
     period_end: Option<i64>,
+    asp_reject_reason: Option<&str>,
 ) -> String {
+    if let Some(reason) = asp_reject_reason.filter(|value| !value.trim().is_empty()) {
+        return format!(
+            "[Service Closed] The ASP declined \"{service_name}\" before activation. Job {job_id} status: Closed. ASP reason: {reason}. This closure notice does not by itself confirm that a refund settled."
+        );
+    }
     let mut out = format!("[Service Closed] \"{service_name}\"");
     if let (Some(s), Some(e)) = (fmt_epoch(period_start), fmt_epoch(period_end)) {
         out.push_str(&format!("'s current period ({s}–{e})"));
@@ -716,7 +793,8 @@ pub fn sub_close_notify_user_notify(
     out
 }
 
-/// `sub_failed_notify` (user side, terminal). Two variants selected by `trial_type`:
+/// `sub_failed_notify` user-side lifecycle copy. Two variants selected by `trial_type`;
+/// the caller must not treat this copy alone as refund finality.
 /// trial-conversion fail (`trialType == 1`) shows the verbatim `reason`; renewal terminal
 /// fail (otherwise) appends the service-ended date from `grace_ends_at` (`subBufferEndTime`)
 /// when present. `reason` is the verbatim `failReason` (`failReasopn` fallback), shown as-is.
@@ -777,7 +855,8 @@ pub fn sub_expire_warn_no_autorenew_notify(
     )
 }
 
-/// `sub_reject_refund_notify` — ASP missed rejection response window; user can claim refund.
+/// `sub_reject_refund_notify` — ASP missed the rejection response window;
+/// the backend has already initiated the automatic refund.
 pub fn sub_reject_refund_notify_user(
     service_name: &str,
     period_start: Option<i64>,
@@ -1106,8 +1185,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_asp_selected_renders_active_and_first_charge_verbatim() {
-        let out = sub_asp_selected_user_notify(
+    fn sub_created_renders_active_and_first_charge_verbatim() {
+        let out = sub_created_user_notify(
             "job-1",
             "My Sub",
             Some("1.500000"),
@@ -1133,8 +1212,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_created_paid_is_created_but_not_active() {
-        let out = sub_created_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
+    fn sub_open_paid_is_created_but_not_active() {
+        let out = sub_open_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
         assert!(out.starts_with("[Subscription Created]"));
         assert!(out.contains("waiting for the ASP to accept"));
         assert!(out.contains("1.5 USDT has been funded"));
@@ -1143,8 +1222,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_created_trial_does_not_claim_trial_started() {
-        let out = sub_created_trial_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
+    fn sub_open_trial_does_not_claim_trial_started() {
+        let out = sub_open_trial_user_notify("job-1", "My Sub", Some("1.5"), Some("USDT"));
         assert!(out.starts_with("[Trial Subscription Created]"));
         assert!(out.contains("waiting for the ASP to accept"));
         assert!(out.contains("free trial has not started yet"));
@@ -1153,8 +1232,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_asp_selected_auto_renew_off() {
-        let out = sub_asp_selected_user_notify(
+    fn sub_created_auto_renew_off() {
+        let out = sub_created_user_notify(
             "job-1",
             "My Sub",
             Some("1.5"),
@@ -1174,8 +1253,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_asp_selected_conditional_next_charge_and_degrades() {
-        let with = sub_asp_selected_user_notify(
+    fn sub_created_conditional_next_charge_and_degrades() {
+        let with = sub_created_user_notify(
             "job-1",
             "My Sub",
             Some("1.5"),
@@ -1185,7 +1264,7 @@ mod tests {
             true,
         );
         assert!(with.contains("next charge date:"), "clause present: {with}");
-        let bare = sub_asp_selected_user_notify("job-1", "My Sub", None, None, None, None, false);
+        let bare = sub_created_user_notify("job-1", "My Sub", None, None, None, None, false);
         assert!(bare.contains("Job job-1"));
         assert!(!bare.contains("First charge"));
         assert!(!bare.contains("current period"));
@@ -1197,8 +1276,8 @@ mod tests {
     }
 
     #[test]
-    fn sub_asp_selected_trial_renders_trial_started_no_charge() {
-        let out = sub_asp_selected_trial_user_notify(
+    fn sub_created_trial_renders_trial_started_no_charge() {
+        let out = sub_created_trial_user_notify(
             Some("1.500000"),
             Some("USDT"),
             Some(1_700_000_000),
@@ -1224,14 +1303,13 @@ mod tests {
     }
 
     #[test]
-    fn sub_asp_selected_trial_degrades_without_amount_or_dates() {
-        let bare = sub_asp_selected_trial_user_notify(None, None, None, None);
+    fn sub_created_trial_degrades_without_amount_or_dates() {
+        let bare = sub_created_trial_user_notify(None, None, None, None);
         assert_eq!(
-            bare,
-            "[Trial Started] Your free trial is active.",
+            bare, "[Trial Started] Your free trial is active.",
             "no amount → whole conversion sentence omitted; no dates → no range"
         );
-        let no_dates = sub_asp_selected_trial_user_notify(Some("1.5"), None, None, None);
+        let no_dates = sub_created_trial_user_notify(Some("1.5"), None, None, None);
         assert!(
             no_dates.contains("After it ends, 1.5 will be auto-charged to convert"),
             "amount without symbol/date still announces conversion: {no_dates}"
@@ -1551,6 +1629,7 @@ mod tests {
             "job-1",
             Some(1_700_000_000),
             Some(1_700_600_000),
+            None,
         );
         assert!(out.starts_with("[Service Closed]"));
         assert!(
@@ -1564,11 +1643,21 @@ mod tests {
             "closed subscriptions do not trigger a rating: {out}"
         );
         // period absent → degrade, no period clause.
-        let bare = sub_close_notify_user_notify("My Sub", "job-1", None, None);
+        let bare = sub_close_notify_user_notify("My Sub", "job-1", None, None, None);
         assert!(
             bare.contains("[Service Closed] \"My Sub\" has ended."),
             "degrade without period: {bare}"
         );
+    }
+
+    #[test]
+    fn sub_close_notify_distinguishes_pre_acceptance_asp_decline() {
+        let out =
+            sub_close_notify_user_notify("My Sub", "job-1", None, None, Some("unsupported region"));
+        assert!(out.contains("ASP declined \"My Sub\" before activation"));
+        assert!(out.contains("ASP reason: unsupported region"));
+        assert!(out.contains("does not by itself confirm that a refund settled"));
+        assert!(!out.contains("refund completed"));
     }
 
     #[test]
