@@ -93,4 +93,9 @@ skills/okx-agent-task-workspace/
 
 output/
 
+
 scripts/dev
+
+.aiide/
+.aiide-preview/
+
