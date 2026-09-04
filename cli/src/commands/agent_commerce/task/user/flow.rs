@@ -253,11 +253,8 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             format!("  onchainos agent refund-prepare {job_id}  # Reconcile the authoritative close result"),
         ],
         Status::Expired => vec![
-            "Task has expired (Expired); refund eligibility cannot be inferred from status alone."
+            "Task is Expired(8), which is terminal. For a paid task, this authoritative status means the backend automatic refund has reached the buyer. For a trial or zero-amount task, no refundable funds existed. Never execute a buyer-side claim or finalization."
                 .to_string(),
-            format!(
-                "  onchainos agent refund-prepare {job_id}  # Query authoritative Refund V2 status"
-            ),
         ],
         Status::AdminStopped => vec![
             "Task has been stopped by admin (AdminStopped). Please contact platform support to find out why.".to_string(),
@@ -374,8 +371,10 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 Event::DisputeResolved => "onchainos agent user-notify (notify evaluation result)",
                 Event::JobRefunded => "onchainos agent user-notify (notify refund complete)",
                 Event::JobAutoRefunded => "onchainos agent user-notify (backend/Refund V2 settlement receipt)",
-                Event::JobAspAcceptExpire | Event::JobAspRejectExpire =>
-                    "onchainos agent user-notify (timeout is non-terminal) → refund-prepare",
+                Event::JobAspAcceptExpire =>
+                    "fresh Expired(8) details → terminal refund result (or terminal no-funds result for trial/zero amount)",
+                Event::JobAspRejectExpire =>
+                    "fresh Failed(9) + durable request-refund provenance → terminal automatic-refund notification",
                 Event::JobAspRejectClosed =>
                     "fresh Closed(7) verification → notify without overclaiming settlement",
                 Event::NegotiateReply =>
@@ -1659,19 +1658,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_expired_is_notification_only_and_cannot_claim_from_local_event_input() {
+    async fn caller_supplied_submit_expired_cannot_claim_terminal_refund() {
         let out = run(
             "submit_expired",
             json!({ "event": "submit_expired", "jobId": JOB_ID }),
         )
         .await;
-        assert!(out.contains("[Submit Deadline Expired]"), "{out}");
-        assert!(out.contains("did not send a refund transaction"), "{out}");
-        assert!(out.contains("refund-prepare"), "{out}");
+        assert!(out.contains("[Expired Task Detail Incomplete]"), "{out}");
+        assert!(out.contains("fresh authoritative Expired(8)"), "{out}");
         assert!(!out.contains("claim-auto-refund"), "{out}");
         assert!(!out.contains("claimAutoRefund"), "{out}");
         assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
         assert!(!out.contains("session-cleanup"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn fresh_submit_expired_confirms_refund_and_ends_session() {
+        let detail = refund_prefetched(8, "12.34");
+        let out = run_with_prefetched(
+            "submit_expired",
+            json!({ "event": "submit_expired", "jobId": JOB_ID }),
+            &detail,
+        )
+        .await;
+        assert!(out.contains("[Auto-Refund Settled]"), "{out}");
+        assert!(out.contains("12.34 USDT"), "{out}");
+        assert!(out.contains("Timeout result"), "{out}");
+        assert!(out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(out.contains("session-cleanup"), "{out}");
+        assert!(!out.contains("claim-auto-refund"), "{out}");
+        assert!(!out.contains("finalize-expired-refund"), "{out}");
     }
 
     #[tokio::test]
@@ -1689,30 +1705,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn job_expired_is_nonterminal_and_routes_to_refund_v2() {
+    async fn caller_supplied_job_expired_cannot_claim_terminal_refund() {
         let out = run(
             "job_expired",
             json!({ "event": "job_expired", "jobId": JOB_ID }),
         )
         .await;
-        assert!(out.contains("refund-prepare"), "{out}");
-        assert!(
-            out.contains("not proof that escrow has been refunded"),
-            "{out}"
-        );
+        assert!(out.contains("[Expired Task Detail Incomplete]"), "{out}");
         assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
         assert!(!out.contains("session-cleanup"), "{out}");
     }
 
     #[tokio::test]
-    async fn asp_accept_expiry_is_nonterminal_and_routes_to_refund_v2() {
+    async fn fresh_job_expired_confirms_refund_and_ends_session() {
+        let detail = refund_prefetched(8, "12.34");
+        let out = run_with_prefetched(
+            "job_expired",
+            json!({ "event": "job_expired", "jobId": JOB_ID }),
+            &detail,
+        )
+        .await;
+        assert!(out.contains("[Auto-Refund Settled]"), "{out}");
+        assert!(out.contains("12.34 USDT"), "{out}");
+        assert!(out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(out.contains("session-cleanup"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn caller_supplied_asp_accept_expiry_cannot_claim_without_fresh_status() {
         let out = run(
             "job_asp_accept_expire",
             json!({ "event": "job_asp_accept_expire", "jobId": JOB_ID }),
         )
         .await;
-        assert!(out.contains("[ASP Acceptance Expired]"), "{out}");
-        assert!(out.contains("refund-prepare"), "{out}");
+        assert!(out.contains("[ASP Acceptance Timeout Detail Incomplete]"), "{out}");
         assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
         assert!(!out.contains("session-cleanup"), "{out}");
         assert!(
@@ -1722,23 +1748,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn asp_reject_expiry_waits_for_backend_final_event_without_claim() {
+    async fn fresh_asp_accept_expiry_confirms_backend_refund() {
+        let detail = refund_prefetched(8, "12.34");
+        let out = run_with_prefetched(
+            "job_asp_accept_expire",
+            json!({ "event": "job_asp_accept_expire", "jobId": JOB_ID }),
+            &detail,
+        )
+        .await;
+        assert!(out.contains("[Refund Task Details]"), "{out}");
+        assert!(out.contains("Current status: Expired (8)"), "{out}");
+        assert!(out.contains("funds have reached your wallet"), "{out}");
+        assert!(out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(out.contains("session-cleanup"), "{out}");
+        assert!(!out.contains("finalize-expired-refund"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn caller_supplied_asp_reject_expiry_cannot_claim_terminal_refund() {
         let out = run(
             "job_asp_reject_expire",
             json!({ "event": "job_asp_reject_expire", "jobId": JOB_ID }),
         )
         .await;
-        assert!(out.contains("[Auto-Refund Processing]"), "{out}");
-        assert!(
-            out.contains("automatic refund settlement is in progress"),
-            "{out}"
-        );
+        assert!(out.contains("[Automatic Refund Detail Incomplete]"), "{out}");
         assert!(out.contains("refund-prepare"), "{out}");
-        assert!(out.contains("job_auto_refunded"), "{out}");
         assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
         assert!(!out.contains("session-cleanup"), "{out}");
         assert!(!out.contains("claim-auto-refund"), "{out}");
         assert!(!out.contains("claimAutoRefund"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn fresh_asp_reject_expiry_remains_failed9_provenance_rule() {
+        let detail = subscription_refund_prefetched(9, "12.34");
+        let out = run_with_prefetched(
+            "job_asp_reject_expire",
+            json!({ "event": "job_asp_reject_expire", "jobId": JOB_ID }),
+            &detail,
+        )
+        .await;
+        assert!(out.contains("[Automatic Refund Settled]"), "{out}");
+        assert!(out.contains("Failed(9)"), "{out}");
+        assert!(out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(out.contains("session-cleanup"), "{out}");
     }
 
     #[tokio::test]

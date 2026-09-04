@@ -49,6 +49,19 @@ Onchainos-skills intentionally does **not** enumerate which DApps are supported 
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 
+## Branch promotion order
+
+For changes that must reach both development branches, always use this order:
+
+1. Commit and push the changes to `codex/a2a-skill-cli-contract` first.
+2. Switch to `codex/dacs-dev` and update it without rewriting remote history.
+3. Merge `codex/a2a-skill-cli-contract` into `codex/dacs-dev`, validate the
+   merged tree, and push `codex/dacs-dev`.
+
+Do not implement or push the shared change to `codex/dacs-dev` first. Preserve
+the merge ancestry between the two branches; do not replace this promotion
+flow with a force push or an `ours` merge that discards source-branch content.
+
 ## Development refresh
 
 When the user asks to "build", "refresh", or "sync" without explicitly naming

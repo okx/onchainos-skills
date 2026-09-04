@@ -327,10 +327,20 @@ the list row itself as a completed refund. When the User asks about the refund,
 run `refund-prepare` and say "refund completed" only for
 `reason=refund_confirmed`. Under the unchanged backend contract, a semantic
 result event (`sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
-`job_auto_refunded`, or `dispute_resolved`) may describe the branch but cannot
-create proof. Polling and restart recovery require durable local Refund V2
-`request-refund` provenance bound to job, Buyer, formal `jobType=1`, exact
-positive original amount, and token address plus fresh Buyer-owned Failed(9).
+`job_auto_refunded`, `job_asp_reject_expire`, or `dispute_resolved`) may
+describe the branch but cannot create proof. Polling and restart recovery for
+subscription Failed(9) require fresh Buyer ownership plus the provenance for
+the established branch: durable local Refund V2 `request-refund` provenance for
+a User-requested or provider refund-decision-timeout path. It binds job, Buyer,
+formal `jobType=1`, exact positive original amount, and token address. Fresh
+Buyer-owned paid non-trial acceptance/delivery Expired(8) is a separate
+terminal contract: it confirms that the refund has arrived without Failed(9),
+Tx Hash, request provenance, or a local observation journal. A direct read
+follows `stop`; a scoped lifecycle/watch event emits the terminal marker and
+cleans up. Offer no Buyer claim/finalize write.
+Trial and zero-amount Expired(8) instead use terminal
+`expired_without_refundable_payment` with `settlement.state=not_required`; do
+not claim fund movement.
 Provider/Service, period, token-symbol, and `paymentMode` fields veto only on a
 two-sided mismatch; absence reduces detail/display only. Event-only Failed(9),
 `sub_failed_notify`, and bare subscription Failed(9) may not prove a refund.

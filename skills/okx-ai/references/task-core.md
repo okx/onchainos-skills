@@ -46,9 +46,8 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
      --agentId <envelope's top-level agentId> \
      --message '<the envelope.message object as a JSON string>'
    ```
-   🛑 Treat the CLI result as authoritative: route structured progression through
-   [`task-action-routing.md`](task-action-routing.md); otherwise execute only the returned script.
-   Never infer behavior or notification content from the envelope.
+   If the result contains `phase`, `decision`, `reason`, `nextAction`, and `payload`, treat it as structured progression: for `job_rejected`, `sub_user_reject`, or any `arbitration_*` phase read the Action routing and Output templates sections in `task-arbitration.md`; otherwise use `task-action-routing.md` and `task-output-templates.md`. Execute a legacy prose result as its returned script.
+   🛑 **For a legacy script result, execute exactly the returned steps in their declared order and stop at the declared boundary.**
    🛑 **Mandatory whenever an `event` field is present** — regardless of session history or any "Read the … skill" / "SKILL.md" wording inside the envelope (that wording does NOT make it a prefetch). Never classify a message that carries `event` as a skill-prefetch or as "no action".
    🛑 `--message` is JSON — inside string values, escape `\n` `\t` `\"` `\\`; no raw newlines.
 2. **a2a-agent-chat** — `msgType == "a2a-agent-chat"` + `jobId`:
@@ -107,13 +106,24 @@ For User-facing refund finality, follow
 [`task-user-refund.md`](task-user-refund.md). Fresh backend chain-projected
 one-time Failed(9), or positive-amount escrow Closed(7), can confirm the refund
 without a Tx Hash. Bare subscription Failed(9) is overloaded with charge
-failure and remains ambiguous. Subscription confirmation instead combines a
-durable local Refund V2 `request-refund` record bound to the same job, Buyer,
-formal `jobType=1` subscription, exact positive original amount, and token
-address with fresh composed detail proving Buyer ownership and Failed(9). Legacy
-events such as `sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
+failure and remains ambiguous. Subscription confirmation instead combines
+fresh Buyer-owned Failed(9) core facts with the provenance for the established
+branch: a durable local Refund V2 `request-refund` record for a User-requested
+or provider refund-decision-timeout path. That provenance binds the same job,
+Buyer, formal `jobType=1` subscription, exact positive original amount, and
+token address. Legacy events such as `sub_asp_agree`,
+`sub_reject_refund_notify`, `job_asp_reject_expire`, `job_refunded`,
 `job_auto_refunded`, and `dispute_resolved` may describe the branch, but cannot
 create proof by themselves. Event-only Failed(9) therefore remains ambiguous.
+Fresh Buyer-owned paid non-trial acceptance/delivery Expired(8), task kind, and
+exact positive original payment independently prove `refund_confirmed`; no
+later Failed(9), Tx Hash, request provenance, or local observation journal is
+required. A scoped lifecycle/watch event emits the terminal marker and cleans
+up without a Buyer claim/finalize write; a direct read follows its returned
+`stop`. Trial and zero-amount Expired(8) are terminal
+`expired_without_refundable_payment` outcomes with
+`settlement.state=not_required`; never claim fund movement. Both terminal
+status-8 results set `rules.providerTimeoutRefundExpected=false`.
 For `dispute_resolved`, both status 6 (ASP wins/no refund) and status 9 (User
 wins/refund) require that same durable local request provenance plus fresh
 composed job type, Buyer ownership, and terminal status; otherwise do not

@@ -9,7 +9,7 @@ and boolean `payload.active`. Missing or invalid fields are a hard stop; never
 guess the subscription from history or run another task list.
 
 Map `payload.status` for display: `-1=INIT`, `1=ACTIVE`, `3=REJECTED`,
-`4=DISPUTED`, `6=COMPLETED`, `7=CLOSED`, and `9=FAILED`. Render any other value
+`4=DISPUTED`, `6=COMPLETED`, `7=CLOSED`, `8=EXPIRED`, and `9=FAILED`. Render any other value
 as `UNKNOWN_<status>`. Use the mapped value as `<statusName>` below without
 changing the payload.
 

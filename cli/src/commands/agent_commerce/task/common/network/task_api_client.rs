@@ -132,6 +132,10 @@ impl TaskApiClient {
         format!("{TASK_PREFIX}/{job_id}/{action}")
     }
 
+    pub fn dispute_list_path(&self, page: u32, page_size: u32) -> String {
+        format!("{TASK_PREFIX}/dispute/my?page={page}&pageSize={page_size}")
+    }
+
     /// `/priapi/v1/aieco/task/broadcast`
     pub fn broadcast_path(&self) -> &'static str {
         const PATH: &str = "/priapi/v1/aieco/task/broadcast";

@@ -6,6 +6,13 @@ This file only covers the content **specific** to the ASP role. Generic rules (e
 
 The task state machine has moved into the CLI (`onchainos agent next-action`) — **you do not need to memorize the steps for every status**. On any system event (chain event / user-decision relay from the user session), call `next-action` and execute its output.
 
+For provider-side `job_asp_reject_expire`, a subscription at Failed(9) is not
+by itself proof that the Buyer received a refund: the same status also covers
+charge or conversion failure, and the replayable event input cannot create
+settlement provenance. Render the CLI's neutral result-unverified notification
+verbatim (or faithfully localized); never upgrade it to refund-complete copy.
+The User-side checkout applies its separate durable request-provenance gate.
+
 ---
 
 ## Deposit-address QR (insufficient-balance — MANDATORY)
@@ -103,6 +110,14 @@ dispatcher, simulator, or hook must not accept the subscription, synthesize a
 deliverable, or send XMTP in response to these events. Such tooling may observe
 state only.
 
+For `job_asp_accept_expire`, `job_expired`, and legacy `submit_expired`, always
+dispatch the CLI's structured result. Fresh provider-owned Expired(8) is
+terminal: notify the ASP from authoritative task fields, then follow the
+returned job-scoped `notify_and_cleanup_subscription` action. Paid non-trial
+tasks state that the backend refund reached the Buyer; trial and zero-amount
+tasks state that no refundable funds existed. Caller event fields, including a
+nonzero caller-supplied code, cannot override a fresh matching Expired(8).
+
 | Event | Action |
 |---|---|
 | `sub_open` | **Run the §1.3 provider decision inside the ASP runtime.** The backend sends this event to both Buyer and ASP after the Buyer's create-subscribe transaction is confirmed. Fetch latest subscription detail, require CREATED, verify the exact registered Service, then return exactly `ACCEPT / NEED_PARAMS / REJECT` and follow [task-asp-accept.md](task-asp-accept.md). |
@@ -112,7 +127,7 @@ state only.
 | `sub_close_notify` | Render the CLI's canonical terminal `Content:` per the language rule below, then follow `session-cleanup`. End turn. |
 | `sub_failed_notify` | The current event/status combination does not carry trustworthy charge-failure cause provenance. Fail closed: render only the CLI's incomplete/read-only result, emit no terminal marker, and do not run `session-cleanup`. Only a CLI result that independently establishes trustworthy cause provenance may use the canonical terminal charge-failure copy. End turn. |
 | `sub_asp_agree` / `sub_asp_dispute` | **ASP's own action (agree refund / open a dispute) — no ASP-side push. Silently ignore. End turn.** Owned by the action-command flows (`subscribe-agree-refund` / `subscribe-dispute`), not this notification path. |
-| `sub_user_reject` | **Decision — NOT display-only, do NOT ignore.** The buyer rejected the current period. Call `next-action --role asp`; the CLI returns a `pending-decisions-v2 request-prompt` decision (A = file a dispute for evaluation / B = confirm the refund — ASP-3 copy: `[Action Needed: User Rejection]` with the rejected period, the precise response deadline `{rejectWindowEndsAt}`, and the auto-refund amount). Push that decision to the user per the returned guidance. Limited window (~1 day); if it lapses the backend auto-refunds the period in full. After the user picks, the relay maps to `sub_dispute` → `subscribe-dispute` / `sub_agree_refund` → `subscribe-agree-refund`. |
+| `sub_user_reject` | Read `task-arbitration.md` and use its unified A/B decision contract. |
 | `sub_cancel` / `sub_trial_into_active` | **Not handled on the ASP side in this slice — silently ignore. End turn.** Buyer-only. |
 | `sub_renew` | Renewal → the **previous period's income is now claimable**. Run `onchainos agent subscribe-asp-claim <jobId> --agent-id <yours>` (claims your own funds — no buyer action, do not send a peer message), then push a short localized note via `onchainos agent user-notify`; if the CLI reports nothing claimable, end the turn silently. |
 
