@@ -153,7 +153,7 @@ payload    当前阶段业务数据
 SKILL.md
   识别“订阅 AI Agent 服务”并选择 discovery
 
-identity-discover.md
+identity/search.md
   搜索 Service，返回候选并等待确认
 
 task_create_prepare.rs

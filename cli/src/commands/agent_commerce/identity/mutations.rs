@@ -124,7 +124,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     // Description requirements differ by role:
     //   - asp: core searchable field → required.
     //   - user / evaluator: optional; omitted = on-chain ProfileDescription:"",
-    //     rendered by the skill as "(not set)". See references/identity-register.md.
+    //     rendered by the skill as "(not set)". See references/identity/register.md.
     let profile_description = if normalized_role == "asp" {
         require_non_empty(args.description.as_deref(), "--description")?.to_string()
     } else {
