@@ -312,9 +312,13 @@ pub(crate) async fn handle_task_create_prepare(
         return Ok(());
     }
 
+    let service = normalize_service(service);
+
     // Match create-subscribe's write-boundary source and status policy. The
     // Service detail isSubscribing flag may omit settlement-pending EXPIRED(8)
-    // rows that still block duplicate creation.
+    // rows that still block duplicate creation. Normalize first because the
+    // raw service-detail response exposes subscription[] rather than the
+    // derived supportSubscription field.
     let duplicate_subscription =
         if service.get("supportSubscription").and_then(Value::as_bool) == Some(true) {
             let existing_subscriptions =
@@ -327,7 +331,6 @@ pub(crate) async fn handle_task_create_prepare(
         } else {
             None
         };
-    let service = normalize_service(service);
     if let Some(existing) = duplicate_subscription.as_ref() {
         emit(
             PHASE_SUBSCRIPTION_VALIDATION,
@@ -483,11 +486,18 @@ mod tests {
 
     #[test]
     fn expired_buyer_subscription_blocks_when_service_detail_says_not_subscribing() {
-        let service = json!({
+        let raw_service = json!({
             "serviceId": "svc-expired",
-            "supportSubscription": true,
-            "isSubscribing": false
+            "serviceType": "A2A",
+            "serviceDescription": "Monthly signals",
+            "subscription": [{"fee": 1, "interval": "month"}],
+            "supportTrial": true,
+            "freeTrial": 72,
+            "isSubscribing": false,
+            "feeToken": "0xtoken",
+            "feeTokenSymbol": "USDT"
         });
+        let service = normalize_service(raw_service);
         let summaries = vec![super::super::subscription_ops::ExistingSubscriptionSummary {
             job_id: "job-expired".to_string(),
             service_id: "svc-expired".to_string(),
@@ -502,6 +512,7 @@ mod tests {
             .expect("duplicate lookup")
             .expect("expired subscription must block");
 
+        assert_eq!(service["supportSubscription"], true);
         assert_eq!(existing.job_id, "job-expired");
         assert_eq!(existing.status, 8);
         assert!(!existing.active);
