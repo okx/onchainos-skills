@@ -514,6 +514,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::ListAttachments { .. } => "list-attachments".into(),
         AgentCommand::MySubscriptions { .. } => "my-subscriptions".into(),
         AgentCommand::MyTasks { .. } => "my-tasks".into(),
+        AgentCommand::SubscriptionList { .. } => "subscription-list".into(),
+        AgentCommand::TaskVisibilityUpdate { .. } => "task-visibility-update".into(),
         AgentCommand::SubscribeDetail { .. } => "subscribe-detail".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
         AgentCommand::AspClaimable { .. } => "asp-claimable".into(),
