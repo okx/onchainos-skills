@@ -4,6 +4,10 @@ const ARBITRATION_REFERENCE: &str =
     include_str!("../../skills/okx-ai-v2/references/a2a/provider/arbitration.md");
 const TASK_INTENT_ROUTING: &str =
     include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
+const PROVIDER_ROUTER: &str =
+    include_str!("../../skills/okx-ai-v2/references/a2a/provider/router.md");
+const PROVIDER_JOB: &str =
+    include_str!("../../skills/okx-ai-v2/references/a2a/provider/job.md");
 const OKX_AI_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
 const ARBITRATION_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/arbitration.rs");
 const PENDING_V2_SOURCE: &str =
@@ -99,15 +103,17 @@ fn arbitration_actions_have_one_domain_registry() {
 
 #[test]
 fn task_and_arbitration_query_intents_use_distinct_commands() {
-    assert!(TASK_INTENT_ROUTING
+    assert!(PROVIDER_JOB
         .contains("onchainos agent tasks --agent-id <aspAgentId> --page 1 --limit 20"));
-    assert!(!TASK_INTENT_ROUTING.contains(
+    assert!(!PROVIDER_JOB.contains(
         "onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20"
     ));
     assert!(OKX_AI_SKILL.contains("references/a2a/user/router.md"));
-    assert!(TASK_INTENT_ROUTING.contains("哪些可以仲裁"));
-    assert!(TASK_INTENT_ROUTING.contains("`which tasks can I arbitrate`"));
-    assert!(TASK_INTENT_ROUTING.contains("../provider/arbitration.md#rejected-candidates"));
+    assert!(!TASK_INTENT_ROUTING.contains("../provider/"));
+    assert!(PROVIDER_ROUTER.contains("List existing tasks for an ASP"));
+    assert!(PROVIDER_ROUTER.contains("哪些可以仲裁"));
+    assert!(PROVIDER_ROUTER.contains("`which tasks can I arbitrate`"));
+    assert!(PROVIDER_ROUTER.contains("`arbitration.md`"));
     assert!(ARBITRATION_REFERENCE.contains(
         "onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20"
     ));

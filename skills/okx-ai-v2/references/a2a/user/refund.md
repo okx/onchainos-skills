@@ -14,6 +14,10 @@ Cancellation and refund are different:
 - a User cannot open arbitration directly from this flow. A submitted refund
   request first waits for the ASP to agree or dispute.
 
+If the wording could mean either cancelling future subscription renewal or
+returning paid funds, ask which outcome the Buyer wants before running a CLI
+command.
+
 The CLI is authoritative for Buyer ownership, task type, state, payment, and
 available actions. In every successful Refund V2 command response, the `data`
 object must contain exactly `phase`, `decision`, `reason`, `nextAction`, and
@@ -266,4 +270,3 @@ marker or clear recovery state merely because time passed.
 - For `watch_task`, read [`../../runtime/watch.md`](../../runtime/watch.md) and preserve scope.
 - For cancellation without a request to return funds, use
   [`playbook.md`](playbook.md).
-

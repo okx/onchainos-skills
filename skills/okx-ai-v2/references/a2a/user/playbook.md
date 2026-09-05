@@ -39,21 +39,11 @@ communication rules; it does not match free-text user intents.
 
 ---
 
-## User Intent Routing
+## Free-text entry
 
-> When the user-session receives free-form text targeting a specific task and no pending decision matches, load [`router.md`](router.md) and follow its routing flow.
-
-| Intent | Trigger examples | Route to |
-|---|---|---|
-| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`../../identity/search.md`](../../identity/search.md) commissioning search, then route the `task-create-prepare` response's `data.decision` and `data.nextAction` through [`../../shared/task-action-routing.md`](../../shared/task-action-routing.md); do not read `data.action` from that response |
-| Add attachment / image | "attach a file/image to a task" | [`actions.md`](actions.md) §2 |
-| Stop task | "stop task / close task" | [`actions.md`](actions.md) §3 |
-| View deliverables | "view / list deliverables" | [`actions.md`](actions.md) §4 |
-| Refund, paid-deliverable rejection, or refund progress | "refund / get my money back / apply for refund / reject paid delivery / refund status / refund arbitration" | [`refund.md`](refund.md); do not route through disabled legacy close/reject/subscribe-reject/claim-auto-refund commands |
-| Other subscription task ops | "auto-renew / trial cancel / subscription charge / subscription cost" | §Subscription below |
-| Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
-| Re-submit / nudge | "re-submit / nudge" | [`router.md`](router.md) |
-| Task list / status / close / decision list | "my tasks / view decisions / close task" | [`router.md`](router.md) |
+Free-text Buyer intents enter through [`router.md`](router.md). Once this
+playbook is selected, follow only the chosen task-list or Subscription section;
+route a new unrelated intent from `SKILL.md` again.
 
 ---
 
@@ -227,7 +217,18 @@ separate flow; execute only actions returned by Refund V2.
 
 ## Unified My Tasks
 
-Routing entry: [`router.md` §Task list](router.md#task-list--what-am-i-working-on).
+Run one initial read with independently selected filters:
+
+```bash
+onchainos agent my-tasks --task-type <type> --status-type <status> --page 1
+```
+
+| Parameter | User intent → value |
+|---|---|
+| `<type>` | all → `all`; subscription → `subscription`; one-time → `one-time` |
+| `<status>` | all → `0`; active → `1`; ended → `2` |
+
+`all my tasks` means the caller's own tasks; there is no public task pool.
 
 ### Response contract (non-negotiable)
 
