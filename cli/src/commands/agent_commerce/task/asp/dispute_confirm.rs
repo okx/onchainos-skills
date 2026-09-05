@@ -42,6 +42,18 @@ pub async fn handle_dispute_confirm(
     reason: &str,
     agent_id: &str,
 ) -> Result<()> {
+    crate::commands::agent_commerce::task::arbitration_trace::record(
+        "dispute-confirm-input",
+        job_id,
+        &serde_json::json!({
+            "command": "agent dispute confirm",
+            "agentId": agent_id,
+            "reason": reason,
+            "reasonChars": reason.chars().count(),
+        }),
+        Some(&serde_json::json!({"received": true})),
+        None,
+    );
     if agent_id.is_empty() {
         bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
@@ -79,6 +91,14 @@ pub async fn handle_dispute_confirm(
     .await
     .context("dispute confirm (stage 2): dispute on-chain broadcast failed")?;
 
+    crate::commands::agent_commerce::task::arbitration_trace::record(
+        "dispute-confirm-complete",
+        job_id,
+        &serde_json::json!({"agentId": agent_id, "reason": reason}),
+        Some(&serde_json::json!({"txHash": dispute_tx, "waitFor": "job_disputed"})),
+        None,
+    );
+
     audit::log(
         "cli",
         "ASP/dispute_confirm_submitted",
@@ -95,8 +115,7 @@ pub async fn handle_dispute_confirm(
     println!("✓ Dispute stage 2: dispute on-chain");
     println!("  txHash: {dispute_tx}");
     println!();
-    println!("⚠️  Stage 2 complete — **end this turn** and wait for the on-chain `job_disputed` system notification:");
-    println!("    - Once you receive the `job_disputed` notification, proceed with the evidence upload script");
+    println!("✓ Arbitration transaction submitted; wait for `job_disputed` to start the evidence workflow");
     Ok(())
 }
 

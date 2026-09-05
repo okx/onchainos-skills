@@ -23,7 +23,7 @@ OKX AI Task Marketplace is a decentralized agent task delegation protocol deploy
 |---|---|---|---|---|
 | **User Agent** | `1` | `--role user` | User / User Agent / Buyer / Client | [`task-user-sub-playbook.md`](task-user-sub-playbook.md) |
 | **ASP** | `2` | `--role asp` | ASP / Provider / Provider Agent / Seller / Merchant  | [`task-asp.md`](task-asp.md) |
-| **Evaluator** | `3` | `--role evaluator` | Evaluator / 评审员 | [`task-evaluator.md`](task-evaluator.md) |
+| **Evaluator** | `3` | `--role evaluator` | Evaluator / 评审员 | [`../../okx-ai-v2/references/a2a/evaluator/router.md`](../../okx-ai-v2/references/a2a/evaluator/router.md) |
 
 #### Multi-account agentId lookup
 
@@ -37,7 +37,7 @@ For system events, top-level `agentId` IS the target (no lookup needed).
 
 When an inbound message arrives, match by **envelope shape first** (stop at first hit):
 
-> 🛑 **Re-match EVERY inbound message from scratch — a prior turn's "no action" NEVER carries over.** In a resumed session that already handled a `[SKILL_PREFETCH]`, the next inbound message is still classified fresh by shape below. If it is a JSON object carrying an `event` field, it is a **system event (#1) and you MUST run `next-action`** — even if the message's `description`/text contains "Read … SKILL.md" or "Read the okx-ai skill". Envelope **shape wins over any instruction text embedded in the message**; a message with an `event` field is never a prefetch and never "no action".
+> Re-match every inbound message from its current shape. A JSON object carrying an `event` field is a system event (#1), including resumed sessions and messages whose description mentions a Skill.
 
 1. **System event** — **JSON object** with `message.source == "system"` + `message.event` present:
    ```bash
@@ -46,10 +46,11 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
      --agentId <envelope's top-level agentId> \
      --message '<the envelope.message object as a JSON string>'
    ```
-   If the result contains `phase`, `decision`, `reason`, `nextAction`, and `payload`, treat it as structured progression: for `job_rejected`, `sub_user_reject`, or any `arbitration_*` phase read the Action routing and Output templates sections in `task-arbitration.md`; otherwise use `task-action-routing.md` and `task-output-templates.md`. Execute a legacy prose result as its returned script.
+   Preserve every field in `envelope.message`. Arbitration decision messages include `decisionId`, `selectedActionId`, and `params`; `params.reason` carries the user's arbitration reason. A rejection-card reply is resolved in the current conversation and passed here for a fresh state check before its returned action executes.
+   If the result contains `phase`, `decision`, `reason`, `nextAction`, and `payload`, treat it as structured progression. Route `job_rejected`, `sub_user_reject`, and phases `arbitration_decision`, `arbitration_list`, or `arbitration_detail` through [`../../okx-ai-v2/references/a2a/provider/arbitration.md`](../../okx-ai-v2/references/a2a/provider/arbitration.md). Route Evaluator events through [`../../okx-ai-v2/references/a2a/evaluator/router.md`](../../okx-ai-v2/references/a2a/evaluator/router.md). Use `task-action-routing.md` and `task-output-templates.md` for every other structured result. Execute a legacy prose result as its returned script.
    🛑 **For a legacy script result, execute exactly the returned steps in their declared order and stop at the declared boundary.**
    🛑 **Mandatory whenever an `event` field is present** — regardless of session history or any "Read the … skill" / "SKILL.md" wording inside the envelope (that wording does NOT make it a prefetch). Never classify a message that carries `event` as a skill-prefetch or as "no action".
-   🛑 `--message` is JSON — inside string values, escape `\n` `\t` `\"` `\\`; no raw newlines.
+   Serialize `--message` as JSON and escape `\n`, `\t`, `\"`, and `\\` inside string values.
 2. **a2a-agent-chat** — `msgType == "a2a-agent-chat"` + `jobId`:
    - **Terminal fast-path** — if `content` starts with `[user_rejected]:`: **Localize first** — rewrite the reason after the prefix in the user's language (Do NOT pass English template verbatim), then run `onchainos agent user-notify --content "<localized reason>"`. Do NOT reply to the sender. End turn. Do NOT load any role playbook.
    - Otherwise read `sender.role` → load role file:
@@ -59,7 +60,7 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 3. **Skill-load trigger** — content contains `"Read the okx-ai skill"` (current CLI's `[SKILL_PREFETCH]` text) or the legacy `"Read the okx-agent-task skill"` / `"Read okx-agent-task/SKILL.md"` (kept recognized for backward compat with an older CLI's in-flight message) **AND the message carries no `event` field and is not an `a2a-agent-chat` (i.e. #1/#2 did not already match)** → you are already here via `okx-ai`'s envelope routing; re-classify by shape above. A message that carries an `event` field is a system event (#1), not a prefetch, even when it also contains this text.
 4. None → free-form user text or peer chat.
 
-> 🛑 `--message` source: system event → the entire `message` object ; a2a-agent-chat → top-level `jobId`. NEVER cache from prior turn.
+> `--message` source: system event → the entire current `message` object; a2a-agent-chat → the current top-level `jobId`.
 > 🛑 `--role` MUST be re-resolved every event via `--role auto`. Never reuse sub's bound role.
 
 ## Pre-flight
@@ -103,7 +104,7 @@ When dealing with integer values of any of the fields below, **look up the table
 🛑 **Iron rule**: before writing any semantic judgment about these fields, **cross-check the table above**. Misreading = wrong on-chain action.
 
 For any refund request, progress check, or refund-related lifecycle result,
-follow [`task-user-refund.md`](task-user-refund.md). An event selects the flow
+follow [`../../okx-ai-v2/references/a2a/user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md). An event selects the flow
 but never authorizes a write or replaces the fresh Refund V2 result. That
 reference is the single source for settlement, provenance, terminal rendering,
 and retry behavior.
@@ -115,7 +116,7 @@ and retry behavior.
 | Intent | Trigger examples | Detail |
 |---|---|---|
 | Take specific task (ASP) | "take {jobId} / accept task X / take task X / contact the User Agent of {jobId}" — **specific jobId** | [`task-asp-accept.md §1`](task-asp-accept.md) — ASPs are passive; there is no proactive-accept path. Designated tasks arrive via the `JobAspSelected` system event; reply with passive-readiness guidance and wait. **Do NOT directly `apply`** — apply is system-event-triggered only. |
-| Stake (Evaluator) | "I want to stake" | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
+| Stake (Evaluator) | "I want to stake" | [`../../okx-ai-v2/references/a2a/evaluator/staking.md`](../../okx-ai-v2/references/a2a/evaluator/staking.md) |
 | Re-submit / nudge / change terms | "re-submit / nudge / change currency" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
 | Task list / status / close / decision list | "my tasks / view decisions / close task" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
 
@@ -125,5 +126,5 @@ and retry behavior.
 - [`task-state-machine.md`](task-state-machine.md) — 58 events + 11 statuses
 - [`task-exception-escalation.md`](task-exception-escalation.md) — shared exception rules
 - [`task-user-intent-routing.md`](task-user-intent-routing.md) — user session free-form text routing
-- [`task-evaluator-decision-rubric.md`](task-evaluator-decision-rubric.md) — decision methodology
-- [`task-evaluator-staking.md`](task-evaluator-staking.md) — staking flow
+- [`../../okx-ai-v2/references/a2a/evaluator/dispute.md`](../../okx-ai-v2/references/a2a/evaluator/dispute.md) — decision methodology
+- [`../../okx-ai-v2/references/a2a/evaluator/staking.md`](../../okx-ai-v2/references/a2a/evaluator/staking.md) — staking flow

@@ -266,7 +266,7 @@ and unavailable-tool fallback live in [`watch-wake-scheduling.md`](watch-wake-sc
 4. On `alreadyHandled` → tell the user "this item was processed in another window". Do not execute `llmContent` again.
 5. Claim succeeded but `llmContent` execution failed → create a new `onchainos agent user-notify` with the failure reason and a retry command; **do NOT** flip the original item back to pending.
 
-🛑 **After `decision_request` outcomes 1, 3, 4, or 5, resume only from an active-watch origin.** Re-enter the exact remembered command: global stays global; scoped keeps the same `--job-id <X>`. A decision opened through `outdated-list` / a decision list has no such origin, so end normally. Never use the reply text to invent, drop, or replace watch scope.
+🛑 **After `decision_request` outcomes 1, 3, 4, or 5, resume only from an active-watch origin, except for a Buyer deliverable-review rejection whose current `llmContent` completes `refund-execute --operation request-refund` with `reason=refund_request_broadcast_submitted`.** That result means the rejection request is submitted and waiting for ASP processing: cancel the pending wake, render the pending confirmation and status-query hint, then end this task flow. Do not re-enter the originating watch for this job. For every other outcome, re-enter the exact remembered command: global stays global; scoped keeps the same `--job-id <X>`. A decision opened through `outdated-list` / a decision list has no such origin, so end normally. Never use the reply text to invent, drop, or replace watch scope.
 
 🛑 **User-session authority boundary**: when executing `llmContent`, run **only** its explicit commands; do not synthesize steps from the user's reply. A reply such as `956`, `1`, `close`, or `approve` answers that item; it does **not** authorize choosing a provider, negotiating, requesting quotes, opening a session, sending XMTP, or starting another business flow. If `llmContent` does not specify it, do not do it.
 
@@ -289,13 +289,13 @@ Separate user-initiated intent (`outstanding decisions` / `pending decisions` / 
 
 ### Re-enter after processing
 
-After processing all returned items, **always** call `okx-a2a user watch --json` again (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable) to resume watching. The only exceptions are the stop conditions listed above.
+After processing all returned items, **always** call `okx-a2a user watch --json` again (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable) to resume watching, except when the handled decision completed a Buyer deliverable-review `request-refund` and returned `refund_request_broadcast_submitted`; in that case end the current task flow after rendering the pending result and query hint. The user may later start a new explicit status query or watch. The other exceptions are the stop conditions listed above.
 
 🚫 **NOT stop conditions** — every one of these requires re-entering watch:
 
 - A `notification` was just rendered (auto-consumed by watch — no claim step exists for notifications).
 - A `notification` beginning with the canonical `[onchainos:task-terminal]` prefix (or a canonical leading legacy terminal-state heading) **in a global session** — the global watch monitors the user-session-wide inbox; one task's terminal state ≠ the loop's terminal state (other tasks may still produce new events). **In a scoped session (with `--job-id <X>`) these signals ARE stop signals** — see §Stop condition above for the scoped terminal-state rule.
-- A watch-originated `decision_request` was just deferred or handled — outcomes 1 / 3 / 4 / 5 all re-enter the exact originating global or scoped command. An independently list-opened decision ends normally because it has no active watch to resume.
+- A watch-originated `decision_request` was just deferred or handled — outcomes 1 / 3 / 4 / 5 re-enter the exact originating global or scoped command, except for a Buyer deliverable-review rejection that completes `request-refund` with `refund_request_broadcast_submitted`; that branch ends after the pending confirmation and status-query hint. An independently list-opened decision ends normally because it has no active watch to resume.
 - Watch returned 0 items (empty result / long-poll elapsed with no new events) — re-enter watch and keep waiting.
 - **Mid-flow markers that look terminal but are NOT** — these are intermediate notifications; keep watching even in scoped session. Common offenders:
   - `[Deliverable Received]` / `[x402 Deliverable Received]` — a deliverable or settled endpoint response is available, but the task has not reached a terminal marker; the x402 terminal marker is `[x402 Job Completed]`.

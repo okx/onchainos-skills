@@ -71,6 +71,10 @@ fn skill_confirmation_templates_never_expose_execution_configuration() {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
+    let playbook_contract = USER_PLAYBOOK
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for forbidden_row in [
         "| Signal Execution |",
         "| Per-Signal Amount |",
@@ -89,14 +93,15 @@ fn skill_confirmation_templates_never_expose_execution_configuration() {
     assert!(PUBLISH_ACTIONS.contains("--guide-consent-json"));
     assert!(!PUBLISH_ACTIONS.contains("`--autotrade-*` arguments"));
     assert!(publish_contract.contains("that returned form is the sole field authority"));
-    assert!(publish_contract
-        .contains("Appendix A is only a fallback render contract for a direct route"));
-    assert!(USER_PLAYBOOK
+    assert!(publish_contract.contains(
+        "Appendix A is only a fallback render contract for a direct route"
+    ));
+    assert!(playbook_contract
         .contains("derives and locally validates a projection from the selected service Guide"));
     assert!(USER_PLAYBOOK.contains("ASP supplies Guide text only"));
     assert!(!USER_PLAYBOOK.contains("Signal handling mode"));
     assert!(!USER_PLAYBOOK.contains("autoTradeConfigRequested"));
-    assert!(USER_PLAYBOOK.contains(
+    assert!(playbook_contract.contains(
         "its returned confirmation form is the sole field authority; never merge fields"
     ));
 }
@@ -131,6 +136,27 @@ fn refund_v2_requires_a_user_authored_reason_and_explicit_confirmation() {
     assert!(contract.contains("refund-execute"));
     assert!(contract.contains("--confirm"));
     assert!(USER_PLAYBOOK.contains("refund.md"));
+}
+
+#[test]
+fn deliverable_review_b_reason_is_the_scoped_direct_rejection_confirmation() {
+    let refund_contract = USER_REFUND.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(USER_REFUND.contains(
+        "B` together with a non-blank\n\
+User-authored reason is the User's final confirmation"
+    ));
+    assert!(USER_REFUND.contains("Handle this reply in the current user conversation"));
+    assert!(USER_REFUND.contains("refund_request_confirmation_required"));
+    assert!(USER_REFUND.contains("returned `nextAction.id=submit_refund_request`"));
+    assert!(USER_REFUND.contains("owns reason extraction, fresh preparation, execution, and"));
+    assert!(USER_REFUND.contains("give one concise localized\nconfirmation"));
+    assert!(refund_contract.contains("Describe it as submitted rather than settled"));
+    assert!(USER_REFUND.contains(
+        "onchainos agent status <jobId> --agent-id <buyerAgentId>"
+    ));
+    assert!(USER_REFUND.contains("a reason\nreceived outside that active card remains input only"));
+    assert!(REFUND_ACTION_ROUTING.contains("active deliverable-review"));
+    assert!(REFUND_OUTPUT_TEMPLATES.contains("active deliverable-review"));
 }
 
 #[test]

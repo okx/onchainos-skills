@@ -168,10 +168,12 @@ event handling, and terminal behavior are defined in
 |---|---|
 | `refund_target_required` | Ask the User to select exactly one buyer-owned `jobId`. |
 | `refund_reason_required`, `refund_reason_too_long` | Ask only for a non-blank User-authored reason within `payload.input.reasonMaxChars`. |
-| `direct_refund_confirmation_required`, `refund_request_confirmation_required` | Render the confirmation contract below and the returned write action. |
+| `direct_refund_confirmation_required` | Render the confirmation contract below and the returned write action. |
+| `refund_request_confirmation_required` | In an active deliverable-review flow, `B` plus a non-blank User-authored reason proceeds with the freshly returned `submit_refund_request` action. Every other flow renders the confirmation contract below and the returned write action. |
 | `zero_amount_close_confirmation_required`, `trial_subscription_not_refundable` | Explain the exact non-refund effect and render only the returned choices; any write still requires explicit selection. |
 | `refund_execution_confirmation_required` | Render the complete currently prepared action and its exact payment or non-payment effect, then wait for explicit selection. |
-| `zero_amount_close_broadcast_submitted`, `refund_broadcast_submitted`, `refund_request_broadcast_submitted`, `trial_conversion_cancel_broadcast_submitted` | Render the corresponding post-submit contract as pending. A close or trial conversion cancellation must not be described as a refund. |
+| `refund_request_broadcast_submitted` | Render the rejection/refund request as pending, tell the User that the ASP needs time to process it, provide the task-status query hint, and end the turn. Do not start or resume `watch_task` automatically. |
+| `zero_amount_close_broadcast_submitted`, `refund_broadcast_submitted`, `trial_conversion_cancel_broadcast_submitted` | Render the corresponding post-submit contract as pending. A close or trial conversion cancellation must not be described as a refund. |
 | `provider_response_pending`, `arbitration_in_progress`, `refund_operation_pending_reconciliation`, `refund_outcome_unknown` | Show the returned pending state and read-only next actions. Do not imply settlement or suggest a retry. |
 | `refund_confirmed` | Render the confirmed settlement contract below. |
 | `expired_without_refundable_payment`, `trial_subscription_closed_without_refund`, `zero_amount_task_closed`, `refund_not_approved_or_task_completed`, `task_closed_no_new_refund_action` | Render the returned terminal or closed state and state whether funds moved. Never use refund-complete copy for a no-refund result. |
@@ -255,7 +257,9 @@ only returned facts and actions.
 
 Write actions (`cancel_trial_conversion`, `close_zero_price`,
 `execute_direct_refund`, `submit_refund_request`) always require explicit
-selection, even when only one write is offered.
+selection, even when only one write is offered. An active deliverable-review
+`B` plus a non-blank User-authored reason is that selection for its freshly
+prepared `submit_refund_request` action.
 
 ## `task_create_prepare` phase mapping
 

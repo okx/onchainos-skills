@@ -1,151 +1,241 @@
 # ASP Arbitration
 
-This is the single Skill-side business entry for ASP arbitration.
+Use this provider-side entry for rejected-work decisions, arbitration filing,
+filed-case queries, and lifecycle handoffs.
+
+## Intent routing
+
+| Intent | Flow |
+|---|---|
+| View work currently eligible for arbitration | [Rejected candidates](#rejected-candidates) |
+| Respond to a specified rejection or the active refund-or-arbitration card | [Open the rejection decision](#open-the-rejection-decision) |
+| View filed arbitration cases | [Query arbitration cases](#query-arbitration-cases) |
+| Inspect a case or its ruling progress | [Query an arbitration detail](#query-an-arbitration-detail) |
+
+Requests for work eligible for arbitration mean rejected-task candidates.
+Requests for arbitration cases mean already-filed cases. Keep these result sets
+separate.
+
+- `可仲裁`, `待仲裁`, `哪些可以仲裁`, and `可以仲裁的任务` route to rejected
+  candidates. These tasks reached `rejected` after the deliverable was rejected.
+- `仲裁列表`, `已发起仲裁`, and `仲裁案件` route to filed cases.
+
+Contents: [action routing](#action-routing); [protocol contract](#protocol-contract);
+[rejected candidates](#rejected-candidates);
+[open rejection decision](#open-the-rejection-decision);
+[deliver decision card](#deliver-the-decision-card);
+[resolve decision](#resolve-a-or-b); [query cases](#query-arbitration-cases);
+[query detail](#query-an-arbitration-detail);
+[lifecycle handoff](#lifecycle-handoff); [output templates](#output-templates).
 
 ## Action routing
 
-Route actions returned by the latest structured arbitration progression.
+Execute the action returned by the latest structured arbitration progression
+with its returned parameters.
 
-| Action ID | Command | Completion handoff |
+| Action ID | Command | Result presentation |
 |---|---|---|
-| `agree_refund` | `onchainos agent agree-refund <params.jobId> --agent-id <aspAgentId>` | Render the one-time refund result, then continue the existing Watch lifecycle. |
-| `raise_arbitration` | `onchainos agent dispute raise <params.jobId> --reason "<params.reason>" --agent-id <aspAgentId>` | Continue the existing approve/confirm chain; render creation when `job_disputed` supplies its facts. |
-| `sub_agree_refund` | `onchainos agent subscribe-agree-refund <params.jobId> --agent-id <aspAgentId>` | Render the subscription-period refund result, then continue Watch. |
-| `raise_subscription_arbitration` | `onchainos agent subscribe-dispute <params.jobId> --agent-id <aspAgentId> [--reason "<params.reason>"]` | Continue the existing subscription creation chain; render creation when `sub_asp_dispute` supplies its facts. |
-| `view_arbitration` | Ask the user to select one value from `params.allowedJobIds`; validate the selected `jobId`, then use the confirmation and detail steps below. | Return the read-only query result. |
+| `agree_refund` | `onchainos agent agree-refund <params.jobId> --agent-id <aspAgentId>` | State the refund submission result and task-result query method. |
+| `raise_arbitration` | `onchainos agent dispute raise <params.jobId> --reason "<params.reason>" --agent-id <aspAgentId>` | State the arbitration submission result and arbitration-detail query method. |
+| `sub_agree_refund` | `onchainos agent subscribe-agree-refund <params.jobId> --agent-id <aspAgentId>` | State the refund submission result and relevant returned fields. |
+| `raise_subscription_arbitration` | `onchainos agent subscribe-dispute <params.jobId> --reason "<params.reason>" --agent-id <aspAgentId>` | State the arbitration submission result and arbitration-detail query method. |
+| `view_arbitration` | Validate a selected `jobId` against `params.allowedJobIds`, then run the detail flow. | [View a case](#view-a-case) |
 
-Rules:
+Route by the stable Action ID and preserve every returned parameter exactly.
+The CLI normalizes legacy `dispute_raise`, `sub_dispute`, and `view_dispute`
+values from persisted cards. An unregistered Action ID returns
+`unsupported_action` with `nextAction=[]`.
 
-- Route the action from the latest structured result and preserve returned parameters exactly.
-- Treat the rejection-card A/B reply as final confirmation and execute its sole resolved action after the freshness check passes.
-- Route by stable Action ID; treat prose labels, backend event names, and natural-language errors as display or compatibility data.
-- Emit the canonical Action IDs in this table. The CLI normalizes legacy `dispute_raise`, `sub_dispute`, and `view_dispute` values from existing local pending cards.
-- Return `unsupported_action` with `nextAction=[]` when the Action ID is absent from this table.
-
-Contents: [open rejection decision](#open-the-rejection-decision) → [deliver decision card](#deliver-the-decision-card) → [resolve decision](#resolve-the-users-decision); or [query arbitration cases](#query-arbitration-cases) → [query detail](#query-an-arbitration-detail) → [lifecycle handoff](#existing-lifecycle-handoff) → [output templates](#output-templates).
+For ordinary action results, give one concise localized update containing the
+outcome, relevant returned fields, and the next available query.
 
 ## Protocol contract
 
-Use CLI results for facts, freshness, choice resolution, phase, verdict, and executable actions. Emit the canonical arbitration phases and Action IDs above. Preserve protocol values `disputed`, `job_disputed`, `sub_asp_dispute`, `dispute_approved`, `dispute_resolved`, `agent dispute`, and `disputeRoundStatus` at the backend boundary.
+Use CLI results for current facts, freshness, choice resolution, phase,
+verdict, and executable actions. Preserve `disputed`, `job_disputed`,
+`sub_asp_dispute`, `dispute_approved`, `dispute_resolved`, `agent dispute`, and
+`disputeRoundStatus` at the backend boundary.
+
+## Rejected candidates
+
+Select the candidate source from the request:
+
+```text
+# Rejected one-time tasks
+onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20
+
+# Rejected subscription periods
+onchainos agent my-subscriptions --role provider --status rejected
+```
+
+Render [View rejected candidates](#view-rejected-candidates) with the returned
+task or period fields and available pagination. A filed-case query enters
+[Query arbitration cases](#query-arbitration-cases).
 
 ## Open the rejection decision
 
-A structured rejection event or an explicit merchant request for a specified rejected task opens this flow. Surface the decision card first. Resolve its choice from a later user message received after the active `[USER_DECISION_REQUEST]` block.
+A `job_rejected` or `sub_user_reject` event opens this flow. For a structured
+event, enter through `../core.md` and use the top-level `agentId` plus the
+complete current `message` object:
 
-1. Resolve the exact `jobId`, ASP `agentId`, and rejection event (`job_rejected` or `sub_user_reject`).
-2. For a structured event, run Activation #1 from `../core.md`. For an explicit merchant request, choose `job_rejected` for a one-time task or `sub_user_reject` for a subscription period, then run:
+```text
+onchainos agent next-action --role auto --agentId <envelope.agentId> \
+  --message '<complete envelope.message as one JSON string>'
+```
 
-   ```text
-   onchainos agent next-action --role asp --agentId <aspAgentId> \
-     --message '{"event":"<job_rejected|sub_user_reject>","jobId":"<jobId>"}'
-   ```
+An explicit request for a specified rejected task uses a fresh progression
+call:
 
-   The command refreshes the task or subscription facts.
-3. Require `phase=arbitration_decision` and all five progression fields: `phase`, `decision`, `reason`, `nextAction`, and `payload`.
-4. Render `decision=blocked` as the terminal result for this attempt.
-5. Continue to card delivery only for `decision=requires_user_input` with `reason=delivery_rejected`. Map every other shape to `unsupported_progression` with `nextAction=[]`.
+```text
+onchainos agent next-action --role asp --agentId <aspAgentId> \
+  --message '{"event":"<job_rejected|sub_user_reject>","jobId":"<jobId>"}'
+```
 
-For a rejected `jobId`, reuse its active card or run the fresh progression and deliver a new decision card.
+Render [Decide refund or arbitration](#decide-refund-or-arbitration) from the
+returned payload, then deliver the decision card.
 
 ## Deliver the decision card
 
-1. Render the `Decide refund or arbitration` template from the returned payload.
-2. Build every choice mechanically as `{ "key": nextAction.key, "actionId": nextAction.id, "params": nextAction.params }`.
-3. Run exactly one `request-prompt` command:
+Build each choice mechanically from the returned `nextAction`:
+
+```json
+{"key":nextAction.key,"actionId":nextAction.id,"params":nextAction.params}
+```
+
+Run one card request:
 
 ```text
 onchainos agent pending-decisions-v2 request-prompt \
   --job-id <payload.jobId> --role asp --agent-id <aspAgentId> \
   --source-event <job_rejected|sub_user_reject> \
   --decision-id <payload.decisionId> \
-  --choices-json '<choices built mechanically from nextAction>' \
-  --user-content '<rendered arbitration decision card>' \
+  --choices-json '<choices built from nextAction>' \
+  --user-content '<rendered decision card>' \
   --list-label '<payload.name> — <payload.amount> <payload.tokenSymbol>' \
-  [--expires-at <valid returned deadline>]
+  [--expires-at <returned deadline>]
 ```
 
-4. Treat exit success with `OK` as confirmed card delivery.
-5. End the current turn at this boundary. The delivered card is the user-facing result of the original arbitration intent.
-6. Enter decision resolution only when the user sends a subsequent reply to that card.
+After successful card delivery, end the turn and wait for the next reply.
+Preserve subscription `decisionBindingKey` and `decisionBindingValue` through
+resolution.
 
-A is full refund. B is arbitration. For subscriptions, preserve returned `decisionBindingKey` / `decisionBindingValue` through resolution and freshness checking. Populate period and service-stop facts from returned fields.
+## Open an existing decision
 
-## Merchant opens an existing decision
+1. Re-render the active `[USER_DECISION_REQUEST]` for the specified job.
+2. When a matching card is absent, run
+   `onchainos agent pending-decisions-v2 list --format markdown`.
+3. Activate a selected entry with
+   `onchainos agent pending-decisions-v2 pick --index <N>`.
+4. When the specified job has no queue entry, regenerate its card through
+   [Open the rejection decision](#open-the-rejection-decision).
+5. Wait for the reply to the latest active card.
 
-For a routed request to handle a specified rejected task, surface its active decision state.
+## Resolve A or B
 
-1. If the matching `[USER_DECISION_REQUEST]` is active, render it again and wait for a subsequent reply.
-2. Otherwise run `onchainos agent pending-decisions-v2 list --format markdown`.
-3. If the merchant identifies a listed `jobId`, activate its exact current index with `pending-decisions-v2 pick --index <N>`, render the returned card, and wait for a subsequent reply.
-4. If several entries match and no job is identified, show the queue and wait for selection.
-5. If the merchant supplied a `jobId` and no queue entry matches, enter `Open the rejection decision` and regenerate the card from fresh task facts.
-6. When the target remains unresolved, request the target `jobId`.
+Accept these final decisions:
 
-Wait for the user's reply to the latest active card before executing arbitration or refund.
+- `A`: approve the full refund.
+- `B <reason>`: open arbitration with the supplied reason preserved verbatim.
 
-## Resolve the user's decision
+For B with an empty reason, keep the card active and request `B <reason>` in
+the current conversation language.
 
-Enter this section when an active `[USER_DECISION_REQUEST]` exists and the user has sent a later reply to it.
+1. Run the active card's pre-filled `resolve-with-sessionkey` command in
+   CLI-driver mode, or its pre-filled `resolve-prompt` command in queue mode.
+2. Pass the complete reply verbatim.
+3. Run `next-action` from the returned `validate_arbitration_choice` action
+   with its exact `role`, `agentId`, and complete `message`.
+4. Execute the returned action through [Action routing](#action-routing) in the
+   current conversation and present its concise result.
 
-1. Accept A as a complete refund choice.
-2. Accept B together with an arbitration reason in the user's own language. For B alone, keep the active card and ask for `B <reason>` in the current conversation language.
-3. In CLI-driver mode, run the active block's pre-filled `resolve-with-sessionkey` command with its exact `decisionId`, `choices-json`, and expiry metadata.
-4. In queue mode, run the active block's pre-filled `resolve-prompt` command against the persisted entry.
-5. Pass the complete user reply verbatim and use the returned `selectedActionId` plus `params`.
-6. Run `next-action` from the emitted relay envelope so the latest task or subscription detail is checked before a write action is returned.
+For `ambiguous_choice`, render
+[Decide refund or arbitration](#decide-refund-or-arbitration) again. For
+`arbitration_reason_required`, keep the active decision and request
+`B <reason>`. For `decision_metadata_missing`, `decision_expired`,
+`unsupported_action`, `stale_event`, or a job mismatch, state the returned
+reason and recovery guidance.
 
-- `ambiguous_choice`: leave the decision active and show the same card again.
-- `decision_expired`, missing metadata, stale event, or job mismatch: return a blocked result with `nextAction=[]`.
-- `phase=arbitration_decision`, `decision=ready`, `reason=user_choice_resolved`: execute the sole returned action through the Action routing table above.
-
-The complete reply is the final confirmation. A routes immediately to the corresponding refund. B with its reason routes immediately to the one-time or subscription arbitration command, preserving the user's reason exactly.
+The complete A or B reply is the final confirmation. A executes the matching
+full-refund action. B with its reason executes the matching arbitration action
+in the current conversation.
 
 ## Query arbitration cases
 
-Run `arbitration-list` for filed arbitration cases.
+Keep an explicitly supplied ASP Agent ID. In an active provider task envelope,
+keep its bound `agentId`. Otherwise run `onchainos agent my-agents`, retain ASP
+(`2`) identities, and use the sole match or present matching identities for
+selection.
 
-### Select identity
+Run:
 
-Keep an explicitly supplied User or ASP Agent ID. In an ASP task/envelope context, keep that ASP `agentId`. Otherwise run `onchainos agent my-agents`, keep roles User (`1`) and ASP (`2`), show the candidates, and wait for an explicit user choice.
+```text
+onchainos agent arbitration-list --agent-id <aspAgentId> [--page <n>] [--page-size <n>]
+```
 
-### List and select
-
-1. Run `onchainos agent arbitration-list --agent-id <selectedAgentId> [--page <n>] [--page-size <n>]`.
-2. Require `phase=arbitration_list`. Render `payload.items[]` with `jobId`, description, occurrence time, and task status; add the verdict when returned.
-3. Treat `nextAction[id=view_arbitration].params.allowedJobIds` as the current selection allowlist.
-4. If the list is empty, render the empty arbitration state and finish the query.
-5. When the user selects a listed case, validate the exact `jobId` against the allowlist and render the read-only confirmation card.
+Render [View arbitration cases](#view-arbitration-cases) with
+`payload.items[]` in CLI order. Use
+`nextAction[id=view_arbitration].params.allowedJobIds` for case selection. Use
+the empty-list variant when `payload.items[]` is empty.
 
 ## Query an arbitration detail
 
-1. Resolve the target from an explicitly supplied `jobId` or the latest arbitration-list selection.
-2. Run `onchainos agent arbitration-detail <jobId> --agent-id <selectedAgentId>` once to validate access and populate the confirmation card.
-3. Render a blocked lookup result for a missing or inaccessible case.
-4. Render the `Confirm a case` card for an accessible case and wait for A or B.
+Resolve the case from an explicit `jobId` or the latest allowed list selection.
+Run once:
 
-### Confirm and show fresh detail
+```text
+onchainos agent arbitration-detail <jobId> --agent-id <aspAgentId>
+```
 
-Keep this A/B state separate from the rejection decision card:
+For a missing or inaccessible case, state the returned reason and recovery
+guidance. For an accessible case, render [View a case](#view-a-case) directly
+with fresh detail fields. Localize status with:
 
-- A = View Details. Rerun `arbitration-detail` for fresh facts, then render `phase=arbitration_detail` by `payload.arbitrationPhase` and `payload.verdict`.
-- B = Back to Arbitration Cases. Rerun `arbitration-list` and render the fresh list.
-- Any ambiguous reply keeps the current confirmation card active.
+| `payload.arbitrationPhase` | `payload.verdict` | Display |
+|---|---|---|
+| `evidence_preparation` | any | Evidence preparation |
+| `in_progress` | any | Arbitration in progress |
+| `resolved` | `asp_won` | ASP won |
+| `resolved` | `asp_lost_auto_refund` | ASP lost; automatic refund |
+| other | other | Unknown phase |
 
-Detail template selection is deterministic:
+## Lifecycle handoff
 
-- `evidence_preparation` → evidence preparation;
-- `in_progress` → arbitration in progress;
-- `resolved` + `asp_won` → ASP won;
-- `resolved` + `asp_lost_auto_refund` → ASP lost and automatic refund;
-- `unknown` or an unsupported combination → map directly to the unknown-phase template.
-
-## Existing lifecycle handoff
-
-After a resolved write action, continue the existing ASP and Watch lifecycle. That lifecycle owns `dispute_approved`, `job_disputed`, `sub_asp_dispute`, refund events, evidence events, and `dispute_resolved` automation.
+- A one-time B decision submits `dispute raise` in the current conversation.
+  The task sub-session receives `dispute_approved` and runs `dispute confirm`
+  once with the original reason when available.
+- `job_disputed` starts the independent evidence flow after a fresh
+  `disputed` status check. That flow resolves the buyer, reads task chat
+  history, attaches saved deliverables when available, uploads evidence, and
+  waits for `dispute_resolved`.
+- A subscription B decision runs `subscribe-dispute`; `sub_asp_dispute`
+  supplies the dispute-creation facts.
+- Refund, evidence, and ruling events continue through their scoped lifecycle
+  handlers and `../../runtime/watch.md`.
 
 ## Output templates
 
-Render returned fields in the user's language. Include optional lines when their values are available.
+Use fixed templates for decision cards and structured list/detail views.
+Render returned fields in the conversation language, include optional lines
+when values are available, and keep IDs and amount strings exact.
+
+### View rejected candidates
+
+```text
+Tasks or subscription periods currently available for refund or arbitration:
+{sequence}. {name or description}
+   Job ID: {jobId}
+   {Type: one-time task or subscription period}
+   {Refund: amount tokenSymbol}
+   {Rejected: rejectedAt}
+
+Reply with a sequence number or Job ID.
+```
+
+Empty list:
+
+```text
+There are currently no rejected tasks or subscription periods available for arbitration.
+```
 
 ### Decide refund or arbitration
 
@@ -166,9 +256,9 @@ B. Start arbitration — reply with B followed by your reason
 Arbitration cases:
 {sequence}. {description}
    Job ID: {jobId}
-   Status: {taskStatus}
+   Status: {localized task status}
    {Filed: occurredAt}
-   {Verdict: verdict}
+   {Verdict: localized verdict}
 
 Reply with a sequence number.
 ```
@@ -179,54 +269,16 @@ Empty list:
 There are currently no arbitration cases for this account.
 ```
 
-### Confirm a case
-
-```text
-View this arbitration case?
-Job ID: {jobId}
-Job: {description}
-Status: {taskStatus}
-
-A. View details
-B. Back to arbitration cases
-```
-
 ### View a case
 
 ```text
 Arbitration: {description}
 Job ID: {jobId}
-Status: {arbitrationPhase}
+Status: {localized status mapped from arbitrationPhase and verdict}
 {Deadline: deadline}
-{Verdict: verdict}
+{Verdict: localized verdict}
 {Amount: amount tokenSymbol}
 {Fund destination: fundDestination}
 {Refund: refundAmount tokenSymbol}
 {Transaction: txHash}
-```
-
-### Show refund result
-
-```text
-Refund approved for {name}.
-Job ID: {jobId}
-Refund: {amount} {tokenSymbol}
-{refund destination or zero-price result}
-```
-
-### Show arbitration started
-
-```text
-Arbitration started for {name}.
-Job ID: {jobId}
-{arbitrationId}
-Evidence deadline: {evidenceDeadline}
-```
-
-### Show blocked result
-
-```text
-Unable to continue: {reason}
-Job ID: {jobId}
-{recovery guidance}
 ```

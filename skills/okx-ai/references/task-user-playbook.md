@@ -57,7 +57,7 @@ communication rules; it does not match free-text user intents.
 | View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
 | Subscription task list | "my subscriptions / subscription list / ongoing subscriptions / active subscriptions / ended subscriptions" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Task list → §Unified My Tasks. User-initiated lists use `my-tasks --task-type subscription`, never `my-subscriptions`. |
 | Rate | "rate this task / rate this subscription / review jobId X / give X five stars / leave feedback" | [`task-user-intent-routing.md`](task-user-intent-routing.md) §Rate an active subscription |
-| Refund, paid-deliverable rejection, or refund progress | "refund / get my money back / apply for refund / reject paid delivery / refund status / refund arbitration" | [`task-user-refund.md`](task-user-refund.md); do not route through disabled legacy close/reject/subscribe-reject/claim-auto-refund commands |
+| Refund, paid-deliverable rejection, or refund progress | "refund / get my money back / apply for refund / reject paid delivery / refund status / refund arbitration" | [`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md); do not route through disabled legacy close/reject/subscribe-reject/claim-auto-refund commands |
 | Other subscription task ops | "auto-renew / trial cancel / subscription charge / subscription cost" | §Subscription below |
 | Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
 | Re-submit / nudge | "re-submit / nudge" | [`task-user-intent-routing.md`](task-user-intent-routing.md) |
@@ -137,7 +137,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 | Subscription detail | `subscribe-detail {subId} --format json` | show subscription detail; **always pass `--format json`** when you render or consume fields (the default text output is a human glance: it shows raw `offline` / `devices` but not `thisDeviceReceives` or joined names) |
 | Enable auto-renew | `start-autorenew {subId}` | on-chain, needs EIP-712 sign; may require approve |
 | Cancel subscription (trial conversion / formal auto-renew) | `subscribe-cancel {subId}` | cancellation is not Refund V2: trial → cancel auto-conversion while the trial continues; formal → close auto-renew while the current period continues |
-| Request or check a refund | `refund-prepare` | read [`task-user-refund.md`](task-user-refund.md), then use only returned Refund V2 actions |
+| Request or check a refund | `refund-prepare` | read [`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md), then use only returned Refund V2 actions |
 | Active subscription cost | `subscribe-cost` | total monthly cost of active formal subscriptions (no params needed) |
 | Pause / stop auto copy-trading | `autotrade-consent-set --job-id <jobId> --mode pause` | Direct local action; follow §Pause auto copy-trade below. Do **not** load `task-user-sub-playbook.md`, query subscription state, or resolve an agent id. |
 | Start receiving on this device | `subscribe-device-update --job-id <id> --device-list <fresh list + this device>` | **fresh-read first** (`subscribe-detail <id> --format json` or `my-subscriptions`). If `deviceList:null`, default-all is active: report already receiving and do **NOT** write. For an explicit array, do not write if this device is present; otherwise union, write, re-read, and mark `✅ Yes (added now)`. |
@@ -231,7 +231,7 @@ onchainos agent autotrade-consent-set --job-id <jobId> --mode pause
 ### Refund V2
 
 Route Buyer refund requests, progress checks, and refund-related results to
-[`task-user-refund.md`](task-user-refund.md). It is the single source for
+[`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md). It is the single source for
 eligibility, confirmation, settlement, and recovery. Cancellation remains a
 separate flow; execute only actions returned by Refund V2.
 
@@ -314,7 +314,7 @@ Translate the CLI's canonical `statusName` to the user's locked language. Use th
 
 `failed` is task-kind dependent, so never label a list row itself as a
 completed refund. When the User asks about refund status, run `refund-prepare`
-and follow [`task-user-refund.md`](task-user-refund.md); only its structured
+and follow [`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md); only its structured
 result controls settlement and terminal wording. Render `status_<n>` as
 `Unknown status (<n>)` or its faithful translation. If `statusName` is absent
 or malformed, render `—`; never infer from numeric `status`.

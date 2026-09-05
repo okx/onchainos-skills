@@ -9,7 +9,7 @@
 > [`task-user-sub-playbook.md`](task-user-sub-playbook.md)).
 > If this table and the CLI disagree, the CLI is right and this file is stale.
 > Refund settlement and terminal behavior are defined only in
-> [`task-user-refund.md`](task-user-refund.md); this mirror does not duplicate
+> [`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md); this mirror does not duplicate
 > those proof rules.
 
 | # | Event (`event`) | Target | Rendered notification (English canonical, from the authoritative copy doc) |
@@ -24,7 +24,7 @@
 | 7 | `sub_asp_agree` | user | ASP-agree branch. Run `next-action` and render its structured Refund V2 result; the event alone does not establish settlement. |
 | 8 | `sub_asp_dispute` | user | "[Dispute Filed] The ASP has disputed your rejection of {jobTitle}'s current period ({subStartTime}–{subEndTime}) and escalated to evaluation. Job {jobId} status: Disputed." (user side only — the ASP's own action gets no ASP-side push; the subscribe-dispute action flow owns that lifecycle.) |
 | 9 | `sub_complete_notify` | user + asp | "[Subscription Complete] {jobTitle} has completed all scheduled renewals. Job {jobId} status: Completed; service ends normally at {subEndTime} with no further renewal." (user side; the ASP side keeps its own ASP-perspective copy.) (terminal) |
-| 10 | `sub_close_notify` | user + asp | Require fresh role ownership and Closed(7). Without `aspRejectReason`, render the normal service-closed copy. With it, identify the pre-activation ASP-decline branch and preserve the reason verbatim. Never reuse renewal-charge-failure or refund-complete copy: Closed alone does not establish subscription refund settlement. ASP delivery may clean up after its assignment ends; Buyer refund handling follows `task-user-refund.md`. |
+| 10 | `sub_close_notify` | user + asp | Require fresh role ownership and Closed(7). Without `aspRejectReason`, render the normal service-closed copy. With it, identify the pre-activation ASP-decline branch and preserve the reason verbatim. Never reuse renewal-charge-failure or refund-complete copy: Closed alone does not establish subscription refund settlement. ASP delivery may clean up after its assignment ends; Buyer refund handling follows `../../okx-ai-v2/references/a2a/user/refund.md`. |
 | 11 | `sub_failed_notify` | user + asp | Ambiguous failure branch. Run `next-action` and render only its structured result; do not infer refund or charge-failure cause from this event. |
 | 12 | `sub_expire_warn` | user | **Selected by `autoRenew`.** `autoRenew=true` (or missing/legacy → treated as true) → existing copy (`content::sub_expire_warn_user_notify`), unchanged. `autoRenew=false` → "[Subscription Ending Soon] Subscription job {job_id} (period {periodStart}–{periodEnd}) will expire and close on {periodEnd}. To continue using it, please enable auto-renew in time." The CLI English literal is canonical; localize faithfully at render time. |
 | 13 | `sub_reject_refund_notify` | user | Backend automatic-refund branch. Run `next-action`; no client-side claim follows, and only the returned Refund V2 result controls terminal copy. |
@@ -42,6 +42,6 @@ ignores 1,3,4,5 (buyer-only) plus 7,8 (the ASP's own actions — no ASP-side pus
 live in the subscribe-agree-refund / subscribe-dispute action flows).
 
 For all refund-related subscription events, use
-[`task-user-refund.md`](task-user-refund.md) for fresh-read, settlement,
+[`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md) for fresh-read, settlement,
 terminal-marker, cleanup, and retry behavior. This file supplies only a
 human-readable event mirror.

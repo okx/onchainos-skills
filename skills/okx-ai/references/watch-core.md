@@ -261,7 +261,18 @@ and unavailable-tool fallback live in [`watch-wake-scheduling.md`](watch-wake-sc
    immediately re-enter that exact originating command; otherwise end the turn normally. Do not claim
    that deferring the item stops an independently active monitor.
 2. Otherwise claim first: `okx-a2a user check --todo-ids <id> --json`.
-3. On `handled` → **execute the commands specified in `llmContent` verbatim**. The instructions can be anything the issuer chose — a relay to another session (`session send`), a wallet / onchain call, an agent CLI command, an arbitrary tool invocation, or a multi-step sequence. `llmContent` itself names the command(s), the target(s), and how to assemble the payload — just follow it. Do not block on downstream effects.
+3. On `handled`, route by the current `llmContent`:
+   - A buyer deliverable-review card for `job_submitted` or `review_deadline_warn` uses its
+     current-conversation A/B branch. Analyze the reply, then execute the embedded direct
+     `onchainos` action with the card's `jobId`, `agentId`, and verbatim rejection reason.
+   - A refund-or-arbitration card for `job_rejected` or `sub_user_reject` resolves the
+     choice in the current conversation, validates its exact returned message through
+     `next-action`, and executes the returned full-refund or arbitration action. A
+     one-time B choice runs `dispute raise`; its `dispute_approved` signal runs
+     `dispute confirm` in the task sub-session. Then provide the arbitration-list
+     query hint.
+   - Other decisions execute the commands specified in `llmContent` verbatim. The instructions
+     name the command(s), target(s), and parameter assembly. Continue through their returned result.
 4. On `alreadyHandled` → tell the user "this item was processed in another window". Do not execute `llmContent` again.
 5. Claim succeeded but `llmContent` execution failed → create a new `onchainos agent user-notify` with the failure reason and a retry command; **do NOT** flip the original item back to pending.
 
@@ -280,7 +291,7 @@ Separate user-initiated intent (`outstanding decisions` / `pending decisions` / 
 - The user explicitly says `stop watching` / `unsubscribe`.
 - **Scoped session + this task reached a terminal state.** When the watch is running with `--job-id <X>` (scoped session per §Session-scoped sticky) AND any `notification` in the complete returned batch has `userContent` whose first non-whitespace characters are the stable `[onchainos:task-terminal]` prefix followed by whitespace or end-of-content, mark that Watch generation no longer current as soon as the prefix is detected, render the complete batch per §Dispatch, then **stop the watch loop** — do not re-enter. A marker appearing later inside a title, description, reason, deliverable, or other business field is data, not a stop signal. The prefix is machine-readable and must never be translated, removed, or moved when the following human-readable content is localized. Legacy notifications may instead begin with `[Job Completed]` / `[Job Auto-Completed]` / `[x402 Job Completed]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]` / `[Dispute Lost]`; treat only that canonical leading heading as a fallback stop marker, never a substring inside business data.
   For refund-related notifications, dispatch the structured result and apply
-  [`task-user-refund.md`](task-user-refund.md). Event names and human-readable
+  [`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md). Event names and human-readable
   headings are never stop signals by themselves. Only a leading terminal marker
   produced after the fresh Refund V2 gate stops a scoped watch; incomplete or
   ambiguous results produce no marker and must re-enter.
@@ -302,7 +313,7 @@ After processing all returned items, **always** call `okx-a2a user watch --json`
     without a generated terminal marker — dispatch must fresh-read Refund V2.
     Follow only its returned result; no Buyer claim/finalize action exists.
   - `job_closed` or another refund-result event without a generated terminal
-    marker — apply [`task-user-refund.md`](task-user-refund.md), then re-enter if
+    marker — apply [`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md), then re-enter if
     the result remains pending or incomplete. Never manufacture a marker from
     event prose.
   - `[Cancelled]` / `[Auto-Renew Cancelled]` from `sub_cancel` — only future trial conversion or renewal was cancelled; the current trial/period continues, so retain the scoped session.

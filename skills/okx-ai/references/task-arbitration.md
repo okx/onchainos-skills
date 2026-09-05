@@ -2,16 +2,27 @@
 
 This is the single Skill-side business entry for ASP arbitration.
 
+## Query intent mapping
+
+- `可仲裁`, `待仲裁`, `哪些可以仲裁`, and `可以仲裁的任务` mean rejected-task
+  candidates. Run
+  `onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20`.
+  Each returned task reached `rejected` after the User rejected the deliverable
+  and can enter the refund-or-arbitration decision.
+- `仲裁列表`, `已发起仲裁`, and `仲裁案件` mean filed arbitration cases. Run
+  `onchainos agent arbitration-list --agent-id <selectedAgentId>` and render the
+  current cases.
+
 ## Action routing
 
 Route actions returned by the latest structured arbitration progression.
 
 | Action ID | Command | Completion handoff |
 |---|---|---|
-| `agree_refund` | `onchainos agent agree-refund <params.jobId> --agent-id <aspAgentId>` | Render the one-time refund result, then continue the existing Watch lifecycle. |
-| `raise_arbitration` | `onchainos agent dispute raise <params.jobId> --reason "<params.reason>" --agent-id <aspAgentId>` | Continue the existing approve/confirm chain; render creation when `job_disputed` supplies its facts. |
+| `agree_refund` | `onchainos agent agree-refund <params.jobId> --agent-id <aspAgentId>` | Render the submitted full-refund result, then continue the existing Watch lifecycle. |
+| `raise_arbitration` | `onchainos agent dispute raise <params.jobId> --reason "<params.reason>" --agent-id <aspAgentId>` | Submit the stage-1 approval broadcast; `dispute_approved` continues with `dispute confirm` in the task sub-session. |
 | `sub_agree_refund` | `onchainos agent subscribe-agree-refund <params.jobId> --agent-id <aspAgentId>` | Render the subscription-period refund result, then continue Watch. |
-| `raise_subscription_arbitration` | `onchainos agent subscribe-dispute <params.jobId> --agent-id <aspAgentId> [--reason "<params.reason>"]` | Continue the existing subscription creation chain; render creation when `sub_asp_dispute` supplies its facts. |
+| `raise_subscription_arbitration` | `onchainos agent subscribe-dispute <params.jobId> --reason "<params.reason>" --agent-id <aspAgentId>` | Continue the existing subscription creation chain; render creation when `sub_asp_dispute` supplies its facts. |
 | `view_arbitration` | Ask the user to select one value from `params.allowedJobIds`; validate the selected `jobId`, then use the confirmation and detail steps below. | Return the read-only query result. |
 
 Rules:
@@ -22,7 +33,7 @@ Rules:
 - Emit the canonical Action IDs in this table. The CLI normalizes legacy `dispute_raise`, `sub_dispute`, and `view_dispute` values from existing local pending cards.
 - Return `unsupported_action` with `nextAction=[]` when the Action ID is absent from this table.
 
-Contents: [open rejection decision](#open-the-rejection-decision) → [deliver decision card](#deliver-the-decision-card) → [resolve decision](#resolve-the-users-decision); or [query arbitration cases](#query-arbitration-cases) → [query detail](#query-an-arbitration-detail) → [lifecycle handoff](#existing-lifecycle-handoff) → [output templates](#output-templates).
+Contents: [query intent mapping](#query-intent-mapping); [open rejection decision](#open-the-rejection-decision) → [deliver decision card](#deliver-the-decision-card) → [resolve decision](#resolve-the-users-decision); or [query arbitration cases](#query-arbitration-cases) → [query detail](#query-an-arbitration-detail) → [lifecycle handoff](#existing-lifecycle-handoff) → [output templates](#output-templates).
 
 ## Protocol contract
 
@@ -40,7 +51,7 @@ A structured rejection event or an explicit merchant request for a specified rej
      --message '{"event":"<job_rejected|sub_user_reject>","jobId":"<jobId>"}'
    ```
 
-   The command refreshes the task or subscription facts.
+   This compact message is only for explicitly reopening a known rejected task. The command refreshes the task or subscription facts. An inbound event uses its complete current `message` object through Activation #1.
 3. Require `phase=arbitration_decision` and all five progression fields: `phase`, `decision`, `reason`, `nextAction`, and `payload`.
 4. Render `decision=blocked` as the terminal result for this attempt.
 5. Continue to card delivery only for `decision=requires_user_input` with `reason=delivery_rejected`. Map every other shape to `unsupported_progression` with `nextAction=[]`.
@@ -91,14 +102,19 @@ Enter this section when an active `[USER_DECISION_REQUEST]` exists and the user 
 2. Accept B together with an arbitration reason in the user's own language. For B alone, keep the active card and ask for `B <reason>` in the current conversation language.
 3. In CLI-driver mode, run the active block's pre-filled `resolve-with-sessionkey` command with its exact `decisionId`, `choices-json`, and expiry metadata.
 4. In queue mode, run the active block's pre-filled `resolve-prompt` command against the persisted entry.
-5. Pass the complete user reply verbatim and use the returned `selectedActionId` plus `params`.
-6. Run `next-action` from the emitted relay envelope so the latest task or subscription detail is checked before a write action is returned.
+5. Pass the complete user reply verbatim. Require `phase=arbitration_decision`, `decision=ready`, `reason=user_choice_resolved`, and the sole `nextAction.id=validate_arbitration_choice`.
+6. Run `next-action` with the exact `role`, `agentId`, and complete `message` returned under that action. Preserve `decisionId`, `selectedActionId`, `params`, `data`, and `jobId` so the latest task or subscription facts and the bound decision are checked before execution.
 
 - `ambiguous_choice`: leave the decision active and show the same card again.
+- `arbitration_reason_required`: leave the decision active and ask for `B <reason>` in the current conversation language.
 - `decision_expired`, missing metadata, stale event, or job mismatch: return a blocked result with `nextAction=[]`.
 - `phase=arbitration_decision`, `decision=ready`, `reason=user_choice_resolved`: execute the sole returned action through the Action routing table above.
 
-The complete reply is the final confirmation. A routes immediately to the corresponding refund. B with its reason routes immediately to the one-time or subscription arbitration command, preserving the user's reason exactly.
+The complete reply is the final confirmation. A executes the corresponding full refund. B with its reason executes the arbitration path immediately. For a one-time task, run `dispute raise`; the resulting `dispute_approved` signal continues with `dispute confirm` in the task sub-session. For a subscription period, run `subscribe-dispute` with that reason.
+
+After a successful A result, confirm that the full-refund transaction was submitted and that progress will update in the task. Offer `查询任务结果` or `onchainos agent status <jobId> --agent-id <aspAgentId>`.
+
+After a successful B result, confirm that the arbitration transaction was submitted and that evidence and ruling progress will update in the task. Offer `查询仲裁列表` or `onchainos agent arbitration-list --agent-id <aspAgentId>`.
 
 ## Query arbitration cases
 
@@ -141,7 +157,7 @@ Detail template selection is deterministic:
 
 ## Existing lifecycle handoff
 
-After a resolved write action, continue the existing ASP and Watch lifecycle. That lifecycle owns `dispute_approved`, `job_disputed`, `sub_asp_dispute`, refund events, evidence events, and `dispute_resolved` automation.
+After a resolved write action, continue the existing Watch lifecycle. For a one-time B decision, the current conversation submits stage 1. The task sub-session receives `dispute_approved` and executes `dispute confirm` once for stage 2. A later `job_disputed` starts its existing independent evidence workflow: it refreshes task status, resolves the buyer, reads task chat history, attaches saved deliverables when available, uploads evidence, and waits for `dispute_resolved`. This evidence entry depends on the fresh `disputed` task state and `job_disputed`, rather than earlier decision-conversation context. Subscription events, refund events, evidence events, and `dispute_resolved` continue through their existing handlers.
 
 ## Output templates
 
@@ -158,6 +174,22 @@ Refund: {amount} {tokenSymbol}
 
 A. Approve full refund
 B. Start arbitration — reply with B followed by your reason
+```
+
+Successful A:
+
+```text
+Full refund approved. The refund transaction has been submitted. Progress will update in this task.
+You can ask me to query the task result, or run:
+onchainos agent status {jobId} --agent-id {aspAgentId}
+```
+
+Successful B:
+
+```text
+Arbitration transaction submitted. Evidence and ruling progress will update in this task after on-chain confirmation.
+You can ask me to query the arbitration list, or run:
+onchainos agent arbitration-list --agent-id {aspAgentId}
 ```
 
 ### View arbitration cases

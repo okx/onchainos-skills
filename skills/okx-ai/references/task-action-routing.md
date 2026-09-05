@@ -18,14 +18,14 @@ legacy prose field `action`.
 | `finalize_user_subscription` | [`task-actions-completion.md` §Subscription Complete User](task-actions-completion.md#subscription-complete-user) | No | End turn |
 | `notify_and_cleanup_subscription` | [`task-actions-completion.md` §Terminal ASP Notification and Cleanup](task-actions-completion.md#terminal-asp-notification-and-cleanup); legacy-compatible action ID, job-scoped for terminal subscription or ordinary ASP notifications | No | End turn |
 | `notify_user` | [`task-actions-completion.md` §Notification Only](task-actions-completion.md#notification-only) | No | End turn |
-| `resolve_refund_target` | `task-user-refund.md`, §Entry and target resolution | No | Ask for or list one buyer-owned `jobId`; then run `refund-prepare` |
-| `prepare_refund` | `task-user-refund.md`; rerun `refund-prepare` for `params.jobId` | No | Route the fresh progression result |
-| `provide_refund_reason` | `task-user-refund.md`, §Submitted one-time or Active formal subscription | No write; the reason must be authored by the User | Rerun `refund-prepare` with the verbatim reason |
-| `cancel_trial_conversion` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation cancel-trial-conversion` | Required | Route the returned structured result; never describe this as a refund |
-| `close_zero_price` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation close-zero` | Required | Route the returned structured result; no funds move |
-| `execute_direct_refund` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation direct-refund` | Required | Route the returned structured result, then watch when offered |
-| `submit_refund_request` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation request-refund` | Required; pass only the User-authored reason | Route the returned structured result, then watch when offered |
-| `view_refund_status` | `task-user-refund.md`; rerun `refund-prepare` for `params.jobId` | No | Route the fresh progression result |
+| `resolve_refund_target` | `../../okx-ai-v2/references/a2a/user/refund.md`, §Entry and target resolution | No | Ask for or list one buyer-owned `jobId`; then run `refund-prepare` |
+| `prepare_refund` | `../../okx-ai-v2/references/a2a/user/refund.md`; rerun `refund-prepare` for `params.jobId` | No | Route the fresh progression result |
+| `provide_refund_reason` | `../../okx-ai-v2/references/a2a/user/refund.md`, §Submitted one-time or Active formal subscription | No write; the reason must be authored by the User | Rerun `refund-prepare` with the verbatim reason |
+| `cancel_trial_conversion` | `../../okx-ai-v2/references/a2a/user/refund.md`, §Execute the offered action; use `refund-execute --operation cancel-trial-conversion` | Required | Route the returned structured result; never describe this as a refund |
+| `close_zero_price` | `../../okx-ai-v2/references/a2a/user/refund.md`, §Execute the offered action; use `refund-execute --operation close-zero` | Required | Route the returned structured result; no funds move |
+| `execute_direct_refund` | `../../okx-ai-v2/references/a2a/user/refund.md`, §Execute the offered action; use `refund-execute --operation direct-refund` | Required | Route the returned structured result, then watch when offered |
+| `submit_refund_request` | `../../okx-ai-v2/references/a2a/user/refund.md`, §Execute the offered action; use `refund-execute --operation request-refund` | Required; an active deliverable-review B + reason reply supplies it, otherwise show the Refund V2 confirmation card | Route the returned structured result, then watch when offered |
+| `view_refund_status` | `../../okx-ai-v2/references/a2a/user/refund.md`; rerun `refund-prepare` for `params.jobId` | No | Route the fresh progression result |
 | `stop` | End the current flow | No | Run no further command |
 
 ## Routing rules
@@ -50,8 +50,14 @@ legacy prose field `action`.
 - Never substitute the disabled legacy writes `close`, `reject`,
   `subscribe-reject`, or `claim-auto-refund` for a missing Refund V2 action.
   `subscribe-cancel` is cancellation-only and is not a refund substitute.
+- For the active deliverable-review card, B + a non-blank User-authored reason
+  is the final confirmation for `submit_refund_request`. Handle it in the
+  current user conversation: run fresh `refund-prepare`, require the exact
+  `refund_request_confirmation_required` result and returned action, then
+  execute that action immediately with `--confirm`. Keep general refund intents
+  on the standard confirmation-card path.
 - Refund settlement evidence, event handling, and terminal behavior are owned
-  by [`task-user-refund.md` Finality](task-user-refund.md#progress-arbitration-and-finality).
+  by [`user/refund.md` Finality](../../okx-ai-v2/references/a2a/user/refund.md#finality-compact-matrix).
 - `refund-execute` always requires explicit selection of the displayed write
   action. Supplying a reason never substitutes for that confirmation.
 - Preserve the returned order; `recommend=true` marks the preferred option.

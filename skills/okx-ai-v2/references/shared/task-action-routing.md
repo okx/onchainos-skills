@@ -26,7 +26,7 @@ This is the v2 Action Router. Route every task action to its v2 domain file.
 | `cancel_trial_conversion` | [`../a2a/user/refund.md`](../a2a/user/refund.md), §Execute the offered action; use `refund-execute --operation cancel-trial-conversion` | Required | Route the returned structured result; never describe this as a refund |
 | `close_zero_price` | [`../a2a/user/refund.md`](../a2a/user/refund.md), §Execute the offered action; use `refund-execute --operation close-zero` | Required | Route the returned structured result; no funds move |
 | `execute_direct_refund` | [`../a2a/user/refund.md`](../a2a/user/refund.md), §Execute the offered action; use `refund-execute --operation direct-refund` | Required | Route the returned structured result, then watch when offered |
-| `submit_refund_request` | [`../a2a/user/refund.md`](../a2a/user/refund.md), §Execute the offered action; use `refund-execute --operation request-refund` | Required; pass only the User-authored reason | Route the returned structured result, then watch when offered |
+| `submit_refund_request` | [`../a2a/user/refund.md`](../a2a/user/refund.md), §Execute the offered action; use `refund-execute --operation request-refund` | Required; an active deliverable-review `B` plus a non-blank User-authored reason supplies this selection for its freshly prepared action | For `refund_request_broadcast_submitted`, render the pending result, tell the User the ASP needs time to process it, provide the later status-query hint, and end the turn. Do not execute or resume `watch_task` automatically |
 | `view_refund_status` | [`../a2a/user/refund.md`](../a2a/user/refund.md); rerun `refund-prepare` for `params.jobId` | No | Route the fresh progression result |
 | `stop` | End the current flow | No | Run no further command |
 
@@ -54,8 +54,11 @@ This is the v2 Action Router. Route every task action to its v2 domain file.
   `subscribe-cancel` is cancellation-only and is not a refund substitute.
 - Refund settlement evidence, event handling, and terminal behavior are owned
   by [`../a2a/user/refund.md` Finality](../a2a/user/refund.md#progress-arbitration-and-finality).
-- `refund-execute` always requires explicit selection of the displayed write
-  action. Supplying a reason never substitutes for that confirmation.
+- `refund-execute` requires explicit selection of the current prepared write.
+  In an active deliverable-review flow, `B` plus a non-blank User-authored
+  reason supplies that selection for the freshly returned
+  `submit_refund_request` action. Every other refund flow uses the displayed
+  confirmation contract.
 - Preserve the returned order; `recommend=true` marks the preferred option.
 - A number maps only to the matching action in the latest rendered list.
 - Do not execute an action not returned by the CLI.

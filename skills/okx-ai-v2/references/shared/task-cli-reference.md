@@ -646,7 +646,8 @@ Route returned actions through
 | `refund_confirmation` | `requires_user_input` | `refund_request_confirmation_required` | `submit_refund_request`, `stop` |
 | `refund_provider_response` | `blocked` | `provider_response_pending` | `view_refund_status`, `watch_task` |
 | `refund_arbitration` | `blocked` | `arbitration_in_progress` | `view_arbitration`, `stop` |
-| `refund_settlement` | `ready` | `zero_amount_close_broadcast_submitted`, `refund_broadcast_submitted`, `refund_request_broadcast_submitted`, or `trial_conversion_cancel_broadcast_submitted` | `view_refund_status`, `watch_task` |
+| `refund_settlement` | `ready` | `refund_request_broadcast_submitted` | `view_refund_status` (not recommended; user may query later); no automatic watch follows submission |
+| `refund_settlement` | `ready` | `zero_amount_close_broadcast_submitted`, `refund_broadcast_submitted`, or `trial_conversion_cancel_broadcast_submitted` | `view_refund_status`, `watch_task` |
 | `refund_settlement` | `blocked` | `refund_outcome_unknown` | `view_refund_status`, `watch_task` |
 | `refund_reconciliation` | `blocked` | `refund_outcome_unknown` | `view_refund_status`, `watch_task` |
 | `refund_reconciliation` | `blocked` | `refund_operation_pending_reconciliation` | `view_refund_status`, `watch_task` |

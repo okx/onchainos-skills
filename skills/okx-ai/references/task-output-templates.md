@@ -155,12 +155,12 @@ funding recovery, and the final mutually exclusive Confirm/Cancel card.
 
 ## Refund V2
 
-Read `task-user-refund.md` before rendering any `phase` beginning with
+Read `../../okx-ai-v2/references/a2a/user/refund.md` before rendering any `phase` beginning with
 `refund_`. Require `payload.schemaVersion=2`. Display exact decimal strings and
 the original token; never calculate a partial amount, unused-time adjustment,
 or fiat conversion. This section owns display semantics only. Refund evidence,
 event handling, and terminal behavior are defined in
-[`task-user-refund.md` Finality](task-user-refund.md#progress-arbitration-and-finality).
+[`user/refund.md` Finality](../../okx-ai-v2/references/a2a/user/refund.md#finality-compact-matrix).
 
 ### Reason-to-display groups
 
@@ -208,6 +208,11 @@ status; do not relabel it as terminal. Do not add a separate Service, response
 deadline, or receipt row. Keep `pkgId`, `orderId`, `orderType`, `bizUniqKey`,
 internal phase/reason identifiers, and other receipt handles out of these
 sections.
+
+When `refund_request_confirmation_required` is the fresh preparation result for
+an active deliverable-review B + reason reply, execute its returned
+`submit_refund_request` immediately. Render the fields and rules from the
+subsequent `refund_request_broadcast_submitted` result.
 
 ### Refund rules
 

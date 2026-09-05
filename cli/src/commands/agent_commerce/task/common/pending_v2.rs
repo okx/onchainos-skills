@@ -62,6 +62,21 @@ fn decision_relay_post_action() -> &'static str {
     "Decision relayed. If this card was surfaced by a currently active `okx-a2a user watch`, immediately re-enter that exact originating watch command per `skills/okx-ai-v2/references/runtime/watch.md` (re-enter through `skills/okx-ai-v2/SKILL.md` and preserve global vs sticky `--job-id`). If it was opened independently through a decision list / outdated-list, do not start watch; end the turn normally. Never infer watch origin from the user's reply text.\n"
 }
 
+/// Instruction embedded in arbitration-decision relays. The receiving session
+/// already has the complete message object, so it can preserve the validated
+/// decision binding instead of reconstructing a smaller event payload.
+fn arbitration_relay_description(mode: &str, agent_id: &str) -> String {
+    format!(
+        "User-decision relay envelope ({mode}). Run `onchainos agent next-action \
+         --role auto --agentId {agent_id} \
+         --message '<complete current message object as JSON>'`. Preserve every \
+         field from the current `message` object, including `decisionId`, \
+         `selectedActionId`, `params`, `data`, and `jobId` when present. Decision \
+         resolution is complete in the user session; continue with the returned \
+         progression result."
+    )
+}
+
 // ─── Data model ─────────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -918,7 +933,14 @@ fn send_decision_relay(
 ) -> Result<()> {
     use sha2::{Digest, Sha256};
 
-    if let Some(session_key) = trusted_autotrade_session_key(job_id, source_event) {
+    let relay_payload = serde_json::from_str(content)
+        .unwrap_or_else(|_| serde_json::Value::String(content.to_string()));
+    let request = serde_json::json!({
+        "sourceEvent": source_event,
+        "toAgentId": to_agent_id,
+        "content": relay_payload,
+    });
+    let result = if let Some(session_key) = trusted_autotrade_session_key(job_id, source_event) {
         let message_id = format!(
             "autotrade-relay:{}",
             hex::encode(Sha256::digest(format!(
@@ -929,9 +951,43 @@ fn send_decision_relay(
         // lookup can wake a backup session, splitting processing and its UI
         // result across two sessions. Keep the pending decision intact and let
         // the caller retry when the exact delivery session cannot be reached.
-        return super::okx_a2a::session_send_exact(&session_key, content, &message_id);
+        super::okx_a2a::session_send_exact(&session_key, content, &message_id)
+    } else {
+        super::okx_a2a::session_send(job_id, to_agent_id, content)
+    };
+    if arbitration::is_decision_source(source_event) {
+        let response = serde_json::json!({"delivered": result.is_ok()});
+        crate::commands::agent_commerce::task::arbitration_trace::record(
+            "decision-session-send",
+            job_id,
+            &request,
+            Some(&response),
+            result
+                .as_ref()
+                .err()
+                .map(|error| error.to_string())
+                .as_deref(),
+        );
     }
-    super::okx_a2a::session_send(job_id, to_agent_id, content)
+    result
+}
+
+fn trace_arbitration_resolution(
+    stage: &str,
+    job_id: &str,
+    source_event: &str,
+    request: &serde_json::Value,
+    response: &serde_json::Value,
+) {
+    if arbitration::is_decision_source(source_event) {
+        crate::commands::agent_commerce::task::arbitration_trace::record(
+            stage,
+            job_id,
+            request,
+            Some(response),
+            None,
+        );
+    }
 }
 
 fn resolve_arbitration_choice(
@@ -964,6 +1020,82 @@ fn print_arbitration_blocked(reason: &str, job_id: &str, source_event: &str) {
             job_id,
             serde_json::json!({"sourceEvent": source_event})
         )
+    );
+}
+
+fn local_arbitration_resolution(
+    user_reply: &str,
+    role: &str,
+    agent_id: &str,
+    job_id: &str,
+    source_event: &str,
+    decision_id: Option<&str>,
+    selection: &ResolvedChoice,
+) -> serde_json::Value {
+    let message = serde_json::json!({
+        "event": format!("user_decision_{source_event}"),
+        "data": user_reply,
+        "code": 0,
+        "description": "The rejection decision was resolved in the current conversation. Validate the fresh task state, then execute the returned action in this conversation.",
+        "source": "system",
+        "jobId": job_id,
+        "decisionId": decision_id,
+        "selectedActionId": selection.action_id,
+        "params": selection.params,
+        "role": role,
+        "timestamp": Utc::now().timestamp(),
+    });
+    serde_json::json!({
+        "phase": "arbitration_decision",
+        "decision": "ready",
+        "reason": "user_choice_resolved",
+        "nextAction": [{
+            "id": "validate_arbitration_choice",
+            "recommend": true,
+            "params": {
+                "role": role,
+                "agentId": agent_id,
+                "message": message,
+            },
+        }],
+        "payload": {
+            "jobId": job_id,
+            "decisionId": decision_id,
+            "selectedActionId": selection.action_id,
+            "params": selection.params,
+            "executionOwner": "current_conversation",
+        },
+    })
+}
+
+fn print_local_arbitration_resolution(
+    user_reply: &str,
+    role: &str,
+    agent_id: &str,
+    job_id: &str,
+    source_event: &str,
+    decision_id: Option<&str>,
+    selection: &ResolvedChoice,
+) {
+    let result = local_arbitration_resolution(
+        user_reply,
+        role,
+        agent_id,
+        job_id,
+        source_event,
+        decision_id,
+        selection,
+    );
+    trace_arbitration_resolution(
+        "decision-local-result",
+        job_id,
+        source_event,
+        &serde_json::json!({"role": role, "agentId": agent_id}),
+        &result,
+    );
+    println!(
+        "{}",
+        serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
     );
 }
 
@@ -1184,12 +1316,9 @@ fn handle_request(
     )
 }
 
-/// CLI-driver bypass: build the full system-shaped relay envelope from the
-/// caller-supplied routing fields and dispatch it in-process via
-/// `okx_a2a::session_send`. Mirrors the queue-based `handle_resolve`
-/// envelope shape exactly (same fields, same `user_decision_<source_event>`
-/// event), so the receiving sub routes via the same
-/// `next-action --event user_decision_<X>` handler regardless of mode.
+/// CLI-driver decision resolver. Arbitration choices are returned to the
+/// current conversation as a bound `next-action` input. Other decision types
+/// keep their existing relay behavior.
 fn handle_resolve_with_sessionkey(
     user_reply: String,
     job_id: String,
@@ -1206,6 +1335,24 @@ fn handle_resolve_with_sessionkey(
         "handle_resolve_with_sessionkey: job_id={} role={} agent_id={} to_agent_id={:?} source_event={} user_reply={:?}",
         job_id, role, agent_id, to_agent_id, source_event, user_reply,
     ));
+    let trace_request = serde_json::json!({
+        "mode": "resolve-with-sessionkey",
+        "userReply": user_reply,
+        "role": role,
+        "agentId": agent_id,
+        "toAgentId": to_agent_id,
+        "sourceEvent": source_event,
+        "decisionId": decision_id,
+        "choicesJson": choices_json,
+        "expiresAt": expires_at,
+    });
+    trace_arbitration_resolution(
+        "decision-resolve-input",
+        &job_id,
+        &source_event,
+        &trace_request,
+        &serde_json::json!({"received": true}),
+    );
     // Rescue path for cards already issued with a poisoned self-addressed target:
     // normalizing here means answering such a card again still relays correctly.
     let to_agent_id = trusted_autotrade_target(&job_id, &agent_id, &source_event, to_agent_id);
@@ -1220,16 +1367,37 @@ fn handle_resolve_with_sessionkey(
             value.starts_with(&expected_prefix) && value.len() > expected_prefix.len()
         }) || choices_json.as_deref().is_none()
         {
+            trace_arbitration_resolution(
+                "decision-validation",
+                &job_id,
+                &source_event,
+                &trace_request,
+                &serde_json::json!({"decision": "blocked", "reason": "decision_metadata_missing"}),
+            );
             print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
             return Ok(());
         }
         if expires_at.is_some_and(|value| value <= Utc::now().timestamp()) {
+            trace_arbitration_resolution(
+                "decision-validation",
+                &job_id,
+                &source_event,
+                &trace_request,
+                &serde_json::json!({"decision": "blocked", "reason": "decision_expired"}),
+            );
             print_arbitration_blocked("decision_expired", &job_id, &source_event);
             return Ok(());
         }
         match arbitration::parse_choices(choices_json.as_deref(), &source_event, &job_id) {
             Ok(choices) => choices,
             Err(_) => {
+                trace_arbitration_resolution(
+                    "decision-validation",
+                    &job_id,
+                    &source_event,
+                    &trace_request,
+                    &serde_json::json!({"decision": "blocked", "reason": "decision_metadata_missing"}),
+                );
                 print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
                 return Ok(());
             }
@@ -1241,11 +1409,46 @@ fn handle_resolve_with_sessionkey(
         match resolve_arbitration_choice(&source_event, &job_id, &arbitration_choices, &user_reply)
         {
             Ok(selection) => selection,
-            Err(_) => {
-                print_arbitration_blocked("ambiguous_choice", &job_id, &source_event);
+            Err(error) => {
+                let reason = error.reason_code();
+                trace_arbitration_resolution(
+                    "decision-validation",
+                    &job_id,
+                    &source_event,
+                    &trace_request,
+                    &serde_json::json!({"decision": "blocked", "reason": reason}),
+                );
+                print_arbitration_blocked(reason, &job_id, &source_event);
                 return Ok(());
             }
         };
+    trace_arbitration_resolution(
+        "decision-validation",
+        &job_id,
+        &source_event,
+        &trace_request,
+        &serde_json::json!({
+            "decision": "ready",
+            "selectedActionId": arbitration_selection.as_ref().map(|value| &value.action_id),
+            "params": arbitration_selection.as_ref().map(|value| &value.params),
+        }),
+    );
+    if let Some(selection) = arbitration_selection.as_ref() {
+        if role != "asp" {
+            print_arbitration_blocked("unsupported_action", &job_id, &source_event);
+            return Ok(());
+        }
+        print_local_arbitration_resolution(
+            &user_reply,
+            &role,
+            &agent_id,
+            &job_id,
+            &source_event,
+            decision_id.as_deref(),
+            selection,
+        );
+        return Ok(());
+    }
     let (user_reply, autotrade_outcome) = match prepare_foreground_autotrade(
         &job_id,
         &agent_id,
@@ -1265,28 +1468,32 @@ fn handle_resolve_with_sessionkey(
         source_event.as_str()
     };
     let relay_event = format!("user_decision_{relay_source_event}");
-    let relay_data_contract = if autotrade_outcome.is_some() {
-        "<foreground-validated normalized A/B/C policy>"
+    let description = if arbitration::is_decision_source(relay_source_event) {
+        arbitration_relay_description("CLI mode", &agent_id)
     } else {
-        "<message.data verbatim>"
+        let relay_data_contract = if autotrade_outcome.is_some() {
+            "<foreground-validated normalized A/B/C policy>"
+        } else {
+            "<message.data verbatim>"
+        };
+        let delivery_contract = relay_delivery_id
+            .as_deref()
+            .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
+            .unwrap_or_default();
+        format!(
+            "User-decision relay envelope (CLI mode). Call `onchainos agent next-action \
+             --role {role} --agentId {agent} \
+             --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"{data_contract}\"{delivery_contract}}}'` \
+             to fetch the routing playbook; follow it. \
+             ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
+             user-session-only; the user-session already issued this relay envelope.",
+            jid = job_id,
+            evt = relay_event,
+            role = role,
+            agent = agent_id,
+            data_contract = relay_data_contract,
+        )
     };
-    let delivery_contract = relay_delivery_id
-        .as_deref()
-        .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
-        .unwrap_or_default();
-    let description = format!(
-        "User-decision relay envelope (CLI mode). Call `onchainos agent next-action \
-         --role {role} --agentId {agent} \
-         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"{data_contract}\"{delivery_contract}}}'` \
-         to fetch the routing playbook; follow it. \
-         ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
-         user-session-only; the user-session already issued this relay envelope.",
-        jid = job_id,
-        evt = relay_event,
-        role = role,
-        agent = agent_id,
-        data_contract = relay_data_contract,
-    );
     let relay_envelope = serde_json::json!({
         "agentId": agent_id,
         "message": {
@@ -1304,6 +1511,13 @@ fn handle_resolve_with_sessionkey(
             "timestamp": Utc::now().timestamp(),
         }
     });
+    trace_arbitration_resolution(
+        "decision-relay-envelope",
+        &job_id,
+        &source_event,
+        &serde_json::json!({"mode": "resolve-with-sessionkey"}),
+        &relay_envelope,
+    );
     let relay_content = serde_json::to_string(&relay_envelope)
         .unwrap_or_else(|_| format!(
             "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":{:?},\"source\":\"system\",\"jobId\":\"{}\",\"role\":\"{}\"}}}}",
@@ -1330,11 +1544,9 @@ fn handle_resolve_with_sessionkey(
     Ok(())
 }
 
-/// Queue-backed variant of `handle_resolve_with_sessionkey`. Builds the same
-/// system-shaped relay envelope from the caller-supplied routing fields,
-/// dispatches it in-process via `okx_a2a::session_send`, and best-effort
-/// removes the matching queue entry. Pairs with `playbook_push_prompt_user`
-/// so a queue-mode push lands a queue-mode relay.
+/// Queue-backed variant of `handle_resolve_with_sessionkey`. Arbitration
+/// choices are returned to the current conversation after the active queue
+/// entry is consumed. Other decision types keep their existing relay behavior.
 fn handle_resolve_prompt(
     user_reply: String,
     job_id: String,
@@ -1349,6 +1561,22 @@ fn handle_resolve_prompt(
         "handle_resolve_prompt: job_id={} role={} agent_id={} to_agent_id={:?} source_event={} user_reply={:?}",
         job_id, role, agent_id, to_agent_id, source_event, user_reply,
     ));
+    let trace_request = serde_json::json!({
+        "mode": "resolve-prompt",
+        "userReply": user_reply,
+        "role": role,
+        "agentId": agent_id,
+        "toAgentId": to_agent_id,
+        "sourceEvent": source_event,
+        "decisionId": decision_id,
+    });
+    trace_arbitration_resolution(
+        "decision-resolve-input",
+        &job_id,
+        &source_event,
+        &trace_request,
+        &serde_json::json!({"received": true}),
+    );
     // Same self-addressed-target rescue as `handle_resolve_with_sessionkey`.
     let to_agent_id = trusted_autotrade_target(&job_id, &agent_id, &source_event, to_agent_id);
     let relay_delivery_id = trusted_autotrade_delivery_id(&job_id, &source_event);
@@ -1360,6 +1588,13 @@ fn handle_resolve_prompt(
             value.starts_with(&prefix) && value.len() > prefix.len()
         })
     {
+        trace_arbitration_resolution(
+            "decision-validation",
+            &job_id,
+            &source_event,
+            &trace_request,
+            &serde_json::json!({"decision": "blocked", "reason": "decision_metadata_missing"}),
+        );
         print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
         return Ok(());
     }
@@ -1371,6 +1606,13 @@ fn handle_resolve_prompt(
         decision_id.as_deref(),
     );
     if arbitration::is_decision_source(&source_event) && stored_entry.is_none() {
+        trace_arbitration_resolution(
+            "decision-validation",
+            &job_id,
+            &source_event,
+            &trace_request,
+            &serde_json::json!({"decision": "blocked", "reason": "decision_metadata_missing", "activeDecisionExists": false}),
+        );
         print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
         return Ok(());
     }
@@ -1385,6 +1627,13 @@ fn handle_resolve_prompt(
             &agent_id,
             to_agent_id.as_deref(),
             decision_id.as_deref(),
+        );
+        trace_arbitration_resolution(
+            "decision-validation",
+            &job_id,
+            &source_event,
+            &trace_request,
+            &serde_json::json!({"decision": "blocked", "reason": "decision_expired"}),
         );
         print_arbitration_blocked("decision_expired", &job_id, &source_event);
         return Ok(());
@@ -1401,6 +1650,13 @@ fn handle_resolve_prompt(
             to_agent_id.as_deref(),
             decision_id.as_deref(),
         );
+        trace_arbitration_resolution(
+            "decision-validation",
+            &job_id,
+            &source_event,
+            &trace_request,
+            &serde_json::json!({"decision": "blocked", "reason": "decision_metadata_missing"}),
+        );
         print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
         return Ok(());
     }
@@ -1414,11 +1670,34 @@ fn handle_resolve_prompt(
         &user_reply,
     ) {
         Ok(selection) => selection,
-        Err(_) => {
-            print_arbitration_blocked("ambiguous_choice", &job_id, &source_event);
+        Err(error) => {
+            let reason = error.reason_code();
+            trace_arbitration_resolution(
+                "decision-validation",
+                &job_id,
+                &source_event,
+                &trace_request,
+                &serde_json::json!({"decision": "blocked", "reason": reason}),
+            );
+            print_arbitration_blocked(reason, &job_id, &source_event);
             return Ok(());
         }
     };
+    trace_arbitration_resolution(
+        "decision-validation",
+        &job_id,
+        &source_event,
+        &trace_request,
+        &serde_json::json!({
+            "decision": "ready",
+            "activeDecisionExists": true,
+            "storedDecisionId": stored_entry.as_ref().and_then(|entry| entry.decision_id.as_deref()),
+            "storedExpiresAt": stored_entry.as_ref().and_then(|entry| entry.expires_at),
+            "storedChoices": stored_entry.as_ref().map(|entry| &entry.choices),
+            "selectedActionId": arbitration_selection.as_ref().map(|value| &value.action_id),
+            "params": arbitration_selection.as_ref().map(|value| &value.params),
+        }),
+    );
     // Remove the current queue entry before applying the candidate. A missing-
     // field or confirmation result pushes its replacement under the same key;
     // removing after that push would delete the new card.
@@ -1429,6 +1708,22 @@ fn handle_resolve_prompt(
         to_agent_id.as_deref(),
         decision_id.as_deref(),
     );
+    if let Some(selection) = arbitration_selection.as_ref() {
+        if role != "asp" {
+            print_arbitration_blocked("unsupported_action", &job_id, &source_event);
+            return Ok(());
+        }
+        print_local_arbitration_resolution(
+            &user_reply,
+            &role,
+            &agent_id,
+            &job_id,
+            &source_event,
+            decision_id.as_deref(),
+            selection,
+        );
+        return Ok(());
+    }
     let (user_reply, autotrade_outcome) = match prepare_foreground_autotrade(
         &job_id,
         &agent_id,
@@ -1448,24 +1743,31 @@ fn handle_resolve_prompt(
         source_event.as_str()
     };
     let relay_event = format!("user_decision_{relay_source_event}");
-    let relay_data_contract = if autotrade_outcome.is_some() {
-        "<foreground-validated normalized A/B/C policy>"
+    let description = if arbitration::is_decision_source(relay_source_event) {
+        arbitration_relay_description("queue-backed prompt mode", &agent_id)
     } else {
-        "<message.data verbatim>"
+        let relay_data_contract = if autotrade_outcome.is_some() {
+            "<foreground-validated normalized A/B/C policy>"
+        } else {
+            "<message.data verbatim>"
+        };
+        let delivery_contract = relay_delivery_id
+            .as_deref()
+            .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
+            .unwrap_or_default();
+        format!(
+            "User-decision relay envelope (queue-backed prompt mode). Call `onchainos agent next-action \
+             --role {role} --agentId {agent} \
+             --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"{data_contract}\"{delivery_contract}}}'` \
+             to fetch the routing playbook; follow it. \
+             ❌ Do NOT call `pending-decisions-v2 resolve` / `resolve-with-sessionkey` / `resolve-prompt` / `pick` / `cancel` — those are user-session-only; the user-session already issued this relay envelope.",
+            jid = job_id,
+            evt = relay_event,
+            role = role,
+            agent = agent_id,
+            data_contract = relay_data_contract,
+        )
     };
-    let delivery_contract = relay_delivery_id
-        .as_deref()
-        .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
-        .unwrap_or_default();
-    let description = format!(
-        "User-decision relay envelope (queue-backed prompt mode). Call `onchainos agent next-action \
-         --role {role} --agentId {agent} \
-         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"{data_contract}\"{delivery_contract}}}'` \
-         to fetch the routing playbook; follow it. \
-         ❌ Do NOT call `pending-decisions-v2 resolve` / `resolve-with-sessionkey` / `resolve-prompt` / `pick` / `cancel` — those are user-session-only; the user-session already issued this relay envelope.",
-        jid = job_id, evt = relay_event, role = role, agent = agent_id,
-        data_contract = relay_data_contract,
-    );
     let relay_envelope = serde_json::json!({
         "agentId": agent_id,
         "message": {
@@ -1483,6 +1785,13 @@ fn handle_resolve_prompt(
             "timestamp": Utc::now().timestamp(),
         }
     });
+    trace_arbitration_resolution(
+        "decision-relay-envelope",
+        &job_id,
+        &source_event,
+        &serde_json::json!({"mode": "resolve-prompt"}),
+        &relay_envelope,
+    );
     let relay_content = serde_json::to_string(&relay_envelope)
         .unwrap_or_else(|_| format!(
             "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":{:?},\"source\":\"system\",\"jobId\":\"{}\",\"role\":\"{}\"}}}}",
@@ -1677,9 +1986,9 @@ fn handle_resolve(user_reply: String) -> Result<()> {
         &user_reply,
     ) {
         Ok(selection) => selection,
-        Err(_) => {
+        Err(error) => {
             write_queue_atomic(&q)?;
-            print_arbitration_blocked("ambiguous_choice", &active.job_id, source_event);
+            print_arbitration_blocked(error.reason_code(), &active.job_id, source_event);
             return Ok(());
         }
     };
@@ -1705,24 +2014,28 @@ fn handle_resolve(user_reply: String) -> Result<()> {
     // common mis-routing pattern where the sub pattern-matches "I see user_decision_*"
     // → "this is from resolve flow" → "I should call resolve too" (which is wrong; resolve
     // is user-session-only — user-session ALREADY called it to produce THIS envelope).
-    let delivery_contract = relay_delivery_id
-        .as_deref()
-        .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
-        .unwrap_or_default();
-    let description = format!(
-        "User-decision relay envelope (sub session). Call `onchainos agent next-action \
-         --role {role} --agentId {agent} \
-         --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"<message.data verbatim>\"{delivery_contract}}}'` \
-         to fetch the routing playbook; follow it. \
-         ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
-         user-session-only; the user-session already called `resolve` to produce this \
-         envelope. The sub session has no queue file; calling resolve here = wasted turn \
-         + flow stall.",
-        jid = active.job_id,
-        evt = relay_event,
-        role = active.role,
-        agent = active.agent_id,
-    );
+    let description = if arbitration::is_decision_source(source_event) {
+        arbitration_relay_description("sub session", &active.agent_id)
+    } else {
+        let delivery_contract = relay_delivery_id
+            .as_deref()
+            .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
+            .unwrap_or_default();
+        format!(
+            "User-decision relay envelope (sub session). Call `onchainos agent next-action \
+             --role {role} --agentId {agent} \
+             --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"<message.data verbatim>\"{delivery_contract}}}'` \
+             to fetch the routing playbook; follow it. \
+             ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
+             user-session-only; the user-session already called `resolve` to produce this \
+             envelope. The sub session has no queue file; calling resolve here = wasted turn \
+             + flow stall.",
+            jid = active.job_id,
+            evt = relay_event,
+            role = active.role,
+            agent = active.agent_id,
+        )
+    };
     let relay_envelope = serde_json::json!({
         "agentId": active.agent_id,
         "message": {
@@ -2270,9 +2583,9 @@ fn role_short_label(role: &str) -> &str {
 }
 
 /// CLI-driver variant of `resolve_llm_content`. The queue file is bypassed in
-/// CLI mode, so the future `resolve` call cannot reverse-lookup routing fields
-/// from a queue entry — embed all of them up front so the LLM passes them
-/// verbatim to `resolve-with-sessionkey`.
+/// CLI mode. Most decisions therefore embed their routing fields for a later
+/// `resolve-with-sessionkey`; buyer review decisions use the source-specific
+/// direct-execution contract below instead.
 fn foreground_autotrade_candidate_guidance(source_event: &str) -> &'static str {
     if crate::commands::agent_commerce::task::common::autotrade::is_retired_mode_configuration_decision(
         Some(source_event),
@@ -2302,7 +2615,93 @@ fn foreground_autotrade_candidate_flag(source_event: &str) -> &'static str {
     }
 }
 
+fn buyer_review_llm_content_cli(entry: &PendingEntry) -> Option<String> {
+    let source_event = entry.source_event.as_deref()?;
+    if entry.role != "user" || !matches!(source_event, "job_submitted" | "review_deadline_warn") {
+        return None;
+    }
+
+    let to_header = match entry.to_agent_id.as_deref() {
+        Some(value) => format!("[to: {value}]"),
+        None => "[to: backup]".to_string(),
+    };
+    Some(format!(
+        "[USER_DECISION_REQUEST][job: {job}][role: {role}][agent: {agent}]{to_header}\n\n\
+         Step 1 — Card was just delivered. **END THE TURN NOW** and wait for the user's next message.\n\
+         Step 2 — Handle that reply in this current conversation. Enter through `skills/okx-ai-v2/SKILL.md`, then apply `skills/okx-ai-v2/references/runtime/watch.md` §Handling the user reply: cancel the wake when applicable, and for a non-defer reply claim the decision with `okx-a2a user check --todo-ids <todo_id> --json`. Continue on `handled`.\n\
+         Step 3 — Interpret the choice and complete the selected review action here:\n\
+           - A or an unambiguous approval: run `onchainos agent next-action --role user --agentId {agent} --message '{{\"event\":\"approve_review\",\"jobId\":\"{job}\"}}'`. For `reason=completion_submitted`, give one localized friendly confirmation equivalent to: \"Deliverable approved. The on-chain completion transaction has been submitted.\" For any other result, present its returned status and actions.\n\
+           - B with a non-blank reason: treat this reply as the user's final rejection confirmation. Extract the user-authored reason after the choice marker and keep it verbatim. Run `onchainos agent refund-prepare {job} --reason \"<verbatim reason>\"`. Continue when it returns `payload.schemaVersion=2`, `phase=refund_confirmation`, `decision=ready`, `reason=refund_request_confirmation_required`, and `nextAction[id=submit_refund_request]`; immediately run `onchainos agent refund-execute <params.jobId> --operation <params.operation> --refund-context-id <params.refundContextId> --reason \"<params.reason verbatim>\" --confirm` with every parameter copied from that fresh action. For `reason=refund_request_broadcast_submitted`, give one localized friendly confirmation equivalent to: \"Rejection request submitted. Reason: <verbatim reason>. Refund or arbitration progress will update in this task. You can ask me to check the task result, or run `onchainos agent status {job} --agent-id {agent}`.\" For any other result, present its returned status and actions.\n\
+           - B without a reason: ask for the rejection reason in this conversation and keep this decision context active. The next non-blank reason completes the B choice.\n\
+           - Ambiguous or unrelated text: show the same A/B choice and wait.\n\n\
+         The current conversation owns choice parsing, action execution, and result feedback. For `refund_request_broadcast_submitted`, end the turn after the pending confirmation and do not resume the originating watch; the User may request a later status query explicitly. Other decisions resume the exact originating watch only when the watch-core rules require it.",
+        job = entry.job_id,
+        role = entry.role,
+        agent = entry.agent_id,
+        to_header = to_header,
+    ))
+}
+
+fn asp_arbitration_llm_content(entry: &PendingEntry, queue_mode: bool) -> Option<String> {
+    let source_event = entry.source_event.as_deref()?;
+    if entry.role != "asp" || !arbitration::is_decision_source(source_event) {
+        return None;
+    }
+
+    let decision_flag = entry
+        .decision_id
+        .as_deref()
+        .map(|value| format!(" --decision-id \"{value}\""))
+        .unwrap_or_default();
+    let resolver = if queue_mode {
+        format!(
+            "onchainos agent pending-decisions-v2 resolve-prompt --user-reply \"<user's verbatim wording>\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\" --source-event \"{}\"{}",
+            entry.job_id, entry.role, entry.agent_id, source_event, decision_flag,
+        )
+    } else {
+        let choices = serde_json::to_string(&entry.choices).unwrap_or_else(|_| "[]".to_string());
+        let expires = entry
+            .expires_at
+            .map(|value| format!(" --expires-at {value}"))
+            .unwrap_or_default();
+        format!(
+            "onchainos agent pending-decisions-v2 resolve-with-sessionkey --user-reply \"<user's verbatim wording>\" --job-id \"{}\" --role \"{}\" --agent-id \"{}\" --source-event \"{}\"{} --choices-json '{}'{}",
+            entry.job_id,
+            entry.role,
+            entry.agent_id,
+            source_event,
+            decision_flag,
+            choices.replace('\'', "'\"'\"'"),
+            expires,
+        )
+    };
+    Some(format!(
+        "[USER_DECISION_REQUEST][job: {job}][role: {role}][agent: {agent}]\n\n\
+         Step 1 — The card was just delivered. End this turn and wait for the user's next message.\n\
+         Step 2 — Handle the next reply in this current conversation. Enter through `skills/okx-ai-v2/SKILL.md`, then apply `skills/okx-ai-v2/references/runtime/watch.md` §Handling the user reply: cancel the wake when applicable, and claim a non-defer reply with `okx-a2a user check --todo-ids <todo_id> --json`. Continue on `handled`.\n\
+         Step 3 — Resolve the user's complete reply as the final decision by running this pre-filled command once:\n\
+           `{resolver}`\n\
+         The resolver preserves the card's `decisionId`, choices, deadline, job binding, and the user's B reason. For `ambiguous_choice`, show the same card. For `arbitration_reason_required`, ask for `B <reason>` and keep the card active.\n\n\
+         Step 4 — For `phase=arbitration_decision`, `decision=ready`, `reason=user_choice_resolved`, and sole `nextAction.id=validate_arbitration_choice`, run `onchainos agent next-action --role <nextAction.params.role> --agentId <nextAction.params.agentId> --message '<nextAction.params.message as exact compact JSON>'`. Use the fresh sole action it returns.\n\
+           - `agree_refund`: run `onchainos agent agree-refund <params.jobId> --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query.\n\
+           - `raise_arbitration`: run `onchainos agent dispute raise <params.jobId> --reason \"<params.reason verbatim>\" --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query. A later `dispute_approved` event enters the ASP task event flow, which runs `dispute confirm` once.\n\
+           - `sub_agree_refund`: run `onchainos agent subscribe-agree-refund <params.jobId> --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome and relevant returned fields.\n\
+           - `raise_subscription_arbitration`: run `onchainos agent subscribe-dispute <params.jobId> --reason \"<params.reason verbatim>\" --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query.\n\n\
+         The current conversation owns choice resolution, freshness validation, returned action execution, concise result feedback, and resuming the exact originating watch when one exists.",
+        job = entry.job_id,
+        role = entry.role,
+        agent = entry.agent_id,
+        resolver = resolver,
+    ))
+}
+
 fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
+    if let Some(content) = buyer_review_llm_content_cli(entry) {
+        return content;
+    }
+    if let Some(content) = asp_arbitration_llm_content(entry, false) {
+        return content;
+    }
     if let Some(ref custom) = entry.llm_content_override {
         return custom.clone();
     }
@@ -2365,6 +2764,9 @@ fn resolve_llm_content_cli(entry: &PendingEntry) -> String {
 /// LLM's context, the LLM first asks the user which jobId they're answering
 /// rather than guessing.
 fn resolve_llm_content_prompt_user(entry: &PendingEntry) -> String {
+    if let Some(content) = asp_arbitration_llm_content(entry, true) {
+        return content;
+    }
     if let Some(ref custom) = entry.llm_content_override {
         return custom.clone();
     }
@@ -2848,9 +3250,10 @@ mod shared_encoding_shell_safety_tests {
 #[cfg(test)]
 mod sanitize_tests {
     use super::{
-        decision_relay_post_action, read_queue, request_prompt_inner, resolve_arbitration_choice,
-        resolve_llm_content_cli, resolve_llm_content_prompt_user, sanitize_to_agent,
-        trusted_autotrade_session_key, write_queue_atomic, PendingEntry, Queue, Status,
+        arbitration_relay_description, decision_relay_post_action, local_arbitration_resolution,
+        read_queue, request_prompt_inner, resolve_arbitration_choice, resolve_llm_content_cli,
+        resolve_llm_content_prompt_user, sanitize_to_agent, trusted_autotrade_session_key,
+        write_queue_atomic, PendingEntry, Queue, Status,
     };
     use chrono::Utc;
 
@@ -2919,6 +3322,20 @@ mod sanitize_tests {
     }
 
     #[test]
+    fn arbitration_relay_preserves_the_complete_message_contract() {
+        let description = arbitration_relay_description("CLI mode", "11802");
+        assert!(description.contains("--role auto --agentId 11802"));
+        assert!(description.contains("<complete current message object as JSON>"));
+        for field in ["decisionId", "selectedActionId", "params", "data", "jobId"] {
+            assert!(
+                description.contains(field),
+                "missing {field}: {description}"
+            );
+        }
+        assert!(!description.contains("{\"event\":"));
+    }
+
+    #[test]
     fn retired_policy_decisions_never_request_candidate_extraction() {
         for source in ["autotrade_consent", "autotrade_config_required"] {
             let mut entry = decision_entry();
@@ -2934,16 +3351,168 @@ mod sanitize_tests {
     }
 
     #[test]
-    fn non_autotrade_decisions_keep_the_generic_resolver_contract() {
+    fn buyer_review_executes_in_the_current_cli_conversation() {
+        for source_event in ["job_submitted", "review_deadline_warn"] {
+            let mut entry = decision_entry();
+            entry.source_event = Some(source_event.to_string());
+            let content = resolve_llm_content_cli(&entry);
+
+            assert!(content.contains("Handle that reply in this current conversation"));
+            assert!(content.contains("final rejection confirmation"));
+            assert!(content.contains("refund-prepare job-123"));
+            assert!(content.contains("refund-execute <params.jobId>"));
+            assert!(content.contains("--confirm"));
+            assert!(content.contains("Deliverable approved"));
+            assert!(content.contains("Rejection request submitted"));
+            assert!(content.contains("ask me to check the task result"));
+            assert!(content.contains("onchainos agent status job-123 --agent-id 8315"));
+            assert!(content.contains("result feedback"));
+            assert!(!content.contains("pending-decisions-v2 resolve"));
+            assert!(!content.contains("okx-a2a session send"));
+            assert!(!content.contains("another confirmation card"));
+            assert!(!content.contains("--autotrade-candidate-json"));
+        }
+    }
+
+    #[test]
+    fn buyer_review_direct_execution_overrides_legacy_relay_content() {
         let mut entry = decision_entry();
         entry.source_event = Some("job_submitted".to_string());
+        entry.llm_content_override = Some("okx-a2a session send legacy-review".to_string());
+
+        let content = resolve_llm_content_cli(&entry);
+
+        assert!(content.contains("Handle that reply in this current conversation"));
+        assert!(content.contains("onchainos agent next-action"));
+        assert!(content.contains("onchainos agent refund-prepare"));
+        assert!(!content.contains("legacy-review"));
+        assert!(!content.contains("okx-a2a session send"));
+    }
+
+    #[test]
+    fn non_buyer_review_decisions_keep_the_existing_resolver() {
+        let mut entry = decision_entry();
+        entry.source_event = Some("cli_failed".to_string());
+
+        let content = resolve_llm_content_cli(&entry);
+
+        assert!(content.contains("pending-decisions-v2 resolve-with-sessionkey"));
+        assert!(!content.contains("final rejection confirmation"));
+    }
+
+    #[test]
+    fn queue_mode_buyer_review_keeps_its_queue_backed_resolver() {
+        let mut entry = decision_entry();
+        entry.source_event = Some("job_submitted".to_string());
+        let content = resolve_llm_content_prompt_user(&entry);
+
+        assert!(content.contains("pending-decisions-v2 resolve-prompt"));
+        assert!(!content.contains("--autotrade-candidate-json"));
+    }
+
+    #[test]
+    fn asp_rejection_decision_executes_in_the_current_conversation() {
+        let mut entry = decision_entry();
+        entry.role = "asp".to_string();
+        entry.agent_id = "11802".to_string();
+        entry.source_event =
+            Some(crate::commands::agent_commerce::task::arbitration::JOB_REJECTED.to_string());
+        entry.decision_id = Some("job-123:job_rejected:event-1".to_string());
+        entry.choices = crate::commands::agent_commerce::task::arbitration::default_choices(
+            crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
+            &entry.job_id,
+        );
+        entry.expires_at = Some(2_000_000_000);
+
         for content in [
             resolve_llm_content_cli(&entry),
             resolve_llm_content_prompt_user(&entry),
         ] {
-            assert!(!content.contains("--autotrade-candidate-json"));
-            assert!(!content.contains("strict compact JSON"));
+            assert!(content.contains("Handle the next reply in this current conversation"));
+            assert!(content.contains("final decision"));
+            assert!(content.contains("validate_arbitration_choice"));
+            assert!(content.contains("onchainos agent agree-refund <params.jobId>"));
+            assert!(content.contains("onchainos agent dispute raise <params.jobId>"));
+            assert!(content.contains("in this current conversation"));
+            assert!(content.contains("one concise localized result"));
+            assert!(
+                content.contains("A later `dispute_approved` event enters the ASP task event flow")
+            );
+            assert!(content.contains("which runs `dispute confirm` once"));
+            assert!(!content.contains("Full refund approved"));
+            assert!(!content.contains("Arbitration transaction submitted"));
+            assert!(!content.contains("onchainos agent status job-123 --agent-id 11802"));
+            assert!(!content.contains("onchainos agent arbitration-list --agent-id 11802"));
+            assert!(!content.contains("friendly result feedback"));
+            assert!(!content.contains("matching arbitration Output Template"));
+            assert!(!content.contains("onchainos agent dispute confirm <params.jobId>"));
+            assert!(!content.contains("okx-a2a session send"));
+            assert!(!content.contains("second confirmation"));
         }
+    }
+
+    #[test]
+    fn asp_rejection_decision_overrides_legacy_relay_content() {
+        let mut entry = decision_entry();
+        entry.role = "asp".to_string();
+        entry.source_event =
+            Some(crate::commands::agent_commerce::task::arbitration::JOB_REJECTED.to_string());
+        entry.decision_id = Some("job-123:job_rejected:event-1".to_string());
+        entry.choices = crate::commands::agent_commerce::task::arbitration::default_choices(
+            crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
+            &entry.job_id,
+        );
+        entry.llm_content_override = Some("okx-a2a session send legacy-arbitration".to_string());
+
+        let content = resolve_llm_content_cli(&entry);
+
+        assert!(content.contains("validate_arbitration_choice"));
+        assert!(content.contains("A later `dispute_approved` event enters the ASP task event flow"));
+        assert!(content.contains("one concise localized result"));
+        assert!(!content.contains("matching arbitration Output Template"));
+        assert!(!content.contains("onchainos agent dispute confirm <params.jobId>"));
+        assert!(!content.contains("legacy-arbitration"));
+        assert!(!content.contains("okx-a2a session send"));
+    }
+
+    #[test]
+    fn local_arbitration_resolution_preserves_the_bound_choice() {
+        let choices = crate::commands::agent_commerce::task::arbitration::default_choices(
+            crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
+            "job-123",
+        );
+        let selected = resolve_arbitration_choice(
+            crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
+            "job-123",
+            &choices,
+            "B reason: delivery below expectation",
+        )
+        .unwrap()
+        .unwrap();
+        let result = local_arbitration_resolution(
+            "B reason: delivery below expectation",
+            "asp",
+            "11802",
+            "job-123",
+            crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
+            Some("job-123:job_rejected:event-1"),
+            &selected,
+        );
+
+        assert_eq!(result["phase"], "arbitration_decision");
+        assert_eq!(result["decision"], "ready");
+        assert_eq!(result["nextAction"][0]["id"], "validate_arbitration_choice");
+        assert_eq!(result["nextAction"][0]["params"]["role"], "asp");
+        assert_eq!(result["nextAction"][0]["params"]["agentId"], "11802");
+        assert_eq!(
+            result["nextAction"][0]["params"]["message"]["selectedActionId"],
+            "raise_arbitration"
+        );
+        assert_eq!(
+            result["nextAction"][0]["params"]["message"]["params"]["reason"],
+            "delivery below expectation"
+        );
+        assert_eq!(result["payload"]["executionOwner"], "current_conversation");
     }
 
     #[test]

@@ -7,5 +7,5 @@
 | Provided-subscription list, lifecycle, renewal, or earnings | `subscription.md` |
 | Provider refund decision, dispute creation, arbitration list, or arbitration detail | `arbitration.md` |
 
-Select one file and stop routing. Do not proactively accept without a system
+Select one file and stop routing. Accept assignments after a matching system
 assignment.

@@ -1539,7 +1539,8 @@ fn job_submitted_waiting_for_deliverable(job_id: &str) -> String {
 /// Escrow path (paymentMode=1):
 ///   Step 1 (task ctx) → Step 2a (saved check) → Step 2b (download / extract + save)
 ///   → Step 3 (compose review user_content) → push pending-decisions-v2 review card.
-/// User must reply A (approve) / B (reject). Auto-approve is strictly forbidden.
+/// User must reply A (approve) / B + reason (reject). The B reply is the final
+/// confirmation for a fresh Refund V2 rejection write. Auto-approve is strictly forbidden.
 pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
@@ -1780,8 +1781,8 @@ fn user_authored_rejection_reason(data: Option<&str>) -> Option<&str> {
     data.map(str::trim).filter(|reason| !reason.is_empty())
 }
 
-/// Hand a review rejection to Refund V2 with the exact user-authored reason.
-/// No mutation is executed from the caller-provided pseudo-event itself.
+/// Compatibility handoff for review replies already relayed to a task session.
+/// Current CLI-driver cards execute in the user conversation and do not enter here.
 pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
 
@@ -1799,8 +1800,8 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
         "reason": reason,
     });
     format!(
-        "[reject_review] No mutation occurred. Continue through Refund V2 using this exact handoff: {handoff}\n\n\
-         Run the read-only `onchainos agent refund-prepare {job_id} --reason <exact user-authored reason above>`. Execute only a returned `submit_refund_request` action with its unchanged `refundContextId`, operation, reason, and explicit `--confirm`; if prepare returns any other action or block, do not call `reject` or `subscribe-reject`. The user already selected Reject, but fresh Refund V2 state remains authoritative.\n"
+        "[reject_review compatibility] The relayed B + reason is the user's final rejection confirmation. Continue through Refund V2 using this exact handoff: {handoff}\n\n\
+         Run the read-only `onchainos agent refund-prepare {job_id} --reason <exact user-authored reason above>`. When it returns `phase=refund_confirmation`, `decision=ready`, `reason=refund_request_confirmation_required`, and `nextAction.id=submit_refund_request`, immediately execute that action with its unchanged `jobId`, `refundContextId`, operation, reason, and `--confirm`. Any other preparation result is the authoritative outcome to present to the user.\n"
     )
 }
 
@@ -1972,7 +1973,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reject_review_with_reason_only_hands_off_to_refund_v2() {
+    async fn legacy_reject_review_with_reason_executes_in_same_turn_after_fresh_prepare() {
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
             job_id: "0xabc",
             agent_id: "426",
@@ -1987,10 +1988,12 @@ mod tests {
         };
 
         let out = reject_review(&ctx).await;
-        assert!(out.contains("No mutation occurred"), "{out}");
+        assert!(out.contains("final rejection confirmation"), "{out}");
         assert!(out.contains("\"reason\":\"quality below SLA\""), "{out}");
         assert!(out.contains("refund-prepare 0xabc"), "{out}");
         assert!(out.contains("submit_refund_request"), "{out}");
+        assert!(out.contains("immediately execute that action"), "{out}");
+        assert!(out.contains("authoritative outcome"), "{out}");
         assert!(out.contains("--confirm"), "{out}");
         assert!(!out.contains("onchainos agent reject "), "{out}");
         assert!(!out.contains("broadcast"), "{out}");
@@ -2575,6 +2578,17 @@ Part B continues
 
     #[test]
     fn escrow_card_appends_review_line_when_expire_time_present() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("submitted-review-card-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
         let now = chrono::Local::now().timestamp();
         let p = escrow_ctx_with_expire(Some(now + 3 * 86_400));
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
@@ -2594,10 +2608,27 @@ Part B continues
             out.contains("⏰ Review deadline: 3 day(s)"),
             "escrow card should append the Review reminder line; got:\n{out}"
         );
+        assert!(out.contains("A. Approve → reply 'A'"), "{out}");
+        assert!(
+            out.contains("B. Reject (state reason; used as evidence if disputed)"),
+            "{out}"
+        );
+        assert!(!out.contains("Full refund request:"), "{out}");
     }
 
     #[test]
     fn escrow_card_no_reminder_when_expire_time_none() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("submitted-review-card-no-deadline-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
         let p = escrow_ctx_with_expire(None);
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
             job_id: "0xabc",
