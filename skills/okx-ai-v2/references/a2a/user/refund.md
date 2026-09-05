@@ -73,7 +73,10 @@ reason, and refund or arbitration progress will update in this task. Describe
 it as submitted rather than settled. End with a practical query hint: the User
 can ask the assistant to check the task result, or run
 `onchainos agent status <jobId> --agent-id <buyerAgentId>` using the active
-review-card identifiers.
+review-card identifiers. Tell the User that the ASP needs time to process the
+request, then end the current turn. Do not execute `watch_task` or resume the
+originating watch automatically; a later status query or explicit watch request
+is a new User action.
 
 ### Submitted one-time or Active formal subscription
 
@@ -146,7 +149,8 @@ Use the returned `reason`, payload, and actions together:
 | `refund_reason_required`, `refund_reason_too_long` | Collect only a verbatim User reason, then prepare again. |
 | `trial_subscription_not_refundable` | Explain that no charge is being returned. Offer conversion cancellation only when returned. |
 | `zero_amount_close_confirmation_required`, `direct_refund_confirmation_required`, `refund_request_confirmation_required` | Render the prepared details and wait for explicit selection of the returned write. |
-| `*_broadcast_submitted` | State that the operation is pending. Follow only returned read/watch actions; never retry the write. |
+| `refund_request_broadcast_submitted` | State that the rejection/refund request is pending and the ASP needs time to process it. Provide the task-status query hint, then end the turn; do not execute or resume `watch_task` automatically. |
+| `zero_amount_close_broadcast_submitted`, `refund_broadcast_submitted`, `trial_conversion_cancel_broadcast_submitted` | State that the operation is pending. Follow only returned read/watch actions; never retry the write. |
 | `provider_response_pending` | The ASP has not agreed or disputed. Permit only returned status/watch actions. |
 | `arbitration_in_progress` | No refund is decided. Permit only returned arbitration/read actions. |
 | `refund_confirmed` | Render a full original-token refund as terminal using the finality matrix below. |
@@ -225,9 +229,10 @@ restart, polling, and terminal recovery. It proves the classified request path,
 not settlement by itself; combine it only with the fresh facts required by the
 finality matrix. A core mismatch or definitive rejection disqualifies it.
 
-Pending, unknown, or settlement-incomplete results stay on returned read-only
-status/watch actions. Never manufacture a terminal marker or clear recovery
-state merely because time passed.
+Pending, unknown, or settlement-incomplete results stay read-only. For a
+`refund_request_broadcast_submitted` result, the returned status query is
+available for a later explicit User request; do not manufacture a terminal
+marker or clear recovery state merely because time passed.
 
 ## Safety invariants
 

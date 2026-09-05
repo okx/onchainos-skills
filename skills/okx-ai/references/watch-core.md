@@ -291,7 +291,7 @@ Separate user-initiated intent (`outstanding decisions` / `pending decisions` / 
 - The user explicitly says `stop watching` / `unsubscribe`.
 - **Scoped session + this task reached a terminal state.** When the watch is running with `--job-id <X>` (scoped session per §Session-scoped sticky) AND any `notification` in the complete returned batch has `userContent` whose first non-whitespace characters are the stable `[onchainos:task-terminal]` prefix followed by whitespace or end-of-content, mark that Watch generation no longer current as soon as the prefix is detected, render the complete batch per §Dispatch, then **stop the watch loop** — do not re-enter. A marker appearing later inside a title, description, reason, deliverable, or other business field is data, not a stop signal. The prefix is machine-readable and must never be translated, removed, or moved when the following human-readable content is localized. Legacy notifications may instead begin with `[Job Completed]` / `[Job Auto-Completed]` / `[x402 Job Completed]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]` / `[Dispute Lost]`; treat only that canonical leading heading as a fallback stop marker, never a substring inside business data.
   For refund-related notifications, dispatch the structured result and apply
-  [`task-user-refund.md`](task-user-refund.md). Event names and human-readable
+  [`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md). Event names and human-readable
   headings are never stop signals by themselves. Only a leading terminal marker
   produced after the fresh Refund V2 gate stops a scoped watch; incomplete or
   ambiguous results produce no marker and must re-enter.
@@ -313,7 +313,7 @@ After processing all returned items, **always** call `okx-a2a user watch --json`
     without a generated terminal marker — dispatch must fresh-read Refund V2.
     Follow only its returned result; no Buyer claim/finalize action exists.
   - `job_closed` or another refund-result event without a generated terminal
-    marker — apply [`task-user-refund.md`](task-user-refund.md), then re-enter if
+    marker — apply [`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md), then re-enter if
     the result remains pending or incomplete. Never manufacture a marker from
     event prose.
   - `[Cancelled]` / `[Auto-Renew Cancelled]` from `sub_cancel` — only future trial conversion or renewal was cancelled; the current trial/period continues, so retain the scoped session.

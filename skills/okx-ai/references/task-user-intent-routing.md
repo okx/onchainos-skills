@@ -11,7 +11,7 @@ or the watch loop.
 | Task attachment or deliverables | [`task-user-actions.md`](task-user-actions.md), selected section |
 | Subscription list or detail | [`task-subscription-view.md`](task-subscription-view.md) |
 | Rate or review an active subscription | §Rate an active subscription below |
-| Refund, paid-deliverable rejection, or refund progress for a task or subscription | [`task-user-refund.md`](task-user-refund.md) |
+| Refund, paid-deliverable rejection, or refund progress for a task or subscription | [`../../okx-ai-v2/references/a2a/user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md) |
 | Subscription device, receipt, copy-trade, or signal action | [`task-user-playbook.md`](task-user-playbook.md), selected section |
 | Watch, history, or outstanding decisions | [`watch-core.md`](watch-core.md) |
 
@@ -60,7 +60,7 @@ User-session needs to forward free-form user instructions targeting a specific t
 Triggers: `refund`, `get my money back`, `apply for a refund`, `refund status`,
 `where is my refund`, or a refund-related `dispute` / `arbitration` request.
 
-Read and follow [`task-user-refund.md`](task-user-refund.md). This route takes
+Read and follow [`../../okx-ai-v2/references/a2a/user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md). This route takes
 precedence over generic task-scoped forwarding and over the disabled legacy
 `close`/`reject`/`subscribe-reject`/`claim-auto-refund` flows. A User asking for
 arbitration does not gain authority to invoke an ASP or Evaluator command;
@@ -165,14 +165,13 @@ Task-list intents are read-only Task operations. The user session answers list r
 |---|---|
 | User task list, active tasks, ended tasks, subscription tasks, or one-time tasks | `onchainos agent my-tasks --task-type <type> --status-type <status> --page 1` |
 | Existing tasks for ASP `agentId` | `onchainos agent tasks --agent-id <aspAgentId> --page 1 --limit 20` |
-| Rejected one-time tasks / arbitration-eligible tasks / pending-arbitration tasks / refund-decision candidates for ASP `agentId` | `onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20` |
-| Rejected subscription periods for the ASP provider view | `onchainos agent my-subscriptions --role provider --status rejected` |
 
-Triggers for the first row include `my tasks`, `what am I working on`, `active tasks`, `ended tasks`, `subscription tasks`, and `one-time tasks`. Triggers for the ASP rows include `my ASP tasks`, `tasks for ASP <agentId>`, `rejected tasks`, `tasks that can be arbitrated`, `pending arbitration tasks`, `which tasks can I arbitrate`, `可仲裁`, `待仲裁`, `待仲裁任务`, `哪些可以仲裁`, `可以仲裁的任务`, `refused deliveries`, `pending refund decisions`, and semantic equivalents in any language.
+Triggers for the first row include `my tasks`, `what am I working on`, `active tasks`, `ended tasks`, `subscription tasks`, and `one-time tasks`. Triggers for the second row include `my ASP tasks` and `tasks for ASP <agentId>`.
 
-`可仲裁` and `待仲裁` describe candidate tasks in `rejected` status after the
-User rejected the deliverable. `仲裁列表`, `已发起仲裁`, and `仲裁案件`
-describe filed arbitration cases.
+Route rejected candidates, pending arbitration decisions, filed-case lists, and
+case details through [`../../okx-ai-v2/references/a2a/provider/arbitration.md`](../../okx-ai-v2/references/a2a/provider/arbitration.md).
+That flow owns command selection, identity resolution, rendering, and
+pagination for these intents.
 
 For a User task list, choose the two `my-tasks` parameters independently:
 
@@ -181,15 +180,7 @@ For a User task list, choose the two `my-tasks` parameters independently:
 | `<type>` | all → `all`; subscription → `subscription`; one-time → `one-time` |
 | `<status>` | all → `0`; active → `1`; ended → `2` |
 
-Render and paginate the User result per [`task-user-playbook.md` §Unified My Tasks](task-user-playbook.md#unified-my-tasks). Render an ASP `tasks` result from its current page with the returned `jobId`, title, amount, and status. Present every rejected row as an arbitration candidate.
-
-For a rejected-task or arbitration-candidate list, append one localized line below the existing list template:
-
-```text
-Tip: An ASP merchant can start arbitration for a task in `rejected` status.
-```
-
-Resolve an explicit ASP Agent ID directly. With an ASP identity in the current task context, retain that `agentId`. Otherwise run `onchainos agent my-agents`, retain role ASP (`2`) candidates, display them, and wait for the user's selection.
+Render and paginate the User result per [`task-user-playbook.md` §Unified My Tasks](task-user-playbook.md#unified-my-tasks). Render a general ASP `tasks` result from its current page with the returned `jobId`, title, amount, and status.
 
 `active-tasks` remains the task-scoped sub-session routing command. `arbitration-list` remains the list of cases where arbitration has already been filed.
 
@@ -242,7 +233,7 @@ The legacy `agent close` entry is disabled and never performs the write.
 |-------------------------------------------------------------------------------|---|---|
 | Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`identity/search.md`](identity/search.md) commissioning search. Confirm its single `service-match` result and run `task-create-prepare`. A structured insufficient-balance result enters shared Funding immediately; otherwise route its `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md). Never read `data.action` from `task-create-prepare`; that field does not exist in its response. | user publish flow |
 | Take specific task (ASP) — `take {jobId}` / `contact the User Agent of {jobId}` | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | task-asp-accept.md §1 |
-| Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`task-evaluator-staking.md §2`](task-evaluator-staking.md) |
+| Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`../../okx-ai-v2/references/a2a/evaluator/staking.md`](../../okx-ai-v2/references/a2a/evaluator/staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |
 
 🛑 **ASP constraint**: `find tasks` / `start accepting jobs` / `take task {jobId}` → ASPs cannot discover or proactively accept tasks, with or without a `jobId`. Designated tasks arrive only through `JobAspSelected` system events. Reply with passive-readiness guidance and do not call `apply`.
@@ -251,7 +242,7 @@ The legacy `agent close` entry is disabled and never performs the write.
 
 ## Status / progress query (specific task)
 
-Route arbitration creation, filed-case lists, and case details through `task-arbitration.md`. Keep rejected-task and pending-refund-decision lists in §Task list with the rejected Task filter.
+Route rejected candidates, arbitration creation, filed-case lists, and case details through [`../../okx-ai-v2/references/a2a/provider/arbitration.md`](../../okx-ai-v2/references/a2a/provider/arbitration.md).
 
 | Trigger | Action |
 |---|---|

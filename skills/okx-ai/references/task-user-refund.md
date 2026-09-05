@@ -249,7 +249,7 @@ state merely because time passed.
 ## Conditional references
 
 - Route `nextAction.id=view_arbitration` through
-  [`task-arbitration.md`](task-arbitration.md). Route every other returned
+  [`../../okx-ai-v2/references/a2a/provider/arbitration.md`](../../okx-ai-v2/references/a2a/provider/arbitration.md). Route every other returned
   action through [`task-action-routing.md`](task-action-routing.md).
 - When rendering a Refund V2 result, read the Refund V2 section of
   [`task-output-templates.md`](task-output-templates.md).

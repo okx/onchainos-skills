@@ -571,7 +571,7 @@ The response uses `phase=arbitration_detail`, `decision=ready`, and `reason=arbi
 
 This section documents command syntax and the structured response contract.
 For Buyer workflow, eligibility, finality, event handling, confirmation, and
-retry rules, read [`task-user-refund.md`](task-user-refund.md). Do not recreate
+retry rules, read [`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md). Do not recreate
 those decisions from this technical reference.
 
 #### refund-prepare
@@ -789,7 +789,7 @@ When `job.jobType=subscription`, `subscription` has this shape:
 Do not derive eligibility, settlement, or event meaning from individual payload
 fields. Follow the returned `decision`, `reason`, and `nextAction`; the canonical
 behavioral contract remains
-[`task-user-refund.md`](task-user-refund.md).
+[`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md).
 
 ### set-payment-mode
 
@@ -859,7 +859,7 @@ agent claim-auto-refund <jobId>
 
 The syntax remains registered for compatibility and deterministic migration
 guidance; no current path executes this legacy mutation. See
-[`task-user-refund.md`](task-user-refund.md) for current timeout and finality
+[`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md) for current timeout and finality
 handling.
 
 ### task-attach

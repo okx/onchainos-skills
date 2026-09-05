@@ -2172,11 +2172,16 @@ pub async fn handle_prepare(
     let pending = reconcile_without_downgrading_confirmed_settlement(&mut snapshot).await?;
     let plan = snapshot.plan(reason);
     if let Some(pending) = pending {
+        let operation = if pending.operation == RefundOperation::RequestRefund.as_str() {
+            Some(RefundOperation::RequestRefund)
+        } else {
+            plan.operation
+        };
         emit_decision(
             "refund_reconciliation",
             "blocked",
             "refund_operation_pending_reconciliation",
-            reconcile_actions(job_id),
+            reconcile_actions(job_id, operation),
             pending_reconciliation_payload(&snapshot, reason, &plan, &pending),
         );
         return Ok(());
@@ -2394,10 +2399,24 @@ async fn execute_operation(
     }
 }
 
-fn reconcile_actions(job_id: &str) -> Value {
-    json!([
-        action("view_refund_status", true, Some(json!({"jobId": job_id}))),
-        action("watch_task", false, Some(json!({"jobId": job_id})))
+fn reconcile_actions(job_id: &str, operation: Option<RefundOperation>) -> Value {
+    let is_request_refund = operation == Some(RefundOperation::RequestRefund);
+    if is_request_refund {
+        return Value::Array(vec![action(
+            "view_refund_status",
+            false,
+            Some(json!({"jobId": job_id})),
+        )]);
+    }
+
+    let follow_up = action("watch_task", false, Some(json!({"jobId": job_id})));
+    Value::Array(vec![
+        action(
+            "view_refund_status",
+            true,
+            Some(json!({"jobId": job_id})),
+        ),
+        follow_up,
     ])
 }
 
@@ -2445,7 +2464,7 @@ pub async fn handle_execute(
             "refund_reconciliation",
             "blocked",
             "refund_operation_pending_reconciliation",
-            reconcile_actions(job_id),
+            reconcile_actions(job_id, Some(operation)),
             pending_reconciliation_payload(&snapshot, reason, &plan, &pending),
         );
         return Ok(());
@@ -2532,7 +2551,7 @@ pub async fn handle_execute(
             "refund_reconciliation",
             "blocked",
             "refund_operation_pending_reconciliation",
-            reconcile_actions(job_id),
+            reconcile_actions(job_id, Some(operation)),
             pending_reconciliation_payload(&snapshot, reason, &plan, &pending),
         );
         return Ok(());
@@ -2617,7 +2636,7 @@ pub async fn handle_execute(
                         "refund_reconciliation",
                         "blocked",
                         "refund_operation_pending_reconciliation",
-                        reconcile_actions(job_id),
+                        reconcile_actions(job_id, Some(operation)),
                         payload,
                     );
                     return Ok(());
@@ -2662,7 +2681,7 @@ pub async fn handle_execute(
                 "refund_settlement",
                 "blocked",
                 "refund_outcome_unknown",
-                reconcile_actions(job_id),
+                reconcile_actions(job_id, Some(operation)),
                 payload,
             );
             return Ok(());
@@ -2702,7 +2721,7 @@ pub async fn handle_execute(
             "refund_reconciliation",
             "blocked",
             "refund_outcome_unknown",
-            reconcile_actions(job_id),
+            reconcile_actions(job_id, Some(operation)),
             payload,
         );
         return Ok(());
@@ -2760,7 +2779,7 @@ pub async fn handle_execute(
         "refund_settlement",
         "ready",
         result_reason,
-        reconcile_actions(job_id),
+        reconcile_actions(job_id, Some(operation)),
         payload,
     );
     Ok(())
@@ -4134,6 +4153,22 @@ mod tests {
         assert_eq!(actions[0]["id"], "view_refund_status");
         assert_eq!(actions[1]["id"], "watch_task");
         assert!(snapshot.payload(None, &plan)["settlement"]["txHash"].is_null());
+    }
+
+    #[test]
+    fn request_refund_reconciliation_exposes_optional_status_without_watch() {
+        let actions = reconcile_actions("job-1", Some(RefundOperation::RequestRefund));
+        assert_eq!(actions[0]["id"], "view_refund_status");
+        assert_eq!(actions[0]["recommend"], false);
+        assert_eq!(actions.as_array().unwrap().len(), 1);
+        assert!(!actions
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["id"] == "watch_task"));
+
+        let other_actions = reconcile_actions("job-1", Some(RefundOperation::DirectRefund));
+        assert_eq!(other_actions[1]["id"], "watch_task");
     }
 
     #[test]
