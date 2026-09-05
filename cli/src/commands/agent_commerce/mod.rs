@@ -250,8 +250,8 @@ pub enum AgentCommand {
     /// Persist this device's explicitly user-confirmed subscription execution mode.
     #[command(name = "subscription-execution-config-set")]
     SubscriptionExecutionConfigSet {
-        #[arg(long = "job-id")]
-        job_id: String,
+        #[arg(long = "service-id")]
+        service_id: String,
         #[arg(long = "execution-mode")]
         execution_mode: String,
         /// Replace an existing mode only after a fresh, explicit user confirmation.
@@ -1625,13 +1625,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::user::run_task(T::SubscribeOfflineUpdate { job_id, flag }, ctx).await
         }
         AgentCommand::SubscriptionExecutionConfigSet {
-            job_id,
+            service_id,
             execution_mode,
             replace,
         } => {
             task::user::run_task(
                 T::SubscriptionExecutionConfigSet {
-                    job_id,
+                    service_id,
                     execution_mode,
                     replace,
                 },

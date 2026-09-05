@@ -386,8 +386,8 @@ pub enum TaskCommand {
     /// Persist this device's explicitly user-confirmed subscription execution mode.
     #[command(name = "subscription-execution-config-set")]
     SubscriptionExecutionConfigSet {
-        #[arg(long = "job-id")]
-        job_id: String,
+        #[arg(long = "service-id")]
+        service_id: String,
         /// signal_only receives and displays signals; guide_direct permits Guide-driven execution.
         #[arg(long = "execution-mode")]
         execution_mode: String,
@@ -1894,24 +1894,29 @@ pub(crate) async fn finalize_post_login_subscriptions(
     compose_post_login_subscriptions(subscriptions, false, devices)
 }
 
-fn handle_subscription_execution_config_set(
-    job_id: String,
+async fn handle_subscription_execution_config_set(
+    service_id: String,
     execution_mode: String,
     replace: bool,
 ) -> Result<()> {
-    use crate::commands::agent_commerce::task::common::autotrade::{guide, subscription_config};
+    use crate::commands::agent_commerce::task::common::autotrade::subscription_config;
+
+    let (resolved_agent_id, _) = create::resolve_user_agent().await?;
+    let user_agent_id = crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id(
+        &resolved_agent_id,
+        "",
+    )?;
 
     let execution_mode = execution_mode.parse::<subscription_config::ExecutionMode>()?;
-    if execution_mode == subscription_config::ExecutionMode::GuideDirect
-        && !guide::has_active_execution_contract(&job_id)
-    {
-        anyhow::bail!(
-            "guide_direct requires an active local Service Guide and Guide Consent for this jobId"
-        );
-    }
-    let outcome = subscription_config::save_execution_mode(&job_id, execution_mode, replace)?;
+    let outcome = subscription_config::save_execution_mode(
+        &user_agent_id,
+        &service_id,
+        execution_mode,
+        replace,
+    )?;
     crate::output::success(serde_json::json!({
-        "jobId": job_id,
+        "userAgentId": user_agent_id,
+        "serviceId": service_id,
         "executionMode": execution_mode.as_str(),
         "outcome": outcome.as_str(),
         "storage": "local",
@@ -1924,10 +1929,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     // client (and its credential/keyring dependencies) before persisting it.
     let cmd = match cmd {
         TaskCommand::SubscriptionExecutionConfigSet {
-            job_id,
+            service_id,
             execution_mode,
             replace,
-        } => return handle_subscription_execution_config_set(job_id, execution_mode, replace),
+        } => return handle_subscription_execution_config_set(service_id, execution_mode, replace).await,
         cmd => cmd,
     };
     let mut client = TaskApiClient::new();
@@ -2186,10 +2191,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             offline_receive::handle_subscribe_offline_update(&mut client, &job_id, &flag).await
         }
         TaskCommand::SubscriptionExecutionConfigSet {
-            job_id,
+            service_id,
             execution_mode,
             replace,
-        } => handle_subscription_execution_config_set(job_id, execution_mode, replace),
+        } => handle_subscription_execution_config_set(service_id, execution_mode, replace).await,
         TaskCommand::DeviceList { page, page_size } => {
             device_routing::handle_device_list(&mut client, page, page_size).await
         }

@@ -43,7 +43,8 @@ impl std::str::FromStr for ExecutionMode {
 #[serde(rename_all = "camelCase")]
 struct SubscriptionExecutionConfig {
     version: u32,
-    job_id: String,
+    user_agent_id: String,
+    service_id: String,
     /// Optional only to support repairing an early/incomplete local record.
     #[serde(default)]
     execution_mode: Option<ExecutionMode>,
@@ -74,18 +75,19 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn config_path(job_id: &str) -> Result<PathBuf> {
-    if !super::grants::job_id_is_safe(job_id) {
-        bail!("invalid subscription jobId")
+fn config_path(user_agent_id: &str, service_id: &str) -> Result<PathBuf> {
+    if !super::grants::job_id_is_safe(user_agent_id) || !super::grants::job_id_is_safe(service_id) {
+        bail!("invalid userAgentId or serviceId")
     }
     Ok(crate::home::onchainos_home()?
         .join("autotrade")
         .join("subscription-config")
-        .join(format!("{job_id}.json")))
+        .join(user_agent_id)
+        .join(format!("{service_id}.json")))
 }
 
-fn load_config(job_id: &str) -> Result<Option<SubscriptionExecutionConfig>> {
-    let path = config_path(job_id)?;
+fn load_config(user_agent_id: &str, service_id: &str) -> Result<Option<SubscriptionExecutionConfig>> {
+    let path = config_path(user_agent_id, service_id)?;
     if !path.exists() {
         return Ok(None);
     }
@@ -97,7 +99,10 @@ fn load_config(job_id: &str) -> Result<Option<SubscriptionExecutionConfig>> {
     })?;
     let config: SubscriptionExecutionConfig = serde_json::from_slice(&bytes)
         .context("subscription execution configuration is invalid")?;
-    if config.version > CONFIG_VERSION || config.job_id != job_id {
+    if config.version != CONFIG_VERSION
+        || config.user_agent_id != user_agent_id
+        || config.service_id != service_id
+    {
         bail!("subscription execution configuration is invalid")
     }
     Ok(Some(config))
@@ -105,19 +110,20 @@ fn load_config(job_id: &str) -> Result<Option<SubscriptionExecutionConfig>> {
 
 /// Reads the explicitly selected execution mode. Missing, incomplete, or
 /// unreadable records must never be promoted to Guide-driven execution.
-pub fn execution_mode(job_id: &str) -> Result<Option<ExecutionMode>> {
-    Ok(load_config(job_id)?.and_then(|config| config.execution_mode))
+pub fn execution_mode(user_agent_id: &str, service_id: &str) -> Result<Option<ExecutionMode>> {
+    Ok(load_config(user_agent_id, service_id)?.and_then(|config| config.execution_mode))
 }
 
 /// Saves a user-confirmed mode locally. By default this only initializes a
 /// missing/incomplete record; callers must use `replace` for an explicit later
 /// mode change so orchestration cannot silently overwrite a previous choice.
 pub fn save_execution_mode(
-    job_id: &str,
+    user_agent_id: &str,
+    service_id: &str,
     execution_mode: ExecutionMode,
     replace: bool,
 ) -> Result<SaveOutcome> {
-    let existing = load_config(job_id)?;
+    let existing = load_config(user_agent_id, service_id)?;
     let outcome = match existing.as_ref().and_then(|config| config.execution_mode) {
         None if existing.is_some() => SaveOutcome::Repaired,
         None => SaveOutcome::Created,
@@ -131,11 +137,12 @@ pub fn save_execution_mode(
     };
     let config = SubscriptionExecutionConfig {
         version: CONFIG_VERSION,
-        job_id: job_id.to_string(),
+        user_agent_id: user_agent_id.to_string(),
+        service_id: service_id.to_string(),
         execution_mode: Some(execution_mode),
         updated_at_ms: now_ms(),
     };
-    let path = config_path(job_id)?;
+    let path = config_path(user_agent_id, service_id)?;
     crate::home::write_secure(&path, &serde_json::to_vec_pretty(&config)?).map_err(|error| {
         anyhow::anyhow!(
             "failed to persist subscription execution configuration at {}: {error}",
@@ -168,20 +175,22 @@ mod tests {
     fn saves_an_explicit_mode_and_does_not_overwrite_it() {
         with_home(|| {
             assert_eq!(
-                save_execution_mode("job-mode-1", ExecutionMode::SignalOnly, false).unwrap(),
+                save_execution_mode("user-1", "service-1", ExecutionMode::SignalOnly, false)
+                    .unwrap(),
                 SaveOutcome::Created
             );
             assert_eq!(
-                execution_mode("job-mode-1").unwrap(),
+                execution_mode("user-1", "service-1").unwrap(),
                 Some(ExecutionMode::SignalOnly)
             );
-            assert!(save_execution_mode("job-mode-1", ExecutionMode::GuideDirect, false).is_err());
+            assert!(save_execution_mode("user-1", "service-1", ExecutionMode::GuideDirect, false).is_err());
             assert_eq!(
-                save_execution_mode("job-mode-1", ExecutionMode::GuideDirect, true).unwrap(),
+                save_execution_mode("user-1", "service-1", ExecutionMode::GuideDirect, true)
+                    .unwrap(),
                 SaveOutcome::Replaced
             );
             assert_eq!(
-                execution_mode("job-mode-1").unwrap(),
+                execution_mode("user-1", "service-1").unwrap(),
                 Some(ExecutionMode::GuideDirect)
             );
         });
@@ -190,15 +199,16 @@ mod tests {
     #[test]
     fn repairs_an_incomplete_legacy_record() {
         with_home(|| {
-            let path = config_path("job-mode-2").unwrap();
+            let path = config_path("user-2", "service-2").unwrap();
             crate::home::write_secure(
                 &path,
-                br#"{"version":1,"jobId":"job-mode-2","updatedAtMs":1}"#,
+                br#"{"version":1,"userAgentId":"user-2","serviceId":"service-2","updatedAtMs":1}"#,
             )
             .unwrap();
-            assert_eq!(execution_mode("job-mode-2").unwrap(), None);
+            assert_eq!(execution_mode("user-2", "service-2").unwrap(), None);
             assert_eq!(
-                save_execution_mode("job-mode-2", ExecutionMode::SignalOnly, false).unwrap(),
+                save_execution_mode("user-2", "service-2", ExecutionMode::SignalOnly, false)
+                    .unwrap(),
                 SaveOutcome::Repaired
             );
         });

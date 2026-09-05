@@ -143,11 +143,10 @@ UserOperation was submitted but is not yet final. Require
 `payload.type=204`, `payload.bizType=204`, and use `payload.jobId` as the sole
 subscription identifier. Render the broadcast transaction hash when present,
 attachment count, and `guideStatus` / `consentStatus` / `executionProfileSaved`.
-Then follow `task-user-actions-create.md` Step 5: persist the retained,
-user-confirmed `guide_direct` or `signal_only` mode with
-`subscription-execution-config-set` before executing the returned
-`nextAction.id=watch_task`. Do not establish the A2A session in this creation
-step; the `sub_open` event owns that transition.
+The retained, user-confirmed `guide_direct` or `signal_only` mode must already
+have been persisted with `subscription-execution-config-set` before this
+create command ran. Do not establish the A2A session in this creation step;
+the `sub_open` event owns that transition.
 
 For `phase=service_routing` and `nextAction.id=invoke_a2mcp`, do not render the
 generic task-creation confirmation card above. Continue through the owning

@@ -359,13 +359,25 @@ struct LocalExecutionAdmission {
     reason: &'static str,
 }
 
-fn local_execution_admission(job_id: &str) -> LocalExecutionAdmission {
+fn local_execution_admission(
+    job_id: &str,
+    user_agent_id: &str,
+    service_id: Option<&str>,
+) -> LocalExecutionAdmission {
     use crate::commands::agent_commerce::task::common::autotrade::{
         guide,
         subscription_config::{self, ExecutionMode},
     };
 
-    match subscription_config::execution_mode(job_id) {
+    let Some(service_id) = service_id.filter(|service_id| !service_id.trim().is_empty()) else {
+        return LocalExecutionAdmission {
+            mode: None,
+            guide_direct: false,
+            reason: "subscription_service_unavailable",
+        };
+    };
+
+    match subscription_config::execution_mode(user_agent_id, service_id) {
         Ok(Some(ExecutionMode::GuideDirect)) if guide::has_active_execution_contract(job_id) => {
             LocalExecutionAdmission {
                 mode: Some(ExecutionMode::GuideDirect.as_str()),
@@ -453,7 +465,7 @@ pub(crate) async fn route_subscription_delivery_to_skill(
     );
     let received_at_ms = now_ms();
     let consent_snapshot = guide::consent_snapshot(job_id);
-    let execution_admission = local_execution_admission(job_id);
+    let execution_admission = local_execution_admission(job_id, agent_id, Some(&active.service_id));
     if !execution_admission.guide_direct {
         crate::audit::log(
             "cli",
@@ -674,7 +686,8 @@ pub(crate) async fn resume_queued_subscription_delivery(
         return fail_terminal("the active subscription provider no longer matches this delivery");
     }
 
-    let execution_admission = local_execution_admission(job_id);
+    let execution_admission =
+        local_execution_admission(job_id, &context.agent_id, Some(&active.service_id));
     if !execution_admission.guide_direct {
         // Only legacy/direct contexts created by an older CLI can reach the
         // queued path without a valid Guide contract. Retire that context

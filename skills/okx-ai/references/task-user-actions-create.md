@@ -256,21 +256,20 @@ was saved against that `jobId` before broadcast and activated after broadcast.
 A local preparation failure blocks broadcast; activation failure remains
 fail-closed and must not be described as executable.
 
-Before the returned `nextAction.id=watch_task`, persist the user-confirmed
-Step 2 choice on this device exactly once:
+Before running `create-subscribe`, persist the user-confirmed Step 2 choice on
+this device exactly once:
 
 ```bash
 onchainos agent subscription-execution-config-set \
-  --job-id <payload.jobId> \
+  --service-id <selected serviceId> \
   --execution-mode <retained guide_direct|signal_only>
 ```
 
-For `guide_direct`, require all three creation fields above to be active/true
-before running this command; otherwise stop and explain that only signal
-receipt is safe. For `signal_only`, save the mode even when the Guide is
-absent. This command initializes a missing or incomplete local mode record; it
-does not overwrite an existing selected mode. Only after its successful local
-result may the flow continue to `watch_task`.
+This command initializes a missing or incomplete local mode record; it does
+not overwrite an existing selected mode. `create-subscribe` rejects a missing
+record or missing `executionMode` before any subscription write, and returns
+this command in its recovery prompt. For `guide_direct`, the subsequent create
+command must also carry a valid Guide and separately confirmed Consent.
 
 **Guide bundle rule:** for either creation command, include the complete Guide
 bundle only when `payload.serviceGuide` is non-blank. Pass the exact Guide, its
