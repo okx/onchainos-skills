@@ -43,8 +43,12 @@ impl std::str::FromStr for ExecutionMode {
 #[serde(rename_all = "camelCase")]
 struct SubscriptionExecutionConfig {
     version: u32,
-    user_agent_id: String,
-    service_id: String,
+    /// Missing only in an unbound record written by the previous local schema.
+    /// It must never authorize execution until repaired against this path's key.
+    #[serde(default)]
+    user_agent_id: Option<String>,
+    #[serde(default)]
+    service_id: Option<String>,
     /// Optional only to support repairing an early/incomplete local record.
     #[serde(default)]
     execution_mode: Option<ExecutionMode>,
@@ -99,11 +103,19 @@ fn load_config(user_agent_id: &str, service_id: &str) -> Result<Option<Subscript
     })?;
     let config: SubscriptionExecutionConfig = serde_json::from_slice(&bytes)
         .context("subscription execution configuration is invalid")?;
-    if config.version != CONFIG_VERSION
-        || config.user_agent_id != user_agent_id
-        || config.service_id != service_id
-    {
+    if config.version != CONFIG_VERSION {
         bail!("subscription execution configuration is invalid")
+    }
+    match (
+        config.user_agent_id.as_deref(),
+        config.service_id.as_deref(),
+    ) {
+        (Some(stored_user_agent_id), Some(stored_service_id))
+            if stored_user_agent_id == user_agent_id && stored_service_id == service_id => {}
+        // An old unbound record is incomplete, not an authorization grant. The
+        // save command can repair it after the user confirms a mode.
+        (None, None) => {}
+        _ => bail!("subscription execution configuration is invalid"),
     }
     Ok(Some(config))
 }
@@ -111,7 +123,12 @@ fn load_config(user_agent_id: &str, service_id: &str) -> Result<Option<Subscript
 /// Reads the explicitly selected execution mode. Missing, incomplete, or
 /// unreadable records must never be promoted to Guide-driven execution.
 pub fn execution_mode(user_agent_id: &str, service_id: &str) -> Result<Option<ExecutionMode>> {
-    Ok(load_config(user_agent_id, service_id)?.and_then(|config| config.execution_mode))
+    Ok(load_config(user_agent_id, service_id)?.and_then(|config| {
+        (config.user_agent_id.as_deref() == Some(user_agent_id)
+            && config.service_id.as_deref() == Some(service_id))
+            .then_some(config.execution_mode)
+            .flatten()
+    }))
 }
 
 /// Saves a user-confirmed mode locally. By default this only initializes a
@@ -124,7 +141,12 @@ pub fn save_execution_mode(
     replace: bool,
 ) -> Result<SaveOutcome> {
     let existing = load_config(user_agent_id, service_id)?;
+    let existing_is_bound = existing.as_ref().is_some_and(|config| {
+        config.user_agent_id.as_deref() == Some(user_agent_id)
+            && config.service_id.as_deref() == Some(service_id)
+    });
     let outcome = match existing.as_ref().and_then(|config| config.execution_mode) {
+        _ if existing.is_some() && !existing_is_bound => SaveOutcome::Repaired,
         None if existing.is_some() => SaveOutcome::Repaired,
         None => SaveOutcome::Created,
         Some(_) if replace => SaveOutcome::Replaced,
@@ -137,8 +159,8 @@ pub fn save_execution_mode(
     };
     let config = SubscriptionExecutionConfig {
         version: CONFIG_VERSION,
-        user_agent_id: user_agent_id.to_string(),
-        service_id: service_id.to_string(),
+        user_agent_id: Some(user_agent_id.to_string()),
+        service_id: Some(service_id.to_string()),
         execution_mode: Some(execution_mode),
         updated_at_ms: now_ms(),
     };
