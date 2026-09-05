@@ -50,8 +50,27 @@ Follow the flow for the confirmed role.
 
 1. Ask for Name, Description, and Avatar in one message.
 2. Require a brand Name with no test markers or celebrity names, a one-sentence Agent Description, and an uploaded Avatar.
-3. Once all three fields are ready, immediately render the Identity card with Role / Name / Description / Profile photo, using the uploaded CDN URL.
+3. Once all three fields are ready, immediately render the identity confirmation card below.
 4. Wait for reply `1` before proceeding to Step 2. This reply never runs `agent create`.
+
+###### Identity confirmation card
+
+```markdown
+### Service Provider Identity Information
+
+| # | Name | Avatar | Description |
+|---|---|---|---|
+| 1 | {Service ProviderName} | {avatar} | {Service ProviderDescription} |
+
+Please review the information above. Reply `1` to continue adding services. This will not create the identity.
+```
+
+Rules:
+
+- Show the name and description verbatim. Preserve description line breaks. Do not add Role or Agent ID.
+- Render the avatar as an image. Never show its token or URL as text.
+- Keep the column order shown above.
+- Only reply `1` proceeds to Step 2. It does not run `agent create`.
 
 ##### Step 2: Service collection
 
