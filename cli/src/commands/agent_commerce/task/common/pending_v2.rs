@@ -2682,12 +2682,12 @@ fn asp_arbitration_llm_content(entry: &PendingEntry, queue_mode: bool) -> Option
          Step 3 — Resolve the user's complete reply as the final decision by running this pre-filled command once:\n\
            `{resolver}`\n\
          The resolver preserves the card's `decisionId`, choices, deadline, job binding, and the user's B reason. For `ambiguous_choice`, show the same card. For `arbitration_reason_required`, ask for `B <reason>` and keep the card active.\n\n\
-         Step 4 — Continue only for `phase=arbitration_decision`, `decision=ready`, `reason=user_choice_resolved`, and sole `nextAction.id=validate_arbitration_choice`. Run `onchainos agent next-action --role <nextAction.params.role> --agentId <nextAction.params.agentId> --message '<nextAction.params.message as exact compact JSON>'`. Use the fresh sole action it returns.\n\
-           - `agree_refund`: run `onchainos agent agree-refund <params.jobId> --agent-id {agent}`. On success, give one friendly localized confirmation equivalent to: \"Full refund approved. The refund transaction has been submitted. Progress will update in this task. You can ask me to check the task result, or run `onchainos agent status {job} --agent-id {agent}`.\"\n\
-           - `raise_arbitration`: run `onchainos agent dispute raise <params.jobId> --reason \"<params.reason verbatim>\" --agent-id {agent}`. This submits the stage-1 approval broadcast; the `dispute_approved` signal continues with `dispute confirm` in the task sub-session. On success, give one friendly localized confirmation equivalent to: \"Arbitration transaction submitted. After on-chain confirmation, evidence and ruling progress will update in this task. You can ask me to query the arbitration list, or run `onchainos agent arbitration-list --agent-id {agent}`.\"\n\
-           - `sub_agree_refund`: run `onchainos agent subscribe-agree-refund <params.jobId> --agent-id {agent}` and use the same refund confirmation.\n\
-           - `raise_subscription_arbitration`: run `onchainos agent subscribe-dispute <params.jobId> --reason \"<params.reason verbatim>\" --agent-id {agent}` and use the same arbitration confirmation.\n\n\
-         The current conversation owns choice resolution, freshness validation, action execution, friendly result feedback, and resuming the exact originating watch when one exists.",
+         Step 4 — For `phase=arbitration_decision`, `decision=ready`, `reason=user_choice_resolved`, and sole `nextAction.id=validate_arbitration_choice`, run `onchainos agent next-action --role <nextAction.params.role> --agentId <nextAction.params.agentId> --message '<nextAction.params.message as exact compact JSON>'`. Use the fresh sole action it returns.\n\
+           - `agree_refund`: run `onchainos agent agree-refund <params.jobId> --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query.\n\
+           - `raise_arbitration`: run `onchainos agent dispute raise <params.jobId> --reason \"<params.reason verbatim>\" --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query. A later `dispute_approved` event enters the ASP task event flow, which runs `dispute confirm` once.\n\
+           - `sub_agree_refund`: run `onchainos agent subscribe-agree-refund <params.jobId> --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome and relevant returned fields.\n\
+           - `raise_subscription_arbitration`: run `onchainos agent subscribe-dispute <params.jobId> --reason \"<params.reason verbatim>\" --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query.\n\n\
+         The current conversation owns choice resolution, freshness validation, returned action execution, concise result feedback, and resuming the exact originating watch when one exists.",
         job = entry.job_id,
         role = entry.role,
         agent = entry.agent_id,
@@ -3433,10 +3433,18 @@ mod sanitize_tests {
             assert!(content.contains("validate_arbitration_choice"));
             assert!(content.contains("onchainos agent agree-refund <params.jobId>"));
             assert!(content.contains("onchainos agent dispute raise <params.jobId>"));
-            assert!(content.contains("the `dispute_approved` signal continues with `dispute confirm`"));
-            assert!(content.contains("onchainos agent status job-123 --agent-id 11802"));
-            assert!(content.contains("onchainos agent arbitration-list --agent-id 11802"));
-            assert!(content.contains("friendly result feedback"));
+            assert!(content.contains("in this current conversation"));
+            assert!(content.contains("one concise localized result"));
+            assert!(
+                content.contains("A later `dispute_approved` event enters the ASP task event flow")
+            );
+            assert!(content.contains("which runs `dispute confirm` once"));
+            assert!(!content.contains("Full refund approved"));
+            assert!(!content.contains("Arbitration transaction submitted"));
+            assert!(!content.contains("onchainos agent status job-123 --agent-id 11802"));
+            assert!(!content.contains("onchainos agent arbitration-list --agent-id 11802"));
+            assert!(!content.contains("friendly result feedback"));
+            assert!(!content.contains("matching arbitration Output Template"));
             assert!(!content.contains("onchainos agent dispute confirm <params.jobId>"));
             assert!(!content.contains("okx-a2a session send"));
             assert!(!content.contains("second confirmation"));
@@ -3459,7 +3467,9 @@ mod sanitize_tests {
         let content = resolve_llm_content_cli(&entry);
 
         assert!(content.contains("validate_arbitration_choice"));
-        assert!(content.contains("the `dispute_approved` signal continues with `dispute confirm`"));
+        assert!(content.contains("A later `dispute_approved` event enters the ASP task event flow"));
+        assert!(content.contains("one concise localized result"));
+        assert!(!content.contains("matching arbitration Output Template"));
         assert!(!content.contains("onchainos agent dispute confirm <params.jobId>"));
         assert!(!content.contains("legacy-arbitration"));
         assert!(!content.contains("okx-a2a session send"));
