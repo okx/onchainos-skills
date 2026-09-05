@@ -417,6 +417,32 @@ pub enum AgentCommand {
         page_size: u32,
     },
 
+    /// List the current User's subscription tasks in one combined, cursor-paginated view.
+    #[command(name = "subscription-list")]
+    SubscriptionList {
+        /// Opaque cursor returned by the preceding subscription-list response.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Rows per combined page (1-100). Must match the cursor's page size.
+        #[arg(
+            long = "page-size",
+            default_value_t = 10,
+            value_parser = clap::value_parser!(u32).range(1..=100)
+        )]
+        page_size: u32,
+    },
+
+    /// Change a task's visibility through the marketplace task API.
+    #[command(name = "task-visibility-update")]
+    TaskVisibilityUpdate {
+        /// Task job ID.
+        #[arg(long = "job-id")]
+        job_id: String,
+        /// Target visibility: public or private.
+        #[arg(long, value_enum)]
+        visibility: task::user::visibility::TaskVisibility,
+    },
+
     /// Aggregated non-terminal tasks across **all agents under the current
     /// active account**, with `myRole` / `counterpartyAgentId` annotations so
     /// the user-session can route ad-hoc user instructions to the correct sub
@@ -596,7 +622,7 @@ pub enum AgentCommand {
     /// to current account). Wrapper over `agent get-agents --agent-ids` that flattens
     /// the `list[].agentList[]` nesting and returns the matched agent as a
     /// single flat object. Used for verifying peer / designated provider
-    /// identities (e.g. user-sub-playbook.md Provider validation).
+    /// identities (e.g. `references/a2a/user/session.md` Provider validation).
     ///
     /// `ok: false` when not found / agentId malformed; otherwise `data` is
     /// the agent object `{agentId, name, role, status, ownerAddress,
@@ -988,10 +1014,10 @@ pub enum AgentCommand {
     #[command(name = "subscribe-dispute")]
     SubscribeDispute {
         job_id: String,
-        /// ASP's dispute reason — persisted on-chain via the broadcast bizContext (like
-        /// `dispute confirm`). Optional; omitted → empty reason.
+        /// ASP's non-empty dispute reason — persisted on-chain via the broadcast
+        /// bizContext (like `dispute confirm`).
         #[arg(long = "reason")]
-        reason: Option<String>,
+        reason: String,
         /// ASP agentId (required)
         #[arg(long = "agent-id")]
         agent_id: String,
@@ -1160,7 +1186,7 @@ pub enum AgentCommand {
         #[arg(long)]
         vote: u8,
         /// Full verdict text produced by Step 5 per the Verdict template defined in
-        /// `references/evaluator-decision-rubric.md` (whichever heading the user-customized
+        /// `skills/okx-ai-v2/references/a2a/evaluator/dispute.md` (whichever heading the user-customized
         /// rubric uses to define it; required). Sent to backend in the broadcast bizContext as
         /// `voteReport` — the human-readable on-chain audit trail; whatever fields the rubric's
         /// Verdict template prescribes. Flatten to a single line with `\n` / `\t` / `\r` / `\\` / `\"`
@@ -1275,14 +1301,17 @@ pub enum AgentCommand {
 
     /// Get next-step instruction prompt for current job state.
     ///
-    /// Invocation contract — exactly **three** flags:
+    /// Invocation contract — three core flags, plus `--a2a-file` for a
+    /// `deliverable_received` envelope:
     ///   `--role <user|asp|evaluator|auto>` — playbook routing role
     ///   `--agentId <agentId>`                    — receiving agent
     ///   `--message <envelope JSON>`              — the full `message` object
     ///                                              from the inbound notification
     ///
     /// All other inputs (`jobId`, `event`, `code`, `jobTitle`, `provider`, `data`,
-    /// etc.) are extracted from inside the `--message` JSON.
+    /// etc.) are extracted from inside the `--message` JSON. Arbitration-decision
+    /// relays also carry their validated `decisionId`, `selectedActionId`, and
+    /// `params` in that same object.
     /// This keeps the LLM-facing surface minimal: copy the envelope through, the
     /// CLI parses out whatever it needs.
     #[command(name = "next-action")]
@@ -1294,9 +1323,13 @@ pub enum AgentCommand {
         /// resolve the role from `--agentId` (saves a separate `agent profile` round-trip).
         #[arg(long)]
         role: String,
-        /// Full system event envelope as a JSON string — the entire `message` object.
+        /// Complete current `message` object serialized as JSON.
         /// Required. Must contain at least `event` and `jobId`; optional fields the
-        /// CLI reads: `code` / `jobTitle` / `provider` / `data`
+        /// CLI reads: `code` / `jobTitle` / `provider` / `data`. A
+        /// `user_decision_job_rejected` or `user_decision_sub_user_reject`
+        /// message also contains `decisionId`, `selectedActionId`, and `params`;
+        /// an arbitration action carries the user's non-empty reason in
+        /// `params.reason`.
         /// (plus any task-detail fields like `paymentMode` /
         /// `tokenAmount` / `tokenSymbol` / `serviceParams` that downstream scenes
         /// may consume directly).
@@ -1743,6 +1776,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 ctx,
             )
             .await
+        }
+
+        AgentCommand::SubscriptionList { cursor, page_size } => {
+            task::user::run_task(T::SubscriptionList { cursor, page_size }, ctx).await
+        }
+
+        AgentCommand::TaskVisibilityUpdate { job_id, visibility } => {
+            task::user::run_task(T::TaskVisibilityUpdate { job_id, visibility }, ctx).await
         }
 
         AgentCommand::ActiveTasks {
@@ -2786,7 +2827,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::asp::subscription::handle_dispute(
                 &mut client,
                 &job_id,
-                reason.as_deref().unwrap_or(""),
+                &reason,
                 &agent_id,
             )
             .await
@@ -2949,6 +2990,20 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     anyhow::bail!(msg);
                 }
             }
+            let trace_arbitration_flow = task::arbitration_trace::is_flow_event(&event);
+            if trace_arbitration_flow {
+                task::arbitration_trace::record(
+                    "next-action-input",
+                    &job_id,
+                    &serde_json::json!({
+                        "agentId": agent_id,
+                        "requestedRole": role,
+                        "message": parsed_message,
+                    }),
+                    Some(&serde_json::json!({"parsed": true})),
+                    None,
+                );
+            }
             if DEBUG_LOG {
                 eprintln!(
                     "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}",
@@ -2976,7 +3031,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     Some(t) => format!(" **{t}**"),
                     None => " ".to_string(),
                 };
-                println!(
+                let failure = format!(
                     "【交易失败】{label}（code={code}）\n\n\
                      运行 `onchainos agent user-notify` 通知用户：\n\
                      ```bash\n\
@@ -2984,6 +3039,20 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                      ```\n\
                      → 结束 turn。"
                 );
+                if trace_arbitration_flow {
+                    task::arbitration_trace::record_text(
+                        "next-action-output",
+                        &job_id,
+                        &serde_json::json!({
+                            "event": event,
+                            "code": code,
+                            "outputBoundary": "stdout_to_invoking_session",
+                        }),
+                        &failure,
+                        None,
+                    );
+                }
+                println!("{failure}");
                 return Ok(());
             }
 
@@ -3012,6 +3081,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             if DEBUG_LOG {
                 eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
+            }
+            if trace_arbitration_flow {
+                task::arbitration_trace::record(
+                    "next-action-role-resolution",
+                    &job_id,
+                    &serde_json::json!({"requestedRole": role, "agentId": agent_id}),
+                    Some(&serde_json::json!({"resolvedRole": resolved_role})),
+                    None,
+                );
             }
 
             // ── job_created API fallback: when --provider is absent and no local file exists,
@@ -3080,8 +3158,36 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .await
             };
             if let Some(w) = freshness_warning {
+                if trace_arbitration_flow {
+                    task::arbitration_trace::record_text(
+                        "next-action-freshness",
+                        &job_id,
+                        &serde_json::json!({
+                            "event": event,
+                            "role": resolved_role,
+                            "outputBoundary": "stdout_to_invoking_session",
+                        }),
+                        &w,
+                        None,
+                    );
+                }
                 println!("{w}");
                 return Ok(());
+            }
+            if trace_arbitration_flow {
+                task::arbitration_trace::record(
+                    "next-action-freshness",
+                    &job_id,
+                    &serde_json::json!({"event": event, "role": resolved_role}),
+                    Some(&serde_json::json!({
+                        "accepted": true,
+                        "status": prefetched.as_ref().and_then(|value| value.status),
+                        "jobType": prefetched.as_ref().and_then(|value| value.job_type),
+                        "providerAgentId": prefetched.as_ref().and_then(|value| value.provider_agent_id.as_deref()),
+                        "buyerAgentId": prefetched.as_ref().and_then(|value| value.user_agent_id.as_deref()),
+                    })),
+                    None,
+                );
             }
             let payment_mode = prefetched.as_ref().and_then(|p| p.payment_mode);
             let title_ref = job_title.as_deref();
@@ -3168,6 +3274,20 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
                 other => anyhow::bail!("--role 必须是 asp/user/evaluator，当前: {other}"),
             };
+            if trace_arbitration_flow {
+                task::arbitration_trace::record_text(
+                    "next-action-output",
+                    &job_id,
+                    &serde_json::json!({
+                        "event": event,
+                        "role": resolved_role,
+                        "agentId": agent_id,
+                        "outputBoundary": "stdout_to_invoking_session",
+                    }),
+                    &prompt,
+                    None,
+                );
+            }
             println!("{prompt}");
             Ok(())
         }
@@ -4625,7 +4745,41 @@ async fn check_status_freshness(
 
     // Non-refund events keep their established single authoritative endpoint.
     let detail_path = detail_path_for_event(&c, job_id, job_status_or_event);
-    let resp = match c.get_with_identity(&detail_path, agent_id).await {
+    let detail_result = c.get_with_identity(&detail_path, agent_id).await;
+    if task::arbitration_trace::is_flow_event(job_status_or_event) {
+        let request = serde_json::json!({
+            "event": job_status_or_event,
+            "role": role,
+            "agentId": agent_id,
+            "path": detail_path,
+            "message": message,
+        });
+        match &detail_result {
+            Ok(detail) => task::arbitration_trace::record(
+                "next-action-freshness-query",
+                job_id,
+                &request,
+                Some(&serde_json::json!({
+                    "status": detail.get("status"),
+                    "subStatus": detail.get("subStatus"),
+                    "periodIndex": detail.get("periodIndex"),
+                    "subStartTime": detail.get("subStartTime"),
+                    "subEndTime": detail.get("subEndTime"),
+                    "providerAgentId": detail.get("providerAgentId"),
+                    "buyerAgentId": detail.get("buyerAgentId"),
+                })),
+                None,
+            ),
+            Err(error) => task::arbitration_trace::record(
+                "next-action-freshness-query",
+                job_id,
+                &request,
+                None,
+                Some(&format!("{error:#}")),
+            ),
+        }
+    }
+    let resp = match detail_result {
         Ok(detail) => detail,
         Err(error) if arbitration_source.is_some() => {
             return (

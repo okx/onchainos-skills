@@ -31,8 +31,8 @@ Structured envelopes override free-text routing:
 
 Refund-related system events still enter `references/task-core.md` first for
 envelope validation and role dispatch. User-facing refund interpretation then
-delegates to `references/task-user-refund.md`; never route a structured event
-directly from its event name or prose.
+delegates to `../okx-ai-v2/references/a2a/user/refund.md`; never route a
+structured event directly from its event name or prose.
 
 ## Response language
 
@@ -52,13 +52,13 @@ flow.
 | A confirmed service result returns `nextAction[].id=invoke_a2mcp` | `references/a2mcp-direct-invoke.md`; this direct invocation is not task creation |
 | Register or manage Agent identities and listings; discover, inspect, select, or engage Agents/services by service name, Service ID, or Agent ID; view reviews or reputation | `references/identity/router.md` |
 | Browse tasks or start accepting jobs as ASP | `references/task-asp-accept.md`, §1; passive guidance only, do not run a command |
-| As Buyer, request a refund, reject a paid deliverable, check refund progress, or interpret a refund-related arbitration result | `references/task-user-refund.md`; Refund V2 is distinct from cancellation. Read `references/task-cli-reference.md` only for CLI syntax or schema lookup |
+| Request a refund, reject a paid deliverable, check refund progress, or interpret a refund-related arbitration result | `../okx-ai-v2/references/a2a/user/refund.md`; use `../okx-ai-v2/references/shared/task-cli-reference.md` only for CLI syntax or schema lookup |
 | Auto-renew, trial cancel, or deliver | §Task Marketplace |
 | View an existing User task list or ASP task list | `references/task-user-playbook.md` → `references/task-user-intent-routing.md`, §Task list |
-| View rejected ASP tasks, refund-decision candidates, or tasks that can be arbitrated (`哪些可以仲裁` / `可以仲裁的任务`) | `references/task-user-playbook.md` → `references/task-user-intent-routing.md`, §Task list; use the rejected filter |
-| View tasks with an arbitration already filed | `references/task-arbitration.md`, §Query arbitration cases; use `arbitration-list` |
-| View the current or a specified arbitration case's detail/progress | `references/task-arbitration.md`, §Query an arbitration detail; use `arbitration-detail` |
-| As ASP, respond to a specified rejected task by agreeing to refund or opening a dispute/arbitration | `references/task-arbitration.md`, §Open the rejection decision; ASP decisions do not enter the Buyer Refund V2 flow |
+| Query rejected tasks that can be arbitrated (`哪些可以仲裁` / `可以仲裁的任务`) or pending-arbitration tasks (`可仲裁` / `待仲裁`) | `../okx-ai-v2/references/a2a/provider/arbitration.md`, §Rejected candidates |
+| Query filed arbitration cases (`仲裁列表` / `已发起仲裁` / `仲裁案件`) | `../okx-ai-v2/references/a2a/provider/arbitration.md`, §Query arbitration cases |
+| View the current or a specified arbitration case's detail/progress | `../okx-ai-v2/references/a2a/provider/arbitration.md`, §Query an arbitration detail |
+| Respond to a specified rejected task by agreeing to refund or opening a dispute/arbitration | `../okx-ai-v2/references/a2a/provider/arbitration.md`, §Open the rejection decision |
 | Other existing task actions or subscription list/detail | `references/task-user-playbook.md` |
 | Pause/stop subscription copy-trading | `references/task-user-playbook.md`, §Pause auto copy-trade only |
 | Devices or subscription-message receipt/replay settings | `references/task-user-playbook.md`, §Device List / device-receipt; buyer side only |
@@ -78,7 +78,7 @@ A2MCP reference. Otherwise, use the A2A task/subscription preparation flow.
 
 Treat the CLI result as the progression contract. For `arbitration_*` phases,
 use the Action routing and Output templates sections in
-`references/task-arbitration.md`. For other phases, use
+`../okx-ai-v2/references/a2a/provider/arbitration.md`. For other phases, use
 `references/task-output-templates.md` and `references/task-action-routing.md`.
 
 ```json

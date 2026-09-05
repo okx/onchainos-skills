@@ -2,7 +2,7 @@
 //!
 //! Based on the current system notification type received (event), outputs the prompt
 //! for the next action to take. The goal: consolidate the Scene steps scattered across
-//! asp.md into code so the agent can simply run
+//! `references/a2a/provider/router.md` into code so the agent can simply run
 //! `exec onchainos agent next-action ...` to fetch the prompt and execute it directly,
 //! without having to reason over the entire document.
 
@@ -446,11 +446,13 @@ pub async fn generate_next_action(
                         ),
                     )
                     .unwrap_or_else(|_| "{}".to_string()),
-                    Err(_) => crate::commands::agent_commerce::task::arbitration::blocked_result(
-                        "unsupported_action",
-                        job_id,
-                        serde_json::json!({"sourceEvent": source_event}),
-                    ),
+                    Err(error) => {
+                        crate::commands::agent_commerce::task::arbitration::blocked_result(
+                            error.reason_code(),
+                            job_id,
+                            serde_json::json!({"sourceEvent": source_event}),
+                        )
+                    }
                 };
             }
         }
@@ -580,37 +582,34 @@ pub async fn generate_next_action(
             )
         }
 
-        // ─── Scene 6.3: User chose to raise a dispute (user-instruction pseudo-event) ───
-        Event::Other(ref s) if matches!(s.as_str(), "raise_arbitration" | "dispute_raise") => format!(
-            "[Current action] Raise dispute — phase 1 (approve)\n\
-             [Role] ASP\n\n\
-             ⚠️ **Evaluation is a two-phase on-chain flow**: phase 1 approve → wait for `dispute_approved` notification → phase 2 dispute → wait for `job_disputed` notification. This turn only runs phase 1.\n\n\
-             **Step 1 — Call the CLI to run phase 1 approve (on-chain):**\n\
-             ```bash\n\
-             onchainos agent dispute raise {job_id} --reason \"<user-provided reason or default: completed per acceptance criteria>\" --agent-id {agent_id}\n\
-             ```\n\
-             CLI internals: POST /dispute/approve → uopData → sign uopHash → broadcast. Wait for the on-chain `dispute_approved` notification.\n\n\
-             ⚠️ **After dispute raise ends this turn directly**:\n\
-             - Do NOT send any okx-a2a session send to the User Agent (`dispute raised` is filler; wait until phase 2 completes)\n\
-             - Do NOT call `dispute confirm` in the same turn (must wait for the on-chain dispute_approved notification)\n\n\
-             [Follow-up events]\n\
-             - `dispute_approved` system notification → call next-action to fetch the phase-2 script (dispute confirm)\n\
-             - Only after that does the flow enter `job_disputed` → evidence preparation period\n"
-        ),
+        // Legacy direct pseudo-events cannot prove which active decision the
+        // user answered. The bound `user_decision_job_rejected` relay is the
+        // sole entry for either write action.
+        Event::Other(ref s)
+            if matches!(
+                s.as_str(),
+                "raise_arbitration" | "dispute_raise" | "agree_refund"
+            ) => {
+                crate::commands::agent_commerce::task::arbitration::blocked_result(
+                    "decision_metadata_missing",
+                    job_id,
+                    serde_json::json!({
+                        "sourceEvent": crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
+                        "receivedEvent": s,
+                    }),
+                )
+            }
 
         // ─── Scene 6.3.5: Dispute phase 1 approve confirmed on-chain → run phase 2 dispute ─
         Event::DisputeApproved => match prefetched.and_then(|task| task.job_type) {
             Some(0) => format!(
                 "[Current state] dispute_approved (dispute approve tx receipt)\n\
              [Role] ASP\n\n\
-             **Step 1 — Call the CLI to run phase 2 dispute (on-chain):**\n\
+             **Step 1 — Run the stage-2 dispute broadcast:**\n\
              ```bash\n\
-             onchainos agent dispute confirm {job_id} --reason \"<original reason from phase-1 dispute raise if still in this turn's context; otherwise pass empty string \\\"\\\">\" --agent-id {agent_id}\n\
+             onchainos agent dispute confirm {job_id} --reason \"<original stage-1 reason>\" --agent-id {agent_id}\n\
              ```\n\
-             CLI internals: POST /dispute → uopData → sign uopHash → broadcast. Wait for the on-chain `job_disputed` notification.\n\n\
-             ⚠️ **After dispute confirm ends this turn directly**:\n\
-             - Do NOT okx-a2a session send the User Agent (still filler state)\n\
-             - Do NOT submit evidence in the same turn (evidence goes through dispute upload; must wait for the `job_disputed` notification + user-provided content)\n\n\
+             Use `--reason \"\"` when the original reason is not present in this signal/session context; the stage-1 broadcast already preserved the user-authored reason. This calls POST /dispute, signs the returned uopHash, and broadcasts it. End this turn after the command completes.\n\n\
              [Follow-up events]\n\
              - `job_disputed` system notification\n"
             ),
@@ -702,34 +701,21 @@ pub async fn generate_next_action(
             )
         }
 
-        // ─── Subscription: user chose to raise a dispute (pseudo-event) ──
+        // Legacy subscription pseudo-events use the same bound-decision gate.
         Event::Other(ref s)
             if matches!(
                 s.as_str(),
-                "raise_subscription_arbitration" | "sub_dispute"
-            ) => format!(
-            "[Current action] Subscription dispute — raise evaluation (§2.10 single combined call)\n\
-             [Role] ASP (subscription)\n\n\
-             **Step 1 — Call the CLI (on-chain):**\n\
-             ```bash\n\
-             onchainos agent subscribe-dispute {job_id} --reason \"<user-provided reason, or default: delivered per acceptance criteria>\" --agent-id {agent_id}\n\
-             ```\n\
-             🌐 Localize the `--reason` text to the user's language; keep it ≤2000 chars. It is persisted on-chain in the evaluation record (broadcast bizContext) — pass the ASP's actual argument, not an empty string.\n\
-             CLI internals: POST /task/{{jobId}}/dispute/approveAndCreateDispute (approve + create in ONE call — not the two-phase task dispute raise/confirm) → uopData → sign → broadcast (reason on bizContext); subStatus → Disputed.\n\n\
-             After Step 1 → **end this turn**. Do NOT `okx-a2a session send` the buyer.\n"
-        ),
-
-        // ─── Subscription: user chose to agree to refund (pseudo-event) ──
-        Event::Other(ref s) if s == "sub_agree_refund" => format!(
-            "[Current action] Subscription — agree to refund this period\n\
-             [Role] ASP (subscription)\n\n\
-             **Step 1 — Call the CLI (on-chain):**\n\
-             ```bash\n\
-             onchainos agent subscribe-agree-refund {job_id} --agent-id {agent_id}\n\
-             ```\n\
-             CLI internals: POST /subscribe/{{subId}}/agreeRefund (subId == jobId) → uopData → sign → broadcast; subStatus → Failed (this period refunded).\n\n\
-             After Step 1 → **end this turn**. Do NOT `okx-a2a session send` the buyer.\n"
-        ),
+                "raise_subscription_arbitration" | "sub_dispute" | "sub_agree_refund"
+            ) => {
+                crate::commands::agent_commerce::task::arbitration::blocked_result(
+                    "decision_metadata_missing",
+                    job_id,
+                    serde_json::json!({
+                        "sourceEvent": crate::commands::agent_commerce::task::arbitration::SUB_USER_REJECT,
+                        "receivedEvent": s,
+                    }),
+                )
+            }
 
         // ─── Scene 7: Task completed (review passed / evaluation won) ────────────────
         Event::JobCompleted => super::v2::job_completed::handle(job_id, agent_id).await,
@@ -1089,30 +1075,6 @@ pub async fn generate_next_action(
             let source = &s["user_decision_".len()..];
             let reply = data.unwrap_or("").trim();
             match source {
-                "job_rejected" => format!(
-                    "[User decision relay] source_event=`job_rejected`, user's verbatim reply: `{reply}`\n\n\
-                     **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
-                     Two options:\n\
-                     \x20\x20• **`dispute_raise`** — user wants to challenge the rejection and go to evaluation (typical intents: A / 发起仲裁 / dispute / 不接受拒绝 / 我做得没问题 / 申诉 / 我要争 / file dispute / contest).\n\
-                     \x20\x20• **`agree_refund`** — user accepts the refund and walks away (typical intents: B / 同意退款 / agree refund / 退款 / 算了 / 不争了 / OK refund / let it go).\n\n\
-                     If the user's reply clearly maps to one of these → call:\n\
-                     ```bash\n\
-                     onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<dispute_raise|agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
-                     ```\n\
-                     If the reply is **truly ambiguous** (e.g. non-committal `OK` / `sure` / `hmm` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT it for `[to: backup]` / backup subs — NEVER your own agentId) and `--source-event job_rejected`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=file dispute  B=accept refund\".\n"
-                ),
-                "sub_user_reject" => format!(
-                    "[User decision relay] source_event=`sub_user_reject`, user's verbatim reply: `{reply}`\n\n\
-                     **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
-                     Two options:\n\
-                     \x20\x20• **`sub_dispute`** — user wants to challenge the rejection and go to evaluation (typical intents: A / 发起仲裁 / dispute / 申诉 / 我要争 / contest).\n\
-                     \x20\x20• **`sub_agree_refund`** — user accepts refunding this period (typical intents: B / 同意退款 / agree refund / 退款 / 算了 / let it go).\n\n\
-                     If the reply clearly maps to one → call:\n\
-                     ```bash\n\
-                     onchainos agent next-action --role asp --agentId {agent_id} --message '{{\"event\":\"<sub_dispute|sub_agree_refund>\",\"jobId\":\"{job_id}\"}}'\n\
-                     ```\n\
-                     If **truly ambiguous** (non-committal `OK` / `sure` — could mean either), these are irreversible on-chain actions — **do NOT guess**. Re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (OMIT it for `[to: backup]` / backup subs — NEVER your own agentId) and `--source-event sub_user_reject`. **`--user-content` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=raise dispute  B=agree refund\".\n"
-                ),
                 "submit_deadline_warn" => format!(
                     "[User decision relay] source_event=`submit_deadline_warn`, user's verbatim reply: `{reply}`\n\n\
                      **Semantic mapping** — decide which intent the user's reply means:\n\n\
@@ -1643,6 +1605,27 @@ mod tests {
         assert!(output.contains("Waiting for the User Agent's review"));
         assert!(output.contains("must NOT trigger a second A2A send"));
         assert!(output.contains("Wait for `job_completed` / `job_rejected`"));
+    }
+
+    #[tokio::test]
+    async fn dispute_approved_runs_confirm_and_job_disputed_owns_evidence() {
+        let approved = run_asp(
+            "dispute_approved",
+            json!({"event":"dispute_approved", "code":0}),
+        )
+        .await;
+        assert!(approved.contains("Run the stage-2 dispute broadcast"));
+        assert!(approved.contains("onchainos agent dispute confirm"));
+        assert!(approved.contains("`job_disputed` system notification starts the independent evidence-upload workflow"));
+
+        let disputed = run_asp(
+            "job_disputed",
+            json!({"event":"job_disputed", "buyerAgentId":"8315"}),
+        )
+        .await;
+        assert!(disputed.contains("job_disputed"));
+        assert!(disputed.contains("evidence"));
+        assert!(disputed.contains("onchainos agent dispute upload"));
     }
 
     #[tokio::test]
@@ -2374,22 +2357,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn asp_sub_dispute_guidance_passes_reason() {
-        // The dispute outcome must thread a `--reason` so it reaches the on-chain
-        // evaluation record (broadcast bizContext); a bare `subscribe-dispute` drops it.
-        let out = run_asp(
+    async fn direct_arbitration_pseudo_events_require_bound_decision_metadata() {
+        for event in [
+            "raise_arbitration",
+            "dispute_raise",
+            "agree_refund",
+            "raise_subscription_arbitration",
             "sub_dispute",
-            json!({ "event": "sub_dispute", "jobId": ASP_JOB_ID }),
+            "sub_agree_refund",
+        ] {
+            let out = run_asp(event, json!({ "event": event, "jobId": ASP_JOB_ID })).await;
+            let result: serde_json::Value = serde_json::from_str(&out).unwrap();
+            assert_eq!(result["decision"], "blocked", "{event}: {out}");
+            assert_eq!(
+                result["reason"], "decision_metadata_missing",
+                "{event}: {out}"
+            );
+            assert_eq!(result["nextAction"], json!([]), "{event}: {out}");
+        }
+    }
+
+    #[tokio::test]
+    async fn bound_arbitration_relay_preserves_reason_in_next_action() {
+        let out = run_asp(
+            "user_decision_job_rejected",
+            json!({
+                "event": "user_decision_job_rejected",
+                "jobId": ASP_JOB_ID,
+                "data": "B 交付物符合预期",
+                "decisionId": format!("{ASP_JOB_ID}:job_rejected:event-1"),
+                "selectedActionId": "raise_arbitration",
+                "params": {
+                    "jobId": ASP_JOB_ID,
+                    "reason": "交付物符合预期"
+                }
+            }),
         )
         .await;
-        assert!(
-            out.contains("subscribe-dispute"),
-            "must call subscribe-dispute: {out}"
+        let result: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(result["decision"], "ready");
+        assert_eq!(result["nextAction"][0]["id"], "raise_arbitration");
+        assert_eq!(
+            result["nextAction"][0]["params"]["reason"],
+            "交付物符合预期"
         );
-        assert!(
-            out.contains("--reason"),
-            "sub_dispute guidance must pass --reason (on-chain bizContext): {out}"
-        );
+    }
+
+    #[tokio::test]
+    async fn bound_arbitration_relay_requires_reason_for_write_action() {
+        let out = run_asp(
+            "user_decision_job_rejected",
+            json!({
+                "event": "user_decision_job_rejected",
+                "jobId": ASP_JOB_ID,
+                "decisionId": format!("{ASP_JOB_ID}:job_rejected:event-1"),
+                "selectedActionId": "raise_arbitration",
+                "params": {"jobId": ASP_JOB_ID}
+            }),
+        )
+        .await;
+        let result: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(result["decision"], "blocked");
+        assert_eq!(result["reason"], "arbitration_reason_required");
+        assert_eq!(result["nextAction"], json!([]));
     }
 
     #[tokio::test]

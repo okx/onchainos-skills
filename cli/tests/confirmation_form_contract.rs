@@ -1,16 +1,65 @@
-const PUBLISH_ACTIONS: &str =
-    include_str!("../../skills/okx-ai/references/task-user-actions-create.md");
-const USER_PLAYBOOK: &str = include_str!("../../skills/okx-ai/references/task-user-playbook.md");
-const USER_REFUND: &str = include_str!("../../skills/okx-ai/references/task-user-refund.md");
+const PUBLISH_ACTIONS: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create.md");
+const USER_PLAYBOOK: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/playbook.md");
+const USER_REFUND: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund.md");
 const REFUND_ACTION_ROUTING: &str =
-    include_str!("../../skills/okx-ai/references/task-action-routing.md");
+    include_str!("../../skills/okx-ai-v2/references/shared/task-action-routing.md");
 const REFUND_OUTPUT_TEMPLATES: &str =
-    include_str!("../../skills/okx-ai/references/task-output-templates.md");
-const CANONICAL_SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
+    include_str!("../../skills/okx-ai-v2/references/shared/task-output-templates.md");
+const CANONICAL_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
 const USER_INTENT_ROUTER: &str =
-    include_str!("../../skills/okx-ai/references/task-user-intent-routing.md");
-const V2_USER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
-const V2_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
+    include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
+const A2A_CORE_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/core.md");
+const IDENTITY_SEARCH: &str = include_str!("../../skills/okx-ai-v2/references/identity/search.md");
+const RUNTIME_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/runtime/router.md");
+const CHAT_COMM_INIT: &str =
+    include_str!("../../skills/okx-ai-v2/references/shared/chat-comm-init.md");
+const COMPLETION_ACTIONS: &str =
+    include_str!("../../skills/okx-ai-v2/references/a2a/completion.md");
+const V2_USER_ROUTER: &str = USER_INTENT_ROUTER;
+const V2_SKILL: &str = CANONICAL_SKILL;
+
+#[test]
+fn v2_task_entry_keeps_two_level_lazy_routing_contract() {
+    assert!(CANONICAL_SKILL.contains("references/runtime/router.md"));
+    assert!(!CANONICAL_SKILL.contains("references/runtime/README.md"));
+    assert!(CANONICAL_SKILL.contains("Select exactly one row"));
+    assert!(CANONICAL_SKILL.contains("never scan Skill directories"));
+    assert!(!CANONICAL_SKILL.contains("§Activation"));
+
+    assert!(USER_INTENT_ROUTER.contains("Read only [`../../identity/search.md`]"));
+    assert!(USER_INTENT_ROUTER.contains("nextAction.id=open_create_playbook"));
+    assert!(IDENTITY_SEARCH.contains("Only now read `output-templates.md`"));
+    assert!(PUBLISH_ACTIONS.contains("read only\n[`../../runtime/watch.md`]"));
+    assert!(!PUBLISH_ACTIONS.contains("task-output-templates.md"));
+
+    assert!(A2A_CORE_ROUTER.split_whitespace().count() <= 500);
+    assert!(!A2A_CORE_ROUTER.contains("task-output-templates.md"));
+    assert!(A2A_CORE_ROUTER.contains("legacy\nSkill-read trigger strings"));
+    for leaf in [
+        "watch.md",
+        "backlog.md",
+        "../shared/chat-comm-init.md",
+        "attachment.md",
+        "recovery.md",
+        "cli-reference.md",
+    ] {
+        assert!(RUNTIME_ROUTER.contains(leaf));
+    }
+    assert!(CHAT_COMM_INIT.contains("okx-a2a doctor --fix --json"));
+    assert!(PUBLISH_ACTIONS.contains("../../shared/chat-comm-init.md"));
+}
+
+#[test]
+fn completion_preserves_terminal_marker_and_skips_same_owner_rating() {
+    let contract = COMPLETION_ACTIONS
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(COMPLETION_ACTIONS.contains("[onchainos:task-terminal]"));
+    assert!(contract.contains("preserve that exact prefix byte-for-byte"));
+    assert!(COMPLETION_ACTIONS.contains("payload.rating.required=false"));
+    assert!(contract.contains("Do not call `feedback-submit`"));
+}
 const V2_USER_REFUND: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund.md");
 const V2_REFUND_DISPLAY: &str =
     include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-display.md");
@@ -18,6 +67,14 @@ const V2_USER_RATING: &str = include_str!("../../skills/okx-ai-v2/references/a2a
 
 #[test]
 fn skill_confirmation_templates_never_expose_execution_configuration() {
+    let publish_contract = PUBLISH_ACTIONS
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let playbook_contract = USER_PLAYBOOK
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for forbidden_row in [
         "| Signal Execution |",
         "| Per-Signal Amount |",
@@ -30,25 +87,21 @@ fn skill_confirmation_templates_never_expose_execution_configuration() {
         );
     }
 
-    assert!(PUBLISH_ACTIONS.contains("Do not append or merge any other row"));
-    assert!(PUBLISH_ACTIONS.contains("list them below the table; never add an Attachments row"));
-    assert!(PUBLISH_ACTIONS.contains("Guide-defined Consent and Signal values"));
+    assert!(publish_contract.contains("Do not append or merge any other row"));
+    assert!(publish_contract.contains("list them below the table; never add an Attachments row"));
+    assert!(publish_contract.contains("Guide-defined Consent and Signal values"));
     assert!(PUBLISH_ACTIONS.contains("--guide-consent-json"));
     assert!(!PUBLISH_ACTIONS.contains("`--autotrade-*` arguments"));
-    assert!(PUBLISH_ACTIONS.contains(
-        "that\n\
-returned form is the sole field authority"
+    assert!(publish_contract.contains("that returned form is the sole field authority"));
+    assert!(publish_contract.contains(
+        "Appendix A is only a fallback render contract for a direct route"
     ));
-    assert!(PUBLISH_ACTIONS.contains(
-        "Appendix A\n\
-is only a fallback render contract for a direct route"
-    ));
-    assert!(USER_PLAYBOOK
+    assert!(playbook_contract
         .contains("derives and locally validates a projection from the selected service Guide"));
     assert!(USER_PLAYBOOK.contains("ASP supplies Guide text only"));
     assert!(!USER_PLAYBOOK.contains("Signal handling mode"));
     assert!(!USER_PLAYBOOK.contains("autoTradeConfigRequested"));
-    assert!(USER_PLAYBOOK.contains(
+    assert!(playbook_contract.contains(
         "its returned confirmation form is the sole field authority; never merge fields"
     ));
 }
@@ -82,31 +135,52 @@ fn refund_v2_requires_a_user_authored_reason_and_explicit_confirmation() {
     assert!(contract.contains("After explicit confirmation"));
     assert!(contract.contains("refund-execute"));
     assert!(contract.contains("--confirm"));
-    assert!(USER_PLAYBOOK.contains("task-user-refund.md"));
+    assert!(USER_PLAYBOOK.contains("refund.md"));
 }
 
 #[test]
-fn v2_buyer_router_owns_its_refund_contract() {
-    assert!(CANONICAL_SKILL.contains("references/task-user-refund.md"));
-    assert!(CANONICAL_SKILL.contains("only for CLI syntax or schema lookup"));
-    assert!(USER_INTENT_ROUTER.contains("[`task-user-refund.md`](task-user-refund.md)"));
-    assert!(V2_USER_ROUTER.contains("| Buyer refunds and paid-deliverable rejection"));
-    assert!(V2_USER_ROUTER.contains("| [Buyer refunds](refund.md) |"));
-    assert!(!V2_USER_ROUTER.contains("../../../../okx-ai/references/task-user-refund.md"));
-    assert!(V2_USER_ROUTER.contains("paid-deliverable rejection"));
+fn deliverable_review_b_reason_is_the_scoped_direct_rejection_confirmation() {
+    let refund_contract = USER_REFUND.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(USER_REFUND.contains(
+        "B` together with a non-blank\n\
+User-authored reason is the User's final confirmation"
+    ));
+    assert!(USER_REFUND.contains("Handle this reply in the current user conversation"));
+    assert!(USER_REFUND.contains("refund_request_confirmation_required"));
+    assert!(USER_REFUND.contains("returned `nextAction.id=submit_refund_request`"));
+    assert!(USER_REFUND.contains("owns reason extraction, fresh preparation, execution, and"));
+    assert!(USER_REFUND.contains("give one concise localized\nconfirmation"));
+    assert!(refund_contract.contains("Describe it as submitted rather than settled"));
+    assert!(USER_REFUND.contains(
+        "onchainos agent status <jobId> --agent-id <buyerAgentId>"
+    ));
+    assert!(USER_REFUND.contains("a reason\nreceived outside that active card remains input only"));
+    assert!(REFUND_ACTION_ROUTING.contains("active deliverable-review"));
+    assert!(REFUND_OUTPUT_TEMPLATES.contains("active deliverable-review"));
+}
+
+#[test]
+fn v2_okx_ai_skill_routes_refunds_to_one_contract() {
+    assert!(CANONICAL_SKILL.contains("references/a2a/user/router.md"));
+    assert!(USER_INTENT_ROUTER.contains("[`refund.md`](refund.md)"));
+    assert!(USER_INTENT_ROUTER.contains("paid-deliverable rejection"));
+    assert!(!USER_INTENT_ROUTER.contains("refunds are not yet migrated"));
+    assert!(USER_INTENT_ROUTER.contains("Rate or review an active subscription"));
+    assert!(USER_INTENT_ROUTER.contains("[`rating.md`](rating.md)"));
     assert!(V2_USER_REFUND.contains("[Refund Presentation](refund-display.md)"));
     for canonical_reference in [
-        "../okx-ai/references/task-core.md",
-        "../okx-ai/references/task-output-templates.md",
-        "../okx-ai/references/task-action-routing.md",
+        "references/a2a/core.md",
+        "references/shared/task-action-routing.md",
     ] {
-        assert!(V2_SKILL.contains(canonical_reference));
+        assert!(CANONICAL_SKILL.contains(canonical_reference));
     }
+    assert!(!CANONICAL_SKILL.contains("references/shared/task-output-templates.md"));
+    assert!(!CANONICAL_SKILL.contains("../okx-ai/"));
 }
 
 #[test]
 fn refund_documents_keep_finality_in_the_canonical_reference() {
-    const FINALITY_LINK: &str = "task-user-refund.md#progress-arbitration-and-finality";
+    const FINALITY_LINK: &str = "../a2a/user/refund.md#progress-arbitration-and-finality";
 
     assert!(USER_REFUND.contains("<a id=\"progress-arbitration-and-finality\"></a>"));
     assert!(V2_USER_REFUND.contains("<a id=\"progress-arbitration-and-finality\"></a>"));

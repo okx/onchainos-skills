@@ -50,6 +50,20 @@ pub async fn handle_upload_evidence(
     explicit_file_paths: &[String],
     max_files: Option<usize>,
 ) -> Result<()> {
+    crate::commands::agent_commerce::task::arbitration_trace::record(
+        "evidence-upload-input",
+        job_id,
+        &serde_json::json!({
+            "command": "agent dispute upload",
+            "agentId": agent_id,
+            "role": role,
+            "text": text,
+            "explicitFiles": explicit_file_paths,
+            "maxFiles": max_files,
+        }),
+        Some(&serde_json::json!({"received": true})),
+        None,
+    );
     if role != "user" && role != "asp" {
         bail!("--role must be 'user' or 'asp', got '{role}'");
     }
@@ -148,7 +162,10 @@ pub async fn handle_upload_evidence(
             Ok(m) => m,
             Err(e) => {
                 if *is_explicit {
-                    bail!("evidence file not found / unreadable: {} ({e})", p.display());
+                    bail!(
+                        "evidence file not found / unreadable: {} ({e})",
+                        p.display()
+                    );
                 }
                 if DEBUG_LOG {
                     eprintln!(
@@ -196,10 +213,7 @@ pub async fn handle_upload_evidence(
                 continue;
             }
         };
-        let original_name = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("evidence");
+        let original_name = p.file_name().and_then(|n| n.to_str()).unwrap_or("evidence");
         let ext = p
             .extension()
             .and_then(|e| e.to_str())
@@ -219,7 +233,11 @@ pub async fn handle_upload_evidence(
                 bytes.len(),
             );
         }
-        parts.push(FilePart { filename, mime, bytes });
+        parts.push(FilePart {
+            filename,
+            mime,
+            bytes,
+        });
     }
 
     // Post-loop safety net: if every manifest entry was unreadable and the
@@ -287,20 +305,61 @@ pub async fn handle_upload_evidence(
 
     let path = client.endpoint(job_id, "evidence/upload");
     let content_type = format!("multipart/form-data; boundary={boundary}");
-    client
+    let upload_request = serde_json::json!({
+        "path": path,
+        "agentId": agent_id,
+        "role": role,
+        "text": text_clean,
+        "explicitFiles": explicit_file_paths,
+        "manifestFiles": manifest_filenames,
+        "attachedFiles": parts.iter().map(|part| serde_json::json!({
+            "filename": part.filename,
+            "mime": part.mime,
+            "bytes": part.bytes.len(),
+        })).collect::<Vec<_>>(),
+        "skippedManifestFiles": skipped_manifest_missing,
+        "multipartBytes": body.len(),
+    });
+    let upload_result = client
         .raw_post_with_identity(&path, body, &content_type, agent_id)
-        .await?;
+        .await;
+    match &upload_result {
+        Ok(response) => crate::commands::agent_commerce::task::arbitration_trace::record(
+            "evidence-upload-api",
+            job_id,
+            &upload_request,
+            Some(response),
+            None,
+        ),
+        Err(error) => crate::commands::agent_commerce::task::arbitration_trace::record(
+            "evidence-upload-api",
+            job_id,
+            &upload_request,
+            None,
+            Some(&format!("{error:#}")),
+        ),
+    }
+    upload_result?;
 
     println!("✓ Evidence uploaded (off-chain, effective within 1h preparation window)");
     println!("  jobId:    {job_id}");
     println!("  role:     {role}");
     if let Some(t) = text_clean.as_deref() {
-        println!("  text:     {} bytes ({} chars)", t.len(), t.chars().count());
+        println!(
+            "  text:     {} bytes ({} chars)",
+            t.len(),
+            t.chars().count()
+        );
     }
     if !explicit_file_paths.is_empty() {
-        println!("  --file:   {} explicit attachment(s)", explicit_file_paths.len());
+        println!(
+            "  --file:   {} explicit attachment(s)",
+            explicit_file_paths.len()
+        );
     }
-    let manifest_attached = manifest_filenames.len().saturating_sub(skipped_manifest_missing);
+    let manifest_attached = manifest_filenames
+        .len()
+        .saturating_sub(skipped_manifest_missing);
     if manifest_attached > 0 {
         println!("  manifest: {manifest_attached} local deliverable(s) auto-attached");
     }

@@ -510,6 +510,9 @@ pub async fn handle_dispute(
 ) -> Result<()> {
     let validated_agent_id = select_subscription_agent_id("", agent_id)?;
     let agent_id = validated_agent_id.as_str();
+    if reason.trim().is_empty() {
+        bail!("Dispute reason is required. Pass the user's arbitration reason with --reason.");
+    }
     if reason.chars().count() > MAX_DISPUTE_REASON_CHARS {
         bail!("Dispute reason exceeds {MAX_DISPUTE_REASON_CHARS} characters. Please shorten it and try again.");
     }

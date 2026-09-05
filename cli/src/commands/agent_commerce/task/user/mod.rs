@@ -34,7 +34,9 @@ pub(crate) mod refund_v2;
 mod reject_apply;
 mod service_detail;
 pub(crate) mod service_param_update;
+pub(crate) mod subscription_list;
 pub(crate) mod subscription_ops;
+pub(crate) mod visibility;
 mod task_create_prepare;
 mod v2;
 
@@ -347,6 +349,18 @@ pub enum TaskCommand {
         status_type: u8,
         page: u32,
         page_size: u32,
+    },
+    SubscriptionList {
+        cursor: Option<String>,
+        page_size: u32,
+    },
+    /// Change a task's visibility through the marketplace task API.
+    #[command(name = "task-visibility-update")]
+    TaskVisibilityUpdate {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long, value_enum)]
+        visibility: visibility::TaskVisibility,
     },
     /// Show total monthly cost of active subscriptions.
     #[command(name = "subscribe-cost")]
@@ -2193,6 +2207,12 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             page,
             page_size,
         } => my_tasks::handle_my_tasks(&mut client, task_type, status_type, page, page_size).await,
+        TaskCommand::SubscriptionList { cursor, page_size } => {
+            subscription_list::handle_subscription_list(cursor.as_deref(), page_size).await
+        }
+        TaskCommand::TaskVisibilityUpdate { job_id, visibility } => {
+            visibility::handle_task_visibility_update(&mut client, &job_id, visibility).await
+        }
         TaskCommand::SubscribeCost {} => subscription_ops::handle_subscribe_cost(&mut client).await,
     }
 }

@@ -1,5 +1,6 @@
 use crate::commands::agent_commerce::task::common::{
-    deliverables, network::task_api_client::TaskApiClient, PreFetchedTaskContext,
+    deliverables, has_same_agent_owner, network::task_api_client::TaskApiClient,
+    PreFetchedTaskContext, TERMINAL_NOTIFICATION_MARKER,
 };
 
 pub(crate) async fn handle(job_id: &str, agent_id: &str) -> serde_json::Value {
@@ -25,6 +26,12 @@ fn result_from_task_detail(
     if response.get("status").and_then(serde_json::Value::as_i64) != Some(6) {
         return blocked_result(job_id, "stale_task_status");
     }
+    let rating_required = !has_same_agent_owner(&response);
+    let reason = if rating_required {
+        "notification_and_rating_required"
+    } else {
+        "notification_required"
+    };
     let task = PreFetchedTaskContext::from_api_response(&response);
     let provider_agent_id = match task
         .provider_agent_id
@@ -38,7 +45,7 @@ fn result_from_task_detail(
     serde_json::json!({
         "phase": "task_completion",
         "decision": "ready",
-        "reason": "notification_and_rating_required",
+        "reason": reason,
         "nextAction": [{
             "id": "finalize_user_task",
             "recommend": true,
@@ -51,6 +58,7 @@ fn result_from_task_detail(
                 title(&task),
             ),
             "rating": {
+                "required": rating_required,
                 "targetAgentId": provider_agent_id,
                 "creatorAgentId": agent_id,
                 "taskDescription": task.description,
@@ -81,7 +89,7 @@ fn title(task: &PreFetchedTaskContext) -> &str {
 }
 
 fn completion_notification(job_id: &str, task: &PreFetchedTaskContext) -> String {
-    if task.payment_mode == Some(3) {
+    let content = if task.payment_mode == Some(3) {
         format!(
             "[x402 Job Completed] {} (`{job_id}`) — all steps complete.\n- Spent: {} {}\n- Payment: x402",
             title(task), task.token_amount, task.token_symbol,
@@ -93,7 +101,8 @@ fn completion_notification(job_id: &str, task: &PreFetchedTaskContext) -> String
             &task.token_amount,
             &task.token_symbol,
         )
-    }
+    };
+    format!("{TERMINAL_NOTIFICATION_MARKER} {content}")
 }
 
 fn deliverable_files(job_id: &str) -> Vec<serde_json::Value> {
@@ -144,6 +153,7 @@ mod tests {
         assert_eq!(output["nextAction"][0]["id"], "finalize_user_task");
         assert_eq!(output["payload"]["rating"]["targetAgentId"], "provider-1");
         assert_eq!(output["payload"]["rating"]["creatorAgentId"], "user-1");
+        assert_eq!(output["payload"]["rating"]["required"], true);
         assert_eq!(
             output["payload"]["rating"]["taskDescription"],
             "Audit the contract"
@@ -155,6 +165,10 @@ mod tests {
         assert!(output["payload"]["notification"]
             .as_str()
             .unwrap()
+            .starts_with(TERMINAL_NOTIFICATION_MARKER));
+        assert!(output["payload"]["notification"]
+            .as_str()
+            .unwrap()
             .contains("Audit report"));
         assert!(output["payload"]["ratingResultNotification"]
             .as_str()
@@ -163,12 +177,30 @@ mod tests {
     }
 
     #[test]
+    fn same_owner_skips_user_rating_but_keeps_terminal_marker() {
+        let task = serde_json::json!({
+            "jobId": "job-1",
+            "status": 6,
+            "title": "Audit report",
+            "buyerAgentAddress": "0xAbC",
+            "providerAgentAddress": "0xabc",
+            "providerAgentId": "provider-1"
+        });
+
+        let output = result_from_task_detail("job-1", "user-1", Ok(task));
+
+        assert_eq!(output["reason"], "notification_required");
+        assert_eq!(output["payload"]["rating"]["required"], false);
+        assert!(output["payload"]["notification"]
+            .as_str()
+            .unwrap()
+            .starts_with(TERMINAL_NOTIFICATION_MARKER));
+    }
+
+    #[test]
     fn blocks_when_task_detail_request_fails() {
-        let output = result_from_task_detail(
-            "job-1",
-            "user-1",
-            Err(anyhow::anyhow!("request failed")),
-        );
+        let output =
+            result_from_task_detail("job-1", "user-1", Err(anyhow::anyhow!("request failed")));
 
         assert_eq!(output["decision"], "blocked");
         assert_eq!(output["reason"], "task_detail_unavailable");

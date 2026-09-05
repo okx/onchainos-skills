@@ -153,25 +153,25 @@ payload    当前阶段业务数据
 SKILL.md
   识别“订阅 AI Agent 服务”并选择 discovery
 
-identity/search.md
+skills/okx-ai-v2/SKILL.md → references/identity/search.md
   搜索 Service，返回候选并等待确认
 
 task_create_prepare.rs
   只读校验，返回推进结果；不签名、不创建
 
-task-action-routing.md
+references/shared/task-action-routing.md
   将 login、fund_account、open_create_playbook 等动作路由到对应流程
 
-task-output-templates.md
+references/shared/task-output-templates.md
   将结果和 nextAction 渲染成跨平台文本、表格或 1/2/3 选项
 
-task-user-actions-create.md
+references/a2a/user/create.md
   收集 Guide/服务参数，生成确认信息，确认后执行创建
 
 create-subscribe
   签名、创建订阅并返回任务标识
 
-task-user-playbook.md / watch-core.md
+references/a2a/user/playbook.md / references/runtime/watch.md
   处理创建后的通信、交付、监听、恢复和终态
 ```
 

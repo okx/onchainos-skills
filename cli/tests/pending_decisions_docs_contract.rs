@@ -2,7 +2,8 @@ mod common;
 
 use common::onchainos;
 
-const REFERENCE: &str = include_str!("../../skills/okx-ai/references/task-cli-reference.md");
+const REFERENCE: &str =
+    include_str!("../../skills/okx-ai-v2/references/shared/task-cli-reference.md");
 
 fn section(start: &str, end: &str) -> &'static str {
     let from = REFERENCE

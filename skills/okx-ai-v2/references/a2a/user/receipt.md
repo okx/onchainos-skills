@@ -1,34 +1,85 @@
-# A2A User Receipt
+# Subscription Device Delivery
 
-Controls subscription-message delivery to devices. It does not authorize execution.
+Manage which logged-in devices receive messages for each subscription task.
 
-## Enable this device
+## View devices and delivery
 
-1. Read current state:
+1. List the user's logged-in devices:
+
+   ```bash
+   onchainos agent device-list
+   ```
+
+   Render each returned `deviceId`, device name, last-online time, and current-device marker.
+
+2. Read the selected subscription from the current subscription list:
 
    ```bash
    onchainos agent subscribe-detail <jobId> --format json
    ```
 
-2. Branch on `deviceList` and `thisDeviceReceives`:
+3. Render its delivery mode and current-device result:
 
-   | State | Action |
+   | `deviceList` | Delivery mode |
    |---|---|
-   | `deviceList: null` | Default-all; report enabled and do not write. |
-   | Explicit list with `thisDeviceReceives: true` | Report enabled and do not write. |
-   | Explicit list with `thisDeviceReceives: false` | Union the fresh list with the current device, then write. |
-   | `deviceList: null` with `thisDeviceReceives: false` | Stop; state is inconsistent. |
+   | `null` | All logged-in devices receive messages. |
+   | `[]` | No device receives messages. |
+   | Non-empty array | Only the listed devices receive messages. |
 
-3. Write only when required:
+   Render `thisDeviceReceives` as the current device's Yes/No status. Do not
+   infer device names for IDs that are absent from the fresh device list.
+
+## Set receiving devices
+
+Use this flow when the user asks to enable or disable a device for one task,
+receive on all devices, receive only on selected devices, or stop delivery to
+all devices.
+
+1. Require a selected `jobId` from the current subscription list and reread
+   `subscribe-detail --format json` immediately before the change.
+2. Read `device-list`; accept only its fresh `deviceId` values as targets.
+3. Build the complete desired list:
+
+   | User choice | Write value |
+   |---|---|
+   | All currently logged-in devices | Fresh complete `deviceId` list; preserve `deviceList: null` and do not write if it is already `null`. |
+   | Selected devices | The complete selected `deviceId` list. |
+   | Enable one device | Fresh explicit list union that `deviceId`; `null` is already enabled. |
+   | Disable one device | Fresh explicit list minus that `deviceId`; for `null`, first ask for the complete replacement allowlist. |
+   | No devices | Empty list. |
+
+4. Before writing, show the affected task and the complete resulting receiver
+   list. Require explicit confirmation when the operation removes a device or
+   leaves no receiving device.
+5. Write the complete list:
 
    ```bash
    onchainos agent subscribe-device-update \
-     --job-id <jobId> --device-list <fresh-union>
+     --job-id <jobId> --device-list <complete-device-ids>
    ```
 
-4. Reread `subscribe-detail --format json`; report enabled only when
-   `thisDeviceReceives` is true.
+   To apply different receiving-device lists to multiple selected subscription
+   tasks in one operation, use the batch form:
 
-`null` means default-all, `[]` means none, and a non-empty array is an
-allowlist. Build writes only from the fresh complete list. Do not start watch,
-read history, sign, pay, or change execution policy.
+   ```bash
+   onchainos agent subscribe-device-update \
+     --items '[{"jobId":"<jobId>","deviceList":["<deviceId>"]}]'
+   ```
+
+6. Reread `subscribe-detail --format json` and report the resulting delivery
+   mode and `thisDeviceReceives` status.
+
+## Constraints
+
+- `subscribe-device-update` replaces the entire stored list. Never write a
+  partial list from conversation memory; always fresh-read, merge or subtract,
+  write, then reread.
+- Treat `deviceList: null` as default-all, not an empty editable list. The
+  current write API accepts only an explicit device array: to exclude one device
+  or replace default-all, the user must choose the resulting device set
+  explicitly.
+- Do not update a task that is not selected from the current subscription list.
+- Device delivery is configured independently for each task. Changing one task
+  must not alter delivery for another task or device.
+- A single batch submission accepts 1–100 selected tasks. Split a larger
+  selection into separate, independently confirmed submissions.

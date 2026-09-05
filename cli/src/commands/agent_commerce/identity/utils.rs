@@ -853,7 +853,7 @@ fn enrich_agent_row(row: &mut Value) {
 
 // ─── `card`: ordered, ready-to-render detail-card rows ────────────────────
 //
-// Mirrors `skills/okx-ai/references/identity/output-templates.md §Agent detail`:
+// Mirrors `skills/okx-ai-v2/references/identity/output-templates.md §Agent detail`:
 // one ordered `{ "label": <canonical-English>, "value": <string> }` row per
 // visible field, omitting a row when its value is unavailable (same omit
 // rules the skill uses today). Service rows are ASP-ONLY — the
@@ -1143,7 +1143,7 @@ fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
 // the skill renders the table by simply laying out cells. Mirrors:
 //   • references/identity/profile.md    §My Agents    → `build_agent_list_cells`
 //   • references/identity/profile.md    §Services for an explicit Agent ID → `build_service_cells`
-//   • skills/okx-guide/references/registered-home.md §2 → `build_search_table`
+//   • Search results                              → `build_search_table`
 //   • references/identity/reputation.md §Result       → `build_feedback_cells`
 // All builders are additive: raw fields + existing `card`/labels stay intact.
 // The `cells` insert is an intentional unconditional overwrite — see the
@@ -1271,7 +1271,7 @@ pub(super) use precheck::{build_precheck, collect_owned_agents};
 // ─── §6 search-result table ────────────────────────────────────────────
 //
 // Search uses a DIFFERENT backend schema than
-// `agent get`. Columns (skills/okx-guide/references/registered-home.md §2), in order:
+// `agent get`. Search-result columns, in order:
 //   Agent ID | Name | Sold Count | Rating | Min price | Top service
 // Critical schema differences handled HERE:
 //   • Rating source is `feedbackRate`, a backend 0–100 score converted to

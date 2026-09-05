@@ -39,4 +39,4 @@ For an agent in the evaluator role, any non-`source:"system"` inbound envelope (
 | Inspect raw task info | `onchainos agent status <jobId> --agent-id <evaluatorAgentId>` |
 | Check account-level claimable rewards | `onchainos agent arbitration-claimable --agent-id <evaluatorAgentId>` |
 
-Staking lifecycle / slashing rules / reward rules / cooldown period + all staking commands (`staking-config` / `my-stake` / `stake` / `increase-stake` / `request-unstake` / `claim-unstake` / `cancel-unstake`) are in [`task-evaluator-staking.md`](task-evaluator-staking.md). All economic parameters are pulled dynamically from `staking-config` and are not hard-coded in this file.
+Staking lifecycle / slashing rules / reward rules / cooldown period + all staking commands (`staking-config` / `my-stake` / `stake` / `increase-stake` / `request-unstake` / `claim-unstake` / `cancel-unstake`) are in [`../../okx-ai-v2/references/a2a/evaluator/staking.md`](../../okx-ai-v2/references/a2a/evaluator/staking.md). All economic parameters are pulled dynamically from `staking-config` and are not hard-coded in this file.

@@ -127,7 +127,7 @@ nonzero caller-supplied code, cannot override a fresh matching Expired(8).
 | `sub_close_notify` | Render the CLI's canonical terminal `Content:` per the language rule below, then follow `session-cleanup`. End turn. |
 | `sub_failed_notify` | The current event/status combination does not carry trustworthy charge-failure cause provenance. Fail closed: render only the CLI's incomplete/read-only result, emit no terminal marker, and do not run `session-cleanup`. Only a CLI result that independently establishes trustworthy cause provenance may use the canonical terminal charge-failure copy. End turn. |
 | `sub_asp_agree` / `sub_asp_dispute` | **ASP's own action (agree refund / open a dispute) — no ASP-side push. Silently ignore. End turn.** Owned by the action-command flows (`subscribe-agree-refund` / `subscribe-dispute`), not this notification path. |
-| `sub_user_reject` | Read `task-arbitration.md` and use its unified A/B decision contract. |
+| `sub_user_reject` | Enter [`../../okx-ai-v2/references/a2a/provider/arbitration.md`](../../okx-ai-v2/references/a2a/provider/arbitration.md) and use its rejection decision flow. |
 | `sub_cancel` / `sub_trial_into_active` | **Not handled on the ASP side in this slice — silently ignore. End turn.** Buyer-only. |
 | `sub_renew` | Renewal → the **previous period's income is now claimable**. Run `onchainos agent subscribe-asp-claim <jobId> --agent-id <yours>` (claims your own funds — no buyer action, do not send a peer message), then push a short localized note via `onchainos agent user-notify`; if the CLI reports nothing claimable, end the turn silently. |
 

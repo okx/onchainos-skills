@@ -1,5 +1,6 @@
 use crate::commands::agent_commerce::task::common::{
-    network::task_api_client::TaskApiClient, PreFetchedTaskContext,
+    has_same_agent_owner, network::task_api_client::TaskApiClient, PreFetchedTaskContext,
+    TERMINAL_NOTIFICATION_MARKER,
 };
 
 pub(crate) async fn handle(job_id: &str, agent_id: &str) -> String {
@@ -25,6 +26,12 @@ fn result_from_task_detail(
     if response.get("status").and_then(serde_json::Value::as_i64) != Some(6) {
         return blocked_result(job_id, "stale_task_status");
     }
+    let rating_required = !has_same_agent_owner(&response);
+    let reason = if rating_required {
+        "notification_and_rating_required"
+    } else {
+        "notification_required"
+    };
     let task = PreFetchedTaskContext::from_api_response(&response);
     let user_agent_id = match task
         .user_agent_id
@@ -38,7 +45,7 @@ fn result_from_task_detail(
     serde_json::json!({
         "phase": "task_completion",
         "decision": "ready",
-        "reason": "notification_and_rating_required",
+        "reason": reason,
         "nextAction": [{
             "id": "finalize_asp_task",
             "recommend": true,
@@ -48,6 +55,7 @@ fn result_from_task_detail(
             "notification": completion_notification(job_id, &task),
             "ratingResultNotification": rating_notification(job_id, &task),
             "rating": {
+                "required": rating_required,
                 "targetAgentId": user_agent_id,
                 "creatorAgentId": agent_id,
                 "taskDescription": task.description,
@@ -71,7 +79,7 @@ fn blocked_result(job_id: &str, reason: &str) -> String {
 
 fn completion_notification(job_id: &str, task: &PreFetchedTaskContext) -> String {
     format!(
-        "[💰 Job Completed] Job {job_id} ({}) — approved by the User Agent; funds received.\n      - Income: {} {}\n      - User Agent: {}\n    \n    This job is complete.",
+        "{TERMINAL_NOTIFICATION_MARKER} [💰 Job Completed] Job {job_id} ({}) — approved by the User Agent; funds received.\n      - Income: {} {}\n      - User Agent: {}\n    \n    This job is complete.",
         title(task),
         task.token_amount,
         task.token_symbol,
@@ -109,30 +117,51 @@ mod tests {
             "serviceParams": "{\"chain\":\"xlayer\"}"
         });
 
-        let output: serde_json::Value = serde_json::from_str(&result_from_task_detail(
-            "job-1",
-            "provider-1",
-            Ok(task),
-        ))
-        .unwrap();
+        let output: serde_json::Value =
+            serde_json::from_str(&result_from_task_detail("job-1", "provider-1", Ok(task)))
+                .unwrap();
 
         assert_eq!(output["phase"], "task_completion");
         assert_eq!(output["decision"], "ready");
         assert_eq!(output["nextAction"][0]["id"], "finalize_asp_task");
         assert_eq!(output["payload"]["rating"]["targetAgentId"], "user-1");
         assert_eq!(output["payload"]["rating"]["creatorAgentId"], "provider-1");
+        assert_eq!(output["payload"]["rating"]["required"], true);
         assert_eq!(
             output["payload"]["rating"]["taskDescription"],
             "Audit the contract"
         );
         assert_eq!(
             output["payload"]["notification"],
-            "[💰 Job Completed] Job job-1 (Audit report) — approved by the User Agent; funds received.\n      - Income: 12 USDT\n      - User Agent: user-1\n    \n    This job is complete."
+            "[onchainos:task-terminal] [💰 Job Completed] Job job-1 (Audit report) — approved by the User Agent; funds received.\n      - Income: 12 USDT\n      - User Agent: user-1\n    \n    This job is complete."
         );
         assert!(output["payload"]["ratingResultNotification"]
             .as_str()
             .unwrap()
             .contains("<score>"));
+    }
+
+    #[test]
+    fn same_owner_skips_asp_rating_but_keeps_terminal_marker() {
+        let task = serde_json::json!({
+            "jobId": "job-1",
+            "status": 6,
+            "title": "Audit report",
+            "buyerAgentAddress": "0xAbC",
+            "providerAgentAddress": "0xabc",
+            "buyerAgentId": "user-1"
+        });
+
+        let output: serde_json::Value =
+            serde_json::from_str(&result_from_task_detail("job-1", "provider-1", Ok(task)))
+                .unwrap();
+
+        assert_eq!(output["reason"], "notification_required");
+        assert_eq!(output["payload"]["rating"]["required"], false);
+        assert!(output["payload"]["notification"]
+            .as_str()
+            .unwrap()
+            .starts_with(TERMINAL_NOTIFICATION_MARKER));
     }
 
     #[test]

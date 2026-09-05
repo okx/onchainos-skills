@@ -28,7 +28,7 @@ Backend `status` int field → local `Status` enum mapping (`state_machine.rs::S
 | `9` | `failed` | `Status::Failed` | Terminal refund-or-failure state; subscription cause can be ambiguous. | `job_refunded`, `job_auto_refunded`, `job_asp_reject_expire`, `sub_asp_agree`, `sub_reject_refund_notify`, `dispute_resolved`, or `sub_failed_notify` |
 
 > Refund meaning must not be inferred from this table alone. Run the fresh
-> Refund V2 flow in [`task-user-refund.md`](task-user-refund.md); its structured
+> Refund V2 flow in [`user/refund.md`](../../okx-ai-v2/references/a2a/user/refund.md); its structured
 > result owns settlement, provenance, and terminal handling.
 >
 > ⚠️ **There is no `applied` status** — `provider_applied` is an event; when it fires, status is still `created`. Similarly when `dispute_approved` fires, status is still `rejected` (dispute phase 1 approve). Events are just "what just happened" — they don't necessarily change status.

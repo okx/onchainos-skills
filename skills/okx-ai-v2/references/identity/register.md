@@ -60,7 +60,7 @@ Follow the flow for the confirmed role.
 
 | # | Name | Avatar | Description |
 |---|---|---|---|
-| 1 | {Service ProviderName} | {avatar} | {Service ProviderDescription} |
+| 1 | {Service ProviderName} | {avatarUrl} | {Service ProviderDescription} |
 
 Please review the information above. Reply `1` to continue adding services. This will not create the identity.
 ```
@@ -68,7 +68,7 @@ Please review the information above. Reply `1` to continue adding services. This
 Rules:
 
 - Show the name and description verbatim. Preserve description line breaks. Do not add Role or Agent ID.
-- Render the avatar as an image. Never show its token or URL as text.
+- Show the complete avatar URL as plain text without truncation. Do not render it as an image.
 - Keep the column order shown above.
 - Only reply `1` proceeds to Step 2. It does not run `agent create`.
 
@@ -102,18 +102,42 @@ ASP only: after explicit Done, execute Create mode from `validate.md`. Continue 
 
 Actions:
 
-1. For User / Evaluator, render one `| Field | Value |` identity card.
-2. For ASP, do not repeat the confirmed Identity card. Render a final card for each service, labeled
-   `Service [N]`, with Name / Description / Type / Fee / Subscription / Free trial / Endpoint rows;
-   add Guide when non-blank.
-3. End with localized `Reply 1 to confirm and run. Nothing will run before that.`
+1. For User / Evaluator, render one `| Field | Value |` identity card and end with localized
+   `Reply 1 to confirm and run. Nothing will run before that.`
+2. For ASP, do not repeat the confirmed Identity card. Render the service creation confirmation
+   below after all services pass validation.
+
+#### ASP service creation confirmation
+
+scene: ASP registration after all services are collected and validated
+
+display template:
+
+```markdown
+### Service Information
+
+| # | Name | Type | Fee | Free trial | Endpoint | Description | Service Guide |
+|---|---|---|---|---|---|---|---|
+| 1 | <serviceName> | <serviceType> | <fee> | <freeTrial> | <endpoint> | <serviceDescription> | <serviceGuide> |
+
+Please review the service information above. Reply `1` to confirm and create, or directly state what information needs to be changed.
+```
 
 Rules:
 
-1. Render service values according to
-   [`output-templates.md` §Service value display](output-templates.md#service-value-display).
-2. Display ASP Type exactly as `A2MCP` or `A2A`.
-3. Only `1` on the final card may trigger the single `agent create`. Do not skip confirmation, reuse an earlier confirmation, or show bash.
+1. Render one row per confirmed service in collection order, numbered consecutively from 1. Keep all template columns.
+2. Show `serviceName` and `serviceDescription` verbatim. Do not rewrite or translate them.
+3. Show `serviceType` only as `A2A` or `A2MCP`.
+4. Show a zero price as `Free`, without a currency or billing period. Otherwise, show `N USDT / call` or `N USDT / month`, based on the confirmed billing model.
+5. For A2A, use `—` for `endpoint`. Show `freeTrial` as `3 days` only for a confirmed 3-day subscription trial; otherwise use `—`. Show a non-blank `serviceGuide` verbatim with
+   necessary line breaks; otherwise use `—`.
+6. For A2MCP, preserve the complete HTTPS `endpoint` without truncation. Use `—` for `freeTrial` and `serviceGuide`.
+7. For every role, only the exact reply `1` to that role's final confirmation card may trigger the
+   single `agent create`.
+8. For ASP, a reply that specifies changes returns to service collection without creating the
+   identity. Apply the requested changes, revalidate all services, and render the updated final
+   confirmation card again.
+9. Do not skip final confirmation, reuse an earlier confirmation, or show bash.
 
 ### 6. Registration execution
 
@@ -131,8 +155,8 @@ Rules:
 Actions:
 
 1. Report registration success. If an Agent ID is available, display it; otherwise state that it was not returned and tell the user to say `list my agents` to find it.
-2. For every role, follow [Chat communication initialization](../../../okx-ai/references/chat-comm-init.md) and complete its communication setup/readiness check.
-3. For Evaluator only, after communication setup, ask whether the user wants to stake now. If yes, hand off to [Task Core](../../../okx-ai/references/task-core.md) §Pre-flight and then [Evaluator staking](../../../okx-ai/references/task-evaluator-staking.md); if no, finish registration.
+2. For every role, follow [Chat communication initialization](../shared/chat-comm-init.md) and complete its communication setup/readiness check.
+3. After a dispute-review identity is registered and communication setup is complete, ask whether the user wants to stake now. If yes, hand off to [Evaluator staking](../a2a/evaluator/staking.md); if no, finish registration.
 
 Rules:
 

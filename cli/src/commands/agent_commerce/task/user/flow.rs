@@ -113,7 +113,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20Then send SKILL_PREFETCH:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\" --json\n\
+                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill through skills/okx-ai-v2/SKILL.md. Pre-load user role context.\" --json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x207. **Upload pending attachments (if any):**\n\
                      \x20\x20\x20\x20```bash\n\
@@ -292,7 +292,7 @@ pub async fn generate_next_action(
     };
 
     // Short jobId, used in pending-decisions-v2 request --user-content / --list-label as the `[Job <shortID>]` prefix.
-    // Serves as a dual disambiguation anchor for the user and user agent when multiple prompts run concurrently. See user-sub-playbook.md §Communication Contract.
+    // Serves as a dual disambiguation anchor for the user and user agent when multiple prompts run concurrently. See `references/a2a/user/session.md` §Communication Contract.
     let short_id = short_job_id(job_id);
 
     // jobTitle carried by the envelope — when present, inlined directly into the playbook, saving the agent an extra API query to fetch the title.
@@ -309,7 +309,7 @@ pub async fn generate_next_action(
     let title_in_extract = if job_title.is_some() { "" } else { "title, " };
 
     // ──────────────────────────────────────────────────────────────────────
-    // Communication mechanism (how to send, whether to send, shape whitelist) — all covered in user-sub-playbook.md §Communication Contract.
+    // Communication mechanism (how to send, whether to send, shape whitelist) — all covered in `references/a2a/user/session.md` §Communication Contract.
     // This file only tells the agent **what content to send where at each step**, without re-explaining tool usage.
     //
     // Three communication CLI commands:
@@ -565,7 +565,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
                      \x20\x20• **`approve_review`** — user accepts the deliverable (typical intents: A / 通过 / 同意 / 满意 / 接受 / 验收 / approve / accept / agree / OK / 行 / 可以 — anything meaning satisfaction with the deliverable).\n\
-                     \x20\x20• **`reject_review`** — user rejects and wants revisions/refund (typical intents: B / 拒绝 / 不通过 / 不满意 / 不接受 / reject / refuse / 不行 / 不达标 — anything meaning dissatisfaction; extract the reason if the user provided one after `理由` / `reason` / `因为`; the exact reason is handed to Refund V2 and is submitted only after fresh preparation and explicit confirmation).\n\n\
+                     \x20\x20• **`reject_review`** — compatibility route for a review reply already relayed to this task session. B with a non-blank reason is the user's final confirmation to submit the rejection/refund request on-chain. Preserve the reason verbatim; the compatibility handler runs fresh Refund V2 preparation and executes the returned `submit_refund_request` action in the same turn.\n\n\
                      If the reply approves, or rejects with an explicit reason → call:\n\
                      ```bash\n\
                      # For approve_review (no extra args needed):\n\
@@ -851,7 +851,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```\n\
                      Then send SKILL_PREFETCH:\n\
                      ```bash\n\
-                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\" --json\n\
+                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill through skills/okx-ai-v2/SKILL.md. Pre-load user role context.\" --json\n\
                      ```\n\
                      5. **Upload pending attachments (if any):**\n\
                      ```bash\n\
