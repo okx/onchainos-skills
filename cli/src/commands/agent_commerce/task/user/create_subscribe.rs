@@ -221,14 +221,15 @@ pub async fn handle_create_subscribe(
         let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
             .await
             .ok_or_else(|| anyhow::anyhow!("failed to resolve the funding address"))?;
-        return Err(crate::output::CliFundingBlocked {
-            data: build_subscription_funding_block(
-                &insufficient,
-                &deposit,
-                &params.service_token_address,
-            )?,
-        }
-        .into());
+        // Keep subscription creation on the same funding contract as the
+        // one-time task create-and-fund flow. In particular, funding is a
+        // successful structured response, not a CLI error envelope.
+        crate::output::success(super::create::build_task_creation_funding_result(
+            &insufficient,
+            &deposit,
+            &params.service_token_address,
+        )?);
+        return Ok(());
     }
 
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
@@ -360,27 +361,6 @@ async fn subscribe_balance_shortfall(
             None => Err(error),
         },
     }
-}
-
-fn build_subscription_funding_block(
-    insufficient: &common::deposit_qr::InsufficientBalanceError,
-    deposit: &common::deposit_qr::DepositInfo,
-    token_address: &str,
-) -> Result<serde_json::Value> {
-    crate::funding::build_funding_bundle_for_address(
-        "",
-        &deposit.chain_index,
-        &deposit.address,
-        crate::funding::FundingBlockedInput {
-            asset: &insufficient.currency,
-            token_address,
-            required: &insufficient.required,
-            balance: Some(&insufficient.available),
-            operation: Some(crate::funding::FUNDING_OPERATION_TASK_CREATION),
-            error_code: None,
-            error_message: None,
-        },
-    )
 }
 
 #[cfg(test)]
@@ -675,7 +655,7 @@ mod tests {
         let deposit = common::deposit_qr::deposit_info_for_address(
             "0x1234567890abcdef1234567890abcdef12345678",
         );
-        let output = build_subscription_funding_block(
+        let output = super::super::create::build_task_creation_funding_result(
             &insufficient,
             &deposit,
             "0x779ded0c9e1022225f8e0630b35a9b54be713736",

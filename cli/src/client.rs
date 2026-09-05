@@ -16,26 +16,6 @@ use crate::payment_notify::{self, Flag, NotifyInput, TierState, UserType};
 
 pub const DEFAULT_BASE_URL: &str = "https://web3.okx.com";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const DEV_CLIENT_VERSION: &str = "999.0.0";
-
-/// Development wrappers can opt out of a server's minimum-client-version gate
-/// without changing the Cargo package version. This affects only the request
-/// header; normal processes continue to advertise the compiled package version.
-fn effective_client_version(skip_gate: bool) -> &'static str {
-    if skip_gate {
-        DEV_CLIENT_VERSION
-    } else {
-        CLIENT_VERSION
-    }
-}
-
-fn client_version() -> &'static str {
-    let skip_gate = matches!(
-        std::env::var("ONCHAINOS_SKIP_CLIENT_VERSION_GATE").as_deref(),
-        Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES")
-    );
-    effective_client_version(skip_gate)
-}
 
 /// Market API config endpoint — returns the path→tier `endpointList` map plus
 /// the default `accepts` signing parameters. Refreshed at most once per
@@ -454,7 +434,7 @@ impl ApiClient {
         map.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         map.insert(
             "ok-client-version",
-            HeaderValue::from_static(client_version()),
+            HeaderValue::from_static(CLIENT_VERSION),
         );
         map.insert(
             "Ok-Access-Client-type",
@@ -2083,12 +2063,6 @@ mod tests {
     #[test]
     fn client_version_matches_cargo() {
         assert_eq!(super::CLIENT_VERSION, env!("CARGO_PKG_VERSION"));
-        assert_eq!(super::effective_client_version(false), env!("CARGO_PKG_VERSION"));
-    }
-
-    #[test]
-    fn development_client_version_bypasses_the_server_version_gate() {
-        assert_eq!(super::effective_client_version(true), "999.0.0");
     }
 
     // ── JWT headers ──────────────────────────────────────────────────────────

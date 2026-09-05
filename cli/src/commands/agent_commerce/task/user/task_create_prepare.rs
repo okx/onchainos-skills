@@ -314,11 +314,11 @@ pub(crate) async fn handle_task_create_prepare(
 
     let service = normalize_service(service);
 
-    // Match create-subscribe's write-boundary source and status policy. The
-    // Service detail isSubscribing flag may omit settlement-pending EXPIRED(8)
-    // rows that still block duplicate creation. Normalize first because the
-    // raw service-detail response exposes subscription[] rather than the
-    // derived supportSubscription field.
+    // Match create-subscribe's write-boundary source and status policy.
+    // Expired subscriptions do not block a new subscription; settlement for
+    // the old job remains isolated in its own reconciliation flow. Normalize
+    // first because the raw service-detail response exposes subscription[]
+    // rather than the derived supportSubscription field.
     let duplicate_subscription =
         if service.get("supportSubscription").and_then(Value::as_bool) == Some(true) {
             let existing_subscriptions =
@@ -467,55 +467,21 @@ mod tests {
     }
 
     #[test]
-    fn inactive_duplicate_only_allows_stop() {
+    fn inactive_blocking_duplicate_only_allows_stop() {
         let summary = super::super::subscription_ops::ExistingSubscriptionSummary {
             job_id: "job-43".to_string(),
             service_id: "svc-43".to_string(),
             provider_agent_id: "asp-43".to_string(),
-            status_name: "EXPIRED".to_string(),
+            status_name: "REJECTED".to_string(),
             restore_listening_available: false,
             title: "Paused Signals".to_string(),
-            status: 8,
+            status: 3,
         };
         let existing = duplicate_subscription_context(&summary).expect("valid duplicate metadata");
 
-        assert_eq!(existing.status, 8);
+        assert_eq!(existing.status, 3);
         assert_eq!(existing.title, "Paused Signals");
         assert_eq!(duplicate_next_actions(&existing), next_action("stop", true));
-    }
-
-    #[test]
-    fn expired_buyer_subscription_blocks_when_service_detail_says_not_subscribing() {
-        let raw_service = json!({
-            "serviceId": "svc-expired",
-            "serviceType": "A2A",
-            "serviceDescription": "Monthly signals",
-            "subscription": [{"fee": 1, "interval": "month"}],
-            "supportTrial": true,
-            "freeTrial": 72,
-            "isSubscribing": false,
-            "feeToken": "0xtoken",
-            "feeTokenSymbol": "USDT"
-        });
-        let service = normalize_service(raw_service);
-        let summaries = vec![super::super::subscription_ops::ExistingSubscriptionSummary {
-            job_id: "job-expired".to_string(),
-            service_id: "svc-expired".to_string(),
-            provider_agent_id: "asp-expired".to_string(),
-            status_name: "EXPIRED".to_string(),
-            restore_listening_available: false,
-            title: "Expired Signals".to_string(),
-            status: 8,
-        }];
-
-        let existing = duplicate_subscription_for_service(&service, &summaries)
-            .expect("duplicate lookup")
-            .expect("expired subscription must block");
-
-        assert_eq!(service["supportSubscription"], true);
-        assert_eq!(existing.job_id, "job-expired");
-        assert_eq!(existing.status, 8);
-        assert!(!existing.active);
     }
 
     #[test]

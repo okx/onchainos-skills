@@ -1,7 +1,8 @@
 # My Subscriptions
 
 Read-only subscription list and detail. Device delivery, execution policy,
-renewal, cancellation, and refunds are outside this flow.
+renewal, cancellation, and refunds are outside this flow. A new refund intent
+routes directly through `router.md` to the complete Refund V2 reference.
 
 ## Commands
 

@@ -410,9 +410,8 @@ pub enum AgentCommand {
     /// the user-session can route ad-hoc user instructions to the correct sub
     /// session (via `okx-a2a session query` → `okx-a2a session send --no-wait`).
     /// Status filter: includes 0 created / 1 accepted / 2 submitted / 3 refused
-    /// / 4 disputed by default; buyer-role rows also retain 8
-    /// expired-reconciling. Pass `--include-terminal` to include the remaining
-    /// terminal rows for each role.
+    /// / 4 disputed by default. Pass `--include-terminal` to include terminal
+    /// rows, including 8 expired.
     #[command(name = "active-tasks")]
     ActiveTasks {
         /// Optional role filter: user | asp | evaluator
@@ -2966,8 +2965,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
             }
 
-            // code ≠ 0 → tx failed; output the failure script directly and skip the event match
-            if code != 0 {
+            // A caller-supplied timeout envelope cannot veto a fresh backend
+            // Expired(8) projection. Defer these events to the authoritative
+            // status/ownership read below; other transaction results retain
+            // the legacy nonzero-code failure gate.
+            if code != 0 && !expired_timeout_uses_authoritative_status(&event) {
                 let label = tx_failure_label(&event);
                 let title_part = match job_title.as_deref() {
                     Some(t) => format!(" **{t}**"),
@@ -3337,6 +3339,13 @@ fn tx_failure_label(event: &str) -> &'static str {
     task::common::state_machine::Event::parse(event).failure_label()
 }
 
+fn expired_timeout_uses_authoritative_status(event: &str) -> bool {
+    matches!(
+        event,
+        "job_expired" | "submit_expired" | "job_asp_accept_expire"
+    )
+}
+
 /// Escape raw ASCII control chars (LF / CR / TAB) that appear inside JSON string
 /// scope, leaving everything else untouched. Tracks `"`/`\\` state to differentiate
 /// "inside string" from "outside string". Used as a one-shot repair for
@@ -3386,15 +3395,9 @@ fn is_path_under_canonical_dir(path: &std::path::Path, dir: &std::path::Path) ->
     c_path.starts_with(c_dir)
 }
 
-fn is_safe_a2a_file_path_with_spool_dir(
-    path: &std::path::Path,
-    configured_spool_dir: Option<&std::path::Path>,
-) -> bool {
+fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
     if path.as_os_str().is_empty() {
         return false;
-    }
-    if configured_spool_dir.is_some_and(|dir| is_path_under_canonical_dir(path, dir)) {
-        return true;
     }
     let tmp_dir = std::env::temp_dir();
     if is_path_under_canonical_dir(path, &tmp_dir) {
@@ -3416,13 +3419,6 @@ fn is_safe_a2a_file_path_with_spool_dir(
         }
     }
     false
-}
-
-fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
-    let configured_spool_dir = std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR")
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from);
-    is_safe_a2a_file_path_with_spool_dir(path, configured_spool_dir.as_deref())
 }
 
 fn parse_a2a_json_arg(raw: &str) -> anyhow::Result<serde_json::Value> {
@@ -3471,11 +3467,6 @@ fn write_secure_temp_file(path: &std::path::Path, contents: &[u8]) -> std::io::R
 }
 
 fn a2a_intake_spool_dir() -> std::path::PathBuf {
-    if let Some(path) =
-        std::env::var_os("ONCHAINOS_A2A_SPOOL_DIR").filter(|value| !value.is_empty())
-    {
-        return std::path::PathBuf::from(path);
-    }
     #[cfg(test)]
     {
         return std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -3530,9 +3521,7 @@ fn validate_a2a_file_arg(
 ) -> anyhow::Result<String> {
     let fp = std::path::Path::new(path);
     if !is_safe_a2a_file_path(fp) {
-        anyhow::bail!(
-            "--a2a-file must point to a file under the OS temp directory or the configured A2A spool directory"
-        );
+        anyhow::bail!("--a2a-file must point to a file under the OS temp directory");
     }
     let metadata = std::fs::symlink_metadata(fp)
         .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?;
@@ -3754,41 +3743,8 @@ mod auto_consent_permit_tests {
 mod escape_control_chars_tests {
     use super::{
         escape_control_chars_in_strings, handler_fetches_own_task_detail,
-        is_safe_a2a_file_path_with_spool_dir, should_block_legacy_a2mcp_flow,
-        validate_a2a_file_arg,
+        should_block_legacy_a2mcp_flow, validate_a2a_file_arg,
     };
-
-    #[test]
-    fn accepts_a2a_file_under_configured_spool_dir() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("configured-a2a-spool-tests");
-        let spool = root.join("spool");
-        std::fs::create_dir_all(&spool).unwrap();
-        let path = spool.join("envelope.json");
-        std::fs::write(&path, "{}").unwrap();
-
-        assert!(is_safe_a2a_file_path_with_spool_dir(&path, Some(&spool)));
-
-        std::fs::remove_dir_all(root).ok();
-    }
-
-    #[test]
-    fn rejects_a2a_file_outside_configured_spool_dir() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("configured-a2a-spool-boundary-tests");
-        let spool = root.join("spool");
-        let sibling = root.join("spool-other");
-        std::fs::create_dir_all(&spool).unwrap();
-        std::fs::create_dir_all(&sibling).unwrap();
-        let path = sibling.join("envelope.json");
-        std::fs::write(&path, "{}").unwrap();
-
-        assert!(!is_safe_a2a_file_path_with_spool_dir(&path, Some(&spool)));
-
-        std::fs::remove_dir_all(root).ok();
-    }
 
     #[test]
     fn escapes_raw_lf_inside_string() {
@@ -4167,16 +4123,17 @@ fn subscription_refund_final_block_reason(
     })
 }
 
-/// Refund-related notifications whose `job_*` spelling is shared by one-time
-/// and subscription tasks. `bool=true` means the event claims a terminal
-/// settlement and therefore needs final refund proof in addition to status.
+/// Refund-related timeout/result notifications shared by one-time and
+/// subscription tasks. `bool=true` means the event claims a terminal settlement
+/// and therefore needs final refund proof in addition to status.
 fn refund_event_status_policy(event: &str) -> Option<(i64, bool)> {
     match event {
         "job_closed" | "job_asp_reject_closed" => Some((7, true)),
         "job_refunded" | "job_auto_refunded" | "sub_asp_agree" | "sub_reject_refund_notify" => {
             Some((9, true))
         }
-        "job_asp_accept_expire" | "job_asp_reject_expire" => Some((8, false)),
+        "job_expired" | "submit_expired" | "job_asp_accept_expire" => Some((8, false)),
+        "job_asp_reject_expire" => Some((9, true)),
         _ => None,
     }
 }
@@ -4526,8 +4483,10 @@ async fn check_status_freshness(
     // Refund lifecycle events use Refund V2's exact task/subscription parser
     // and buyer-ownership checks. A short bounded re-read absorbs the common
     // race where the event arrives just before lifecycle/order reconciliation.
-    // The two Expired(8) events validate status+ownership only: they are
-    // explicitly not final and do not require a confirmed refund outcome.
+    // Acceptance and delivery timeout remain at Expired(8). After a fresh
+    // ownership read, that status is the terminal refund result for paid tasks
+    // (or terminal no-funds result for trial/zero-amount tasks). It never
+    // authorizes a Buyer claim/finalize write.
     let mut c = TaskApiClient::new();
     const REFUND_RETRY_DELAYS_MS: [u64; 3] = [250, 750, 1_500];
 
@@ -4950,10 +4909,10 @@ mod authoritative_detail_path_tests {
     use super::{
         asp_refund_context_block_reason, buyer_refund_event_status_policy,
         buyer_refund_freshness_ready, detail_path_for_event, dispute_result_context_block_reason,
-        refund_event_status_policy, refund_final_context_ready, subscription_acceptance_status,
-        subscription_event_block_reason, subscription_failed_context_block_reason,
-        subscription_refund_final_block_reason, subscription_side_effect_context_block_reason,
-        subscription_side_effect_event_status_policy,
+        expired_timeout_uses_authoritative_status, refund_event_status_policy,
+        refund_final_context_ready, subscription_acceptance_status, subscription_event_block_reason,
+        subscription_failed_context_block_reason, subscription_refund_final_block_reason,
+        subscription_side_effect_context_block_reason, subscription_side_effect_event_status_policy,
     };
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
@@ -5167,18 +5126,72 @@ mod authoritative_detail_path_tests {
 
     #[test]
     fn shared_v2_refund_events_have_explicit_status_and_finality_policy() {
+        for event in ["job_expired", "submit_expired", "job_asp_accept_expire"] {
+            assert!(expired_timeout_uses_authoritative_status(event));
+        }
+        for event in ["job_closed", "job_auto_refunded", "job_asp_reject_expire"] {
+            assert!(!expired_timeout_uses_authoritative_status(event));
+        }
+
         assert_eq!(
             refund_event_status_policy("job_asp_accept_expire"),
             Some((8, false))
         );
         assert_eq!(
             refund_event_status_policy("job_asp_reject_expire"),
-            Some((8, false))
+            Some((9, true))
         );
+        assert_eq!(refund_event_status_policy("job_expired"), Some((8, false)));
+        assert_eq!(refund_event_status_policy("submit_expired"), Some((8, false)));
         assert_eq!(
             refund_event_status_policy("job_asp_reject_closed"),
             Some((7, true))
         );
+
+        let expired =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 0,
+                    "status": 8,
+                    "buyerAgentId": "buyer-1",
+                    "paymentTokenAmount": "10",
+                }),
+            );
+        assert!(refund_final_context_ready(
+            &expired,
+            "job_asp_accept_expire",
+            "buyer-1"
+        ));
+        assert!(buyer_refund_freshness_ready(
+            &expired,
+            "job_expired",
+            "buyer-1",
+            8,
+            false,
+        ));
+
+        let trial_expired =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "trialType": 1,
+                    "status": 8,
+                    "buyerAgentId": "buyer-1",
+                    "paymentTokenAmount": "10",
+                }),
+            );
+        assert!(!refund_final_context_ready(
+            &trial_expired,
+            "job_asp_accept_expire",
+            "buyer-1"
+        ));
+        assert!(buyer_refund_freshness_ready(
+            &trial_expired,
+            "job_asp_accept_expire",
+            "buyer-1",
+            8,
+            false,
+        ));
 
         let closed =
             crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
@@ -5339,6 +5352,12 @@ mod authoritative_detail_path_tests {
                 .unwrap()
                 .contains("does not bind")
         );
+        for event in ["job_expired", "submit_expired"] {
+            assert!(asp_refund_context_block_reason(&valid, event, "asp-1").is_none());
+            assert!(asp_refund_context_block_reason(&valid, event, "asp-2")
+                .unwrap()
+                .contains("does not bind"));
+        }
 
         let stale =
             crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(

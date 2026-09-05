@@ -207,10 +207,10 @@ pub struct GetMyAgentsArgs {
     /// Filter to agents owned by this address.
     #[arg(long = "owner-address")]
     pub owner_address: Option<String>,
-    /// Page number (1-based). Omitted → backend default.
+    /// Page number (1-based). Defaults to 1.
     #[arg(long)]
     pub page: Option<String>,
-    /// Results per page. Omitted → backend default.
+    /// Results per page. Defaults to 5; values above 50 are clamped to 50.
     #[arg(long = "page-size")]
     pub page_size: Option<String>,
 }

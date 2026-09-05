@@ -108,4 +108,5 @@ scripts/dev
 .codex/cargo/
 .codex/onchainos/
 .codex/target-global/
+.codex/agent-task
 artifacts/

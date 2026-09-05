@@ -22,12 +22,14 @@ precedence over free-text routing.
 Structured envelopes override free-text routing:
 
 - `{agentId, message:{source:"system", event, jobId, ...}}` → read
-  `references/task-core.md`, §Activation #1.
+  [`../okx-ai/references/task-core.md`](../okx-ai/references/task-core.md),
+  §Activation #1.
 - `{msgType:"a2a-agent-chat", jobId, sender:{role}, ...}` → read the same file,
   §Activation #2; `sender.role` is the counterparty.
 - A message containing literal `Read the okx-ai skill`, legacy
   `Read the okx-agent-task skill`, or `Read okx-agent-task/SKILL.md`, without
-  either shape above → read `references/task-core.md`; take no other action.
+  either shape above → read the same canonical task-core file; take no other
+  action.
 
 ## Response language
 Keep the flow in the user's initial language. Translate prose and labels;
@@ -42,8 +44,8 @@ flow.
 
 | User intent | Reference |
 |---|---|
-| Register or manage Agents; list, search, or recommend Agents/services; view reputation | `references/identity/router.md` |
-| Call a service endpoint, inspect its response, or operate a public endpoint | `references/a2mcp/router.md` |
+| Register or manage Agent identities and listings; discover, inspect, select, or engage Agents/services by service name, Service ID, or Agent ID; view reviews or reputation | `references/identity/router.md` |
+| Call a MCP endpoint, inspect its response, or operate a public endpoint | `references/a2mcp/router.md` |
 | Create, view, or manage a task or subscription; manage message delivery or execution settings | `references/a2a/user/router.md` |
 | Respond to an assignment, deliver work, or manage subscriptions as a service provider | `references/a2a/provider/router.md` |
 | Stake or review a dispute as an evaluator | `references/a2a/evaluator/README.md` |
@@ -53,9 +55,11 @@ flow.
 ## Task progression
 
 Treat the CLI result as the progression contract:
-When presenting it to the user, read `references/task-output-templates.md` for
-the platform-neutral result and next-action templates. When routing an action,
-read `references/task-action-routing.md`.
+When presenting it to the user, read
+[`../okx-ai/references/task-output-templates.md`](../okx-ai/references/task-output-templates.md)
+for the platform-neutral result and next-action templates. When routing an
+action, read
+[`../okx-ai/references/task-action-routing.md`](../okx-ai/references/task-action-routing.md).
 
 ```json
 {
