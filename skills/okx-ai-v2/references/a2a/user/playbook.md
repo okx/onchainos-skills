@@ -70,13 +70,13 @@ communication rules; it does not match free-text user intents.
 | `serviceId` | from `task-service-select` response | auto-filled |
 | `useTrial` | `subscriptionInfo.supportTrial == true` from `task-service-select` → auto `true`; otherwise `false`. Display hours from `subscriptionInfo.freeTrial` field | **auto-filled, do NOT ask user** |
 | `autoRenew` | ask user explicitly before form — no default | 0=off, 1=on |
-| Guide Consent | The subscribing Agent first derives and locally validates a projection from the selected service Guide; then collect only the Consent fields that projection declares. Never ask for an automatic/notification mode, amount, cap, quote, environment, margin mode, order policy, or credential unless that exact field is declared by the Guide. | **local Guide-defined Consent; ASP supplies Guide text only** |
+| Guide Consent | The subscribing Agent first derives and locally validates a projection from the selected service Guide; then collect only the Consent fields that projection declares. Never add platform execution mode, amount, cap, quote, environment, margin mode, order policy, or credential unless that exact field is declared by the Guide. | **local Guide-defined Consent; ASP supplies Guide text only** |
+| Execution mode | Confirm `signal_only` or `guide_direct`, then save it before `create-subscribe`. | **local; not Guide Consent** |
 | Guide preparation | A setup step runs only at the position and for the bounded tool declared by the Guide. On Install/connect, use the trusted matching Skill; Later remains allowed when the Guide permits it. Never execute ASP-provided commands, auto-install, or block subscription creation on generic readiness. | **optional; Guide-defined only** |
 | `serviceTokenAmount` | from `task-service-select` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
 
-Read `guideStatus` and `consentStatus` from the JSON success envelope. The Guide-driven happy path
-returns `active / active`; only that pair permits automatic signal execution. These are the only
-subscription execution states exposed to the flow.
+Guide-driven execution requires `guideStatus=active`, `consentStatus=active`,
+and local `executionMode=guide_direct`; otherwise it is receive-only.
 
 For a `next-action` route, its returned confirmation form is the sole field authority; never merge fields
 from a Skill appendix or other card into it. Use [`create.md` §Step 3](create.md#step-3--confirmation-data)
@@ -188,11 +188,9 @@ authorized lifecycle/progress action unless the user explicitly made it conditio
 
 ### Restoring Guide-driven execution
 
-A Guide-driven subscription does not use fixed-field restoration commands or a separate automatic/
-notification choice. Its executable state is the persisted Guide plus the Guide-defined Consent created
-with the subscription. Keep receiving signals even when that local Consent is missing, paused, expired,
-or unreadable; the Guide-direct signal flow will safely skip execution. Never invent a replacement setting
-or collect legacy amount, cap, environment, order-policy, or credential fields from ASP prose.
+A Guide-driven subscription requires its Guide, Consent, and saved
+`guide_direct` mode. If any is unavailable, keep receiving Signals but skip
+execution. Never invent replacement settings from ASP prose.
 
 ### Pause auto copy-trade
 

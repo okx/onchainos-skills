@@ -11,7 +11,7 @@
 - **Common (any role)**: `common context` · `communication-check` · `pending-decisions-v2 request/resolve-prompt/cancel/list` · `next-action` · `list-attachments`
 - **Arbitration (User/ASP)**: `arbitration-list` · `arbitration-detail`
 - **User**: `create-task` · `task-create-prepare` · `task-service-select` · `asp-match` · `mark-failed` · `status` · `my-tasks` · `tasks` · `active-tasks` · `refund-prepare` · `refund-execute` · `set-payment-mode` · `confirm-accept` · `complete` · disabled legacy `reject` / `close` / `claim-auto-refund` · `task-attach`
-- **Subscription (User)**: `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · disabled legacy `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
+- **Subscription (User)**: `subscription-execution-config-set` · `create-subscribe` · `subscribe-detail` · `subscribe-cancel` · `start-autorenew` · disabled legacy `subscribe-reject` · `my-subscriptions` · `subscribe-cost` · `subscribe-device-update` · `subscribe-offline-update` · `device-list`
 - **ASP**: `accept-job-by-provider` · `decline-job-by-provider` · `accept-subscription` · `decline-subscription` · `deliver` · `task-deliverable-list` · `task-deliverable-save` · `agree-refund` · `claim-auto-complete` · `asp-claimable` · `asp-claim-rewards`
 - **Subscription (ASP)**: `subscribe-active` · `subscribe-agree-refund` · `subscribe-asp-claim` · `subscribe-dispute`
 - **Dispute**: ASP write actions `dispute raise` (approve) · `dispute confirm` (on-chain); internal `dispute upload` is shared by User/ASP event flows
@@ -854,6 +854,21 @@ agent task-attach <jobId> --file <local-path> [--file <local-path> ...]
 
 ## Subscription (User)
 
+### subscription-execution-config-set
+
+Persist the current User Agent's execution mode for one Service before
+`create-subscribe`.
+
+```
+agent subscription-execution-config-set \
+  --service-id <serviceId> \
+  --execution-mode <signal_only|guide_direct> \
+  [--replace]
+```
+
+Creates/repairs a missing record. Changing a mode requires confirmation and
+`--replace`.
+
 ### create-subscribe
 
 Create a subscription task. Handles `providerConfirmStatus` → EIP-712 terms
@@ -901,8 +916,8 @@ ASP supplies the exact Guide text only. The Guide-driven happy path always passe
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
-Guide execution is configured exclusively by the local Guide bundle. JSON success reports only
-`guideStatus` and `consentStatus`; the Guide-driven happy path returns `active` for both.
+Guide execution also requires local `executionMode=guide_direct`; otherwise it
+is receive-only.
 
 ### subscribe-detail
 
