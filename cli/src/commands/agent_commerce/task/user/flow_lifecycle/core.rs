@@ -349,6 +349,53 @@ fn signal_only_prompt(runtime_context: &serde_json::Value) -> Option<String> {
     ))
 }
 
+/// The explicit local mode is the user's durable intent. Guide + Consent are a
+/// separate execution-material check, so neither a missing file nor an old
+/// Guide record can silently change a receive-only subscription into auto
+/// execution.
+struct LocalExecutionAdmission {
+    mode: Option<&'static str>,
+    guide_direct: bool,
+    reason: &'static str,
+}
+
+fn local_execution_admission(job_id: &str) -> LocalExecutionAdmission {
+    use crate::commands::agent_commerce::task::common::autotrade::{
+        guide,
+        subscription_config::{self, ExecutionMode},
+    };
+
+    match subscription_config::execution_mode(job_id) {
+        Ok(Some(ExecutionMode::GuideDirect)) if guide::has_active_execution_contract(job_id) => {
+            LocalExecutionAdmission {
+                mode: Some(ExecutionMode::GuideDirect.as_str()),
+                guide_direct: true,
+                reason: "guide_direct",
+            }
+        }
+        Ok(Some(ExecutionMode::GuideDirect)) => LocalExecutionAdmission {
+            mode: Some(ExecutionMode::GuideDirect.as_str()),
+            guide_direct: false,
+            reason: "no_active_guide_execution_contract",
+        },
+        Ok(Some(ExecutionMode::SignalOnly)) => LocalExecutionAdmission {
+            mode: Some(ExecutionMode::SignalOnly.as_str()),
+            guide_direct: false,
+            reason: "execution_mode_signal_only",
+        },
+        Ok(None) => LocalExecutionAdmission {
+            mode: None,
+            guide_direct: false,
+            reason: "execution_mode_unconfigured",
+        },
+        Err(_) => LocalExecutionAdmission {
+            mode: None,
+            guide_direct: false,
+            reason: "execution_mode_unreadable",
+        },
+    }
+}
+
 /// Hand every saved delivery from an exactly Active subscription to the model
 /// Skill. This includes inline text saved as `.txt` and long `--deliverable-text`
 /// values that the ASP transport converted to `.md` files. No deterministic
@@ -406,7 +453,8 @@ pub(crate) async fn route_subscription_delivery_to_skill(
     );
     let received_at_ms = now_ms();
     let consent_snapshot = guide::consent_snapshot(job_id);
-    if !guide::has_active_execution_contract(job_id) {
+    let execution_admission = local_execution_admission(job_id);
+    if !execution_admission.guide_direct {
         crate::audit::log(
             "cli",
             "user/subscription_signal_admission",
@@ -421,6 +469,11 @@ pub(crate) async fn route_subscription_delivery_to_skill(
                 format!("deliveryId={delivery_id}"),
                 "executionPath=signal_only".into(),
                 "guideDriven=false".into(),
+                format!(
+                    "executionMode={}",
+                    execution_admission.mode.unwrap_or("unconfigured")
+                ),
+                format!("reason={}", execution_admission.reason),
                 format!("consentStatus={}", consent_snapshot.status),
             ]),
             None,
@@ -438,12 +491,13 @@ pub(crate) async fn route_subscription_delivery_to_skill(
             "deliverableType": deliverable_type,
             "receivedAtMs": received_at_ms,
             "guidePath": guide_path,
+            "executionMode": execution_admission.mode,
             "executionPath": "signal_only",
             "consentSnapshot": consent_snapshot,
             "executionContract": {
                 "path": "signal_only",
                 "directMoneyMovingCommandAllowed": false,
-                "reason": "no_active_guide_execution_contract",
+                "reason": execution_admission.reason,
             },
         });
         return signal_only_prompt(&runtime_context);
@@ -499,6 +553,7 @@ pub(crate) async fn route_subscription_delivery_to_skill(
             format!("deliveryId={delivery_id}"),
             format!("executionPath={}", execution_path.as_str()),
             "guideDriven=true".to_string(),
+            "executionMode=guide_direct".to_string(),
             format!("consentStatus={}", consent_snapshot.status),
         ]),
         None,
@@ -524,6 +579,7 @@ pub(crate) async fn route_subscription_delivery_to_skill(
         "deliverableType": deliverable_type,
         "receivedAtMs": received_at_ms,
         "guidePath": guide_path,
+        "executionMode": "guide_direct",
         "executionPath": execution_path.as_str(),
         "consentSnapshot": consent_snapshot,
         "executionContract": execution_contract,
@@ -618,7 +674,8 @@ pub(crate) async fn resume_queued_subscription_delivery(
         return fail_terminal("the active subscription provider no longer matches this delivery");
     }
 
-    if !guide::has_active_execution_contract(job_id) {
+    let execution_admission = local_execution_admission(job_id);
+    if !execution_admission.guide_direct {
         // Only legacy/direct contexts created by an older CLI can reach the
         // queued path without a valid Guide contract. Retire that context
         // silently instead of manufacturing the old "No active execution
@@ -626,8 +683,8 @@ pub(crate) async fn resume_queued_subscription_delivery(
         consent::clear_pending_delivery(job_id, delivery_id);
         let _ = delivery_queue::complete_and_advance(job_id, delivery_id);
         return format!(
-            "[Queued subscription Signal] The saved delivery at {} is receive-and-display-only because this subscription has no active local Service Guide + Guide Consent execution contract. No order was submitted, no execution outcome was created, and no legacy Consent command may be used.",
-            context.saved_path
+            "[Queued subscription Signal] The saved delivery at {} is receive-and-display-only because local execution is unavailable ({}). No order was submitted, no execution outcome was created, and no legacy Consent command may be used.",
+            context.saved_path, execution_admission.reason
         );
     }
 
@@ -655,6 +712,7 @@ pub(crate) async fn resume_queued_subscription_delivery(
         "deliverableType": context.deliverable_type,
         "receivedAtMs": context.received_at_ms,
         "guidePath": guide_path,
+        "executionMode": "guide_direct",
         "executionPath": execution_path.as_str(),
         "consentSnapshot": consent_snapshot,
         "queueRecovery": {

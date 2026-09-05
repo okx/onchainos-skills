@@ -247,6 +247,18 @@ pub enum AgentCommand {
         flag: String,
     },
 
+    /// Persist this device's explicitly user-confirmed subscription execution mode.
+    #[command(name = "subscription-execution-config-set")]
+    SubscriptionExecutionConfigSet {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long = "execution-mode")]
+        execution_mode: String,
+        /// Replace an existing mode only after a fresh, explicit user confirmation.
+        #[arg(long)]
+        replace: bool,
+    },
+
     /// List the devices this agent is logged in on (paginated to completion).
     #[command(name = "device-list")]
     DeviceList {
@@ -1578,6 +1590,21 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         }
         AgentCommand::SubscribeOfflineUpdate { job_id, flag } => {
             task::user::run_task(T::SubscribeOfflineUpdate { job_id, flag }, ctx).await
+        }
+        AgentCommand::SubscriptionExecutionConfigSet {
+            job_id,
+            execution_mode,
+            replace,
+        } => {
+            task::user::run_task(
+                T::SubscriptionExecutionConfigSet {
+                    job_id,
+                    execution_mode,
+                    replace,
+                },
+                ctx,
+            )
+            .await
         }
         AgentCommand::DeviceList { page, page_size } => {
             task::user::run_task(T::DeviceList { page, page_size }, ctx).await
