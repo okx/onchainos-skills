@@ -1141,6 +1141,9 @@ mod tests {
         assert!(out.contains("Do NOT end the turn merely because one watch call returned"));
         assert!(out.contains("re-enter the same scoped command"));
         assert!(out.contains("job-id `job-123`"));
+        assert!(out.contains("skills/okx-ai-v2/SKILL.md"));
+        assert!(out.contains("skills/okx-ai-v2/references/runtime/watch.md"));
+        assert!(!out.contains("skills/okx-ai/references/"));
         assert!(!out.contains("End the turn after Step 2"));
     }
 

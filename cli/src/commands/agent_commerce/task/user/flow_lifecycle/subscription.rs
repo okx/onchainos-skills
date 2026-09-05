@@ -374,7 +374,7 @@ pub(crate) fn sub_asp_dispute(
             return format!(
                 "[sub_asp_dispute] prefetched.provider_agent_id missing for job {job_id}; \
              cannot fetch chat history for dispute evidence.\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+             Enter through `skills/okx-ai-v2/SKILL.md`, then see `skills/okx-ai-v2/references/runtime/recovery.md` §2 — push `cli_failed` decision.\n"
             )
         }
     };
@@ -390,7 +390,7 @@ pub(crate) fn sub_asp_dispute(
         Err(e) => {
             return format!(
                 "[sub_asp_dispute] `okx-a2a session history` failed: {e}\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+             Enter through `skills/okx-ai-v2/SKILL.md`, then see `skills/okx-ai-v2/references/runtime/recovery.md` §2 — push `cli_failed` decision.\n"
             )
         }
     };

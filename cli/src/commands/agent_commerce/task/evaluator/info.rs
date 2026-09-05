@@ -103,7 +103,7 @@ pub(super) async fn fetch_evidence_bytes(
 /// rest with `_` into `<idx>_<uuid>` and write the file with **no extension**.
 /// The CLI deliberately does NOT magic-byte-sniff: the evaluator agent
 /// inspects the file content itself (see the evaluator playbook Step 3 +
-/// `references/evaluator-decision-rubric.md` Pass 4 for the probe procedure).
+/// `skills/okx-ai-v2/references/a2a/evaluator/dispute.md` Pass 4 for the probe procedure).
 async fn download_file(
     client: &TaskApiClient,
     job_id: &str,
