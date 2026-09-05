@@ -46,7 +46,7 @@ Run the local daemon directly with its normal Codex provider. Do not set
 `OKX_A2A_AI_CODEX_COMMAND` to this example's dispatcher:
 
 ```bash
-./.codex/bin/okx-a2a daemon restart --provider codex --no-autostart
+okx-a2a daemon restart --provider codex --no-autostart
 ```
 
 If an older shell or service definition still exports

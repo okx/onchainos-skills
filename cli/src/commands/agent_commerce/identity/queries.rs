@@ -137,7 +137,7 @@ pub(super) async fn get_my_agents_with_access_token(
     // approvalDisplayStatus / reputation are left intact.
     enrich_agent_get_rows(&mut out);
     // Additive: add a ready-to-render `cells` array per row (the list-table
-    // analog of `card`; references/identity-discover.md §My Agents columns). `agent get` is
+    // analog of `card`; references/identity/profile.md §My Agents columns). `agent get` is
     // now list-only — filtered by `--role` / `--owner-address` — so cells are
     // always meaningful.
     add_agent_list_cells(&mut out);
@@ -201,7 +201,7 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
     // approvalDisplayStatus / reputation are left intact.
     enrich_agent_get_rows(&mut out);
     // Additive: in LIST mode (no --agent-ids) add a ready-to-render `cells`
-    // array per row (references/identity-discover.md §My Agents columns). Detail mode (with
+    // array per row (references/identity/profile.md §My Agents columns). Detail mode (with
     // --agent-ids) already carries the `card`; the list-table `cells` are the
     // row analog and only meaningful for the list view.
     if args.agent_ids.is_none() {
@@ -415,30 +415,30 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
 
 // ─── `agent feedback-list` ────────────────────────────────────────────────
 
+fn build_feedback_list_query(
+    agent_id: &str,
+    page: Option<&str>,
+    page_size: Option<&str>,
+) -> Result<Vec<(String, String)>> {
+    let page = parse_u32_arg(page, "--page", 1, Some(1), None, false)?;
+    let page_size = parse_u32_arg(page_size, "--page-size", 5, Some(1), Some(50), true)?;
+    Ok(vec![
+        ("agentId".to_string(), agent_id.to_string()),
+        ("pageNo".to_string(), page.to_string()),
+        ("pageSize".to_string(), page_size.to_string()),
+    ])
+}
+
 async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
 
-    // agentId is required; page / pageSize are optional — omit when not provided, let the backend use its defaults
-    let mut query = vec![(
-        "agentId".to_string(),
-        require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string(),
-    )];
-    if let Some(page_raw) = args.page.as_deref() {
-        let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;
-        query.push(("pageNo".to_string(), page.to_string()));
-    }
-    if let Some(page_size_raw) = args.page_size.as_deref() {
-        let page_size = parse_u32_arg(
-            Some(page_size_raw),
-            "--page-size",
-            20,
-            Some(1),
-            Some(50),
-            true,
-        )?;
-        query.push(("pageSize".to_string(), page_size.to_string()));
-    }
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let query = build_feedback_list_query(
+        agent_id,
+        args.page.as_deref(),
+        args.page_size.as_deref(),
+    )?;
     let query_refs: Vec<(&str, &str)> = query
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -693,5 +693,37 @@ mod tests {
         ] {
             assert!(build_service_list_query("42", None, page, page_size).is_err());
         }
+    }
+
+    #[test]
+    fn feedback_list_query_uses_documented_defaults() {
+        let query = build_feedback_list_query("42", None, None).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "42".to_string()),
+                ("pageNo".to_string(), "1".to_string()),
+                ("pageSize".to_string(), "5".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn feedback_list_query_forwards_explicit_pagination() {
+        let query = build_feedback_list_query("42", Some("3"), Some("20")).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "42".to_string()),
+                ("pageNo".to_string(), "3".to_string()),
+                ("pageSize".to_string(), "20".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn feedback_list_query_clamps_page_size_to_fifty() {
+        let query = build_feedback_list_query("42", None, Some("51")).unwrap();
+        assert_eq!(query[2], ("pageSize".to_string(), "50".to_string()));
     }
 }

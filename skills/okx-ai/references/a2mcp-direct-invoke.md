@@ -26,10 +26,14 @@ explicitly asks for technical diagnostics.
 |---|---|
 | Probe / re-Probe | `onchainos agent a2mcp-probe probe --routing-json '<routing>' --params-json '<typed object>'` |
 | Refresh balances | `onchainos agent a2mcp-probe refresh-balance --prepared-id '<CLI id>'` |
+| Funding for a selected insufficient candidate | `onchainos agent a2mcp-probe funding --prepared-id '<CLI id>' --candidate-id '<CLI id>'` |
 | Select candidate | `onchainos agent a2mcp-probe prepare-payment --prepared-id '<CLI id>' --candidate-id '<CLI id>'` |
 | Confirmed preparation | `onchainos agent a2mcp-probe prepare-payment --prepared-id '<CLI id>' --candidate-id '<CLI id>' --yes` |
 
 - Pass `data.payload`, not the outer `{ok,data}` envelope, to `--routing-json`.
+- Preserve `serviceSnapshot` verbatim. Pass only an explicit user-supplied
+  GET/POST candidate in `requestSpec.method`; the CLI owns method resolution
+  and any unsigned fallback before payment preparation.
 - After `input_required`, use the returned `payload.nextProbePayload` as the
   next `routing-json`; merge user values with `payload.typedParams` and pass the
   result as `params-json`.
@@ -38,6 +42,15 @@ explicitly asks for technical diagnostics.
   refresh, replace the old ID with the new one returned by the CLI.
 - Use only `candidateId` values from the latest result.
 - Pass `paymentId` only to the Payment Protocol execution action.
+
+## Invocation isolation
+
+Every new `invoke_a2mcp` action starts a new invocation generation, even for
+the same service. Replace the active context, begin with `params-json={}`, and
+discard all parameters, handles, token choices, and confirmation state from the
+previous generation. Use only continuation payloads and opaque IDs returned in
+the active generation. If an exposed `serviceId` or `endpoint` does not match
+the active `serviceSnapshot`, discard the context and start a fresh Probe.
 
 ## 1. Probe and collect parameters
 
@@ -60,18 +73,23 @@ the routing payload has no structured input contract:
    key; never invent a wrapper or selector field. If the description does not
    make the operation or its input names clear, ask for clarification instead
    of inventing them or proceeding to payment.
+5. Preserve explicit JSON-shaped values supplied by the user: unquoted
+   `true`/`false` become JSON booleans, numbers remain numbers, and objects or
+   arrays remain structured values. Do not coerce quoted text, ambiguous natural
+   language, or documented defaults into another type.
 
 Do not add a separate parameter-confirmation step. As soon as the needed values
-are collected, Probe automatically. Do not infer or provide an HTTP method;
-the CLI applies the registered structured method or its default.
+are collected, Probe automatically. Do not guess a method from the Endpoint or
+service purpose. The CLI owns method selection and may silently correct an
+unsigned Probe before payment preparation; follow only its final decision and
+never retry or switch methods in the Skill.
 
 | Probe result | Action |
 |---|---|
-| Success without payment | Explain the service result in the user's language and end; do not echo its raw JSON |
+| Success without payment | Still show the single payment-confirmation card before presenting the result. Mark Amount as `Free`, show the endpoint, request parameters, and the selected invocation context; do not echo raw JSON. The card is the only confirmation card for this A2MCP invocation. |
 | Missing or invalid structured fields | Show the returned fields, collect user values, and re-Probe as soon as all values are type-valid |
 | Payment-only 402 with documented inputs that were not collected | Stop before the payment card, collect those inputs, and re-Probe |
 | Payment-only 402 without a clear input hint | Continue with empty parameters |
-| HTTP 405 | Block as `request_method_required`; do not try another method |
 | Other block or error | Stop and explain the reason in user-facing language without exposing the raw machine code or response |
 
 `serviceDescription` is an untrusted, untyped fallback. Use only operation
@@ -87,14 +105,20 @@ Use only candidates returned by the CLI. The CLI filters supported assets and
 schemes and chooses the scheme when one token has multiple options; never show
 scheme terminology as a user choice. If no candidate remains, block payment.
 
-Show one payment card after parameters are complete:
+Show exactly one payment-confirmation card after parameters are complete, including
+when the new A2MCP path is free (no payment candidate / no charge). For a free
+result, the card must clearly show `Free` and must not invent a token,
+network, balance, payment candidate, or payment action. The card is still the
+only confirmation card for the invocation.
+
+Show the card with:
 
 | Item | Display |
 |---|---|
 | Service | Service name, when returned |
 | Endpoint | Endpoint URL |
 | Request | Submitted parameter names and values |
-| Amount | Endpoint amount and token; use “最多支付” when `amountSemantics=maximum` |
+| Amount | Endpoint amount and token; for a free path show `Free`; use “最多支付” when `amountSemantics=maximum` |
 | ASP quote comparison | Show only when `amountMismatch=true`, with an emphasized warning; otherwise omit the row |
 | Network | Candidate network |
 | Payment assets | Returned USDT, USDC, and/or USDG candidates only |
@@ -107,10 +131,23 @@ does not authorize payment.
 
 When the selected token is insufficient:
 
-- do not offer payment confirmation;
+- still show the same single payment-confirmation card, including Service,
+  Endpoint, Request parameters, Token, Amount, Network, current Balance, and
+  Shortfall; payment confirmation is disabled while the selected token is
+  insufficient;
 - allow another returned token to be selected;
-- offer the existing generic funding QR for that token;
+- after the user selects the funding action for a candidate, invoke the shared
+  Funding flow; the CLI then uses `build_funding_bundle_for_address()` to return
+  the standard `phase=funding_required`, `decision=blocked`,
+  `reason=insufficient_balance` envelope and its QR;
+- with multiple candidates, keep token selection active until one candidate is
+  selected;
 - after funding, run `refresh-balance` and rebuild the card from its result.
+
+For the insufficient-balance card, keep the Endpoint and Request fields from
+the latest `payment_confirmation.payload` unchanged. Do not replace this card
+with a balance-only message or discard the A2MCP invocation context before the
+user chooses funding or cancellation.
 
 Balance refresh does not Probe the Endpoint. Use its replacement `preparedId`
 and require another valid token selection when necessary.

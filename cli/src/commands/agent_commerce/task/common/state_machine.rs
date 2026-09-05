@@ -112,16 +112,14 @@ impl Status {
         }
     }
 
-    /// Terminal states of the main task state machine — in these statuses the task is finished and
-    /// no further chain events can advance it; any dispute subflow (if it exists) is also necessarily
-    /// closed, and any commit/reveal vote will be slashed.
-    ///
-    /// `Expired(8)` is intentionally not terminal. The v2 task contracts use it as an
-    /// intermediate timeout state while the buyer still has to reconcile/finalize the
-    /// escrow refund; only a later closed/refunded state is terminal from the buyer's
-    /// funds-settlement perspective.
+    /// Terminal states of the main task state machine. The backend writes
+    /// `Expired(8)` only after any applicable automatic refund has reached the
+    /// buyer, so it is terminal for both lifecycle and funds-settlement views.
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Status::Completed | Status::Close | Status::Failed,)
+        matches!(
+            self,
+            Status::Completed | Status::Close | Status::Expired | Status::Failed
+        )
     }
 }
 
@@ -418,8 +416,9 @@ impl Event {
             "negotiate_reply" => Event::NegotiateReply,
             // Network / restart recovery
             "wakeup_notify" => Event::WakeupNotify,
-            // Subscription lifecycle (`sub_created` starts the ASP decision flow;
-            // later events are notifications/service-start signals).
+            // Subscription lifecycle (`sub_open` starts the ASP decision flow;
+            // `sub_created` is the Buyer acceptance event and
+            // `sub_asp_selected` starts the ASP service workflow).
             "sub_open" => Event::SubOpen,
             "sub_created" => Event::SubCreated,
             "sub_asp_selected" => Event::SubAspSelected,
@@ -558,7 +557,7 @@ pub fn status_when_event(e: &Event) -> Status {
         // Backend TaskStatusEnum: 6=COMPLETE (funds released to provider), 9=FAILED (funds returned to user).
         // The two terminal states are distinguished directly by the event.
         Event::JobCompleted => Status::Completed,
-        Event::JobRefunded | Event::JobAutoRefunded => Status::Failed,
+        Event::JobRefunded | Event::JobAutoRefunded | Event::JobAspRejectExpire => Status::Failed,
         // DisputeResolved depends on the verdict (user-wins → Failed; seller-wins → Completed);
         // not determinable from the event alone — default to Completed and callers should prefer `agent status`.
         Event::DisputeResolved => Status::Completed,
@@ -574,9 +573,7 @@ pub fn status_when_event(e: &Event) -> Status {
         // Reminder class (no status change; task stays in its current status)
         Event::SubmitDeadlineWarn => Status::Accepted,
         Event::ReviewDeadlineWarn => Status::Submitted,
-        Event::JobExpired | Event::JobAspAcceptExpire | Event::JobAspRejectExpire => {
-            Status::Expired
-        }
+        Event::JobExpired | Event::JobAspAcceptExpire => Status::Expired,
         Event::JobClosed | Event::JobAspRejectClosed => Status::Close,
         // paymentMode is a pass-through event that does not change status; not allowed outside of created, so expect Created
         Event::JobPaymentModeChanged => Status::Created,
@@ -676,7 +673,7 @@ pub enum SubStatus {
     /// Service-lifecycle terminal: closed (trial cancel / expired / on-chain failure). For a
     /// formal subscription this status alone is not buyer-side refund finality.
     Closed, // 7
-    /// ASP did not accept before the deadline; refund settlement is pending.
+    /// Terminal: ASP did not accept before the deadline; any paid amount was automatically refunded.
     Expired, // 8
     /// Terminal: refund settled (ASP agreed / auto-refund / DM ruled user-wins).
     Failed, // 9
@@ -729,7 +726,7 @@ impl SubStatus {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            SubStatus::Completed | SubStatus::Failed | SubStatus::Closed
+            SubStatus::Completed | SubStatus::Failed | SubStatus::Closed | SubStatus::Expired
         )
     }
 
@@ -752,8 +749,7 @@ impl SubStatus {
                 SubStatus::Completed, // DM rules ASP wins
                 SubStatus::Failed,    // DM rules user wins
             ],
-            SubStatus::Expired => &[SubStatus::Failed],
-            SubStatus::Completed | SubStatus::Failed | SubStatus::Closed => &[],
+            SubStatus::Completed | SubStatus::Failed | SubStatus::Closed | SubStatus::Expired => &[],
         }
     }
 
@@ -768,7 +764,7 @@ impl SubStatus {
 pub fn sub_status_after_event(e: &Event) -> Option<SubStatus> {
     match e {
         Event::SubOpen => Some(SubStatus::Created),
-        Event::SubCreated => Some(SubStatus::Created),
+        Event::SubCreated => Some(SubStatus::Active),
         Event::SubAspSelected => Some(SubStatus::Active),
         Event::SubTrialIntoActive => Some(SubStatus::Active),
         Event::SubRenew => None, // success=Active, fail=eventually Closed
@@ -848,8 +844,8 @@ mod tests {
     }
 
     #[test]
-    fn expired_is_not_terminal_until_refund_or_close_settles() {
-        assert!(!Status::Expired.is_terminal());
+    fn expired_is_terminal_and_proves_timeout_refund_completion() {
+        assert!(Status::Expired.is_terminal());
         assert_eq!(status_when_event(&Event::SubmitExpired), Status::Expired);
         assert!(Status::Close.is_terminal());
         assert!(Status::Failed.is_terminal());
@@ -925,7 +921,7 @@ mod tests {
             (
                 "job_asp_reject_expire",
                 Event::JobAspRejectExpire,
-                Status::Expired,
+                Status::Failed,
             ),
         ] {
             assert_eq!(Event::parse(name), event);
@@ -1048,7 +1044,7 @@ mod tests {
         assert!(!SubStatus::Active.is_terminal());
         assert!(!SubStatus::Rejected.is_terminal());
         assert!(!SubStatus::Disputed.is_terminal());
-        assert!(!SubStatus::Expired.is_terminal());
+        assert!(SubStatus::Expired.is_terminal());
         assert!(SubStatus::Completed.is_terminal());
         assert!(SubStatus::Failed.is_terminal());
         assert!(SubStatus::Closed.is_terminal());
@@ -1077,7 +1073,7 @@ mod tests {
         assert!(SubStatus::Disputed.can_transition_to(SubStatus::Failed));
         assert!(!SubStatus::Disputed.can_transition_to(SubStatus::Active));
 
-        assert!(SubStatus::Expired.can_transition_to(SubStatus::Failed));
+        assert!(!SubStatus::Expired.can_transition_to(SubStatus::Failed));
         assert!(!SubStatus::Expired.can_transition_to(SubStatus::Active));
 
         // Terminal states cannot transition
@@ -1094,7 +1090,7 @@ mod tests {
         );
         assert_eq!(
             sub_status_after_event(&Event::SubCreated),
-            Some(SubStatus::Created)
+            Some(SubStatus::Active)
         );
         assert_eq!(
             sub_status_after_event(&Event::SubAspSelected),

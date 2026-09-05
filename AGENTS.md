@@ -49,72 +49,38 @@ Onchainos-skills intentionally does **not** enumerate which DApps are supported 
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 
-## Development refresh
+## Branch promotion order
 
-When the user asks to "build", "refresh", or "sync" without explicitly naming
-the CLI or skills target, always run `npm run dev:skills`. Treat a CLI rebuild
-as optional for an ambiguous request: run `npm run dev:cli` only when the user
-explicitly asks to build the CLI or when the current task changed files under
-`cli/`.
+For changes that must reach both development branches, always use this order:
 
-After making changes, run the checkout-local command that matches the files
-changed before handing work back:
+1. Commit and push the changes to `codex/a2a-skill-cli-contract` first.
+2. Switch to `codex/dacs-dev` and update it without rewriting remote history.
+3. Merge `codex/a2a-skill-cli-contract` into `codex/dacs-dev`, validate the
+   merged tree, and push `codex/dacs-dev`.
 
-- Changed `skills/` or `workflows/`: run `npm run dev:skills`.
-- Changed `cli/`: run `npm run dev:cli`.
-- Changed both areas: run both commands.
+Do not implement or push the shared change to `codex/dacs-dev` first. Preserve
+the merge ancestry between the two branches; do not replace this promotion
+flow with a force push or an `ours` merge that discards source-branch content.
 
-Whenever either refresh command is triggered, the final response must explicitly
-tell the user what was updated and when it takes effect:
+### `codex/dacs-dev` local-development exception
 
-- After `npm run dev:cli` succeeds, state that the CLI was rebuilt and is already
-  effective for checkout-local `./.codex/bin/onchainos` commands.
-- After `npm run dev:skills` succeeds, state that skills were updated and will
-  take effect in a new Codex session.
-- If both commands run, report both activation states separately.
-- If a refresh command fails, do not claim that update is effective; report the
-  failure and the affected activation state instead.
+The checkout-local development tooling is intentionally absent from
+`codex/a2a-skill-cli-contract` and must remain available only on
+`codex/dacs-dev`. When merging `codex/a2a-skill-cli-contract` into
+`codex/dacs-dev`, preserve the `codex/dacs-dev` version of all related changes,
+including:
 
-`npm run dev:init` is only for a new checkout or the first development session
-after a machine restart. It restarts the A2A daemon, so never run it
-automatically as part of an ordinary code change.
+- `scripts/onchainos-local-dev-setup.sh`,
+  `scripts/test-onchainos-local-dev-setup.sh`, and
+  `scripts/test-onchainos-update.sh`;
+- the `dev:init`, `dev:init:test`, `dev:skills`, and `dev:cli` package scripts;
+- checkout-local development documentation and `.codex/bin` wrapper usage;
+- `ONCHAINOS_SKIP_CLIENT_VERSION_GATE` handling;
+- `ONCHAINOS_A2A_SPOOL_DIR` handling and checkout-local A2A spool routing.
 
-### Development build environment
-
-The checkout-local build script must isolate Cargo state for every
-`npm run dev:init` and `npm run dev:cli` invocation. It must set
-`CARGO_HOME` to `$PWD/.codex/build/cargo-home` and `CARGO_TARGET_DIR` to
-`$PWD/.codex/build/cargo-target`; do not rely on or reuse a developer's ambient
-Cargo directories. Keep this behavior covered by
-`scripts/test-onchainos-local-dev-setup.sh`.
-
-Before the first AI-initiated `npm run dev:init` or `npm run dev:cli` build in a
-Codex session, maintain a session-only logical variable named
-`onchainos_cli_build_env` with one of these values:
-
-- `beta`: build with `OKX_BASE_URL=https://beta.okex.org`.
-- `production`: build without a base-URL override by running through
-  `env -u OKX_BASE_URL`; the CLI then uses its built-in production endpoint.
-
-If the variable is unset, ask the user which environment to use before
-building. Remember the answer for the rest of the current Codex session and do
-not ask again unless the user explicitly requests an environment change. Do
-not persist this session choice in repository files or infer it from an
-existing wrapper, binary, or ambient shell environment. `npm run dev:skills`
-does not build the CLI and therefore does not require this choice.
-
-### Local command boundary
-
-After the developer has run `npm run dev:init`, every AI-initiated command in
-this checkout must use the project-local wrappers:
-
-- Use `./.codex/bin/onchainos ...`; never invoke bare `onchainos ...`.
-- Use `./.codex/bin/okx-a2a ...`; never invoke bare `okx-a2a ...`.
-
-The wrappers select the project-local credential and daemon state and disable
-development-only preflight actions. If either wrapper is missing, stop and ask
-the developer to run `npm run dev:init`; do not fall back to a globally
-installed command.
+Resolve those paths and hunks in favor of `codex/dacs-dev` during the merge,
+then validate the merged tree before pushing it. Do not merge the deletion of
+these branch-specific facilities into `codex/dacs-dev`.
 
 ## CLI Composite Commands
 

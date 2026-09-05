@@ -396,7 +396,7 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
     Ok(())
 }
 
-fn build_task_creation_funding_result(
+pub(super) fn build_task_creation_funding_result(
     insufficient: &common::deposit_qr::InsufficientBalanceError,
     deposit: &common::deposit_qr::DepositInfo,
     token_address: &str,

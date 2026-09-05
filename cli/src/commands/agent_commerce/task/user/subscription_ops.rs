@@ -562,13 +562,25 @@ pub(crate) struct ExistingSubscriptionSummary {
     pub(crate) provider_agent_id: String,
     pub(crate) status_name: String,
     pub(crate) restore_listening_available: bool,
+    /// Retained for preparation-time confirmation cards, but deliberately
+    /// omitted from the create-subscribe duplicate error contract.
+    #[serde(skip_serializing)]
+    pub(crate) title: String,
+    /// Raw backend status used by task-create-prepare so its decision matches
+    /// the write-boundary duplicate check exactly.
+    #[serde(skip_serializing)]
+    pub(crate) status: i64,
 }
 
 fn blocks_duplicate_creation(status: i64) -> bool {
     // Unknown future states fail closed: SubStatus::from_code intentionally
-    // maps them to Init, which is non-terminal. Only a known terminal state is
-    // sufficient evidence that creating the service again is safe.
-    !SubStatus::from_code(status).is_terminal()
+    // maps them to Init, which remains blocking. Expired is safe for duplicate
+    // creation even when settlement for the old job is still pending; that
+    // settlement continues through the old job's reconciliation flow.
+    !matches!(
+        SubStatus::from_code(status),
+        SubStatus::Completed | SubStatus::Closed | SubStatus::Expired | SubStatus::Failed
+    )
 }
 
 fn summarize_non_terminal_buyer_subscriptions(
@@ -585,6 +597,8 @@ fn summarize_non_terminal_buyer_subscriptions(
             provider_agent_id: item.provider_agent_id,
             status_name: status_name(item.status),
             restore_listening_available: item.status == SubStatus::Active.code(),
+            title: item.title,
+            status: item.status,
         })
         .collect::<Vec<_>>();
 
@@ -594,7 +608,7 @@ fn summarize_non_terminal_buyer_subscriptions(
     summaries
 }
 
-/// Read all non-terminal subscriptions owned by an already-resolved buyer.
+/// Read all subscriptions that block duplicate creation for an already-resolved buyer.
 /// Unlike the user-facing listing, this precheck does not create sessions or
 /// alter device routing.
 pub(crate) async fn fetch_non_terminal_buyer_subscriptions_for_agent(
@@ -1078,20 +1092,23 @@ mod tests {
         assert!(!should_ensure_subscription_session(
             SubStatus::Failed.code()
         ));
+        assert!(!should_ensure_subscription_session(
+            SubStatus::Expired.code()
+        ));
     }
 
     #[test]
-    fn duplicate_creation_is_blocked_only_by_non_terminal_statuses() {
+    fn duplicate_creation_allows_expired_and_terminal_statuses() {
         for status in [-1, 1, 3, 4, 42] {
             assert!(
                 blocks_duplicate_creation(status),
                 "status {status} must block duplicate creation"
             );
         }
-        for status in [6, 7, 9] {
+        for status in [6, 7, 8, 9] {
             assert!(
                 !blocks_duplicate_creation(status),
-                "terminal status {status} must allow a new subscription"
+                "non-blocking status {status} must allow a new subscription"
             );
         }
     }

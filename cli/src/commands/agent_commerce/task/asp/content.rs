@@ -14,7 +14,7 @@
 //!    users see the equivalent of "escrow, review window expired, task completed"). The no-technical-jargon
 //!    rule applies to all languages, not just English.
 //!
-//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a session send`
+//! 2. **Peer-facing** — agent-to-agent protocol messages sent via `okx-a2a xmtp-send`
 //!    to the User Agent's sub agent. Naming suffix: `_to_buyer`.
 //!    Rule: protocol literals are allowed (`[intent:*]` / `fileKey`/`digest` etc.);
 //!    **do NOT instruct the peer to run CLIs** — the peer has its own flow.rs and
@@ -120,7 +120,7 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
 /// The short jobId prefix lets the user tell tasks apart at a glance when
 /// multiple prompts are in flight concurrently.
 pub fn job_rejected_user_decision_prompt(short_id: &str, expire_time: Option<i64>) -> String {
-    // FR-4: append the decision-deadline reminder after the refund option. `None`
+    // FR-4: append the decision-deadline reminder after the dispute option. `None`
     // (no expireTime, or not representable) ⇒ empty string, card unchanged (FR-5).
     use super::super::common::deadline::{self, DeadlineKind};
     let decision_deadline_line = deadline::deadline_reminder_line(
@@ -132,8 +132,8 @@ pub fn job_rejected_user_decision_prompt(short_id: &str, expire_time: Option<i64
     .unwrap_or_default();
     format!(
         "\x20\x20\x20\x20[Job {short_id} — you are the ASP] The User Agent rejected the deliverable. Choose:\n\
-         \x20\x20\x20\x20A. File a dispute → reply 'file dispute, reason: <reason>'\n\
-         \x20\x20\x20\x20B. Agree to refund → reply 'agree to refund'{decision_deadline_line}"
+         \x20\x20\x20\x20A. Agree to a full refund → reply 'agree to refund'\n\
+         \x20\x20\x20\x20B. File a dispute → reply 'file dispute, reason: <reason>'{decision_deadline_line}"
     )
 }
 
@@ -223,12 +223,13 @@ pub fn escalation_cli_failed_notify(job_id: &str) -> String {
 /// The short jobId prefix lets the user tell tasks apart at a glance (same as
 /// `job_rejected_user_decision_prompt`). If the user replies `submit now` →
 /// the user-session relays the decision back to the sub, which runs the delivery
-/// flow; if they stay silent → the sub waits for `submit_expired` to trigger a refund.
+/// flow; if they stay silent → the backend completes the timeout refund before
+/// projecting `submit_expired`.
 pub fn submit_deadline_warn_user_prompt(short_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[⏰ Deadline Warning — Job {short_id}, you are the ASP] The submit deadline is approaching.\n\
          \x20\x20\x20\x20If the deliverable is ready, reply 'submit now' and I will run the delivery flow immediately.\n\
-         \x20\x20\x20\x20If it is not ready, you may stay silent — after expiry the User Agent can claim an auto-refund, escrowed funds return to the User Agent, and this job is void."
+         \x20\x20\x20\x20If it is not ready, you may stay silent — after expiry the backend automatically returns any escrowed funds to the User Agent and this job is void. No client-side refund claim is required."
     )
 }
 
@@ -297,7 +298,7 @@ pub fn deliver_file_to_user(job_id: &str) -> String {
     )
 }
 
-/// Build the actual text-deliver A2A session message with real content (used by deliver.rs).
+/// Build the actual text-deliver XMTP message with real content (used by deliver.rs).
 pub fn build_text_deliver_message(job_id: &str, text: &str) -> String {
     format!(
         "jobId: {job_id}\n\
@@ -309,7 +310,7 @@ pub fn build_text_deliver_message(job_id: &str, text: &str) -> String {
     )
 }
 
-/// Build the actual file-deliver A2A session message with real upload metadata (used by deliver.rs).
+/// Build the actual file-deliver XMTP message with real upload metadata (used by deliver.rs).
 pub fn build_file_deliver_message(
     job_id: &str,
     upload: &crate::commands::agent_commerce::task::common::okx_a2a::FileUploadResult,
@@ -390,7 +391,7 @@ pub fn sub_asp_selected_asp_notify(
 /// `sub_asp_selected` with `trialType=1` — the subscriber is on a free trial, so nothing
 /// has been charged yet; the ASP must NOT be told a payment was received (the real payment
 /// is announced on conversion via `sub_trial_into_active`). Mirrors the buyer-side
-/// Buyer-side `sub_asp_selected_trial_user_notify` trial variant.
+/// Buyer-side `sub_created_trial_user_notify` trial variant.
 pub fn sub_asp_selected_trial_asp_notify(
     service_name: Option<&str>,
     buyer_agent_id: Option<&str>,
@@ -510,8 +511,8 @@ pub fn sub_user_reject_asp_decision_copy(
         _ => {}
     }
     out.push_str(" will be issued to the user automatically.\n");
-    out.push_str("  A. File a dispute for evaluation.\n");
-    out.push_str("  B. Confirm the refund for this period.");
+    out.push_str("  A. Agree to a full refund for this period.\n");
+    out.push_str("  B. File a dispute for evaluation.");
     out
 }
 
@@ -523,13 +524,25 @@ pub fn subscription_job_asp_accept_expire_asp_notify(
     job_id: &str,
     amount: &str,
     token_symbol: &str,
+    is_trial: bool,
+    is_paid: bool,
 ) -> String {
+    let payment = if is_trial {
+        "No refundable funds were collected during the trial, so no refund action is required."
+            .to_string()
+    } else if is_paid {
+        format!(
+            "Escrowed amount: {amount} {token_symbol}\nAuthoritative Expired(8) confirms that the backend completed the full refund and the funds have reached the Buyer. No client-side claim is required."
+        )
+    } else {
+        "No refundable funds were collected, so no refund action is required.".to_string()
+    };
     format!(
         "[Assignment Expired] You did not accept {job_name} before the deadline.\n\
          Job ID: {job_id}\n\
          Job status: Expired (8)\n\
-         Escrowed amount: {amount} {token_symbol}\n\
-         No further service delivery is required. Buyer refund settlement remains pending; this notification is not proof of completed settlement or funds receipt."
+         {payment}\n\
+         No further service delivery is required."
     )
 }
 
@@ -543,16 +556,47 @@ pub fn regular_job_asp_accept_expire_asp_notify(
 ) -> String {
     let payment = if is_paid {
         format!(
-            "\nEscrowed amount: {amount} {token_symbol}\nBuyer refund settlement remains pending; this notification is not proof of completed settlement or funds receipt."
+            "\nEscrowed amount: {amount} {token_symbol}\nAuthoritative Expired(8) confirms that the backend completed the full refund and the funds have reached the Buyer. No client-side claim is required."
         )
     } else {
-        "\nNo paid amount needs to be returned.".to_string()
+        "\nNo refundable funds were collected, so no refund action is required.".to_string()
     };
     format!(
         "[Assignment Expired] You did not accept {job_name} before the deadline.\n\n\
          Job ID: {job_id}\n\
          Job status: Expired (8){payment}\n\
          No further service delivery is required."
+    )
+}
+
+/// The ASP missed the delivery deadline and the backend projected Expired(8).
+#[allow(clippy::too_many_arguments)]
+pub fn job_delivery_expire_asp_notify(
+    job_name: &str,
+    job_id: &str,
+    task_type: &str,
+    amount: &str,
+    token_symbol: &str,
+    is_trial: bool,
+    is_paid: bool,
+) -> String {
+    let payment = if is_trial {
+        "No refundable funds were collected during the trial, so no refund action is required."
+            .to_string()
+    } else if is_paid {
+        format!(
+            "Escrowed amount: {amount} {token_symbol}\nAuthoritative Expired(8) confirms that the backend completed the full refund and the funds have reached the Buyer."
+        )
+    } else {
+        "No refundable funds were collected, so no refund action is required.".to_string()
+    };
+    format!(
+        "[Delivery Expired] The deliverable for {job_name} was not submitted before the deadline.\n\
+         Job ID: {job_id}\n\
+         Task type: {task_type}\n\
+         Job status: Expired (8)\n\
+         {payment}\n\
+         No further delivery, refund claim, or finalization action is required."
     )
 }
 
@@ -591,11 +635,10 @@ pub fn subscription_job_asp_reject_expire_asp_notify(
     token_symbol: &str,
 ) -> String {
     format!(
-        "[Auto-Refund Processing] You did not process the refund request for {job_name} by the deadline. Automatic refund settlement of {amount} {token_symbol} is pending.\n\
+        "[Refund Result Unverified] A refund-response-timeout notice was received for {job_name}. Fresh subscription status is Failed (9), but that status also covers charge or conversion failures; this caller-supplied event does not prove that {amount} {token_symbol} was refunded to the Buyer.\n\
          Job ID: {job_id}\n\
-         Job status: Expired (8)\n\
-         No further service delivery is required.\n\
-         This notification is not proof of completed settlement or funds receipt."
+         Job status: Failed (9)\n\
+         No further service delivery or refund response is required. Verify the authoritative settlement result before reporting refund completion."
     )
 }
 
@@ -609,19 +652,17 @@ pub fn regular_job_asp_reject_expire_asp_notify(
 ) -> String {
     if is_paid {
         format!(
-            "[Auto-Refund Processing] You did not process the refund request for {job_name} by the deadline. Automatic refund settlement of {amount} {token_symbol} is pending.\n\n\
+            "[Automatic Refund Completed] You did not process the refund request for {job_name} by the deadline. The backend completed the automatic full refund of {amount} {token_symbol} to the Buyer.\n\n\
              Job ID: {job_id}\n\
-             Job status: Expired (8)\n\
-             No further service delivery is required.\n\
-             This notification is not proof of completed settlement or funds receipt."
+             Job status: Failed (9)\n\
+             No further service delivery or refund response is required."
         )
     } else {
         format!(
             "[Refund Response Expired] You did not process the refund request for {job_name} by the deadline. No paid amount needs to be returned.\n\n\
              Job ID: {job_id}\n\
-             Job status: Expired (8)\n\
-             No further service delivery is required.\n\
-             This notification is not proof of completed settlement or funds receipt."
+             Job status: Failed (9)\n\
+             No further service delivery or refund response is required."
         )
     }
 }
@@ -654,8 +695,10 @@ mod tests {
                 "job-1",
                 "12.34",
                 "USDT",
+                false,
+                true,
             ),
-            "[Assignment Expired] You did not accept BTC Signals before the deadline.\nJob ID: job-1\nJob status: Expired (8)\nEscrowed amount: 12.34 USDT\nNo further service delivery is required. Buyer refund settlement remains pending; this notification is not proof of completed settlement or funds receipt."
+            "[Assignment Expired] You did not accept BTC Signals before the deadline.\nJob ID: job-1\nJob status: Expired (8)\nEscrowed amount: 12.34 USDT\nAuthoritative Expired(8) confirms that the backend completed the full refund and the funds have reached the Buyer. No client-side claim is required.\nNo further service delivery is required."
         );
         assert_eq!(
             subscription_job_asp_reject_closed_asp_notify(
@@ -672,7 +715,7 @@ mod tests {
                 "12.34",
                 "USDT",
             ),
-            "[Auto-Refund Processing] You did not process the refund request for BTC Signals by the deadline. Automatic refund settlement of 12.34 USDT is pending.\nJob ID: job-1\nJob status: Expired (8)\nNo further service delivery is required.\nThis notification is not proof of completed settlement or funds receipt."
+            "[Refund Result Unverified] A refund-response-timeout notice was received for BTC Signals. Fresh subscription status is Failed (9), but that status also covers charge or conversion failures; this caller-supplied event does not prove that 12.34 USDT was refunded to the Buyer.\nJob ID: job-1\nJob status: Failed (9)\nNo further service delivery or refund response is required. Verify the authoritative settlement result before reporting refund completion."
         );
         assert_eq!(
             sub_asp_claim_notify_asp_notify(
@@ -688,7 +731,7 @@ mod tests {
             regular_job_asp_accept_expire_asp_notify(
                 "One-off analysis", "job-2", "0", "USDT", false,
             ),
-            "[Assignment Expired] You did not accept One-off analysis before the deadline.\n\nJob ID: job-2\nJob status: Expired (8)\nNo paid amount needs to be returned.\nNo further service delivery is required."
+            "[Assignment Expired] You did not accept One-off analysis before the deadline.\n\nJob ID: job-2\nJob status: Expired (8)\nNo refundable funds were collected, so no refund action is required.\nNo further service delivery is required."
         );
         assert_eq!(
             regular_job_asp_reject_closed_asp_notify("One-off analysis", "job-2", "policy"),
@@ -698,14 +741,22 @@ mod tests {
             regular_job_asp_reject_expire_asp_notify(
                 "One-off analysis", "job-2", "5", "USDT", true,
             ),
-            "[Auto-Refund Processing] You did not process the refund request for One-off analysis by the deadline. Automatic refund settlement of 5 USDT is pending.\n\nJob ID: job-2\nJob status: Expired (8)\nNo further service delivery is required.\nThis notification is not proof of completed settlement or funds receipt."
+            "[Automatic Refund Completed] You did not process the refund request for One-off analysis by the deadline. The backend completed the automatic full refund of 5 USDT to the Buyer.\n\nJob ID: job-2\nJob status: Failed (9)\nNo further service delivery or refund response is required."
         );
         assert_eq!(
             regular_job_asp_reject_expire_asp_notify(
                 "One-off analysis", "job-3", "0", "USDT", false,
             ),
-            "[Refund Response Expired] You did not process the refund request for One-off analysis by the deadline. No paid amount needs to be returned.\n\nJob ID: job-3\nJob status: Expired (8)\nNo further service delivery is required.\nThis notification is not proof of completed settlement or funds receipt."
+            "[Refund Response Expired] You did not process the refund request for One-off analysis by the deadline. No paid amount needs to be returned.\n\nJob ID: job-3\nJob status: Failed (9)\nNo further service delivery or refund response is required."
         );
+    }
+
+    #[test]
+    fn submit_deadline_warning_never_routes_to_a_buyer_refund_claim() {
+        let prompt = submit_deadline_warn_user_prompt("abc123");
+        assert!(prompt.contains("the backend automatically returns any escrowed funds"));
+        assert!(prompt.contains("No client-side refund claim is required"));
+        assert!(!prompt.contains("User Agent can claim an auto-refund"));
     }
 
     // ── job_rejected_user_decision_prompt decision-deadline reminder (FR-4) ──
@@ -728,7 +779,7 @@ mod tests {
             "no reminder when expire_time is None; got:\n{out}"
         );
         assert!(
-            out.ends_with("agree to refund'"),
+            out.ends_with("file dispute, reason: <reason>'"),
             "card unchanged when None; got:\n{out}"
         );
     }

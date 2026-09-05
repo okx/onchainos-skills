@@ -1274,6 +1274,8 @@ mod tests {
             provider_agent_id: "9967".to_string(),
             status_name: "ACTIVE".to_string(),
             restore_listening_available: true,
+            title: "Trading Signals".to_string(),
+            status: 1,
         }];
         let mut compact = json!({
             "services": [
@@ -1288,6 +1290,8 @@ mod tests {
         assert_eq!(compact["subscriptionCheck"]["status"], "checked");
         assert_eq!(compact["subscriptionCheck"]["blockingServiceCount"], 1);
         assert_eq!(compact["services"][0]["existingSubscription"]["jobId"], "job-42");
+        assert!(compact["services"][0]["existingSubscription"].get("title").is_none());
+        assert!(compact["services"][0]["existingSubscription"].get("status").is_none());
         assert!(compact["services"][1]["existingSubscription"].is_null());
         assert!(compact["services"][2].get("existingSubscription").is_none());
     }

@@ -25,13 +25,6 @@ communication rules; it does not match free-text user intents.
   persistence failures are fail-closed and never create an acceptance decision.
 - A successful task-detail prefetch identifies a one-time task. If its authoritative status is already
   `submitted`, create the acceptance decision immediately; otherwise save and wait for `job_submitted`.
-- A delivery absent from the one-time task registry must pass the ACTIVE subscription lookup. Without
-  an active local Service Guide + matching Guide Consent, save and display the Signal only. With an
-  active Guide contract, apply the exact Guide to the saved Signal using only user-confirmed Consent.
-  Before a money-moving command, require `tradeRecordsV1.ok=true`, query the exact
-  `(jobId, deliveryId)`, and stop when any record exists; then reserve the delivery with
-  `autotrade-direct-claim`. After the one execution attempt, call `autotrade-direct-finalize` and persist
-  the terminal trade record. A post-submit persistence failure must never trigger a retry or replay.
 
 ## §1.8 `job_submitted`
 
@@ -52,7 +45,7 @@ communication rules; it does not match free-text user intents.
 
 | Intent | Trigger examples | Route to |
 |---|---|---|
-| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`identity-service-search.md`](identity-service-search.md) commissioning search, then route the `task-create-prepare` response's `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md); do not read `data.action` from that response |
+| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`identity/search.md`](identity/search.md) commissioning search, then route the `task-create-prepare` response's `data.decision` and `data.nextAction` through [`task-action-routing.md`](task-action-routing.md); do not read `data.action` from that response |
 | Add attachment / image | "attach a file/image to a task" | [`task-user-actions.md`](task-user-actions.md) §2 |
 | Stop task | "stop task / close task" | [`task-user-actions.md`](task-user-actions.md) §3 |
 | View deliverables | "view / list deliverables" | [`task-user-actions.md`](task-user-actions.md) §4 |
@@ -95,7 +88,7 @@ direct/fallback subscription route that did not receive a CLI-provided confirmat
 
 AFTER `create-subscribe` succeeds, render the English block below verbatim or translate it faithfully per §Localization. `{jobTitle}` is the **just-created REAL subscription title** — never a sample.
 
-**Ordering with the mandatory watch:** render this block, but do **not** pause or wait for the user's choice. Immediately continue to §Post-creation: Watch check below and enter watch. Handle the user's preference only when their reply arrives; the preference question must never delay the initial watch or the `sub_created` event.
+**Ordering with the mandatory watch:** render this block, but do **not** pause or wait for the user's choice. Immediately continue to §Post-creation: Watch check below and enter watch. Handle the user's preference only when their reply arrives; the preference question must never delay the initial watch or the `sub_open` event.
 
 **Device-routing copy contract:** after every successful creation, render the single device-routing line in the response template below after the success title and before the offline-deliverables question. The line is informational only: do not ask a device question or wait for a device confirmation.
 
@@ -129,7 +122,7 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 - `[Watch]` block present → read `skills/okx-ai/references/watch-core.md` and enter its Watch generation. A returned notification, deliverable, or empty poll does **not** end the turn; dispatch the complete batch and re-enter the same scoped command until `watch-core.md` says to stop or a `decision_request` requires the user's reply.
 - No `[Watch]` block → **end this turn immediately**.
 
-🛑 This Watch handoff is the **last non-Watch action in the creation flow** — once entered, `watch-core.md` owns the rest of the turn, including every required dispatch and re-entry. Do not run unrelated creation commands after the handoff, and do not confuse "last creation action" with permission to stop after the first watch result. On `sub_created`, the CLI establishes or restores the designated ASP session and independently forwards pending attachments; the agent sends the created/waiting-for-ASP notification. It does NOT re-scan the description for DApp names, does NOT auto-install any plugin, and does NOT pre-select a tool. Local tool preparation is non-blocking and happens at its `serviceGuide` step, or as the post-guide fallback only when that step is absent; the visible Install/connect flow runs only if the user explicitly chooses it and delegates authentication to `okx-cex-auth`. Trade Kit readiness is not repeated on every delivery or for a compatible cached route. Authentication and trading availability are decided only by the final target command. A failed delivery remains visible and is never auto-replayed, while future deliveries continue normally.
+🛑 This Watch handoff is the **last non-Watch action in the creation flow** — once entered, `watch-core.md` owns the rest of the turn, including every required dispatch and re-entry. Do not run unrelated creation commands after the handoff, and do not confuse "last creation action" with permission to stop after the first watch result. On `sub_open`, the CLI establishes or restores the designated ASP session and independently forwards pending attachments; the agent sends the created/waiting-for-ASP notification. It does NOT re-scan the description for DApp names, does NOT auto-install any plugin, and does NOT pre-select a tool. Local tool preparation is non-blocking and happens at its `serviceGuide` step, or as the post-guide fallback only when that step is absent; the visible Install/connect flow runs only if the user explicitly chooses it and delegates authentication to `okx-cex-auth`. Trade Kit readiness is not repeated on every delivery or for a compatible cached route. Authentication and trading availability are decided only by the final target command. A failed delivery remains visible and is never auto-replayed, while future deliveries continue normally.
 
 ### Subscription management (user-initiated)
 
@@ -231,17 +224,10 @@ onchainos agent autotrade-consent-set --job-id <jobId> --mode pause
 
 ### Refund V2
 
-Refund, refund progress, and refund-related arbitration are owned exclusively by
-[`task-user-refund.md`](task-user-refund.md). Do not reproduce its task versus
-subscription classification here, and do not translate a Refund V2 intent into
-the disabled legacy writes `reject`, `close`, `subscribe-reject`, or
-`claim-auto-refund`. `subscribe-cancel` remains cancellation-only and must not
-stand in for a refund.
-
-Use the implemented `agent refund-prepare` / `agent refund-execute` contract.
-Unsupported state/type combinations return a `*_contract_required` block; a
-legacy command is not a safe fallback because it lacks the Refund V2 context
-binding and structured progression result.
+Route Buyer refund requests, progress checks, and refund-related results to
+[`task-user-refund.md`](task-user-refund.md). It is the single source for
+eligibility, confirmation, settlement, and recovery. Cancellation remains a
+separate flow; execute only actions returned by Refund V2.
 
 ## Unified My Tasks
 
@@ -320,30 +306,10 @@ Translate the CLI's canonical `statusName` to the user's locked language. Use th
 | `expired` | `Expired` |
 | `failed` | `Failed` |
 
-`failed` is task-kind dependent. For a one-time task, fresh backend
-chain-projected Failed(9) represents a successful refund transition. For a
-subscription it may instead represent terminal charge failure, so never label
-the list row itself as a completed refund. When the User asks about the refund,
-run `refund-prepare` and say "refund completed" only for
-`reason=refund_confirmed`. Under the unchanged backend contract, a semantic
-result event (`sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
-`job_auto_refunded`, or `dispute_resolved`) may describe the branch but cannot
-create proof. Polling and restart recovery require durable local Refund V2
-`request-refund` provenance bound to job, Buyer, formal `jobType=1`, exact
-positive original amount, and token address plus fresh Buyer-owned Failed(9).
-Provider/Service, period, token-symbol, and `paymentMode` fields veto only on a
-two-sided mismatch; absence reduces detail/display only. Event-only Failed(9),
-`sub_failed_notify`, and bare subscription Failed(9) may not prove a refund.
-For `dispute_resolved`, durable local refund-request provenance plus fresh
-composed job type, Buyer ownership, and exact terminal status are required for
-both status 9 (User wins/refund) and status 6 (ASP wins/no refund); without
-them, announce no verdict and perform no rating, notification, or cleanup.
-Because current `sub_failed_notify` input lacks trustworthy event
-provenance/cause, treat it as non-terminal and incomplete regardless of whether
-durable refund intent is found: make no fund-direction claim, emit no terminal
-marker, perform no cleanup, and keep only read-only reconciliation. A missing Tx Hash
-may be shown as unavailable and does not invalidate confirmation; no
-`refundTxHash` or `settlementTxHash` field is required. Render `status_<n>` as
+`failed` is task-kind dependent, so never label a list row itself as a
+completed refund. When the User asks about refund status, run `refund-prepare`
+and follow [`task-user-refund.md`](task-user-refund.md); only its structured
+result controls settlement and terminal wording. Render `status_<n>` as
 `Unknown status (<n>)` or its faithful translation. If `statusName` is absent
 or malformed, render `—`; never infer from numeric `status`.
 

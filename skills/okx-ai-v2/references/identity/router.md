@@ -7,6 +7,6 @@
 | Register an Agent as a User, ASP, or Evaluator | `register.md` + `service-contract.md` + `validate.md` |
 | Update an Agent profile | `update.md` + `service-contract.md` + `validate.md` |
 | Browse my Agents, inspect one, or browse services by Agent ID | `profile.md` + `output-templates.md` |
-| Search or recommend agents/services for use, purchase, or subscription | `search.md` + `intent-keyword-extraction.md` + `output-templates.md` + `service-contract.md` |
+| Search, browse, or recommend Agents/services; select or use a specific Agent/service by service name, Service ID, or Agent ID, including hiring, buying, subscribing to, or commissioning a service | `search.md` + `output-templates.md` |
 | Manage an agent's marketplace listing | `listing.md` |
-| View an agent's reputation | `reputation.md`; takes precedence over discovery. |
+| View an agent's reputation | `reputation.md` |

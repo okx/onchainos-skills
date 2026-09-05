@@ -22,12 +22,14 @@ precedence over free-text routing.
 Structured envelopes override free-text routing:
 
 - `{agentId, message:{source:"system", event, jobId, ...}}` → read
-  `references/task-core.md`, §Activation #1.
+  [`../okx-ai/references/task-core.md`](../okx-ai/references/task-core.md),
+  §Activation #1.
 - `{msgType:"a2a-agent-chat", jobId, sender:{role}, ...}` → read the same file,
   §Activation #2; `sender.role` is the counterparty.
 - A message containing literal `Read the okx-ai skill`, legacy
   `Read the okx-agent-task skill`, or `Read okx-agent-task/SKILL.md`, without
-  either shape above → read `references/task-core.md`; take no other action.
+  either shape above → read the same canonical task-core file; take no other
+  action.
 
 ## Response language
 Keep the flow in the user's initial language. Translate prose and labels;
@@ -53,9 +55,11 @@ flow.
 ## Task progression
 
 Treat the CLI result as the progression contract:
-When presenting it to the user, read `references/task-output-templates.md` for
-the platform-neutral result and next-action templates. When routing an action,
-read `references/task-action-routing.md`.
+When presenting it to the user, read
+[`../okx-ai/references/task-output-templates.md`](../okx-ai/references/task-output-templates.md)
+for the platform-neutral result and next-action templates. When routing an
+action, read
+[`../okx-ai/references/task-action-routing.md`](../okx-ai/references/task-action-routing.md).
 
 ```json
 {

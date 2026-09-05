@@ -4,6 +4,7 @@
 //! here are deliberately small and dependency-light.
 
 use anyhow::{anyhow, bail, Context as _, Result};
+use chrono::TimeZone;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -567,7 +568,7 @@ pub(super) fn ensure_asp_has_service(card: &AgentCard) -> Result<()> {
 }
 
 /// ASPs MUST carry an uploaded avatar — there is no default fallback (see
-/// references/identity-register.md §5). user / evaluator may keep the default
+/// references/identity/register.md §5). user / evaluator may keep the default
 /// (empty `--picture` → on-chain default image), so the check is ASP-only.
 /// The skill uploads the image first (`agent upload`) and passes the returned
 /// CDN URL as `--picture`; this gate is the CLI backstop if it doesn't.
@@ -582,7 +583,7 @@ pub(super) fn ensure_asp_has_avatar(card: &AgentCard) -> Result<()> {
 /// `(label, mime)` for a supported format (PNG / JPEG / WebP) or `None` for
 /// anything else. Detection is content-based — a `.png`-renamed PDF still maps
 /// to `None`, because extensions are attacker-controlled and reqwest never sees
-/// the path anyway. Keep the accepted set in sync with references/identity-register.md §5.
+/// the path anyway. Keep the accepted set in sync with references/identity/register.md §5.
 pub(super) fn detect_image_kind(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
     // PNG: 89 50 4E 47 0D 0A 1A 0A
     if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
@@ -852,7 +853,7 @@ fn enrich_agent_row(row: &mut Value) {
 
 // ─── `card`: ordered, ready-to-render detail-card rows ────────────────────
 //
-// Mirrors `skills/okx-ai/references/identity-discover.md §Agent detail`:
+// Mirrors `skills/okx-ai/references/identity/output-templates.md §Agent detail`:
 // one ordered `{ "label": <canonical-English>, "value": <string> }` row per
 // visible field, omitting a row when its value is unavailable (same omit
 // rules the skill uses today). Service rows are ASP-ONLY — the
@@ -972,8 +973,8 @@ fn unpriced_fee_label(is_a2mcp: bool) -> String {
     }
 }
 
-/// Format a single ASP service into its card value string, mirroring
-/// references/identity-discover.md §Agent detail Service summary.
+/// Format a single ASP service into its card value string for
+/// references/identity/profile.md §Detail for explicit Agent IDs.
 /// A subscription-priced A2A service shows its monthly tier(s) in the fee slot
 /// (`<N> USDT / month`) instead of a single-purchase price.
 /// `Type` maps `A2MCP`→"API service" / `A2A`→"agent-to-agent" (verbatim
@@ -1030,7 +1031,7 @@ fn format_service_value(service: &Value) -> Option<String> {
     Some(format!("{name} — {}", segments.join(", ")))
 }
 
-/// Assemble the ordered `card` array per references/identity-discover.md §Agent detail.
+/// Assemble the ordered `card` array per references/identity/output-templates.md §Agent detail.
 fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     let mut card: Vec<Value> = Vec::new();
 
@@ -1140,10 +1141,10 @@ fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
 // Labels are canonical English; the skill localizes them. All formatting
 // (truncation, ★ stars, A2A fee, type labels, `—` fallbacks) is done HERE so
 // the skill renders the table by simply laying out cells. Mirrors:
-//   • references/identity-discover.md   §My Agents    → `build_agent_list_cells`
-//   • references/identity-discover.md   §Service list → `build_service_cells`
+//   • references/identity/profile.md    §My Agents    → `build_agent_list_cells`
+//   • references/identity/profile.md    §Services for an explicit Agent ID → `build_service_cells`
 //   • skills/okx-guide/references/registered-home.md §2 → `build_search_table`
-//   • references/identity-reviews.md    §feedback-list → `build_feedback_cells`
+//   • references/identity/reputation.md §Result       → `build_feedback_cells`
 // All builders are additive: raw fields + existing `card`/labels stay intact.
 // The `cells` insert is an intentional unconditional overwrite — see the
 // overwrite NOTE in the `agent get` row-enrichment section above.
@@ -1177,7 +1178,7 @@ fn read_agent_id(map: &serde_json::Map<String, Value>) -> Option<String> {
 
 // ─── §1 agent-list row cells ──────────────────────────────────────────────
 //
-// Columns (references/identity-discover.md §My Agents), in order:
+// Columns (references/identity/profile.md §My Agents), in order:
 //   Agent ID | Name | Role | Status | Approval status | Rating
 // Status and approval apply only to ASPs; other roles render `—`.
 fn build_agent_list_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
@@ -1431,7 +1432,7 @@ pub(super) fn build_search_table(v: &Value) -> Value {
 
 // ─── §4 service-list row cells ────────────────────────────────────────────
 //
-// Cells (references/identity-discover.md §Service list), in order:
+// Cells (references/identity/profile.md §Services for an explicit Agent ID), in order:
 //   # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description
 // Read-only service-list never exposes Service guide for any service type;
 // serviceGuide is handled only by the guided register/update flows.
@@ -1532,16 +1533,7 @@ fn add_service_cells_to_node(node: &mut Value) {
     let Some(map) = node.as_object_mut() else {
         return;
     };
-    if let (Some(page), Some(page_size), Some(total)) = (
-        pagination_value(map.get("page")),
-        pagination_value(map.get("pageSize")),
-        pagination_value(map.get("total")),
-    ) {
-        map.insert(
-            "hasMore".to_string(),
-            Value::Bool(page.saturating_mul(page_size) < total),
-        );
-    }
+    derive_has_more(map);
     let key = ["list", "services"]
         .into_iter()
         .find(|k| map.get(*k).map(Value::is_array).unwrap_or(false));
@@ -1586,62 +1578,94 @@ fn pagination_value(value: Option<&Value>) -> Option<u64> {
     }
 }
 
+fn derive_has_more(map: &mut serde_json::Map<String, Value>) {
+    if let (Some(page), Some(page_size), Some(total)) = (
+        pagination_value(map.get("page")),
+        pagination_value(map.get("pageSize")),
+        pagination_value(map.get("total")),
+    ) {
+        map.insert(
+            "hasMore".to_string(),
+            Value::Bool(page.saturating_mul(page_size) < total),
+        );
+    }
+}
+
 // ─── §5 feedback-list row cells ───────────────────────────────────────────
 //
-// references/identity-reviews.md §feedback-list is a prose entry per review rather than a strict
-// table, but we surface the same fields as ordered cells so the skill can lay
-// them out directly. Fields (per §feedback-list):
-//   Score (`★ <score>` — score is ALREADY a 0.00–5.00 float, set by
-//     convert_feedback_list_scores; render directly, trailing zeros trimmed),
-//   Reviewer (creatorId → `#<id>`), Task (taskId), Date (createdAt),
-//   Comment (description verbatim, or `(no comment)` when empty).
+// references/identity/output-templates.md §Reputation list renders these
+// ordered cells directly. Fields:
+//   Score (`valueString` / `value` divided by 20 and displayed on a 5-point
+//     scale without a suffix; legacy `score` stays supported as an
+//     already-normalized 5-point value),
+//   Reviewer (`agentName`, with legacy creatorId → `#<id>` fallback),
+//   Date (`time` Unix milliseconds → local date, with legacy createdAt fallback),
+//   Comment (`content`, with legacy description fallback).
 // Missing optional fields render `—` (the row keeps all cells) EXCEPT comment
 // which uses §5's `(no comment)` placeholder.
 fn build_feedback_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
-    // score: already a 0.00–5.00 float (convert_feedback_list_scores ran).
-    let score = match map.get("score") {
-        Some(Value::Number(n)) => match n.as_f64() {
-            Some(v) => format!("★ {}", format_search_rate(v)),
-            None => "—".to_string(),
-        },
-        _ => "—".to_string(),
-    };
-
-    let reviewer = map
-        .get("creatorId")
-        .and_then(|v| {
-            v.as_u64()
-                .map(|n| n.to_string())
-                .or_else(|| v.as_str().map(str::to_string))
+    let score_100 = ["valueString", "value"].into_iter().find_map(|key| {
+        map.get(key).and_then(|value| match value {
+            Value::String(value) => {
+                value
+                    .trim()
+                    .strip_suffix("/100")
+                    .unwrap_or(value.trim())
+                    .parse::<f64>()
+                    .ok()
+            }
+            Value::Number(value) => value.as_f64(),
+            _ => None,
         })
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(|id| format!("#{id}"))
+    });
+    let score = score_100
+        .map(|value| format_search_rate(value / 20.0))
+        .or_else(|| {
+            map.get("score")
+                .and_then(Value::as_f64)
+                .map(format_search_rate)
+        })
         .unwrap_or_else(|| "—".to_string());
 
-    let task = map
-        .get("taskId")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+    let reviewer = first_str(map, &["agentName"])
         .map(str::to_string)
+        .or_else(|| {
+            map.get("creatorId")
+                .and_then(|value| {
+                    value
+                        .as_u64()
+                        .map(|number| number.to_string())
+                        .or_else(|| value.as_str().map(str::to_string))
+                })
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .map(|id| format!("#{id}"))
+        })
         .unwrap_or_else(|| "—".to_string());
 
-    let date = map
-        .get("createdAt")
-        .and_then(|v| {
-            v.as_str()
-                .map(str::to_string)
-                .or_else(|| v.as_u64().map(|n| n.to_string()))
+    let date = map.get("time")
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|value| value.trim().parse().ok()))
         })
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .and_then(|timestamp| chrono::Local.timestamp_millis_opt(timestamp).single())
+        .map(|date_time| date_time.format("%Y-%m-%d").to_string())
+        .or_else(|| {
+            map.get("createdAt")
+                .and_then(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .or_else(|| value.as_u64().map(|number| number.to_string()))
+                })
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
         .unwrap_or_else(|| "—".to_string());
 
     // Comment: §5 placeholder `(no comment)` when empty / missing.
-    let comment = map
-        .get("description")
-        .and_then(Value::as_str)
+    let comment = first_str(map, &["content", "description"])
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
@@ -1650,7 +1674,6 @@ fn build_feedback_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     vec![
         cell("Score", score),
         cell("Reviewer", reviewer),
-        cell("Task", task),
         cell("Date", date),
         cell("Comment", comment),
     ]
@@ -1665,6 +1688,7 @@ pub(super) fn add_feedback_list_cells(v: &mut Value) {
     let Value::Object(map) = v else {
         return;
     };
+    derive_has_more(map);
     for key in ["items", "list"] {
         if let Some(items) = map.get_mut(key).and_then(Value::as_array_mut) {
             for item in items.iter_mut() {

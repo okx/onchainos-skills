@@ -52,14 +52,14 @@ returned without blocking the caller, which may warn and continue.
 
 ### pending-decisions-v2
 
-Pending-decisions queue with four subcommands. Same `(jobId, role, agentId, toAgentId?)` key re-`request` overwrites in place (idempotent).
+Pending-decisions queue commands: `request`, `request-prompt`, `resolve`, `resolve-with-sessionkey`, `resolve-prompt`, `pick`, `list`, and `cancel`. Arbitration requests use `decisionId` as the idempotency key; other requests use `(jobId, role, agentId, toAgentId?)`.
 
 #### request
 
 Push a decision to the user
 
 ```
-agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --user-content "<text>" --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>] [--continuation-id <id>]
+agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] [--user-content "<text>" | --user-content-file <path>] --list-label "<short label>" [--llm-content "<override>"] [--source-event <event>] [--decision-id <id>] [--choices-json '<json>'] [--expires-at <unix-seconds>]
 ```
 
 | Param | Required | Default | Description |
@@ -68,18 +68,31 @@ agent pending-decisions-v2 request --job-id <jobId> --role <user|asp|evaluator> 
 | `--role` | Yes | - | `user` / `asp` / `evaluator` |
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--to-agent-id` | No | - | Peer agentId (omit for backup sub) |
-| `--user-content` | Yes | - | Full content shown to user verbatim |
+| `--user-content` | Required unless `--user-content-file` | - | Full content shown to user verbatim |
+| `--user-content-file` | Required unless `--user-content` | - | File containing the full user-facing content |
 | `--list-label` | Yes | - | Short label for multi-decision list view |
 | `--llm-content` | No | - | Custom llmContent override |
 | `--source-event` | No | - | Chain event name; used to build `user_decision_<source_event>` on resolve |
-| `--continuation-id` | No | - | Opaque state binding persisted with the pending entry and relayed as `message.continuationId`; cannot be combined with `--llm-content` |
+| `--decision-id` | Arbitration | derived current instance | Stable rejection-instance key |
+| `--choices-json` | Arbitration | event defaults | Exact `key` → `actionId` + `params` mapping |
+| `--expires-at` | No | - | Decision deadline in unix seconds |
+
+#### request-prompt
+
+Deliver a decision card synchronously:
+
+```text
+agent pending-decisions-v2 request-prompt --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--user-content "<text>" | --user-content-file <path>] --list-label "<label>" [--decision-id <id>] [--choices-json '<json>'] [--expires-at <unix-seconds>] [--template-vars-b64 <base64-json>]
+```
+
+`--user-content` is Required unless `--user-content-file` is supplied, and `--user-content-file` is Required unless `--user-content` is supplied. `--template-vars-b64` applies whitelisted values only where the value originates in an input template; each value is inserted literally and is not scanned or expanded again. An `OK` result confirms card delivery. The next user reply is resolved through the active decision metadata.
 
 #### resolve-prompt
 
 Relay the user's reply back to the sub session
 
 ```
-agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <event> [--continuation-id <id>]
+agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <event> [--decision-id <id>]
 ```
 
 | Param | Required | Default | Description |
@@ -90,7 +103,7 @@ agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jo
 | `--agent-id` | Yes | - | Caller's agentId |
 | `--to-agent-id` | No | - | Must match the original request |
 | `--source-event` | Yes | - | Chain event name from the original request |
-| `--continuation-id` | No | - | Exact binding embedded by the original request's default resolver; relayed unchanged |
+| `--decision-id` | Arbitration | - | Exact decision instance embedded by the original request |
 
 #### cancel
 
@@ -118,7 +131,7 @@ agent pending-decisions-v2 list --format markdown
 
 ### next-action
 
-Output the action result based on `(event, role)`
+Return the next progression result based on `(event, role)`. `job_rejected` and `sub_user_reject` return the structured arbitration contract; other flows may return a script.
 
 ```
 agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message '<JSON>' [--a2a-file <path>]
@@ -287,8 +300,8 @@ First search:
 agent task-service-select [--keywords <kw>...] [--asp-agent-id <id>] [--asp-name <name>] [--service-name <name>] [--sid <sid>] [--min-payment-token-amount <amount>] [--max-payment-token-amount <amount>] [--agentic-id <buyerAgentId>] --limit 1 --format json
 ```
 
-For the initial search, pass the user's original utterance verbatim to
-[`intent-keyword-extraction.md`](intent-keyword-extraction.md), then use its output as the base
+For the initial search, pass the user's original utterance verbatim to the argument-extraction flow in
+[`identity/search.md`](identity/search.md), then use its output as the base
 `task-service-select` arguments. Use the canonical
 `service-match` argument shape: emit `--keywords` at most once, followed by all extracted keyword
 values in their original order. For `--sid`, prefer the extracted value; otherwise use the
@@ -315,15 +328,16 @@ conditions.
 | `hasMore` | bool | Whether more services are available |
 | `unmatchReason` | string/null | Backend no-match reason when present |
 | `subscriptionCheck` | object | Present when a matched result contains a subscription service: `{status:"checked", blockingServiceCount}` |
-| `duplicateSubscription` | object | Present when the selected service has a blocking non-terminal subscription. Contains the exact minimal `userFacingPrompt` and optional `nextAfterUserChoice`; only ACTIVE offers `restore-listening`. |
-| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, sid, serviceId, serviceName, serviceDescription, serviceGuide, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, existingSubscription, autoTradePreflight}`. `existingSubscription` is added only to subscription services and is `null` when no non-terminal duplicate exists. |
+| `duplicateSubscription` | object | Present when the selected service has a subscription that blocks duplicate creation. Contains the exact minimal `userFacingPrompt` and optional `nextAfterUserChoice`; only ACTIVE offers `restore-listening`. |
+| `services[]` | array | Normalized matched services: `{providerAgentId, providerAgentName, sid, serviceId, serviceName, serviceDescription, serviceGuide, serviceType, online, feeAmount, feeToken, feeTokenSymbol, endpoint, supportSubscription, subscriptionInfo, existingSubscription, autoTradePreflight}`. `existingSubscription` is added only to subscription services and is `null` when no blocking duplicate exists. |
 
 For a matched subscription service, `--agentic-id <buyerAgentId>` is mandatory because the command performs
 the duplicate-subscription check before returning a selectable result. A blocking
 `existingSubscription` contains `jobId`, `serviceId`, `providerAgentId`, `statusName`, and
-`restoreListeningAvailable`. Only `ACTIVE` sets `restoreListeningAvailable:true`; known terminal states
-(`COMPLETED`, `CLOSED`, `FAILED`) are excluded and therefore do not prevent a new subscription. An unknown
-future status fails closed as non-terminal. If the check cannot complete, the command fails and the caller
+`restoreListeningAvailable`. Only `ACTIVE` sets `restoreListeningAvailable:true`; known non-blocking states
+(`COMPLETED`, `CLOSED`, `EXPIRED`, `FAILED`) are excluded and therefore do not prevent a new subscription.
+Settlement for an Expired subscription remains isolated to its original job. An unknown future status
+fails closed. If the check cannot complete, the command fails and the caller
 must not show the subscription confirmation card or call `create-subscribe`.
 
 When `duplicateSubscription` is present, the selected duplicate service is reduced to the fields needed
@@ -407,6 +421,8 @@ agent status <jobId> [--agent-id <id>]
 | `<jobId>` | Yes | - | Task ID (positional) |
 | `--agent-id` | No | auto-resolved | Caller's agentId |
 
+For a filed arbitration case, prefer `arbitration-detail`. It returns the normalized arbitration phase, verdict, deadlines, amount, token, rounds, destination, refund, and transaction fields that are available from the backend.
+
 ### my-tasks
 
 List subscription and one-time tasks for the current account's User identity.
@@ -458,6 +474,8 @@ agent tasks [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 | `--limit` | No | `20` | Items per page |
 | `--agent-id` | No | auto-resolved | Caller's agentId |
 
+Use `tasks --status rejected --agent-id <aspAgentId>` for rejected tasks that can enter arbitration. Use `arbitration-list` for cases where arbitration has already been filed. The legacy `tasks --status disputed` form delegates to the arbitration-list contract.
+
 ### active-tasks
 
 List non-terminal tasks across all agents under the current account
@@ -469,7 +487,7 @@ agent active-tasks [--role <r>] [--include-terminal]
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--role` | No | all | `user` / `asp` / `evaluator` |
-| `--include-terminal` | No | `false` | Include role-terminal tasks. Status 8 remains in the default list only for `user` rows because buyer refund reconciliation may still be required; it is excluded by default for ASP and Evaluator rows. |
+| `--include-terminal` | No | `false` | Include role-terminal tasks. Status 8 is terminal for every role and is excluded from the default list; use this flag to include it. |
 
 **Return fields**:
 
@@ -511,9 +529,7 @@ agent arbitration-list --agent-id <userOrAspAgentId> [--page <n>] [--page-size <
 | `--page` | No | `1` | One-based page number |
 | `--page-size` | No | `20` | Positive page size |
 
-The response preserves backend pagination fields: `total`, `page`, `pageSize`, and `list[]`. Each list
-item preserves `jobId`, `title`, `status`, and `createTime`; the CLI adds `statusName` when `status` is
-numeric.
+The response uses `phase=arbitration_list`. `payload.items[]` contains the stable `jobId`, description, task status, arbitration phase, verdict, and occurrence time. `nextAction.id=view_arbitration` carries the current page's `allowedJobIds` and requires confirmation before the selected detail is displayed. An empty result uses `reason=no_arbitrations` and an empty action list.
 
 ### arbitration-detail
 
@@ -523,66 +539,36 @@ Show the current arbitration state visible to one User or ASP identity.
 agent arbitration-detail <jobId> --agent-id <userOrAspAgentId>
 ```
 
-The response preserves all fields from `GET /task/{jobId}/dispute/status`, including `jobId`,
-`jobType`, `currentRound`, `selectedVoter`, `taskStatus`, `disputeRoundStatus`, `prepareEndTime`, and
-`roundEndTime`. The CLI adds:
-
-| Field | Description |
-|---|---|
-| `taskStatusName` | Normalized task status when `taskStatus` is numeric |
-| `disputeRoundStatusName` | `init`, `commit_phase`, `reveal_phase`, `completed`, `rejected`, `invalidated`, or `unknown` |
-| `phase` | `evidence_preparation`, `arbitrating`, `resolved`, `rejected`, `invalidated`, or `unknown` |
-
-Additional settlement fields are passed through unchanged when the backend returns them. Their
-absence must not be interpreted as a verdict, transfer, refund, or transaction.
+The response uses `phase=arbitration_detail`, `decision=ready`, and `reason=arbitration_found`. `payload` contains normalized `arbitrationPhase` (`evidence_preparation`, `in_progress`, `resolved`, or `unknown`), verdict (`asp_won`, `asp_lost_auto_refund`, or null), and the available backend facts. Missing fields remain null.
 
 ### refund-prepare / refund-execute — Refund V2
 
-These commands are implemented. They orchestrate only proven existing
-lifecycle operations. Unsupported state/type combinations return a
-`*_contract_required` result and no write action; never substitute the disabled
-legacy writes `close`, `reject`, `subscribe-reject`, or `claim-auto-refund`.
-`subscribe-cancel` remains valid only for cancellation of trial conversion or
-formal auto-renew and is never a refund substitute.
+This section documents command syntax and the structured response contract.
+For Buyer workflow, eligibility, finality, event handling, confirmation, and
+retry rules, read [`task-user-refund.md`](task-user-refund.md). Do not recreate
+those decisions from this technical reference.
 
-Refund V2 does not introduce a new backend refund contract. It reuses the
-existing endpoints, lifecycle statuses, and semantic result events. In
-particular, finality does not depend on a new cause query, typed settlement
-source, or properties named `refundTxHash` / `settlementTxHash`. The client
-instead retains durable local `request-refund` provenance, whose required core
-binding is the job, Buyer, formal `jobType=1` subscription, exact positive
-original amount, and token address, so polling and a restarted process can
-safely disambiguate overloaded subscription Failed(9). Provider/Service,
-period, token-symbol, and `paymentMode` fields are optional consistency checks:
-when both recorded and fresh values exist a mismatch vetoes, while absence does
-not invalidate provenance/finality and only reduces available detail/display.
+#### refund-prepare
 
-`refund-prepare` is read-only. It resolves authoritative buyer ownership, task
-versus subscription, trial/formal type, exact payment, refund lifecycle state,
-and the currently allowed action set. It performs no signing, notification, or
-write.
+Read the current Buyer-owned task or subscription and return its Refund V2
+progression. This command does not sign or write.
 
 ```text
 agent refund-prepare <jobId> [--reason <user-authored-text>]
 ```
 
-`finalize-expired-refund` is reserved transport plumbing: the CLI accepts the
-enum and validates type/bizType 207, but the current prepare contract never
-returns it because authoritative status 8 has no timeout-cause discriminator.
-Manual invocation is therefore rejected before mutation.
-
 | Param | Required | Description |
 |---|---|---|
 | `<jobId>` | Yes | Buyer-owned task or subscription id |
-| `--reason` | No | Used only when the resolved path is `request-refund`; then it must be verbatim User-authored text, non-blank, and at most `payload.input.reasonMaxChars`. Other paths ignore it. |
+| `--reason` | No | Verbatim User-authored text for a returned `request-refund` path; observe `payload.input.reasonMaxChars` |
 
-`refund-execute` performs exactly one action offered by the latest preparation
-result. It must re-read authoritative state and consume the opaque context
-binding before writing.
+#### refund-execute
+
+Execute one write action returned by the latest `refund-prepare` response.
 
 ```text
 agent refund-execute <jobId> \
-  --operation <close-zero|direct-refund|request-refund|cancel-trial-conversion|finalize-expired-refund> \
+  --operation <close-zero|direct-refund|request-refund|cancel-trial-conversion> \
   --refund-context-id <id> [--reason <user-authored-text>] --confirm
 ```
 
@@ -590,30 +576,62 @@ agent refund-execute <jobId> \
 |---|---|---|
 | `<jobId>` | Yes | Must equal the latest action's `params.jobId` |
 | `--operation` | Yes | Must equal the latest action's `params.operation` |
-| `--refund-context-id` | Yes | Opaque latest-prepare binding; never compose or reuse across jobs |
-| `--reason` | For `request-refund` only | Must byte-match the User reason validated by the latest preparation; omitted and not context-bound for every other operation |
-| `--confirm` | Yes | Records explicit confirmation of this exact displayed write |
+| `--refund-context-id` | Yes | Opaque binding from the latest preparation for this job |
+| `--reason` | For `request-refund` only | Must byte-match the reason in the selected action |
+| `--confirm` | Yes | Confirms the exact displayed write |
 
-The write allowlist is exact:
+#### Action binding
 
-| Target | Raw status | Condition | Operation / lifecycle mapping |
-|---|---:|---|---|
-| one-time | 0 (Created) | exact original amount is zero | `close-zero` / existing close flow |
-| one-time | 0 (Created) | paid and `paymentMode=1` proves escrow funding | `direct-refund` / existing close flow |
-| one-time | 2 (Submitted) | paid, `paymentMode=1`, and valid User reason | `request-refund` / existing regular reject flow |
-| formal subscription | 1 (Active) | paid, complete current-period boundaries, and valid User reason | `request-refund` / existing subscription reject flow |
-| trial subscription | 1 (Active) | `trialType=1` and `autoRenew=1` | `cancel-trial-conversion` / existing subscription cancel flow |
-| formal subscription | 8 (Expired) | status does not distinguish ASP accept-timeout from refund-response-timeout | blocked: `expired_subscription_refund_cause_ambiguous`; type-207 transport is wired but cannot be safely selected until detail supplies an authoritative cause |
-| one-time | 1 (Accepted) | any | blocked: `accepted_task_refund_contract_required` |
-| one-time | 8 (Expired) | any | blocked: `accept_expired_refund_contract_ambiguous`; the subscription-only type-207 contract cannot prove the one-time cause or write |
-| formal subscription | 0 (Created) | any | blocked: `direct_subscription_refund_contract_required` |
+Copy action parameters unchanged. The write mapping is fixed:
 
-No other state/type combination may produce a Refund V2 write.
+| `nextAction[].id` | `params.operation` |
+|---|---|
+| `cancel_trial_conversion` | `cancel-trial-conversion` |
+| `close_zero_price` | `close-zero` |
+| `execute_direct_refund` | `direct-refund` |
+| `submit_refund_request` | `request-refund` |
 
-Both commands return exactly five top-level fields under success `data`:
-`phase`, `decision`, `reason`, `nextAction`, and `payload`.
+The write actions carry `params.jobId`, `params.operation`, and
+`params.refundContextId`; `submit_refund_request` also carries `params.reason`.
+Read actions omit `operation`. Unsupported combinations return no write action.
 
-Allowed phases and results:
+Example write action:
+
+```json
+{
+  "id": "execute_direct_refund",
+  "recommend": true,
+  "params": {
+    "jobId": "<id>",
+    "operation": "direct-refund",
+    "refundContextId": "<opaque-id>",
+    "expectedJobType": 0,
+    "expectedStatus": 0,
+    "expectedOriginalAmount": "10"
+  }
+}
+```
+
+#### Response envelope
+
+On a successful command invocation, `data` contains exactly these five fields:
+
+```json
+{
+  "phase": "<phase>",
+  "decision": "ready|blocked|requires_user_input",
+  "reason": "<machine-readable-reason>",
+  "nextAction": [],
+  "payload": {}
+}
+```
+
+Every action has `id` and `recommend`; `params` is present only when required.
+Route returned actions through
+[`task-action-routing.md`](task-action-routing.md), and render results through
+[`task-output-templates.md`](task-output-templates.md).
+
+#### Phase and result registry
 
 | Phase | Decision | Reason | Allowed action IDs |
 |---|---|---|---|
@@ -637,51 +655,18 @@ Allowed phases and results:
 | `refund_eligibility` | `blocked` | `refund_context_stale` | `prepare_refund` |
 | `refund_eligibility` | `blocked` | `refund_operation_not_available` | the current freshly recomputed safe action set |
 | `refund_confirmation` | `requires_user_input` | `refund_execution_confirmation_required` | the current prepared write action and `stop` |
-| `refund_eligibility` | `blocked` | `accepted_task_refund_contract_required`, `direct_subscription_refund_contract_required`, `accept_expired_refund_contract_ambiguous`, `expired_subscription_refund_cause_ambiguous`, `zero_amount_close_contract_required`, `subscription_period_contract_required`, `refund_task_details_incomplete`, `trial_conversion_state_unknown`, `trial_conversion_already_cancelled`, `direct_refund_funding_not_verified`, `refund_payment_not_verified`, `zero_amount_subscription_not_refundable`, or `refund_not_available_for_status` | current safe read actions: status 4 uses `view_arbitration`, `watch_task`; otherwise `view_refund_status`, `watch_task` |
-| `refund_resolution` | `ready` | `refund_confirmed`, `trial_subscription_closed_without_refund`, or `zero_amount_task_closed` | `stop` |
+| `refund_eligibility` | `blocked` | `accepted_task_refund_contract_required`, `direct_subscription_refund_contract_required`, `zero_amount_close_contract_required`, `subscription_period_contract_required`, `refund_task_details_incomplete`, `trial_conversion_state_unknown`, `trial_conversion_already_cancelled`, `direct_refund_funding_not_verified`, `refund_payment_not_verified`, `zero_amount_subscription_not_refundable`, or `refund_not_available_for_status` | current safe read actions: status 4 uses `view_arbitration`, `watch_task`; otherwise `view_refund_status`, `watch_task` |
+| `refund_resolution` | `ready` | `refund_confirmed`, `expired_without_refundable_payment`, `trial_subscription_closed_without_refund`, or `zero_amount_task_closed` | `stop` |
 | `refund_resolution` | `blocked` | `refund_settlement_details_incomplete` | `view_refund_status`, `watch_task` |
 | `refund_resolution` | `blocked` | `refund_not_approved_or_task_completed` | `stop` |
 | `refund_resolution` | `blocked` | `task_closed_no_new_refund_action` | `view_refund_status`, `watch_task` |
 
-Every action object has `id` and `recommend`; `params` is present when the
-action needs parameters. Refund write actions include all three binding
-values:
+#### Payload schema
 
-```json
-{
-  "id": "execute_direct_refund",
-  "recommend": true,
-  "params": {
-    "jobId": "<id>",
-    "operation": "direct-refund",
-    "refundContextId": "<opaque-id>",
-    "expectedJobType": 0,
-    "expectedStatus": 0,
-    "expectedOriginalAmount": "10"
-  }
-}
-```
-
-Action-to-operation mapping is fixed:
-
-| Action ID | `params.operation` |
-|---|---|
-| `cancel_trial_conversion` | `cancel-trial-conversion` |
-| `close_zero_price` | `close-zero` |
-| `execute_direct_refund` | `direct-refund` |
-| `submit_refund_request` | `request-refund` |
-
-`prepare_refund`, `provide_refund_reason`, `view_refund_status`,
-`view_arbitration`, `watch_task`, and `stop` are not refund writes and omit
-`operation`. The current Refund V2 action for `view_arbitration` carries only
-`jobId`; resolve the current User Agent identity as required by the existing
-read-only arbitration command.
-
-For a successfully loaded snapshot, `payload` has schema version 2 and the keys
-below remain present; inapplicable or unavailable values are `null`, never
-guessed. Amounts are exact decimal strings and all times are Unix seconds.
-Strings joined by `|` below enumerate alternatives; the CLI returns one value,
-never the joined string.
+For a successfully loaded snapshot, `payload.schemaVersion` is `2`.
+Inapplicable or unavailable values are `null`. Amounts are exact decimal
+strings and times are Unix seconds. Values joined by `|` below enumerate
+alternatives; the CLI returns one value.
 
 ```json
 {
@@ -738,7 +723,7 @@ never the joined string.
     "onchainConfirmationRequired": false
   },
   "settlement": {
-    "state": "not_started|pending|broadcast_submitted|confirmed|details_incomplete|not_refunded|unknown",
+    "state": "not_started|pending|broadcast_submitted|confirmed|not_required|details_incomplete|not_refunded|unknown",
     "cause": null,
     "txHash": null,
     "confirmationSource": "backend_onchain_lifecycle|null",
@@ -752,7 +737,7 @@ never the joined string.
     "currentRound": null,
     "prepareEndTime": null,
     "roundEndTime": null,
-    "outcome": null
+    "outcome": "not_refunded|null"
   },
   "capability": {
     "clientOperation": null,
@@ -762,27 +747,7 @@ never the joined string.
 }
 ```
 
-`settlement.txHash` and `settlement.provenance` are optional audit details, not
-mandatory refund-finality fields. `confirmationSource=backend_onchain_lifecycle`
-records that fresh backend chain projection established the business outcome;
-it is not transaction provenance. `settlement.provenance` is reserved for the
-optional same-device, operation-scoped wallet-order correlation and may identify
-its source, operation, `orderId`, `bizType`, and `chainIndex`. During broadcast
-or reconciliation, candidate handles and any unconfirmed hash appear only under
-`settlement.broadcastReceipt`. There is no required backend property named
-`refundTxHash` or `settlementTxHash`. A fresh backend chain-projected one-time
-refund terminal, or durable local subscription `request-refund` provenance
-paired with matching fresh lifecycle/payment state, may set `settlement.state=confirmed` and
-`confirmationSource=backend_onchain_lifecycle` while `settlement.txHash` and
-`settlement.provenance` remain null because no transaction metadata was exposed.
-`job.refundState=resolved` follows that confirmed business outcome;
-`settlement_unverified` is used for a terminal-looking state whose refund cause
-is still unresolved, notably bare or event-only subscription Failed(9). The
-durable local `request-refund` journal is an internal classification/recovery
-input; it does not require a Tx Hash and need not populate the optional
-`settlement.provenance` object.
-
-For a subscription, `subscription` is:
+When `job.jobType=subscription`, `subscription` has this shape:
 
 ```json
 {
@@ -795,142 +760,10 @@ For a subscription, `subscription` is:
 }
 ```
 
-`arbitration` always exists and preserves only returned facts:
-
-```json
-{
-  "phase": "<backend-string-or-null>",
-  "currentRound": null,
-  "prepareEndTime": null,
-  "roundEndTime": null,
-  "outcome": "not_refunded|null"
-}
-```
-
-Refund policy invariants:
-
-- `refundContextId` is a non-null snapshot hash. Use it only with a write action
-  returned by that same preparation result;
-- trial subscriptions and zero-price one-time tasks have
-  `refundScope=none` and `refundableAmount="0"`;
-- a formal subscription refund covers the current charged period unless an
-  authoritative future product contract explicitly adds another scope;
-- refunds use the original token and full eligible amount, with no partial
-  refund or time-based proration;
-- formal-subscription accept-expiry transport requires response `type=207` and
-  broadcasts `bizType=207`; it remains unroutable for either task kind until
-  fresh detail distinguishes the overloaded status-8 timeout cause;
-- every successful refund-operation broadcast receipt requires non-empty
-  `pkgId`, `orderId`, `orderType`, and `bizUniqKey`; its `txHash` may be absent
-  until publication. In that case `settlement.txHash=null` is a pending state,
-  not finality, failure proof, or permission to retry;
-- `broadcast_submitted` is not confirmation. The same-device receipt binds and
-  de-duplicates the pending client operation, but a later fresh backend chain
-  projection is authoritative for the business outcome;
-- for one-time tasks, fresh Failed(9) is reserved for successful refund
-  transitions: ASP agreement, refund-response timeout, or User-won
-  arbitration. Fresh paid-escrow Closed(7) with positive amount and
-  `paymentMode=1` likewise means the escrow return completed. With matching
-  User and original payment, either can produce
-  `reason=refund_confirmed` even when no Tx Hash is available. Subscription
-  Closed(7) never gets this one-time escrow interpretation. Missing ASP or
-  Service display labels are rendered unavailable and do not alter finality;
-- bare and event-only subscription Failed(9) are overloaded with terminal
-  charge failure and remain `refund_settlement_details_incomplete`.
-  Subscription refund confirmation requires durable local `request-refund`
-  provenance bound to the same job, Buyer, formal `jobType=1` subscription,
-  exact positive original amount, and token address plus fresh Buyer-owned
-  Failed(9). Provider/Service, period, token-symbol, and `paymentMode` values
-  veto only on a two-sided mismatch; missing values are not required. Legacy events `sub_asp_agree`,
-  `sub_reject_refund_notify`, `job_refunded`, `job_auto_refunded`, and
-  `dispute_resolved` may describe the branch but cannot create proof. A
-  `request-refund` record alone proves only the submitted client operation, not
-  the later backend-owned outcome;
-- `sub_failed_notify` labels a possible charge/conversion failure but does not
-  prove that cause. The current event input lacks trustworthy provenance/cause,
-  so fail closed both with and without durable refund intent: make no final
-  fund-direction claim, emit no terminal marker, perform no cleanup, and keep
-  only read-only reconciliation;
-- transaction evidence, when returned, is optional operation/event-scoped
-  metadata rather than a required property name. It must not be relabelled
-  across another job or operation. Its absence alone does
-  not invalidate a refund already established by an authoritative backend
-  chain projection;
-- a displayed EVM transaction hash is lowercase-prefix `0x` followed by exactly
-  64 hexadecimal characters; an unrelated task or event hash is never
-  relabelled as refund evidence;
-- either refund-capable terminal status with any required settlement invariant
-  missing returns
-  `refund_settlement_details_incomplete`. Required subscription invariants are
-  Failed(9), Buyer ownership, formal `jobType=1`, exact positive original
-  amount, token address, and matching durable `request-refund` provenance; the
-  one-time paid-close path additionally requires `paymentMode=1`;
-  they are not ASP/Service display labels or Tx Hash availability. Never
-  promote an unconfirmed candidate
-  transaction into the normalized final settlement field;
-- `refund_not_approved_or_task_completed` has
-  `settlement.state=not_refunded`; the client cannot distinguish a User-lost
-  arbitration from generic task completion in this state;
-- only ASP notification fields are currently exposed, under
-  `request.providerNotification`, and only as `not_requested` or `unknown`;
-- a local reconciliation marker is written before mutation and suppresses the
-  pending operation across revision, formatting, and billing-period drift.
-  Valid `request-refund` provenance is retained through Rejected(3),
-  Disputed(4), process restart, polling, and terminal-result recovery so a fresh
-  subscription Failed(9) can be safely classified again. A definitive
-  rejection or core-binding mismatch invalidates it. After confirmed terminal
-  handling, retain the provenance or persist an equivalent durable terminal fact
-  rather than making restart recovery forget why Failed(9) was classified. This
-  local guard does not replace backend idempotency across devices;
-- an unknown marker with no stable transaction/order/UserOp identifier cannot
-  be safely cleared while authoritative state is unchanged. Never use TTL,
-  `not found`, or a user override as proof that the mutation was not received;
-  backend idempotency or read-only operation status is required to unlock it;
-- after stale context, pending/unknown outcome, or any broadcast result, use only the
-  returned read-only reconciliation action. Never retry automatically.
-
-Backend `job_closed`, `job_refunded`, and `job_auto_refunded` notifications
-retain their transaction-result semantics; they are distinct from
-`uopData.executeResult`, which is only the backend pre-broadcast preflight
-result. These events may omit a Tx Hash. A nonzero system-envelope
-`message.code` still fails the standard transaction-result gate. Treat every
-successful event as branch context that triggers a fresh detail read, never as
-a new-write instruction or settlement proof.
-For a one-time task, matching fresh positive-amount paid-escrow Closed(7) or
-Failed(9) can confirm the refund independently. For a subscription,
-`sub_asp_agree`, `sub_reject_refund_notify`, `job_refunded`,
-`job_auto_refunded`, or `dispute_resolved` may describe the branch but cannot
-create proof. Confirmation requires matching durable local `request-refund`
-provenance bound to job, Buyer, formal `jobType=1`, exact positive original
-amount, and token address plus fresh Buyer-owned Failed(9). Optional
-Provider/Service, period, token-symbol, and `paymentMode` values veto only when
-both sides exist and conflict. Bare and event-only subscription
-Failed(9) remain ambiguous. `dispute_resolved` requires fresh ownership and
-composed task/subscription facts **and** matching durable local
-`request-refund` provenance for both terminal branches: status 9 identifies
-the User-winning/refund branch and status 6 identifies the ASP-winning/no-refund
-branch. Without that proof, a caller-supplied event cannot announce a verdict,
-rate, notify, or clean up. Current `sub_failed_notify` lacks trustworthy cause
-provenance and remains fail-closed/read-only regardless of whether a durable
-refund intent exists: no fund-direction claim, terminal marker, or cleanup.
-
-The subscription backend may also emit `job_asp_accept_expire`,
-`job_asp_reject_closed`, and `job_asp_reject_expire`. These are lifecycle
-signals, not write permission or successful-refund result: the
-acceptance-expiry event documents a type-207 backend path but cannot authorize
-it without a cause discriminator; the ASP-decline event proves only Closed;
-and the ASP refund-response-timeout event means automatic refund is pending.
-Event payload `jobStatus=expired` alone must not select type 207 for either task
-kind. A retained local `request-refund` record plus later matching fresh
-subscription Failed(9) confirms settlement even when no follow-up event or Tx
-Hash is available.
-
-For every Refund V2 lifecycle response, `uopData.executeResult` is backend
-preflight. Preserve the established lifecycle signer behavior: only explicit
-boolean `false` blocks before signing/broadcast. Boolean `true`, null, a missing
-field, and non-boolean values continue through normal signing/broadcast
-validation. No `executeResult` value proves that a transaction was broadcast,
-succeeded, projected to task state, or refunded.
+Do not derive eligibility, settlement, or event meaning from individual payload
+fields. Follow the returned `decision`, `reason`, and `nextAction`; the canonical
+behavioral contract remains
+[`task-user-refund.md`](task-user-refund.md).
 
 ### set-payment-mode
 
@@ -992,18 +825,16 @@ agent close <jobId> [--agent-id <id>]
 ### claim-auto-refund
 
 Disabled legacy write command. Direct invocation fails before authentication or
-network access and points the caller to `refund-prepare`. A locally supplied
-`submit_expired` event is also notification-only and cannot invoke a write.
-Provider-response timeout (`reject_expired` / `job_asp_reject_expire`) is a
-backend-settlement path. A cause-specific timeout claim remains unavailable
-until the backend exposes its Refund V2 response type and discriminator.
+network access and points the caller to `refund-prepare`.
 
 ```
 agent claim-auto-refund <jobId>
 ```
 
 The syntax remains registered for compatibility and deterministic migration
-guidance; no current path executes this legacy mutation.
+guidance; no current path executes this legacy mutation. See
+[`task-user-refund.md`](task-user-refund.md) for current timeout and finality
+handling.
 
 ### task-attach
 
@@ -1065,7 +896,7 @@ ASP supplies the exact Guide text only. The Guide-driven happy path always passe
 
 > **Insufficient-balance output:** when under-funded, `create-subscribe` does not submit. It returns the common `phase=funding_required`, `decision=blocked`, `reason=insufficient_balance` result with an empty `nextAction`; enter [`funding.md`](../../okx-agentic-wallet/references/funding.md) immediately and render its balance, address, and QR template.
 
-> **Duplicate-subscription output:** immediately before any provider-confirmation, signing, create, or broadcast request, the CLI fresh-reads the buyer's subscriptions for the exact `serviceId`. A non-terminal match exits with `{ok:false,data:{blockedReason:"duplicate-subscription",existingSubscription,userFacingPrompt,nextAfterUserChoice?}}`. Render only the localized `userFacingPrompt`; it always includes `jobId` and the explicit duplicate-creation block, and deliberately omits fee, trial, status, description, and readiness. `nextAfterUserChoice` is present only when the existing status is `ACTIVE` and then contains only `restore-listening`; otherwise there is no follow-up action. Do not query or suggest the ASP's other services. A failed precheck is fail-closed and sends no create request. This write-boundary check is intentionally repeated even when `task-create-prepare` already checked, closing the confirmation-to-create race.
+> **Duplicate-subscription output:** immediately before any provider-confirmation, signing, create, or broadcast request, the CLI fresh-reads the buyer's subscriptions for the exact `serviceId`. A blocking match exits with `{ok:false,data:{blockedReason:"duplicate-subscription",existingSubscription,userFacingPrompt,nextAfterUserChoice?}}`. `EXPIRED` does not block a new subscription; settlement for the old job remains separate. Render only the localized `userFacingPrompt`; it always includes `jobId` and the explicit duplicate-creation block, and deliberately omits fee, trial, status, description, and readiness. `nextAfterUserChoice` is present only when the existing status is `ACTIVE` and then contains only `restore-listening`; otherwise there is no follow-up action. Do not query or suggest the ASP's other services. A failed precheck is fail-closed and sends no create request. This write-boundary check is intentionally repeated even when `task-create-prepare` already checked, closing the confirmation-to-create race.
 
 > **Offline-replay capability:** the success `data` **always** carries `offlineReplaySupported: <bool>` — whether the local comm package can honor an offline-replay preference (the CLI probes it locally; copy-only, it never changes whether or how the subscription was created). When `false`, `data` also carries `offlineReplayFixCommands: [<strings>]` (upgrade commands to surface to the user; the packaged default `npm install -g @okxweb3/a2a-node@latest` when the probe returned none). When `true`, `offlineReplayFixCommands` is absent.
 
@@ -1203,7 +1034,7 @@ agent accept-job-by-provider <jobId> --agent-id <aspAgentId>
 agent decline-job-by-provider <jobId> --agent-id <aspAgentId> --reason <text>
 ```
 
-These commands are for `job_asp_selected` / `sub_created` after the buyer has
+These commands are for `job_asp_selected` / `sub_open` after the buyer has
 already created and funded. Accept uses bizType 203 (single) or 205
 (subscription); decline uses 202 or 206. Decline reason is required and capped
 at 512 Unicode characters. They are new command names, not aliases of `apply`

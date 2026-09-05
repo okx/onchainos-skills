@@ -703,7 +703,7 @@ fn build_search_table_has_fixed_columns_and_walks_flat_list() {
 
 #[test]
 fn build_service_cells_a2mcp_pascalcase() {
-    // service-list returns PascalCase keys per references/identity-discover.md §Service list.
+    // service-list returns PascalCase keys per references/identity/profile.md §Services for an explicit Agent ID.
     let svc = json!({
         "ServiceName": "TVL Query",
         "ServiceType": "A2MCP",
@@ -967,9 +967,8 @@ fn build_feedback_cells_full_entry() {
     assert_eq!(
         cell_pairs(&Value::Array(cells)),
         vec![
-            ("Score".to_string(), "★ 5".to_string()),
+            ("Score".to_string(), "5".to_string()),
             ("Reviewer".to_string(), "#88".to_string()),
-            ("Task".to_string(), "0xabc03e8".to_string()),
             ("Date".to_string(), "2026-04-20".to_string()),
             (
                 "Comment".to_string(),
@@ -980,7 +979,7 @@ fn build_feedback_cells_full_entry() {
 }
 
 #[test]
-fn build_feedback_cells_no_comment_and_missing_task() {
+fn build_feedback_cells_no_comment() {
     let item = json!({
         "creatorId": 77,
         "score": 4.45,
@@ -988,14 +987,58 @@ fn build_feedback_cells_no_comment_and_missing_task() {
     });
     let cells = build_feedback_cells(item.as_object().unwrap());
     let pairs = cell_pairs(&Value::Array(cells));
-    assert_eq!(pairs[0], ("Score".to_string(), "★ 4.45".to_string()));
-    // missing taskId → `—`.
-    assert_eq!(pairs[2], ("Task".to_string(), "—".to_string()));
+    assert_eq!(pairs[0], ("Score".to_string(), "4.45".to_string()));
     // empty/missing description → `(no comment)`.
     assert_eq!(
-        pairs[4],
+        pairs[3],
         ("Comment".to_string(), "(no comment)".to_string())
     );
+}
+
+#[test]
+fn build_feedback_cells_accepts_live_agent_name_and_content() {
+    let time = 1_751_587_200_000_i64;
+    let expected_date = chrono::Local
+        .timestamp_millis_opt(time)
+        .single()
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
+    let item = json!({
+        "agentName": "ScoutGate Buyer",
+        "content": "x402 completion confirmed; no replay issues",
+        "valueString": "100",
+        "time": time,
+    });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(pairs[0], ("Score".to_string(), "5".to_string()));
+    assert_eq!(
+        pairs[1],
+        ("Reviewer".to_string(), "ScoutGate Buyer".to_string())
+    );
+    assert_eq!(pairs[2], ("Date".to_string(), expected_date));
+    assert_eq!(
+        pairs[3],
+        (
+            "Comment".to_string(),
+            "x402 completion confirmed; no replay issues".to_string()
+        )
+    );
+}
+
+#[test]
+fn build_feedback_cells_accepts_numeric_live_value() {
+    let item = json!({ "value": 70 });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "3.5" }));
+}
+
+#[test]
+fn build_feedback_cells_accepts_suffixed_live_value_string() {
+    let item = json!({ "valueString": "90/100" });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "4.5" }));
 }
 
 #[test]
@@ -1008,8 +1051,8 @@ fn add_feedback_list_cells_walks_items() {
         ],
     });
     add_feedback_list_cells(&mut resp);
-    assert_eq!(resp["items"][0]["cells"].as_array().unwrap().len(), 5);
-    assert_eq!(resp["items"][0]["cells"][0]["value"], json!("★ 4.5"));
+    assert_eq!(resp["items"][0]["cells"].as_array().unwrap().len(), 4);
+    assert_eq!(resp["items"][0]["cells"][0]["value"], json!("4.5"));
 }
 
 #[test]
@@ -1264,9 +1307,46 @@ fn add_feedback_list_cells_walks_list_key() {
     });
     add_feedback_list_cells(&mut data);
     let cells = &data["list"][0]["cells"];
-    assert_eq!(cells[0], json!({ "label": "Score", "value": "★ 5" }));
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "5" }));
     assert_eq!(cells[1], json!({ "label": "Reviewer", "value": "#88" }));
-    assert_eq!(cells[4], json!({ "label": "Comment", "value": "Great" }));
+    assert_eq!(cells[3], json!({ "label": "Comment", "value": "Great" }));
+}
+
+#[test]
+fn add_feedback_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in [
+        (1, 3, 7, true),
+        (2, 3, 7, true),
+        (3, 3, 7, false),
+        (1, 3, 3, false),
+        (1, 3, 0, false),
+    ] {
+        let mut data = json!({
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        });
+
+        add_feedback_list_cells(&mut data);
+
+        assert_eq!(data["hasMore"], json!(expected));
+    }
+}
+
+#[test]
+fn add_feedback_list_cells_derives_has_more_from_string_metadata() {
+    let mut data = json!({
+        "items": [],
+        "page": "2",
+        "pageSize": "3",
+        "total": "7",
+    });
+
+    add_feedback_list_cells(&mut data);
+
+    assert_eq!(data["hasMore"], json!(true));
 }
 
 // ─── build_precheck (registration §2 uniqueness) ─────────────────────

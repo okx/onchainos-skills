@@ -44,6 +44,30 @@ use serde_json::Value;
 use std::fs;
 
 #[test]
+fn provider_subscription_decision_commands_are_registered() {
+    for (command, required_args) in [
+        ("accept-subscription", vec!["--agent-id <AGENT_ID>"]),
+        (
+            "decline-subscription",
+            vec!["--agent-id <AGENT_ID>", "--reason <REASON>"],
+        ),
+    ] {
+        let output = onchainos()
+            .args(["agent", command, "job-1", "--help"])
+            .output()
+            .unwrap_or_else(|error| panic!("run {command} help: {error}"));
+        assert_eq!(output.status.code(), Some(0), "{command} was not registered");
+        let help = String::from_utf8_lossy(&output.stdout);
+        for required in required_args {
+            assert!(
+                help.contains(required),
+                "{command} help missing {required:?}: {help}"
+            );
+        }
+    }
+}
+
+#[test]
 fn refund_v2_commands_expose_the_prepare_confirm_contract() {
     let prepare = onchainos()
         .args(["agent", "refund-prepare", "job-1", "--help"])
@@ -67,13 +91,13 @@ fn refund_v2_commands_expose_the_prepare_confirm_contract() {
         "direct-refund",
         "request-refund",
         "cancel-trial-conversion",
-        "finalize-expired-refund",
     ] {
         assert!(
             execute_help.contains(expected),
             "refund-execute help missing {expected:?}: {execute_help}"
         );
     }
+    assert!(!execute_help.contains("finalize-expired-refund"));
 }
 
 #[test]
@@ -111,6 +135,7 @@ fn legacy_claim_auto_refund_is_blocked_before_network_access() {
         &[
             "direct claim-auto-refund is disabled by Refund V2",
             "refund-prepare job-1",
+            "Expired(8) is terminal",
         ],
     );
 }

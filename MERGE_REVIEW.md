@@ -2,6 +2,8 @@
 
 Regenerated after remote refresh: 2026-09-04 (Asia/Hong_Kong)
 
+> **Superseded lifecycle note (2026-09-04):** the backend broadcast contract is authoritative. bizType 204 emits `sub_open` to Buyer and ASP; bizType 205 emits `sub_created` to Buyer and `sub_asp_selected` to ASP. Any lifecycle resolution below that removes `sub_open` or assigns the initial provider decision to `sub_created` is retained only as historical merge context.
+
 ## Executive result
 
 > Resolution update (2026-09-04): the original 58 textual conflict hunks and the 2 additional hunks from the latest Contract refresh are resolved. The first merge is commit `966e03a21`; the refreshed merge is ready to commit but has not yet been pushed. Creation keeps the Elvis v2 transaction path, adds Contract Guide/Consent persistence around the real `jobId`, removes `copyTrade` and fixed-field creation authorization, and retains structured output. `sub_open` and ASP second acceptance are removed; `sub_created` owns User session/attachment setup and `sub_asp_selected` starts ASP service directly.
