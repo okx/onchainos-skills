@@ -1,27 +1,32 @@
-# CLAUDE.md
+# Claude Code Guidance
 
-This file provides guidance to Claude Code when working with this repository.
+## Command discipline
 
-## Dev Environment
+- Before running `onchainos`, read the matching skill's `SKILL.md`; do not
+  guess command syntax.
+- After a CLI command actually runs, show the command that ran. Do not emit a
+  placeholder for conversational-only steps.
+- Use CLI results for live data; do not substitute skill text or model memory.
 
-- **Dev binary**: `cli/target/release/onchainos`. If it does not exist, build it first: `cd cli && cargo build --release`.
-- **`ONCHAINOS_HOME`**: Points to project-local `.onchainos/` for wallet credentials.
-- **Show executed command**: after every `onchainos` command, print the actual command that was executed. This applies only when a command actually ran — do not print any placeholder line (e.g. "no CLI call this step") for conversational-only steps such as asking the user to pick an option or collecting a value; just skip the line entirely.
-- **NEVER skip CLI calls**: always execute the onchainos CLI command to get real-time data. Do NOT answer from skill files or your own knowledge.
+## Workflow routing
 
-## Project Overview
+Read `workflows/INDEX.md` before responding to token research, market overview,
+smart-money, new-token scanning, wallet analysis, portfolio, or wallet-monitor
+requests. For Chinese requests, also read `workflows/references/keyword-glossary.md`.
 
-This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, DeFi investment management, and transaction broadcasting across 20+ blockchains. The `onchainos` CLI also works as a native MCP server.
+Follow the risk controls in `okx-agentic-wallet`. Use `--format` only when the
+command documents it.
 
-## Architecture
+## Intent boundaries
 
-- **skills/** — onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference). Deprecated skill directories are kept as thin redirect stubs pointing to their successor umbrella skill.
-- **workflows/** — Pre-built multi-step workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
-- **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
-- **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
-- **.mcp.json.example** — MCP server configuration template for Claude Code
-- **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
-- **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
+- OnchainOS installation, update, or reinstall → `okx-guide`, which uses
+  `npx -y oc-onchainos install` (`--beta` for beta).
+- Named third-party DApp → `okx-dapp-discovery`.
+- Agent identity, task lifecycle, task monitoring, or agent-marketplace
+  subscriptions → `okx-ai`.
+- HTTP 402, x402, MPP, or paymentId → `okx-agent-payments-protocol`.
+- Wallet operations, swaps, bridges, Gateway, Gas Station, and safety checks →
+  `okx-agentic-wallet`.
 
 ## Workflows
 

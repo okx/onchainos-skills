@@ -209,6 +209,11 @@ deadline, or receipt row. Keep `pkgId`, `orderId`, `orderType`, `bizUniqKey`,
 internal phase/reason identifiers, and other receipt handles out of these
 sections.
 
+When `refund_request_confirmation_required` is the fresh preparation result for
+an active deliverable-review B + reason reply, execute its returned
+`submit_refund_request` immediately. Render the fields and rules from the
+subsequent `refund_request_broadcast_submitted` result.
+
 ### Refund rules
 
 | Order | Semantic rule | Meaning |

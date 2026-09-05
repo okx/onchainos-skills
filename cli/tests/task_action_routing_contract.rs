@@ -30,7 +30,7 @@ fn arbitration_actions_have_one_domain_registry() {
     assert!(
         ARBITRATION_REFERENCE.find("## Output templates").unwrap()
             > ARBITRATION_REFERENCE
-                .find("## Existing lifecycle handoff")
+                .find("## Lifecycle handoff")
                 .unwrap()
     );
     let arbitration_lower = ARBITRATION_REFERENCE.to_ascii_lowercase();
@@ -53,13 +53,10 @@ fn arbitration_actions_have_one_domain_registry() {
         .1;
     assert!(!output_templates.to_ascii_lowercase().contains("match "));
     for intent in [
+        "### View rejected candidates",
         "### Decide refund or arbitration",
         "### View arbitration cases",
-        "### Confirm a case",
         "### View a case",
-        "### Show refund result",
-        "### Show arbitration started",
-        "### Show blocked result",
     ] {
         assert!(output_templates.contains(intent));
     }
@@ -81,6 +78,9 @@ fn arbitration_actions_have_one_domain_registry() {
         "../skills/okx-ai-v2/references/a2a/provider/dispute.md",
         "../skills/okx-ai-v2/references/a2a/provider/arbitration-action-routing.md",
         "../skills/okx-ai-v2/references/a2a/provider/arbitration-output-templates.md",
+        "../skills/okx-ai-v2/references/a2a/provider/arbitration-review.md",
+        "../skills/okx-ai-v2/references/a2a/provider/arbitration-rubric.md",
+        "../skills/okx-ai-v2/references/a2a/provider/arbitration-staking.md",
     ] {
         assert!(!std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(obsolete_reference)
@@ -92,21 +92,24 @@ fn arbitration_actions_have_one_domain_registry() {
 fn task_and_arbitration_query_intents_use_distinct_commands() {
     assert!(TASK_INTENT_ROUTING
         .contains("onchainos agent tasks --agent-id <aspAgentId> --page 1 --limit 20"));
-    assert!(TASK_INTENT_ROUTING.contains(
+    assert!(!TASK_INTENT_ROUTING.contains(
         "onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20"
     ));
-    assert!(TASK_INTENT_ROUTING
-        .contains("An ASP merchant can start arbitration for a task in `rejected` status"));
     assert!(OKX_AI_SKILL.contains("references/a2a/user/router.md"));
     assert!(TASK_INTENT_ROUTING.contains("哪些可以仲裁"));
     assert!(TASK_INTENT_ROUTING.contains("`which tasks can I arbitrate`"));
+    assert!(TASK_INTENT_ROUTING.contains("../provider/arbitration.md#rejected-candidates"));
+    assert!(ARBITRATION_REFERENCE.contains(
+        "onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20"
+    ));
+    assert!(ARBITRATION_REFERENCE
+        .contains("onchainos agent my-subscriptions --role provider --status rejected"));
     assert!(ARBITRATION_REFERENCE.contains("## Query arbitration cases"));
-    assert!(!ARBITRATION_REFERENCE.contains("user/router.md"));
     assert!(ARBITRATION_REFERENCE.contains("## Query an arbitration detail"));
     assert!(ARBITRATION_REFERENCE
-        .contains("onchainos agent arbitration-list --agent-id <selectedAgentId>"));
+        .contains("onchainos agent arbitration-list --agent-id <aspAgentId>"));
     assert!(ARBITRATION_REFERENCE
-        .contains("onchainos agent arbitration-detail <jobId> --agent-id <selectedAgentId>"));
+        .contains("onchainos agent arbitration-detail <jobId> --agent-id <aspAgentId>"));
 }
 
 #[test]
@@ -140,4 +143,5 @@ fn refund_v2_actions_are_registered_and_context_bound() {
     }
     assert!(ACTION_ROUTING.contains("params.refundContextId"));
     assert!(ACTION_ROUTING.contains("Do not execute an action not returned by the CLI"));
+    assert!(ACTION_ROUTING.contains("active deliverable-review"));
 }

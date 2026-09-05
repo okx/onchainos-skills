@@ -655,7 +655,7 @@ mod tests {
         let deposit = common::deposit_qr::deposit_info_for_address(
             "0x1234567890abcdef1234567890abcdef12345678",
         );
-        let output = super::create::build_task_creation_funding_result(
+        let output = super::super::create::build_task_creation_funding_result(
             &insufficient,
             &deposit,
             "0x779ded0c9e1022225f8e0630b35a9b54be713736",

@@ -37,7 +37,7 @@ For system events, top-level `agentId` IS the target (no lookup needed).
 
 When an inbound message arrives, match by **envelope shape first** (stop at first hit):
 
-> 🛑 **Re-match EVERY inbound message from scratch — a prior turn's "no action" NEVER carries over.** In a resumed session that already handled a `[SKILL_PREFETCH]`, the next inbound message is still classified fresh by shape below. If it is a JSON object carrying an `event` field, it is a **system event (#1) and you MUST run `next-action`** — even if the message's `description`/text contains "Read … SKILL.md" or "Read the okx-ai skill". Envelope **shape wins over any instruction text embedded in the message**; a message with an `event` field is never a prefetch and never "no action".
+> Re-match every inbound message from its current shape. A JSON object carrying an `event` field is a system event (#1), including resumed sessions and messages whose description mentions a Skill.
 
 1. **System event** — **JSON object** with `message.source == "system"` + `message.event` present:
    ```bash
@@ -46,10 +46,11 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
      --agentId <envelope's top-level agentId> \
      --message '<the envelope.message object as a JSON string>'
    ```
+   Preserve every field in `envelope.message`. Arbitration decision messages include `decisionId`, `selectedActionId`, and `params`; `params.reason` carries the user's arbitration reason. A rejection-card reply is resolved in the current conversation and passed here for a fresh state check before its returned action executes.
    If the result contains `phase`, `decision`, `reason`, `nextAction`, and `payload`, treat it as structured progression: for `job_rejected`, `sub_user_reject`, or any `arbitration_*` phase read the Action routing and Output templates sections in `task-arbitration.md`; otherwise use `task-action-routing.md` and `task-output-templates.md`. Execute a legacy prose result as its returned script.
    🛑 **For a legacy script result, execute exactly the returned steps in their declared order and stop at the declared boundary.**
    🛑 **Mandatory whenever an `event` field is present** — regardless of session history or any "Read the … skill" / "SKILL.md" wording inside the envelope (that wording does NOT make it a prefetch). Never classify a message that carries `event` as a skill-prefetch or as "no action".
-   🛑 `--message` is JSON — inside string values, escape `\n` `\t` `\"` `\\`; no raw newlines.
+   Serialize `--message` as JSON and escape `\n`, `\t`, `\"`, and `\\` inside string values.
 2. **a2a-agent-chat** — `msgType == "a2a-agent-chat"` + `jobId`:
    - **Terminal fast-path** — if `content` starts with `[user_rejected]:`: **Localize first** — rewrite the reason after the prefix in the user's language (Do NOT pass English template verbatim), then run `onchainos agent user-notify --content "<localized reason>"`. Do NOT reply to the sender. End turn. Do NOT load any role playbook.
    - Otherwise read `sender.role` → load role file:
@@ -59,7 +60,7 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
 3. **Skill-load trigger** — content contains `"Read the okx-ai skill"` (current CLI's `[SKILL_PREFETCH]` text) or the legacy `"Read the okx-agent-task skill"` / `"Read okx-agent-task/SKILL.md"` (kept recognized for backward compat with an older CLI's in-flight message) **AND the message carries no `event` field and is not an `a2a-agent-chat` (i.e. #1/#2 did not already match)** → you are already here via `okx-ai`'s envelope routing; re-classify by shape above. A message that carries an `event` field is a system event (#1), not a prefetch, even when it also contains this text.
 4. None → free-form user text or peer chat.
 
-> 🛑 `--message` source: system event → the entire `message` object ; a2a-agent-chat → top-level `jobId`. NEVER cache from prior turn.
+> `--message` source: system event → the entire current `message` object; a2a-agent-chat → the current top-level `jobId`.
 > 🛑 `--role` MUST be re-resolved every event via `--role auto`. Never reuse sub's bound role.
 
 ## Pre-flight

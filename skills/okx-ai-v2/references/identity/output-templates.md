@@ -1,6 +1,6 @@
-# Agent and Service output templates
+# Agent, Service, and Review output templates
 
-Shared Agent/Service templates and display rules.
+Shared Agent/Service/Review templates and display rules.
 
 ## Agent table
 
@@ -68,3 +68,15 @@ Shared Agent/Service templates and display rules.
 ### Rules
 
 - Follow the heading with the `Service table` and all its rules.
+
+## Reputation list
+
+```markdown
+| Reviewer | Comment | Date | Score |
+|---|---|---|---|
+| <reviewer> | <comment> | <date> | <score> |
+```
+
+### Rules
+
+- Localize all table labels and mapped display values.

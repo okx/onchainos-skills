@@ -46,7 +46,7 @@ When an inbound message arrives, match by **envelope shape first** (stop at firs
      --agentId <envelope's top-level agentId> \
      --message '<the envelope.message object as a JSON string>'
    ```
-   If the result contains `phase`, `decision`, `reason`, `nextAction`, and `payload`, treat it as structured progression: for `job_rejected`, `sub_user_reject`, or any `arbitration_*` phase read the Action routing and Output templates sections in `provider/arbitration.md`; otherwise use `../shared/task-action-routing.md` and `../shared/task-output-templates.md`. Execute a legacy prose result as its returned script.
+   If the result contains `phase`, `decision`, `reason`, `nextAction`, and `payload`, treat it as structured progression. Route `job_rejected`, `sub_user_reject`, and phases `arbitration_decision`, `arbitration_list`, or `arbitration_detail` through the Action routing and Output templates in `provider/arbitration.md`. Route Evaluator events through `evaluator/router.md`; its staking intents enter `evaluator/staking.md`. Use `../shared/task-action-routing.md` and `../shared/task-output-templates.md` for every other structured result. Execute a legacy prose result as its returned script.
    🛑 **For a legacy script result, execute exactly the returned steps in their declared order and stop at the declared boundary.**
    🛑 **Mandatory whenever an `event` field is present** — regardless of session history or any "Read the … skill" / "SKILL.md" wording inside the envelope (that wording does NOT make it a prefetch). Never classify a message that carries `event` as a skill-prefetch or as "no action".
    🛑 `--message` is JSON — inside string values, escape `\n` `\t` `\"` `\\`; no raw newlines.

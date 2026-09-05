@@ -28,7 +28,18 @@ pub struct ResolvedChoice {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChoiceError {
     Ambiguous,
+    MissingReason,
     UnsupportedAction,
+}
+
+impl ChoiceError {
+    pub fn reason_code(self) -> &'static str {
+        match self {
+            Self::Ambiguous => "ambiguous_choice",
+            Self::MissingReason => "arbitration_reason_required",
+            Self::UnsupportedAction => "unsupported_action",
+        }
+    }
 }
 
 pub fn is_decision_source(source_event: &str) -> bool {
@@ -231,9 +242,8 @@ pub fn resolve_choice(
     }
     let mut params = choice.params.clone();
     if key == "B" {
-        if let Some(reason) = arbitration_reason(normalized) {
-            params.insert("reason".to_string(), Value::String(reason));
-        }
+        let reason = arbitration_reason(normalized).ok_or(ChoiceError::MissingReason)?;
+        params.insert("reason".to_string(), Value::String(reason));
     }
     Ok(ResolvedChoice {
         action_id: action_id.to_string(),
@@ -263,6 +273,16 @@ pub fn resolved_action(
         return Err(ChoiceError::UnsupportedAction);
     }
     resolved_params.insert("jobId".to_string(), Value::String(job_id.to_string()));
+    if matches!(
+        action_id,
+        "raise_arbitration" | "raise_subscription_arbitration"
+    ) && resolved_params
+        .get("reason")
+        .and_then(Value::as_str)
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        return Err(ChoiceError::MissingReason);
+    }
     Ok(ResolvedChoice {
         action_id: action_id.to_string(),
         params: resolved_params,
@@ -441,14 +461,25 @@ fn arbitration_reason(reply: &str) -> Option<String> {
             ""
         }
     };
-    let reason = after_choice
-        .trim_start_matches(|c: char| {
-            c.is_whitespace() || matches!(c, '.' | ':' | '：' | ',' | '，')
-        })
-        .strip_prefix("理由")
-        .unwrap_or(after_choice.trim_start_matches(|c: char| {
-            c.is_whitespace() || matches!(c, '.' | ':' | '：' | ',' | '，')
-        }))
+    let reason = after_choice.trim_start_matches(|c: char| {
+        c.is_whitespace() || matches!(c, '.' | ':' | '：' | ',' | '，')
+    });
+    let reason = reason.strip_prefix("理由").unwrap_or_else(|| {
+        let Some(prefix) = reason.get(.."reason".len()) else {
+            return reason;
+        };
+        let rest = reason.get("reason".len()..).unwrap_or("");
+        if prefix.eq_ignore_ascii_case("reason")
+            && rest.chars().next().is_none_or(|c| {
+                c.is_whitespace() || matches!(c, '.' | ':' | '：' | ',' | '，')
+            })
+        {
+            rest
+        } else {
+            reason
+        }
+    });
+    let reason = reason
         .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, ':' | '：'))
         .trim();
     (!reason.is_empty()).then(|| reason.to_string())
@@ -730,11 +761,20 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_reply_maps_choice_and_optional_reason() {
+    fn deterministic_reply_maps_choice_and_requires_arbitration_reason() {
         let choices = default_choices(JOB_REJECTED, "job-1");
         let selected = resolve_choice(JOB_REJECTED, &choices, "B，理由：按要求完成").unwrap();
         assert_eq!(selected.action_id, "raise_arbitration");
         assert_eq!(selected.params["reason"], "按要求完成");
+        let selected = resolve_choice(
+            JOB_REJECTED,
+            &choices,
+            "B reason: delivery below expectation",
+        )
+        .unwrap();
+        assert_eq!(selected.params["reason"], "delivery below expectation");
+        let selected = resolve_choice(JOB_REJECTED, &choices, "B 交付产物不及预期").unwrap();
+        assert_eq!(selected.params["reason"], "交付产物不及预期");
         assert_eq!(
             resolve_choice(JOB_REJECTED, &choices, "同意退款")
                 .unwrap()
@@ -748,10 +788,12 @@ mod tests {
             "agree_refund"
         );
         assert_eq!(
-            resolve_choice(JOB_REJECTED, &choices, "发起仲裁")
-                .unwrap()
-                .action_id,
-            "raise_arbitration"
+            resolve_choice(JOB_REJECTED, &choices, "发起仲裁"),
+            Err(ChoiceError::MissingReason)
+        );
+        assert_eq!(
+            resolve_choice(JOB_REJECTED, &choices, "B"),
+            Err(ChoiceError::MissingReason)
         );
     }
 
@@ -794,6 +836,15 @@ mod tests {
                 Some(&json!({"jobId": "job-1"}))
             ),
             Err(ChoiceError::UnsupportedAction)
+        );
+        assert_eq!(
+            resolved_action(
+                JOB_REJECTED,
+                "raise_arbitration",
+                "job-2",
+                Some(&json!({"jobId": "job-2"}))
+            ),
+            Err(ChoiceError::MissingReason)
         );
     }
 
@@ -846,7 +897,7 @@ mod tests {
                 JOB_REJECTED,
                 "dispute_raise",
                 "job-1",
-                Some(&json!({"jobId": "job-1"}))
+                Some(&json!({"jobId": "job-1", "reason": "completed as agreed"}))
             )
             .unwrap()
             .action_id,

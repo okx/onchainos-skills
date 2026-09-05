@@ -166,10 +166,10 @@ Task-list intents are read-only Task operations. The user session answers list r
 |---|---|
 | User task list, active tasks, ended tasks, subscription tasks, or one-time tasks | `onchainos agent my-tasks --task-type <type> --status-type <status> --page 1` |
 | Existing tasks for ASP `agentId` | `onchainos agent tasks --agent-id <aspAgentId> --page 1 --limit 20` |
-| Rejected one-time tasks / tasks that can be arbitrated / refund-decision candidates for ASP `agentId` | `onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20` |
-| Rejected subscription periods for the ASP provider view | `onchainos agent my-subscriptions --role provider --status rejected` |
 
-Triggers for the first row include `my tasks`, `what am I working on`, `active tasks`, `ended tasks`, `subscription tasks`, and `one-time tasks`. Triggers for the ASP rows include `my ASP tasks`, `tasks for ASP <agentId>`, `rejected tasks`, `tasks that can be arbitrated`, `which tasks can I arbitrate`, `哪些可以仲裁`, `可以仲裁的任务`, `refused deliveries`, `pending refund decisions`, and semantic equivalents in any language.
+Triggers for the first row include `my tasks`, `what am I working on`, `active tasks`, `ended tasks`, `subscription tasks`, and `one-time tasks`. Triggers for the ASP row include `my ASP tasks` and `tasks for ASP <agentId>`.
+
+Route `rejected tasks`, `tasks that can be arbitrated`, `which tasks can I arbitrate`, `哪些可以仲裁`, `可以仲裁的任务`, `refused deliveries`, `pending refund decisions`, and semantic equivalents in any language through [`../provider/arbitration.md` Rejected candidates](../provider/arbitration.md#rejected-candidates). That flow owns both rejected one-time tasks and rejected subscription periods.
 
 For a User task list, choose the two `my-tasks` parameters independently:
 
@@ -178,13 +178,7 @@ For a User task list, choose the two `my-tasks` parameters independently:
 | `<type>` | all → `all`; subscription → `subscription`; one-time → `one-time` |
 | `<status>` | all → `0`; active → `1`; ended → `2` |
 
-Render and paginate the User result per [`playbook.md` §Unified My Tasks](playbook.md#unified-my-tasks). Render an ASP `tasks` result from its current page with the returned `jobId`, title, amount, and status. Present every rejected row as an arbitration candidate.
-
-For a rejected-task or arbitration-candidate list, append one localized line below the existing list template:
-
-```text
-Tip: An ASP merchant can start arbitration for a task in `rejected` status.
-```
+Render and paginate the User result per [`playbook.md` §Unified My Tasks](playbook.md#unified-my-tasks). Render an ASP `tasks` result from its current page with the returned `jobId`, title, amount, and status.
 
 Resolve an explicit ASP Agent ID directly. With an ASP identity in the current task context, retain that `agentId`. Otherwise run `onchainos agent my-agents`, retain role ASP (`2`) candidates, display them, and wait for the user's selection.
 
@@ -248,7 +242,7 @@ The legacy `agent close` entry is disabled and never performs the write.
 
 ## Status / progress query (specific task)
 
-Route arbitration creation, filed-case lists, and case details through `../provider/arbitration.md`. Keep rejected-task and pending-refund-decision lists in §Task list with the rejected Task filter.
+Route rejected candidates, arbitration creation, filed-case lists, and case details through `../provider/arbitration.md`.
 
 | Trigger | Action |
 |---|---|
