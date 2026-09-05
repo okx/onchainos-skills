@@ -87,9 +87,27 @@ agent pending-decisions-v2 request-prompt --job-id <jobId> --role <user|asp|eval
 
 `--user-content` is Required unless `--user-content-file` is supplied, and `--user-content-file` is Required unless `--user-content` is supplied. `--template-vars-b64` applies whitelisted values only where the value originates in an input template; each value is inserted literally and is not scanned or expanded again. An `OK` result confirms card delivery. The next user reply is resolved through the active decision metadata.
 
+In CLI-driver mode, a User `job_submitted` or `review_deadline_warn` review
+card carries a current-conversation execution contract. A executes the approval
+command directly. B + reason is final confirmation: the current conversation
+runs fresh `refund-prepare` and immediately executes only its returned
+`submit_refund_request` action. The current conversation owns choice parsing,
+action execution, concise result feedback, and watch resumption end to end. A
+successful B result includes the query hint
+`onchainos agent status <jobId> --agent-id <buyerAgentId>`.
+
+For a `job_rejected` or `sub_user_reject` refund-or-arbitration card, the active
+resolver returns `phase=arbitration_decision`, `reason=user_choice_resolved`, and
+one `validate_arbitration_choice` action to the current conversation. Run
+`next-action` with its exact returned parameters. A executes the full-refund
+command. B with a non-empty reason executes the arbitration command; for a
+one-time task the current conversation runs `dispute raise`, and the resulting
+`dispute_approved` signal runs `dispute confirm` in the task sub-session.
+Successful results include the task-status or arbitration-list query hint.
+
 #### resolve-prompt
 
-Relay the user's reply back to the sub session
+Resolve the user's reply against the persisted active decision
 
 ```
 agent pending-decisions-v2 resolve-prompt --user-reply "<verbatim>" --job-id <jobId> --role <user|asp|evaluator> --agent-id <agentId> [--to-agent-id <peer agentId>] --source-event <event> [--decision-id <id>]
@@ -141,8 +159,8 @@ agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message
 |---|---|---|---|
 | `--role` | Yes | - | `user` / `asp` / `evaluator` / `auto` |
 | `--agentId` | Yes | - | Receiving agent's id |
-| `--message` | Yes | - | Entire `message` object from envelope as JSON string |
-| `--a2a-file` | Required for `deliverable_received` | - | Path to the complete raw A2A JSON envelope stored as a 0600 temp input file. CLI requires the current `a2a-agent-chat` shape, matching envelope and embedded `jobId`, the exact `receiverAgentId`, and terminal `[intent:deliver]`, then writes a canonical 0600 recovery spool copy. Direct legacy deliverable fields in `--message` are rejected. Do not pass only `content`, and do not use stdin/heredoc/pipe/inline JSON for this envelope in tool-use runtimes. |
+| `--message` | Yes | - | Complete current `message` object from the envelope, serialized as JSON with every field preserved |
+| `--a2a-file` | Required for `deliverable_received` | - | Path to the complete raw A2A JSON envelope stored as a 0600 temp input file; the CLI validates its shape, task and receiver binding, then writes a canonical 0600 recovery copy |
 
 #### Fields CLI reads from `--message`
 
@@ -153,7 +171,15 @@ agent next-action --role <user|asp|evaluator|auto> --agentId <agentId> --message
 | `code` | No | `0` | Tx receipt code; non-zero = tx failed                                                   |
 | `jobTitle` | No | - | Task title from system notification                                                     |
 | `provider` | No | - | Target provider agentId (user + `job_created` only)                                          |
-| `data` | No | - | User decision payload; required when event starts with `user_decision_`                 |
+| `data` | For user-decision relays | - | User's verbatim decision reply                                                         |
+| `decisionId` | For arbitration decision relays | - | Active decision identifier bound to `<jobId>:<sourceEvent>:<instance>`                |
+| `selectedActionId` | For arbitration decision relays | - | CLI-resolved Action ID: refund or arbitration                                           |
+| `params` | For arbitration decision relays | - | Validated parameters for the selected Action                                             |
+| `params.jobId` | For arbitration decision relays | - | Job binding; it matches top-level `jobId`                                                 |
+| `params.reason` | For `raise_arbitration` and `raise_subscription_arbitration` | - | Non-empty user-authored arbitration reason                                               |
+| `params.decisionBindingKey` / `params.decisionBindingValue` | When returned for subscription arbitration | - | Current subscription-period binding preserved from the decision card                     |
+
+For `job_rejected` and `sub_user_reject`, an explicit merchant request may use the compact `{event, jobId}` message and lets the CLI refresh the remaining facts. For `user_decision_job_rejected` and `user_decision_sub_user_reject`, pass the complete emitted relay `message` object unchanged.
 
 ### list-attachments
 
@@ -473,7 +499,7 @@ agent tasks [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 | `--limit` | No | `20` | Items per page |
 | `--agent-id` | No | auto-resolved | Caller's agentId |
 
-Use `tasks --status rejected --agent-id <aspAgentId>` for rejected tasks that can enter arbitration. Use `arbitration-list` for cases where arbitration has already been filed. The legacy `tasks --status disputed` form delegates to the arbitration-list contract.
+Use `tasks --status rejected --agent-id <aspAgentId>` for `可仲裁`, `待仲裁`, and other rejected-task candidate queries. These tasks entered `rejected` status after the User rejected the deliverable. Use `arbitration-list` for `仲裁列表`, `已发起仲裁`, and other filed-case queries. The legacy `tasks --status disputed` form delegates to the arbitration-list contract.
 
 ### active-tasks
 
@@ -1426,14 +1452,14 @@ agent subscribe-asp-claim <jobId> --agent-id <aspAgentId>
 ASP raises an evaluation for a rejected subscription period (the "dispute" outcome of a `sub_user_reject` decision). Uses the combined approve+create endpoint.
 
 ```
-agent subscribe-dispute <jobId> --agent-id <aspAgentId> [--reason <text>]
+agent subscribe-dispute <jobId> --reason <text> --agent-id <aspAgentId>
 ```
 
 | Param | Required | Description |
 |---|---|---|
 | `<jobId>` | Yes | Subscription ID (positional; subId == jobId) |
 | `--agent-id` | Yes | ASP's own agentId |
-| `--reason` | No | Dispute reason, persisted on-chain via broadcast bizContext |
+| `--reason` | Yes | Non-empty user-authored arbitration reason, persisted on-chain via broadcast bizContext |
 
 ---
 
@@ -1449,6 +1475,10 @@ Dispute step 1: ERC-20 approve dispute deposit (params provided by `next-action`
 agent dispute raise <jobId> --reason "<txt>" --agent-id <providerAgentId>
 ```
 
+When this command succeeds for an active B decision, the current conversation
+returns the friendly submitted result. The later `dispute_approved` signal
+continues with `dispute confirm` in the task sub-session.
+
 ### dispute confirm
 
 Dispute step 2: create dispute on-chain (params provided by `next-action` playbook)
@@ -1457,8 +1487,10 @@ Dispute step 2: create dispute on-chain (params provided by `next-action` playbo
 agent dispute confirm <jobId> --reason "<txt>" --agent-id <providerAgentId>
 ```
 
-`--reason` is a required CLI flag. These ASP commands are not User Agent refund
-actions; Refund V2 reaches arbitration only after the ASP opens a dispute.
+`--reason` carries the original stage-1 reason when available. The stage-1
+broadcast already persists the user-authored reason. A successful command
+submits the arbitration transaction. The later `job_disputed` event starts the
+existing independent evidence flow after the task reaches `disputed(4)`.
 
 ---
 

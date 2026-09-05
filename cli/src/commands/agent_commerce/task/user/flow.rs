@@ -566,7 +566,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
                      \x20\x20• **`approve_review`** — user accepts the deliverable (typical intents: A / 通过 / 同意 / 满意 / 接受 / 验收 / approve / accept / agree / OK / 行 / 可以 — anything meaning satisfaction with the deliverable).\n\
-                     \x20\x20• **`reject_review`** — user rejects and wants revisions/refund (typical intents: B / 拒绝 / 不通过 / 不满意 / 不接受 / reject / refuse / 不行 / 不达标 — anything meaning dissatisfaction; extract the reason if the user provided one after `理由` / `reason` / `因为`; the exact reason is handed to Refund V2 and is submitted only after fresh preparation and explicit confirmation).\n\n\
+                     \x20\x20• **`reject_review`** — compatibility route for a review reply already relayed to this task session. B with a non-blank reason is the user's final confirmation to submit the rejection/refund request on-chain. Preserve the reason verbatim; the compatibility handler runs fresh Refund V2 preparation and executes the returned `submit_refund_request` action in the same turn.\n\n\
                      If the reply approves, or rejects with an explicit reason → call:\n\
                      ```bash\n\
                      # For approve_review (no extra args needed):\n\

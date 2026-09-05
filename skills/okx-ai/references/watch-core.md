@@ -261,7 +261,18 @@ and unavailable-tool fallback live in [`watch-wake-scheduling.md`](watch-wake-sc
    immediately re-enter that exact originating command; otherwise end the turn normally. Do not claim
    that deferring the item stops an independently active monitor.
 2. Otherwise claim first: `okx-a2a user check --todo-ids <id> --json`.
-3. On `handled` → **execute the commands specified in `llmContent` verbatim**. The instructions can be anything the issuer chose — a relay to another session (`session send`), a wallet / onchain call, an agent CLI command, an arbitrary tool invocation, or a multi-step sequence. `llmContent` itself names the command(s), the target(s), and how to assemble the payload — just follow it. Do not block on downstream effects.
+3. On `handled`, route by the current `llmContent`:
+   - A buyer deliverable-review card for `job_submitted` or `review_deadline_warn` uses its
+     current-conversation A/B branch. Analyze the reply, then execute the embedded direct
+     `onchainos` action with the card's `jobId`, `agentId`, and verbatim rejection reason.
+   - A refund-or-arbitration card for `job_rejected` or `sub_user_reject` resolves the
+     choice in the current conversation, validates its exact returned message through
+     `next-action`, and executes the returned full-refund or arbitration action. A
+     one-time B choice runs `dispute raise`; its `dispute_approved` signal runs
+     `dispute confirm` in the task sub-session. Then provide the arbitration-list
+     query hint.
+   - Other decisions execute the commands specified in `llmContent` verbatim. The instructions
+     name the command(s), target(s), and parameter assembly. Continue through their returned result.
 4. On `alreadyHandled` → tell the user "this item was processed in another window". Do not execute `llmContent` again.
 5. Claim succeeded but `llmContent` execution failed → create a new `onchainos agent user-notify` with the failure reason and a retry command; **do NOT** flip the original item back to pending.
 

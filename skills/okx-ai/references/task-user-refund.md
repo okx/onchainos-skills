@@ -131,6 +131,39 @@ operation from status 8, event prose, or the presence of the low-level enum.
 
 ## Decision handling
 
+### Deliverable-review rejection
+
+For an active post-delivery review card, `B` together with a non-blank
+User-authored reason is the User's final confirmation to submit the full refund
+request on-chain. This changes only how the reply is executed; keep the existing
+acceptance-review card copy unchanged.
+
+Handle this reply in the current user conversation:
+
+1. Preserve the rejection reason verbatim.
+2. Run `refund-prepare <jobId> --reason "<verbatim reason>"` for a fresh state
+   and ownership check.
+3. Continue only for `payload.schemaVersion=2`, `phase=refund_confirmation`,
+   `decision=ready`, `reason=refund_request_confirmation_required`, and the
+   returned `nextAction.id=submit_refund_request`.
+4. Copy that action's `params.jobId`, `params.operation`,
+   `params.refundContextId`, and `params.reason` unchanged into
+   `refund-execute ... --confirm` and execute immediately.
+5. Render the execution result and continue only through its returned actions.
+
+This review-card path uses the B reply as the explicit confirmation. The current
+user conversation owns reason extraction, fresh preparation, execution, and
+result rendering end to end. A blocked, changed, or malformed preparation result
+is rendered as the authoritative outcome.
+
+For `reason=refund_request_broadcast_submitted`, give one concise localized
+confirmation: the rejection request was submitted with the User's verbatim
+reason, and refund or arbitration progress will update in this task. Describe it
+as submitted rather than settled. End with a practical query hint: the User can
+ask the assistant to check the task result, or run
+`onchainos agent status <jobId> --agent-id <buyerAgentId>` using the active
+review-card identifiers.
+
 ### Trial subscription
 
 For `trial_subscription_not_refundable`, explain that no refundable charge is
@@ -192,7 +225,9 @@ For `refund_request_confirmation_required`, render the ordered
 semantic `refund_rules` items defined in `task-output-templates.md`. Do not add
 a Service row, deadline row, internal receipt handle, or localized hard-coded
 copy to those sections. Execute only after the User selects
-`submit_refund_request`.
+`submit_refund_request`. The deliverable-review rejection path above is the
+single exception: its explicit B + reason reply already selected that action,
+so fresh preparation continues immediately to execution in the same turn.
 
 ## Execute the offered action
 
@@ -209,8 +244,9 @@ onchainos agent refund-execute <jobId> \
 
 Never combine fields from different preparation results. The execute command
 re-reads authoritative state and rejects stale or unavailable operations.
-Every write action requires explicit confirmation; a supplied reason is never
-permission by itself.
+Every write action requires explicit confirmation. In the deliverable-review
+path, the active card's B + reason reply supplies that confirmation; a reason
+received outside that active card remains input only.
 
 A successful write returns one of
 `zero_amount_close_broadcast_submitted`, `refund_broadcast_submitted`,

@@ -24,7 +24,7 @@ legacy prose field `action`.
 | `cancel_trial_conversion` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation cancel-trial-conversion` | Required | Route the returned structured result; never describe this as a refund |
 | `close_zero_price` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation close-zero` | Required | Route the returned structured result; no funds move |
 | `execute_direct_refund` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation direct-refund` | Required | Route the returned structured result, then watch when offered |
-| `submit_refund_request` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation request-refund` | Required; pass only the User-authored reason | Route the returned structured result, then watch when offered |
+| `submit_refund_request` | `task-user-refund.md`, §Execute the offered action; use `refund-execute --operation request-refund` | Required; an active deliverable-review B + reason reply supplies it, otherwise show the Refund V2 confirmation card | Route the returned structured result, then watch when offered |
 | `view_refund_status` | `task-user-refund.md`; rerun `refund-prepare` for `params.jobId` | No | Route the fresh progression result |
 | `stop` | End the current flow | No | Run no further command |
 
@@ -49,6 +49,12 @@ legacy prose field `action`.
   writes `close`, `reject`, `subscribe-reject`, or `claim-auto-refund` for a
   missing Refund V2 action. `subscribe-cancel` is cancellation-only and never a
   refund substitute.
+- For the active deliverable-review card, B + a non-blank User-authored reason
+  is the final confirmation for `submit_refund_request`. Handle it in the
+  current user conversation: run fresh `refund-prepare`, require the exact
+  `refund_request_confirmation_required` result and returned action, then
+  execute that action immediately with `--confirm`. Keep general refund intents
+  on the standard confirmation-card path.
 - `finalize_expired_refund` is not currently a routable action. The type-207
   transport is wired, but subscription status 8 also represents a backend-owned
   refund-response timeout. Until fresh detail supplies an authoritative cause

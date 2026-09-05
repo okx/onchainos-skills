@@ -169,7 +169,7 @@ or fiat conversion.
 | `direct_refund_confirmation_required` | A direct full refund is ready for confirmation. | The ordered `refund_task_details` presentation contract below |
 | `expired_subscription_refund_cause_ambiguous` | Subscription status 8 does not prove whether type-207 buyer finalization or backend auto-refund applies. | Fresh task/subscription status, original amount/token, and read-only actions only; no write action |
 | `refund_reason_required` / `refund_reason_too_long` | A valid User-authored refund reason is required. | Only `payload.input.requiredParams` and `reasonMaxChars` |
-| `refund_request_confirmation_required` | The full refund request is ready for confirmation. | The ordered `refund_task_details` and `refund_rules` presentation contracts below, including the verbatim User reason |
+| `refund_request_confirmation_required` | The full refund request is ready for confirmation. For an active deliverable-review B + reason reply, that reply supplies confirmation and continues directly to execution. | The ordered `refund_task_details` and `refund_rules` presentation contracts below, including the verbatim User reason, except when the active review-card direct-execution rule applies |
 | `zero_amount_close_broadcast_submitted` | The zero-price close was broadcast; no refund occurred. | Required receipt identifiers, Transaction hash when present, and pending state |
 | `refund_broadcast_submitted` | The direct-refund transaction was broadcast and is pending final reconciliation. | The ordered `refund_task_details` presentation contract below; keep broadcast receipt handles internal |
 | `refund_request_broadcast_submitted` | The refund request was broadcast and is awaiting reconciliation/ASP response. | The ordered `refund_task_details` and `refund_rules` presentation contracts below; keep broadcast receipt handles internal |
@@ -252,6 +252,11 @@ After the User supplies a refund reason, render the following for both
      the refund amount, refund time, and the Tx Hash field;
    - after submission, the User can return to task detail at any time to view
      progress.
+
+When `refund_request_confirmation_required` is the fresh preparation result for
+an active deliverable-review B + reason reply, execute its returned
+`submit_refund_request` immediately. Render the details and rules from the
+subsequent `refund_request_broadcast_submitted` result.
 
 Derive those statements from `payload.rules` and the returned read actions;
 never infer a stronger rule than the payload supports. A Tx Hash field may be

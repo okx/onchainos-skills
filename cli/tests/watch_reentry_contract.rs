@@ -3,6 +3,8 @@ const WATCH_OUTDATED_LIST: &str =
     include_str!("../../skills/okx-ai/references/watch-outdated-list.md");
 const TASK_USER_PLAYBOOK: &str =
     include_str!("../../skills/okx-ai/references/task-user-playbook.md");
+const TASK_CREATE_ACTIONS: &str =
+    include_str!("../../skills/okx-ai/references/task-user-actions-create.md");
 
 #[test]
 fn watch_docs_do_not_end_after_a_nonterminal_result() {
@@ -11,6 +13,28 @@ fn watch_docs_do_not_end_after_a_nonterminal_result() {
     assert!(TASK_USER_PLAYBOOK
         .contains("A returned notification, deliverable, or empty poll does **not** end the turn"));
     assert!(!TASK_USER_PLAYBOOK.contains("execute watch, then **end this turn**"));
+}
+
+#[test]
+fn task_creation_keeps_the_existing_scoped_watch_handoff() {
+    assert!(TASK_CREATE_ACTIONS
+        .contains("On `reason=broadcast_submitted`, route `nextAction.id=watch_task`"));
+    assert!(WATCH_CORE.contains("okx-a2a user watch --json --job-id <X>"));
+    assert!(WATCH_CORE.contains("single long-poll call"));
+}
+
+#[test]
+fn direct_review_execution_starts_only_after_the_decision_reply_is_claimed() {
+    let claim = WATCH_CORE
+        .find("Otherwise claim first")
+        .expect("watch contract must claim a non-defer reply");
+    let review = WATCH_CORE
+        .find("A buyer deliverable-review card")
+        .expect("watch contract must define the direct A/B branch");
+
+    assert!(claim < review);
+    assert!(WATCH_CORE.contains("current-conversation A/B branch"));
+    assert!(WATCH_CORE.contains("verbatim rejection reason"));
 }
 
 #[test]

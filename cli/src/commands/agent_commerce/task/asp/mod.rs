@@ -16,14 +16,14 @@
 
 mod agreerefund;
 mod apply;
+mod asp_claim;
 mod asp_reject;
 mod content;
 mod deliver;
-mod provider_decision;
 mod dispute_confirm;
 mod dispute_raise;
 pub mod flow;
-mod asp_claim;
+mod provider_decision;
 pub mod subscription;
 mod v2;
 
@@ -157,7 +157,7 @@ pub enum ProviderCommand {
 #[derive(Subcommand)]
 pub enum DisputeCommand {
     /// Dispute stage 1: call the approve API to grant the dispute contract token approval (calldata → sign → broadcast).
-    /// After completion, wait for the on-chain `dispute_approved` notification, then run `dispute confirm` for stage 2.
+    /// The `dispute_approved` signal continues with `dispute confirm` in the task sub-session.
     Raise {
         job_id: String,
         #[arg(long)]
@@ -167,7 +167,7 @@ pub enum DisputeCommand {
         agent_id: String,
     },
     /// Dispute stage 2: call the dispute API to actually raise the dispute (calldata → sign → broadcast).
-    /// The `dispute_approved` system notification must have been received first. After completion, wait for the `job_disputed` notification.
+    /// Triggered by `dispute_approved`; `job_disputed` starts evidence preparation.
     Confirm {
         job_id: String,
         #[arg(long)]
@@ -218,31 +218,89 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
     let mut client = TaskApiClient::new();
 
     match cmd {
-        ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
-            apply::handle_apply(&mut client, &job_id, &token_amount, &token_symbol, &agent_id).await,
-        ProviderCommand::Deliver { job_id, file, deliverable_text, agent_id } =>
-            deliver::handle_deliver(&mut client, &job_id, &file, &deliverable_text, &agent_id).await,
-        ProviderCommand::AgreeRefund { job_id, agent_id } =>
-            agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await,
-        ProviderCommand::AspReject { job_id, agent_id, reason } =>
-            asp_reject::handle_asp_reject(&mut client, &job_id, &agent_id, &reason).await,
-        ProviderCommand::AcceptJobByProvider { job_id, agent_id } =>
-            provider_decision::handle_accept_job(&mut client, &job_id, &agent_id).await,
-        ProviderCommand::DeclineJobByProvider { job_id, agent_id, reason } =>
-            provider_decision::handle_decline_job(&mut client, &job_id, &agent_id, &reason).await,
-        ProviderCommand::AcceptSubscription { job_id, agent_id } =>
-            provider_decision::handle_accept_subscription(&mut client, &job_id, &agent_id).await,
-        ProviderCommand::DeclineSubscription { job_id, agent_id, reason } =>
-            provider_decision::handle_decline_subscription(&mut client, &job_id, &agent_id, &reason).await,
-        ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
-            asp_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
-        ProviderCommand::Status { job_id, agent_id } => {
-            use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_ASP};
-            common_query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_ASP).await
+        ProviderCommand::Apply {
+            job_id,
+            token_amount,
+            token_symbol,
+            agent_id,
+        } => {
+            apply::handle_apply(
+                &mut client,
+                &job_id,
+                &token_amount,
+                &token_symbol,
+                &agent_id,
+            )
+            .await
         }
-        ProviderCommand::List { status, page, limit, agent_id } => {
-            use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_ASP};
-            common_query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_ASP).await
+        ProviderCommand::Deliver {
+            job_id,
+            file,
+            deliverable_text,
+            agent_id,
+        } => {
+            deliver::handle_deliver(&mut client, &job_id, &file, &deliverable_text, &agent_id).await
+        }
+        ProviderCommand::AgreeRefund { job_id, agent_id } => {
+            agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await
+        }
+        ProviderCommand::AspReject {
+            job_id,
+            agent_id,
+            reason,
+        } => asp_reject::handle_asp_reject(&mut client, &job_id, &agent_id, &reason).await,
+        ProviderCommand::AcceptJobByProvider { job_id, agent_id } => {
+            provider_decision::handle_accept_job(&mut client, &job_id, &agent_id).await
+        }
+        ProviderCommand::DeclineJobByProvider {
+            job_id,
+            agent_id,
+            reason,
+        } => provider_decision::handle_decline_job(&mut client, &job_id, &agent_id, &reason).await,
+        ProviderCommand::AcceptSubscription { job_id, agent_id } => {
+            provider_decision::handle_accept_subscription(&mut client, &job_id, &agent_id).await
+        }
+        ProviderCommand::DeclineSubscription {
+            job_id,
+            agent_id,
+            reason,
+        } => {
+            provider_decision::handle_decline_subscription(&mut client, &job_id, &agent_id, &reason)
+                .await
+        }
+        ProviderCommand::ClaimAutoComplete { job_id, agent_id } => {
+            asp_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await
+        }
+        ProviderCommand::Status { job_id, agent_id } => {
+            use crate::commands::agent_commerce::task::common::{
+                query as common_query, AGENT_ROLE_ASP,
+            };
+            common_query::handle_status(
+                &mut client,
+                &job_id,
+                agent_id.as_deref().unwrap_or(""),
+                AGENT_ROLE_ASP,
+            )
+            .await
+        }
+        ProviderCommand::List {
+            status,
+            page,
+            limit,
+            agent_id,
+        } => {
+            use crate::commands::agent_commerce::task::common::{
+                query as common_query, AGENT_ROLE_ASP,
+            };
+            common_query::handle_list(
+                &mut client,
+                status.as_deref(),
+                page,
+                limit,
+                agent_id.as_deref().unwrap_or(""),
+                AGENT_ROLE_ASP,
+            )
+            .await
         }
 
         // account-pull claim calls common::claim inline:
@@ -277,8 +335,13 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
                 bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
             }
             let (account_id, address) = signing::resolve_wallet_by_agent_id(&agent_id).await?;
-            let tx_hash =
-                common_claim::submit_claim_and_broadcast(&mut client, &account_id, &address, &agent_id).await?;
+            let tx_hash = common_claim::submit_claim_and_broadcast(
+                &mut client,
+                &account_id,
+                &address,
+                &agent_id,
+            )
+            .await?;
             audit::log(
                 "cli",
                 "ASP/arbitration_claimed",
@@ -302,13 +365,76 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
 pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
     let mut client = TaskApiClient::new();
     match cmd {
-        DisputeCommand::Raise { job_id, reason, agent_id } =>
-            dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await,
-        DisputeCommand::Confirm { job_id, reason, agent_id } =>
-            dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &reason, &agent_id).await,
-        DisputeCommand::Upload { job_id, agent_id, role, text, files, max_files } =>
+        DisputeCommand::Raise {
+            job_id,
+            reason,
+            agent_id,
+        } => {
+            let result =
+                dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await;
+            record_dispute_command_result("raise", &job_id, &agent_id, &reason, &result);
+            result
+        }
+        DisputeCommand::Confirm {
+            job_id,
+            reason,
+            agent_id,
+        } => {
+            let result =
+                dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &reason, &agent_id)
+                    .await;
+            record_dispute_command_result("confirm", &job_id, &agent_id, &reason, &result);
+            result
+        }
+        DisputeCommand::Upload {
+            job_id,
+            agent_id,
+            role,
+            text,
+            files,
+            max_files,
+        } => {
             dispute_upload::handle_upload_evidence(
-                &mut client, &job_id, &agent_id, &role, text.as_deref(), &files, max_files,
-            ).await,
+                &mut client,
+                &job_id,
+                &agent_id,
+                &role,
+                text.as_deref(),
+                &files,
+                max_files,
+            )
+            .await
+        }
+    }
+}
+
+fn record_dispute_command_result(
+    command: &str,
+    job_id: &str,
+    agent_id: &str,
+    reason: &str,
+    result: &Result<()>,
+) {
+    let request = serde_json::json!({
+        "command": format!("agent dispute {command}"),
+        "agentId": agent_id,
+        "reason": reason,
+        "reasonChars": reason.chars().count(),
+    });
+    match result {
+        Ok(()) => crate::commands::agent_commerce::task::arbitration_trace::record(
+            "dispute-command-result",
+            job_id,
+            &request,
+            Some(&serde_json::json!({"command": command, "completed": true})),
+            None,
+        ),
+        Err(error) => crate::commands::agent_commerce::task::arbitration_trace::record(
+            "dispute-command-result",
+            job_id,
+            &request,
+            Some(&serde_json::json!({"command": command, "completed": false})),
+            Some(&format!("{error:#}")),
+        ),
     }
 }

@@ -50,8 +50,8 @@ flow.
 | Request a refund, reject a paid deliverable, check refund progress, or handle a refund-related arbitration result | `references/task-user-refund.md` + `references/task-cli-reference.md`; Refund V2 is distinct from cancellation |
 | Auto-renew, trial cancel, or deliver | §Task Marketplace |
 | View an existing User task list or ASP task list | `references/task-user-playbook.md` → `references/task-user-intent-routing.md`, §Task list |
-| View rejected ASP tasks, refund-decision candidates, or tasks that can be arbitrated (`哪些可以仲裁` / `可以仲裁的任务`) | `references/task-user-playbook.md` → `references/task-user-intent-routing.md`, §Task list; use the rejected filter |
-| View tasks with an arbitration already filed | `references/task-arbitration.md`, §Query arbitration cases; use `arbitration-list` |
+| Query rejected tasks that can be arbitrated (`哪些可以仲裁` / `可以仲裁的任务`) or pending-arbitration tasks (`可仲裁` / `待仲裁`) | `references/task-arbitration.md`, §Query intent mapping; run `onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20`; results are tasks rejected by the User and eligible for an arbitration decision |
+| Query filed arbitration cases (`仲裁列表` / `已发起仲裁` / `仲裁案件`) | `references/task-arbitration.md`, §Query arbitration cases; run `arbitration-list` |
 | View the current or a specified arbitration case's detail/progress | `references/task-arbitration.md`, §Query an arbitration detail; use `arbitration-detail` |
 | Start arbitration for a specified rejected task, or handle its refund/arbitration decision | `references/task-arbitration.md`, §Open the rejection decision; this takes precedence over generic task actions/status |
 | Other existing task actions or subscription list/detail | `references/task-user-playbook.md` |

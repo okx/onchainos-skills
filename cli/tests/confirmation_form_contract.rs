@@ -68,3 +68,21 @@ fn refund_v2_requires_a_user_authored_reason_and_explicit_confirmation() {
     assert!(USER_REFUND.contains("--confirm"));
     assert!(USER_PLAYBOOK.contains("task-user-refund.md"));
 }
+
+#[test]
+fn deliverable_review_b_reason_is_the_scoped_direct_rejection_confirmation() {
+    assert!(USER_REFUND.contains(
+        "B` together with a non-blank\n\
+User-authored reason is the User's final confirmation"
+    ));
+    assert!(USER_REFUND.contains("Handle this reply in the current user conversation"));
+    assert!(USER_REFUND.contains("refund_request_confirmation_required"));
+    assert!(USER_REFUND.contains("returned `nextAction.id=submit_refund_request`"));
+    assert!(USER_REFUND.contains("owns reason extraction, fresh preparation, execution, and"));
+    assert!(USER_REFUND.contains("give one concise localized\nconfirmation"));
+    assert!(USER_REFUND.contains("Describe it\nas submitted rather than settled"));
+    assert!(USER_REFUND.contains(
+        "onchainos agent status <jobId> --agent-id <buyerAgentId>"
+    ));
+    assert!(USER_REFUND.contains("a reason\nreceived outside that active card remains input only"));
+}
