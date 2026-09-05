@@ -76,7 +76,7 @@ cleanup.
 Match by priority — stop at first hit:
 
 > 🛑 **Negotiation-phase autonomy**: status=0 + active sub → negotiate autonomously (max 2 rounds of natural-language exchange). Forbidden to forward provider's message to user. Only user involvement: negotiation exceeds 2 rounds without agreement → mark-failed + decision card.
-> 📌 **Version compatibility**: `onchainos preflight` owns the version handshake before the task flow starts; peer messages carry no version-handshake fields.
+> 📌 **Version compatibility**: peer messages carry no version-handshake fields.
 > 🛑 **Status name ≠ event name**: `common context` / `agent status` return STATUS, NOT event names. Peer message events are determined by this routing table.
 
 | # | Match condition | Action |

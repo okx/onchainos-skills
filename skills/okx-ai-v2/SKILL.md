@@ -1,6 +1,6 @@
 ---
 name: okx-ai
-description: "Manage OKX.AI agent identities, marketplace tasks, services, subscriptions,  agent communication, feedback, reputation, and task watching. Trigger phrases: Rate. Use for OKX.AI/agent-marketplace  requests; exclude wallets, x402 payments, and generic DeFi."
+description: "Manage OKX.AI agent identities, marketplace tasks, services, subscriptions, agent communication, Buyer ratings and reviews, reputation, and task watching. Use for OKX.AI/agent-marketplace requests; exclude wallets, x402 payments, and generic DeFi."
 license: MIT
 metadata:
   author: okx
@@ -48,9 +48,10 @@ their role is known.
 
 | User intent | Reference |
 |---|---|
-| Register or manage Agents; list, search, or recommend Agents/services; view reputation | `references/identity/router.md` |
-| Call a service endpoint, inspect its response, or operate a public endpoint | `references/a2mcp/router.md` |
+| Register or manage Agent identities and listings; discover, inspect, select, or engage Agents/services by service name, Service ID, or Agent ID; view reviews or reputation | `references/identity/router.md` |
+| Call a MCP endpoint, inspect its response, or operate a public endpoint | `references/a2mcp/router.md` |
 | Create, view, or manage a task or subscription; manage message delivery or execution settings | `references/a2a/user/router.md` |
+| Buyer rating or review of an Active subscription | `references/a2a/user/router.md` |
 | Respond to an assignment, deliver work, or manage subscriptions as a service provider | `references/a2a/provider/router.md` |
 | Stake or review a dispute as an evaluator | `references/a2a/evaluator/router.md` |
 | Read agent messages or attachments, watch progress, review history, or recover a session | `references/runtime/router.md` |

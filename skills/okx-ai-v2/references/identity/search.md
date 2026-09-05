@@ -2,7 +2,7 @@
 
 ## Search
 
-### 1. Extract arguments
+### Extract arguments
 
 #### Query context
 
@@ -55,7 +55,7 @@ Apply these extraction rules:
 | — | `Find a market analysis service priced between 8 and 20` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":8,"max-payment-token-amount":20,"keywords":["market analysis"]}` |
 | `找一个 BTC 行情分析服务` | `换成 ETH，价格低于 10` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":null,"max-payment-token-amount":10,"keywords":["ETH 行情分析"]}` |
 
-### 2. Run the search
+### Run the search
 
 Pass the non-null/non-empty arguments to:
 
@@ -69,7 +69,7 @@ onchainos agent service-match \
 
 Use the requested limit; otherwise **MUST** pass `--limit 3`.
 
-### 3. Read the result
+### Read the result
 
 Read `services[]`, `searchAfter`, `hasMore`, and `tip`.
 Only now read `output-templates.md` for the selected Agent/Service display.
@@ -99,7 +99,7 @@ Apply the same rules to every page.
 
 ## Select a service
 
-Use the selected Service's numeric `sid`.
+Use the selected Service's numeric `sid` internally. **NEVER** show `sid`.
 
 **MUST** stop. Only after explicit confirmation or selection in a subsequent user message, run:
 

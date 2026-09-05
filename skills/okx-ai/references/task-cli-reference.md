@@ -1124,8 +1124,7 @@ Internal coordination for the Guide-driven Agent-direct path. The runtime Agent 
 matching Consent, and raw saved Signal, then applies the Guide before choosing a documented tool call.
 
 ```bash
-agent autotrade-direct-claim --job-id <jobId> --delivery-id <deliveryId> \
-  --amount <amount-derived-from-guide-consent-and-signal>
+agent autotrade-direct-claim --job-id <jobId> --delivery-id <deliveryId>
 
 agent autotrade-direct-finalize --job-id <jobId> --delivery-id <deliveryId> \
   --status <submitted|failed_before_submit|unknown_after_submit> --tool-id <safeToolId> \

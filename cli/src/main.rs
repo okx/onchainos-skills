@@ -150,10 +150,10 @@ pub enum Commands {
         command: Box<commands::workflows::WorkflowCommand>,
     },
 
-    /// Upgrade onchainos to the latest version
+    /// Upgrade onchainos with the package-managed installer
     Upgrade(commands::upgrade::UpgradeArgs),
 
-    /// Session-start preflight: update + verify + drift check, emit JSON
+    /// Deprecated compatibility command
     Preflight(commands::upgrade::PreflightArgs),
 
     /// AI Agent commerce: identity, tasks, chat, file attachments

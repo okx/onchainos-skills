@@ -812,9 +812,6 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long = "delivery-id")]
         delivery_id: String,
-        /// Exact amount derived by the runtime Agent from Guide, Consent, and Signal.
-        #[arg(long)]
-        amount: String,
     },
 
     /// Persist the documented result returned by an Agent-selected Skill/tool.
@@ -2087,12 +2084,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::AutotradeDirectClaim {
             job_id,
             delivery_id,
-            amount,
         } => {
             let result = task::common::autotrade::executor::claim_guide_direct(
                 &job_id,
                 &delivery_id,
-                &amount,
             )?;
             crate::output::success(result);
             Ok(())
