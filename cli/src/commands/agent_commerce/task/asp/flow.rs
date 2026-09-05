@@ -604,11 +604,13 @@ pub async fn generate_next_action(
         Event::DisputeApproved => format!(
             "[Current state] dispute_approved (dispute approve tx receipt)\n\
              [Role] ASP\n\n\
-             **Step 1 — Run the stage-2 dispute broadcast:**\n\
+             **Step 1 — Recover the arbitration reason:**\n\
+             Find the latest `[ARBITRATION_REASON_CONTEXT]` message in this task conversation whose `jobId` is `{job_id}` and `providerAgentId` is `{agent_id}`. Preserve its `reason` exactly and use its URL-safe `reasonB64` value below.\n\n\
+             **Step 2 — Run the stage-2 dispute broadcast once:**\n\
              ```bash\n\
-             onchainos agent dispute confirm {job_id} --reason \"<original stage-1 reason>\" --agent-id {agent_id}\n\
+             onchainos agent dispute confirm {job_id} --reason-b64 <reasonB64 from the matching context> --agent-id {agent_id}\n\
              ```\n\
-             Use `--reason \"\"` when the original reason is not present in this signal/session context; the stage-1 broadcast already preserved the user-authored reason. This calls POST /dispute, signs the returned uopHash, and broadcasts it. End this turn after the command completes.\n\n\
+             The matching context is required for this write. When it is unavailable, return `arbitration_reason_context_missing` and end this turn. After the command completes, end this turn.\n\n\
              [Follow-up events]\n\
              - `job_disputed` system notification starts the independent evidence-upload workflow\n"
         ),
@@ -1556,6 +1558,10 @@ mod tests {
         .await;
         assert!(approved.contains("Run the stage-2 dispute broadcast"));
         assert!(approved.contains("onchainos agent dispute confirm"));
+        assert!(approved.contains("[ARBITRATION_REASON_CONTEXT]"));
+        assert!(approved.contains("--reason-b64"));
+        assert!(approved.contains("arbitration_reason_context_missing"));
+        assert!(!approved.contains("--reason \"\""));
         assert!(approved.contains("`job_disputed` system notification starts the independent evidence-upload workflow"));
 
         let disputed = run_asp(

@@ -933,13 +933,6 @@ fn send_decision_relay(
 ) -> Result<()> {
     use sha2::{Digest, Sha256};
 
-    let relay_payload = serde_json::from_str(content)
-        .unwrap_or_else(|_| serde_json::Value::String(content.to_string()));
-    let request = serde_json::json!({
-        "sourceEvent": source_event,
-        "toAgentId": to_agent_id,
-        "content": relay_payload,
-    });
     let result = if let Some(session_key) = trusted_autotrade_session_key(job_id, source_event) {
         let message_id = format!(
             "autotrade-relay:{}",
@@ -955,39 +948,7 @@ fn send_decision_relay(
     } else {
         super::okx_a2a::session_send(job_id, to_agent_id, content)
     };
-    if arbitration::is_decision_source(source_event) {
-        let response = serde_json::json!({"delivered": result.is_ok()});
-        crate::commands::agent_commerce::task::arbitration_trace::record(
-            "decision-session-send",
-            job_id,
-            &request,
-            Some(&response),
-            result
-                .as_ref()
-                .err()
-                .map(|error| error.to_string())
-                .as_deref(),
-        );
-    }
     result
-}
-
-fn trace_arbitration_resolution(
-    stage: &str,
-    job_id: &str,
-    source_event: &str,
-    request: &serde_json::Value,
-    response: &serde_json::Value,
-) {
-    if arbitration::is_decision_source(source_event) {
-        crate::commands::agent_commerce::task::arbitration_trace::record(
-            stage,
-            job_id,
-            request,
-            Some(response),
-            None,
-        );
-    }
 }
 
 fn resolve_arbitration_choice(
@@ -1085,13 +1046,6 @@ fn print_local_arbitration_resolution(
         source_event,
         decision_id,
         selection,
-    );
-    trace_arbitration_resolution(
-        "decision-local-result",
-        job_id,
-        source_event,
-        &serde_json::json!({"role": role, "agentId": agent_id}),
-        &result,
     );
     println!(
         "{}",
@@ -1335,24 +1289,6 @@ fn handle_resolve_with_sessionkey(
         "handle_resolve_with_sessionkey: job_id={} role={} agent_id={} to_agent_id={:?} source_event={} user_reply={:?}",
         job_id, role, agent_id, to_agent_id, source_event, user_reply,
     ));
-    let trace_request = serde_json::json!({
-        "mode": "resolve-with-sessionkey",
-        "userReply": user_reply,
-        "role": role,
-        "agentId": agent_id,
-        "toAgentId": to_agent_id,
-        "sourceEvent": source_event,
-        "decisionId": decision_id,
-        "choicesJson": choices_json,
-        "expiresAt": expires_at,
-    });
-    trace_arbitration_resolution(
-        "decision-resolve-input",
-        &job_id,
-        &source_event,
-        &trace_request,
-        &serde_json::json!({"received": true}),
-    );
     // Rescue path for cards already issued with a poisoned self-addressed target:
     // normalizing here means answering such a card again still relays correctly.
     let to_agent_id = trusted_autotrade_target(&job_id, &agent_id, &source_event, to_agent_id);
@@ -1367,37 +1303,16 @@ fn handle_resolve_with_sessionkey(
             value.starts_with(&expected_prefix) && value.len() > expected_prefix.len()
         }) || choices_json.as_deref().is_none()
         {
-            trace_arbitration_resolution(
-                "decision-validation",
-                &job_id,
-                &source_event,
-                &trace_request,
-                &serde_json::json!({"decision": "blocked", "reason": "decision_metadata_missing"}),
-            );
             print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
             return Ok(());
         }
         if expires_at.is_some_and(|value| value <= Utc::now().timestamp()) {
-            trace_arbitration_resolution(
-                "decision-validation",
-                &job_id,
-                &source_event,
-                &trace_request,
-                &serde_json::json!({"decision": "blocked", "reason": "decision_expired"}),
-            );
             print_arbitration_blocked("decision_expired", &job_id, &source_event);
             return Ok(());
         }
         match arbitration::parse_choices(choices_json.as_deref(), &source_event, &job_id) {
             Ok(choices) => choices,
             Err(_) => {
-                trace_arbitration_resolution(
-                    "decision-validation",
-                    &job_id,
-                    &source_event,
-                    &trace_request,
-                    &serde_json::json!({"decision": "blocked", "reason": "decision_metadata_missing"}),
-                );
                 print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
                 return Ok(());
             }
@@ -1411,28 +1326,10 @@ fn handle_resolve_with_sessionkey(
             Ok(selection) => selection,
             Err(error) => {
                 let reason = error.reason_code();
-                trace_arbitration_resolution(
-                    "decision-validation",
-                    &job_id,
-                    &source_event,
-                    &trace_request,
-                    &serde_json::json!({"decision": "blocked", "reason": reason}),
-                );
                 print_arbitration_blocked(reason, &job_id, &source_event);
                 return Ok(());
             }
         };
-    trace_arbitration_resolution(
-        "decision-validation",
-        &job_id,
-        &source_event,
-        &trace_request,
-        &serde_json::json!({
-            "decision": "ready",
-            "selectedActionId": arbitration_selection.as_ref().map(|value| &value.action_id),
-            "params": arbitration_selection.as_ref().map(|value| &value.params),
-        }),
-    );
     if let Some(selection) = arbitration_selection.as_ref() {
         if role != "asp" {
             print_arbitration_blocked("unsupported_action", &job_id, &source_event);
@@ -1511,13 +1408,6 @@ fn handle_resolve_with_sessionkey(
             "timestamp": Utc::now().timestamp(),
         }
     });
-    trace_arbitration_resolution(
-        "decision-relay-envelope",
-        &job_id,
-        &source_event,
-        &serde_json::json!({"mode": "resolve-with-sessionkey"}),
-        &relay_envelope,
-    );
     let relay_content = serde_json::to_string(&relay_envelope)
         .unwrap_or_else(|_| format!(
             "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":{:?},\"source\":\"system\",\"jobId\":\"{}\",\"role\":\"{}\"}}}}",
@@ -1561,22 +1451,6 @@ fn handle_resolve_prompt(
         "handle_resolve_prompt: job_id={} role={} agent_id={} to_agent_id={:?} source_event={} user_reply={:?}",
         job_id, role, agent_id, to_agent_id, source_event, user_reply,
     ));
-    let trace_request = serde_json::json!({
-        "mode": "resolve-prompt",
-        "userReply": user_reply,
-        "role": role,
-        "agentId": agent_id,
-        "toAgentId": to_agent_id,
-        "sourceEvent": source_event,
-        "decisionId": decision_id,
-    });
-    trace_arbitration_resolution(
-        "decision-resolve-input",
-        &job_id,
-        &source_event,
-        &trace_request,
-        &serde_json::json!({"received": true}),
-    );
     // Same self-addressed-target rescue as `handle_resolve_with_sessionkey`.
     let to_agent_id = trusted_autotrade_target(&job_id, &agent_id, &source_event, to_agent_id);
     let relay_delivery_id = trusted_autotrade_delivery_id(&job_id, &source_event);
@@ -1588,13 +1462,6 @@ fn handle_resolve_prompt(
             value.starts_with(&prefix) && value.len() > prefix.len()
         })
     {
-        trace_arbitration_resolution(
-            "decision-validation",
-            &job_id,
-            &source_event,
-            &trace_request,
-            &serde_json::json!({"decision": "blocked", "reason": "decision_metadata_missing"}),
-        );
         print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
         return Ok(());
     }
@@ -1606,13 +1473,6 @@ fn handle_resolve_prompt(
         decision_id.as_deref(),
     );
     if arbitration::is_decision_source(&source_event) && stored_entry.is_none() {
-        trace_arbitration_resolution(
-            "decision-validation",
-            &job_id,
-            &source_event,
-            &trace_request,
-            &serde_json::json!({"decision": "blocked", "reason": "decision_metadata_missing", "activeDecisionExists": false}),
-        );
         print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
         return Ok(());
     }
@@ -1627,13 +1487,6 @@ fn handle_resolve_prompt(
             &agent_id,
             to_agent_id.as_deref(),
             decision_id.as_deref(),
-        );
-        trace_arbitration_resolution(
-            "decision-validation",
-            &job_id,
-            &source_event,
-            &trace_request,
-            &serde_json::json!({"decision": "blocked", "reason": "decision_expired"}),
         );
         print_arbitration_blocked("decision_expired", &job_id, &source_event);
         return Ok(());
@@ -1650,13 +1503,6 @@ fn handle_resolve_prompt(
             to_agent_id.as_deref(),
             decision_id.as_deref(),
         );
-        trace_arbitration_resolution(
-            "decision-validation",
-            &job_id,
-            &source_event,
-            &trace_request,
-            &serde_json::json!({"decision": "blocked", "reason": "decision_metadata_missing"}),
-        );
         print_arbitration_blocked("decision_metadata_missing", &job_id, &source_event);
         return Ok(());
     }
@@ -1672,32 +1518,10 @@ fn handle_resolve_prompt(
         Ok(selection) => selection,
         Err(error) => {
             let reason = error.reason_code();
-            trace_arbitration_resolution(
-                "decision-validation",
-                &job_id,
-                &source_event,
-                &trace_request,
-                &serde_json::json!({"decision": "blocked", "reason": reason}),
-            );
             print_arbitration_blocked(reason, &job_id, &source_event);
             return Ok(());
         }
     };
-    trace_arbitration_resolution(
-        "decision-validation",
-        &job_id,
-        &source_event,
-        &trace_request,
-        &serde_json::json!({
-            "decision": "ready",
-            "activeDecisionExists": true,
-            "storedDecisionId": stored_entry.as_ref().and_then(|entry| entry.decision_id.as_deref()),
-            "storedExpiresAt": stored_entry.as_ref().and_then(|entry| entry.expires_at),
-            "storedChoices": stored_entry.as_ref().map(|entry| &entry.choices),
-            "selectedActionId": arbitration_selection.as_ref().map(|value| &value.action_id),
-            "params": arbitration_selection.as_ref().map(|value| &value.params),
-        }),
-    );
     // Remove the current queue entry before applying the candidate. A missing-
     // field or confirmation result pushes its replacement under the same key;
     // removing after that push would delete the new card.
@@ -1785,13 +1609,6 @@ fn handle_resolve_prompt(
             "timestamp": Utc::now().timestamp(),
         }
     });
-    trace_arbitration_resolution(
-        "decision-relay-envelope",
-        &job_id,
-        &source_event,
-        &serde_json::json!({"mode": "resolve-prompt"}),
-        &relay_envelope,
-    );
     let relay_content = serde_json::to_string(&relay_envelope)
         .unwrap_or_else(|_| format!(
             "{{\"agentId\":\"{}\",\"message\":{{\"event\":\"{}\",\"data\":{:?},\"source\":\"system\",\"jobId\":\"{}\",\"role\":\"{}\"}}}}",

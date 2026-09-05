@@ -8,7 +8,9 @@ filed-case queries, and lifecycle handoffs.
 | Intent | Flow |
 |---|---|
 | View work currently eligible for arbitration | [Rejected candidates](#rejected-candidates) |
-| Respond to a specified rejection or the active refund-or-arbitration card | [Open the rejection decision](#open-the-rejection-decision) |
+| Start arbitration for a specified rejected task | [Start arbitration directly](#start-arbitration-directly) |
+| Respond to a rejection event or the active refund-or-arbitration card | [Open the rejection decision](#open-the-rejection-decision) |
+| Receive `[ARBITRATION_REASON_CONTEXT]` | [Reason handoff](#reason-handoff) |
 | View filed arbitration cases | [Query arbitration cases](#query-arbitration-cases) |
 | Inspect a case or its ruling progress | [Query an arbitration detail](#query-an-arbitration-detail) |
 
@@ -22,11 +24,13 @@ separate.
 
 Contents: [action routing](#action-routing); [protocol contract](#protocol-contract);
 [rejected candidates](#rejected-candidates);
+[start arbitration directly](#start-arbitration-directly);
 [open rejection decision](#open-the-rejection-decision);
 [deliver decision card](#deliver-the-decision-card);
 [resolve decision](#resolve-a-or-b); [query cases](#query-arbitration-cases);
 [query detail](#query-an-arbitration-detail);
-[lifecycle handoff](#lifecycle-handoff); [output templates](#output-templates).
+[reason handoff](#reason-handoff); [lifecycle handoff](#lifecycle-handoff);
+[output templates](#output-templates).
 
 ## Action routing
 
@@ -72,6 +76,34 @@ Render [View rejected candidates](#view-rejected-candidates) with the returned
 task or period fields and available pagination. A filed-case query enters
 [Query arbitration cases](#query-arbitration-cases).
 
+## Start arbitration directly
+
+Treat an explicit instruction to arbitrate a specified task as authorization
+to start arbitration. The arbitration reason completes that instruction.
+
+1. Resolve the exact `jobId` and ASP Agent ID.
+2. Find the exact task in the fresh rejected-candidate sources above. Its source
+   identifies a one-time task or subscription period and confirms current
+   eligibility.
+3. Preserve a reason supplied in the same request verbatim. When the request
+   lacks a reason, ask only for the arbitration reason and treat the next plain
+   reply as that reason.
+4. For a one-time task, run:
+
+   ```text
+   onchainos agent dispute raise <jobId> --reason "<reason>" --agent-id <aspAgentId>
+   ```
+
+5. For a subscription period, run:
+
+   ```text
+   onchainos agent subscribe-dispute <jobId> --reason "<reason>" --agent-id <aspAgentId>
+   ```
+
+6. Present the submission result and the arbitration-detail query method.
+
+Decision cards apply to event-driven rejection decisions and active cards.
+
 ## Open the rejection decision
 
 A `job_rejected` or `sub_user_reject` event opens this flow. For a structured
@@ -81,14 +113,6 @@ complete current `message` object:
 ```text
 onchainos agent next-action --role auto --agentId <envelope.agentId> \
   --message '<complete envelope.message as one JSON string>'
-```
-
-An explicit request for a specified rejected task uses a fresh progression
-call:
-
-```text
-onchainos agent next-action --role asp --agentId <aspAgentId> \
-  --message '{"event":"<job_rejected|sub_user_reject>","jobId":"<jobId>"}'
 ```
 
 Render [Decide refund or arbitration](#decide-refund-or-arbitration) from the
@@ -159,6 +183,35 @@ The complete A or B reply is the final confirmation. A executes the matching
 full-refund action. B with its reason executes the matching arbitration action
 in the current conversation.
 
+## Reason handoff
+
+For a one-time arbitration, `dispute raise` sends one local task-session
+message before broadcasting the approval transaction:
+
+```text
+[ARBITRATION_REASON_CONTEXT]
+{"version":1,"intent":"arbitration_reason_context","jobId":"<jobId>","providerAgentId":"<aspAgentId>","reason":"<exact reason>","reasonB64":"<URL-safe base64>","confirmArgs":[...]}
+```
+
+When this message arrives:
+
+1. Match `jobId` and `providerAgentId` to the current task conversation.
+2. Keep `reason` and `reasonB64` exactly in the conversation context.
+3. End the turn and continue when the matching `dispute_approved` event
+   arrives.
+
+For that `dispute_approved` event, read the latest matching context and run its
+confirmation once:
+
+```text
+onchainos agent dispute confirm <jobId> \
+  --reason-b64 <reasonB64> --agent-id <aspAgentId>
+```
+
+The CLI decodes `reasonB64` back to the exact original reason before building
+the dispute broadcast. A missing matching context returns
+`arbitration_reason_context_missing` and ends the event turn.
+
 ## Query arbitration cases
 
 Keep an explicitly supplied ASP Agent ID. In an active provider task envelope,
@@ -201,8 +254,9 @@ with fresh detail fields. Localize status with:
 ## Lifecycle handoff
 
 - A one-time B decision submits `dispute raise` in the current conversation.
-  The task sub-session receives `dispute_approved` and runs `dispute confirm`
-  once with the original reason when available.
+  The command sends the exact reason to the task sub-session, then broadcasts
+  approval. The task sub-session receives `dispute_approved` and runs
+  `dispute confirm` once with that reason.
 - `job_disputed` starts the independent evidence flow after a fresh
   `disputed` status check. That flow resolves the buyer, reads task chat
   history, attaches saved deliverables when available, uploads evidence, and

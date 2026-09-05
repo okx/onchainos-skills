@@ -15,6 +15,9 @@ const EVALUATOR_INFO_SOURCE: &str =
 const DISPUTE_LIFECYCLE_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/user/flow_lifecycle/dispute.rs");
 const TASK_COMMON_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/common/mod.rs");
+const ASP_DISPUTE_RAISE_SOURCE: &str =
+    include_str!("../src/commands/agent_commerce/task/asp/dispute_raise.rs");
+const ASP_FLOW_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/asp/flow.rs");
 
 #[test]
 fn arbitration_actions_have_one_domain_registry() {
@@ -74,6 +77,36 @@ fn arbitration_actions_have_one_domain_registry() {
     assert!(ARBITRATION_SOURCE.contains("pub fn build_decision_result"));
     assert!(ARBITRATION_SOURCE.contains("pub async fn handle_arbitration_list"));
     assert!(ARBITRATION_SOURCE.contains("pub async fn handle_arbitration_detail"));
+    assert!(ARBITRATION_REFERENCE.contains("## Start arbitration directly"));
+    let direct_flow = ARBITRATION_REFERENCE
+        .split_once("## Start arbitration directly")
+        .unwrap()
+        .1
+        .split_once("## Open the rejection decision")
+        .unwrap()
+        .0;
+    assert!(direct_flow.contains("onchainos agent dispute raise <jobId>"));
+    assert!(direct_flow.contains("onchainos agent subscribe-dispute <jobId>"));
+    assert!(!direct_flow.contains("pending-decisions-v2 request-prompt"));
+    assert!(ARBITRATION_REFERENCE.contains("Decision cards apply to event-driven"));
+    assert!(ARBITRATION_REFERENCE.contains("## Reason handoff"));
+    assert!(ARBITRATION_REFERENCE.contains("[ARBITRATION_REASON_CONTEXT]"));
+    assert!(ARBITRATION_REFERENCE.contains("--reason-b64 <reasonB64>"));
+    assert!(ASP_DISPUTE_RAISE_SOURCE.contains("common::okx_a2a::session_send"));
+    assert!(ASP_DISPUTE_RAISE_SOURCE.contains("failed to hand off the arbitration reason"));
+    assert!(
+        ASP_DISPUTE_RAISE_SOURCE
+            .find("common::okx_a2a::session_send")
+            .unwrap()
+            < ASP_DISPUTE_RAISE_SOURCE
+                .find("signing::sign_uop_and_broadcast")
+                .unwrap()
+    );
+    assert!(!ASP_DISPUTE_RAISE_SOURCE.contains("atomic_write"));
+    assert!(!ASP_DISPUTE_RAISE_SOURCE.contains("task_state_dir"));
+    assert!(ASP_FLOW_SOURCE.contains("[ARBITRATION_REASON_CONTEXT]"));
+    assert!(ASP_FLOW_SOURCE.contains("--reason-b64"));
+    assert!(!ASP_FLOW_SOURCE.contains("Use `--reason \\\"\\\"`"));
     for obsolete in [
         "src/commands/agent_commerce/task/common/dispute.rs",
         "src/commands/agent_commerce/task/common/arbitration.rs",

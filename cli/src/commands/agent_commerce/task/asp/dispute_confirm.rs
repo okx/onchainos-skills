@@ -8,6 +8,7 @@
 //! After completion, wait for the on-chain `job_disputed` notification, then call next-action to enter the evidence preparation window.
 
 use anyhow::{bail, Context, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL, Engine as _};
 use std::time::Duration;
 
 use crate::audit;
@@ -16,77 +17,49 @@ use crate::commands::agent_commerce::task::signing;
 
 const MAX_REASON_CHARS: usize = 2000;
 
+pub(super) fn decode_reason_input(
+    reason: Option<&str>,
+    reason_b64: Option<&str>,
+) -> Result<String> {
+    match (reason, reason_b64) {
+        (Some(_), Some(_)) => bail!("Pass exactly one of --reason or --reason-b64"),
+        (Some(reason), None) => Ok(reason.to_string()),
+        (None, Some(encoded)) => {
+            let bytes = BASE64_URL
+                .decode(encoded)
+                .context("--reason-b64 is not valid URL-safe base64")?;
+            String::from_utf8(bytes).context("--reason-b64 does not contain UTF-8 text")
+        }
+        (None, None) => bail!("Dispute reason is required. Pass --reason or --reason-b64."),
+    }
+}
+
 pub async fn handle_dispute_confirm(
     client: &mut TaskApiClient,
     job_id: &str,
     reason: &str,
     agent_id: &str,
 ) -> Result<()> {
-    crate::commands::agent_commerce::task::arbitration_trace::record(
-        "dispute-confirm-input",
-        job_id,
-        &serde_json::json!({
-            "command": "agent dispute confirm",
-            "agentId": agent_id,
-            "reason": reason,
-            "reasonChars": reason.chars().count(),
-        }),
-        Some(&serde_json::json!({"received": true})),
-        None,
-    );
     if agent_id.is_empty() {
         bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
+    }
+    if reason.trim().is_empty() {
+        bail!("Dispute reason is required. Pass the original arbitration reason with --reason or --reason-b64.");
     }
     if reason.chars().count() > MAX_REASON_CHARS {
         bail!("Dispute reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
     }
-    let wallet_result = signing::resolve_wallet_by_agent_id(agent_id).await;
-    match &wallet_result {
-        Ok((account_id, address)) => {
-            crate::commands::agent_commerce::task::arbitration_trace::record(
-                "dispute-confirm-wallet-resolution",
-                job_id,
-                &serde_json::json!({"agentId": agent_id}),
-                Some(&serde_json::json!({"accountId": account_id, "address": address})),
-                None,
-            );
-        }
-        Err(error) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "dispute-confirm-wallet-resolution",
-            job_id,
-            &serde_json::json!({"agentId": agent_id}),
-            None,
-            Some(&format!("{error:#}")),
-        ),
-    }
-    let (account_id, address) = wallet_result?;
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
     let body = serde_json::json!({});
 
     let dispute_path = client.endpoint(job_id, "dispute");
-    let dispute_result = client
+    let dispute_resp = client
         .post_with_identity(&dispute_path, &body, agent_id)
-        .await;
-    match &dispute_result {
-        Ok(response) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "dispute-confirm-api",
-            job_id,
-            &serde_json::json!({"path": dispute_path, "agentId": agent_id, "body": body}),
-            Some(response),
-            None,
-        ),
-        Err(error) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "dispute-confirm-api",
-            job_id,
-            &serde_json::json!({"path": dispute_path, "agentId": agent_id, "body": body}),
-            None,
-            Some(&format!("{error:#}")),
-        ),
-    }
-    let dispute_resp =
-        dispute_result.context("dispute confirm (stage 2): dispute API request failed")?;
+        .await
+        .context("dispute confirm (stage 2): dispute API request failed")?;
 
     let reason_json = serde_json::json!({ "reason": reason });
-    let dispute_tx = signing::sign_uop_and_broadcast_traced(
+    let dispute_tx = signing::sign_uop_and_broadcast(
         client,
         &dispute_resp["uopData"],
         &account_id,
@@ -95,18 +68,9 @@ pub async fn handle_dispute_confirm(
         signing::extract_biz_type(&dispute_resp),
         agent_id,
         Some(&reason_json),
-        "dispute-confirm",
     )
     .await
-        .context("dispute confirm (stage 2): dispute on-chain broadcast failed")?;
-
-    crate::commands::agent_commerce::task::arbitration_trace::record(
-        "dispute-confirm-complete",
-        job_id,
-        &serde_json::json!({"agentId": agent_id, "reason": reason}),
-        Some(&serde_json::json!({"txHash": dispute_tx, "waitFor": "job_disputed"})),
-        None,
-    );
+    .context("dispute confirm (stage 2): dispute on-chain broadcast failed")?;
 
     audit::log(
         "cli",
@@ -126,4 +90,26 @@ pub async fn handle_dispute_confirm(
     println!();
     println!("✓ Arbitration transaction submitted; wait for `job_disputed` to start the evidence workflow");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reason_b64_round_trips_exact_utf8_text() {
+        let reason = "已按要求交付，用户拒绝理由不成立";
+        let encoded = BASE64_URL.encode(reason.as_bytes());
+        assert_eq!(
+            decode_reason_input(None, Some(&encoded)).unwrap(),
+            reason
+        );
+    }
+
+    #[test]
+    fn reason_input_requires_exactly_one_source() {
+        assert!(decode_reason_input(None, None).is_err());
+        assert!(decode_reason_input(Some("reason"), Some("cmVhc29u")).is_err());
+        assert!(decode_reason_input(None, Some("%%%invalid%%%")).is_err());
+    }
 }

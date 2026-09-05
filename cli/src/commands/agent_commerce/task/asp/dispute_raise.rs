@@ -11,6 +11,7 @@
 //! reason is included in the stage-1 broadcast bizContext for the later dispute creation.
 
 use anyhow::{bail, Context, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL, Engine as _};
 use std::time::Duration;
 
 use crate::audit;
@@ -20,6 +21,38 @@ use crate::commands::agent_commerce::task::common::{
 use crate::commands::agent_commerce::task::signing;
 
 const MAX_REASON_CHARS: usize = 2000;
+const ARBITRATION_REASON_CONTEXT: &str = "[ARBITRATION_REASON_CONTEXT]";
+
+fn build_reason_handoff(
+    job_id: &str,
+    provider_agent_id: &str,
+    reason: &str,
+) -> String {
+    let reason_b64 = BASE64_URL.encode(reason.as_bytes());
+    let context = serde_json::json!({
+        "version": 1,
+        "intent": "arbitration_reason_context",
+        "jobId": job_id,
+        "providerAgentId": provider_agent_id,
+        "reason": reason,
+        "reasonB64": reason_b64.clone(),
+        "confirmArgs": [
+            "agent",
+            "dispute",
+            "confirm",
+            job_id,
+            "--reason-b64",
+            reason_b64,
+            "--agent-id",
+            provider_agent_id,
+        ],
+    });
+    format!(
+        "{ARBITRATION_REASON_CONTEXT}\n{context}\n\
+         Keep this exact reason in the current task conversation and end this turn. \
+         When the matching dispute_approved event arrives, execute confirmArgs once."
+    )
+}
 
 pub async fn handle_dispute_raise(
     client: &mut TaskApiClient,
@@ -27,18 +60,6 @@ pub async fn handle_dispute_raise(
     reason: &str,
     agent_id: &str,
 ) -> Result<()> {
-    crate::commands::agent_commerce::task::arbitration_trace::record(
-        "dispute-raise-input",
-        job_id,
-        &serde_json::json!({
-            "command": "agent dispute raise",
-            "agentId": agent_id,
-            "reason": reason,
-            "reasonChars": reason.chars().count(),
-        }),
-        Some(&serde_json::json!({"received": true})),
-        None,
-    );
     if agent_id.is_empty() {
         bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
@@ -48,54 +69,15 @@ pub async fn handle_dispute_raise(
     if reason.chars().count() > MAX_REASON_CHARS {
         bail!("Dispute reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
     }
-    let wallet_result = signing::resolve_wallet_by_agent_id(agent_id).await;
-    match &wallet_result {
-        Ok((account_id, address)) => {
-            crate::commands::agent_commerce::task::arbitration_trace::record(
-                "dispute-raise-wallet-resolution",
-                job_id,
-                &serde_json::json!({"agentId": agent_id}),
-                Some(&serde_json::json!({"accountId": account_id, "address": address})),
-                None,
-            );
-        }
-        Err(error) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "dispute-raise-wallet-resolution",
-            job_id,
-            &serde_json::json!({"agentId": agent_id}),
-            None,
-            Some(&format!("{error:#}")),
-        ),
-    }
-    let (account_id, address) = wallet_result?;
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
 
     // Dispute deposit precheck: wallet's matching token balance must be ≥ 5% of the job amount.
     // Insufficient balance bails immediately to avoid wasting gas on later approve / dispute on-chain txs.
     let task_path = client.task_path(job_id);
-    let task_result = client.get_with_identity(&task_path, agent_id).await;
-    match &task_result {
-        Ok(response) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "dispute-raise-task-detail",
-            job_id,
-            &serde_json::json!({"path": task_path, "agentId": agent_id}),
-            Some(&serde_json::json!({
-                "status": response.get("status"),
-                "tokenAmount": response.get("tokenAmount"),
-                "tokenSymbol": response.get("tokenSymbol"),
-                "providerAgentId": response.get("providerAgentId"),
-            })),
-            None,
-        ),
-        Err(error) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "dispute-raise-task-detail",
-            job_id,
-            &serde_json::json!({"path": task_path, "agentId": agent_id}),
-            None,
-            Some(&format!("{error:#}")),
-        ),
-    }
-    let task_resp =
-        task_result.context("dispute raise: failed to fetch task details (deposit precheck)")?;
+    let task_resp = client
+        .get_with_identity(&task_path, agent_id)
+        .await
+        .context("dispute raise: failed to fetch task details (deposit precheck)")?;
     let task_amount: f64 = task_resp["tokenAmount"]
         .as_str()
         .unwrap_or("0")
@@ -104,35 +86,7 @@ pub async fn handle_dispute_raise(
     let token_symbol = task_resp["tokenSymbol"].as_str().unwrap_or("?");
     if task_amount > 0.0 {
         let required = task_amount * 0.05;
-        let balance_result =
-            common::ensure_sufficient_balance_at(required, token_symbol, &address).await;
-        match &balance_result {
-            Ok(()) => crate::commands::agent_commerce::task::arbitration_trace::record(
-                "dispute-raise-deposit-check",
-                job_id,
-                &serde_json::json!({
-                    "address": address,
-                    "taskAmount": task_amount,
-                    "requiredAmount": required,
-                    "tokenSymbol": token_symbol,
-                }),
-                Some(&serde_json::json!({"sufficient": true})),
-                None,
-            ),
-            Err(error) => crate::commands::agent_commerce::task::arbitration_trace::record(
-                "dispute-raise-deposit-check",
-                job_id,
-                &serde_json::json!({
-                    "address": address,
-                    "taskAmount": task_amount,
-                    "requiredAmount": required,
-                    "tokenSymbol": token_symbol,
-                }),
-                Some(&serde_json::json!({"sufficient": false})),
-                Some(&format!("{error:#}")),
-            ),
-        }
-        if let Err(e) = balance_result {
+        if let Err(e) = common::ensure_sufficient_balance_at(required, token_symbol, &address).await {
             // Preserve the dispute-bond framing, then enrich with the ASP signing
             // account's deposit address + stderr QR (FR-2 — explicit address, no
             // agentId resolution). enrich_blocking_at folds the full `{:#}` chain
@@ -149,30 +103,27 @@ pub async fn handle_dispute_raise(
 
     // POST /dispute/approve → uopData → sign + broadcast
     let approve_path = client.endpoint(job_id, "dispute/approve");
-    let approve_result = client
+    let approve_resp = client
         .post_with_identity(&approve_path, &body, agent_id)
-        .await;
-    match &approve_result {
-        Ok(response) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "dispute-raise-approve-api",
-            job_id,
-            &serde_json::json!({"path": approve_path, "agentId": agent_id, "body": body}),
-            Some(response),
-            None,
-        ),
-        Err(error) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "dispute-raise-approve-api",
-            job_id,
-            &serde_json::json!({"path": approve_path, "agentId": agent_id, "body": body}),
-            None,
-            Some(&format!("{error:#}")),
-        ),
-    }
-    let approve_resp =
-        approve_result.context("dispute raise (stage 1): dispute/approve API request failed")?;
+        .await
+        .context("dispute raise (stage 1): dispute/approve API request failed")?;
+
+    // Hand the exact reason to the existing task sub-session before the approve
+    // transaction is broadcast. The future `dispute_approved` event is delivered
+    // to that session, so ordering the local dispatch first guarantees that the
+    // stage-2 command can reuse the main-session reason without machine storage.
+    let buyer_agent_id = task_resp["buyerAgentId"]
+        .as_str()
+        .or_else(|| task_resp["userAgentId"].as_str())
+        .filter(|value| !value.trim().is_empty())
+        .context("dispute raise: task detail missing buyerAgentId for reason handoff")?;
+    let reason_handoff = build_reason_handoff(job_id, agent_id, reason);
+    common::okx_a2a::session_send(job_id, Some(buyer_agent_id), &reason_handoff).context(
+        "dispute raise: failed to hand off the arbitration reason to the task session; approve transaction was not broadcast",
+    )?;
 
     let reason_json = serde_json::json!({ "reason": reason });
-    let approve_tx = signing::sign_uop_and_broadcast_traced(
+    let approve_tx = signing::sign_uop_and_broadcast(
         client,
         &approve_resp["uopData"],
         &account_id,
@@ -181,18 +132,9 @@ pub async fn handle_dispute_raise(
         signing::extract_biz_type(&approve_resp),
         agent_id,
         Some(&reason_json),
-        "dispute-raise",
     )
     .await
     .context("dispute raise (stage 1): approve on-chain broadcast failed")?;
-
-    crate::commands::agent_commerce::task::arbitration_trace::record(
-        "dispute-raise-complete",
-        job_id,
-        &serde_json::json!({"agentId": agent_id, "reason": reason}),
-        Some(&serde_json::json!({"txHash": approve_tx, "waitFor": "dispute_approved"})),
-        None,
-    );
 
     audit::log(
         "cli",
@@ -208,11 +150,12 @@ pub async fn handle_dispute_raise(
         None,
     );
 
-    println!("✓ Dispute stage 1: approve on-chain (token approved to the dispute contract)");
-    println!("  Reason logged: {reason}");
+    println!("✓ Arbitration request submitted");
     println!("  txHash: {approve_tx}");
-    println!();
-    println!("✓ Stage 1 broadcast submitted; the `dispute_approved` signal will continue with `dispute confirm`");
+    println!("  Progress will update in this task.");
+    println!(
+        "  Check: onchainos agent arbitration-detail {job_id} --agent-id {agent_id}"
+    );
     Ok(())
 }
 
@@ -234,5 +177,34 @@ fn print_dispute_funding_block_from_error(err: anyhow::Error) -> Result<()> {
             .into())
         }
         None => Err(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reason_handoff_preserves_raw_reason_and_safe_confirm_args() {
+        let reason = "已交付：用户说 \"不满意\"; $(touch /tmp/nope)";
+        let content = build_reason_handoff("job-1", "asp-1", reason);
+        let mut lines = content.lines();
+        assert_eq!(lines.next(), Some(ARBITRATION_REASON_CONTEXT));
+        let payload: serde_json::Value =
+            serde_json::from_str(lines.next().expect("context json")).unwrap();
+        assert_eq!(payload["jobId"], "job-1");
+        assert_eq!(payload["providerAgentId"], "asp-1");
+        assert_eq!(payload["reason"], reason);
+
+        let encoded = payload["reasonB64"].as_str().unwrap();
+        assert!(encoded
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')));
+        assert_eq!(payload["confirmArgs"][5], encoded);
+        assert_eq!(
+            BASE64_URL.decode(encoded).unwrap(),
+            reason.as_bytes(),
+            "the task session must recover the exact main-session reason"
+        );
     }
 }

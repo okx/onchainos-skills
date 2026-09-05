@@ -170,8 +170,16 @@ pub enum DisputeCommand {
     /// Triggered by `dispute_approved`; `job_disputed` starts evidence preparation.
     Confirm {
         job_id: String,
-        #[arg(long)]
-        reason: String,
+        /// Original arbitration reason in plain text.
+        #[arg(long, required_unless_present = "reason_b64", conflicts_with = "reason_b64")]
+        reason: Option<String>,
+        /// URL-safe base64 form supplied by the task-session reason handoff.
+        #[arg(
+            long = "reason-b64",
+            required_unless_present = "reason",
+            conflicts_with = "reason"
+        )]
+        reason_b64: Option<String>,
         /// ASP agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
@@ -369,22 +377,16 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
             job_id,
             reason,
             agent_id,
-        } => {
-            let result =
-                dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await;
-            record_dispute_command_result("raise", &job_id, &agent_id, &reason, &result);
-            result
-        }
+        } => dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await,
         DisputeCommand::Confirm {
             job_id,
             reason,
+            reason_b64,
             agent_id,
         } => {
-            let result =
-                dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &reason, &agent_id)
-                    .await;
-            record_dispute_command_result("confirm", &job_id, &agent_id, &reason, &result);
-            result
+            let reason =
+                dispute_confirm::decode_reason_input(reason.as_deref(), reason_b64.as_deref())?;
+            dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &reason, &agent_id).await
         }
         DisputeCommand::Upload {
             job_id,
@@ -405,36 +407,5 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
             )
             .await
         }
-    }
-}
-
-fn record_dispute_command_result(
-    command: &str,
-    job_id: &str,
-    agent_id: &str,
-    reason: &str,
-    result: &Result<()>,
-) {
-    let request = serde_json::json!({
-        "command": format!("agent dispute {command}"),
-        "agentId": agent_id,
-        "reason": reason,
-        "reasonChars": reason.chars().count(),
-    });
-    match result {
-        Ok(()) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "dispute-command-result",
-            job_id,
-            &request,
-            Some(&serde_json::json!({"command": command, "completed": true})),
-            None,
-        ),
-        Err(error) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "dispute-command-result",
-            job_id,
-            &request,
-            Some(&serde_json::json!({"command": command, "completed": false})),
-            Some(&format!("{error:#}")),
-        ),
     }
 }

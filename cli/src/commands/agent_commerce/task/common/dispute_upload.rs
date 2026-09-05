@@ -50,20 +50,6 @@ pub async fn handle_upload_evidence(
     explicit_file_paths: &[String],
     max_files: Option<usize>,
 ) -> Result<()> {
-    crate::commands::agent_commerce::task::arbitration_trace::record(
-        "evidence-upload-input",
-        job_id,
-        &serde_json::json!({
-            "command": "agent dispute upload",
-            "agentId": agent_id,
-            "role": role,
-            "text": text,
-            "explicitFiles": explicit_file_paths,
-            "maxFiles": max_files,
-        }),
-        Some(&serde_json::json!({"received": true})),
-        None,
-    );
     if role != "user" && role != "asp" {
         bail!("--role must be 'user' or 'asp', got '{role}'");
     }
@@ -305,41 +291,9 @@ pub async fn handle_upload_evidence(
 
     let path = client.endpoint(job_id, "evidence/upload");
     let content_type = format!("multipart/form-data; boundary={boundary}");
-    let upload_request = serde_json::json!({
-        "path": path,
-        "agentId": agent_id,
-        "role": role,
-        "text": text_clean,
-        "explicitFiles": explicit_file_paths,
-        "manifestFiles": manifest_filenames,
-        "attachedFiles": parts.iter().map(|part| serde_json::json!({
-            "filename": part.filename,
-            "mime": part.mime,
-            "bytes": part.bytes.len(),
-        })).collect::<Vec<_>>(),
-        "skippedManifestFiles": skipped_manifest_missing,
-        "multipartBytes": body.len(),
-    });
-    let upload_result = client
+    client
         .raw_post_with_identity(&path, body, &content_type, agent_id)
-        .await;
-    match &upload_result {
-        Ok(response) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "evidence-upload-api",
-            job_id,
-            &upload_request,
-            Some(response),
-            None,
-        ),
-        Err(error) => crate::commands::agent_commerce::task::arbitration_trace::record(
-            "evidence-upload-api",
-            job_id,
-            &upload_request,
-            None,
-            Some(&format!("{error:#}")),
-        ),
-    }
-    upload_result?;
+        .await?;
 
     println!("✓ Evidence uploaded (off-chain, effective within 1h preparation window)");
     println!("  jobId:    {job_id}");

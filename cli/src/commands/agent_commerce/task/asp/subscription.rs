@@ -430,12 +430,10 @@ pub async fn handle_agree_refund(
         None,
     );
 
-    println!("✓ Agreed to refund this subscription period, waiting for on-chain confirmation");
+    println!("✓ Full refund for this subscription period submitted");
     println!("  txHash: {tx_hash}");
-    println!();
-    println!(
-        "⚠️  Next steps are driven by system notifications — do not proactively message the buyer."
-    );
+    println!("  Progress will update in this task.");
+    println!("  Check: onchainos agent status {job_id} --agent-id {agent_id}");
     Ok(())
 }
 
@@ -552,11 +550,11 @@ pub async fn handle_dispute(
         None,
     );
 
-    println!("✓ Subscription dispute raised (approve+create), waiting for on-chain confirmation");
+    println!("✓ Arbitration request submitted");
     println!("  txHash: {tx_hash}");
-    println!();
+    println!("  Progress will update in this task.");
     println!(
-        "⚠️  Next steps are driven by system notifications — do not proactively message the buyer."
+        "  Check: onchainos agent arbitration-detail {job_id} --agent-id {agent_id}"
     );
     Ok(())
 }

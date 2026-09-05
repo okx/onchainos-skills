@@ -276,48 +276,6 @@ pub async fn sign_uop_and_broadcast_full(
     agent_id: &str,
     biz_context_extra: Option<&Value>,
 ) -> Result<Value> {
-    sign_uop_and_broadcast_full_inner(
-        client,
-        uop_data,
-        account_id,
-        address,
-        job_id,
-        biz_type,
-        agent_id,
-        biz_context_extra,
-        None,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn sign_uop_and_broadcast_full_inner(
-    client: &mut TaskApiClient,
-    uop_data: &Value,
-    account_id: &str,
-    address: &str,
-    job_id: &str,
-    biz_type: i64,
-    agent_id: &str,
-    biz_context_extra: Option<&Value>,
-    trace_stage: Option<&str>,
-) -> Result<Value> {
-    if let Some(stage) = trace_stage {
-        crate::commands::agent_commerce::task::arbitration_trace::record(
-            &format!("{stage}-sign-input"),
-            job_id,
-            &serde_json::json!({
-                "accountId": account_id,
-                "address": address,
-                "agentId": agent_id,
-                "bizType": biz_type,
-                "bizContextExtra": biz_context_extra,
-                "uopData": uop_data,
-            }),
-            Some(&serde_json::json!({"accepted": !uop_data.is_null()})),
-            None,
-        );
-    }
     if uop_data.is_null() {
         bail!("backend did not return uopData; cannot sign and broadcast");
     }
@@ -353,49 +311,14 @@ async fn sign_uop_and_broadcast_full_inner(
     )
     .await?;
     broadcast_body["bizContext"] = merge_biz_context(job_id, biz_type, biz_context_extra);
-    if let Some(stage) = trace_stage {
-        crate::commands::agent_commerce::task::arbitration_trace::record(
-            &format!("{stage}-sign-output"),
-            job_id,
-            &serde_json::json!({"bizType": biz_type}),
-            Some(&serde_json::json!({
-                "signed": true,
-                "broadcastBody": broadcast_body,
-            })),
-            None,
-        );
-    }
 
     // `.context` (not `anyhow!("...: {e}")`) so the underlying `ApiCodeError`
     // survives in the chain so callers can recover the backend `code` + `msg`.
     // `{e:#}` still renders "broadcast failed: …".
-    let broadcast_result = client
+    let bc_resp = client
         .post_mutation_with_identity(client.broadcast_path(), &broadcast_body, agent_id)
-        .await;
-    if let Some(stage) = trace_stage {
-        let request = serde_json::json!({
-            "path": client.broadcast_path(),
-            "agentId": agent_id,
-            "body": broadcast_body,
-        });
-        match &broadcast_result {
-            Ok(response) => crate::commands::agent_commerce::task::arbitration_trace::record(
-                &format!("{stage}-task-broadcast"),
-                job_id,
-                &request,
-                Some(response),
-                None,
-            ),
-            Err(error) => crate::commands::agent_commerce::task::arbitration_trace::record(
-                &format!("{stage}-task-broadcast"),
-                job_id,
-                &request,
-                None,
-                Some(&format!("{error:#}")),
-            ),
-        }
-    }
-    let bc_resp = broadcast_result.context("broadcast failed")?;
+        .await
+        .context("broadcast failed")?;
 
     Ok(bc_resp.get(0).cloned().unwrap_or(Value::Null))
 }
@@ -426,35 +349,6 @@ pub async fn sign_uop_and_broadcast(
         biz_type,
         agent_id,
         biz_context_extra,
-    )
-    .await?;
-
-    Ok(first["txHash"].as_str().unwrap_or("pending").to_string())
-}
-
-/// Arbitration-only variant that emits redacted step files for local flow testing.
-#[allow(clippy::too_many_arguments)]
-pub async fn sign_uop_and_broadcast_traced(
-    client: &mut TaskApiClient,
-    uop_data: &Value,
-    account_id: &str,
-    address: &str,
-    job_id: &str,
-    biz_type: i64,
-    agent_id: &str,
-    biz_context_extra: Option<&Value>,
-    trace_stage: &str,
-) -> Result<String> {
-    let first = sign_uop_and_broadcast_full_inner(
-        client,
-        uop_data,
-        account_id,
-        address,
-        job_id,
-        biz_type,
-        agent_id,
-        biz_context_extra,
-        Some(trace_stage),
     )
     .await?;
 

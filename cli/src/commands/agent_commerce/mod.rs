@@ -2934,20 +2934,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     anyhow::bail!(msg);
                 }
             }
-            let trace_arbitration_flow = task::arbitration_trace::is_flow_event(&event);
-            if trace_arbitration_flow {
-                task::arbitration_trace::record(
-                    "next-action-input",
-                    &job_id,
-                    &serde_json::json!({
-                        "agentId": agent_id,
-                        "requestedRole": role,
-                        "message": parsed_message,
-                    }),
-                    Some(&serde_json::json!({"parsed": true})),
-                    None,
-                );
-            }
             if DEBUG_LOG {
                 eprintln!(
                     "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}",
@@ -2983,19 +2969,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                      ```\n\
                      → 结束 turn。"
                 );
-                if trace_arbitration_flow {
-                    task::arbitration_trace::record_text(
-                        "next-action-output",
-                        &job_id,
-                        &serde_json::json!({
-                            "event": event,
-                            "code": code,
-                            "outputBoundary": "stdout_to_invoking_session",
-                        }),
-                        &failure,
-                        None,
-                    );
-                }
                 println!("{failure}");
                 return Ok(());
             }
@@ -3025,15 +2998,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             if DEBUG_LOG {
                 eprintln!("[next-action] resolved role: {role} -> {resolved_role}");
-            }
-            if trace_arbitration_flow {
-                task::arbitration_trace::record(
-                    "next-action-role-resolution",
-                    &job_id,
-                    &serde_json::json!({"requestedRole": role, "agentId": agent_id}),
-                    Some(&serde_json::json!({"resolvedRole": resolved_role})),
-                    None,
-                );
             }
 
             // ── job_created API fallback: when --provider is absent and no local file exists,
@@ -3102,36 +3066,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .await
             };
             if let Some(w) = freshness_warning {
-                if trace_arbitration_flow {
-                    task::arbitration_trace::record_text(
-                        "next-action-freshness",
-                        &job_id,
-                        &serde_json::json!({
-                            "event": event,
-                            "role": resolved_role,
-                            "outputBoundary": "stdout_to_invoking_session",
-                        }),
-                        &w,
-                        None,
-                    );
-                }
                 println!("{w}");
                 return Ok(());
-            }
-            if trace_arbitration_flow {
-                task::arbitration_trace::record(
-                    "next-action-freshness",
-                    &job_id,
-                    &serde_json::json!({"event": event, "role": resolved_role}),
-                    Some(&serde_json::json!({
-                        "accepted": true,
-                        "status": prefetched.as_ref().and_then(|value| value.status),
-                        "jobType": prefetched.as_ref().and_then(|value| value.job_type),
-                        "providerAgentId": prefetched.as_ref().and_then(|value| value.provider_agent_id.as_deref()),
-                        "buyerAgentId": prefetched.as_ref().and_then(|value| value.user_agent_id.as_deref()),
-                    })),
-                    None,
-                );
             }
             let payment_mode = prefetched.as_ref().and_then(|p| p.payment_mode);
             let title_ref = job_title.as_deref();
@@ -3218,20 +3154,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
                 other => anyhow::bail!("--role 必须是 asp/user/evaluator，当前: {other}"),
             };
-            if trace_arbitration_flow {
-                task::arbitration_trace::record_text(
-                    "next-action-output",
-                    &job_id,
-                    &serde_json::json!({
-                        "event": event,
-                        "role": resolved_role,
-                        "agentId": agent_id,
-                        "outputBoundary": "stdout_to_invoking_session",
-                    }),
-                    &prompt,
-                    None,
-                );
-            }
             println!("{prompt}");
             Ok(())
         }
@@ -4690,39 +4612,6 @@ async fn check_status_freshness(
     // Non-refund events keep their established single authoritative endpoint.
     let detail_path = detail_path_for_event(&c, job_id, job_status_or_event);
     let detail_result = c.get_with_identity(&detail_path, agent_id).await;
-    if task::arbitration_trace::is_flow_event(job_status_or_event) {
-        let request = serde_json::json!({
-            "event": job_status_or_event,
-            "role": role,
-            "agentId": agent_id,
-            "path": detail_path,
-            "message": message,
-        });
-        match &detail_result {
-            Ok(detail) => task::arbitration_trace::record(
-                "next-action-freshness-query",
-                job_id,
-                &request,
-                Some(&serde_json::json!({
-                    "status": detail.get("status"),
-                    "subStatus": detail.get("subStatus"),
-                    "periodIndex": detail.get("periodIndex"),
-                    "subStartTime": detail.get("subStartTime"),
-                    "subEndTime": detail.get("subEndTime"),
-                    "providerAgentId": detail.get("providerAgentId"),
-                    "buyerAgentId": detail.get("buyerAgentId"),
-                })),
-                None,
-            ),
-            Err(error) => task::arbitration_trace::record(
-                "next-action-freshness-query",
-                job_id,
-                &request,
-                None,
-                Some(&format!("{error:#}")),
-            ),
-        }
-    }
     let resp = match detail_result {
         Ok(detail) => detail,
         Err(error) if arbitration_source.is_some() => {

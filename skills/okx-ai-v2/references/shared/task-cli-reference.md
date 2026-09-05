@@ -1271,6 +1271,11 @@ agent subscribe-dispute <jobId> --agent-id <aspAgentId> [--reason <text>]
 
 Dispute step 1: ERC-20 approve dispute deposit (params provided by `next-action` playbook)
 
+Before broadcasting approval, the command sends an
+`[ARBITRATION_REASON_CONTEXT]` message to the matching local task session. A
+successful handoff makes the original reason available when
+`dispute_approved` triggers step 2.
+
 > **Insufficient-bond output:** when under-funded, this command returns blocked funding-notice JSON with `--reason dispute-bond`. If `fundingNoticeCommand` exists, run it; otherwise show `balanceWarning`.
 
 ```
@@ -1283,10 +1288,13 @@ Dispute step 2: create dispute on-chain (params provided by `next-action` playbo
 
 ```
 agent dispute confirm <jobId> --reason "<txt>" --agent-id <providerAgentId>
+agent dispute confirm <jobId> --reason-b64 <URL-safe-base64> --agent-id <providerAgentId>
 ```
 
-`--reason` is a required CLI flag. These ASP commands are not User Agent refund
-actions; Refund V2 reaches arbitration only after the ASP opens a dispute.
+Pass exactly one reason form. `--reason-b64` is the task-session handoff form
+and decodes to the original UTF-8 reason before broadcast. These ASP commands
+are not User Agent refund actions; Refund V2 reaches arbitration only after the
+ASP opens a dispute.
 
 ---
 
