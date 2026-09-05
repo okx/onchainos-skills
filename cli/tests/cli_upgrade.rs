@@ -1,17 +1,12 @@
-//! Offline integration coverage for the legacy `upgrade` command (NFR-1: kept
-//! one release cycle after `preflight --force` ships). Verifies the command
-//! still parses and its `--help` lists the documented flags, so existing scripts
-//! calling `onchainos upgrade [--check|--force|…]` keep working.
+//! Integration coverage for the package-managed `upgrade` command surface.
 
 mod common;
 
 use common::onchainos;
 
-// IT-007: the older update command still works so existing scripts keep running.
-// The legacy `upgrade` entry is unchanged this release; `upgrade --help` still
-// lists its flags, including `--check`. clap prints help to stdout and exits 0.
+// `upgrade` intentionally has no legacy flags: the installer owns its behavior.
 #[test]
-fn upgrade_help_lists_check_flag() {
+fn upgrade_help_has_no_legacy_flags() {
     let output = onchainos()
         .args(["upgrade", "--help"])
         .output()
@@ -24,7 +19,7 @@ fn upgrade_help_lists_check_flag() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("--check"),
-        "upgrade --help must still list the --check flag: {stdout}"
+        !stdout.contains("--check") && !stdout.contains("--force"),
+        "upgrade --help must not expose retired flags: {stdout}"
     );
 }

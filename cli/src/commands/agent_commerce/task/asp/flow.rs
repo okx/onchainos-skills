@@ -599,8 +599,9 @@ pub async fn generate_next_action(
         ),
 
         // ─── Scene 6.3.5: Dispute phase 1 approve confirmed on-chain → run phase 2 dispute ─
-        Event::DisputeApproved => format!(
-            "[Current state] dispute_approved (dispute approve tx receipt)\n\
+        Event::DisputeApproved => match prefetched.and_then(|task| task.job_type) {
+            Some(0) => format!(
+                "[Current state] dispute_approved (dispute approve tx receipt)\n\
              [Role] ASP\n\n\
              **Step 1 — Call the CLI to run phase 2 dispute (on-chain):**\n\
              ```bash\n\
@@ -612,7 +613,20 @@ pub async fn generate_next_action(
              - Do NOT submit evidence in the same turn (evidence goes through dispute upload; must wait for the `job_disputed` notification + user-provided content)\n\n\
              [Follow-up events]\n\
              - `job_disputed` system notification\n"
-        ),
+            ),
+            Some(1) => format!(
+                "[Current state] dispute_approved (subscription compatibility event)\n\
+                 [Role] ASP (subscription)\n\n\
+                 This subscription uses the one-step `subscribe-dispute` flow (`approveAndCreateDispute`). Do NOT call `dispute confirm` or submit another dispute transaction. End this turn idempotently and wait for `sub_asp_dispute` / fresh subscription status.\n\
+                 jobId={job_id}\n"
+            ),
+            Some(other) => format!(
+                "[next-action blocked] dispute_approved requires a one-time task with jobType=0; fresh detail returned unsupported jobType={other}. Do NOT call `dispute confirm`. jobId={job_id}\n"
+            ),
+            None => format!(
+                "[next-action blocked] Cannot verify jobType=0 for dispute_approved. Do NOT call `dispute confirm`; fetch fresh task detail and retry. jobId={job_id}\n"
+            ),
+        },
 
         // ─── Scene 6.2: User chose to agree to refund (user-instruction pseudo-event) ───
         Event::Other(ref s) if s == "agree_refund" => format!(
@@ -1587,6 +1601,39 @@ mod tests {
             Some(&msg),
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn one_time_dispute_approved_routes_to_confirm() {
+        let task = notification_task("One-time work", 0, "1", "USDT", 3);
+        let output = run_asp_with_task(
+            "dispute_approved",
+            json!({"event": "dispute_approved"}),
+            &task,
+        )
+        .await;
+        assert!(output.contains("onchainos agent dispute confirm"));
+    }
+
+    #[tokio::test]
+    async fn subscription_dispute_approved_never_routes_to_confirm() {
+        let task = notification_task("Subscription", 1, "1", "USDT", 4);
+        let output = run_asp_with_task(
+            "dispute_approved",
+            json!({"event": "dispute_approved"}),
+            &task,
+        )
+        .await;
+        assert!(output.contains("subscription compatibility event"));
+        assert!(output.contains("Do NOT call `dispute confirm`"));
+        assert!(!output.contains("onchainos agent dispute confirm"));
+    }
+
+    #[tokio::test]
+    async fn dispute_approved_without_job_type_fails_closed() {
+        let output = run_asp("dispute_approved", json!({"event": "dispute_approved"})).await;
+        assert!(output.contains("Cannot verify jobType=0"));
+        assert!(!output.contains("onchainos agent dispute confirm"));
     }
 
     #[tokio::test]
