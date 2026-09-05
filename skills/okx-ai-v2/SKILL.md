@@ -49,7 +49,7 @@ their role is known.
 | Intent | Reference |
 |---|---|
 | Register or manage Agent identities and listings; discover, inspect, select, or engage Agents/services by service name, Service ID, or Agent ID; view reviews or reputation | `references/identity/router.md` |
-| Call a MCP endpoint, inspect its response, or operate a public endpoint | `references/a2mcp/router.md` |
+| Invoke a confirmed A2MCP service or inspect its synchronous result | `references/a2mcp/router.md` |
 | Review rejected work, approve a full refund, open arbitration, or inspect arbitration progress | `references/a2a/provider/router.md` |
 | Create, view, or manage a task or subscription; manage message delivery or execution settings | `references/a2a/user/router.md` |
 | Buyer rating or review of an Active subscription | `references/a2a/user/router.md` |
@@ -65,7 +65,24 @@ linked file means the installation is incomplete—report it and stop.
 ## Task progression
 
 Treat `phase`, `decision`, `reason`, `nextAction`, and `payload` as the CLI's
-progression contract. After—not before—a result returns `nextAction`, read
+progression contract.
+
+Once a flow enters through `invoke_a2mcp`, the V2 A2MCP references own its
+subsequent results, including results with an empty `nextAction`, until the
+first of these boundaries: `endpoint_result/free_result`, handoff of
+`execute_a2mcp_payment` to the payment protocol, user selection of
+`cancel_a2mcp`, or a blocked `invocation_recovery`. Clear the active A2MCP
+context at that boundary and route later results afresh.
+
+Also treat a result as A2MCP only when an object in `nextAction[]` has an `id`
+matching one of these values: `invoke_a2mcp`, `provide_a2mcp_params`,
+`select_a2mcp_token`, `fund_a2mcp_token`, `resume_a2mcp_after_funding`,
+`confirm_a2mcp_free`, `confirm_a2mcp_payment`, `execute_a2mcp_payment`, or
+`cancel_a2mcp`. For an active or action-identified A2MCP result, read only
+[`references/a2mcp/router.md`](references/a2mcp/router.md); do not load shared
+A2A action routing or templates.
+
+For every non-A2MCP result, after—not before—it returns `nextAction`, read
 [`references/shared/task-action-routing.md`](references/shared/task-action-routing.md)
 and then only the selected action leaf. Let that leaf own confirmation and
 rendering. If it has no domain template, read the small shared

@@ -98,13 +98,21 @@ pub(super) async fn run_probe(args: &ProbeArgs) -> Result<ProbeDecision> {
             }
             Ok(input_required_decision(input, required))
         }
-        HttpOutcome::Free { status, body } => Ok(ProbeDecision {
-            phase: "endpoint_result".to_string(),
-            decision: "ready".to_string(),
-            reason: "free_result".to_string(),
-            next_action: Vec::new(),
-            payload: json!({"schemaVersion":1,"serviceId":input.snapshot.service_id,"statusCode":status,"result":body}),
-        }),
+        HttpOutcome::Free { status, body } => {
+            let stored = store_free_result(
+                FreeResultInput {
+                    service_id: input.snapshot.service_id.clone(),
+                    service_name: input.snapshot.service_name.clone(),
+                    endpoint: input.snapshot.endpoint.to_string(),
+                    method: input.snapshot.method.clone(),
+                    typed_params: input.typed_params.clone(),
+                    status_code: status,
+                    result: body,
+                },
+                crate::commands::payment::session_state::now_unix(),
+            )?;
+            Ok(free_confirmation_decision(&input, stored.confirmation_id()))
+        }
         HttpOutcome::MethodRequired { allow } => Ok(ProbeDecision::blocked(
             "request_method_required",
             json!({"schemaVersion":1,"allow":allow}),
@@ -128,6 +136,89 @@ pub(super) async fn run_probe(args: &ProbeArgs) -> Result<ProbeDecision> {
             build_payment_decision(&input, challenge, body).await
         }
     }
+}
+
+pub(super) fn free_confirmation_decision(
+    input: &ProbeInput,
+    confirmation_id: &str,
+) -> ProbeDecision {
+    build_free_confirmation_decision(
+        &input.snapshot.service_id,
+        input.snapshot.service_name.as_deref(),
+        input.snapshot.endpoint.as_str(),
+        &input.snapshot.method,
+        &input.typed_params,
+        confirmation_id,
+    )
+}
+
+fn free_confirmation_decision_from_state(state: &FreeResultState) -> ProbeDecision {
+    build_free_confirmation_decision(
+        state.service_id(),
+        state.service_name(),
+        state.endpoint(),
+        state.method(),
+        state.typed_params(),
+        state.confirmation_id(),
+    )
+}
+
+fn build_free_confirmation_decision(
+    service_id: &str,
+    service_name: Option<&str>,
+    endpoint: &str,
+    method: &str,
+    typed_params: &Map<String, Value>,
+    confirmation_id: &str,
+) -> ProbeDecision {
+    ProbeDecision {
+        phase: "payment_confirmation".to_string(),
+        decision: "requires_user_input".to_string(),
+        reason: "free_confirmation_required".to_string(),
+        next_action: vec![
+            Action::new("confirm_a2mcp_free", true)
+                .with_params(json!({"confirmationId": confirmation_id})),
+            Action::new("cancel_a2mcp", false),
+        ],
+        payload: json!({
+            "schemaVersion":1,
+            "serviceId":service_id,
+            "serviceName":service_name,
+            "endpoint":endpoint,
+            "method":method,
+            "typedParams":typed_params,
+            "amountDisplay":"Free",
+            "confirmationEnabled":true,
+            "confirmationId":confirmation_id,
+        }),
+    }
+}
+
+pub(super) fn run_confirm_free(args: &ConfirmFreeArgs) -> Result<ProbeDecision> {
+    let now = crate::commands::payment::session_state::now_unix();
+    if !args.yes {
+        let state = load_free_result(&args.confirmation_id, now)?;
+        return Ok(free_confirmation_decision_from_state(&state));
+    }
+
+    let state = consume_free_result(&args.confirmation_id, now)?;
+    Ok(ProbeDecision {
+        phase: "endpoint_result".to_string(),
+        decision: "ready".to_string(),
+        reason: "free_result".to_string(),
+        next_action: Vec::new(),
+        payload: json!({
+            "schemaVersion":1,
+            "serviceId":state.service_id(),
+            "serviceName":state.service_name(),
+            "endpoint":state.endpoint(),
+            "method":state.method(),
+            "typedParams":state.typed_params(),
+            "amountDisplay":"Free",
+            "statusCode":state.status_code(),
+            "result":state.result(),
+        }),
+    })
 }
 
 pub(super) fn apply_input_required_method(
@@ -246,6 +337,7 @@ pub(super) async fn run_refresh_balance(args: &RefreshBalanceArgs) -> Result<Pro
     let loaded_at = crate::commands::payment::session_state::now_unix();
     let prepared = load_a2mcp_prepared_payment(&args.prepared_id, &owner_account_id, loaded_at)?;
     let prepared = refresh_a2mcp_prepared_payment(prepared).await?;
+    let confirmation_context = prepared.confirmation_context();
     let refreshed_at = crate::commands::payment::session_state::now_unix();
     let replacement_id = replace_a2mcp_prepared_payment(
         &args.prepared_id,
@@ -257,6 +349,9 @@ pub(super) async fn run_refresh_balance(args: &RefreshBalanceArgs) -> Result<Pro
         .candidates()
         .iter()
         .map(|candidate| {
+            let mismatch = confirmation_context
+                .asp_amount()
+                .is_some_and(|amount| !decimal_strings_equal(amount, candidate.amount_display()));
             json!({
                 "candidateId":candidate.candidate_id(),"tokenSymbol":candidate.symbol(),
                 "network":candidate.network(),"chainName":candidate.chain_name(),
@@ -266,6 +361,7 @@ pub(super) async fn run_refresh_balance(args: &RefreshBalanceArgs) -> Result<Pro
                 "balanceStatus":candidate.balance_status(),"availableDisplay":candidate.available_amount(),
                 "shortfallDisplay":candidate.shortfall(),"depositAddress":candidate.deposit_address(),
                 "confirmationEnabled":candidate.balance_status()=="sufficient",
+                "amountMismatch":mismatch,
             })
         })
         .collect::<Vec<_>>();
@@ -276,15 +372,25 @@ pub(super) async fn run_refresh_balance(args: &RefreshBalanceArgs) -> Result<Pro
     let selected_id = single.map(|candidate| candidate.candidate_id());
     let selected_enabled =
         single.is_some_and(|candidate| candidate.balance_status() == "sufficient");
+    let selected_mismatch = single.map(|candidate| {
+        confirmation_context
+            .asp_amount()
+            .is_some_and(|amount| !decimal_strings_equal(amount, candidate.amount_display()))
+    });
     let (reason, next_action) = if let Some(candidate_id) = selected_id {
-        let confirmation =
-            ProbeDecision::payment_confirmation(candidate_id, selected_enabled, false);
+        let confirmation = ProbeDecision::payment_confirmation(
+            &replacement_id,
+            candidate_id,
+            selected_enabled,
+            false,
+        );
         (confirmation.reason, confirmation.next_action)
     } else {
         (
             "token_selection_required".to_string(),
             vec![
-                Action::new("select_a2mcp_token", true),
+                Action::new("select_a2mcp_token", true)
+                    .with_params(json!({"preparedId": replacement_id})),
                 Action::new("cancel_a2mcp", false),
             ],
         )
@@ -295,8 +401,12 @@ pub(super) async fn run_refresh_balance(args: &RefreshBalanceArgs) -> Result<Pro
         reason,
         next_action,
         payload: json!({
-            "schemaVersion":1,"endpoint":prepared.frozen_request().endpoint(),
+            "schemaVersion":1,"serviceId":confirmation_context.service_id(),
+            "serviceName":confirmation_context.service_name(),
+            "endpoint":prepared.frozen_request().endpoint(),
             "method":prepared.frozen_request().method(),"typedParams":prepared.frozen_request().typed_params(),
+            "aspPrice":{"amount":confirmation_context.asp_amount(),"symbol":confirmation_context.asp_symbol()},
+            "amountMismatch":selected_mismatch,
             "selectedCandidateId":selected_id,"confirmationEnabled":selected_enabled,
             "walletError":prepared.wallet_error(),"candidates":candidates,
             "preparedId":replacement_id,
@@ -304,20 +414,85 @@ pub(super) async fn run_refresh_balance(args: &RefreshBalanceArgs) -> Result<Pro
     })
 }
 
+pub(super) async fn run_resume_after_funding(
+    args: &ResumeAfterFundingArgs,
+) -> Result<ProbeDecision> {
+    use crate::commands::payment::a2mcp::{
+        claim_a2mcp_prepared_payment, create_a2mcp_payment_intent, refresh_a2mcp_prepared_payment,
+        A2mcpIntentCreateInput, ERR_CONFIRMATION_REQUIRED,
+    };
+
+    if !args.yes {
+        return Err(anyhow!(
+            "{ERR_CONFIRMATION_REQUIRED}: funding completion must be explicit"
+        ));
+    }
+    let owner_account_id = crate::commands::payment::state::current_owner_id()
+        .ok_or_else(|| anyhow!("wallet_login_required: no selected wallet"))?;
+    let loaded_at = crate::commands::payment::session_state::now_unix();
+    let claim = claim_a2mcp_prepared_payment(&args.prepared_id, &owner_account_id, loaded_at)?;
+    if claim.prepared().funding_candidate_id() != Some(args.candidate_id.as_str()) {
+        return Err(anyhow!(
+            "a2mcp_funding_continuation_required: enter Funding before resuming"
+        ));
+    }
+
+    let mut refreshed = refresh_a2mcp_prepared_payment(claim.prepared().clone()).await?;
+    let refreshed_candidate = refreshed
+        .candidates()
+        .iter()
+        .find(|candidate| candidate.candidate_id() == args.candidate_id)
+        .ok_or_else(|| anyhow!("a2mcp_invalid_payment_candidate: unknown candidate"))?;
+    if refreshed_candidate.balance_status() == "sufficient" {
+        let selected = refreshed.select(&args.candidate_id)?;
+        let (_, _, payer_address) =
+            crate::commands::payment::payment_flow::resolve_chain_and_payer(selected.raw(), None)
+                .await?;
+        let created_at = crate::commands::payment::session_state::now_unix();
+        let intent = create_a2mcp_payment_intent(A2mcpIntentCreateInput {
+            probe_id: args.prepared_id.clone(),
+            owner_account_id,
+            payer_address,
+            frozen_request: refreshed.frozen_request().clone(),
+            selected_accept: selected,
+            created_at,
+            expires_at: refreshed.challenge_expires_at(),
+            user_confirmed: true,
+        })?;
+        claim.commit();
+        return Ok(payment_ready_decision(intent.payment_id()));
+    }
+
+    refreshed.clear_funding_continuation();
+    let replacement_id = claim.replace(refreshed)?;
+    run_prepare_payment(&PreparePaymentArgs {
+        prepared_id: replacement_id,
+        candidate_id: args.candidate_id.clone(),
+        yes: false,
+    })
+    .await
+}
+
 pub(super) async fn run_funding(args: &FundingArgs) -> Result<ProbeDecision> {
-    use crate::commands::payment::a2mcp::load_a2mcp_prepared_payment;
+    use crate::commands::payment::a2mcp::replace_a2mcp_prepared_payment;
 
     let owner_account_id = crate::commands::payment::state::current_owner_id()
         .ok_or_else(|| anyhow!("wallet_login_required: no selected wallet"))?;
     let loaded_at = crate::commands::payment::session_state::now_unix();
-    let prepared = load_a2mcp_prepared_payment(&args.prepared_id, &owner_account_id, loaded_at)?;
+    let mut prepared = crate::commands::payment::a2mcp::load_a2mcp_prepared_payment(
+        &args.prepared_id,
+        &owner_account_id,
+        loaded_at,
+    )?;
     let candidate = prepared
         .candidates()
         .iter()
         .find(|candidate| candidate.candidate_id() == args.candidate_id)
         .ok_or_else(|| anyhow!("a2mcp_invalid_payment_candidate: unknown candidate"))?;
     if candidate.balance_status() == "sufficient" {
-        return Err(anyhow!("a2mcp_funding_not_required: selected candidate is sufficient"));
+        return Err(anyhow!(
+            "a2mcp_funding_not_required: selected candidate is sufficient"
+        ));
     }
     let funding = crate::funding::build_funding_bundle_for_address(
         "",
@@ -325,7 +500,11 @@ pub(super) async fn run_funding(args: &FundingArgs) -> Result<ProbeDecision> {
         candidate.deposit_address(),
         crate::funding::FundingBlockedInput {
             asset: candidate.symbol(),
-            token_address: candidate.raw_accept().get("asset").and_then(Value::as_str).unwrap_or(""),
+            token_address: candidate
+                .raw_accept()
+                .get("asset")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
             required: candidate.required_amount(),
             balance: Some(candidate.available_amount()),
             operation: Some("a2mcp"),
@@ -333,11 +512,19 @@ pub(super) async fn run_funding(args: &FundingArgs) -> Result<ProbeDecision> {
             error_message: None,
         },
     )?;
+    prepared.mark_funding_continuation(&args.candidate_id)?;
+    let continuation_id =
+        replace_a2mcp_prepared_payment(&args.prepared_id, prepared, &owner_account_id, loaded_at)?;
     Ok(ProbeDecision {
         phase: "funding_required".to_string(),
         decision: "blocked".to_string(),
         reason: "insufficient_balance".to_string(),
-        next_action: Vec::new(),
+        next_action: vec![
+            Action::new("resume_a2mcp_after_funding", true).with_params(json!({
+                "preparedId": continuation_id,
+                "candidateId": args.candidate_id,
+            })),
+        ],
         payload: funding["payload"].clone(),
     })
 }
@@ -359,16 +546,25 @@ pub(super) async fn run_prepare_payment(args: &PreparePaymentArgs) -> Result<Pro
         .ok_or_else(|| anyhow!("a2mcp_invalid_payment_intent: unknown candidate"))?;
     if !args.yes {
         let enabled = candidate.balance_status() == "sufficient";
+        let confirmation_context = prepared.confirmation_context();
+        let mismatch = confirmation_context
+            .asp_amount()
+            .is_some_and(|amount| !decimal_strings_equal(amount, candidate.amount_display()));
         let mut decision = ProbeDecision::payment_confirmation(
+            &args.prepared_id,
             candidate.candidate_id(),
             enabled,
             prepared.candidates().len() > 1,
         );
         decision.payload = json!({
             "schemaVersion":1,
+            "serviceId":confirmation_context.service_id(),
+            "serviceName":confirmation_context.service_name(),
             "endpoint":prepared.frozen_request().endpoint(),
             "method":prepared.frozen_request().method(),
             "typedParams":prepared.frozen_request().typed_params(),
+            "aspPrice":{"amount":confirmation_context.asp_amount(),"symbol":confirmation_context.asp_symbol()},
+            "amountMismatch":mismatch,
             "selectedCandidateId":candidate.candidate_id(),
             "confirmationEnabled":enabled,
             "candidate":{
@@ -379,6 +575,7 @@ pub(super) async fn run_prepare_payment(args: &PreparePaymentArgs) -> Result<Pro
                 "requiredDisplay":candidate.required_amount(),
                 "balanceStatus":candidate.balance_status(),"availableDisplay":candidate.available_amount(),
                 "shortfallDisplay":candidate.shortfall(),"depositAddress":candidate.deposit_address(),
+                "amountMismatch":mismatch,
             },
             "walletError":prepared.wallet_error(),
             "preparedId":args.prepared_id,
@@ -403,13 +600,18 @@ pub(super) async fn run_prepare_payment(args: &PreparePaymentArgs) -> Result<Pro
         user_confirmed: args.yes,
     })?;
     claim.commit();
-    Ok(ProbeDecision {
+    Ok(payment_ready_decision(intent.payment_id()))
+}
+
+pub(super) fn payment_ready_decision(payment_id: &str) -> ProbeDecision {
+    ProbeDecision {
         phase: "payment_ready".to_string(),
         decision: "ready".to_string(),
         reason: "payment_ready".to_string(),
-        next_action: vec![Action::new("execute_a2mcp_payment", true)],
-        payload: json!({"schemaVersion":1,"paymentId":intent.payment_id()}),
-    })
+        next_action: vec![Action::new("execute_a2mcp_payment", true)
+            .with_params(json!({"paymentId": payment_id}))],
+        payload: json!({"schemaVersion":1,"paymentId":payment_id}),
+    }
 }
 
 pub(super) async fn build_payment_decision(
@@ -418,8 +620,8 @@ pub(super) async fn build_payment_decision(
     merchant_body: Value,
 ) -> Result<ProbeDecision> {
     use crate::commands::payment::a2mcp::{
-        prepare_a2mcp_payment_from_challenge, store_a2mcp_prepared_payment, A2mcpFrozenRequestV1,
-        A2mcpPreparedChallengeInput,
+        prepare_a2mcp_payment_from_challenge, store_a2mcp_prepared_payment,
+        A2mcpConfirmationContextV1, A2mcpFrozenRequestV1, A2mcpPreparedChallengeInput,
     };
 
     let body_plan = merchant_body
@@ -446,6 +648,12 @@ pub(super) async fn build_payment_decision(
     let prepared = match prepare_a2mcp_payment_from_challenge(A2mcpPreparedChallengeInput {
         challenge: challenge.to_string(),
         frozen_request,
+        confirmation_context: A2mcpConfirmationContextV1::new(
+            input.snapshot.service_id.clone(),
+            input.snapshot.service_name.clone(),
+            input.snapshot.asp_amount.clone(),
+            input.snapshot.asp_symbol.clone(),
+        ),
     })
     .await
     {
@@ -499,14 +707,19 @@ pub(super) async fn build_payment_decision(
     let selected_enabled =
         single.is_some_and(|candidate| candidate.balance_status() == "sufficient");
     let (reason, next_action) = if let Some(candidate_id) = selected_id {
-        let confirmation =
-            ProbeDecision::payment_confirmation(candidate_id, selected_enabled, false);
+        let confirmation = ProbeDecision::payment_confirmation(
+            &prepared_id,
+            candidate_id,
+            selected_enabled,
+            false,
+        );
         (confirmation.reason, confirmation.next_action)
     } else {
         (
             "token_selection_required".to_string(),
             vec![
-                Action::new("select_a2mcp_token", true),
+                Action::new("select_a2mcp_token", true)
+                    .with_params(json!({"preparedId": prepared_id})),
                 Action::new("cancel_a2mcp", false),
             ],
         )

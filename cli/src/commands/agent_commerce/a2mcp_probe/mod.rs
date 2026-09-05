@@ -2,11 +2,13 @@
 
 mod contract;
 mod flow;
+mod free_result;
 mod method;
 mod probe;
 
 use contract::*;
 use flow::*;
+use free_result::*;
 use method::*;
 use probe::*;
 
@@ -25,9 +27,19 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Subcommand, Debug)]
 pub enum A2mcpProbeCommand {
     Probe(ProbeArgs),
+    ConfirmFree(ConfirmFreeArgs),
     RefreshBalance(RefreshBalanceArgs),
     Funding(FundingArgs),
+    ResumeAfterFunding(ResumeAfterFundingArgs),
     PreparePayment(PreparePaymentArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ConfirmFreeArgs {
+    #[arg(long = "confirmation-id")]
+    pub confirmation_id: String,
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Args, Debug)]
@@ -50,6 +62,16 @@ pub struct FundingArgs {
     pub prepared_id: String,
     #[arg(long = "candidate-id")]
     pub candidate_id: String,
+}
+
+#[derive(Args, Debug)]
+pub struct ResumeAfterFundingArgs {
+    #[arg(long = "prepared-id")]
+    pub prepared_id: String,
+    #[arg(long = "candidate-id")]
+    pub candidate_id: String,
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Args, Debug)]
@@ -154,6 +176,8 @@ struct InputRequired {
 struct Action {
     id: String,
     recommend: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    params: Option<Value>,
 }
 
 impl Action {
@@ -161,7 +185,13 @@ impl Action {
         Self {
             id: id.into(),
             recommend,
+            params: None,
         }
+    }
+
+    fn with_params(mut self, params: Value) -> Self {
+        self.params = Some(params);
+        self
     }
 }
 
@@ -176,16 +206,25 @@ struct ProbeDecision {
 }
 
 impl ProbeDecision {
-    fn payment_confirmation(candidate_id: &str, enabled: bool, can_select_other: bool) -> Self {
+    fn payment_confirmation(
+        prepared_id: &str,
+        candidate_id: &str,
+        enabled: bool,
+        can_select_other: bool,
+    ) -> Self {
+        let bound = || json!({"preparedId": prepared_id, "candidateId": candidate_id});
         let next_action = if enabled {
             vec![
-                Action::new("confirm_a2mcp_payment", true),
+                Action::new("confirm_a2mcp_payment", true).with_params(bound()),
                 Action::new("cancel_a2mcp", false),
             ]
         } else {
-            let mut actions = vec![Action::new("fund_a2mcp_token", true)];
+            let mut actions = vec![Action::new("fund_a2mcp_token", true).with_params(bound())];
             if can_select_other {
-                actions.push(Action::new("select_a2mcp_token", false));
+                actions.push(
+                    Action::new("select_a2mcp_token", false)
+                        .with_params(json!({"preparedId": prepared_id})),
+                );
             }
             actions.push(Action::new("cancel_a2mcp", false));
             actions
@@ -215,6 +254,37 @@ impl ProbeDecision {
     }
 }
 
+fn normalize_invocation_result(result: Result<ProbeDecision>) -> Result<ProbeDecision> {
+    let error = match result {
+        Ok(decision) => return Ok(decision),
+        Err(error) => error,
+    };
+    let message = error.to_string();
+    let reason =
+        if message.starts_with(crate::commands::payment::a2mcp::ERR_PREPARED_EXPIRED_OR_MISSING) {
+            "a2mcp_prepared_expired_or_missing"
+        } else if message.starts_with(ERR_FREE_RESULT_EXPIRED_OR_MISSING) {
+            "a2mcp_free_result_expired_or_missing"
+        } else if message.starts_with("a2mcp_invalid_payment_candidate")
+            || (message.starts_with(crate::commands::payment::a2mcp::ERR_INVALID_INTENT)
+                && message.contains("unknown candidate"))
+        {
+            "a2mcp_candidate_invalid_or_missing"
+        } else if message.starts_with("a2mcp_funding_continuation_required") {
+            "a2mcp_funding_continuation_required"
+        } else {
+            return Err(error);
+        };
+
+    Ok(ProbeDecision {
+        phase: "invocation_recovery".to_string(),
+        decision: "blocked".to_string(),
+        reason: reason.to_string(),
+        next_action: vec![Action::new("cancel_a2mcp", true)],
+        payload: json!({"schemaVersion": 1, "message": message}),
+    })
+}
+
 enum HttpOutcome {
     Free { status: u16, body: Value },
     InputRequired(InputRequired),
@@ -233,9 +303,19 @@ enum PostVerificationAction {
 pub async fn run(command: A2mcpProbeCommand, _ctx: &CommandContext) -> Result<()> {
     let decision = match command {
         A2mcpProbeCommand::Probe(args) => run_probe(&args).await?,
-        A2mcpProbeCommand::RefreshBalance(args) => run_refresh_balance(&args).await?,
-        A2mcpProbeCommand::Funding(args) => run_funding(&args).await?,
-        A2mcpProbeCommand::PreparePayment(args) => run_prepare_payment(&args).await?,
+        A2mcpProbeCommand::ConfirmFree(args) => {
+            normalize_invocation_result(run_confirm_free(&args))?
+        }
+        A2mcpProbeCommand::RefreshBalance(args) => {
+            normalize_invocation_result(run_refresh_balance(&args).await)?
+        }
+        A2mcpProbeCommand::Funding(args) => normalize_invocation_result(run_funding(&args).await)?,
+        A2mcpProbeCommand::ResumeAfterFunding(args) => {
+            normalize_invocation_result(run_resume_after_funding(&args).await)?
+        }
+        A2mcpProbeCommand::PreparePayment(args) => {
+            normalize_invocation_result(run_prepare_payment(&args).await)?
+        }
     };
     crate::output::success(decision);
     Ok(())

@@ -17,6 +17,10 @@ const COMPLETION_ACTIONS: &str =
     include_str!("../../skills/okx-ai-v2/references/a2a/completion.md");
 const V2_USER_ROUTER: &str = USER_INTENT_ROUTER;
 const V2_SKILL: &str = CANONICAL_SKILL;
+const V2_A2MCP_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2mcp/router.md");
+const V2_A2MCP_INVOKE: &str = include_str!("../../skills/okx-ai-v2/references/a2mcp/invoke.md");
+const V2_A2MCP_OUTPUT: &str =
+    include_str!("../../skills/okx-ai-v2/references/a2mcp/output-templates.md");
 
 #[test]
 fn v2_task_entry_keeps_two_level_lazy_routing_contract() {
@@ -47,6 +51,19 @@ fn v2_task_entry_keeps_two_level_lazy_routing_contract() {
     }
     assert!(CHAT_COMM_INIT.contains("okx-a2a doctor --fix --json"));
     assert!(PUBLISH_ACTIONS.contains("../../shared/chat-comm-init.md"));
+}
+
+#[test]
+fn a2mcp_free_result_has_one_cli_owned_confirmation_gate() {
+    for action in ["confirm_a2mcp_free", "cancel_a2mcp"] {
+        assert!(V2_SKILL.contains(action));
+        assert!(V2_A2MCP_ROUTER.contains(&format!("| `{action}` |")));
+    }
+    assert!(V2_A2MCP_INVOKE.contains("a2mcp-probe confirm-free"));
+    assert!(V2_A2MCP_INVOKE.contains("confirmationId"));
+    assert!(V2_A2MCP_INVOKE.contains("does not expose the endpoint result yet"));
+    assert!(V2_A2MCP_OUTPUT.contains("Amount: Free"));
+    assert!(V2_A2MCP_OUTPUT.contains("endpoint_result/free_result"));
 }
 
 #[test]

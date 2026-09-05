@@ -644,15 +644,22 @@ pub struct A2mcpPreparedPayment {
     version: u32,
     source: String,
     frozen_request: A2mcpFrozenRequestV1,
+    #[serde(default)]
+    confirmation_context: A2mcpConfirmationContextV1,
     candidates: Vec<A2mcpPreparedCandidate>,
     challenge_expires_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     wallet_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    funding_candidate_id: Option<String>,
 }
 
 impl A2mcpPreparedPayment {
     pub fn frozen_request(&self) -> &A2mcpFrozenRequestV1 {
         &self.frozen_request
+    }
+    pub fn confirmation_context(&self) -> &A2mcpConfirmationContextV1 {
+        &self.confirmation_context
     }
     pub fn candidates(&self) -> &[A2mcpPreparedCandidate] {
         &self.candidates
@@ -662,6 +669,24 @@ impl A2mcpPreparedPayment {
     }
     pub fn wallet_error(&self) -> Option<&str> {
         self.wallet_error.as_deref()
+    }
+    pub fn funding_candidate_id(&self) -> Option<&str> {
+        self.funding_candidate_id.as_deref()
+    }
+    pub fn mark_funding_continuation(&mut self, candidate_id: &str) -> Result<()> {
+        let candidate = self
+            .candidates
+            .iter()
+            .find(|candidate| candidate.candidate_id == candidate_id)
+            .ok_or_else(|| anyhow!("{ERR_INVALID_INTENT}: unknown candidate"))?;
+        if candidate.balance_status == "sufficient" {
+            bail!("a2mcp_funding_not_required: selected candidate is sufficient");
+        }
+        self.funding_candidate_id = Some(candidate_id.to_string());
+        Ok(())
+    }
+    pub fn clear_funding_continuation(&mut self) {
+        self.funding_candidate_id = None;
     }
     pub fn select(&self, candidate_id: &str) -> Result<A2mcpSelectedAcceptV1> {
         self.validate()?;
@@ -691,6 +716,18 @@ impl A2mcpPreparedPayment {
         if self.candidates.is_empty() {
             bail!("{ERR_INVALID_INTENT}: prepared payload has no candidates");
         }
+        if self
+            .funding_candidate_id
+            .as_ref()
+            .is_some_and(|candidate_id| {
+                !self
+                    .candidates
+                    .iter()
+                    .any(|candidate| &candidate.candidate_id == candidate_id)
+            })
+        {
+            bail!("{ERR_INVALID_INTENT}: invalid Funding continuation");
+        }
         for candidate in &self.candidates {
             if candidate.candidate_id.is_empty()
                 || !matches!(
@@ -709,6 +746,47 @@ impl A2mcpPreparedPayment {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct A2mcpConfirmationContextV1 {
+    service_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    service_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    asp_amount: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    asp_symbol: Option<String>,
+}
+
+impl A2mcpConfirmationContextV1 {
+    pub fn new(
+        service_id: String,
+        service_name: Option<String>,
+        asp_amount: Option<String>,
+        asp_symbol: Option<String>,
+    ) -> Self {
+        Self {
+            service_id,
+            service_name,
+            asp_amount,
+            asp_symbol,
+        }
+    }
+
+    pub fn service_id(&self) -> &str {
+        &self.service_id
+    }
+    pub fn service_name(&self) -> Option<&str> {
+        self.service_name.as_deref()
+    }
+    pub fn asp_amount(&self) -> Option<&str> {
+        self.asp_amount.as_deref()
+    }
+    pub fn asp_symbol(&self) -> Option<&str> {
+        self.asp_symbol.as_deref()
     }
 }
 
@@ -830,14 +908,7 @@ pub fn replace_a2mcp_prepared_payment(
 ) -> Result<String> {
     prepared.validate()?;
     let claim = claim_a2mcp_prepared_payment(prepared_id, owner_account_id, now)?;
-    let replacement = write_a2mcp_prepared_state(
-        prepared,
-        owner_account_id,
-        claim.state.created_at,
-        claim.state.expires_at,
-    )?;
-    claim.commit();
-    Ok(replacement)
+    claim.replace(prepared)
 }
 
 pub struct A2mcpPreparedClaim {
@@ -850,6 +921,21 @@ pub struct A2mcpPreparedClaim {
 impl A2mcpPreparedClaim {
     pub fn prepared(&self) -> &A2mcpPreparedPayment {
         &self.state.prepared
+    }
+
+    /// Replace the claimed handle while preserving its original lifetime.
+    /// A write failure leaves the claim unfinalized, so Drop restores the old handle.
+    pub fn replace(mut self, prepared: A2mcpPreparedPayment) -> Result<String> {
+        prepared.validate()?;
+        let replacement = write_a2mcp_prepared_state(
+            prepared,
+            &self.state.owner_account_id,
+            self.state.created_at,
+            self.state.expires_at,
+        )?;
+        let _ = fs::remove_file(&self.claim_path);
+        self.finalized = true;
+        Ok(replacement)
     }
 
     /// Commit one-time consumption. Failure to remove an inaccessible claim
@@ -920,6 +1006,7 @@ pub fn consume_a2mcp_prepared_payment(
 pub struct A2mcpPreparedChallengeInput {
     pub challenge: String,
     pub frozen_request: A2mcpFrozenRequestV1,
+    pub confirmation_context: A2mcpConfirmationContextV1,
 }
 
 /// Decode a captured challenge, apply the OKX.AI A2MCP asset/scheme policy and
@@ -970,9 +1057,11 @@ pub async fn prepare_a2mcp_payment_from_challenge(
         version: A2MCP_INTENT_VERSION,
         source: A2MCP_SOURCE.to_string(),
         frozen_request,
+        confirmation_context: input.confirmation_context,
         candidates: by_token.into_values().collect(),
         challenge_expires_at,
         wallet_error,
+        funding_candidate_id: None,
     })
 }
 
@@ -1018,9 +1107,11 @@ pub async fn refresh_a2mcp_prepared_payment(
         version: prepared.version,
         source: prepared.source,
         frozen_request: prepared.frozen_request,
+        confirmation_context: prepared.confirmation_context,
         candidates,
         challenge_expires_at: prepared.challenge_expires_at,
         wallet_error,
+        funding_candidate_id: prepared.funding_candidate_id,
     };
     refreshed.validate()?;
     Ok(refreshed)
@@ -1233,9 +1324,16 @@ mod tests {
                 Some(json!({"url":"https://example.com/pay"})),
             )
             .unwrap(),
+            confirmation_context: A2mcpConfirmationContextV1::new(
+                "service-1".into(),
+                Some("Yield report".into()),
+                Some("1.25".into()),
+                Some("USDT".into()),
+            ),
             candidates: candidates.into_values().collect(),
             challenge_expires_at: 1_200,
             wallet_error: None,
+            funding_candidate_id: None,
         }
     }
 
@@ -1249,6 +1347,13 @@ mod tests {
             assert!(prepared_id.len() < 64);
             let loaded = load_a2mcp_prepared_payment(&prepared_id, "account_1", 1_100).unwrap();
             assert_eq!(loaded.select("candidate_0").unwrap().symbol(), "USDC");
+            assert_eq!(loaded.confirmation_context().service_id(), "service-1");
+            assert_eq!(
+                loaded.confirmation_context().service_name(),
+                Some("Yield report")
+            );
+            assert_eq!(loaded.confirmation_context().asp_amount(), Some("1.25"));
+            assert_eq!(loaded.confirmation_context().asp_symbol(), Some("USDT"));
 
             let consumed =
                 consume_a2mcp_prepared_payment(&prepared_id, "account_1", 1_100).unwrap();
@@ -1272,6 +1377,37 @@ mod tests {
                 assert_eq!(payments_mode, 0o700);
             }
         });
+    }
+
+    #[test]
+    fn funding_continuation_is_explicit_and_survives_handle_replacement() {
+        with_home("a2mcp_funding_continuation", || {
+            let mut prepared = prepared_payment();
+            prepared.candidates[0].balance_status = "insufficient".into();
+            prepared.candidates[0].available_amount = "0".into();
+            prepared.candidates[0].shortfall = "1".into();
+            prepared.mark_funding_continuation("candidate_0").unwrap();
+
+            let original =
+                store_a2mcp_prepared_payment(prepared.clone(), "account_1", 1_000).unwrap();
+            let replacement =
+                replace_a2mcp_prepared_payment(&original, prepared, "account_1", 1_100).unwrap();
+            let loaded = load_a2mcp_prepared_payment(&replacement, "account_1", 1_100).unwrap();
+
+            assert_eq!(loaded.funding_candidate_id(), Some("candidate_0"));
+            assert!(load_a2mcp_prepared_payment(&original, "account_1", 1_100).is_err());
+        });
+    }
+
+    #[test]
+    fn prepared_state_without_confirmation_context_remains_readable() {
+        let mut value = serde_json::to_value(prepared_payment()).unwrap();
+        value.as_object_mut().unwrap().remove("confirmationContext");
+
+        let prepared: A2mcpPreparedPayment = serde_json::from_value(value).unwrap();
+        assert_eq!(prepared.confirmation_context().service_id(), "");
+        assert_eq!(prepared.confirmation_context().service_name(), None);
+        prepared.validate().unwrap();
     }
 
     #[test]

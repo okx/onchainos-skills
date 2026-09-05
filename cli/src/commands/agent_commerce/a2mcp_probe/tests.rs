@@ -1,13 +1,16 @@
+use anyhow::anyhow;
 use serde_json::json;
 
 use super::{
     amount_semantics, apply_input_required_method, decimal_strings_equal,
     discover_endpoint_param_issues, discover_input_required, fallback_method_for_400,
-    fallback_method_for_405, input_required_decision, invalid_params_decision,
-    merge_field_constraints, normalize_a2mcp_method, outstanding_input, outstanding_request_input,
-    parse_probe_input, post_verification_action, resolve_request_method, run_probe,
-    should_verify_default_get_challenge_with_post, to_payment_param_plan, Action, FieldConstraint,
-    HttpOutcome, PostVerificationAction, ProbeArgs, ProbeDecision,
+    fallback_method_for_405, free_confirmation_decision, input_required_decision,
+    invalid_params_decision, merge_field_constraints, normalize_a2mcp_method,
+    normalize_invocation_result, outstanding_input, outstanding_request_input, parse_probe_input,
+    payment_ready_decision, post_verification_action, resolve_request_method, run_confirm_free,
+    run_probe, run_resume_after_funding, should_verify_default_get_challenge_with_post,
+    to_payment_param_plan, A2mcpProbeCommand, Action, ConfirmFreeArgs, FieldConstraint,
+    HttpOutcome, PostVerificationAction, ProbeArgs, ProbeDecision, ResumeAfterFundingArgs,
 };
 
 fn routing_payload() -> serde_json::Value {
@@ -850,11 +853,94 @@ fn action_without_input_omits_params() {
 
 #[test]
 fn next_actions_are_alternatives_not_an_event_sequence() {
-    let decision = ProbeDecision::payment_confirmation("candidate-1", true, false);
+    let decision = ProbeDecision::payment_confirmation("prepared-1", "candidate-1", true, false);
     assert_eq!(decision.next_action.len(), 2);
     assert_eq!(decision.next_action[0].id, "confirm_a2mcp_payment");
+    assert_eq!(
+        serde_json::to_value(&decision.next_action[0]).unwrap(),
+        json!({
+            "id":"confirm_a2mcp_payment",
+            "recommend":true,
+            "params":{"preparedId":"prepared-1","candidateId":"candidate-1"}
+        })
+    );
     assert_eq!(decision.next_action[1].id, "cancel_a2mcp");
     assert_eq!(decision.payload["selectedCandidateId"], "candidate-1");
+}
+
+#[test]
+fn resume_after_funding_is_a_single_cli_command() {
+    let command = A2mcpProbeCommand::ResumeAfterFunding(ResumeAfterFundingArgs {
+        prepared_id: "prepared-1".to_string(),
+        candidate_id: "candidate-1".to_string(),
+        yes: true,
+    });
+    assert!(matches!(command, A2mcpProbeCommand::ResumeAfterFunding(_)));
+}
+
+#[tokio::test]
+async fn resume_after_funding_requires_completion_before_state_access() {
+    let error = run_resume_after_funding(&ResumeAfterFundingArgs {
+        prepared_id: "prepared-1".to_string(),
+        candidate_id: "candidate-1".to_string(),
+        yes: false,
+    })
+    .await
+    .expect_err("funding continuation must require an explicit completion signal");
+    assert!(error
+        .to_string()
+        .starts_with("a2mcp_payment_confirmation_required"));
+}
+
+#[test]
+fn payment_ready_action_binds_the_payment_id() {
+    let decision = payment_ready_decision("a2a_payment-1");
+    assert_eq!(decision.payload["paymentId"], "a2a_payment-1");
+    assert_eq!(
+        serde_json::to_value(&decision.next_action[0]).unwrap(),
+        json!({
+            "id":"execute_a2mcp_payment",
+            "recommend":true,
+            "params":{"paymentId":"a2a_payment-1"}
+        })
+    );
+}
+
+#[test]
+fn free_result_requires_the_single_confirmation_card_before_result_release() {
+    let input = parse_probe_input(
+        &routing_payload().to_string(),
+        r#"{"brand":"OKX","count":2}"#,
+    )
+    .expect("valid payload");
+    let decision = free_confirmation_decision(&input, "a2free_0123456789abcdef0123456789abcdef");
+
+    assert_eq!(decision.phase, "payment_confirmation");
+    assert_eq!(decision.decision, "requires_user_input");
+    assert_eq!(decision.reason, "free_confirmation_required");
+    assert_eq!(decision.next_action[0].id, "confirm_a2mcp_free");
+    assert_eq!(
+        serde_json::to_value(&decision.next_action[0]).unwrap(),
+        json!({
+            "id":"confirm_a2mcp_free",
+            "recommend":true,
+            "params":{"confirmationId":"a2free_0123456789abcdef0123456789abcdef"}
+        })
+    );
+    assert_eq!(decision.next_action[1].id, "cancel_a2mcp");
+    assert_eq!(decision.payload["amountDisplay"], "Free");
+    assert_eq!(decision.payload["serviceName"], "Logo SVG only");
+    assert_eq!(
+        decision.payload["endpoint"],
+        "https://pixelbrief.tech/v1/logo"
+    );
+    assert_eq!(decision.payload["method"], "GET");
+    assert_eq!(decision.payload["typedParams"]["brand"], "OKX");
+    assert_eq!(
+        decision.payload["confirmationId"],
+        "a2free_0123456789abcdef0123456789abcdef"
+    );
+    assert!(decision.payload.get("result").is_none());
 }
 
 #[test]
@@ -1000,4 +1086,77 @@ async fn run_probe_never_contacts_endpoint_until_known_params_are_valid() {
     .expect("unsafe method is represented as a routing decision");
     assert_eq!(blocked.decision, "blocked");
     assert_eq!(blocked.reason, "invalid_a2mcp_routing");
+}
+
+#[test]
+fn stale_invocation_errors_are_structured_recovery_decisions() {
+    for (message, expected_reason) in [
+        (
+            "a2mcp_prepared_expired_or_missing: a2prep_missing",
+            "a2mcp_prepared_expired_or_missing",
+        ),
+        (
+            "a2mcp_free_result_expired_or_missing: a2free_missing",
+            "a2mcp_free_result_expired_or_missing",
+        ),
+        (
+            "a2mcp_invalid_payment_candidate: unknown candidate",
+            "a2mcp_candidate_invalid_or_missing",
+        ),
+        (
+            "a2mcp_invalid_payment_intent: unknown candidate",
+            "a2mcp_candidate_invalid_or_missing",
+        ),
+        (
+            "a2mcp_funding_continuation_required: enter Funding before resuming",
+            "a2mcp_funding_continuation_required",
+        ),
+    ] {
+        let decision = normalize_invocation_result(Err(anyhow!(message)))
+            .expect("known invocation errors must be normalized");
+        assert_eq!(decision.phase, "invocation_recovery");
+        assert_eq!(decision.decision, "blocked");
+        assert_eq!(decision.reason, expected_reason);
+        assert_eq!(decision.next_action.len(), 1);
+        assert_eq!(decision.next_action[0].id, "cancel_a2mcp");
+        assert_eq!(decision.payload["schemaVersion"], 1);
+        assert_eq!(decision.payload["message"], message);
+    }
+}
+
+#[test]
+fn unrelated_command_errors_remain_failures() {
+    for message in [
+        "wallet_login_required",
+        "a2mcp_invalid_payment_intent: unsupported scheme/authorization",
+        "a2mcp_invalid_payment_intent: candidate set changed during balance refresh",
+    ] {
+        let error = normalize_invocation_result(Err(anyhow!(message)))
+            .expect_err("unrelated failures must not be mislabeled as stale state");
+        assert_eq!(error.to_string(), message);
+    }
+}
+
+#[test]
+fn stale_free_command_uses_the_structured_recovery_contract() {
+    let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test_tmp")
+        .join("a2mcp_stale_free_recovery");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::env::set_var("ONCHAINOS_HOME", &dir);
+
+    let result = run_confirm_free(&ConfirmFreeArgs {
+        confirmation_id: "a2free_0123456789abcdef0123456789abcdef".to_string(),
+        yes: true,
+    });
+    let decision = normalize_invocation_result(result)
+        .expect("missing free state must become structured recovery");
+
+    std::env::remove_var("ONCHAINOS_HOME");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(decision.phase, "invocation_recovery");
+    assert_eq!(decision.reason, "a2mcp_free_result_expired_or_missing");
+    assert_eq!(decision.next_action[0].id, "cancel_a2mcp");
 }
