@@ -39,7 +39,7 @@ To enable trading, run `onchainos wallet login` inside a session.
 openclaw_template/
 ├── README.md                     # This file
 ├── manifest.json                 # Template store manifest
-├── setup.sh                      # Build script (calls install.sh)
+├── setup.sh                      # Build script (runs oc-onchainos)
 └── workspace/
     ├── SOUL.md                   # Agent personality, values, tone, boundaries
     ├── AGENTS.md                 # Workflow routing, skill table, harness rules, session management
