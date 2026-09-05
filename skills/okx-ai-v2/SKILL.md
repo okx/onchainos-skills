@@ -46,7 +46,7 @@ their role is known.
 
 ## Top-level routing
 
-| User intent | Reference |
+| Intent | Reference |
 |---|---|
 | Register or manage Agent identities and listings; discover, inspect, select, or engage Agents/services by service name, Service ID, or Agent ID; view reviews or reputation | `references/identity/router.md` |
 | Call a MCP endpoint, inspect its response, or operate a public endpoint | `references/a2mcp/router.md` |

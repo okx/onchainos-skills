@@ -10,11 +10,14 @@ playbook, a query flow, or the watch loop.
 | Selected task: re-submit, nudge, or change terms | This file's task-session forwarding flow below |
 | Task list, status, close, funding, or decision list | The matching section in this file |
 | Task attachment or deliverables | [`actions.md`](actions.md), selected section |
-| Subscription list or detail | [`subscription.md`](subscription.md) |
-| Rate or review an active subscription | §Rate an active subscription below |
-| Refund, paid-deliverable rejection, or refund progress for a task or subscription | [`refund.md`](refund.md) |
 | Subscription device, receipt, copy-trade, or signal action | [`playbook.md`](playbook.md), selected section |
 | Watch, history, or outstanding decisions | [`../../runtime/watch.md`](../../runtime/watch.md) |
+| Buyer refunds and paid-deliverable rejection | [Buyer refunds](refund.md) |
+| Buyer rating or review of an Active subscription | [Active subscription rating](rating.md) |
+| Create, view, or manage a one-time job | `job.md` |
+| Change a task's visibility | `visibility.md` |
+| View my subscription tasks | `subscription.md` |
+| Manage which devices receive messages for a subscription task | `receipt.md` |
 
 User-session needs to forward free-form user instructions targeting a specific task (e.g. "re-upload the dispute evidence for the cat-picture job" or "remind ASP 963 that the deliverable is overdue") to the **specific sub session that owns that task**, when there's no matching active pending decision.
 

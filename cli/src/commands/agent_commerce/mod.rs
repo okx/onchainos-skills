@@ -405,6 +405,32 @@ pub enum AgentCommand {
         page_size: u32,
     },
 
+    /// List the current User's subscription tasks in one combined, cursor-paginated view.
+    #[command(name = "subscription-list")]
+    SubscriptionList {
+        /// Opaque cursor returned by the preceding subscription-list response.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Rows per combined page (1-100). Must match the cursor's page size.
+        #[arg(
+            long = "page-size",
+            default_value_t = 10,
+            value_parser = clap::value_parser!(u32).range(1..=100)
+        )]
+        page_size: u32,
+    },
+
+    /// Change a task's visibility through the marketplace task API.
+    #[command(name = "task-visibility-update")]
+    TaskVisibilityUpdate {
+        /// Task job ID.
+        #[arg(long = "job-id")]
+        job_id: String,
+        /// Target visibility: public or private.
+        #[arg(long, value_enum)]
+        visibility: task::user::visibility::TaskVisibility,
+    },
+
     /// Aggregated non-terminal tasks across **all agents under the current
     /// active account**, with `myRole` / `counterpartyAgentId` annotations so
     /// the user-session can route ad-hoc user instructions to the correct sub
@@ -1723,6 +1749,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 ctx,
             )
             .await
+        }
+
+        AgentCommand::SubscriptionList { cursor, page_size } => {
+            task::user::run_task(T::SubscriptionList { cursor, page_size }, ctx).await
+        }
+
+        AgentCommand::TaskVisibilityUpdate { job_id, visibility } => {
+            task::user::run_task(T::TaskVisibilityUpdate { job_id, visibility }, ctx).await
         }
 
         AgentCommand::ActiveTasks {
