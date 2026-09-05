@@ -16,6 +16,26 @@ use crate::commands::agent_commerce::task::signing;
 
 const MAX_REASON_CHARS: usize = 2000;
 
+fn ensure_one_time_task(detail: &serde_json::Value) -> Result<()> {
+    let job_type = detail["jobType"].as_i64().or_else(|| {
+        detail["jobType"]
+            .as_str()
+            .and_then(|value| value.parse().ok())
+    });
+    match job_type {
+        Some(0) => Ok(()),
+        Some(1) => bail!(
+            "dispute confirm is not valid for a subscription task. Subscription arbitration is created in one step by `subscribe-dispute`; do not submit a second dispute transaction. Reconcile the subscription status instead"
+        ),
+        Some(other) => bail!(
+            "dispute confirm requires a one-time task (jobType=0); backend returned unsupported jobType={other}"
+        ),
+        None => bail!(
+            "dispute confirm requires a fresh task detail with jobType=0; backend response did not include jobType"
+        ),
+    }
+}
+
 pub async fn handle_dispute_confirm(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -28,21 +48,36 @@ pub async fn handle_dispute_confirm(
     if reason.chars().count() > MAX_REASON_CHARS {
         bail!("Dispute reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
     }
+
+    // Fail closed before requesting uopData. Subscription arbitration uses the
+    // one-shot `subscribe-dispute` endpoint and must never enter task phase 2.
+    let task_detail = client
+        .get_with_identity(&client.task_path(job_id), agent_id)
+        .await
+        .context("dispute confirm (stage 2): fresh task detail request failed")?;
+    ensure_one_time_task(&task_detail)?;
+
     let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
     let body = serde_json::json!({});
 
-    let dispute_resp = client.post_with_identity(
-        &client.endpoint(job_id, "dispute"), &body, agent_id,
-    ).await
+    let dispute_resp = client
+        .post_with_identity(&client.endpoint(job_id, "dispute"), &body, agent_id)
+        .await
         .context("dispute confirm (stage 2): dispute API request failed")?;
 
     let reason_json = serde_json::json!({ "reason": reason });
     let dispute_tx = signing::sign_uop_and_broadcast(
-        client, &dispute_resp["uopData"], &account_id, &address,
-        job_id, signing::extract_biz_type(&dispute_resp), agent_id,
+        client,
+        &dispute_resp["uopData"],
+        &account_id,
+        &address,
+        job_id,
+        signing::extract_biz_type(&dispute_resp),
+        agent_id,
         Some(&reason_json),
-    ).await
-        .context("dispute confirm (stage 2): dispute on-chain broadcast failed")?;
+    )
+    .await
+    .context("dispute confirm (stage 2): dispute on-chain broadcast failed")?;
 
     audit::log(
         "cli",
@@ -63,4 +98,31 @@ pub async fn handle_dispute_confirm(
     println!("⚠️  Stage 2 complete — **end this turn** and wait for the on-chain `job_disputed` system notification:");
     println!("    - Once you receive the `job_disputed` notification, proceed with the evidence upload script");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn one_time_task_may_enter_dispute_confirm() {
+        assert!(ensure_one_time_task(&json!({"jobType": 0})).is_ok());
+        assert!(ensure_one_time_task(&json!({"jobType": "0"})).is_ok());
+    }
+
+    #[test]
+    fn subscription_task_must_not_enter_dispute_confirm() {
+        let error = ensure_one_time_task(&json!({"jobType": 1})).unwrap_err();
+        assert!(error.to_string().contains("subscription task"));
+        assert!(error
+            .to_string()
+            .contains("do not submit a second dispute transaction"));
+    }
+
+    #[test]
+    fn missing_or_unknown_job_type_fails_closed() {
+        assert!(ensure_one_time_task(&json!({})).is_err());
+        assert!(ensure_one_time_task(&json!({"jobType": 9})).is_err());
+    }
 }
