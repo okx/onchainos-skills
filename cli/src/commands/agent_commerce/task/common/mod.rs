@@ -1365,16 +1365,16 @@ async fn build_context(
     }
 
     // ── Role guide that must be loaded ───────────────────────────────────
-    let skill_file = match role {
-        "user" => "task-user-sub-playbook.md",
-        "asp" => "task-asp.md",
-        "evaluator" => "task-evaluator.md",
+    let role_reference = match role {
+        "user" => "references/a2a/user/session.md",
+        "asp" => "references/a2a/provider/router.md",
+        "evaluator" => "references/a2a/evaluator/router.md",
         _ => "",
     };
-    if !skill_file.is_empty() {
+    if !role_reference.is_empty() {
         out.push_str("[⚠️ Must Execute Immediately]\n");
         out.push_str(&format!(
-            "Read the role guide skills/okx-ai/references/{skill_file} immediately; it contains the complete negotiation rules and acceptance flow.\n"
+            "Enter through skills/okx-ai-v2/SKILL.md, then follow its structured-envelope role routing to skills/okx-ai-v2/{role_reference}; it contains the complete negotiation rules and acceptance flow.\n"
         ));
     }
 

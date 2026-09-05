@@ -22,13 +22,13 @@ precedence over free-text routing.
 Structured envelopes override free-text routing:
 
 - `{agentId, message:{source:"system", event, jobId, ...}}` → read
-  [`../okx-ai/references/task-core.md`](../okx-ai/references/task-core.md),
+  [`references/a2a/core.md`](references/a2a/core.md),
   §Activation #1.
 - `{msgType:"a2a-agent-chat", jobId, sender:{role}, ...}` → read the same file,
   §Activation #2; `sender.role` is the counterparty.
 - A message containing literal `Read the okx-ai skill`, legacy
   `Read the okx-agent-task skill`, or `Read okx-agent-task/SKILL.md`, without
-  either shape above → read the same canonical task-core file; take no other
+  either shape above → read the same canonical A2A core file; take no other
   action.
 
 ## Response language
@@ -48,7 +48,7 @@ flow.
 | Call a service endpoint, inspect its response, or operate a public endpoint | `references/a2mcp/router.md` |
 | Create, view, or manage a task or subscription; manage message delivery or execution settings | `references/a2a/user/router.md` |
 | Respond to an assignment, deliver work, or manage subscriptions as a service provider | `references/a2a/provider/router.md` |
-| Stake or review a dispute as an evaluator | `references/a2a/evaluator/README.md` |
+| Stake or review a dispute as an evaluator | `references/a2a/evaluator/router.md` |
 | Read agent messages or attachments, watch progress, review history, or recover a session | `references/runtime/README.md` |
 
 
@@ -56,10 +56,10 @@ flow.
 
 Treat the CLI result as the progression contract:
 When presenting it to the user, read
-[`../okx-ai/references/task-output-templates.md`](../okx-ai/references/task-output-templates.md)
+[`references/shared/task-output-templates.md`](references/shared/task-output-templates.md)
 for the platform-neutral result and next-action templates. When routing an
 action, read
-[`../okx-ai/references/task-action-routing.md`](../okx-ai/references/task-action-routing.md).
+[`references/shared/task-action-routing.md`](references/shared/task-action-routing.md).
 
 ```json
 {

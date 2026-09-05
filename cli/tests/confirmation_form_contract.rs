@@ -1,16 +1,15 @@
 const PUBLISH_ACTIONS: &str =
-    include_str!("../../skills/okx-ai/references/task-user-actions-create.md");
-const USER_PLAYBOOK: &str = include_str!("../../skills/okx-ai/references/task-user-playbook.md");
-const USER_REFUND: &str = include_str!("../../skills/okx-ai/references/task-user-refund.md");
+    include_str!("../../skills/okx-ai-v2/references/a2a/user/create.md");
+const USER_PLAYBOOK: &str =
+    include_str!("../../skills/okx-ai-v2/references/a2a/user/playbook.md");
+const USER_REFUND: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund.md");
 const REFUND_ACTION_ROUTING: &str =
-    include_str!("../../skills/okx-ai/references/task-action-routing.md");
+    include_str!("../../skills/okx-ai-v2/references/shared/task-action-routing.md");
 const REFUND_OUTPUT_TEMPLATES: &str =
-    include_str!("../../skills/okx-ai/references/task-output-templates.md");
-const CANONICAL_SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
+    include_str!("../../skills/okx-ai-v2/references/shared/task-output-templates.md");
+const CANONICAL_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
 const USER_INTENT_ROUTER: &str =
-    include_str!("../../skills/okx-ai/references/task-user-intent-routing.md");
-const V2_USER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
-const V2_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
+    include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
 
 #[test]
 fn skill_confirmation_templates_never_expose_execution_configuration() {
@@ -75,29 +74,28 @@ fn refund_v2_requires_a_user_authored_reason_and_explicit_confirmation() {
     assert!(contract.contains("After explicit confirmation"));
     assert!(contract.contains("refund-execute"));
     assert!(contract.contains("--confirm"));
-    assert!(USER_PLAYBOOK.contains("task-user-refund.md"));
+    assert!(USER_PLAYBOOK.contains("refund.md"));
 }
 
 #[test]
-fn both_discovered_okx_ai_skill_trees_route_refunds_to_one_contract() {
-    assert!(CANONICAL_SKILL.contains("references/task-user-refund.md"));
-    assert!(CANONICAL_SKILL.contains("only for CLI syntax or schema lookup"));
-    assert!(USER_INTENT_ROUTER.contains("[`task-user-refund.md`](task-user-refund.md)"));
-    assert!(V2_USER_ROUTER.contains("../../../../okx-ai/references/task-user-refund.md"));
-    assert!(V2_USER_ROUTER.contains("reject a paid deliverable"));
-    assert!(!V2_USER_ROUTER.contains("refunds are not yet migrated"));
+fn v2_okx_ai_skill_routes_refunds_to_one_contract() {
+    assert!(CANONICAL_SKILL.contains("references/a2a/user/router.md"));
+    assert!(USER_INTENT_ROUTER.contains("[`refund.md`](refund.md)"));
+    assert!(USER_INTENT_ROUTER.contains("reject a paid deliverable"));
+    assert!(!USER_INTENT_ROUTER.contains("refunds are not yet migrated"));
     for canonical_reference in [
-        "../okx-ai/references/task-core.md",
-        "../okx-ai/references/task-output-templates.md",
-        "../okx-ai/references/task-action-routing.md",
+        "references/a2a/core.md",
+        "references/shared/task-output-templates.md",
+        "references/shared/task-action-routing.md",
     ] {
-        assert!(V2_SKILL.contains(canonical_reference));
+        assert!(CANONICAL_SKILL.contains(canonical_reference));
     }
+    assert!(!CANONICAL_SKILL.contains("../okx-ai/"));
 }
 
 #[test]
 fn refund_documents_keep_finality_in_the_canonical_reference() {
-    const FINALITY_LINK: &str = "task-user-refund.md#progress-arbitration-and-finality";
+    const FINALITY_LINK: &str = "../a2a/user/refund.md#progress-arbitration-and-finality";
 
     assert!(USER_REFUND.contains("<a id=\"progress-arbitration-and-finality\"></a>"));
     assert!(REFUND_ACTION_ROUTING.contains(FINALITY_LINK));

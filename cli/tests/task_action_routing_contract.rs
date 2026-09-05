@@ -1,9 +1,10 @@
-const ACTION_ROUTING: &str = include_str!("../../skills/okx-ai/references/task-action-routing.md");
+const ACTION_ROUTING: &str =
+    include_str!("../../skills/okx-ai-v2/references/shared/task-action-routing.md");
 const ARBITRATION_REFERENCE: &str =
-    include_str!("../../skills/okx-ai/references/task-arbitration.md");
+    include_str!("../../skills/okx-ai-v2/references/a2a/provider/arbitration.md");
 const TASK_INTENT_ROUTING: &str =
-    include_str!("../../skills/okx-ai/references/task-user-intent-routing.md");
-const OKX_AI_SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
+    include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
+const OKX_AI_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
 const ARBITRATION_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/arbitration.rs");
 
 #[test]
@@ -77,9 +78,9 @@ fn arbitration_actions_have_one_domain_registry() {
             .exists());
     }
     for obsolete_reference in [
-        "../skills/okx-ai/references/task-dispute.md",
-        "../skills/okx-ai/references/task-arbitration-action-routing.md",
-        "../skills/okx-ai/references/task-arbitration-output-templates.md",
+        "../skills/okx-ai-v2/references/a2a/provider/dispute.md",
+        "../skills/okx-ai-v2/references/a2a/provider/arbitration-action-routing.md",
+        "../skills/okx-ai-v2/references/a2a/provider/arbitration-output-templates.md",
     ] {
         assert!(!std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(obsolete_reference)
@@ -96,12 +97,11 @@ fn task_and_arbitration_query_intents_use_distinct_commands() {
     ));
     assert!(TASK_INTENT_ROUTING
         .contains("An ASP merchant can start arbitration for a task in `rejected` status"));
-    assert!(
-        OKX_AI_SKILL.contains("tasks that can be arbitrated (`哪些可以仲裁` / `可以仲裁的任务`)")
-    );
+    assert!(OKX_AI_SKILL.contains("references/a2a/user/router.md"));
+    assert!(TASK_INTENT_ROUTING.contains("哪些可以仲裁"));
     assert!(TASK_INTENT_ROUTING.contains("`which tasks can I arbitrate`"));
     assert!(ARBITRATION_REFERENCE.contains("## Query arbitration cases"));
-    assert!(!ARBITRATION_REFERENCE.contains("task-user-intent-routing.md"));
+    assert!(!ARBITRATION_REFERENCE.contains("user/router.md"));
     assert!(ARBITRATION_REFERENCE.contains("## Query an arbitration detail"));
     assert!(ARBITRATION_REFERENCE
         .contains("onchainos agent arbitration-list --agent-id <selectedAgentId>"));
@@ -112,10 +112,10 @@ fn task_and_arbitration_query_intents_use_distinct_commands() {
 #[test]
 fn notification_action_is_registered() {
     const COMPLETION_ACTIONS: &str =
-        include_str!("../../skills/okx-ai/references/task-actions-completion.md");
+        include_str!("../../skills/okx-ai-v2/references/a2a/completion.md");
 
     assert!(ACTION_ROUTING.contains("| `notify_user` |"));
-    assert!(ACTION_ROUTING.contains("task-actions-completion.md#notification-only"));
+    assert!(ACTION_ROUTING.contains("../a2a/completion.md#notification-only"));
     assert!(COMPLETION_ACTIONS.contains("For `nextAction.id=notify_user`:"));
     assert!(COMPLETION_ACTIONS.contains("payload.notification.content"));
     assert!(COMPLETION_ACTIONS.contains("onchainos agent user-notify"));
