@@ -3,6 +3,7 @@
 | Intent | Read |
 |---|---|
 | Buyer refunds and paid-deliverable rejection | [Buyer refunds](refund.md) |
+| Buyer rating or review of an Active subscription | [Active subscription rating](rating.md) |
 | Create, view, or manage a one-time job | `job.md` |
 | My subscriptions, Active/Ended list, or selected detail | `subscription.md` |
 | Device delivery, offline delivery, or signal receipt | `receipt.md` |
