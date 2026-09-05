@@ -30,8 +30,24 @@ fn v2_task_entry_keeps_two_level_lazy_routing_contract() {
     assert!(CANONICAL_SKILL.contains("never scan Skill directories"));
     assert!(!CANONICAL_SKILL.contains("§Activation"));
 
-    assert!(USER_INTENT_ROUTER.contains("Read only [`../../identity/search.md`]"));
-    assert!(USER_INTENT_ROUTER.contains("nextAction.id=open_create_playbook"));
+    assert!(CANONICAL_SKILL.contains(
+        "Create, publish, view, or manage Buyer tasks and subscriptions"
+    ));
+    assert!(CANONICAL_SKILL.contains("references/identity/router.md"));
+    assert!(CANONICAL_SKILL.contains(
+        "discover, inspect, select, or engage Agents/services by service name, Service ID, or Agent ID"
+    ));
+    assert!(IDENTITY_SEARCH.contains("task-create-prepare"));
+    assert!(!CANONICAL_SKILL.contains("## Context precedence"));
+    assert!(!USER_INTENT_ROUTER.contains("\n## "));
+    assert!(USER_INTENT_ROUTER.contains("Buyer context or request (first match wins)"));
+    assert!(USER_INTENT_ROUTER.contains("[`../../runtime/router.md`](../../runtime/router.md)"));
+    assert!(USER_INTENT_ROUTER.contains(
+        "[`../../../../okx-agentic-wallet/references/funding.md`](../../../../okx-agentic-wallet/references/funding.md)"
+    ));
+    assert!(USER_INTENT_ROUTER.contains(
+        "| Continue task or subscription creation after Service selection (`open_create_playbook`) | [`create.md`](create.md) |"
+    ));
     assert!(IDENTITY_SEARCH.contains("Only now read `output-templates.md`"));
     assert!(PUBLISH_ACTIONS.contains("read only\n[`../../runtime/watch.md`]"));
     assert!(!PUBLISH_ACTIONS.contains("task-output-templates.md"));
@@ -293,7 +309,9 @@ fn refund_render_contract_preserves_field_and_state_semantics() {
 fn v2_buyer_rating_is_bound_to_one_active_subscription() {
     assert!(V2_USER_ROUTER
         .contains("| Rate or review an active subscription | [`rating.md`](rating.md) |"));
-    assert!(V2_SKILL.contains("Buyer rating or review of an Active subscription"));
+    assert!(V2_SKILL.contains(
+        "Buyer tasks and subscriptions, including ratings or reviews, files, deliverables, refunds"
+    ));
     assert!(!V2_USER_ROUTER.contains("## Rate an active subscription"));
     assert!(!USER_PLAYBOOK.contains("| Rate |"));
 

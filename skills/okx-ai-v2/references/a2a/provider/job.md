@@ -6,6 +6,21 @@ This file only covers the content **specific** to the ASP role. Generic rules (e
 
 The task state machine has moved into the CLI (`onchainos agent next-action`) — **you do not need to memorize the steps for every status**. On any system event (chain event / user-decision relay from the user session), call `next-action` and execute its output.
 
+## Task list
+
+For `my ASP tasks` or tasks belonging to a specified ASP, resolve the ASP
+identity and run:
+
+```bash
+onchainos agent tasks --agent-id <aspAgentId> --page 1 --limit 20
+```
+
+Use an explicit ASP Agent ID when supplied. Otherwise retain the ASP identity
+from current task context; without one, run `onchainos agent my-agents`, keep
+role ASP (`2`) candidates, and wait for a selection when more than one remains.
+Render only the returned page with each task's `jobId`, title, amount, and
+status.
+
 For provider-side `job_asp_reject_expire`, a subscription at Failed(9) is not
 by itself proof that the Buyer received a refund: the same status also covers
 charge or conversion failure, and the replayable event input cannot create
