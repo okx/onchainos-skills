@@ -34,7 +34,7 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
         Some(p) => p,
         None => return format!(
             "[negotiate_reply] ❌ no prefetched task context for job {job_id}; cannot resolve providerAgentId.\n\n\
-             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
+             Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (enter through `skills/okx-ai-v2/SKILL.md`, then see `skills/okx-ai-v2/references/runtime/recovery.md` §2). Do NOT retry blindly.\n"
         ),
     };
     let provider_agent_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
@@ -42,7 +42,7 @@ pub(crate) async fn negotiate_reply(ctx: &FlowContext<'_>) -> String {
         None => {
             return format!(
                 "[negotiate_reply] ❌ prefetched task context has no providerAgentId for job {job_id}; cannot send a reply.\n\n\
-                 Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (see _shared/exception-escalation.md §2). Do NOT retry blindly.\n"
+                 Push a `cli_failed` decision to the user via `pending-decisions-v2 request` (enter through `skills/okx-ai-v2/SKILL.md`, then see `skills/okx-ai-v2/references/runtime/recovery.md` §2). Do NOT retry blindly.\n"
             );
         }
     };
@@ -141,7 +141,7 @@ pub(crate) async fn provider_reject(ctx: &FlowContext<'_>) -> String {
     if let Err(e) = reset_result {
         return format!(
             "[job_provider_reject] ❌ POST reset/asp failed: {e}\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+             Enter through `skills/okx-ai-v2/SKILL.md`, then see `skills/okx-ai-v2/references/runtime/recovery.md` §2 — push `cli_failed` decision.\n"
         );
     }
 

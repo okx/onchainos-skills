@@ -33,7 +33,7 @@ fn skill_confirmation_templates_never_expose_execution_configuration() {
         );
     }
 
-    assert!(PUBLISH_ACTIONS.contains("Do not append or merge any other row"));
+    assert!(publish_contract.contains("Do not append or merge any other row"));
     assert!(publish_contract.contains("list them below the table; never add an Attachments row"));
     assert!(publish_contract.contains("Guide-defined Consent and Signal values"));
     assert!(PUBLISH_ACTIONS.contains("--guide-consent-json"));
@@ -106,7 +106,7 @@ User-authored reason is the User's final confirmation"
 fn v2_okx_ai_skill_routes_refunds_to_one_contract() {
     assert!(CANONICAL_SKILL.contains("references/a2a/user/router.md"));
     assert!(USER_INTENT_ROUTER.contains("[`refund.md`](refund.md)"));
-    assert!(USER_REFUND.contains("reject a paid\ndeliverable"));
+    assert!(USER_INTENT_ROUTER.contains("paid-deliverable rejection"));
     assert!(!USER_INTENT_ROUTER.contains("refunds are not yet migrated"));
     for canonical_reference in [
         "references/a2a/core.md",

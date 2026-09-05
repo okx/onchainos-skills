@@ -584,7 +584,7 @@ pub enum AgentCommand {
     /// to current account). Wrapper over `agent get-agents --agent-ids` that flattens
     /// the `list[].agentList[]` nesting and returns the matched agent as a
     /// single flat object. Used for verifying peer / designated provider
-    /// identities (e.g. user-sub-playbook.md Provider validation).
+    /// identities (e.g. `references/a2a/user/session.md` Provider validation).
     ///
     /// `ok: false` when not found / agentId malformed; otherwise `data` is
     /// the agent object `{agentId, name, role, status, ownerAddress,
@@ -1151,7 +1151,7 @@ pub enum AgentCommand {
         #[arg(long)]
         vote: u8,
         /// Full verdict text produced by Step 5 per the Verdict template defined in
-        /// `references/evaluator-decision-rubric.md` (whichever heading the user-customized
+        /// `skills/okx-ai-v2/references/a2a/evaluator/dispute.md` (whichever heading the user-customized
         /// rubric uses to define it; required). Sent to backend in the broadcast bizContext as
         /// `voteReport` — the human-readable on-chain audit trail; whatever fields the rubric's
         /// Verdict template prescribes. Flatten to a single line with `\n` / `\t` / `\r` / `\\` / `\"`

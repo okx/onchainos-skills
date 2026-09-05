@@ -292,7 +292,7 @@ pub async fn generate_next_action(
     };
 
     // Short jobId, used in pending-decisions-v2 request --user-content / --list-label as the `[Job <shortID>]` prefix.
-    // Serves as a dual disambiguation anchor for the user and user agent when multiple prompts run concurrently. See user-sub-playbook.md §Communication Contract.
+    // Serves as a dual disambiguation anchor for the user and user agent when multiple prompts run concurrently. See `references/a2a/user/session.md` §Communication Contract.
     let short_id = short_job_id(job_id);
 
     // jobTitle carried by the envelope — when present, inlined directly into the playbook, saving the agent an extra API query to fetch the title.
@@ -309,7 +309,7 @@ pub async fn generate_next_action(
     let title_in_extract = if job_title.is_some() { "" } else { "title, " };
 
     // ──────────────────────────────────────────────────────────────────────
-    // Communication mechanism (how to send, whether to send, shape whitelist) — all covered in user-sub-playbook.md §Communication Contract.
+    // Communication mechanism (how to send, whether to send, shape whitelist) — all covered in `references/a2a/user/session.md` §Communication Contract.
     // This file only tells the agent **what content to send where at each step**, without re-explaining tool usage.
     //
     // Three communication CLI commands:
