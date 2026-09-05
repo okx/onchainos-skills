@@ -113,7 +113,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20Then send SKILL_PREFETCH:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\" --json\n\
+                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill through skills/okx-ai-v2/SKILL.md. Pre-load user role context.\" --json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x207. **Upload pending attachments (if any):**\n\
                      \x20\x20\x20\x20```bash\n\
@@ -855,7 +855,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```\n\
                      Then send SKILL_PREFETCH:\n\
                      ```bash\n\
-                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill. Pre-load user role context.\" --json\n\
+                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill through skills/okx-ai-v2/SKILL.md. Pre-load user role context.\" --json\n\
                      ```\n\
                      5. **Upload pending attachments (if any):**\n\
                      ```bash\n\

@@ -853,7 +853,7 @@ fn enrich_agent_row(row: &mut Value) {
 
 // ─── `card`: ordered, ready-to-render detail-card rows ────────────────────
 //
-// Mirrors `skills/okx-ai/references/identity/output-templates.md §Agent detail`:
+// Mirrors `skills/okx-ai-v2/references/identity/output-templates.md §Agent detail`:
 // one ordered `{ "label": <canonical-English>, "value": <string> }` row per
 // visible field, omitting a row when its value is unavailable (same omit
 // rules the skill uses today). Service rows are ASP-ONLY — the

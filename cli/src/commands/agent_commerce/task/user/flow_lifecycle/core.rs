@@ -1990,7 +1990,7 @@ mod tests {
         assert!(prompt.contains("automatic copy-trade execution is disabled"));
         assert!(prompt.contains(r#""directMoneyMovingCommandAllowed":false"#));
         assert!(prompt.contains("Do not submit an order or create an execution decision"));
-        assert!(!prompt.contains("task-subscription-signal-direct.md"));
+        assert!(!prompt.contains("execution-policy.md"));
     }
 
     #[test]

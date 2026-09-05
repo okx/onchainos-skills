@@ -140,7 +140,7 @@
   <text x="78" y="773" class="chain">open_create_playbook → Action Routing</text>
   <text x="78" y="791" class="muted">只接受最新选项中的 action</text>
   <rect x="373" y="748" width="285" height="58" rx="11" fill="#faf5ff" stroke="#ddd6fe"/>
-  <text x="389" y="773" class="chain">task-user-actions-create.md → create-task</text>
+  <text x="389" y="773" class="chain">a2a/user/create.md → create-task</text>
   <text x="389" y="791" class="muted">参数完整且确认有效才允许写入</text>
   <rect x="684" y="748" width="316" height="58" rx="11" fill="#f0fdfa" stroke="#99f6e4"/>
   <text x="700" y="773" class="chain">write once → {jobId:123, status:created}</text>

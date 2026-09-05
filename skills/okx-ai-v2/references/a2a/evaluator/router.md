@@ -1,19 +1,20 @@
-# A2A Arbitration Review
+# A2A Evaluator Router
 
-Own dispute selection, evidence inspection, Commit/Reveal, ruling outcomes,
-reward claims, penalties, and terminal cleanup.
+Use this entry for dispute selection, evidence inspection, Commit/Reveal,
+ruling outcomes, reward claims, penalties, and terminal cleanup. General A2A
+envelope handling lives in `../core.md`.
 
 ## Intent and event routing
 
 | Input | Flow |
 |---|---|
+| Stake, increase stake, unstake, claim, cancel, query, or staking receipts | [`staking.md`](staking.md) |
 | `evaluator_selected` | [Inspect evidence and commit](#inspect-evidence-and-commit) |
 | `vote_committed` or `vote_commit_deadline_warn` | [Commit events](#commit-events) |
 | `reveal_started`, `vote_revealed`, or `vote_reveal_deadline_warn` | [Reveal events](#reveal-events) |
 | `dispute_resolved`, `round_failed`, `reward_claimed`, or `cooldown_entered` | [Ruling and reward events](#ruling-and-reward-events) |
-| Stake, unstake, or stake-state intent and receipts | `arbitration-staking.md` |
 
-Use `arbitration-rubric.md` for evidence scoring, vote reduction, and the
+Use [`dispute.md`](dispute.md) for evidence scoring, vote reduction, and the
 verdict structure.
 
 Contents: [event entry](#event-entry);
@@ -24,16 +25,16 @@ Contents: [event entry](#event-entry);
 
 ## Event entry
 
-A `source:"system"` envelope starts an arbitration-review event. Record other
-inbound arbitration-review messages as policy events and finish their route.
+A `source:"system"` envelope starts an evaluator event. Record other inbound
+evaluator messages as policy events and finish their route.
 
 Resolve every system envelope from its top-level `agentId` and complete current
 `message` object:
 
 ```text
-onchainos agent next-action \\
-  --role auto \\
-  --agentId <envelope.agentId> \\
+onchainos agent next-action \
+  --role auto \
+  --agentId <envelope.agentId> \
   --message '<complete envelope.message as one JSON string>'
 ```
 
@@ -57,22 +58,22 @@ For `evaluator_selected`:
 2. Use the event's `roundNum` to fetch the selected round:
 
    ```text
-   onchainos agent evidence-info <jobId> \\
-     --agent-id <evaluatorAgentId> \\
+   onchainos agent evidence-info <jobId> \
+     --agent-id <evaluatorAgentId> \
      --round-num <roundNum>
    ```
 
 3. Continue with the post-evidence steps printed by `evidence-info` in the same
    turn.
-4. Read `arbitration-rubric.md`, inspect every evidence item, calculate the
+4. Read [`dispute.md`](dispute.md), inspect every evidence item, calculate the
    score, derive `vote`, and render its Verdict Output Template.
 5. Commit the derived vote:
 
    ```text
-   onchainos agent vote-commit <jobId> \\
-     --vote <0|1> \\
-     --reason "<complete verdict flattened with literal \\n escapes>" \\
-     --reason-summary "<one sentence, at most 30 Unicode characters>" \\
+   onchainos agent vote-commit <jobId> \
+     --vote <0|1> \
+     --reason "<complete verdict flattened with literal \n escapes>" \
+     --reason-summary "<one sentence, at most 30 Unicode characters>" \
      --agent-id <evaluatorAgentId>
    ```
 
@@ -83,8 +84,8 @@ of these binary votes after selection.
 
 Prepare shell-safe values before execution:
 
-- Replace real newlines, tabs, and carriage returns with literal `\\n`, `\\t`,
-  and `\\r` escapes.
+- Replace real newlines, tabs, and carriage returns with literal `\n`, `\t`,
+  and `\r` escapes.
 - Escape `"` as `\"` and `$` as `\$`.
 - Replace a backtick with a single quote or escape it.
 
