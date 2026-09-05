@@ -25,9 +25,7 @@ pub fn handle_session_cleanup(job_id: &str, print_output: bool) -> Result<()> {
 
     let mut out = String::new();
     if super::config::keep_conversation_on_terminal() {
-        out.push_str(
-            "ℹ️ KEEP_SESSION=true — conversation history retained. No further action needed.\n",
-        );
+        out.push_str("ℹ️ KEEP_SESSION=true — conversation history retained. No further action needed.\n");
     } else {
         match okx_a2a::session_delete(job_id, None) {
             Ok(()) => out.push_str("OK"),

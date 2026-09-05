@@ -11,8 +11,12 @@ use crate::commands::agent_commerce::task::common::{
 ///
 /// When non-zero rewards are found, call `arbitration-claim` (an account-level
 /// pull, no jobId) to sweep everything in a single call.
-pub async fn handle_claimable(client: &mut TaskApiClient, agent_id: &str) -> Result<()> {
-    let has_nonzero = common_claim::fetch_and_print_claimable(client, agent_id).await?;
+pub async fn handle_claimable(
+    client: &mut TaskApiClient,
+    agent_id: &str,
+) -> Result<()> {
+    let has_nonzero =
+        common_claim::fetch_and_print_claimable(client, agent_id).await?;
 
     audit::log(
         "cli",

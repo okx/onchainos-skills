@@ -144,8 +144,9 @@ impl ConsentContinuation {
             ),
             (
                 "tradeEnvironment",
-                self.trade_environment
-                    .map(|value| serde_json::Value::String(value.as_str().to_string())),
+                self.trade_environment.map(|value| {
+                    serde_json::Value::String(value.as_str().to_string())
+                }),
             ),
             (
                 "marginMode",
@@ -600,8 +601,8 @@ pub fn start_or_update(
             let seeded_from_notify_only = seed.is_some_and(|consent| {
                 matches!(consent.mode, ConsentMode::Manual | ConsentMode::Decline)
             });
-            let draft_review_required =
-                seeded_from_notify_only && binding.selected_mode == SelectedMode::Auto;
+            let draft_review_required = seeded_from_notify_only
+                && binding.selected_mode == SelectedMode::Auto;
             let mut dynamic_settings = seed
                 .map(|consent| consent.dynamic_settings.clone())
                 .unwrap_or_default();
@@ -791,8 +792,9 @@ pub fn start_or_update(
     let missing_fields = file.missing_fields();
     let draft_review_required = file.draft_review_pending();
     let draft_review = draft_review_required.then(|| file.review_draft());
-    let complete =
-        validation_errors.is_empty() && missing_fields.is_empty() && !draft_review_required;
+    let complete = validation_errors.is_empty()
+        && missing_fields.is_empty()
+        && !draft_review_required;
     let consent_command = complete.then(|| {
         let environment = file
             .trade_environment
@@ -1054,8 +1056,12 @@ mod tests {
                 trade_amount_u: Some("11"),
                 ..exact
             };
-            let error =
-                validate_auto_write("job-1", &completed.continuation_id, &tampered).unwrap_err();
+            let error = validate_auto_write(
+                "job-1",
+                &completed.continuation_id,
+                &tampered,
+            )
+            .unwrap_err();
             assert!(error.to_string().contains("tradeAmount"));
         });
     }
@@ -1080,8 +1086,8 @@ mod tests {
                 auth_mode: None,
                 dynamic_settings: &tampered_settings,
             };
-            let error =
-                validate_auto_write("job-1", &completed.continuation_id, &write).unwrap_err();
+            let error = validate_auto_write("job-1", &completed.continuation_id, &write)
+                .unwrap_err();
             assert!(error.to_string().contains("settings"));
         });
     }
@@ -1155,8 +1161,11 @@ mod tests {
                 auth_mode: None,
                 dynamic_settings: &settings,
             };
-            let error = validate_auto_write("job-1", &pending.continuation_id, &write).unwrap_err();
-            assert!(error.to_string().contains("has not been fully confirmed"));
+            let error = validate_auto_write("job-1", &pending.continuation_id, &write)
+                .unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("has not been fully confirmed"));
         });
     }
 
@@ -1178,9 +1187,11 @@ mod tests {
             };
             validate_auto_write("job-1", &completed.continuation_id, &write).unwrap();
             consume_auto_write("job-1", "7", &completed.continuation_id).unwrap();
-            let replay =
-                validate_auto_write("job-1", &completed.continuation_id, &write).unwrap_err();
-            assert!(replay.to_string().contains("no live consent continuation"));
+            let replay = validate_auto_write("job-1", &completed.continuation_id, &write)
+                .unwrap_err();
+            assert!(replay
+                .to_string()
+                .contains("no live consent continuation"));
         });
     }
 
@@ -1614,7 +1625,10 @@ mod tests {
             assert!(first.draft_review_required);
             assert!(first.consent_command.is_none());
             assert_eq!(first.draft_review.as_ref().unwrap()["mode"], "auto");
-            assert_eq!(first.draft_review.as_ref().unwrap()["tradeAmountU"], "10");
+            assert_eq!(
+                first.draft_review.as_ref().unwrap()["tradeAmountU"],
+                "10"
+            );
             assert_eq!(first.draft_review.as_ref().unwrap()["capU"], "100");
             assert_eq!(first.draft_review.as_ref().unwrap()["authMode"], "oauth");
             let continuation_id = first.continuation_id.clone();
@@ -1771,18 +1785,9 @@ mod tests {
             let mut legacy: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             legacy["version"] = serde_json::json!(5);
-            legacy
-                .as_object_mut()
-                .unwrap()
-                .remove("seededFromNotifyOnly");
-            legacy
-                .as_object_mut()
-                .unwrap()
-                .remove("draftReviewRequired");
-            legacy
-                .as_object_mut()
-                .unwrap()
-                .remove("draftReviewConfirmed");
+            legacy.as_object_mut().unwrap().remove("seededFromNotifyOnly");
+            legacy.as_object_mut().unwrap().remove("draftReviewRequired");
+            legacy.as_object_mut().unwrap().remove("draftReviewConfirmed");
             std::fs::write(&path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
 
             let migrated = load_for_resume("job-1", "7", &current.continuation_id).unwrap();

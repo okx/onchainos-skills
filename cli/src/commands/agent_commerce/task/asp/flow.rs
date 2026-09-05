@@ -179,11 +179,7 @@ fn arbitration_decision_json(
             .find_map(|key| scalar_string(message.and_then(|value| value.get(*key))))
     };
     let name = message_field(&["jobTitle", "title", "serviceName"])
-        .or_else(|| {
-            job_title
-                .map(str::to_string)
-                .filter(|value| !value.is_empty())
-        })
+        .or_else(|| job_title.map(str::to_string).filter(|value| !value.is_empty()))
         .or_else(|| {
             prefetched
                 .map(|value| value.title.clone())
@@ -2207,41 +2203,17 @@ mod tests {
         }
         let cases = [
             // jobTitle=JobT, title=PlainT → title_display JobT / copy JobT / label JobT
-            Case {
-                name: "jobTitle=JobT, title=PlainT",
-                job_title: Some("JobT"),
-                title: Some("PlainT"),
-                expected_title_display: "JobT",
-                expected_copy: "JobT",
-                expected_label: "JobT",
-            },
+            Case { name: "jobTitle=JobT, title=PlainT", job_title: Some("JobT"), title: Some("PlainT"),
+                   expected_title_display: "JobT", expected_copy: "JobT", expected_label: "JobT" },
             // no jobTitle, title=PlainT → title_display <title> / copy PlainT / label <title>
-            Case {
-                name: "no jobTitle, title=PlainT",
-                job_title: None,
-                title: Some("PlainT"),
-                expected_title_display: "<title>",
-                expected_copy: "PlainT",
-                expected_label: "<title>",
-            },
+            Case { name: "no jobTitle, title=PlainT", job_title: None, title: Some("PlainT"),
+                   expected_title_display: "<title>", expected_copy: "PlainT", expected_label: "<title>" },
             // neither → title_display <title> / copy <title> / label <title>
-            Case {
-                name: "neither",
-                job_title: None,
-                title: None,
-                expected_title_display: "<title>",
-                expected_copy: "<title>",
-                expected_label: "<title>",
-            },
+            Case { name: "neither", job_title: None, title: None,
+                   expected_title_display: "<title>", expected_copy: "<title>", expected_label: "<title>" },
             // jobTitle="", title="" → title_display "" / copy "" / label ""
-            Case {
-                name: "jobTitle=\"\", title=\"\"",
-                job_title: Some(""),
-                title: Some(""),
-                expected_title_display: "",
-                expected_copy: "",
-                expected_label: "",
-            },
+            Case { name: "jobTitle=\"\", title=\"\"", job_title: Some(""), title: Some(""),
+                   expected_title_display: "", expected_copy: "", expected_label: "" },
         ];
 
         for c in cases {
@@ -2333,11 +2305,7 @@ mod tests {
             let head_copy = template_vars::render_all(&[head_copy_tmpl.as_str()], &copy_vars)
                 .expect("copy renders")
                 .remove(0);
-            assert_eq!(
-                head_copy, base_copy,
-                "[{}] user-content byte-for-byte",
-                c.name
-            );
+            assert_eq!(head_copy, base_copy, "[{}] user-content byte-for-byte", c.name);
 
             // Base-vs-head final list-label byte-for-byte (short_id slot is stable
             // across base/head, so a fixed sentinel isolates the title substitution).
@@ -2354,11 +2322,7 @@ mod tests {
                 .expect("label renders")
                 .remove(0);
             let base_label = format!("[Decision SID] {expected_label} — refund or dispute");
-            assert_eq!(
-                head_label, base_label,
-                "[{}] list-label byte-for-byte",
-                c.name
-            );
+            assert_eq!(head_label, base_label, "[{}] list-label byte-for-byte", c.name);
         }
     }
 

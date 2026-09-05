@@ -3,12 +3,7 @@ use crate::commands::agent_commerce::task::evaluator::staking_types::{self, MySt
 use chrono::TimeZone;
 use serde_json::Value;
 
-pub async fn generate_next_action(
-    job_id: &str,
-    event: &str,
-    agent_id: &str,
-    message: Option<&Value>,
-) -> String {
+pub async fn generate_next_action(job_id: &str, event: &str, agent_id: &str, message: Option<&Value>) -> String {
     if let Some(s) = staking_next_action(job_id, event, agent_id).await {
         return s;
     }
@@ -35,9 +30,7 @@ fn fmt_local_time(ts: i64) -> Option<String> {
 
 async fn fetch_my_stake(agent_id: &str) -> Option<MyStake> {
     let mut client = TaskApiClient::new();
-    staking_types::get_my_stake(&mut client, agent_id)
-        .await
-        .ok()
+    staking_types::get_my_stake(&mut client, agent_id).await.ok()
 }
 
 fn notify_block(content: &str) -> String {
@@ -172,10 +165,7 @@ async fn staking_next_action(_job_id: &str, event: &str, agent_id: &str) -> Opti
                 },
                 None => "The unstake request has been recorded on-chain. You can cancel the unstake before the cooldown ends.".to_string(),
             };
-            format!(
-                "[Current Event] unstake_requested\n\n{}",
-                notify_block(&content)
-            )
+            format!("[Current Event] unstake_requested\n\n{}", notify_block(&content))
         }
 
         "unstake_claimed" => format!(
@@ -185,16 +175,12 @@ async fn staking_next_action(_job_id: &str, event: &str, agent_id: &str) -> Opti
 
         "unstake_cancelled" => format!(
             "[Current Status] unstake_cancelled\n\n{}",
-            notify_block(
-                "Your unstake has been cancelled; the pending OKB is back in staked state."
-            )
+            notify_block("Your unstake has been cancelled; the pending OKB is back in staked state.")
         ),
 
         "stake_stopped" => format!(
             "[Current Status] stake_stopped\n\n{}",
-            notify_block(
-                "You have exited the voter pool and will no longer be selected as a juror."
-            )
+            notify_block("You have exited the voter pool and will no longer be selected as a juror.")
         ),
 
         _ => return None,
@@ -202,12 +188,7 @@ async fn staking_next_action(_job_id: &str, event: &str, agent_id: &str) -> Opti
     Some(body)
 }
 
-async fn dispute_next_action(
-    job_id: &str,
-    event: &str,
-    agent_id: &str,
-    message: Option<&Value>,
-) -> Option<String> {
+async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message: Option<&Value>) -> Option<String> {
     let body = match event {
         "evaluator_selected" => {
             let job_title = message.and_then(|m| str_field(m, "jobTitle")).unwrap_or_default();

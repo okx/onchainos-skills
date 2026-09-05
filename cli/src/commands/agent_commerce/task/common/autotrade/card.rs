@@ -663,14 +663,8 @@ pub fn make_manual_signal_decision(
     let amount = amount
         .filter(|value| !value.is_empty())
         .map(|value| match user_lang::resolve(job_id) {
-            Lang::Zh => format!(
-                "，当前金额 {value} {}",
-                super::consent::quote_token(job_id).to_ascii_uppercase()
-            ),
-            Lang::En => format!(
-                ", current amount {value} {}",
-                super::consent::quote_token(job_id).to_ascii_uppercase()
-            ),
+            Lang::Zh => format!("，当前金额 {value} {}", super::consent::quote_token(job_id).to_ascii_uppercase()),
+            Lang::En => format!(", current amount {value} {}", super::consent::quote_token(job_id).to_ascii_uppercase()),
         })
         .unwrap_or_default();
     let content = match user_lang::resolve(job_id) {

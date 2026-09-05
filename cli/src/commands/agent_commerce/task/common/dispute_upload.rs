@@ -148,10 +148,7 @@ pub async fn handle_upload_evidence(
             Ok(m) => m,
             Err(e) => {
                 if *is_explicit {
-                    bail!(
-                        "evidence file not found / unreadable: {} ({e})",
-                        p.display()
-                    );
+                    bail!("evidence file not found / unreadable: {} ({e})", p.display());
                 }
                 if DEBUG_LOG {
                     eprintln!(
@@ -199,7 +196,10 @@ pub async fn handle_upload_evidence(
                 continue;
             }
         };
-        let original_name = p.file_name().and_then(|n| n.to_str()).unwrap_or("evidence");
+        let original_name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("evidence");
         let ext = p
             .extension()
             .and_then(|e| e.to_str())
@@ -219,11 +219,7 @@ pub async fn handle_upload_evidence(
                 bytes.len(),
             );
         }
-        parts.push(FilePart {
-            filename,
-            mime,
-            bytes,
-        });
+        parts.push(FilePart { filename, mime, bytes });
     }
 
     // Post-loop safety net: if every manifest entry was unreadable and the
@@ -299,21 +295,12 @@ pub async fn handle_upload_evidence(
     println!("  jobId:    {job_id}");
     println!("  role:     {role}");
     if let Some(t) = text_clean.as_deref() {
-        println!(
-            "  text:     {} bytes ({} chars)",
-            t.len(),
-            t.chars().count()
-        );
+        println!("  text:     {} bytes ({} chars)", t.len(), t.chars().count());
     }
     if !explicit_file_paths.is_empty() {
-        println!(
-            "  --file:   {} explicit attachment(s)",
-            explicit_file_paths.len()
-        );
+        println!("  --file:   {} explicit attachment(s)", explicit_file_paths.len());
     }
-    let manifest_attached = manifest_filenames
-        .len()
-        .saturating_sub(skipped_manifest_missing);
+    let manifest_attached = manifest_filenames.len().saturating_sub(skipped_manifest_missing);
     if manifest_attached > 0 {
         println!("  manifest: {manifest_attached} local deliverable(s) auto-attached");
     }

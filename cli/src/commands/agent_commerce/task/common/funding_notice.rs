@@ -483,11 +483,13 @@ mod tests {
         assert_eq!(notice.display_mode, "terminal-unicode");
         assert!(notice.image_path.is_none());
         assert!(notice.markdown_image.is_none());
-        assert!(notice
-            .terminal_qr
-            .as_deref()
-            .unwrap_or_default()
-            .contains('█'));
+        assert!(
+            notice
+                .terminal_qr
+                .as_deref()
+                .unwrap_or_default()
+                .contains('█')
+        );
         assert!(!notice.must_notify_with_image_path);
         assert!(!notice.must_run_notify_command);
         assert!(!notice.must_render_markdown_image_below_first_option);
@@ -527,14 +529,18 @@ mod tests {
             .notify_command_args
             .as_ref()
             .is_some_and(|args| args.iter().any(|a| a == "--image-path")));
-        assert!(notice
-            .display_policy
-            .contains("put markdownImage under option 1"));
-        assert!(notice
-            .notify_command
-            .as_deref()
-            .unwrap_or_default()
-            .contains("--image-path"));
+        assert!(
+            notice
+                .display_policy
+                .contains("put markdownImage under option 1")
+        );
+        assert!(
+            notice
+                .notify_command
+                .as_deref()
+                .unwrap_or_default()
+                .contains("--image-path")
+        );
         // Business copy preserved.
         assert!(notice.content_canonical.contains(&addr));
     }
@@ -577,19 +583,24 @@ mod tests {
 
         let envelope = funding_blocked_envelope(&warning, "dispute-bond", "Dispute bond");
         assert_eq!(envelope["submitted"], serde_json::json!(false));
-        assert!(envelope["fundingNoticeCommand"]
-            .as_str()
-            .unwrap()
-            .contains("--reason dispute-bond"));
+        assert!(
+            envelope["fundingNoticeCommand"]
+                .as_str()
+                .unwrap()
+                .contains("--reason dispute-bond")
+        );
         assert_eq!(
             envelope["mustRepeatInFinalResponse"],
             serde_json::json!(true)
         );
         assert!(envelope["mustRenderMarkdownImageBelowFirstOption"].is_boolean());
         assert_eq!(envelope["forbidFundingSummary"], serde_json::json!(true));
-        assert!(envelope["finalResponsePolicy"]
-            .as_str()
-            .unwrap()
-            .contains("all four funding options"));
+        assert!(
+            envelope["finalResponsePolicy"]
+                .as_str()
+                .unwrap()
+                .contains("all four funding options")
+        );
     }
+
 }

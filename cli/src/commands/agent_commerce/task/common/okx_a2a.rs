@@ -412,7 +412,12 @@ pub fn user_notify(
 /// Existing callers keep their environment-routed behavior; this path makes a
 /// background trade result deterministic for the owning job UI.
 pub fn user_notify_scoped(content: &str, job_id: &str, idempotency_key: &str) -> Result<()> {
-    user_notify_scoped_with_timeout(content, job_id, idempotency_key, Duration::from_secs(5))
+    user_notify_scoped_with_timeout(
+        content,
+        job_id,
+        idempotency_key,
+        Duration::from_secs(5),
+    )
 }
 
 pub fn user_notify_scoped_with_timeout(
@@ -424,16 +429,16 @@ pub fn user_notify_scoped_with_timeout(
     let content = compose_user_notify_content(content, None)?;
     let mut command = Command::new("okx-a2a");
     command.args([
-        "user",
-        "notify",
-        "--content",
-        &content,
-        "--job-id",
-        job_id,
-        "--idempotency-key",
-        idempotency_key,
-        "--json",
-    ]);
+            "user",
+            "notify",
+            "--content",
+            &content,
+            "--job-id",
+            job_id,
+            "--idempotency-key",
+            idempotency_key,
+            "--json",
+        ]);
     let out = output_with_timeout(command, timeout)
         .map_err(|e| anyhow::anyhow!("scoped user notify failed: {e}"))?;
     if !out.status.success() {
@@ -478,16 +483,9 @@ pub fn user_decision_request(user_content: &str, llm_content: &str) -> Result<()
 // ── Session management ────────────────────────────────────────────────────
 
 fn pending_user_attention_items(value: &serde_json::Value) -> Option<&Vec<serde_json::Value>> {
-    value
-        .get("items")
-        .and_then(serde_json::Value::as_array)
+    value.get("items").and_then(serde_json::Value::as_array)
         .or_else(|| value.get("data").and_then(serde_json::Value::as_array))
-        .or_else(|| {
-            value
-                .get("data")
-                .and_then(|data| data.get("items"))
-                .and_then(serde_json::Value::as_array)
-        })
+        .or_else(|| value.get("data").and_then(|data| data.get("items")).and_then(serde_json::Value::as_array))
 }
 
 fn decision_source_event(llm_content: &str) -> Option<&str> {
@@ -496,26 +494,16 @@ fn decision_source_event(llm_content: &str) -> Option<&str> {
 }
 
 fn retired_autotrade_todo_ids(value: &serde_json::Value, job_id: &str) -> Vec<String> {
-    pending_user_attention_items(value)
-        .into_iter()
-        .flatten()
+    pending_user_attention_items(value).into_iter().flatten()
         .filter(|item| item.get("jobId").and_then(serde_json::Value::as_str) == Some(job_id))
-        .filter(|item| {
-            item.get("kind").and_then(serde_json::Value::as_str) == Some("decision_request")
-        })
+        .filter(|item| item.get("kind").and_then(serde_json::Value::as_str) == Some("decision_request"))
         .filter(|item| item.get("status").and_then(serde_json::Value::as_str) == Some("pending"))
         .filter(|item| {
-            let event = item
-                .get("llmContent")
-                .and_then(serde_json::Value::as_str)
-                .and_then(decision_source_event);
-            crate::commands::agent_commerce::task::common::autotrade::is_retired_delivery_decision(
-                event,
-            )
+            let event = item.get("llmContent").and_then(serde_json::Value::as_str).and_then(decision_source_event);
+            crate::commands::agent_commerce::task::common::autotrade::is_retired_delivery_decision(event)
         })
         .filter_map(|item| item.get("id").and_then(serde_json::Value::as_str))
-        .map(str::to_string)
-        .collect()
+        .map(str::to_string).collect()
 }
 
 fn retired_autotrade_mode_todo_ids(value: &serde_json::Value, job_id: &str) -> Vec<String> {
@@ -538,39 +526,22 @@ fn retired_autotrade_mode_todo_ids(value: &serde_json::Value, job_id: &str) -> V
 }
 
 fn mark_todo_ids_handled(todo_ids: Vec<String>) -> Result<usize> {
-    if todo_ids.is_empty() {
-        return Ok(0);
-    }
+    if todo_ids.is_empty() { return Ok(0); }
     let joined = todo_ids.join(",");
-    let check = npm_cli_command(
-        "okx-a2a",
-        &["user", "check", "--todo-ids", &joined, "--json"],
-    )
-    .output()
-    .map_err(|error| anyhow::anyhow!("spawn failed: {error}"))?;
+    let check = npm_cli_command("okx-a2a", &["user", "check", "--todo-ids", &joined, "--json"]).output()
+        .map_err(|error| anyhow::anyhow!("spawn failed: {error}"))?;
     if !check.status.success() {
-        anyhow::bail!(
-            "okx-a2a user check exit {}: {}",
-            check.status,
-            String::from_utf8_lossy(&check.stderr)
-        );
+        anyhow::bail!("okx-a2a user check exit {}: {}", check.status, String::from_utf8_lossy(&check.stderr));
     }
     Ok(todo_ids.len())
 }
 
 pub fn mark_retired_autotrade_mode_decisions_handled(job_id: &str) -> Result<usize> {
-    if job_id.trim().is_empty() {
-        anyhow::bail!("job id is required");
-    }
-    let list = npm_cli_command("okx-a2a", &["user", "outdated-list"])
-        .output()
+    if job_id.trim().is_empty() { anyhow::bail!("job id is required"); }
+    let list = npm_cli_command("okx-a2a", &["user", "outdated-list"]).output()
         .map_err(|error| anyhow::anyhow!("spawn failed: {error}"))?;
     if !list.status.success() {
-        anyhow::bail!(
-            "okx-a2a user outdated-list exit {}: {}",
-            list.status,
-            String::from_utf8_lossy(&list.stderr)
-        );
+        anyhow::bail!("okx-a2a user outdated-list exit {}: {}", list.status, String::from_utf8_lossy(&list.stderr));
     }
     let json: serde_json::Value = serde_json::from_slice(&list.stdout)
         .map_err(|error| anyhow::anyhow!("user outdated-list stdout not valid JSON: {error}"))?;
@@ -578,18 +549,11 @@ pub fn mark_retired_autotrade_mode_decisions_handled(job_id: &str) -> Result<usi
 }
 
 pub fn mark_retired_autotrade_decisions_handled(job_id: &str) -> Result<usize> {
-    if job_id.trim().is_empty() {
-        anyhow::bail!("job id is required");
-    }
-    let list = npm_cli_command("okx-a2a", &["user", "outdated-list"])
-        .output()
+    if job_id.trim().is_empty() { anyhow::bail!("job id is required"); }
+    let list = npm_cli_command("okx-a2a", &["user", "outdated-list"]).output()
         .map_err(|error| anyhow::anyhow!("spawn failed: {error}"))?;
     if !list.status.success() {
-        anyhow::bail!(
-            "okx-a2a user outdated-list exit {}: {}",
-            list.status,
-            String::from_utf8_lossy(&list.stderr)
-        );
+        anyhow::bail!("okx-a2a user outdated-list exit {}: {}", list.status, String::from_utf8_lossy(&list.stderr));
     }
     let json: serde_json::Value = serde_json::from_slice(&list.stdout)
         .map_err(|error| anyhow::anyhow!("user outdated-list stdout not valid JSON: {error}"))?;
@@ -767,16 +731,16 @@ pub fn session_send_exact_with_timeout(
 ) -> Result<()> {
     let mut command = Command::new("okx-a2a");
     command.args([
-        "session",
-        "send",
-        "--session-key",
-        session_key,
-        "--content",
-        content,
-        "--message-id",
-        message_id,
-        "--json",
-    ]);
+            "session",
+            "send",
+            "--session-key",
+            session_key,
+            "--content",
+            content,
+            "--message-id",
+            message_id,
+            "--json",
+        ]);
     let out = output_with_timeout(command, timeout)
         .map_err(|e| anyhow::anyhow!("exact session send failed: {e}"))?;
     if !out.status.success() {

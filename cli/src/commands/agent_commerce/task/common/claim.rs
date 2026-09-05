@@ -50,7 +50,10 @@ pub async fn submit_claim_and_broadcast(
 /// can use to decide whether to surface a role-flavored "claim now" hint.
 ///
 /// The `account` field shown in the header is taken directly from the backend response; empty string when absent.
-pub async fn fetch_and_print_claimable(client: &mut TaskApiClient, agent_id: &str) -> Result<bool> {
+pub async fn fetch_and_print_claimable(
+    client: &mut TaskApiClient,
+    agent_id: &str,
+) -> Result<bool> {
     let path = "/priapi/v1/aieco/task/claimable";
     let resp = client.get_with_identity(path, agent_id).await?;
 

@@ -364,7 +364,11 @@ fn reserve_direct_execution(
     }
 }
 
-fn reserve_guide_direct_execution(job_id: &str, delivery_id: &str, amount: &str) -> Result<bool> {
+fn reserve_guide_direct_execution(
+    job_id: &str,
+    delivery_id: &str,
+    amount: &str,
+) -> Result<bool> {
     let path = latch_path(job_id, delivery_id)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -397,14 +401,14 @@ fn reserve_guide_direct_execution(job_id: &str, delivery_id: &str, amount: &str)
     }
 }
 
-fn update_execution_phase(job_id: &str, delivery_id: &str, phase: ExecutionPhase) -> Result<()> {
+fn update_execution_phase(
+    job_id: &str,
+    delivery_id: &str,
+    phase: ExecutionPhase,
+) -> Result<()> {
     let existing = read_execution_latch(job_id, delivery_id)?;
-    let direct_amount = existing
-        .as_ref()
-        .and_then(|latch| latch.direct_amount.clone());
-    let direct_execution_mode = existing
-        .as_ref()
-        .and_then(|latch| latch.direct_execution_mode);
+    let direct_amount = existing.as_ref().and_then(|latch| latch.direct_amount.clone());
+    let direct_execution_mode = existing.as_ref().and_then(|latch| latch.direct_execution_mode);
     crate::home::write_secure(
         &latch_path(job_id, delivery_id)?,
         &serde_json::to_vec_pretty(&ExecutionLatch {
@@ -469,7 +473,10 @@ fn read_outcome(path: &Path) -> Result<Option<ExecutionOutcome>> {
 }
 
 fn write_outcome(path: &Path, outcome: &ExecutionOutcome) -> Result<()> {
-    crate::home::write_secure(path, &serde_json::to_vec_pretty(outcome)?)?;
+    crate::home::write_secure(
+        path,
+        &serde_json::to_vec_pretty(outcome)?,
+    )?;
     if let Err(error) = sync_notice_ref(outcome) {
         // The durable execution outcome is authoritative. A secondary index
         // failure must never turn a submitted/unknown transaction into a CLI
@@ -594,8 +601,7 @@ fn apply_trade_kit_auth_environment(
         // The OKX CLI prefers API-key credentials over a valid OAuth session
         // and falls back to API-key values in its config when these variables
         // are absent. Empty overrides mask both inherited and config-file AKs.
-        command
-            .env("OKX_API_KEY", "")
+        command.env("OKX_API_KEY", "")
             .env("OKX_SECRET_KEY", "")
             .env("OKX_PASSPHRASE", "");
     }
@@ -632,7 +638,11 @@ fn read_one_time_permit(path: &Path) -> Result<Option<OneTimePermit>> {
 /// Create the durable authorization used by the legacy over-cap A option.
 /// The permit is bound to one admitted delivery and exact amount; the normal
 /// execution latch still guarantees that it can spawn at most one command.
-pub fn authorize_one_time(job_id: &str, delivery_id: &str, amount: &str) -> Result<OneTimePermit> {
+pub fn authorize_one_time(
+    job_id: &str,
+    delivery_id: &str,
+    amount: &str,
+) -> Result<OneTimePermit> {
     let context = consent::load_delivery_context(job_id, delivery_id)
         .context("trusted delivery context is unavailable")?;
     let pending = consent::load_pending_delivery_context(job_id)?
@@ -768,19 +778,18 @@ fn validate_bound_intent(
             let context = trade_kit_execution_context(args)?;
             match context.operation {
                 TradeKitOperation::Place => {
-                    let (actual_side, actual_amount) =
-                        if context.asset_class == AssetClass::Prediction {
-                            let index = args
-                                .windows(2)
-                                .position(|pair| pair[0] == "event" && pair[1] == "place")
-                                .context("Trade Kit event command shape is invalid")?;
-                            (
-                                args.get(index + 3).map(String::as_str),
-                                args.get(index + 5).map(String::as_str),
-                            )
-                        } else {
-                            (flag_value(args, "--side"), flag_value(args, "--sz"))
-                        };
+                    let (actual_side, actual_amount) = if context.asset_class == AssetClass::Prediction {
+                        let index = args
+                            .windows(2)
+                            .position(|pair| pair[0] == "event" && pair[1] == "place")
+                            .context("Trade Kit event command shape is invalid")?;
+                        (
+                            args.get(index + 3).map(String::as_str),
+                            args.get(index + 5).map(String::as_str),
+                        )
+                    } else {
+                        (flag_value(args, "--side"), flag_value(args, "--sz"))
+                    };
                     require_same_amount(actual_amount, amount, "Trade Kit order size")?;
                     if actual_side != Some(action) {
                         bail!("Trade Kit order side does not match the authorized action");
@@ -788,13 +797,10 @@ fn validate_bound_intent(
                 }
                 TradeKitOperation::ClosePosition => {
                     if flag_value(args, "--sz").is_some() || flag_value(args, "--side").is_some() {
-                        bail!(
-                            "Trade Kit full-position close must not carry order size or side flags"
-                        );
+                        bail!("Trade Kit full-position close must not carry order size or side flags");
                     }
-                    let position_side = flag_value(args, "--posSide").context(
-                        "Trade Kit full-position close requires an explicit position side",
-                    )?;
+                    let position_side = flag_value(args, "--posSide")
+                        .context("Trade Kit full-position close requires an explicit position side")?;
                     match (position_side, action) {
                         ("long", "sell") | ("short", "buy") | ("net", "buy" | "sell") => {}
                         ("long", _) | ("short", _) => {
@@ -880,7 +886,9 @@ fn trade_kit_execution_context(args: &[String]) -> Result<TradeKitExecutionConte
         .windows(2)
         .find_map(|pair| match (pair[0].as_str(), pair[1].as_str()) {
             ("spot", "place") => Some((AssetClass::Spot, TradeKitOperation::Place)),
-            ("swap" | "futures", "place") => Some((AssetClass::Perp, TradeKitOperation::Place)),
+            ("swap" | "futures", "place") => {
+                Some((AssetClass::Perp, TradeKitOperation::Place))
+            }
             ("swap" | "futures", "close") => {
                 Some((AssetClass::Perp, TradeKitOperation::ClosePosition))
             }
@@ -1193,13 +1201,7 @@ fn looks_like_jwt(value: &str) -> bool {
 fn safe_child_text(value: &str) -> String {
     let printable = value
         .chars()
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
+        .map(|character| if character.is_control() { ' ' } else { character })
         .collect::<String>();
     let mut output = Vec::new();
     let mut redact_next = 0usize;
@@ -1222,7 +1224,9 @@ fn safe_child_text(value: &str) -> String {
             .char_indices()
             .filter(|(_, character)| matches!(character, '=' | ':'))
             .find(|(position, _)| sensitive_label(&token[..*position]))
-            .map(|(position, separator)| (&token[..position], &token[position + 1..], separator));
+            .map(|(position, separator)| {
+                (&token[..position], &token[position + 1..], separator)
+            });
         if let Some((label, assigned, separator)) = assignment {
             output.push(format!("{label}{separator}[REDACTED]"));
             if assigned.is_empty() {
@@ -1401,10 +1405,7 @@ fn classify_nonzero(
             .code
             .map(|code| format!(" (code {code})"))
             .unwrap_or_default();
-        let reason = format!(
-            "target command failed with {exit}{code}: {}",
-            detail.message
-        );
+        let reason = format!("target command failed with {exit}{code}: {}", detail.message);
         if detail.definitely_before_submit && receipt.is_none() {
             return (OutcomeStatus::FailedBeforeSubmit, None, Some(reason));
         }
@@ -1451,15 +1452,18 @@ fn classify_success(venue: &str, stdout: &[u8]) -> (OutcomeStatus, Option<Value>
 fn safe_reason(error: &anyhow::Error) -> String {
     safe_text(
         &error
-            .chain()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(": "),
+        .chain()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": "),
     )
 }
 
 fn safe_text(value: &str) -> String {
-    let mut reason = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut reason = value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     if reason.is_empty() {
         reason = "unspecified terminal reason".to_string();
     }
@@ -1472,9 +1476,9 @@ fn safe_text(value: &str) -> String {
 fn safe_metadata_token(value: &str, max_chars: usize) -> bool {
     !value.is_empty()
         && value.chars().count() <= max_chars
-        && value.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':' | '/')
-        })
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':' | '/'))
 }
 
 fn authorize_direct(
@@ -1538,8 +1542,9 @@ fn validate_percentage_policy_amount(
     let ratio = consent::dynamic_decimal_setting(settings, "tradeAmountRatio")?;
     let percentage = consent::dynamic_decimal_setting(settings, "tradeAmountPercent")?;
     let available = Decimal::parse(
-        available_amount
-            .context("--available-amount is required for a percentage execution policy")?,
+        available_amount.context(
+            "--available-amount is required for a percentage execution policy",
+        )?,
     )
     .context("invalid available amount for percentage execution")?;
     let expected = match (ratio, percentage) {
@@ -1661,9 +1666,7 @@ pub fn claim_guide_direct(
             job_id: job_id.to_string(),
             delivery_id: delivery_id.to_string(),
             amount: Some(normalized),
-            reason: Some(
-                "an earlier Guide-driven execution may have started; do not retry".to_string(),
-            ),
+            reason: Some("an earlier Guide-driven execution may have started; do not retry".to_string()),
         });
     }
     Ok(DirectClaimResult {
@@ -1704,8 +1707,8 @@ pub fn finalize_direct(
         }
         return Ok(outcome);
     }
-    let latch =
-        read_execution_latch(job_id, delivery_id)?.context("direct execution was not claimed")?;
+    let latch = read_execution_latch(job_id, delivery_id)?
+        .context("direct execution was not claimed")?;
     let amount = latch
         .direct_amount
         .context("direct execution claim amount is unavailable")?;
@@ -1814,12 +1817,18 @@ fn persist_and_notify(path: &Path, mut outcome: ExecutionOutcome) -> Result<Exec
         }
     }
     consent::clear_pending_delivery(&outcome.job_id, &outcome.delivery_id);
-    notify_and_persist(path, &mut outcome, false, Some(INITIAL_NOTIFY_TIMEOUT));
+    notify_and_persist(
+        path,
+        &mut outcome,
+        false,
+        Some(INITIAL_NOTIFY_TIMEOUT),
+    );
     // A durable terminal result, including a user-selected skip, is the only
     // normal trigger that advances the per-subscription decision FIFO.
-    if let Err(error) =
-        super::delivery_queue::complete_and_advance(&outcome.job_id, &outcome.delivery_id)
-    {
+    if let Err(error) = super::delivery_queue::complete_and_advance(
+        &outcome.job_id,
+        &outcome.delivery_id,
+    ) {
         eprintln!("[autotrade] queued-delivery resume failed (persisted for retry): {error}");
     }
     if terminal_reconciliation_complete(&outcome) {
@@ -1897,12 +1906,13 @@ fn notification(outcome: &ExecutionOutcome) -> String {
         ExecutionMode::Auto => "[Auto Copy-Trade]",
         ExecutionMode::Manual | ExecutionMode::OneTime => "[Manual Copy-Trade]",
     };
-    let zh_auth_guidance =
-        if outcome.failure_category == Some(FailureCategory::AuthenticationRequired) {
-            " 请回复“连接 Trade Kit”以启动授权；授权完成后，本次交易不会自动重试。"
-        } else {
-            ""
-        };
+    let zh_auth_guidance = if outcome.failure_category
+        == Some(FailureCategory::AuthenticationRequired)
+    {
+        " 请回复“连接 Trade Kit”以启动授权；授权完成后，本次交易不会自动重试。"
+    } else {
+        ""
+    };
     let en_auth_guidance = if outcome.failure_category
         == Some(FailureCategory::AuthenticationRequired)
     {
@@ -2024,9 +2034,12 @@ fn notify_and_persist(
     let max_attempts = if force { 3 } else { 1 };
     for attempt in 0..max_attempts {
         let delivered = match attempt_timeout {
-            Some(timeout) => {
-                okx_a2a::user_notify_scoped_with_timeout(&content, &outcome.job_id, &key, timeout)
-            }
+            Some(timeout) => okx_a2a::user_notify_scoped_with_timeout(
+                &content,
+                &outcome.job_id,
+                &key,
+                timeout,
+            ),
             None => okx_a2a::user_notify_scoped(&content, &outcome.job_id, &key),
         };
         if delivered.is_ok() {
@@ -2161,9 +2174,7 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
             amount,
             OutcomeStatus::FailedBeforeSubmit,
             None,
-            Some(format!(
-                "could not persist the prepared execution state: {error}"
-            )),
+            Some(format!("could not persist the prepared execution state: {error}")),
             started,
         );
         return persist_and_notify(&outcome_path, outcome);
@@ -2178,17 +2189,17 @@ pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
     if request.venue == "trade_kit" {
         apply_trade_kit_auth_environment(&mut command, auth_mode);
     }
-    if let Err(error) =
-        update_execution_phase(request.job_id, request.delivery_id, ExecutionPhase::Spawned)
-    {
+    if let Err(error) = update_execution_phase(
+        request.job_id,
+        request.delivery_id,
+        ExecutionPhase::Spawned,
+    ) {
         let outcome = make_outcome(
             &request,
             amount,
             OutcomeStatus::FailedBeforeSubmit,
             None,
-            Some(format!(
-                "could not persist the execution start state: {error}"
-            )),
+            Some(format!("could not persist the execution start state: {error}")),
             started,
         );
         return persist_and_notify(&outcome_path, outcome);
@@ -2260,10 +2271,9 @@ pub fn report_delivery(
     let outcome_path = outcome_path(job_id, delivery_id)?;
     if !reserve_execution(job_id, delivery_id)? {
         if let Some(mut outcome) = read_outcome(&outcome_path)? {
-            let normalize_existing =
-                is_retired_execution_consent_reason(outcome.reason.as_deref().unwrap_or_default())
-                    || (contract_unavailable
-                        && outcome.status == OutcomeStatus::FailedBeforeExecution);
+            let normalize_existing = is_retired_execution_consent_reason(
+                outcome.reason.as_deref().unwrap_or_default(),
+            ) || (contract_unavailable && outcome.status == OutcomeStatus::FailedBeforeExecution);
             if normalize_existing {
                 outcome.status = OutcomeStatus::Skipped;
                 outcome.reason = Some(super::GUIDE_EXECUTION_UNAVAILABLE_REASON.to_string());
@@ -2396,25 +2406,28 @@ pub fn reconcile_terminal_journals(max_records: usize, budget: Duration) -> Resu
             let journal = match read_terminal_journal(&path) {
                 Ok(journal) => journal,
                 Err(error) => {
-                    eprintln!(
-                        "[autotrade] unreadable terminal journal {:?}: {error}",
-                        path
-                    );
+                    eprintln!("[autotrade] unreadable terminal journal {:?}: {error}", path);
                     continue;
                 }
             };
-            let outcome_path = outcome_path(&journal.outcome.job_id, &journal.outcome.delivery_id)?;
+            let outcome_path = outcome_path(
+                &journal.outcome.job_id,
+                &journal.outcome.delivery_id,
+            )?;
             let outcome = read_outcome(&outcome_path)?.unwrap_or(journal.outcome);
             write_outcome(&outcome_path, &outcome)?;
             if outcome.execution_mode == ExecutionMode::OneTime {
-                if let Ok(permit_path) = one_time_permit_path(&outcome.job_id, &outcome.delivery_id)
+                if let Ok(permit_path) =
+                    one_time_permit_path(&outcome.job_id, &outcome.delivery_id)
                 {
                     let _ = std::fs::remove_file(permit_path);
                 }
             }
             consent::clear_pending_delivery(&outcome.job_id, &outcome.delivery_id);
-            let _ =
-                super::delivery_queue::reconcile_terminal(&outcome.job_id, &outcome.delivery_id);
+            let _ = super::delivery_queue::reconcile_terminal(
+                &outcome.job_id,
+                &outcome.delivery_id,
+            );
             if terminal_reconciliation_complete(&outcome) {
                 let _ = std::fs::remove_file(&path);
             }
@@ -2637,10 +2650,7 @@ mod tests {
         outcome.notification_pending = false;
         write_outcome(&path, &outcome).unwrap();
         assert!(!index.exists());
-        assert!(
-            path.exists(),
-            "terminal outcome remains an idempotency tombstone"
-        );
+        assert!(path.exists(), "terminal outcome remains an idempotency tombstone");
         std::env::remove_var("ONCHAINOS_HOME");
     }
 
@@ -2795,8 +2805,7 @@ mod tests {
 
     #[test]
     fn nonzero_structured_rejection_preserves_safe_code_and_message() {
-        let stdout =
-            br#"{"code":"1","data":[{"sCode":"51008","sMsg":"Insufficient account balance"}]}"#;
+        let stdout = br#"{"code":"1","data":[{"sCode":"51008","sMsg":"Insufficient account balance"}]}"#;
         let (status, receipt, reason) = classify_nonzero("trade_kit", Some(7), stdout, b"");
         assert_eq!(status, OutcomeStatus::FailedBeforeSubmit);
         assert!(receipt.is_none());
@@ -2819,7 +2828,12 @@ mod tests {
 
     #[test]
     fn child_diagnostics_redact_sensitive_assignments_and_jwt_shaped_values() {
-        let jwt_shaped = format!("{}.{}.{}", "a".repeat(16), "b".repeat(16), "c".repeat(16));
+        let jwt_shaped = format!(
+            "{}.{}.{}",
+            "a".repeat(16),
+            "b".repeat(16),
+            "c".repeat(16)
+        );
         let raw = format!(
             "apiKey=fixture-api-value --secret fixture-secret-value https://invalid.local?token=fixture-query-value {jwt_shaped} Error: denied"
         );
@@ -2840,9 +2854,15 @@ mod tests {
             "--readable-amount".into(),
             "100".into(),
         ];
-        assert!(
-            validate_bound_intent("dex", "buy", "10", "job1", ExecutionMode::Auto, &dex).is_err()
-        );
+        assert!(validate_bound_intent(
+            "dex",
+            "buy",
+            "10",
+            "job1",
+            ExecutionMode::Auto,
+            &dex
+        )
+        .is_err());
 
         let polymarket = vec![
             "buy".into(),
@@ -3122,12 +3142,7 @@ mod tests {
         .contains("explicit order price"));
 
         assert!(validate_trade_kit_execution_settings(
-            &[
-                "swap".into(),
-                "place".into(),
-                "--ordType".into(),
-                "market".into()
-            ],
+            &["swap".into(), "place".into(), "--ordType".into(), "market".into()],
             TradeKitExecutionContext {
                 asset_class: AssetClass::Perp,
                 environment: trade_kit::TradeEnvironment::Live,
@@ -3237,7 +3252,12 @@ mod tests {
             recovery_state("job-phase", "delivery-1").unwrap(),
             RecoveryState::PreSubmitInterrupted
         );
-        update_execution_phase("job-phase", "delivery-1", ExecutionPhase::Spawned).unwrap();
+        update_execution_phase(
+            "job-phase",
+            "delivery-1",
+            ExecutionPhase::Spawned,
+        )
+        .unwrap();
         assert_eq!(
             recovery_state("job-phase", "delivery-1").unwrap(),
             RecoveryState::SubmissionUnknown
@@ -3276,12 +3296,16 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            claim_direct("job-direct", "delivery-1", "11", None, ExecutionMode::Auto,)
-                .unwrap_err()
-                .to_string()
-                .contains("does not match")
-        );
+        assert!(claim_direct(
+            "job-direct",
+            "delivery-1",
+            "11",
+            None,
+            ExecutionMode::Auto,
+        )
+            .unwrap_err()
+            .to_string()
+            .contains("does not match"));
         let claimed = claim_direct(
             "job-direct",
             "delivery-1",
@@ -3298,8 +3322,14 @@ mod tests {
             RecoveryState::SubmissionUnknown
         );
 
-        let duplicate =
-            claim_direct("job-direct", "delivery-1", "10", None, ExecutionMode::Auto).unwrap();
+        let duplicate = claim_direct(
+            "job-direct",
+            "delivery-1",
+            "10",
+            None,
+            ExecutionMode::Auto,
+        )
+        .unwrap();
         assert!(!duplicate.allowed);
         assert_eq!(duplicate.status, "already_claimed");
 
@@ -3315,10 +3345,7 @@ mod tests {
         assert_eq!(submitted.status, OutcomeStatus::Submitted);
         assert_eq!(submitted.venue, "agent_direct/okx-cex-trade");
         assert_eq!(submitted.amount, "10");
-        assert_eq!(
-            submitted.receipt.as_ref().unwrap()["receiptId"],
-            "order:123"
-        );
+        assert_eq!(submitted.receipt.as_ref().unwrap()["receiptId"], "order:123");
 
         let replay = finalize_direct(
             "job-direct",
@@ -3376,9 +3403,7 @@ mod tests {
             ExecutionMode::Manual,
         )
         .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("legacy manual policy is notify-only"));
+        assert!(error.to_string().contains("legacy manual policy is notify-only"));
         assert_eq!(
             recovery_state("job-manual-notify-only", "delivery-1").unwrap(),
             RecoveryState::NoExecution
@@ -3408,7 +3433,9 @@ mod tests {
         )
         .unwrap();
         let settings = consent::parse_dynamic_settings_json(
-            Some(r#"{"tradeAmountMode":"available_balance_ratio","tradeAmountRatio":"0.25"}"#),
+            Some(
+                r#"{"tradeAmountMode":"available_balance_ratio","tradeAmountRatio":"0.25"}"#,
+            ),
             "--settings-json",
         )
         .unwrap();
@@ -3488,12 +3515,16 @@ mod tests {
             3600,
         )
         .unwrap();
-        assert!(
-            claim_direct("job-legacy", "delivery-1", "10", None, ExecutionMode::Auto,)
-                .unwrap_err()
-                .to_string()
-                .contains("legacy execution wrapper")
-        );
+        assert!(claim_direct(
+            "job-legacy",
+            "delivery-1",
+            "10",
+            None,
+            ExecutionMode::Auto,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("legacy execution wrapper"));
         std::env::remove_var("ONCHAINOS_HOME");
     }
 
@@ -3557,7 +3588,8 @@ mod tests {
         )
         .unwrap();
         super::super::delivery_queue::enqueue("job-journal", "delivery-1").unwrap();
-        super::super::delivery_queue::mark_awaiting_decision("job-journal", "delivery-1").unwrap();
+        super::super::delivery_queue::mark_awaiting_decision("job-journal", "delivery-1")
+            .unwrap();
         let now = now_secs();
         let outcome = ExecutionOutcome {
             version: OUTCOME_VERSION,
@@ -3582,13 +3614,17 @@ mod tests {
             reconcile_terminal_journals(1, Duration::from_secs(1)).unwrap(),
             1
         );
-        assert!(outcome_path("job-journal", "delivery-1").unwrap().exists());
+        assert!(outcome_path("job-journal", "delivery-1")
+            .unwrap()
+            .exists());
         assert!(notice_ref_path("job-journal", "delivery-1")
             .unwrap()
             .exists());
-        assert!(
-            !super::super::delivery_queue::contains_delivery("job-journal", "delivery-1").unwrap()
-        );
+        assert!(!super::super::delivery_queue::contains_delivery(
+            "job-journal",
+            "delivery-1"
+        )
+        .unwrap());
         assert!(!journal.exists());
         std::env::remove_var("ONCHAINOS_HOME");
     }
@@ -3612,10 +3648,17 @@ mod tests {
                 1,
             )
             .unwrap();
-            super::super::delivery_queue::enqueue("job-outcome-fallback", delivery_id).unwrap();
-        }
-        super::super::delivery_queue::mark_awaiting_decision("job-outcome-fallback", "delivery-1")
+            super::super::delivery_queue::enqueue(
+                "job-outcome-fallback",
+                delivery_id,
+            )
             .unwrap();
+        }
+        super::super::delivery_queue::mark_awaiting_decision(
+            "job-outcome-fallback",
+            "delivery-1",
+        )
+        .unwrap();
         let now = now_secs();
         let outcome = ExecutionOutcome {
             version: OUTCOME_VERSION,
@@ -3643,9 +3686,10 @@ mod tests {
         assert!(!terminal_journal_path("job-outcome-fallback", "delivery-1")
             .unwrap()
             .exists());
-        assert!(
-            super::super::delivery_queue::reconcile_terminal_head("job-outcome-fallback").unwrap()
-        );
+        assert!(super::super::delivery_queue::reconcile_terminal_head(
+            "job-outcome-fallback"
+        )
+        .unwrap());
         assert!(!super::super::delivery_queue::contains_delivery(
             "job-outcome-fallback",
             "delivery-1"

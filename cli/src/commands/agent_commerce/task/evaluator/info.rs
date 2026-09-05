@@ -41,16 +41,10 @@ pub async fn handle_info(
     //   - `files[]`: file evidence (any type — not limited to images)
     // `reason` / `texts[]` are JSON passthroughs; only `files[]` items need download.
     for side in EVIDENCE_SIDES {
-        let Some(bucket) = data.get_mut(side).and_then(Value::as_object_mut) else {
-            continue;
-        };
-        let Some(files) = bucket.get_mut("files").and_then(Value::as_array_mut) else {
-            continue;
-        };
+        let Some(bucket) = data.get_mut(side).and_then(Value::as_object_mut) else { continue };
+        let Some(files) = bucket.get_mut("files").and_then(Value::as_array_mut) else { continue };
         for item in files.iter_mut() {
-            let Some(file_key) = item.as_str().map(str::to_string) else {
-                continue;
-            };
+            let Some(file_key) = item.as_str().map(str::to_string) else { continue };
             let mut merged = Map::new();
             merged.insert("fileKey".into(), json!(&file_key));
             match download_file(client, job_id, &file_key, &tmp_dir, agent_id).await {
@@ -87,10 +81,7 @@ pub async fn handle_info(
     println!();
     println!("---");
     println!();
-    print!(
-        "{}",
-        super::flow::evaluator_selected_post_evidence_steps(job_id, agent_id)
-    );
+    print!("{}", super::flow::evaluator_selected_post_evidence_steps(job_id, agent_id));
     Ok(())
 }
 

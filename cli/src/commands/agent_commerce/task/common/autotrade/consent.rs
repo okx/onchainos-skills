@@ -2918,8 +2918,11 @@ mod tests {
             write_consent("job1", ConsentMode::Auto, Some("100"), None, 1).unwrap();
             // Force expiry into the past.
             let path = consent_path("job1").unwrap();
-            let mut file: ConsentFile =
-                guide::parse_markdown("consent", &std::fs::read_to_string(&path).unwrap()).unwrap();
+            let mut file: ConsentFile = guide::parse_markdown(
+                "consent",
+                &std::fs::read_to_string(&path).unwrap(),
+            )
+            .unwrap();
             file.expires_at = 1;
             std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
             assert_eq!(
@@ -2934,8 +2937,11 @@ mod tests {
         with_home(|| {
             write_consent("job1", ConsentMode::Auto, Some("100"), None, 3600).unwrap();
             let path = consent_path("job1").unwrap();
-            let good: ConsentFile =
-                guide::parse_markdown("consent", &std::fs::read_to_string(&path).unwrap()).unwrap();
+            let good: ConsentFile = guide::parse_markdown(
+                "consent",
+                &std::fs::read_to_string(&path).unwrap(),
+            )
+            .unwrap();
 
             let mut newer = good.clone();
             newer.version = CONSENT_VERSION + 1;

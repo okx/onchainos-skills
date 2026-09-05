@@ -40,10 +40,7 @@ pub fn save(job_id: &str, event_key: &str, content: &str) -> Result<()> {
     } else {
         serde_json::Map::new()
     };
-    map.insert(
-        event_key.to_string(),
-        serde_json::Value::String(content.to_string()),
-    );
+    map.insert(event_key.to_string(), serde_json::Value::String(content.to_string()));
     let json = serde_json::to_string_pretty(&serde_json::Value::Object(map))?;
     std::fs::write(&path, json)?;
     Ok(())
