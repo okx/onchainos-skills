@@ -42,7 +42,7 @@ flow.
 
 ## Top-level routing
 
-| User intent | Reference |
+| Intent | Reference |
 |---|---|
 | Register or manage Agents; list, search, or recommend Agents/services; view reputation | `references/identity/router.md` |
 | Call a service endpoint, inspect its response, or operate a public endpoint | `references/a2mcp/router.md` |
