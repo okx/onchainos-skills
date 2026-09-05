@@ -11,6 +11,10 @@ const USER_INTENT_ROUTER: &str =
     include_str!("../../skills/okx-ai/references/task-user-intent-routing.md");
 const V2_USER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
 const V2_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
+const V2_USER_REFUND: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund.md");
+const V2_REFUND_DISPLAY: &str =
+    include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-display.md");
+const V2_USER_RATING: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/rating.md");
 
 #[test]
 fn skill_confirmation_templates_never_expose_execution_configuration() {
@@ -68,7 +72,10 @@ fn skill_playbooks_delegate_optional_trade_kit_setup_to_agent_skills() {
 
 #[test]
 fn refund_v2_requires_a_user_authored_reason_and_explicit_confirmation() {
-    let contract = USER_REFUND.split_whitespace().collect::<Vec<_>>().join(" ");
+    let contract = V2_USER_REFUND
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(contract.contains("authored by the User"));
     assert!(contract.contains("non-blank"));
     assert!(contract.contains("preserved verbatim"));
@@ -79,13 +86,15 @@ fn refund_v2_requires_a_user_authored_reason_and_explicit_confirmation() {
 }
 
 #[test]
-fn both_discovered_okx_ai_skill_trees_route_refunds_to_one_contract() {
+fn v2_buyer_router_owns_its_refund_contract() {
     assert!(CANONICAL_SKILL.contains("references/task-user-refund.md"));
     assert!(CANONICAL_SKILL.contains("only for CLI syntax or schema lookup"));
     assert!(USER_INTENT_ROUTER.contains("[`task-user-refund.md`](task-user-refund.md)"));
-    assert!(V2_USER_ROUTER.contains("../../../../okx-ai/references/task-user-refund.md"));
-    assert!(V2_USER_ROUTER.contains("reject a paid deliverable"));
-    assert!(!V2_USER_ROUTER.contains("refunds are not yet migrated"));
+    assert!(V2_USER_ROUTER.contains("| Buyer refunds and paid-deliverable rejection"));
+    assert!(V2_USER_ROUTER.contains("| [Buyer refunds](refund.md) |"));
+    assert!(!V2_USER_ROUTER.contains("../../../../okx-ai/references/task-user-refund.md"));
+    assert!(V2_USER_ROUTER.contains("paid-deliverable rejection"));
+    assert!(V2_USER_REFUND.contains("[Refund Presentation](refund-display.md)"));
     for canonical_reference in [
         "../okx-ai/references/task-core.md",
         "../okx-ai/references/task-output-templates.md",
@@ -100,6 +109,7 @@ fn refund_documents_keep_finality_in_the_canonical_reference() {
     const FINALITY_LINK: &str = "task-user-refund.md#progress-arbitration-and-finality";
 
     assert!(USER_REFUND.contains("<a id=\"progress-arbitration-and-finality\"></a>"));
+    assert!(V2_USER_REFUND.contains("<a id=\"progress-arbitration-and-finality\"></a>"));
     assert!(REFUND_ACTION_ROUTING.contains(FINALITY_LINK));
     assert!(REFUND_OUTPUT_TEMPLATES.contains(FINALITY_LINK));
 
@@ -122,13 +132,7 @@ fn refund_documents_keep_finality_in_the_canonical_reference() {
 
 #[test]
 fn refund_render_contract_preserves_field_and_state_semantics() {
-    let refund_section = REFUND_OUTPUT_TEMPLATES
-        .split_once("## Refund V2")
-        .expect("missing Refund V2 output contract")
-        .1
-        .split_once("## `task_create_prepare` phase mapping")
-        .expect("missing end of Refund V2 output contract")
-        .0;
+    let refund_section = V2_REFUND_DISPLAY;
 
     let mut previous = 0;
     for (field, source) in [
@@ -163,12 +167,11 @@ fn refund_render_contract_preserves_field_and_state_semantics() {
         .expect("missing refund rules block");
     assert!(reason_position > previous);
     assert!(rules_position > reason_position);
-    assert!(refund_section.lines().any(|line| {
-        line.contains("`refund_reason`") && line.contains("`payload.request.userReason`")
-    }));
-    assert!(refund_section.contains("Use exactly fields 1-6"));
-    assert!(refund_section.contains("Do not add a separate Service, response"));
-    assert!(refund_section.contains("deadline, or receipt row"));
+    assert!(refund_section.contains("`refund_reason`"));
+    assert!(refund_section.contains("`payload.request.userReason`"));
+    assert!(refund_section.contains("localized `refund_task_details` heading"));
+    assert!(refund_section.contains("Use only fields 1–6"));
+    assert!(refund_section.contains("Do not add Service, deadline, receipt"));
 
     let mut previous_rule = 0;
     for semantic_rule in [
@@ -188,11 +191,78 @@ fn refund_render_contract_preserves_field_and_state_semantics() {
     }
 
     for settlement_state in [
-        "broadcast_submitted",
-        "confirmed",
-        "not_required",
-        "details_incomplete",
+        "Pending:",
+        "Confirmed:",
+        "No refundable payment:",
+        "Incomplete:",
     ] {
         assert!(refund_section.contains(settlement_state));
+    }
+}
+
+#[test]
+fn v2_buyer_rating_is_bound_to_one_active_subscription() {
+    assert!(V2_USER_ROUTER.contains(
+        "| Buyer rating or review of an Active subscription | [Active subscription rating](rating.md) |"
+    ));
+    assert!(V2_SKILL.contains("Buyer rating or review of an Active subscription"));
+
+    let list = V2_USER_RATING
+        .find("onchainos agent my-tasks --task-type subscription --status-type 1 --page 1")
+        .expect("missing Active subscription selection");
+    let duplicate_check = V2_USER_RATING
+        .find("onchainos agent task-feedback")
+        .expect("missing duplicate-rating guard");
+    let submit = V2_USER_RATING
+        .find("onchainos agent feedback-submit")
+        .expect("missing rating submission");
+    assert!(list < duplicate_check && duplicate_check < submit);
+
+    let contract = V2_USER_RATING
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    for binding in [
+        "--agent-id PROVIDER_AGENT_ID_ARG",
+        "--creator-id BUYER_AGENT_ID_ARG",
+        "--score SCORE_ARG",
+        "--task-id JOB_ID_ARG",
+        "--description REVIEW_ARG",
+    ] {
+        assert!(
+            V2_USER_RATING.contains(binding),
+            "missing rating binding {binding}"
+        );
+    }
+
+    for invariant in [
+        "selected row's `jobId`, `buyerAgentId`, and `providerAgentId`",
+        "following unreviewed orders. Please select the order you want to review.",
+        "Preserve pagination, continuing only while `hasNext=true`",
+        "Populate every table cell from its returned row",
+        "render `statusName` verbatim",
+        "A non-empty `data[]` means the Buyer already rated",
+        "Never draft, infer, translate, or rewrite the description",
+        "do not request another confirmation",
+        "Only `ok=true` with a non-empty `data.txHash` proves success",
+        "do not claim that the rating succeeded",
+    ] {
+        assert!(
+            contract.contains(invariant),
+            "missing rating invariant {invariant}"
+        );
+    }
+
+    let mut previous = 0;
+    for field in ["- Task ID:", "- Score:", "- Review:", "- Transaction hash:"] {
+        let position = V2_USER_RATING
+            .find(field)
+            .unwrap_or_else(|| panic!("missing rating result field {field}"));
+        assert!(
+            position >= previous,
+            "rating result field order changed at {field}"
+        );
+        previous = position;
     }
 }

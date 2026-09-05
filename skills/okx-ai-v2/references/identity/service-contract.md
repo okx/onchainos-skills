@@ -111,5 +111,5 @@ If `serviceGuide` is absent for A2A create, show the following prompt:
 
 ### id
 
-- For update and delete, copy the fetched `serviceId` into `id`; never use the numeric raw `id`.
+- For update and delete, use the matched record's `id`.
 - For delete, send only `operation` and `id`.
