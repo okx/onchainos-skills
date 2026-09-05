@@ -6,12 +6,9 @@ Bind the CLI result's `data.payload` as `payload` and use it with the original u
 utterance and confirmed context. `decision=ready` means the creation data is
 ready for this flow; it does not authorize creation.
 
-The generic result contract, action numbering, and action routing remain defined in
-[`SKILL.md`](../../../SKILL.md),
-[`task-output-templates.md`](../../shared/task-output-templates.md),
-and the v2
-[`task-action-routing.md`](../../shared/task-action-routing.md). The output
-templates remain on the canonical compatibility path until they are migrated.
+This file owns collection, confirmation, creation, and their rendering. Do not
+load shared action/output references on entry. Load another reference only when
+a fresh CLI result returns an action not handled explicitly below.
 
 ## Flow invariants
 
@@ -113,10 +110,8 @@ Do not show a standalone parameter summary or confirmation. Continue to Step 3.
 
 ## Step 3 — Confirmation data
 
-Read the canonical
-[`task-output-templates.md`](../../shared/task-output-templates.md)
-for rendering. The confirmation must include the following business data; the
-template defines the presentation format.
+Render the confirmation from the business data below; do not load a shared
+output template.
 
 ### Regular task
 
@@ -177,7 +172,7 @@ Handle the result as follows:
 
 Do not choose for the user. End the turn and wait. For option 1, follow the
 canonical
-[`transport.md`](../../runtime/transport.md); when it
+[`chat-comm-init.md`](../../shared/chat-comm-init.md); when it
 returns `ready=true`, continue creation. For option 2, continue creation
 immediately. Reuse the confirmed parameters in both cases; do not rerun
 `communication-check` or the confirmation form.
@@ -207,10 +202,12 @@ onchainos agent create-task \
 
 Pass the confirmed Service context unchanged. Do not re-check price, balance,
 ASP selection, or ask for another confirmation. Repeat `--file` for each
-attachment. On `reason=broadcast_submitted`, route `nextAction.id=watch_task`
-through the v2
-[`task-action-routing.md`](../../shared/task-action-routing.md);
-task creation is final only after `job_created` is received.
+attachment. On `reason=broadcast_submitted` with
+`nextAction.id=watch_task`, read only
+[`../../runtime/watch.md`](../../runtime/watch.md) and enter its scoped watch.
+For any other returned action, read
+[`../../shared/task-action-routing.md`](../../shared/task-action-routing.md).
+Task creation is final only after `job_created` is received.
 
 ### Subscription creation
 

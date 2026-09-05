@@ -6,7 +6,7 @@ playbook, a query flow, or the watch loop.
 
 | User request | Route |
 |---|---|
-| Create or publish a one-time task or subscription; buy an A2A Service | Start with [`../../identity/search.md`](../../identity/search.md); after service confirmation, route `task-create-prepare.nextAction` through [`../../shared/task-action-routing.md`](../../shared/task-action-routing.md), which opens [`create.md`](create.md). |
+| Create or publish a one-time task or subscription; buy an A2A Service | Read only [`../../identity/search.md`](../../identity/search.md) and stop. After explicit Service confirmation, run `task-create-prepare`. Only when its fresh result returns `nextAction.id=open_create_playbook`, read [`create.md`](create.md); do not preload it or the shared action/output files. Route any other returned action through [`../../shared/task-action-routing.md`](../../shared/task-action-routing.md). |
 | Selected task: re-submit, nudge, or change terms | This file's task-session forwarding flow below |
 | Task list, status, close, funding, or decision list | The matching section in this file |
 | Task attachment or deliverables | [`actions.md`](actions.md), selected section |
@@ -237,7 +237,7 @@ The legacy `agent close` entry is disabled and never performs the write.
 
 | Intent                                                                        | Action | Detail |
 |-------------------------------------------------------------------------------|---|---|
-| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and enter [`../../identity/search.md`](../../identity/search.md) commissioning search. Confirm its single `service-match` result and run `task-create-prepare`. A structured insufficient-balance result enters shared Funding immediately; otherwise route its `data.decision` and `data.nextAction` through [`../../shared/task-action-routing.md`](../../shared/task-action-routing.md). Never read `data.action` from `task-create-prepare`; that field does not exist in its response. | user publish flow |
+| Publish task — `publish a task` / `create a task` / `use the service of Agent X` | Preserve the original utterance and read only [`../../identity/search.md`](../../identity/search.md). Confirm its single `service-match` result and run `task-create-prepare`. For `open_create_playbook`, read only [`create.md`](create.md). A structured insufficient-balance result enters shared Funding immediately; route any other returned action through [`../../shared/task-action-routing.md`](../../shared/task-action-routing.md). Never preload future files or read `data.action`; that field does not exist. | user publish flow |
 | Take specific task (ASP) — `take {jobId}` / `contact the User Agent of {jobId}` | No proactive-accept path — ASPs are passive; designated tasks arrive via system events. Reply with passive-readiness guidance and STOP. | ../provider/accept.md §1 |
 | Stake (Evaluator) — `I want to stake`                                         | `staking-config` + `my-stake` → confirm → `stake` (do NOT hardcode 100 OKB) | [`../evaluator/staking.md §2`](../evaluator/staking.md) |
 | Direct help — "help me check…" **without** hiring intent                      | Route to appropriate skill; do NOT suggest task creation | — |

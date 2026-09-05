@@ -1,7 +1,5 @@
-const PUBLISH_ACTIONS: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/user/create.md");
-const USER_PLAYBOOK: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/user/playbook.md");
+const PUBLISH_ACTIONS: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create.md");
+const USER_PLAYBOOK: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/playbook.md");
 const USER_REFUND: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund.md");
 const REFUND_ACTION_ROUTING: &str =
     include_str!("../../skills/okx-ai-v2/references/shared/task-action-routing.md");
@@ -10,6 +8,56 @@ const REFUND_OUTPUT_TEMPLATES: &str =
 const CANONICAL_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
 const USER_INTENT_ROUTER: &str =
     include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
+const A2A_CORE_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/core.md");
+const IDENTITY_SEARCH: &str = include_str!("../../skills/okx-ai-v2/references/identity/search.md");
+const RUNTIME_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/runtime/router.md");
+const CHAT_COMM_INIT: &str =
+    include_str!("../../skills/okx-ai-v2/references/shared/chat-comm-init.md");
+const COMPLETION_ACTIONS: &str =
+    include_str!("../../skills/okx-ai-v2/references/a2a/completion.md");
+
+#[test]
+fn v2_task_entry_keeps_two_level_lazy_routing_contract() {
+    assert!(CANONICAL_SKILL.contains("references/runtime/router.md"));
+    assert!(!CANONICAL_SKILL.contains("references/runtime/README.md"));
+    assert!(CANONICAL_SKILL.contains("Select exactly one row"));
+    assert!(CANONICAL_SKILL.contains("never scan Skill directories"));
+    assert!(!CANONICAL_SKILL.contains("§Activation"));
+
+    assert!(USER_INTENT_ROUTER.contains("Read only [`../../identity/search.md`]"));
+    assert!(USER_INTENT_ROUTER.contains("nextAction.id=open_create_playbook"));
+    assert!(IDENTITY_SEARCH.contains("Only now read `output-templates.md`"));
+    assert!(PUBLISH_ACTIONS.contains("read only\n[`../../runtime/watch.md`]"));
+    assert!(!PUBLISH_ACTIONS.contains("task-output-templates.md"));
+
+    assert!(A2A_CORE_ROUTER.split_whitespace().count() <= 500);
+    assert!(!A2A_CORE_ROUTER.contains("task-output-templates.md"));
+    assert!(A2A_CORE_ROUTER.contains("legacy\nSkill-read trigger strings"));
+    for leaf in [
+        "watch.md",
+        "backlog.md",
+        "../shared/chat-comm-init.md",
+        "attachment.md",
+        "recovery.md",
+        "cli-reference.md",
+    ] {
+        assert!(RUNTIME_ROUTER.contains(leaf));
+    }
+    assert!(CHAT_COMM_INIT.contains("okx-a2a doctor --fix --json"));
+    assert!(PUBLISH_ACTIONS.contains("../../shared/chat-comm-init.md"));
+}
+
+#[test]
+fn completion_preserves_terminal_marker_and_skips_same_owner_rating() {
+    let contract = COMPLETION_ACTIONS
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(COMPLETION_ACTIONS.contains("[onchainos:task-terminal]"));
+    assert!(contract.contains("preserve that exact prefix byte-for-byte"));
+    assert!(COMPLETION_ACTIONS.contains("payload.rating.required=false"));
+    assert!(contract.contains("Do not call `feedback-submit`"));
+}
 
 #[test]
 fn skill_confirmation_templates_never_expose_execution_configuration() {
@@ -84,11 +132,11 @@ fn v2_okx_ai_skill_routes_refunds_to_one_contract() {
     assert!(!USER_INTENT_ROUTER.contains("refunds are not yet migrated"));
     for canonical_reference in [
         "references/a2a/core.md",
-        "references/shared/task-output-templates.md",
         "references/shared/task-action-routing.md",
     ] {
         assert!(CANONICAL_SKILL.contains(canonical_reference));
     }
+    assert!(!CANONICAL_SKILL.contains("references/shared/task-output-templates.md"));
     assert!(!CANONICAL_SKILL.contains("../okx-ai/"));
 }
 

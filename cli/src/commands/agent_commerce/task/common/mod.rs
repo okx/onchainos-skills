@@ -65,6 +65,31 @@ pub use util::{ensure_sufficient_balance, ensure_sufficient_balance_at, query_xl
 /// Enabled by `cargo build --features debug-log`; default off (zero runtime cost).
 pub const DEBUG_LOG: bool = cfg!(feature = "debug-log");
 
+/// Stable machine-readable prefix for terminal notifications consumed by a
+/// scoped `okx-a2a user watch`. Human-readable text after this marker may be
+/// localized; the marker itself must remain byte-for-byte unchanged.
+pub const TERMINAL_NOTIFICATION_MARKER: &str = "[onchainos:task-terminal]";
+
+/// Feedback between Agents controlled by the same owner address is rejected
+/// by the platform. Detect it before producing a rating action so terminal
+/// handling stays quiet and deterministic in same-wallet test topologies.
+pub fn has_same_agent_owner(task: &serde_json::Value) -> bool {
+    let normalized = |key: &str| {
+        task.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_ascii_lowercase)
+    };
+    matches!(
+        (
+            normalized("buyerAgentAddress"),
+            normalized("providerAgentAddress")
+        ),
+        (Some(buyer), Some(provider)) if buyer == provider
+    )
+}
+
 // ─── CLI definition ─────────────────────────────────────────────────────
 #[derive(Subcommand)]
 pub enum CommonCommand {
