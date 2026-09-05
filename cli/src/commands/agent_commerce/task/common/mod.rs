@@ -24,7 +24,6 @@ pub mod okx_a2a;
 pub mod onchainos_self;
 pub mod payment_mode;
 pub mod pending_v2;
-pub mod template_vars;
 pub mod prefilled_notify;
 pub mod prefilled_rating;
 pub mod query;
@@ -32,6 +31,7 @@ pub mod review_gate;
 pub mod session_cleanup;
 pub mod state_machine;
 pub mod subscription_identity;
+pub mod template_vars;
 pub mod user_lang;
 pub mod util;
 
@@ -843,21 +843,21 @@ pub async fn designated_route_inner(
             .and_then(serde_json::Value::as_str)
             .is_some_and(|value| value.eq_ignore_ascii_case("A2MCP"))
     }) {
-            return Ok(serde_json::json!({
-                "route": "error",
-            "errorType": "a2mcp_direct_invoke_required",
-                "providerName": provider_name,
-                "onlineStatus": online_status,
-            }));
-        }
-        if online_status == 2 {
+        return Ok(serde_json::json!({
+            "route": "error",
+        "errorType": "a2mcp_direct_invoke_required",
+            "providerName": provider_name,
+            "onlineStatus": online_status,
+        }));
+    }
+    if online_status == 2 {
         Ok(serde_json::json!({
                 "route": "error",
                 "errorType": "offline",
                 "providerName": provider_name,
                 "onlineStatus": online_status,
         }))
-        } else {
+    } else {
         Ok(serde_json::json!({
                 "route": "a2a",
                 "providerName": provider_name,

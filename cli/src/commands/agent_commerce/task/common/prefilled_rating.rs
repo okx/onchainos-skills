@@ -35,7 +35,10 @@ fn cache_path(job_id: &str) -> Result<std::path::PathBuf> {
 pub fn save(job_id: &str, score: &str, comment: &str) -> Result<()> {
     let dir = cache_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
-    let rating = Rating { score: score.to_string(), comment: comment.to_string() };
+    let rating = Rating {
+        score: score.to_string(),
+        comment: comment.to_string(),
+    };
     let json = serde_json::to_string_pretty(&rating)?;
     std::fs::write(cache_path(job_id)?, json)?;
     Ok(())

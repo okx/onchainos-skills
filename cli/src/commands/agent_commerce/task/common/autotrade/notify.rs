@@ -706,8 +706,7 @@ mod tests {
 
         persist_failed_notice("job1", "notice-key", "safe user notice", 2).unwrap();
         let path = notice_path("job1", "notice-key").unwrap();
-        let notice: PendingNotice =
-            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let notice: PendingNotice = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(notice.job_id, "job1");
         assert_eq!(notice.idempotency_key, "notice-key");
         assert_eq!(notice.attempts, 3);

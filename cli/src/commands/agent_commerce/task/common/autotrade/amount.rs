@@ -138,10 +138,7 @@ impl Decimal {
 
     /// `self * ratio`, floored to 8 decimal places. A ratio is expressed in
     /// `[0, 1]` form (for example `0.25` = 25%).
-    pub fn ratio_to_absolute(
-        holding: &Decimal,
-        ratio: &Decimal,
-    ) -> Result<Decimal, AmountError> {
+    pub fn ratio_to_absolute(holding: &Decimal, ratio: &Decimal) -> Result<Decimal, AmountError> {
         let mantissa = holding
             .mantissa
             .checked_mul(ratio.mantissa)

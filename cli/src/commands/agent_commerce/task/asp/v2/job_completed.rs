@@ -109,12 +109,9 @@ mod tests {
             "serviceParams": "{\"chain\":\"xlayer\"}"
         });
 
-        let output: serde_json::Value = serde_json::from_str(&result_from_task_detail(
-            "job-1",
-            "provider-1",
-            Ok(task),
-        ))
-        .unwrap();
+        let output: serde_json::Value =
+            serde_json::from_str(&result_from_task_detail("job-1", "provider-1", Ok(task)))
+                .unwrap();
 
         assert_eq!(output["phase"], "task_completion");
         assert_eq!(output["decision"], "ready");

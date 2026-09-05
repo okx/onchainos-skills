@@ -199,10 +199,17 @@ pub async fn handle_status(
     } else {
         let t = &resp;
         let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
-        println!("Task status: {}", t["status"].as_i64().map(status_name).unwrap_or("?"));
+        println!(
+            "Task status: {}",
+            t["status"].as_i64().map(status_name).unwrap_or("?")
+        );
         println!("  jobId:    {job_id}");
         println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
-        println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
+        println!(
+            "  budget:   {} {}",
+            t["tokenAmount"].as_str().unwrap_or("?"),
+            token_sym
+        );
         println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
         if let Some(pid) = t["providerAgentId"].as_str() {
             println!("  asp: {pid}");

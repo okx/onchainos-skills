@@ -5,18 +5,16 @@ use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-pub async fn handle_reveal(
-    client: &mut TaskApiClient,
-    job_id: &str,
-    agent_id: &str,
-) -> Result<()> {
+pub async fn handle_reveal(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
     // Pre-check: avoid burning a tx when the reveal window isn't open or the round
     // already settled. Backend returns `{ canReveal: bool, reason?: string }`.
     let can_reveal_path = client.endpoint(job_id, "vote/canReveal");
-    let can_resp = client.get_with_identity(&can_reveal_path, &agent_id).await?;
+    let can_resp = client
+        .get_with_identity(&can_reveal_path, &agent_id)
+        .await?;
     match can_resp["canReveal"].as_bool() {
         Some(true) => {}
         Some(false) => {

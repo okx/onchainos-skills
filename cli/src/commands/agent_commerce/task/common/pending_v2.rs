@@ -1014,9 +1014,8 @@ fn request_prompt_inner(
         use crate::commands::agent_commerce::task::common::template_vars;
         use crate::commands::sink::CodedError;
         let vars = match template_vars_b64.as_deref() {
-            Some(b64) => template_vars::decode_and_validate(b64).map_err(|e| {
-                CodedError::new(e.code(), Some("template-vars-b64"), e.to_string())
-            })?,
+            Some(b64) => template_vars::decode_and_validate(b64)
+                .map_err(|e| CodedError::new(e.code(), Some("template-vars-b64"), e.to_string()))?,
             None => std::collections::BTreeMap::new(),
         };
         let rendered = template_vars::render_all(&[&user_content, &list_label], &vars)
@@ -1040,12 +1039,18 @@ fn request_prompt_inner(
         let is_buyer_review = role == "user" && source_event.as_deref() == Some("job_submitted");
         // CLI mode has no queue entry to deduplicate. Reuse the queue lock so
         // concurrent delivery-first and event-first requests serialize.
-        let _review_lock = if is_buyer_review { Some(acquire_lock()?) } else { None };
+        let _review_lock = if is_buyer_review {
+            Some(acquire_lock()?)
+        } else {
+            None
+        };
         if is_buyer_review && super::deliverables::has_review_card_sent_marker(&job_id) {
             trace_log(&format!(
                 "request_prompt CLI_MODE: buyer review already sent for job_id={job_id}"
             ));
-            if print_ok { println!("OK"); }
+            if print_ok {
+                println!("OK");
+            }
             return Ok(());
         }
         let now = Utc::now();
@@ -1103,7 +1108,9 @@ fn request_prompt_inner(
             trace_log(&format!(
                 "request_prompt QUEUE_MODE: buyer review already sent for job_id={job_id}"
             ));
-            if print_ok { println!("OK"); }
+            if print_ok {
+                println!("OK");
+            }
             return Ok(());
         }
         let mut q = read_queue()?;

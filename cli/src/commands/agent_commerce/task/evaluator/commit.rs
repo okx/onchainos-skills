@@ -64,27 +64,35 @@ pub async fn handle_commit(
 
     let body = serde_json::json!({ "vote": vote });
     let path = client.endpoint(job_id, "vote/commit");
-    let resp = client.post_with_identity(
-        &path,
-        &body,
-        &agent_id,
-    ).await?;
+    let resp = client.post_with_identity(&path, &body, &agent_id).await?;
 
     // Backend commit response returns `salt` and `commitHash`; broadcast bizContext.
-    let salt = resp["salt"].as_str()
-        .unwrap_or("");
+    let salt = resp["salt"].as_str().unwrap_or("");
     if salt.is_empty() {
         bail!("backend did not return salt, cannot broadcast vote/commit");
     }
     let commit_hash = resp["commitHash"].as_str().unwrap_or("");
 
     let tx_hash = signing::sign_uop_and_broadcast_with_commit_meta(
-        client, &resp["uopData"], &account_id, &address,
-        job_id, signing::extract_biz_type(&resp), &agent_id,
-        salt, vote, &reason, &reason_summary,
-    ).await?;
+        client,
+        &resp["uopData"],
+        &account_id,
+        &address,
+        job_id,
+        signing::extract_biz_type(&resp),
+        &agent_id,
+        salt,
+        vote,
+        &reason,
+        &reason_summary,
+    )
+    .await?;
 
-    let vote_label = if vote == 0 { "Approve (Client wins)" } else { "Reject (Provider wins)" };
+    let vote_label = if vote == 0 {
+        "Approve (Client wins)"
+    } else {
+        "Reject (Provider wins)"
+    };
 
     audit::log(
         "cli",

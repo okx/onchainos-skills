@@ -46,8 +46,10 @@ mod tests {
         let _lock = crate::home::TEST_ENV_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let root = std::env::current_dir().unwrap()
-            .join("target").join("review-gate-idempotency-test");
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("review-gate-idempotency-test");
         std::fs::create_dir_all(&root).unwrap();
         let home = tempfile::tempdir_in(root).unwrap();
         std::env::set_var("ONCHAINOS_HOME", home.path());

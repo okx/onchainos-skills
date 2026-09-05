@@ -168,8 +168,13 @@ pub fn handle_save(params: &SaveParams<'_>) -> Result<SaveResult> {
 
     let sanitized = sanitize_title(params.title, params.job_id);
     let now = chrono::Local::now();
-    let timestamp = format!("{}{:03}", now.format("%Y%m%d_%H%M%S"), now.timestamp_subsec_millis());
-    let ext = src.extension()
+    let timestamp = format!(
+        "{}{:03}",
+        now.format("%Y%m%d_%H%M%S"),
+        now.timestamp_subsec_millis()
+    );
+    let ext = src
+        .extension()
         .map(|e| format!(".{}", e.to_string_lossy()))
         .unwrap_or_else(|| ".txt".to_string());
     let dest_name = format!("{sanitized}_{timestamp}{ext}");
@@ -204,20 +209,19 @@ pub fn handle_save(params: &SaveParams<'_>) -> Result<SaveResult> {
         size_bytes: file_size,
     };
 
-    let mut manifest = read_manifest(role, params.job_id)?
-        .unwrap_or_else(|| Manifest {
-            job_id: params.job_id.to_string(),
-            role: role.to_string(),
-            task: TaskContext {
-                short_id: params.short_id.to_string(),
-                title: params.title.to_string(),
-                token_symbol: params.token_symbol.map(|s| s.to_string()),
-                token_amount: params.token_amount.map(|s| s.to_string()),
-                counterparty_agent_id: params.counterparty_agent_id.map(|s| s.to_string()),
-                counterparty_name: params.counterparty_name.map(|s| s.to_string()),
-            },
-            entries: Vec::new(),
-        });
+    let mut manifest = read_manifest(role, params.job_id)?.unwrap_or_else(|| Manifest {
+        job_id: params.job_id.to_string(),
+        role: role.to_string(),
+        task: TaskContext {
+            short_id: params.short_id.to_string(),
+            title: params.title.to_string(),
+            token_symbol: params.token_symbol.map(|s| s.to_string()),
+            token_amount: params.token_amount.map(|s| s.to_string()),
+            counterparty_agent_id: params.counterparty_agent_id.map(|s| s.to_string()),
+            counterparty_name: params.counterparty_name.map(|s| s.to_string()),
+        },
+        entries: Vec::new(),
+    });
 
     manifest.entries.push(entry);
     write_manifest(&manifest)?;
@@ -249,7 +253,9 @@ pub fn write_review_marker(job_id: &str) -> Result<()> {
 }
 
 pub fn has_review_marker(job_id: &str) -> bool {
-    review_marker_path(job_id).map(|p| p.exists()).unwrap_or(false)
+    review_marker_path(job_id)
+        .map(|p| p.exists())
+        .unwrap_or(false)
 }
 
 pub fn delete_review_marker(job_id: &str) {
@@ -265,7 +271,9 @@ fn review_card_sent_marker_path(job_id: &str) -> Result<PathBuf> {
 }
 
 pub fn has_review_card_sent_marker(job_id: &str) -> bool {
-    review_card_sent_marker_path(job_id).map(|p| p.is_file()).unwrap_or(false)
+    review_card_sent_marker_path(job_id)
+        .map(|p| p.is_file())
+        .unwrap_or(false)
 }
 
 pub fn mark_review_card_sent(job_id: &str) -> Result<()> {
@@ -374,12 +382,18 @@ mod tests {
 
     #[test]
     fn sanitize_normal_title() {
-        assert_eq!(sanitize_title("Polymarket聪明钱信号", "0xabc"), "Polymarket聪明钱信号");
+        assert_eq!(
+            sanitize_title("Polymarket聪明钱信号", "0xabc"),
+            "Polymarket聪明钱信号"
+        );
     }
 
     #[test]
     fn sanitize_strips_non_alphanumeric() {
-        assert_eq!(sanitize_title("ETH/BTC 分析: 2026", "0xabc"), "ETHBTC分析2026");
+        assert_eq!(
+            sanitize_title("ETH/BTC 分析: 2026", "0xabc"),
+            "ETHBTC分析2026"
+        );
     }
 
     #[test]
@@ -415,8 +429,10 @@ mod tests {
         let _lock = crate::home::TEST_ENV_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let root = std::env::current_dir().unwrap()
-            .join("target").join("deliverables-review-marker-test");
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("deliverables-review-marker-test");
         std::fs::create_dir_all(&root).unwrap();
         let home = tempfile::tempdir_in(root).unwrap();
         std::env::set_var("ONCHAINOS_HOME", home.path());

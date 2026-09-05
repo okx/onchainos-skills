@@ -1,8 +1,4 @@
-pub(crate) fn handle(
-    job_id: &str,
-    title: Option<&str>,
-    period_end: Option<i64>,
-) -> String {
+pub(crate) fn handle(job_id: &str, title: Option<&str>, period_end: Option<i64>) -> String {
     let notification =
         super::super::content::sub_complete_notify_asp_notify(title, job_id, period_end);
     serde_json::json!({

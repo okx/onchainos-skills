@@ -13,9 +13,9 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::super::okx_a2a;
 use super::consent::{self, DeliveryContext};
 use super::grants::job_id_is_safe;
-use super::super::okx_a2a;
 
 const QUEUE_VERSION: u32 = 1;
 const RESUME_ENVELOPE_VERSION: u32 = 2;
@@ -190,8 +190,8 @@ pub fn enqueue(job_id: &str, delivery_id: &str) -> Result<EnqueueResult> {
             // decision or turn user think-time back into processing. A
             // queued-resume ACK leaves its exact attempt here; consume that
             // marker once so only the resumed worker may present the card.
-            let claimed_resume = front.state == EntryState::Processing
-                && front.processing_attempt > 0;
+            let claimed_resume =
+                front.state == EntryState::Processing && front.processing_attempt > 0;
             if claimed_resume {
                 front.processing_attempt = 0;
                 front.processing_started_at = now_secs();
@@ -379,14 +379,11 @@ fn dispatch_front(job_id: &str, timeout: Duration) -> Result<bool> {
             return Ok(false);
         };
         let now = now_secs();
-        let pending_due = front.state == EntryState::ResumePending
-            && front.next_resume_attempt_at <= now;
+        let pending_due =
+            front.state == EntryState::ResumePending && front.next_resume_attempt_at <= now;
         let acknowledgement_timed_out = front.state == EntryState::ResumeSent
             && (front.resume_sent_at == 0
-                || front
-                    .resume_sent_at
-                    .saturating_add(RESUME_ACK_TIMEOUT_SEC)
-                    <= now);
+                || front.resume_sent_at.saturating_add(RESUME_ACK_TIMEOUT_SEC) <= now);
         if !pending_due && !acknowledgement_timed_out {
             return Ok(false);
         }
@@ -410,9 +407,8 @@ fn dispatch_front(job_id: &str, timeout: Duration) -> Result<bool> {
         if front.delivery_id == delivery_id && front.state == EntryState::ResumePending {
             front.state = EntryState::ResumeSent;
             front.resume_sent_at = now_secs();
-            front.next_resume_attempt_at = front
-                .resume_sent_at
-                .saturating_add(RESUME_ACK_TIMEOUT_SEC);
+            front.next_resume_attempt_at =
+                front.resume_sent_at.saturating_add(RESUME_ACK_TIMEOUT_SEC);
             write_queue(&queue)?;
         }
     }
@@ -731,23 +727,11 @@ mod tests {
             write_queue(&queue).unwrap();
         }
         assert_eq!(
-            acknowledge_resume(
-                "job2",
-                "d1",
-                Some(RESUME_ENVELOPE_VERSION),
-                Some(2),
-            )
-            .unwrap(),
+            acknowledge_resume("job2", "d1", Some(RESUME_ENVELOPE_VERSION), Some(2),).unwrap(),
             ResumeAck::Accepted
         );
         assert_eq!(
-            acknowledge_resume(
-                "job2",
-                "d1",
-                Some(RESUME_ENVELOPE_VERSION),
-                Some(2),
-            )
-            .unwrap(),
+            acknowledge_resume("job2", "d1", Some(RESUME_ENVELOPE_VERSION), Some(2),).unwrap(),
             ResumeAck::DuplicateOrStale
         );
         std::env::remove_var("ONCHAINOS_HOME");
@@ -790,13 +774,7 @@ mod tests {
             write_queue(&queue).unwrap();
         }
         assert_eq!(
-            acknowledge_resume(
-                "job4",
-                "d1",
-                Some(RESUME_ENVELOPE_VERSION),
-                Some(4),
-            )
-            .unwrap(),
+            acknowledge_resume("job4", "d1", Some(RESUME_ENVELOPE_VERSION), Some(4),).unwrap(),
             ResumeAck::DuplicateOrStale
         );
         assert_eq!(
@@ -804,23 +782,11 @@ mod tests {
             ResumeAck::DuplicateOrStale
         );
         assert_eq!(
-            acknowledge_resume(
-                "job4",
-                "d1",
-                Some(RESUME_ENVELOPE_VERSION),
-                Some(0),
-            )
-            .unwrap(),
+            acknowledge_resume("job4", "d1", Some(RESUME_ENVELOPE_VERSION), Some(0),).unwrap(),
             ResumeAck::DuplicateOrStale
         );
         assert_eq!(
-            acknowledge_resume(
-                "job4",
-                "d1",
-                Some(RESUME_ENVELOPE_VERSION),
-                Some(3),
-            )
-            .unwrap(),
+            acknowledge_resume("job4", "d1", Some(RESUME_ENVELOPE_VERSION), Some(3),).unwrap(),
             ResumeAck::Accepted
         );
         assert!(matches!(
@@ -936,17 +902,14 @@ mod tests {
         {
             let _lock = acquire_lock("job3").unwrap();
             let mut queue = read_queue("job3").unwrap();
-            queue.entries[0].processing_started_at = now_secs()
-                .saturating_sub(PROCESSING_WATCHDOG_SEC + 1);
+            queue.entries[0].processing_started_at =
+                now_secs().saturating_sub(PROCESSING_WATCHDOG_SEC + 1);
             write_queue(&queue).unwrap();
         }
         assert!(recover_stalled_processing("job3").unwrap());
         let queue = read_queue("job3").unwrap();
         assert_eq!(queue.entries[0].state, EntryState::ResumePending);
-        assert!(!temp
-            .path()
-            .join("autotrade/outcomes/job3/d1.json")
-            .exists());
+        assert!(!temp.path().join("autotrade/outcomes/job3/d1.json").exists());
         std::env::remove_var("ONCHAINOS_HOME");
     }
 }

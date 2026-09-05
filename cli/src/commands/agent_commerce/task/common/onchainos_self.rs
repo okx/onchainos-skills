@@ -21,19 +21,25 @@ pub fn task_feedback_exists(agent_id: &str, task_id: &str) -> Result<bool> {
         .map_err(|e| anyhow::anyhow!("could not resolve current exe: {e}"))?;
     let out = Command::new(exe)
         .args([
-            "agent", "task-feedback",
-            "--agent-id", agent_id,
-            "--task-id", task_id,
+            "agent",
+            "task-feedback",
+            "--agent-id",
+            agent_id,
+            "--task-id",
+            task_id,
         ])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("onchainos agent task-feedback exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "onchainos agent task-feedback exit {status}: {stderr}",
+            status = out.status
+        );
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
-        .unwrap_or(serde_json::Value::Null);
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).unwrap_or(serde_json::Value::Null);
     let data = &parsed["data"];
     Ok(data.is_array() && !data.as_array().unwrap().is_empty())
 }
@@ -53,18 +59,27 @@ pub fn feedback_submit(
         .map_err(|e| anyhow::anyhow!("could not resolve current exe: {e}"))?;
     let out = Command::new(exe)
         .args([
-            "agent", "feedback-submit",
-            "--agent-id", provider_agent_id,
-            "--creator-id", user_agent_id,
-            "--score", score,
-            "--task-id", job_id,
-            "--description", comment,
+            "agent",
+            "feedback-submit",
+            "--agent-id",
+            provider_agent_id,
+            "--creator-id",
+            user_agent_id,
+            "--score",
+            score,
+            "--task-id",
+            job_id,
+            "--description",
+            comment,
         ])
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("onchainos agent feedback-submit exit {status}: {stderr}", status = out.status);
+        anyhow::bail!(
+            "onchainos agent feedback-submit exit {status}: {stderr}",
+            status = out.status
+        );
     }
     Ok(())
 }

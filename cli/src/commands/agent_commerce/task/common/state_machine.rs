@@ -749,7 +749,9 @@ impl SubStatus {
                 SubStatus::Completed, // DM rules ASP wins
                 SubStatus::Failed,    // DM rules user wins
             ],
-            SubStatus::Completed | SubStatus::Failed | SubStatus::Closed | SubStatus::Expired => &[],
+            SubStatus::Completed | SubStatus::Failed | SubStatus::Closed | SubStatus::Expired => {
+                &[]
+            }
         }
     }
 

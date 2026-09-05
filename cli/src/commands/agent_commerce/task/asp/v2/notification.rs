@@ -82,11 +82,7 @@ fn notification_result(job_id: &str, event: &str, notification: String) -> Strin
 /// Reuse the established ASP terminal-notification action contract. The action
 /// ID is legacy-named for subscriptions, but its payload is job-scoped and the
 /// consumer performs the required notify + session-cleanup sequence.
-fn terminal_notification_result(
-    job_id: &str,
-    event: &str,
-    notification: String,
-) -> String {
+fn terminal_notification_result(job_id: &str, event: &str, notification: String) -> String {
     serde_json::json!({
         "phase": "notification",
         "decision": "ready",
@@ -445,13 +441,14 @@ mod tests {
             .unwrap();
         assert!(content.contains("No refundable funds were collected during the trial"));
         assert!(!content.contains("funds have reached the Buyer"));
-        assert_eq!(trial["nextAction"][0]["id"], "notify_and_cleanup_subscription");
+        assert_eq!(
+            trial["nextAction"][0]["id"],
+            "notify_and_cleanup_subscription"
+        );
 
         let zero = task_context("Free signals", 1, "0.000", "USDT", 8);
         let zero = parse(job_asp_accept_expire("job-2", &zero));
-        let content = zero["payload"]["notification"]["content"]
-            .as_str()
-            .unwrap();
+        let content = zero["payload"]["notification"]["content"].as_str().unwrap();
         assert!(content.contains("No refundable funds were collected"));
         assert!(!content.contains("funds have reached the Buyer"));
     }

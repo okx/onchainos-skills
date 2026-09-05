@@ -8,11 +8,7 @@ use crate::commands::agent_commerce::task::common::okx_a2a;
 use crate::commands::agent_commerce::task::evaluator::{decimal_str, staking_types};
 use crate::commands::agent_commerce::task::signing;
 
-pub async fn handle_stake(
-    client: &mut TaskApiClient,
-    amount: &str,
-    agent_id: &str,
-) -> Result<()> {
+pub async fn handle_stake(client: &mut TaskApiClient, amount: &str, agent_id: &str) -> Result<()> {
     // A successful first-time stake makes the evaluator an active candidate that
     // can be drawn into a jury and must receive arbitration messages, so A2A
     // communication must be ready BEFORE, and the identity synced AFTER — the
@@ -59,12 +55,7 @@ struct StakeUx {
     next_hint: &'static str,
 }
 
-async fn run(
-    client: &mut TaskApiClient,
-    amount: &str,
-    agent_id: &str,
-    ux: StakeUx,
-) -> Result<()> {
+async fn run(client: &mut TaskApiClient, amount: &str, agent_id: &str, ux: StakeUx) -> Result<()> {
     let trimmed = validate_amount(amount)?;
 
     let (account_id, address, agent_id) =
@@ -92,7 +83,10 @@ async fn run(
         None,
     );
 
-    println!("{} submitted (agentId={agent_id}, via={endpoint})", ux.label);
+    println!(
+        "{} submitted (agentId={agent_id}, via={endpoint})",
+        ux.label
+    );
     println!("  amount:  {}{trimmed} OKB", ux.amount_prefix);
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");
@@ -126,10 +120,16 @@ pub(super) async fn execute_stake_or_increase(
 ) -> Result<(String, &'static str)> {
     let m = staking_types::get_my_stake(client, agent_id)
         .await
-        .map_err(|e| anyhow::anyhow!("failed to fetch my-stake, cannot route stake vs increase-stake: {e}"))?;
+        .map_err(|e| {
+            anyhow::anyhow!("failed to fetch my-stake, cannot route stake vs increase-stake: {e}")
+        })?;
     let cfg = staking_types::get_staking_config(client, agent_id)
         .await
-        .map_err(|e| anyhow::anyhow!("failed to fetch staking-config, cannot validate cumulative stake threshold: {e}"))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to fetch staking-config, cannot validate cumulative stake threshold: {e}"
+            )
+        })?;
 
     // Cumulative stake threshold hard check (regardless of registered=true/false):
     // activeStake + amount >= min. All arithmetic runs in string-decimal to avoid
@@ -152,7 +152,11 @@ pub(super) async fn execute_stake_or_increase(
         }
     }
 
-    let endpoint = if m.registered { "increaseStake" } else { "stake" };
+    let endpoint = if m.registered {
+        "increaseStake"
+    } else {
+        "stake"
+    };
     let tx = post_and_broadcast(client, endpoint, amount, account_id, address, agent_id).await?;
     Ok((tx, endpoint))
 }

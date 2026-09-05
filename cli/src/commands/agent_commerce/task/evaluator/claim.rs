@@ -7,10 +7,7 @@ use crate::commands::agent_commerce::task::common::{
 };
 use crate::commands::agent_commerce::task::signing;
 
-pub async fn handle_claim(
-    client: &mut TaskApiClient,
-    agent_id: &str,
-) -> Result<()> {
+pub async fn handle_claim(client: &mut TaskApiClient, agent_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
