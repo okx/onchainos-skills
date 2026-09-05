@@ -60,7 +60,7 @@ Follow the flow for the confirmed role.
 
 | # | Name | Avatar | Description |
 |---|---|---|---|
-| 1 | {Service ProviderName} | {avatar} | {Service ProviderDescription} |
+| 1 | {Service ProviderName} | {avatarUrl} | {Service ProviderDescription} |
 
 Please review the information above. Reply `1` to continue adding services. This will not create the identity.
 ```
@@ -68,7 +68,7 @@ Please review the information above. Reply `1` to continue adding services. This
 Rules:
 
 - Show the name and description verbatim. Preserve description line breaks. Do not add Role or Agent ID.
-- Render the avatar as an image. Never show its token or URL as text.
+- Show the complete avatar URL as plain text without truncation. Do not render it as an image.
 - Keep the column order shown above.
 - Only reply `1` proceeds to Step 2. It does not run `agent create`.
 
