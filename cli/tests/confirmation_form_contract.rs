@@ -11,6 +11,9 @@ const USER_INTENT_ROUTER: &str =
     include_str!("../../skills/okx-ai/references/task-user-intent-routing.md");
 const V2_USER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
 const V2_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
+const V2_USER_REFUND: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund.md");
+const V2_REFUND_DISPLAY: &str =
+    include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-display.md");
 
 #[test]
 fn skill_confirmation_templates_never_expose_execution_configuration() {
@@ -68,7 +71,10 @@ fn skill_playbooks_delegate_optional_trade_kit_setup_to_agent_skills() {
 
 #[test]
 fn refund_v2_requires_a_user_authored_reason_and_explicit_confirmation() {
-    let contract = USER_REFUND.split_whitespace().collect::<Vec<_>>().join(" ");
+    let contract = V2_USER_REFUND
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(contract.contains("authored by the User"));
     assert!(contract.contains("non-blank"));
     assert!(contract.contains("preserved verbatim"));
@@ -79,13 +85,15 @@ fn refund_v2_requires_a_user_authored_reason_and_explicit_confirmation() {
 }
 
 #[test]
-fn both_discovered_okx_ai_skill_trees_route_refunds_to_one_contract() {
+fn v2_buyer_router_owns_its_refund_contract() {
     assert!(CANONICAL_SKILL.contains("references/task-user-refund.md"));
     assert!(CANONICAL_SKILL.contains("only for CLI syntax or schema lookup"));
     assert!(USER_INTENT_ROUTER.contains("[`task-user-refund.md`](task-user-refund.md)"));
-    assert!(V2_USER_ROUTER.contains("../../../../okx-ai/references/task-user-refund.md"));
-    assert!(V2_USER_ROUTER.contains("reject a paid deliverable"));
-    assert!(!V2_USER_ROUTER.contains("refunds are not yet migrated"));
+    assert!(V2_USER_ROUTER.contains("| Buyer refunds and paid-deliverable rejection"));
+    assert!(V2_USER_ROUTER.contains("| [Buyer refunds](refund.md) |"));
+    assert!(!V2_USER_ROUTER.contains("../../../../okx-ai/references/task-user-refund.md"));
+    assert!(V2_USER_ROUTER.contains("paid-deliverable rejection"));
+    assert!(V2_USER_REFUND.contains("[Refund Presentation](refund-display.md)"));
     for canonical_reference in [
         "../okx-ai/references/task-core.md",
         "../okx-ai/references/task-output-templates.md",
@@ -100,6 +108,7 @@ fn refund_documents_keep_finality_in_the_canonical_reference() {
     const FINALITY_LINK: &str = "task-user-refund.md#progress-arbitration-and-finality";
 
     assert!(USER_REFUND.contains("<a id=\"progress-arbitration-and-finality\"></a>"));
+    assert!(V2_USER_REFUND.contains("<a id=\"progress-arbitration-and-finality\"></a>"));
     assert!(REFUND_ACTION_ROUTING.contains(FINALITY_LINK));
     assert!(REFUND_OUTPUT_TEMPLATES.contains(FINALITY_LINK));
 
@@ -122,13 +131,7 @@ fn refund_documents_keep_finality_in_the_canonical_reference() {
 
 #[test]
 fn refund_render_contract_preserves_field_and_state_semantics() {
-    let refund_section = REFUND_OUTPUT_TEMPLATES
-        .split_once("## Refund V2")
-        .expect("missing Refund V2 output contract")
-        .1
-        .split_once("## `task_create_prepare` phase mapping")
-        .expect("missing end of Refund V2 output contract")
-        .0;
+    let refund_section = V2_REFUND_DISPLAY;
 
     let mut previous = 0;
     for (field, source) in [
@@ -163,12 +166,11 @@ fn refund_render_contract_preserves_field_and_state_semantics() {
         .expect("missing refund rules block");
     assert!(reason_position > previous);
     assert!(rules_position > reason_position);
-    assert!(refund_section.lines().any(|line| {
-        line.contains("`refund_reason`") && line.contains("`payload.request.userReason`")
-    }));
-    assert!(refund_section.contains("Use exactly fields 1-6"));
-    assert!(refund_section.contains("Do not add a separate Service, response"));
-    assert!(refund_section.contains("deadline, or receipt row"));
+    assert!(refund_section.contains("`refund_reason`"));
+    assert!(refund_section.contains("`payload.request.userReason`"));
+    assert!(refund_section.contains("localized `refund_task_details` heading"));
+    assert!(refund_section.contains("Use only fields 1–6"));
+    assert!(refund_section.contains("Do not add Service, deadline, receipt"));
 
     let mut previous_rule = 0;
     for semantic_rule in [
@@ -188,10 +190,10 @@ fn refund_render_contract_preserves_field_and_state_semantics() {
     }
 
     for settlement_state in [
-        "broadcast_submitted",
-        "confirmed",
-        "not_required",
-        "details_incomplete",
+        "Pending:",
+        "Confirmed:",
+        "No refundable payment:",
+        "Incomplete:",
     ] {
         assert!(refund_section.contains(settlement_state));
     }
