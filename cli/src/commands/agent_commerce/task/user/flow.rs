@@ -598,13 +598,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      Preserve the saved deliverable and report it exactly once with `onchainos agent autotrade-delivery-report --job-id {job_id} --delivery-id <retainedDeliveryId> --status skipped --reason execution_policy_not_configured`. \
                      Tell the user this delivery was saved and no trade was submitted. Do not offer a legacy automatic-execution update; Guide-driven execution is configured only during subscription setup."
                 ),
-                "autotrade_over_cap" if direct_execution => format!(
-                    "[User decision relay] source_event=autotrade_over_cap, reply: {reply}\\n\\n\
-                     This is a compatibility card from an older client for a delivery pinned to `agent_direct`. Map only A=execute this delivery once or B=skip. For A, recover the exact amount shown on the card/current retained signal and authorize it once with `onchainos agent autotrade-once-authorize`; then re-read the artifact, select the compatible Skill/tool, claim with `onchainos agent autotrade-direct-claim --execution-mode one_time`, invoke the normal final command directly exactly once, and record its documented result with `autotrade-direct-finalize`. For B, call `autotrade-delivery-report --status skipped --reason over_cap_declined`. Ambiguous text must re-request the same localized card. Never use `autotrade-execute`, retry, or fall back to the legacy wrapper."
-                ),
                 "autotrade_over_cap" => format!(
-                    "[User decision relay] source_event=autotrade_over_cap, reply: {reply}\\n\\n\
-                     This is a compatibility card from an older client. Semantically map only A=execute this delivery once or B=skip. For A, recover the exact amount shown on the card/current retained signal, run `onchainos agent autotrade-once-authorize --job-id {job_id} --delivery-id <retainedDeliveryId> --amount <exactAmount>` once, then build the selected Skill/tool's normal user-confirmed argv without `--autotrade-job` and execute it only through `onchainos agent autotrade-execute --job-id {job_id} --delivery-id <retainedDeliveryId> --venue <venue> --action <buy|sell> --amount <exactAmount> --execution-mode one_time --command-json '<argv-json>'`. For B, call `onchainos agent autotrade-delivery-report --job-id {job_id} --delivery-id <retainedDeliveryId> --status skipped --reason over_cap_declined`. Ambiguous text must re-request the same localized two-way card. Never invoke a final money-moving command directly and never retry it automatically."
+                    "[Retired over-cap relay] source_event=autotrade_over_cap, reply: {reply}\\n\\n\
+                     This card was created by an older execution wrapper and cannot authorize the current Guide-driven path. Preserve the saved delivery and report it exactly once with `onchainos agent autotrade-delivery-report --job-id {job_id} --delivery-id <retainedDeliveryId> --status skipped --reason execution_policy_not_configured`. Do not submit an order, create a one-time authorization, or retry the delivery."
                 ),
                 "autotrade_tool_select" if direct_execution => format!(
                     "[User decision relay] source_event=autotrade_tool_select, reply: {reply}\\n\\n\
@@ -1250,7 +1246,6 @@ mod tests {
         assert!(out.contains("do not offer a legacy policy restore/update flow"));
         assert!(!out.contains("autotrade-direct-claim"));
         assert!(!out.contains("autotrade-direct-finalize"));
-        assert!(!out.contains("onchainos agent autotrade-execute"));
         assert!(out.contains("\"executionPath\":\"agent_direct\""));
 
         std::env::remove_var("ONCHAINOS_HOME");
@@ -1272,12 +1267,11 @@ mod tests {
         assert!(out.contains("configured only during subscription setup"));
         assert!(out.contains("execution_policy_not_configured"));
         assert!(out.contains("do not execute a transaction"));
-        assert!(!out.contains("autotrade-execute --execution-mode manual"));
         assert!(!out.contains("autotrade-direct-claim"));
     }
 
     #[tokio::test]
-    async fn over_cap_relay_requires_exact_one_time_permit_and_result_gateway() {
+    async fn over_cap_relay_is_retired_without_a_one_time_execution_path() {
         let out = run(
             "user_decision_autotrade_over_cap",
             json!({
@@ -1287,11 +1281,11 @@ mod tests {
             }),
         )
         .await;
-        assert!(out.contains("autotrade-once-authorize"));
-        assert!(out.contains("--execution-mode one_time"));
+        assert!(out.contains("Retired over-cap relay"));
+        assert!(out.contains("cannot authorize the current Guide-driven path"));
         assert!(out.contains("autotrade-delivery-report"));
-        assert!(out.contains("invoke the normal final command directly exactly once"));
-        assert!(out.contains("Never use `autotrade-execute`"));
+        assert!(out.contains("execution_policy_not_configured"));
+        assert!(!out.contains("autotrade-once-authorize"));
     }
 
     #[tokio::test]
