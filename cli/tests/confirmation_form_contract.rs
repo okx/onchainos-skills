@@ -165,8 +165,6 @@ fn v2_okx_ai_skill_routes_refunds_to_one_contract() {
     assert!(USER_INTENT_ROUTER.contains("[`refund.md`](refund.md)"));
     assert!(USER_INTENT_ROUTER.contains("paid-deliverable rejection"));
     assert!(!USER_INTENT_ROUTER.contains("refunds are not yet migrated"));
-    assert!(USER_INTENT_ROUTER.contains("Rate or review an active subscription"));
-    assert!(USER_INTENT_ROUTER.contains("[`rating.md`](rating.md)"));
     assert!(V2_USER_REFUND.contains("[Refund Presentation](refund-display.md)"));
     for canonical_reference in [
         "references/a2a/core.md",
@@ -276,10 +274,11 @@ fn refund_render_contract_preserves_field_and_state_semantics() {
 
 #[test]
 fn v2_buyer_rating_is_bound_to_one_active_subscription() {
-    assert!(V2_USER_ROUTER.contains(
-        "| Buyer rating or review of an Active subscription | [Active subscription rating](rating.md) |"
-    ));
+    assert!(V2_USER_ROUTER
+        .contains("| Rate or review an active subscription | [`rating.md`](rating.md) |"));
     assert!(V2_SKILL.contains("Buyer rating or review of an Active subscription"));
+    assert!(!V2_USER_ROUTER.contains("## Rate an active subscription"));
+    assert!(!USER_PLAYBOOK.contains("| Rate |"));
 
     let list = V2_USER_RATING
         .find("onchainos agent my-tasks --task-type subscription --status-type 1 --page 1")

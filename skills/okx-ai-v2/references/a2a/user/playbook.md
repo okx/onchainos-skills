@@ -49,7 +49,6 @@ communication rules; it does not match free-text user intents.
 | Add attachment / image | "attach a file/image to a task" | [`actions.md`](actions.md) §2 |
 | Stop task | "stop task / close task" | [`actions.md`](actions.md) §3 |
 | View deliverables | "view / list deliverables" | [`actions.md`](actions.md) §4 |
-| Rate | "rate this task / rate this subscription / review jobId X / give X five stars / leave feedback" | [`router.md`](router.md) §Rate an active subscription |
 | Refund, paid-deliverable rejection, or refund progress | "refund / get my money back / apply for refund / reject paid delivery / refund status / refund arbitration" | [`refund.md`](refund.md); do not route through disabled legacy close/reject/subscribe-reject/claim-auto-refund commands |
 | Other subscription task ops | "auto-renew / trial cancel / subscription charge / subscription cost" | §Subscription below |
 | Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |

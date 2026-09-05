@@ -13,7 +13,7 @@ playbook, a query flow, or the watch loop.
 | Subscription device, receipt, copy-trade, or signal action | [`playbook.md`](playbook.md), selected section |
 | Watch, history, or outstanding decisions | [`../../runtime/watch.md`](../../runtime/watch.md) |
 | Buyer refunds and paid-deliverable rejection | [Buyer refunds](refund.md) |
-| Buyer rating or review of an Active subscription | [Active subscription rating](rating.md) |
+| Rate or review an active subscription | [`rating.md`](rating.md) |
 | Create, view, or manage a one-time job | `job.md` |
 | Change a task's visibility | `visibility.md` |
 | View my subscription tasks | `subscription.md` |
@@ -77,77 +77,6 @@ in `playbook.md`. If the wording could mean either cancellation or
 returning funds, ask which outcome the User wants before any write.
 `subscribe-cancel` remains valid only for that cancellation-only flow and is not
 a refund fallback.
-
----
-
-## Rate an active subscription
-
-Trigger when the buyer wants to rate or review an ongoing subscription.
-
-1. Resolve one ACTIVE buyer subscription:
-
-```bash
-onchainos agent my-tasks --task-type subscription --status-type 1 --page 1
-```
-
-- Current-message `jobId`: match it exactly, advancing `--page` only while `hasNext=true`.
-- Context-only `jobId`: ask whether to use it.
-- No confirmed `jobId`: introduce the list with the localized equivalent of
-  `I found the following unreviewed orders. Please select the order you want to review.` Then render
-  this compact table and wait for the user's choice; preserve pagination.
-
-  | # | Task | Provider | Status | Job ID |
-  |---|---|---|---|---|
-  | 1 | `<title>` | `Agent#<providerAgentId>` | `<statusName>` | `<jobId>` |
-
-  Use only values from the returned row. Render subscription `statusName` verbatim and do not add fee,
-  renewal, device, or billing fields.
-
-The selected row is the sole source of `jobId`, `buyerAgentId`, and `providerAgentId`. If no row matches
-or either Agent id is missing, report that the review cannot be submitted and stop. Do not call detail,
-status, device, or sub-session commands as a fallback.
-
-2. Check for an existing review:
-
-```bash
-onchainos agent task-feedback \
-  --agent-id <selected buyerAgentId> \
-  --task-id <selected jobId>
-```
-
-A non-empty `data[]` means already reviewed: report it and stop. An empty `data[]` continues.
-
-3. Require a user-authored `score` from 0.00 to 5.00 stars and a concrete `description`. `Good review`,
-`positive review`, `bad review`, and localized equivalents are intent, not concrete review text. Retain
-valid values already supplied and ask once for all missing or invalid fields. Never invent the review.
-
-4. When both fields are present, submit without another confirmation:
-
-```bash
-onchainos agent feedback-submit \
-  --agent-id <selected providerAgentId> \
-  --creator-id <selected buyerAgentId> \
-  --score <user-authored stars> \
-  --task-id <selected jobId> \
-  --description "<verbatim user-authored review>"
-```
-
-Pass the star value and review verbatim; never omit `--description`.
-
-Only `ok=true` with a non-empty `data.txHash` is success. Render the localized equivalent of this
-canonical result:
-
-```text
-Review submitted.
-
-- Task ID: <jobId>
-- Score: <score> / 5
-- Review: <description>
-- Transaction hash: <txHash>
-```
-
-Use the submitted values verbatim. If the command fails or `data.txHash` is missing, report the CLI
-error and never claim that the review succeeded.
 
 ---
 
