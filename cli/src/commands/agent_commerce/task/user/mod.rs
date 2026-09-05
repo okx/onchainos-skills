@@ -34,6 +34,7 @@ pub(crate) mod refund_v2;
 mod reject_apply;
 mod service_detail;
 pub(crate) mod service_param_update;
+pub(crate) mod subscription_list;
 pub(crate) mod subscription_ops;
 mod task_create_prepare;
 mod v2;
@@ -346,6 +347,10 @@ pub enum TaskCommand {
         task_type: my_tasks::MyTaskType,
         status_type: u8,
         page: u32,
+        page_size: u32,
+    },
+    SubscriptionList {
+        cursor: Option<String>,
         page_size: u32,
     },
     /// Show total monthly cost of active subscriptions.
@@ -2141,6 +2146,9 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             page,
             page_size,
         } => my_tasks::handle_my_tasks(&mut client, task_type, status_type, page, page_size).await,
+        TaskCommand::SubscriptionList { cursor, page_size } => {
+            subscription_list::handle_subscription_list(cursor.as_deref(), page_size).await
+        }
         TaskCommand::SubscribeCost {} => subscription_ops::handle_subscribe_cost(&mut client).await,
     }
 }

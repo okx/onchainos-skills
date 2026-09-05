@@ -85,5 +85,9 @@ Route by `decision`, then use `reason`, `nextAction`, and `payload`:
 
 Render `nextAction` as a numbered list. Never invent actions not returned by the CLI.
 
+| Action ID | Route |
+|---|---|
+| `register_user_identity` | `references/identity/register.md` — register the User identity, then resume the original read-only request. |
+
 Do not infer progression from human-readable output. Keep backend field names
 inside `payload` unchanged.
