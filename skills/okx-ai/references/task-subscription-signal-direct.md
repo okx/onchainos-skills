@@ -28,33 +28,29 @@ documented interface.
 
 ## Required flow
 
-1. Proceed only when `consentSnapshot.status` is `active` and the runtime
-   contract remains `guide_direct`. If the Guide or active Guide Consent is
-   unavailable, this becomes receive-and-display-only: do not report an
-   execution outcome and do not call a legacy Consent command.
-2. Read the exact local Guide, matching Consent, and `savedPath` together.
-   Apply every Guide rule to the saved Signal and Consent. If a required fact is
-   missing, ambiguous, expired, duplicate, over the user's limit, or otherwise
-   ineligible under the Guide, do not invent a default; report the terminal
-   non-execution result.
-3. Use the documented trusted Skill/plugin appropriate to the Guide. The tool
+1. Confirm the runtime contract remains `guide_direct`, then read the exact
+   local Guide, matching Consent, and `savedPath` together. Apply every Guide
+   rule to the saved Signal and Consent. If the Guide or active Guide Consent
+   is unavailable, preserve/display the Signal without an execution outcome.
+   If a required fact is missing, ambiguous, expired, duplicate, over the
+   user's limit, or otherwise ineligible under the Guide, do not invent a
+   default; report the terminal non-execution result.
+2. Use the documented trusted Skill/plugin appropriate to the Guide. The tool
    still performs its normal safety, market, account, and transaction validation.
    Plugin installation must remain visible and user-approved.
-4. Immediately before the one final money-moving call, reserve this delivery:
+3. Immediately before the one final money-moving call, reserve this delivery:
 
    ```bash
      onchainos agent autotrade-direct-claim \
-     --job-id <jobId> --delivery-id <deliveryId> \
-     --amount <amount-derived-from-guide-consent-and-signal>
+     --job-id <jobId> --delivery-id <deliveryId>
    ```
 
-   Use only the amount determined from the Guide, Consent, and saved Signal.
    Continue only if the result says
    `allowed:true` and `status:"claimed"`.
-5. Invoke the selected tool's normal final command exactly once. Never call `autotrade-execute`,
-   `subscription-route-set`, `subscription-route-clear`, `command-json`, a shell,
-   or a Guide-provided script.
-6. Finalize the exact delivery once with the documented tool result:
+4. Invoke the selected tool's normal final command exactly once. Never call
+   `subscription-route-set`, `subscription-route-clear`, `command-json`, a
+   shell, or a Guide-provided script.
+5. Finalize the exact delivery once with the documented tool result:
 
    ```bash
    onchainos agent autotrade-direct-finalize \
