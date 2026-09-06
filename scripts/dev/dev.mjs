@@ -104,12 +104,14 @@ function refreshSkills() {
   for (const skill of sourceSkills()) {
     const globalMatches = globals.get(skill.name) || [];
     const sameSource = globalMatches.find((candidate) => sameFile(candidate, skill.skillMd));
+    for (const candidate of globalMatches) {
+      if (!sameFile(candidate, skill.skillMd)) conflicts.push({ name: skill.name, path: candidate });
+    }
     if (sameSource) {
       reused.push({ name: skill.name, path: sameSource });
       continue;
     }
     desired.set(skill.name, skill.dir);
-    for (const candidate of globalMatches) conflicts.push({ name: skill.name, path: candidate });
   }
 
   for (const entry of fs.readdirSync(projectSkillsDir, { withFileTypes: true })) {
@@ -230,9 +232,14 @@ function init() {
 
   const a2a = findExecutableOutsideProject("okx-a2a");
   if (!a2a) fail("global okx-a2a is required but was not found on PATH");
+  const codex = findExecutableOutsideProject("codex");
   linkFile(path.join(scriptDir, "onchainos.sh"), path.join(binDir, "onchainos"));
   linkFile(path.join(scriptDir, "okx-a2a.sh"), path.join(binDir, "okx-a2a"));
   linkFile(a2a, path.join(binDir, "okx-a2a.real"));
+  if (codex) {
+    linkFile(path.join(scriptDir, "codex-a2a.sh"), path.join(binDir, "codex-a2a"));
+    linkFile(codex, path.join(binDir, "codex.real"));
+  }
   updateCodexPath();
   const skills = refreshSkills();
 
@@ -240,6 +247,9 @@ function init() {
   console.log(`  Config: ${devConfig}`);
   console.log(`  CLI:    ${path.join(binDir, "onchainos")}`);
   console.log(`  A2A:    ${path.join(binDir, "okx-a2a")} -> ${a2a}`);
+  console.log(codex
+    ? `  Codex:  ${path.join(binDir, "codex-a2a")} -> ${codex}`
+    : "  Codex:  not installed; Codex-specific A2A session pinning skipped");
   console.log(`  Skills: linked=${skills.linked.length} reused-global-same-source=${skills.reused.length} conflicts-disabled=${skills.conflicts.length}`);
   console.log("Reload Codex and start a new task before validating Skill routing.");
 }
@@ -260,13 +270,24 @@ function envCommand(value) {
 function doctor() {
   const errors = [];
   const env = readEnvironment();
-  const expected = { onchainos: path.join(binDir, "onchainos"), "okx-a2a": path.join(binDir, "okx-a2a") };
+  const expected = {
+    onchainos: path.join(binDir, "onchainos"),
+    "okx-a2a": path.join(binDir, "okx-a2a"),
+  };
   for (const [name, target] of Object.entries(expected)) {
     try { if (!(fs.statSync(target).mode & 0o111)) errors.push(`${name} wrapper is not executable`); }
     catch { errors.push(`${name} wrapper is missing`); }
   }
   try { if (!(fs.statSync(path.join(binDir, "okx-a2a.real")).mode & 0o111)) errors.push("okx-a2a.real is not executable"); }
   catch { errors.push("okx-a2a.real is missing or broken"); }
+  const codexAdapter = path.join(binDir, "codex-a2a");
+  const codexReal = path.join(binDir, "codex.real");
+  if (fs.existsSync(codexAdapter) || fs.existsSync(codexReal)) {
+    try { if (!(fs.statSync(codexAdapter).mode & 0o111)) errors.push("codex-a2a wrapper is not executable"); }
+    catch { errors.push("codex-a2a wrapper is missing or broken"); }
+    try { if (!(fs.statSync(codexReal).mode & 0o111)) errors.push("codex.real is not executable"); }
+    catch { errors.push("codex.real is missing or broken"); }
+  }
   const configText = fs.existsSync(codexConfig) ? fs.readFileSync(codexConfig, "utf8") : "";
   if (!configText.includes(binDir)) errors.push(".codex/config.toml does not put .codex/bin on PATH");
 

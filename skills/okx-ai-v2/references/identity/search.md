@@ -101,8 +101,7 @@ Apply the same rules to every page.
 
 Use the selected Service's numeric `sid` internally. **NEVER** show `sid`.
 
-**MUST** stop. Only after explicit confirmation or selection in a subsequent user message, run:
-
-```bash
-onchainos agent task-create-prepare --sid <selected-sid>
-```
+**MUST** stop. Only after explicit confirmation or selection in a subsequent
+User message, hand the exact selected numeric `sid` to
+[`../a2a/user/create-prepare.md`](../a2a/user/create-prepare.md). That leaf owns the one
+`task-create-prepare` call and every resulting branch.

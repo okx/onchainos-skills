@@ -19,4 +19,21 @@ real_a2a="$dev_repo_root/.codex/bin/okx-a2a.real"
   exit 1
 }
 
+local_onchainos="$CARGO_TARGET_DIR/debug/onchainos"
+[[ -x "$local_onchainos" ]] || {
+  echo "error: local OnchainOS CLI is unavailable; run npm run dev:cli" >&2
+  exit 1
+}
+
+# A2A starts several OnchainOS probes concurrently and applies a bounded
+# timeout to each one. Point its child processes at the already-built binary;
+# routing them back through the development wrapper would start concurrent
+# Cargo builds and can exhaust that timeout before the API request begins.
+export ONCHAINOS_BIN="$local_onchainos"
+
+local_codex="$dev_repo_root/.codex/bin/codex-a2a"
+if [[ -x "$local_codex" ]]; then
+  export OKX_A2A_AI_CODEX_COMMAND="$local_codex"
+fi
+
 exec "$real_a2a" "$@"

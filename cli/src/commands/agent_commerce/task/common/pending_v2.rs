@@ -67,13 +67,16 @@ fn decision_relay_post_action() -> &'static str {
 /// decision binding instead of reconstructing a smaller event payload.
 fn arbitration_relay_description(mode: &str, agent_id: &str) -> String {
     format!(
-        "User-decision relay envelope ({mode}). Run `onchainos agent next-action \
-         --role auto --agentId {agent_id} \
-         --message '<complete current message object as JSON>'`. Preserve every \
-         field from the current `message` object, including `decisionId`, \
-         `selectedActionId`, `params`, `data`, and `jobId` when present. Decision \
-         resolution is complete in the user session; continue with the returned \
-         progression result."
+        "User-decision relay envelope ({mode}) for Agent {agent_id}. Pass the \
+         complete current `message` object unchanged to `onchainos agent \
+         next-action` using the structured-envelope command in \
+         `skills/okx-ai-v2/references/a2a/router.md`. Do not reconstruct the JSON \
+         or interpolate its fields into shell source. Preserve every field, \
+         including `decisionId`, `selectedActionId`, `params`, `data`, \
+         `deliveryId`, and `jobId` when present. Decision resolution is complete \
+         in the user session; do not call a `pending-decisions-v2` resolver in \
+         the receiving sub session. Continue with the returned progression \
+         result."
     )
 }
 
@@ -1468,32 +1471,7 @@ fn handle_resolve_with_sessionkey(
         source_event.as_str()
     };
     let relay_event = format!("user_decision_{relay_source_event}");
-    let description = if arbitration::is_decision_source(relay_source_event) {
-        arbitration_relay_description("CLI mode", &agent_id)
-    } else {
-        let relay_data_contract = if autotrade_outcome.is_some() {
-            "<foreground-validated normalized A/B/C policy>"
-        } else {
-            "<message.data verbatim>"
-        };
-        let delivery_contract = relay_delivery_id
-            .as_deref()
-            .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
-            .unwrap_or_default();
-        format!(
-            "User-decision relay envelope (CLI mode). Call `onchainos agent next-action \
-             --role {role} --agentId {agent} \
-             --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"{data_contract}\"{delivery_contract}}}'` \
-             to fetch the routing playbook; follow it. \
-             ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
-             user-session-only; the user-session already issued this relay envelope.",
-            jid = job_id,
-            evt = relay_event,
-            role = role,
-            agent = agent_id,
-            data_contract = relay_data_contract,
-        )
-    };
+    let description = arbitration_relay_description("CLI mode", &agent_id);
     let relay_envelope = serde_json::json!({
         "agentId": agent_id,
         "message": {
@@ -1743,31 +1721,7 @@ fn handle_resolve_prompt(
         source_event.as_str()
     };
     let relay_event = format!("user_decision_{relay_source_event}");
-    let description = if arbitration::is_decision_source(relay_source_event) {
-        arbitration_relay_description("queue-backed prompt mode", &agent_id)
-    } else {
-        let relay_data_contract = if autotrade_outcome.is_some() {
-            "<foreground-validated normalized A/B/C policy>"
-        } else {
-            "<message.data verbatim>"
-        };
-        let delivery_contract = relay_delivery_id
-            .as_deref()
-            .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
-            .unwrap_or_default();
-        format!(
-            "User-decision relay envelope (queue-backed prompt mode). Call `onchainos agent next-action \
-             --role {role} --agentId {agent} \
-             --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"{data_contract}\"{delivery_contract}}}'` \
-             to fetch the routing playbook; follow it. \
-             ❌ Do NOT call `pending-decisions-v2 resolve` / `resolve-with-sessionkey` / `resolve-prompt` / `pick` / `cancel` — those are user-session-only; the user-session already issued this relay envelope.",
-            jid = job_id,
-            evt = relay_event,
-            role = role,
-            agent = agent_id,
-            data_contract = relay_data_contract,
-        )
-    };
+    let description = arbitration_relay_description("queue-backed prompt mode", &agent_id);
     let relay_envelope = serde_json::json!({
         "agentId": agent_id,
         "message": {
@@ -2014,28 +1968,7 @@ fn handle_resolve(user_reply: String) -> Result<()> {
     // common mis-routing pattern where the sub pattern-matches "I see user_decision_*"
     // → "this is from resolve flow" → "I should call resolve too" (which is wrong; resolve
     // is user-session-only — user-session ALREADY called it to produce THIS envelope).
-    let description = if arbitration::is_decision_source(source_event) {
-        arbitration_relay_description("sub session", &active.agent_id)
-    } else {
-        let delivery_contract = relay_delivery_id
-            .as_deref()
-            .map(|delivery_id| format!(",\"deliveryId\":\"{delivery_id}\""))
-            .unwrap_or_default();
-        format!(
-            "User-decision relay envelope (sub session). Call `onchainos agent next-action \
-             --role {role} --agentId {agent} \
-             --message '{{\"event\":\"{evt}\",\"jobId\":\"{jid}\",\"data\":\"<message.data verbatim>\"{delivery_contract}}}'` \
-             to fetch the routing playbook; follow it. \
-             ❌ Do NOT call `pending-decisions-v2 resolve` / `pick` / `cancel` — those are \
-             user-session-only; the user-session already called `resolve` to produce this \
-             envelope. The sub session has no queue file; calling resolve here = wasted turn \
-             + flow stall.",
-            jid = active.job_id,
-            evt = relay_event,
-            role = active.role,
-            agent = active.agent_id,
-        )
-    };
+    let description = arbitration_relay_description("sub session", &active.agent_id);
     let relay_envelope = serde_json::json!({
         "agentId": active.agent_id,
         "message": {
@@ -3324,15 +3257,25 @@ mod sanitize_tests {
     #[test]
     fn arbitration_relay_preserves_the_complete_message_contract() {
         let description = arbitration_relay_description("CLI mode", "11802");
-        assert!(description.contains("--role auto --agentId 11802"));
-        assert!(description.contains("<complete current message object as JSON>"));
-        for field in ["decisionId", "selectedActionId", "params", "data", "jobId"] {
+        assert!(description.contains("for Agent 11802"));
+        assert!(description.contains("complete current `message` object unchanged"));
+        assert!(description.contains("Do not reconstruct the JSON"));
+        for field in [
+            "decisionId",
+            "selectedActionId",
+            "params",
+            "data",
+            "deliveryId",
+            "jobId",
+        ] {
             assert!(
                 description.contains(field),
                 "missing {field}: {description}"
             );
         }
         assert!(!description.contains("{\"event\":"));
+        assert!(!description.contains("--message '"));
+        assert!(!description.contains('\''));
     }
 
     #[test]

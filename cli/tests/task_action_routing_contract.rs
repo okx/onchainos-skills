@@ -1,185 +1,60 @@
-const ACTION_ROUTING: &str =
-    include_str!("../../skills/okx-ai-v2/references/shared/task-action-routing.md");
-const ARBITRATION_REFERENCE: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/provider/arbitration.md");
-const TASK_INTENT_ROUTING: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
-const PROVIDER_ROUTER: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/provider/router.md");
-const PROVIDER_JOB: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/provider/job.md");
-const OKX_AI_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
-const ARBITRATION_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/arbitration.rs");
-const PENDING_V2_SOURCE: &str =
-    include_str!("../src/commands/agent_commerce/task/common/pending_v2.rs");
-const EVALUATOR_FLOW_SOURCE: &str =
-    include_str!("../src/commands/agent_commerce/task/evaluator/flow.rs");
-const EVALUATOR_INFO_SOURCE: &str =
-    include_str!("../src/commands/agent_commerce/task/evaluator/info.rs");
-const DISPUTE_LIFECYCLE_SOURCE: &str =
-    include_str!("../src/commands/agent_commerce/task/user/flow_lifecycle/dispute.rs");
+const ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/router.md");
+const USER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
+const PROVIDER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/provider/router.md");
+const ARBITRATION_DECISION: &str = include_str!("../../skills/okx-ai-v2/references/a2a/provider/arbitration-decision.md");
+const DISPUTE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/provider/dispute.md");
+const ARBITRATION_QUERY: &str = include_str!("../../skills/okx-ai-v2/references/a2a/provider/arbitration-query.md");
 const TASK_COMMON_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/common/mod.rs");
+const AGENT_COMMERCE_SOURCE: &str = include_str!("../src/commands/agent_commerce/mod.rs");
+const EVALUATOR_FLOW_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/evaluator/flow.rs");
 
 #[test]
-fn arbitration_actions_have_one_domain_registry() {
-    for action in [
-        "agree_refund",
-        "raise_arbitration",
-        "sub_agree_refund",
-        "raise_subscription_arbitration",
-        "view_arbitration",
-    ] {
-        assert!(ARBITRATION_REFERENCE.contains(&format!("| `{action}` |")));
-        assert!(!ACTION_ROUTING.contains(&format!("| `{action}` |")));
+fn action_ids_are_partitioned_by_domain_and_role() {
+    for action in ["login", "register_user_agent", "watch_task", "stop"] {
+        assert!(ROUTER.contains(&format!("`{action}`")), "missing action {action}");
     }
-    assert!(ARBITRATION_REFERENCE.contains("arbitration-list"));
-    assert!(ARBITRATION_REFERENCE.contains("arbitration-detail"));
-    assert!(
-        ARBITRATION_REFERENCE.find("## Action routing").unwrap()
-            < ARBITRATION_REFERENCE
-                .find("## Open the rejection decision")
-                .unwrap()
-    );
-    assert!(
-        ARBITRATION_REFERENCE.find("## Output templates").unwrap()
-            > ARBITRATION_REFERENCE
-                .find("## Lifecycle handoff")
-                .unwrap()
-    );
-    let arbitration_lower = ARBITRATION_REFERENCE.to_ascii_lowercase();
-    for reverse_instruction in [
-        "do not",
-        "don't",
-        "never",
-        "must not",
-        "does not need to",
-        "need not",
-    ] {
-        assert!(
-            !arbitration_lower.contains(reverse_instruction),
-            "arbitration reference should use positive steps instead of `{reverse_instruction}`"
-        );
+    for action in ["open_create_playbook", "submit_refund_request"] {
+        assert!(USER_ROUTER.contains(&format!("`{action}`")), "missing user action {action}");
     }
-    let output_templates = ARBITRATION_REFERENCE
-        .split_once("## Output templates")
-        .unwrap()
-        .1;
-    assert!(!output_templates.to_ascii_lowercase().contains("match "));
-    for intent in [
-        "### View rejected candidates",
-        "### Decide refund or arbitration",
-        "### View arbitration cases",
-        "### View a case",
-    ] {
-        assert!(output_templates.contains(intent));
+    for action in ["agree_refund", "raise_arbitration", "view_arbitration"] {
+        assert!(PROVIDER_ROUTER.contains(&format!("`{action}`")), "missing provider action {action}");
     }
-    assert!(!ARBITRATION_REFERENCE
-        .contains("tasks --status disputed` and generic `status` are the public"));
-    assert!(ARBITRATION_SOURCE.contains("pub fn build_decision_result"));
-    assert!(ARBITRATION_SOURCE.contains("pub async fn handle_arbitration_list"));
-    assert!(ARBITRATION_SOURCE.contains("pub async fn handle_arbitration_detail"));
-    for obsolete in [
-        "src/commands/agent_commerce/task/common/dispute.rs",
-        "src/commands/agent_commerce/task/common/arbitration.rs",
-        "src/commands/agent_commerce/task/common/arbitration_query.rs",
-    ] {
-        assert!(!std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(obsolete)
-            .exists());
-    }
-    for obsolete_reference in [
-        "../skills/okx-ai-v2/references/a2a/provider/dispute.md",
-        "../skills/okx-ai-v2/references/a2a/provider/arbitration-action-routing.md",
-        "../skills/okx-ai-v2/references/a2a/provider/arbitration-output-templates.md",
-        "../skills/okx-ai-v2/references/a2a/provider/arbitration-review.md",
-        "../skills/okx-ai-v2/references/a2a/provider/arbitration-rubric.md",
-        "../skills/okx-ai-v2/references/a2a/provider/arbitration-staking.md",
-    ] {
-        assert!(!std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(obsolete_reference)
-            .exists());
-    }
+    assert!(ROUTER.contains("Preserve `agentId`"));
+    assert!(ROUTER.contains("Never substitute retired"));
 }
 
 #[test]
-fn task_and_arbitration_query_intents_use_distinct_commands() {
-    assert!(PROVIDER_JOB
-        .contains("onchainos agent tasks --agent-id <aspAgentId> --page 1 --limit 20"));
-    assert!(!PROVIDER_JOB.contains(
-        "onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20"
-    ));
-    assert!(OKX_AI_SKILL.contains("references/a2a/user/router.md"));
-    assert!(!TASK_INTENT_ROUTING.contains("../provider/"));
-    assert!(PROVIDER_ROUTER.contains("List existing tasks for an ASP"));
-    assert!(PROVIDER_ROUTER.contains("哪些可以仲裁"));
-    assert!(PROVIDER_ROUTER.contains("`which tasks can I arbitrate`"));
-    assert!(PROVIDER_ROUTER.contains("`arbitration.md`"));
-    assert!(ARBITRATION_REFERENCE.contains(
-        "onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20"
-    ));
-    assert!(ARBITRATION_REFERENCE
-        .contains("onchainos agent my-subscriptions --role provider --status rejected"));
-    assert!(ARBITRATION_REFERENCE.contains("## Query arbitration cases"));
-    assert!(ARBITRATION_REFERENCE.contains("## Query an arbitration detail"));
-    assert!(ARBITRATION_REFERENCE
-        .contains("onchainos agent arbitration-list --agent-id <aspAgentId>"));
-    assert!(ARBITRATION_REFERENCE
-        .contains("onchainos agent arbitration-detail <jobId> --agent-id <aspAgentId>"));
-}
-
-#[test]
-fn cli_arbitration_guidance_uses_v2_skill_tree() {
-    let legacy_prefix = ["skills/okx-ai", "/references/"].concat();
-
-    for source in [
-        PENDING_V2_SOURCE,
-        EVALUATOR_FLOW_SOURCE,
-        EVALUATOR_INFO_SOURCE,
-        DISPUTE_LIFECYCLE_SOURCE,
-        TASK_COMMON_SOURCE,
-    ] {
-        assert!(
-            !source.contains(&legacy_prefix),
-            "CLI arbitration guidance references the legacy skill tree"
-        );
+fn arbitration_decision_execution_and_query_are_separate() {
+    assert!(ARBITRATION_DECISION.contains("pending-decisions-v2 request-prompt"));
+    for action in ["agree_refund", "raise_arbitration", "sub_agree_refund", "raise_subscription_arbitration"] {
+        assert!(DISPUTE.contains(&format!("| `{action}` |")));
     }
-
-    assert!(PENDING_V2_SOURCE.contains("skills/okx-ai-v2/SKILL.md"));
-    assert!(EVALUATOR_FLOW_SOURCE.contains("skills/okx-ai-v2/references/a2a/evaluator/dispute.md"));
-    assert!(DISPUTE_LIFECYCLE_SOURCE.contains("skills/okx-ai-v2/references/runtime/recovery.md"));
-    assert!(TASK_COMMON_SOURCE.contains("skills/okx-ai-v2/"));
+    assert!(ARBITRATION_QUERY.contains("tasks --status rejected"));
+    assert!(ARBITRATION_QUERY.contains("arbitration-list"));
+    assert!(ARBITRATION_QUERY.contains("arbitration-detail"));
 }
 
 #[test]
-fn notification_action_is_registered() {
-    const COMPLETION_ACTIONS: &str =
-        include_str!("../../skills/okx-ai-v2/references/a2a/completion.md");
-
-    assert!(ACTION_ROUTING.contains("| `notify_user` |"));
-    assert!(ACTION_ROUTING.contains("../a2a/completion.md#notification-only"));
-    assert!(COMPLETION_ACTIONS.contains("For `nextAction.id=notify_user`:"));
-    assert!(COMPLETION_ACTIONS.contains("payload.notification.content"));
-    assert!(COMPLETION_ACTIONS.contains("onchainos agent user-notify"));
+fn cli_guidance_targets_role_scoped_v2_tree() {
+    assert!(TASK_COMMON_SOURCE.contains("references/a2a/router.md"));
+    assert!(!TASK_COMMON_SOURCE.contains("references/a2a/user/session.md"));
+    assert!(EVALUATOR_FLOW_SOURCE.contains("references/a2a/evaluator/rubric.md"));
+    assert!(!EVALUATOR_FLOW_SOURCE.contains("references/a2a/evaluator/dispute.md"));
 }
 
 #[test]
-fn refund_v2_actions_are_registered_and_context_bound() {
-    for action in [
-        "resolve_refund_target",
-        "prepare_refund",
-        "provide_refund_reason",
-        "cancel_trial_conversion",
-        "close_zero_price",
-        "execute_direct_refund",
-        "submit_refund_request",
-        "view_refund_status",
-    ] {
-        assert!(
-            ACTION_ROUTING.contains(&format!("| `{action}` |")),
-            "missing Refund V2 action {action}"
-        );
-    }
-    assert!(ACTION_ROUTING.contains("params.refundContextId"));
-    assert!(ACTION_ROUTING.contains("Do not execute an action not returned by the CLI"));
-    assert!(ACTION_ROUTING.contains("active deliverable-review"));
+fn stale_system_events_cannot_replay_terminal_side_effects() {
+    assert!(ROUTER.contains("Call `next-action` exactly once"));
+    assert!(ROUTER.contains("never authorizes a duplicate call"));
+    assert!(AGENT_COMMERCE_SOURCE.contains("ignore this stale notification and end the turn immediately"));
+    assert!(AGENT_COMMERCE_SOURCE.contains("do NOT call `next-action` again"));
+    assert!(AGENT_COMMERCE_SOURCE.contains("do NOT replay terminal notification"));
+    assert!(!AGENT_COMMERCE_SOURCE.contains("re-run next-action with the `event` field"));
+    let stale_gate = AGENT_COMMERCE_SOURCE
+        .find("Stop stale system events before any recovery or persistence")
+        .unwrap();
+    let delivery_recovery = AGENT_COMMERCE_SOURCE
+        .find("For job_submitted: prefer an unprocessed spool delivery")
+        .unwrap();
+    assert!(stale_gate < delivery_recovery);
 }

@@ -63,6 +63,28 @@ Each call returns an independent file key. Failure of one does not affect the ot
 | **Server error** | CLI returns the error message from the backend. Suggest retrying. |
 | **Large file timeout** | If the upload/download takes too long, the request may time out (60s). Suggest smaller files or checking network. |
 
+## Attach a file to an active task
+
+This is separate from generic encrypted upload and deliverable intake. Always
+identify the exact task, even when only one appears active.
+
+```bash
+onchainos agent task-attach <jobId> --file <path>
+```
+
+The CLI checks task state and rejects status Submitted or later. A failure
+stops immediately: do not copy the file manually and do not dispatch an
+attachment message. On success, forward the exact saved path once:
+
+```bash
+okx-a2a session send \
+  --job-id <jobId> --to-agent-id <providerAgentId> \
+  --content "[ATTACHMENT_ADDED] <saved path>" --json
+```
+
+If no task session exists yet, state that the file is saved and will be
+forwarded after matching. The per-file limit is 100 MB.
+
 ## Global Notes
 
 - **Encryption**: Files are expected to be XMTP-encrypted before upload. This module does not perform encryption — it uploads/downloads whatever bytes it receives.

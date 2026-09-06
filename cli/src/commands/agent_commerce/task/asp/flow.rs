@@ -2,7 +2,7 @@
 //!
 //! Based on the current system notification type received (event), outputs the prompt
 //! for the next action to take. The goal: consolidate the Scene steps scattered across
-//! `references/a2a/provider/router.md` into code so the agent can simply run
+//! `references/a2a/router.md` into code so the agent can simply run
 //! `exec onchainos agent next-action ...` to fetch the prompt and execute it directly,
 //! without having to reason over the entire document.
 
@@ -1609,14 +1609,16 @@ mod tests {
 
     #[tokio::test]
     async fn dispute_approved_runs_confirm_and_job_disputed_owns_evidence() {
-        let approved = run_asp(
+        let task = notification_task("One-time work", 0, "1", "USDT", 3);
+        let approved = run_asp_with_task(
             "dispute_approved",
             json!({"event":"dispute_approved", "code":0}),
+            &task,
         )
         .await;
         assert!(approved.contains("Run the stage-2 dispute broadcast"));
         assert!(approved.contains("onchainos agent dispute confirm"));
-        assert!(approved.contains("`job_disputed` system notification starts the independent evidence-upload workflow"));
+        assert!(approved.contains("- `job_disputed` system notification"));
 
         let disputed = run_asp(
             "job_disputed",

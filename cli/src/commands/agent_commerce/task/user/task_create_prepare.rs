@@ -167,10 +167,21 @@ async fn fetch_service_detail(user_agent_id: &str, sid: &str) -> Result<Value> {
         .await
         .context("failed to invoke service-detail")?;
     if !output.status.success() {
-        bail!(
-            "service-detail failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = stderr.trim();
+        let detail = if detail.is_empty() {
+            stdout.trim()
+        } else {
+            detail
+        };
+        if detail.is_empty() {
+            bail!(
+                "service-detail failed for sid `{sid}` with status {}",
+                output.status
+            );
+        }
+        bail!("service-detail failed for sid `{sid}`: {detail}");
     }
     let response: Value = serde_json::from_slice(&output.stdout)
         .context("failed to parse service-detail JSON output")?;

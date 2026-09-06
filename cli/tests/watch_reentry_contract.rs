@@ -1,78 +1,48 @@
-const WATCH_CORE: &str = include_str!("../../skills/okx-ai-v2/references/runtime/watch.md");
-const WATCH_OUTDATED_LIST: &str =
-    include_str!("../../skills/okx-ai-v2/references/runtime/watch-outdated-list.md");
-const TASK_USER_PLAYBOOK: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/user/playbook.md");
-const TASK_CREATE_ACTIONS: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/user/create.md");
-const PENDING_V2_SOURCE: &str =
-    include_str!("../src/commands/agent_commerce/task/common/pending_v2.rs");
+const WATCH: &str = include_str!("../../skills/okx-ai-v2/references/runtime/watch.md");
+const BACKLOG: &str = include_str!("../../skills/okx-ai-v2/references/runtime/backlog.md");
+const RELAY: &str = include_str!("../../skills/okx-ai-v2/references/runtime/decision-relay.md");
+const WAKE: &str = include_str!("../../skills/okx-ai-v2/references/runtime/watch-wake.md");
+const CREATE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create.md");
 
 #[test]
-fn watch_docs_do_not_end_after_a_nonterminal_result() {
-    assert!(WATCH_CORE.contains("it never authorizes ending the turn after one watch call returns"));
-    assert!(WATCH_CORE.contains("After processing all returned items, **always** call"));
-    assert!(TASK_USER_PLAYBOOK
-        .contains("A returned notification, deliverable, or empty poll does **not** end the turn"));
-    assert!(!TASK_USER_PLAYBOOK.contains("execute watch, then **end this turn**"));
+fn watch_reenters_after_nonterminal_results() {
+    assert!(WATCH.contains("it never authorizes ending the turn after one watch call returns"));
+    assert!(WATCH.contains("After processing all returned items, **always** call"));
+    assert!(WATCH.contains("single long-poll call"));
+    assert!(WATCH.contains("--job-id <X>"));
+    assert!(CREATE.contains("broadcast_submitted/watch_task"));
 }
 
 #[test]
-fn task_creation_keeps_the_existing_scoped_watch_handoff() {
-    assert!(TASK_CREATE_ACTIONS.contains("`reason=broadcast_submitted`"));
-    assert!(TASK_CREATE_ACTIONS.contains("`nextAction.id=watch_task`"));
-    assert!(WATCH_CORE.contains("okx-a2a user watch --json --job-id <X>"));
-    assert!(WATCH_CORE.contains("single long-poll call"));
-}
-
-#[test]
-fn direct_review_execution_starts_only_after_the_decision_reply_is_claimed() {
-    let claim = WATCH_CORE
-        .find("Otherwise claim first")
-        .expect("watch contract must claim a non-defer reply");
-    let execute = WATCH_CORE
-        .find("On `handled`")
-        .expect("watch contract must execute llmContent after claim");
+fn decision_reply_claims_before_relay() {
+    let claim = RELAY.find("Otherwise claim first").unwrap();
+    let execute = RELAY.find("On `handled`").unwrap();
     assert!(claim < execute);
-
-    let review_claim = PENDING_V2_SOURCE
-        .find("for a non-defer reply claim the decision")
-        .expect("buyer review contract must claim the decision first");
-    let review_action = PENDING_V2_SOURCE
-        .find("Interpret the choice and complete the selected review action here")
-        .expect("buyer review contract must define the direct A/B branch");
-    assert!(review_claim < review_action);
-    assert!(PENDING_V2_SOURCE.contains("current conversation owns choice parsing"));
-    assert!(PENDING_V2_SOURCE.contains("keep it verbatim"));
+    assert!(RELAY.contains("execute only the item's `llmContent` commands verbatim"));
+    assert!(RELAY.contains("List-origin items never start watch"));
 }
 
 #[test]
-fn retired_autotrade_mode_cards_are_claimed_without_rendering() {
-    for document in [WATCH_CORE, WATCH_OUTDATED_LIST] {
-        assert!(document.contains("--source-event \"autotrade_consent\""));
-        assert!(document.contains("--source-event \"autotrade_config_required\""));
-        assert!(document.contains("okx-a2a user check --todo-ids <item.id> --json"));
-        assert!(
-            document.contains("do not render")
-                || document.contains("remove it from the display set")
-        );
-        assert!(document.contains("do not execute") || document.contains("never execute"));
-    }
+fn backlog_is_one_shot_and_filters_only_retired_cards() {
+    assert!(BACKLOG.contains("okx-a2a user outdated-list --json"));
+    assert!(BACKLOG.contains("autotrade_consent"));
+    assert!(BACKLOG.contains("autotrade_config_required"));
+    assert!(BACKLOG.contains("never starts watch"));
+    assert!(BACKLOG.contains("JobID <prefix>"));
 }
 
 #[test]
-fn scoped_terminal_detection_requires_a_canonical_leading_marker() {
-    assert!(WATCH_CORE.contains("first non-whitespace characters"));
-    assert!(WATCH_CORE.contains("marker appearing later inside a title"));
-    assert!(WATCH_CORE.contains("never a substring inside business data"));
-    assert!(WATCH_CORE
-        .contains("`[Job Expired]` / `[ASP Acceptance Expired]` / `[Auto-Refund Processing]`"));
-    assert!(WATCH_CORE.contains("user/refund.md"));
-    assert!(WATCH_CORE.contains("Only a leading terminal marker"));
-    assert!(WATCH_CORE.contains("no Buyer claim/finalize action exists"));
-    let legacy_terminal_sentence = WATCH_CORE
-        .lines()
-        .find(|line| line.contains("Legacy notifications may instead begin with"))
-        .expect("watch-core must document legacy terminal headings");
-    assert!(!legacy_terminal_sentence.contains("[Job Expired]"));
+fn wake_keeps_exact_watch_scope() {
+    assert!(WAKE.contains("okx-a2a user watch --json --job-id <X>"));
+    assert!(WAKE.contains("chronology guard"));
+    assert!(WAKE.contains("COUNT=1"));
+    assert!(WAKE.contains("backlog.md"));
+}
+
+#[test]
+fn scoped_terminal_detection_requires_leading_marker() {
+    assert!(WATCH.contains("first non-whitespace characters"));
+    assert!(WATCH.contains("marker appearing later inside a title"));
+    assert!(WATCH.contains("refund-reconcile.md"));
+    assert!(WATCH.contains("Only a leading terminal marker"));
 }

@@ -77,47 +77,6 @@ broadcast `bizContext`.
 
 ## NEED_PARAMS
 
-Send a natural-language question and one structured block through `okx-a2a`:
-
-```bash
-okx-a2a session send \
-  --job-id <jobId> \
-  --to-agent-id <buyerAgentId> \
-  --content '<natural-language request>
-
-[intent:task_params_request]
-{"version":1,"jobId":"<jobId>","taskType":"single","requestId":"<unique-id>","round":1,"missing":["<field>"]}' \
-  --json
-```
-
-The buyer constructs a complete replacement JSON value and updates the backend:
-
-```bash
-onchainos agent service-param-update <jobId> \
-  --agent-id <buyerAgentId> \
-  --task-type single \
-  --request-id <same-request-id> \
-  --round <same-round> \
-  --service-params '<complete JSON>'
-```
-
-Only when the command exits 0 with `backendUpdated=true` may the buyer send:
-
-```bash
-okx-a2a session send \
-  --job-id <jobId> \
-  --to-agent-id <aspAgentId> \
-  --content '[intent:task_params_response]
-{"version":1,"jobId":"<jobId>","requestId":"<same-id>","round":1,"backendUpdated":true}' \
-  --json
-```
-
-On response, the ASP fetches latest detail again. If it is still CREATED, evaluate
-the newly stored complete `serviceParams`; otherwise stop.
-
-The maximum is three successful backend updates, not three raw requests or
-delivery attempts. A successful update makes the matching response eligible to
-send and consumes that round. Retrying the same `requestId` with identical round
-and parameters returns the same response action and does not consume another
-round. After the third successful update, evaluate once more; if the result
-remains `NEED_PARAMS`, decline with a concrete reason.
+Enter [`../params.md`](../params.md). It is the sole owner of request IDs, rounds,
+complete replacement parameters, backend-update confirmation, and the
+three-successful-update limit.

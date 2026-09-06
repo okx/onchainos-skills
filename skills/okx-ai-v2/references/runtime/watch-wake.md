@@ -69,7 +69,7 @@ of these occurred in the conversation:
 If it is still current, run the exact command embedded in the prompt, without a banner. Preserve global
 versus scoped origin exactly. The consumed decision itself will not reappear in watch; while unclaimed it
 remains available through `okx-a2a user outdated-list` (see
-[`watch-outdated-list.md`](watch-outdated-list.md)).
+[`backlog.md`](backlog.md)).
 
 ## Cancelling the wake
 

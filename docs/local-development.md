@@ -61,8 +61,19 @@ Codex resolves those names through `.codex/bin` in this trusted project.
 - Existing Skill file edits are visible through symlinks. Start a new task when
   changing `SKILL.md` metadata or routing instructions.
 - Run `npm run dev:skills` after adding, deleting, or renaming a Skill.
-- Every `onchainos` invocation runs Cargo's incremental build before executing
-  the current debug binary.
+- Every direct `onchainos` invocation runs Cargo's incremental build before
+  executing the current debug binary. The `okx-a2a` wrapper pins daemon child
+  commands to that prebuilt checkout-local binary so concurrent probes do not
+  spend their bounded runtime waiting on Cargo locks. Run `npm run dev:cli`
+  after CLI source changes and before starting A2A.
+- Daemon-managed Codex sessions run through the checkout-local Codex adapter.
+  It explicitly enables this checkout's Skill files, disables same-name stale
+  global copies, and disables legacy `okx-agent-task*`, `okx-agent-chat`,
+  and `okx-task-watch` Skills that compete for structured task envelopes.
+  User and ASP task sub-sessions therefore use the same routing tree as the
+  User main session. This adapter is installed only when the Codex CLI is
+  available; Claude and other development environments keep using their native
+  A2A launch path and do not require Codex.
 - `okx-a2a` remains the globally installed program; the project wrapper only
   injects isolated state and the project PATH.
 

@@ -29,7 +29,14 @@ pub fn handle_session_cleanup(job_id: &str, print_output: bool) -> Result<()> {
     } else {
         match okx_a2a::session_delete(job_id, None) {
             Ok(()) => out.push_str("OK"),
-            Err(e) => out.push_str(&format!("⚠️ sub session delete failed: {e}\n")),
+            Err(e) => {
+                let warning = format!("⚠️ sub session delete failed: {e}");
+                if !print_output {
+                    eprintln!("{warning}");
+                }
+                out.push_str(&warning);
+                out.push('\n');
+            }
         }
     }
 

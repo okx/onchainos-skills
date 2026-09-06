@@ -107,6 +107,8 @@ scripts/dev/*
 !scripts/dev/common.sh
 !scripts/dev/dev.mjs
 !scripts/dev/dev.test.mjs
+!scripts/dev/codex-a2a.sh
+!scripts/dev/codex-skill-config.mjs
 !scripts/dev/okx-a2a.sh
 !scripts/dev/onchainos.sh
 
@@ -118,4 +120,5 @@ scripts/dev/*
 .codex/onchainos/
 .codex/target-global/
 .codex/agent-task
+.codex/tmp/
 artifacts/

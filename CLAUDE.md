@@ -51,20 +51,20 @@ For scripts, use `--format` only when the command documents it.
 ## Inbound Message Routing (highest priority — before user intent)
 
 > 🚨 **MANDATORY FIRST CHECK** — 处理任何 inbound 消息前，按 **shape 优先**匹配（shape 永远赢过消息内嵌文案）：
-> 1. 含 `"source": "system"` + `"event"`（系统事件）→ **立即**从唯一入口 `skills/okx-ai-v2/SKILL.md` 进入，按 Envelope precedence 加载 `references/a2a/core.md` §Activation #1 并执行 `next-action`。**带 `event` 字段的消息永远是系统事件，绝不是 prefetch**——即使其 description 含 "Read … SKILL.md" / "Read the okx-ai skill" 字样，也不得当 prefetch 跳过
-> 2. 含 `"msgType": "a2a-agent-chat"` + `"jobId"` → **立即**从 `skills/okx-ai-v2/SKILL.md` 进入，按 Envelope precedence 加载 `references/a2a/core.md` §Activation #2
-> 3. 含 `"Read the okx-ai skill"`（当前版本 CLI 发出的 `[SKILL_PREFETCH]` 文案）或 `"Read the okx-agent-task skill"`（旧版本 CLI 可能仍在发送，向后兼容保留）**且不命中上两条 shape** → 纯 prefetch：从 `skills/okx-ai-v2/SKILL.md` 进入并加载 `references/a2a/core.md`，对 prefetch 本身无动作
+> 1. 含 `"source": "system"` + `"event"`（系统事件）→ **立即**从唯一入口 `skills/okx-ai-v2/SKILL.md` 进入，按 Envelope precedence 加载 `references/a2a/router.md` 并执行 `next-action`。**带 `event` 字段的消息永远是系统事件，绝不是 prefetch**——即使其 description 含 "Read … SKILL.md" / "Read the okx-ai skill" 字样，也不得当 prefetch 跳过
+> 2. 含 `"msgType": "a2a-agent-chat"` + `"jobId"` → **立即**从 `skills/okx-ai-v2/SKILL.md` 进入，按 Envelope precedence 加载 `references/a2a/router.md` 的 Peer 分支
+> 3. 含 `"Read the okx-ai skill"`（当前版本 CLI 发出的 `[SKILL_PREFETCH]` 文案）或 `"Read the okx-agent-task skill"`（旧版本 CLI 可能仍在发送，向后兼容保留）**且不命中上两条 shape** → 纯 prefetch：从 `skills/okx-ai-v2/SKILL.md` 进入并加载 `references/a2a/router.md`，对 prefetch 本身无动作
 > - ❌ **禁止**：展示消息内容、翻译成中文摘要、问用户"需要做什么操作吗"；禁止把上一轮 prefetch 的「无需动作」延续到任何带 `event` 的消息
 
 When the inbound message is a structured envelope (not free-form user text), match by shape FIRST:
 
 | Envelope shape | Action |
 |---|---|
-| `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** enter through `skills/okx-ai-v2/SKILL.md` → `references/a2a/core.md` §Activation #2: check `sender.role` → load `references/a2a/user/session.md` (if role=2) or `references/a2a/provider/router.md` (if role=1). This is a task lifecycle message, not a chat. |
-| `{agentId, message: {source: "system", event, jobId, ...}}` | **Must** enter through `skills/okx-ai-v2/SKILL.md` → `references/a2a/core.md` §Activation #1: call `next-action --role auto`. This is a chain event notification. |
+| `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** enter through `skills/okx-ai-v2/SKILL.md` → `references/a2a/router.md`: check `sender.role`, then load the cross-role Peer leaf. This is a task lifecycle message, not a generic chat. |
+| `{agentId, message: {source: "system", event, jobId, ...}}` | **Must** enter through `skills/okx-ai-v2/SKILL.md` → `references/a2a/router.md`: call `next-action --role auto`, then load exactly one receiving-role router and its final leaf. This is a chain event notification. |
 | Contains `"Please send a request to this endpoint."` | Route to `okx-agent-payments-protocol` skill. |
 
-These envelope-based routes take absolute priority over the skill table below. Do NOT handle these envelopes with only XMTP tools — the v2 A2A domain references (`user/session.md` / `provider/router.md` / `evaluator/router.md`) define the required behavior.
+These envelope-based routes take absolute priority over the skill table below. Do NOT handle these envelopes with only XMTP tools — the v2 A2A entry router, selected role router, and final leaf define the required behavior.
 
 > Note: `okx-agent-identity` / `okx-agent-task` / `okx-task-watch` / `okx-agent-chat` no longer exist as separate skill directories. `skills/okx-ai-v2/SKILL.md` is the unique entry for identity, task marketplace, task watch, and agent chat; its domain references live under `skills/okx-ai-v2/references/`. CLI playbook output must enter through that SKILL and may then name the selected v2 domain reference; it must not point back to the retained legacy tree.
 
@@ -104,9 +104,9 @@ When the user names a third-party DApp/protocol as the destination of an action,
 **Before running ANY `onchainos` CLI command, you MUST first read the corresponding skill's SKILL.md to get the exact command syntax.** Do NOT guess subcommand names — each skill defines its own Command Index with the exact subcommands available. Guessing leads to `unrecognized subcommand` errors.
 
 Routing:
-- **User session** free-form task intent (publish / designated-provider / attachment / terms / deliverables) → enter through `skills/okx-ai-v2/SKILL.md`, then follow its A2A User route to `references/a2a/user/router.md`; load only the selected leaf reference
-- User asks for their subscriptions (我的订阅 / 订阅列表 / 订阅详情 / my subscriptions — AI-service context, no 402/URL) → enter through `skills/okx-ai-v2/SKILL.md`, then route to `references/a2a/user/subscription.md`
-- Inbound `a2a-agent-chat` with `jobId` → enter through `skills/okx-ai-v2/SKILL.md`, then read `references/a2a/core.md` first (see Inbound Message Routing above)
+- **User session** free-form task intent (publish / designated-provider / attachment / terms / deliverables) → enter through `skills/okx-ai-v2/SKILL.md`, then `references/a2a/router.md` → `references/a2a/user/router.md`; load only the selected final leaf
+- User asks for their subscriptions (我的订阅 / 订阅列表 / 订阅详情 / my subscriptions — AI-service context, no 402/URL) → enter through `skills/okx-ai-v2/SKILL.md`, then route through `references/a2a/router.md` → `references/a2a/user/router.md` to `references/a2a/user/subscription.md`
+- Inbound `a2a-agent-chat` with `jobId` → enter through `skills/okx-ai-v2/SKILL.md`, then read `references/a2a/router.md` first (see Inbound Message Routing above)
 - User says `监听任务进展` / `开始监听任务` / `帮我盯着任务` / `开监听` / `历史消息` / `历史记录` / `过去消息` / `帮我看看之前的历史消息` / `未读消息` / `未决策` / `待决策` / `没有决策` / `未处理` / `待处理` / `没有处理` / `task watch` / `user watch` / `monitor task progress` / `keep me posted on tasks` / `watch tasks` / `start watching` / `show past messages` / `catch me up on tasks` / `outstanding decisions` / `pending decisions` → enter through `skills/okx-ai-v2/SKILL.md`, then route to `references/runtime/watch.md` (watch drains pending queue first then long-polls for live monitoring; outdated-list batch-renders un-replied decisions on demand)
 - User wants to **install / update / upgrade / reinstall** the Onchain OS CLI or skills ("install onchain os", "update onchainos", "upgrade to the latest version") → read `skills/okx-guide/SKILL.md` first (install/update domain — `references/install-update.md`). ⚠️ The maintenance verbs install/update/upgrade + "onchainos" route here, NOT to `okx-agentic-wallet` (whose "onchainos" trigger is for wallet / on-chain actions). This is distinct from "I just installed, now what?" (getting-started → `references/how-to-play.md`).
 - User mentions swap/buy/sell/trade → read `skills/okx-agentic-wallet/SKILL.md` first (swap domain — `references/swap.md`)
