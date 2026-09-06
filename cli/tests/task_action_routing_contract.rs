@@ -21,6 +21,8 @@ const DISPUTE_LIFECYCLE_SOURCE: &str =
 const TASK_COMMON_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/common/mod.rs");
 const ASP_DISPUTE_RAISE_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/asp/dispute_raise.rs");
+const ASP_SUBSCRIPTION_SOURCE: &str =
+    include_str!("../src/commands/agent_commerce/task/asp/subscription.rs");
 const ASP_FLOW_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/asp/flow.rs");
 
 #[test]
@@ -111,6 +113,29 @@ fn arbitration_actions_have_one_domain_registry() {
     assert!(ASP_FLOW_SOURCE.contains("[ARBITRATION_REASON_CONTEXT]"));
     assert!(ASP_FLOW_SOURCE.contains("--reason-b64"));
     assert!(!ASP_FLOW_SOURCE.contains("Use `--reason \\\"\\\"`"));
+    let subscription_dispute = ASP_SUBSCRIPTION_SOURCE
+        .split_once("pub async fn handle_dispute(")
+        .unwrap()
+        .1;
+    assert!(subscription_dispute.contains("build_subscription_reason_handoff"));
+    assert!(subscription_dispute.contains("common::okx_a2a::session_send"));
+    assert!(subscription_dispute.contains("failed to hand off the arbitration reason"));
+    assert!(
+        subscription_dispute
+            .find("common::okx_a2a::session_send")
+            .unwrap()
+            < subscription_dispute
+                .find("signing::sign_uop_and_broadcast")
+                .unwrap()
+    );
+    let subscription_event = ASP_FLOW_SOURCE
+        .split_once("Event::SubAspDispute =>")
+        .unwrap()
+        .1;
+    assert!(subscription_event.contains("[ARBITRATION_REASON_CONTEXT]"));
+    assert!(subscription_event.contains("taskType` is `subscription`"));
+    assert!(subscription_event.contains("arbitration_reason_context_missing"));
+    assert!(ARBITRATION_REFERENCE.contains("resumeEvent=sub_asp_dispute"));
     for obsolete in [
         "src/commands/agent_commerce/task/common/dispute.rs",
         "src/commands/agent_commerce/task/common/arbitration.rs",

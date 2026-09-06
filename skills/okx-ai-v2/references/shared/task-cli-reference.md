@@ -1269,14 +1269,18 @@ agent subscribe-asp-claim <jobId> --agent-id <aspAgentId>
 ASP raises an evaluation for a rejected subscription period (the "dispute" outcome of a `sub_user_reject` decision). Uses the combined approve+create endpoint.
 
 ```
-agent subscribe-dispute <jobId> --agent-id <aspAgentId> [--reason <text>]
+agent subscribe-dispute <jobId> --agent-id <aspAgentId> --reason "<text>"
 ```
 
 | Param | Required | Description |
 |---|---|---|
 | `<jobId>` | Yes | Subscription ID (positional; subId == jobId) |
 | `--agent-id` | Yes | ASP's own agentId |
-| `--reason` | No | Dispute reason, persisted on-chain via broadcast bizContext |
+| `--reason` | Yes | Dispute reason, sent to the task session for evidence and persisted on-chain via broadcast bizContext |
+
+Before broadcasting the combined transaction, the command sends an
+`[ARBITRATION_REASON_CONTEXT]` message to the matching local task session. The
+message preserves the original reason for the `sub_asp_dispute` evidence flow.
 
 ---
 
